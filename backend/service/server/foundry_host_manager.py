@@ -1,0 +1,765 @@
+import uuid
+import asyncio
+import sys
+import time
+from pathlib import Path
+from typing import Optional, List, Dict, Any
+import httpx
+
+# Ensure backend root (which contains hosts and utils) is importable
+BACKEND_ROOT = Path(__file__).resolve().parents[2]
+if str(BACKEND_ROOT) not in sys.path:
+    sys.path.insert(0, str(BACKEND_ROOT))
+
+from a2a.types import AgentCard, Message, Task, TextPart, TaskStatus, TaskState, FilePart, FileWithUri, FileWithBytes
+from hosts.multiagent.foundry_agent_a2a import FoundryHostAgent2
+from service.server.application_manager import ApplicationManager
+from service.types import Conversation, Event
+from utils.agent_card import get_agent_card
+
+
+def get_context_id(obj: Any, default: str = None) -> str:
+    """
+    Helper function to get contextId from an object, trying both contextId and context_id fields.
+    A2A protocol officially uses contextId (camelCase), but this provides fallback compatibility.
+    """
+    try:
+        # Try contextId first (official A2A protocol field name)
+        if hasattr(obj, 'contextId') and obj.contextId is not None:
+            return obj.contextId
+        # Fallback to context_id for compatibility
+        if hasattr(obj, 'context_id') and obj.context_id is not None:
+            return obj.context_id
+        # Final fallback using getattr
+        return getattr(obj, 'contextId', getattr(obj, 'context_id', default or ''))
+    except Exception:
+        return default or ''
+
+
+def get_message_id(obj: Any, default: str = None) -> str:
+    """
+    Helper function to get messageId from an object, trying both messageId and message_id fields.
+    A2A protocol officially uses messageId (camelCase), but this provides fallback compatibility.
+    """
+    try:
+        # Try messageId first (official A2A protocol field name)
+        if hasattr(obj, 'messageId') and obj.messageId is not None:
+            return obj.messageId
+        # Fallback to message_id for compatibility
+        if hasattr(obj, 'message_id') and obj.message_id is not None:
+            return obj.message_id
+        # Final fallback using getattr
+        return getattr(obj, 'messageId', getattr(obj, 'message_id', default or str(uuid.uuid4())))
+    except Exception:
+        return default or str(uuid.uuid4())
+
+
+class FoundryHostManager(ApplicationManager):
+    def __init__(self, http_client: httpx.AsyncClient, *args, **kwargs):
+        print("[DEBUG] FoundryHostManager __init__ called")
+        self._conversations: List[Conversation] = []
+        self._messages: List[Message] = []
+        self._tasks: List[Task] = []
+        self._events: List[Event] = []
+        self._pending_message_ids: List[str] = []
+        self._agents: List[AgentCard] = []
+        
+        # Store initialization parameters
+        self._http_client = http_client
+        self._host_agent = None
+        self._host_agent_initialized = False
+        
+        self._context_to_conversation: Dict[str, str] = {}
+        self.user_id = 'test_user'
+        self.app_name = 'A2A'
+        self._task_map: Dict[str, str] = {}
+        self._next_id: Dict[str, str] = {}
+        
+        # Initialize the agent immediately at startup instead of lazy loading
+        print("[DEBUG] Initializing Foundry agent at startup...")
+        try:
+            # Create agent immediately at startup - no lazy loading
+            self._host_agent = FoundryHostAgent2([], self._http_client, create_agent_at_startup=True)
+            # Set the host manager reference for UI integration
+            self._host_agent.set_host_manager(self)
+            self._host_agent_initialized = True
+            print("[DEBUG] Foundry agent initialized successfully at startup!")
+        except Exception as e:
+            print(f"[DEBUG] Failed to initialize Foundry agent at startup: {e}")
+            # Don't raise to prevent backend from crashing
+            self._host_agent_initialized = False
+
+    def _ensure_host_agent_initialized(self):
+        """Ensure agent is initialized - should already be done at startup."""
+        if not self._host_agent_initialized:
+            print("[DEBUG] Agent not initialized at startup, creating now...")
+            try:
+                self._host_agent = FoundryHostAgent2([], self._http_client, create_agent_at_startup=True)
+                # Set the host manager reference for UI integration
+                self._host_agent.set_host_manager(self)
+                self._host_agent_initialized = True
+                print("[DEBUG] Foundry agent initialized successfully (fallback)")
+            except Exception as e:
+                print(f"[DEBUG] Failed to initialize Foundry agent: {e}")
+                raise
+
+    async def ensure_host_agent_initialized(self):
+        """Ensure the host agent is initialized before use."""
+        if not self._host_agent_initialized:
+            self._ensure_host_agent_initialized()
+
+    async def create_conversation(self) -> Conversation:
+        conversation_id = str(uuid.uuid4())
+        c = Conversation(conversation_id=conversation_id, is_active=True)
+        self._conversations.append(c)
+        return c
+
+    def foundry_content_to_message(self, resp, context_id, task_id=None):
+        print(f"[DEBUG] foundry_content_to_message called with resp type: {type(resp)}")
+        print(f"[DEBUG] Response content: {resp}")
+        
+        parts = []
+        # Handle list of dicts (artifact wrapper)
+        if isinstance(resp, list) and resp and isinstance(resp[0], dict) and 'kind' in resp[0]:
+            print(f"[DEBUG] Processing as list of dicts with kind")
+            items = resp
+        # Handle single dict with 'kind'
+        elif isinstance(resp, dict) and 'kind' in resp:
+            print(f"[DEBUG] Processing as single dict with kind")
+            items = [resp]
+        # Handle Message object
+        elif hasattr(resp, 'parts'):
+            print(f"[DEBUG] Processing as Message object with {len(resp.parts) if resp.parts else 0} parts")
+            for part in resp.parts:
+                root = getattr(part, 'root', part)
+                kind = getattr(root, 'kind', None)
+                if kind == 'text':
+                    text_content = getattr(root, 'text', str(root))
+                    print(f"[DEBUG] Text part: {text_content[:200]}...")
+                    parts.append(TextPart(text=text_content))
+                elif kind == 'data':
+                    from a2a.types import DataPart
+                    data_content = getattr(root, 'data', {})
+                    print(f"[DEBUG] Data part: {data_content}")
+                    parts.append(DataPart(data=data_content))
+                elif kind == 'file':
+                    from a2a.types import FilePart
+                    print(f"[DEBUG] File part: {getattr(root, 'file', None)}")
+                    parts.append(FilePart(file=getattr(root, 'file', None)))
+                else:
+                    print(f"[DEBUG] Unknown part kind: {kind}, content: {str(root)[:200]}...")
+                    parts.append(TextPart(text=str(root)))
+            return Message(
+                role=getattr(resp, 'role', 'agent'),
+                parts=parts,
+                contextId=context_id,
+                taskId=task_id,
+                messageId=str(uuid.uuid4()),
+            )
+        else:
+            # Fallback: treat as plain text
+            print(f"[DEBUG] Processing as plain text: {str(resp)[:200]}...")
+            return Message(
+                role='agent',
+                parts=[TextPart(text=str(resp))],
+                contextId=context_id,
+                taskId=task_id,
+                messageId=str(uuid.uuid4()),
+            )
+        # If we got here, items is a list of dicts with 'kind'
+        print(f"[DEBUG] Processing {len(items)} items with kind")
+        for i, item in enumerate(items):
+            print(f"[DEBUG] Item {i}: {item}")
+            if item['kind'] == 'text':
+                print(f"[DEBUG] Text item: {item['text'][:200]}...")
+                parts.append(TextPart(text=item['text']))
+            elif item['kind'] == 'data':
+                from a2a.types import DataPart
+                print(f"[DEBUG] Data item: {item['data']}")
+                parts.append(DataPart(data=item['data']))
+            elif item['kind'] == 'file':
+                from a2a.types import FilePart
+                print(f"[DEBUG] File item: {item['file']}")
+                parts.append(FilePart(file=item['file']))
+        return Message(
+            role='agent',
+            parts=parts,
+            contextId=context_id,
+            taskId=task_id,
+            messageId=str(uuid.uuid4()),
+        )
+
+    async def process_message(self, message: Message):
+        await self.ensure_host_agent_initialized()
+        message_id = get_message_id(message)
+        if message_id:
+            self._pending_message_ids.append(message_id)
+        context_id = get_context_id(message) or str(uuid.uuid4())
+        conversation = self.get_conversation(context_id)
+        if not conversation:
+            conversation = Conversation(conversation_id=context_id, is_active=True)
+            self._conversations.append(conversation)
+            
+            # Stream conversation creation to WebSocket
+            print("[DEBUG] Streaming conversation creation to WebSocket...")
+            try:
+                from service.websocket_streamer import get_websocket_streamer
+                
+                streamer = await get_websocket_streamer()
+                if streamer:
+                    # Send in A2A ConversationCreatedEventData format
+                    event_data = {
+                        "conversationId": context_id,
+                        "conversationName": f"Chat {context_id[:8]}...",
+                        "isActive": True,
+                        "messageCount": 0
+                    }
+                    
+                    success = await streamer._send_event("conversation_created", event_data, context_id)
+                    if success:
+                        print(f"[DEBUG] Conversation creation streamed: {event_data}")
+                    else:
+                        print("[DEBUG] Failed to stream conversation creation")
+                else:
+                    print("[DEBUG] Event Hub streamer not available for conversation creation")
+                
+            except Exception as e:
+                print(f"[DEBUG] Error streaming conversation creation: {e}")
+                import traceback
+                traceback.print_exc()
+        
+        self._messages.append(message)
+        if conversation:
+            conversation.messages.append(message)
+        self.add_event(Event(
+            id=str(uuid.uuid4()),
+            actor='user',
+            content=message,
+            timestamp=__import__('datetime').datetime.utcnow().timestamp(),
+        ))
+        # Create a Task for this request (ADK parity)
+        task_id = str(uuid.uuid4())
+        task_description = message.parts[0].root.text if message.parts else "Agent task"
+        task = Task(
+            id=task_id,
+            contextId=context_id,
+            status=TaskStatus(state=TaskState.working),
+            description=task_description,
+            history=[message],
+        )
+        self.add_task(task)
+        
+        # Stream task creation to Event Hub
+        print("[DEBUG] Streaming task creation to WebSocket...")
+        try:
+            from service.websocket_streamer import get_websocket_streamer
+            
+            streamer = await get_websocket_streamer()
+            if streamer:
+                # Send in A2A TaskCreatedEventData format
+                event_data = {
+                    "taskId": task_id,
+                    "conversationId": context_id,
+                    "contextId": context_id,
+                    "state": "created",
+                    "artifactsCount": 0
+                }
+                
+                success = await streamer._send_event("task_created", event_data, context_id)
+                if success:
+                    print(f"[DEBUG] Task creation streamed to Event Hub: {event_data}")
+                else:
+                    print("[DEBUG] Failed to stream task creation to Event Hub")
+            else:
+                print("[DEBUG] Event Hub streamer not available for task creation")
+            
+        except Exception as e:
+            print(f"[DEBUG] Error streaming task creation to Event Hub: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        # Route to FoundryHostAgent
+        tool_call_events = []
+        def event_logger(event_dict):
+            # Convert tool call event dict to Event with enhanced details and stream to Event Hub
+            from a2a.types import Message, Part, TextPart
+            
+            # Extract agent name from event or use default
+            agent_name = event_dict.get('actor', 'host_agent')
+            
+            # Create detailed text based on event type
+            if 'args' in event_dict:
+                text = f"TOOL CALL: {event_dict['name']} with arguments: {event_dict['args']}"
+                # Try to extract agent_name from args if it's a send_message tool
+                if event_dict['name'] == 'send_message' and isinstance(event_dict['args'], dict):
+                    if 'agent_name' in event_dict['args']:
+                        agent_name = event_dict['args']['agent_name']
+                        print(f"[DEBUG] Extracted agent name from tool call: {agent_name}")
+            elif 'output' in event_dict:
+                text = f"TOOL RESULT: {event_dict['name']} {event_dict['output']}"
+            else:
+                text = f"EVENT: {event_dict}"
+            
+            msg = Message(
+                role='agent',
+                parts=[Part(root=TextPart(text=text))],
+                contextId=context_id,
+                messageId=event_dict['id'],
+            )
+            event_obj = Event(
+                id=event_dict['id'],
+                actor=agent_name,
+                content=msg,
+                timestamp=__import__('datetime').datetime.utcnow().timestamp(),
+            )
+            self._events.append(event_obj)
+            tool_call_events.append(event_obj)
+            
+            # Stream tool call events to WebSocket immediately for real-time frontend updates
+            if 'args' in event_dict:
+                print(f"[DEBUG] Streaming tool call event to WebSocket for agent: {agent_name}")
+                try:
+                    from service.websocket_streamer import get_websocket_streamer
+                    import asyncio
+                    
+                    async def stream_tool_call():
+                        try:
+                            streamer = await get_websocket_streamer()
+                            if streamer:
+                                # Send in A2A ToolCallEventData format with structured details
+                                event_data = {
+                                    "toolCallId": event_dict['id'],
+                                    "conversationId": context_id or "",
+                                    "contextId": context_id or "",
+                                    "toolName": event_dict['name'],
+                                    "arguments": event_dict['args'],
+                                    "agentName": agent_name,
+                                    "timestamp": __import__('datetime').datetime.utcnow().isoformat()
+                                }
+                                
+                                success = await streamer._send_event("tool_call", event_data, context_id)
+                                if success:
+                                    print(f"[DEBUG] Tool call event streamed: {event_data}")
+                                else:
+                                    print("[DEBUG] Failed to stream tool call event")
+                            else:
+                                print("[DEBUG] Event Hub streamer not available for tool call")
+                        except Exception as e:
+                            print(f"[DEBUG] Error streaming tool call to Event Hub: {e}")
+                            # Don't let Event Hub errors break the main flow
+                            pass
+                    
+                    # Use background task for event_logger callback (can't make this function async)
+                    asyncio.create_task(stream_tool_call())
+                    
+                except ImportError:
+                    # Event Hub module not available, continue without streaming
+                    print("[DEBUG] Event Hub module not available for tool call")
+                    pass
+                except Exception as e:
+                    print(f"[DEBUG] Error setting up tool call streaming: {e}")
+                    # Don't let Event Hub errors break the main flow
+                    pass
+            # Stream tool response events to WebSocket for granular visibility
+            elif 'output' in event_dict:
+                print(f"[DEBUG] Streaming tool response event to WebSocket for agent: {agent_name}")
+                try:
+                    from service.websocket_streamer import get_websocket_streamer
+                    import asyncio
+                    
+                    async def stream_tool_response():
+                        try:
+                            streamer = await get_websocket_streamer()
+                            if streamer:
+                                # Determine status from output
+                                output = event_dict['output']
+                                status = "success"
+                                error_message = None
+                                
+                                if isinstance(output, dict) and "error" in output:
+                                    status = "failed"
+                                    error_message = output["error"]
+                                elif "error" in str(output).lower() or "failed" in str(output).lower():
+                                    status = "failed"
+                                    error_message = str(output)
+                                
+                                event_data = {
+                                    "toolCallId": event_dict['id'],
+                                    "conversationId": context_id or "",
+                                    "contextId": context_id or "",
+                                    "toolName": event_dict['name'],
+                                    "status": status,
+                                    "agentName": agent_name,
+                                    "timestamp": __import__('datetime').datetime.utcnow().isoformat()
+                                }
+                                
+                                if error_message:
+                                    event_data["error"] = error_message
+                                
+                                success = await streamer._send_event("tool_response", event_data, context_id)
+                                if success:
+                                    print(f"[DEBUG] Tool response event streamed: {event_data}")
+                                else:
+                                    print("[DEBUG] Failed to stream tool response event")
+                            else:
+                                print("[DEBUG] Event Hub streamer not available for tool response")
+                        except Exception as e:
+                            print(f"[DEBUG] Error streaming tool response to Event Hub: {e}")
+                            # Don't let Event Hub errors break the main flow
+                            pass
+                    
+                    # Use background task for event_logger callback (can't make this function async)
+                    asyncio.create_task(stream_tool_response())
+                    
+                except ImportError:
+                    # Event Hub module not available, continue without streaming
+                    print("[DEBUG] Event Hub module not available for tool response")
+                    pass
+                except Exception as e:
+                    print(f"[DEBUG] Error setting up tool response streaming: {e}")
+                    # Don't let Event Hub errors break the main flow
+                    pass
+        # Pass the entire message with all parts (including files) to the host agent
+        user_text = message.parts[0].root.text if message.parts and message.parts[0].root.kind == 'text' else ""
+        print(f"[DEBUG] About to call run_conversation_with_parts with message parts: {len(message.parts)} parts")
+        responses = await self._host_agent.run_conversation_with_parts(message.parts, context_id, event_logger=event_logger)
+        print(f"[DEBUG] FoundryHostAgent responses count: {len(responses) if responses else 'None'}")
+        print(f"[DEBUG] FoundryHostAgent responses: {responses}")
+        
+        if not responses:
+            print("[DEBUG] WARNING: No responses from FoundryHostAgent - this will cause no messages to be sent to frontend!")
+            # Remove from pending since we're not going to get a response
+            if message_id in self._pending_message_ids:
+                self._pending_message_ids.remove(message_id)
+            return []
+        # Build mapping of agent names from tool call events for debugging only
+        # (no longer used for attribution since foundry responses should always be 
+        # attributed to foundry-host-agent, not individual agents)
+        agent_names_from_tools = []
+        for tool_event in tool_call_events:
+            # Extract agent_name from send_message tool calls
+            if 'TOOL CALL: send_message' in tool_event.content.parts[0].root.text:
+                # Try to extract agent_name from the text
+                import re
+                m = re.search(r"'agent_name': '([^']+)'", tool_event.content.parts[0].root.text)
+                if m:
+                    agent_names_from_tools.append(m.group(1))
+                    print(f"[DEBUG] Found agent name in tool call: {m.group(1)}")
+        
+        print(f"[DEBUG] Agent names from tool calls (for debug only): {agent_names_from_tools}")
+        print(f"[DEBUG] Number of responses: {len(responses)}")
+        print(f"[DEBUG] All foundry responses will be attributed to foundry-host-agent")
+        
+        completed_agents: set[str] = set()
+
+        async def stream_task_status_update(target_agent: str, target_state: TaskState):
+            try:
+                from service.websocket_streamer import get_websocket_streamer
+
+                streamer = await get_websocket_streamer()
+                if not streamer:
+                    print("[DEBUG] Event Hub streamer not available for task status")
+                    return
+
+                status_str = target_state.name if hasattr(target_state, 'name') else str(target_state)
+                event_data = {
+                    "taskId": task_id,
+                    "conversationId": context_id,
+                    "contextId": context_id,
+                    "state": status_str,
+                    "agentName": target_agent,
+                    "artifactsCount": 0,
+                }
+
+                success = await streamer._send_event("task_updated", event_data, context_id)
+                if success:
+                    print(f"[DEBUG] Task status update streamed: {event_data}")
+                else:
+                    print("[DEBUG] Failed to stream task status update")
+            except Exception as e:
+                print(f"[DEBUG] SPECIFIC ERROR in task status streaming: {e}")
+                import traceback
+                traceback.print_exc()
+
+        for resp_index, resp in enumerate(responses):
+            print("[DEBUG] Response:", resp)
+            print("[DEBUG] Response parts:", getattr(resp, 'parts', None))
+            msg = self.foundry_content_to_message(resp, context_id, task_id)
+            if conversation:
+                conversation.messages.append(msg)
+            if not hasattr(task, 'history') or task.history is None:
+                task.history = []
+            task.history.append(msg)
+            
+            # FIXED: Always attribute foundry agent responses to "foundry-host-agent" 
+            # instead of trying to map unified responses to individual agent names
+            # This prevents duplicate messages with wrong agent attribution
+            actor_name = "foundry-host-agent"
+            status_agent_name = (
+                agent_names_from_tools[resp_index]
+                if resp_index < len(agent_names_from_tools)
+                else actor_name
+            )
+            print(f"[DEBUG] Using correct foundry host agent name for response {resp_index}: {actor_name}")
+            print(f"[DEBUG] Prevented incorrect attribution to individual agents: {agent_names_from_tools}")
+            
+            self.add_event(Event(
+                id=str(uuid.uuid4()),
+                actor=actor_name,
+                content=msg,
+                timestamp=__import__('datetime').datetime.utcnow().timestamp(),
+            ))
+            
+            # Stream message to WebSocket for frontend in expected format
+            print("[DEBUG] Streaming message to WebSocket...")
+            try:
+                from service.websocket_streamer import get_websocket_streamer
+                
+                streamer = await get_websocket_streamer()
+                if streamer:
+                    # Send in A2A MessageEventData format with proper agent attribution
+                    event_data = {
+                        "messageId": get_message_id(msg),
+                        "conversationId": context_id,
+                        "contextId": context_id,
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "text",
+                                "content": str(resp),
+                                "mediaType": "text/plain"
+                            }
+                        ],
+                        "direction": "incoming",
+                        "agentName": actor_name,  # Use the actual agent name instead of hardcoded "assistant"
+                        "timestamp": __import__('datetime').datetime.utcnow().isoformat()
+                    }
+                    
+                    # Send as proper A2A message event
+                    success = await streamer._send_event("message", event_data, context_id)
+                    if success:
+                        print(f"[DEBUG] Message streamed to Event Hub: {event_data}")
+                    else:
+                        print("[DEBUG] Failed to stream message to Event Hub")
+                else:
+                    print("[DEBUG] Event Hub streamer not available")
+                
+            except Exception as e:
+                print(f"[DEBUG] Error streaming to Event Hub: {e}")
+                import traceback
+                traceback.print_exc()
+            
+            state = TaskState.completed
+            resp_lower = str(resp).lower() if isinstance(resp, str) else ""
+            if hasattr(resp, 'status') and hasattr(resp.status, 'state'):
+                state = resp.status.state
+            elif "input required" in resp_lower or "please provide" in resp_lower or "waiting for" in resp_lower:
+                state = TaskState.input_required
+            elif "cancelled" in resp_lower or "canceled" in resp_lower:
+                state = TaskState.canceled
+            elif "failed" in resp_lower or "error" in resp_lower:
+                state = TaskState.failed
+            task.status.state = state
+            task.status.message = msg
+            self.update_task(task)
+            
+            # Stream task status update to WebSocket
+            print(f"[DEBUG] Streaming task status update to WebSocket: {state}")
+            try:
+                asyncio.create_task(stream_task_status_update(status_agent_name, state))
+                completed_agents.add(status_agent_name)
+            except Exception as e:
+                print(f"[DEBUG] Error scheduling task status update: {e}")
+            
+            if task.status.message and (not conversation.messages or conversation.messages[-1] != task.status.message):
+                conversation.messages.append(task.status.message)
+                self.add_event(Event(
+                    id=str(uuid.uuid4()),
+                    actor=actor_name,
+                    content=task.status.message,
+                    timestamp=__import__('datetime').datetime.utcnow().timestamp(),
+                ))
+            if state == TaskState.input_required:
+                pass
+            elif state == TaskState.canceled:
+                pass
+            elif state == TaskState.failed:
+                pass
+        if message_id in self._pending_message_ids:
+            self._pending_message_ids.remove(message_id)
+
+        # Ensure agents that issued tool calls but did not receive a direct response still transition to completed
+        remaining_agents = [
+            agent_name for agent_name in agent_names_from_tools
+            if agent_name not in completed_agents
+        ]
+        for leftover_agent in remaining_agents:
+            print(f"[DEBUG] Emitting completion status for agent without direct response: {leftover_agent}")
+            try:
+                asyncio.create_task(stream_task_status_update(leftover_agent, TaskState.completed))
+            except Exception as e:
+                print(f"[DEBUG] Error scheduling fallback status update for {leftover_agent}: {e}")
+
+        return responses
+
+    def add_task(self, task: Task):
+        self._tasks.append(task)
+
+    def update_task(self, task: Task):
+        for i, t in enumerate(self._tasks):
+            if t.id == task.id:
+                self._tasks[i] = task
+                return
+
+    def attach_message_to_task(self, message: Message, task_id: str):
+        if message:
+            self._task_map[get_message_id(message)] = task_id
+
+    def insert_message_history(self, task: Task, message: Message):
+        if not message:
+            return
+        if task.history is None:
+            task.history = []
+        message_id = get_message_id(message)
+        if not message_id:
+            return
+        if task.history and (
+            task.status.message
+            and get_message_id(task.status.message)
+            not in [get_message_id(x) for x in task.history]
+        ):
+            task.history.append(task.status.message)
+        elif not task.history and task.status.message:
+            task.history = [task.status.message]
+
+    def add_event(self, event: Event):
+        # Append event in true order
+        event.timestamp = event.timestamp or __import__('datetime').datetime.utcnow().timestamp()
+        self._events.append(event)
+
+    def get_conversation(self, conversation_id: Optional[str]) -> Optional[Conversation]:
+        for c in self._conversations:
+            if c.conversation_id == conversation_id:
+                return c
+        return None
+
+    def get_pending_messages(self) -> list[tuple[str, str]]:
+        return [(msg_id, "") for msg_id in self._pending_message_ids]
+
+    def register_agent(self, url):
+        agent_card = get_agent_card(url)
+        if not agent_card.url:
+            agent_card.url = url
+        self._agents.append(agent_card)
+        
+        # Only register with host agent if it's already initialized
+        if self._host_agent_initialized and self._host_agent:
+            if hasattr(self._host_agent, 'register_agent_card'):
+                self._host_agent.register_agent_card(agent_card)
+            if hasattr(self._host_agent, 'update_instructions_with_agents'):
+                self._host_agent.update_instructions_with_agents()
+
+    async def handle_self_registration(self, agent_address: str, agent_card: Optional[AgentCard] = None) -> bool:
+        """Handle self-registration requests from remote agents.
+        
+        This method is called when remote agents register themselves on startup.
+        
+        Args:
+            agent_address: The URL/address of the remote agent
+            agent_card: Optional pre-built agent card
+            
+        Returns:
+            bool: True if registration successful, False otherwise
+        """
+        try:
+            print(f"[DEBUG] 🤝 Host manager handling self-registration from: {agent_address}")
+            
+            # Ensure agent is initialized before registration
+            await self.ensure_host_agent_initialized()
+            
+            # Use the FoundryHostAgent's registration method
+            success = await self._host_agent.register_remote_agent(agent_address, agent_card)
+            
+            if success:
+                # Also add to our local agent list for UI consistency
+                if not agent_card:
+                    agent_card = get_agent_card(agent_address)
+                    if not agent_card.url:
+                        agent_card.url = agent_address
+                
+                # Check if already registered to avoid duplicates
+                if not any(a.url == agent_address for a in self._agents):
+                    self._agents.append(agent_card)
+                    print(f"[DEBUG] ✅ Added {agent_card.name} to UI agent list")
+                    
+                    # Immediately broadcast agent registry update via WebSocket
+                    try:
+                        from service.websocket_server import get_websocket_manager
+                        websocket_manager = get_websocket_manager()
+                        if websocket_manager:
+                            registry_event = {
+                                "type": "agent_registry_update",
+                                "data": {
+                                    "agents": [{"name": a.name, "url": a.url, "description": a.description} for a in self._agents]
+                                },
+                                "timestamp": time.time()
+                            }
+                            # Use asyncio to ensure the broadcast happens
+                            import asyncio
+                            asyncio.create_task(websocket_manager.broadcast_event(registry_event))
+                            print(f"[DEBUG] 🔔 Immediately broadcasted agent registry update for {agent_card.name}")
+                    except Exception as broadcast_error:
+                        print(f"[DEBUG] ⚠️ Failed to broadcast immediate update: {broadcast_error}")
+                        
+                else:
+                    print(f"[DEBUG] ℹ️ Agent {agent_address} already in UI list")
+                
+            return success
+            
+        except Exception as e:
+            print(f"[DEBUG] ❌ Host manager registration error: {e}")
+            return False
+
+    @property
+    def agents(self) -> list:
+        return self._agents
+
+    @property
+    def conversations(self) -> list:
+        # print("[DEBUG] FoundryHostManager.conversations called, returning:", len(self._conversations), "conversations")
+        return self._conversations
+
+    @property
+    def tasks(self) -> list:
+        # print("[DEBUG] FoundryHostManager.tasks called, returning:", len(self._tasks), "tasks")
+        return self._tasks
+
+    @property
+    def events(self) -> list[Event]:
+        # Return the true event log in append order
+        return self._events
+
+    def sanitize_message(self, message):
+        # For Foundry, just return the message as-is
+        return message 
+
+    async def get_current_root_instruction(self) -> str:
+        """Get the current root instruction from the Foundry agent"""
+        await self.ensure_host_agent_initialized()
+        if self._host_agent:
+            return await self._host_agent.get_current_root_instruction()
+        raise Exception("Host agent not available")
+
+    async def update_root_instruction(self, new_instruction: str) -> bool:
+        """Update the root instruction in the Foundry agent"""
+        await self.ensure_host_agent_initialized()
+        if self._host_agent:
+            return await self._host_agent.update_root_instruction(new_instruction)
+        return False
+
+    async def reset_root_instruction(self) -> bool:
+        """Reset the root instruction to default in the Foundry agent"""
+        await self.ensure_host_agent_initialized()
+        if self._host_agent:
+            return await self._host_agent.reset_root_instruction()
+        return False

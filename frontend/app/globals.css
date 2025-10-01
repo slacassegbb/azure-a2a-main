@@ -1,0 +1,118 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Import highlight.js theme for syntax highlighting */
+@import 'highlight.js/styles/github.css';
+
+@media (prefers-color-scheme: dark) {
+  @import 'highlight.js/styles/github-dark.css';
+}
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 210 20% 22%;
+    --card: 0 0% 100%;
+    --card-foreground: 210 20% 22%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 210 20% 22%;
+    --primary: 208 100% 30%; /* Citibank Blue */
+    --primary-foreground: 0 0% 98%;
+    --secondary: 210 20% 96%;
+    --secondary-foreground: 210 20% 22%;
+    --muted: 210 20% 96%;
+    --muted-foreground: 210 10% 45%;
+    --accent: 5 84% 48%; /* Citibank Red */
+    --accent-foreground: 0 0% 98%;
+    --destructive: 5 84% 48%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 210 20% 88%;
+    --input: 210 20% 88%;
+    --ring: 208 100% 30%;
+    --radius: 0.5rem;
+
+    --sidebar-background: 210 20% 98%;
+    --sidebar-foreground: 210 20% 22%;
+    --sidebar-border: 210 20% 88%;
+    --sidebar-accent: 0 0% 100%;
+    --sidebar-accent-foreground: 208 100% 30%;
+    --sidebar-ring: 208 100% 30%;
+  }
+
+  .dark {
+    --background: 210 20% 10%;
+    --foreground: 0 0% 98%;
+    --card: 210 20% 12%;
+    --card-foreground: 0 0% 98%;
+    --popover: 210 20% 10%;
+    --popover-foreground: 0 0% 98%;
+    --primary: 208 90% 65%; /* Lighter Citibank Blue */
+    --primary-foreground: 210 20% 10%;
+    --secondary: 210 20% 15%;
+    --secondary-foreground: 0 0% 98%;
+    --muted: 210 20% 15%;
+    --muted-foreground: 210 10% 65%;
+    --accent: 5 80% 65%; /* Lighter Citibank Red */
+    --accent-foreground: 210 20% 10%;
+    --destructive: 5 80% 65%;
+    --destructive-foreground: 210 20% 10%;
+    --border: 210 20% 20%;
+    --input: 210 20% 20%;
+    --ring: 208 90% 65%;
+
+    --sidebar-background: 210 20% 8%;
+    --sidebar-foreground: 0 0% 98%;
+    --sidebar-border: 210 20% 20%;
+    --sidebar-accent: 210 20% 15%;
+    --sidebar-accent-foreground: 0 0% 98%;
+    --sidebar-ring: 208 90% 65%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+/* Custom styles for markdown in chat bubbles */
+@layer components {
+  .prose {
+    /* Override prose styles to work better in chat bubbles */
+    --tw-prose-body: inherit;
+    --tw-prose-headings: inherit;
+    --tw-prose-lead: inherit;
+    --tw-prose-links: inherit;
+    --tw-prose-bold: inherit;
+    --tw-prose-counters: inherit;
+    --tw-prose-bullets: inherit;
+    --tw-prose-hr: inherit;
+    --tw-prose-quotes: inherit;
+    --tw-prose-quote-borders: inherit;
+    --tw-prose-captions: inherit;
+    --tw-prose-code: inherit;
+    --tw-prose-pre-code: inherit;
+    --tw-prose-pre-bg: inherit;
+    --tw-prose-th-borders: inherit;
+    --tw-prose-td-borders: inherit;
+  }
+  
+  .prose code {
+    font-size: 0.875em;
+  }
+  
+  .prose pre {
+    background: transparent !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+  
+  .prose pre code {
+    background: transparent !important;
+    color: inherit !important;
+  }
+}

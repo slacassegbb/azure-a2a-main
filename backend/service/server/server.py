@@ -1,0 +1,690 @@
+import asyncio
+import base64
+import os
+import threading
+import time
+import uuid
+from typing import cast, Any, Dict
+from urllib.parse import urlparse
+
+import httpx
+from dotenv import load_dotenv
+
+from a2a.types import FilePart, FileWithUri, Message, Part, TextPart, DataPart
+from fastapi import APIRouter, FastAPI, Request, Response
+from service.azure_eventhub_streamer import get_event_hub_streamer
+
+from service.types import (
+    CreateConversationResponse,
+    GetEventResponse,
+    ListAgentResponse,
+    ListConversationResponse,
+    ListMessageResponse,
+    ListTaskResponse,
+    MessageInfo,
+    PendingMessageResponse,
+    RegisterAgentResponse,
+    SendMessageResponse,
+)
+
+from .adk_host_manager import ADKHostManager, get_message_id
+from .application_manager import ApplicationManager
+from .in_memory_manager import InMemoryFakeAgentManager
+
+def get_context_id(obj, default: str = None) -> str:
+    """
+    Helper function to get contextId from an object, trying both contextId and context_id fields.
+    A2A protocol officially uses contextId (camelCase), but this provides fallback compatibility.
+    """
+    try:
+        # Try contextId first (official A2A protocol field name)
+        if hasattr(obj, 'contextId') and obj.contextId is not None:
+            return obj.contextId
+        # Fallback to context_id for compatibility
+        if hasattr(obj, 'context_id') and obj.context_id is not None:
+            return obj.context_id
+        # Use getattr as final fallback
+        return getattr(obj, 'contextId', getattr(obj, 'context_id', default or str(uuid.uuid4())))
+    except Exception:
+        return default or str(uuid.uuid4())
+
+
+def get_message_id(obj: Any, default: str = None) -> str:
+    """
+    Helper function to get messageId from an object, trying both messageId and message_id fields.
+    A2A protocol officially uses messageId (camelCase), but this provides fallback compatibility.
+    """
+    try:
+        # Try messageId first (official A2A protocol field name)
+        if hasattr(obj, 'messageId') and obj.messageId is not None:
+            return obj.messageId
+        # Fallback to message_id for compatibility
+        if hasattr(obj, 'message_id') and obj.message_id is not None:
+            return obj.message_id
+        # Use getattr as final fallback
+        return getattr(obj, 'messageId', getattr(obj, 'message_id', default or str(uuid.uuid4())))
+    except Exception:
+        return default or str(uuid.uuid4())
+
+
+from .foundry_host_manager import FoundryHostManager
+
+load_dotenv()
+
+# Create a persistent event loop for async tasks
+main_loop = asyncio.new_event_loop()
+asyncio.set_event_loop(main_loop)
+main_loop_thread = threading.Thread(target=main_loop.run_forever, daemon=True)
+main_loop_thread.start()
+
+class ConversationServer:
+    """ConversationServer is the backend to serve the agent interactions in the UI
+
+    This defines the interface that is used by the Mesop system to interact with
+    agents and provide details about the executions.
+    """
+
+    def __init__(self, app: FastAPI, http_client: httpx.AsyncClient):
+        agent_manager = os.environ.get('A2A_HOST', 'FOUNDRY')
+        self.manager: ApplicationManager
+
+        # Get API key from environment
+        api_key = os.environ.get('GOOGLE_API_KEY', '')
+        uses_vertex_ai = (
+            os.environ.get('GOOGLE_GENAI_USE_VERTEXAI', '').upper() == 'TRUE'
+        )
+
+        if agent_manager.upper() == 'ADK':
+            self.manager = ADKHostManager(
+                http_client,
+                api_key=api_key,
+                uses_vertex_ai=uses_vertex_ai,
+            )
+        elif agent_manager.upper() == 'FOUNDRY':
+            self.manager = FoundryHostManager(http_client)
+        else:
+            self.manager = InMemoryFakeAgentManager()
+        self._file_cache = {}  # dict[str, FilePart] maps file id to message data
+        self._message_to_cache = {}  # dict[str, str] maps message id to cache id
+        self._health_cache: Dict[str, tuple] = {}  # agent_url -> (status, timestamp)
+
+        app.add_api_route(
+            '/conversation/create', self._create_conversation, methods=['POST']
+        )
+        app.add_api_route(
+            '/conversation/list', self._list_conversation, methods=['POST']
+        )
+        app.add_api_route('/message/send', self._send_message, methods=['POST'])
+        app.add_api_route('/events/get', self._get_events, methods=['POST'])
+        app.add_api_route(
+            '/message/list', self._list_messages, methods=['POST']
+        )
+        app.add_api_route(
+            '/message/pending', self._pending_messages, methods=['POST']
+        )
+        app.add_api_route('/task/list', self._list_tasks, methods=['POST'])
+        app.add_api_route(
+            '/agent/register', self._register_agent, methods=['POST']
+        )
+        app.add_api_route(
+            '/agent/register-by-address', self._register_agent_by_address, methods=['POST']
+        )
+        app.add_api_route(
+            '/agent/self-register', self._self_register_agent, methods=['POST']
+        )
+        app.add_api_route('/agent/list', self._list_agents, methods=['POST'])
+        app.add_api_route('/agents', self._get_agents, methods=['GET'])
+        app.add_api_route(
+            '/message/file/{file_id}', self._files, methods=['GET']
+        )
+        app.add_api_route(
+            '/api_key/update', self._update_api_key, methods=['POST']
+        )
+        
+        # Add root instruction management endpoints
+        app.add_api_route(
+            '/agent/root-instruction', self._get_root_instruction, methods=['GET']
+        )
+        app.add_api_route(
+            '/agent/root-instruction', self._update_root_instruction, methods=['PUT']
+        )
+        app.add_api_route(
+            '/agent/root-instruction/reset', self._reset_root_instruction, methods=['POST']
+        )
+
+    # Update API key in manager
+    def update_api_key(self, api_key: str):
+        """Update API key in the manager"""
+        if hasattr(self.manager, 'update_api_key'):
+            self.manager.update_api_key(api_key)
+
+    def _extract_agent_name_from_address(self, agent_address: str) -> str:
+        """Extract agent name from agent address/URL."""
+        try:
+            # Try to extract from URL path or use the last part
+            from urllib.parse import urlparse
+            parsed = urlparse(agent_address)
+            if parsed.path:
+                # Get the last non-empty path component
+                path_parts = [part for part in parsed.path.split('/') if part]
+                if path_parts:
+                    name = path_parts[-1]
+                else:
+                    name = parsed.netloc or agent_address
+            else:
+                name = parsed.netloc or agent_address
+            
+            # Clean up the name
+            return name.replace('-', ' ').replace('_', ' ').title()
+        except:
+            # Fallback to using the address as-is
+            return agent_address.split('/')[-1].replace('-', ' ').replace('_', ' ').title()
+
+    async def _create_conversation(self):
+        c = await self.manager.create_conversation()
+        return CreateConversationResponse(result=c)
+
+    def _transform_message_data(self, message_data: dict) -> dict:
+        """Transform message data from frontend format to backend format.
+        
+        Frontend sends: {'root': {'kind': 'text', 'text': 'hello'}}
+        Backend expects: Part objects with direct properties
+        """
+        if 'parts' in message_data:
+            transformed_parts = []
+            for part in message_data['parts']:
+                if 'root' in part:
+                    root = part['root']
+                    if root.get('kind') == 'text':
+                        # Create Part with TextPart root (matching foundry agent expectations)
+                        from a2a.types import Part as A2APart, TextPart as A2ATextPart
+                        transformed_parts.append(A2APart(root=A2ATextPart(text=root['text'])))
+                    elif root.get('kind') == 'data':
+                        # Create Part with DataPart root
+                        from a2a.types import Part as A2APart, DataPart as A2ADataPart
+                        transformed_parts.append(A2APart(root=A2ADataPart(data=root['data'])))
+                    elif root.get('kind') == 'file':
+                        # Create Part with FilePart root (matching foundry agent expectations)
+                        from a2a.types import Part as A2APart, FilePart as A2AFilePart
+                        file_data = root['file']
+                        file_obj = FileWithUri(
+                            name=file_data.get('name', ''),
+                            uri=file_data.get('uri', ''),
+                            mimeType=file_data.get('mime_type', 'application/octet-stream')
+                        )
+                        transformed_parts.append(A2APart(root=A2AFilePart(file=file_obj)))
+                    else:
+                        # Fallback: treat as text
+                        from a2a.types import Part as A2APart, TextPart as A2ATextPart
+                        transformed_parts.append(A2APart(root=A2ATextPart(text=str(root))))
+                else:
+                    # Part is already in correct format
+                    transformed_parts.append(part)
+            message_data['parts'] = transformed_parts
+        return message_data
+
+    async def _send_message(self, request: Request):
+        message_data = await request.json()
+        # Transform the message data to handle frontend format
+        transformed_params = self._transform_message_data(message_data['params'])
+        message = Message(**transformed_params)
+        print(f"[CRITICAL DEBUG] Message created with {len(message.parts)} parts: {[type(p).__name__ for p in message.parts]}")
+        message = self.manager.sanitize_message(message)
+        
+        print(f"[DEBUG] _send_message: Processing message asynchronously for contextId: {get_context_id(message)}")
+        
+        # Process message asynchronously (original pattern)
+        if isinstance(self.manager, ADKHostManager):
+            loop = asyncio.get_event_loop()
+            t = threading.Thread(
+                target=lambda: cast(ADKHostManager, self.manager).process_message_threadsafe(message, loop)
+            )
+        else:
+            t = threading.Thread(
+                target=lambda: asyncio.run_coroutine_threadsafe(self.manager.process_message(message), main_loop)
+            )
+        t.start()
+        
+        print(f"[DEBUG] _send_message: Started background processing thread")
+        
+        # Return immediately with message metadata (frontend expects this)
+        return SendMessageResponse(
+            result=MessageInfo(
+                message_id=get_message_id(message),
+                context_id=get_context_id(message, ''),
+            )
+        )
+
+    async def _list_messages(self, request: Request):
+        message_data = await request.json()
+        conversation_id = message_data['params']
+        conversation = self.manager.get_conversation(conversation_id)
+        if conversation:
+            return ListMessageResponse(
+                result=self.cache_content(conversation.messages)
+            )
+        return ListMessageResponse(result=[])
+
+    def cache_content(self, messages: list[Message]):
+        rval = []
+        for m in messages:
+            message_id = get_message_id(m)
+            if not message_id:
+                rval.append(m)
+                continue
+            new_parts: list[Part] = []
+            for i, p in enumerate(m.parts):
+                part = p.root
+                if part.kind != 'file':
+                    new_parts.append(p)
+                    continue
+                message_part_id = f'{message_id}:{i}'
+                if message_part_id in self._message_to_cache:
+                    cache_id = self._message_to_cache[message_part_id]
+                else:
+                    cache_id = str(uuid.uuid4())
+                    self._message_to_cache[message_part_id] = cache_id
+                # Replace the part data with a url reference
+                new_parts.append(
+                    Part(
+                        root=FilePart(
+                            file=FileWithUri(
+                                mimeType=part.file.mimeType,
+                                uri=f'/message/file/{cache_id}',
+                            )
+                        )
+                    )
+                )
+                if cache_id not in self._file_cache:
+                    self._file_cache[cache_id] = part
+            m.parts = new_parts
+            rval.append(m)
+        return rval
+
+    async def _pending_messages(self):
+        return PendingMessageResponse(
+            result=self.manager.get_pending_messages()
+        )
+
+    def _list_conversation(self):
+        return ListConversationResponse(result=self.manager.conversations)
+
+    def _get_events(self):
+        return GetEventResponse(result=self.manager.events)
+
+    def _list_tasks(self):
+        return ListTaskResponse(result=self.manager.tasks)
+
+    async def _register_agent(self, request: Request):
+        message_data = await request.json()
+        url = message_data['params']
+        self.manager.register_agent(url)
+        return RegisterAgentResponse()
+
+    async def _self_register_agent(self, request: Request):
+        """Handle self-registration requests from remote agents."""
+        try:
+            message_data = await request.json()
+            
+            # Extract agent address from request
+            agent_address = message_data.get('agent_address') or message_data.get('url')
+            agent_card_data = message_data.get('agent_card')
+            
+            print(f"[DEBUG] 🤝 Self-registration request received:")
+            print(f"[DEBUG]   - Agent address: {agent_address}")
+            print(f"[DEBUG]   - Has agent card: {agent_card_data is not None}")
+            
+            if not agent_address:
+                print(f"[DEBUG] ❌ No agent address provided in self-registration request")
+                return {"success": False, "error": "agent_address required"}
+            
+            # Handle self-registration based on manager type
+            if isinstance(self.manager, FoundryHostManager):
+                # Parse agent card if provided
+                agent_card = None
+                if agent_card_data:
+                    from a2a.types import AgentCard
+                    agent_card = AgentCard(**agent_card_data)
+                
+                # Use the manager's self-registration handler
+                success = await self.manager.handle_self_registration(agent_address, agent_card)
+                
+                if success:
+                    print(f"[DEBUG] ✅ Self-registration successful for: {agent_address}")
+                    
+                    # Stream agent self-registration to Event Hub
+                    print(f"[DEBUG] 🌊 Attempting to stream agent self-registration to Event Hub...")
+                    try:
+                        streamer = await get_event_hub_streamer()
+                        if streamer:
+                            agent_info = {
+                                "name": agent_card.name if agent_card else self._extract_agent_name_from_address(agent_address),
+                                "type": "generic",  # Hardcoded since AgentCard doesn't have type attribute
+                                "capabilities": agent_card.capabilities if agent_card else [],
+                                "endpoint": agent_address,
+                                "metadata": agent_card_data if agent_card_data else {}
+                            }
+                            print(f"[DEBUG] 🌊 Agent info for Event Hub: {agent_info}")
+                            stream_success = await streamer.stream_agent_self_registered(agent_info)
+                            if stream_success:
+                                print(f"[DEBUG] ✅ Agent self-registration event streamed to Event Hub successfully")
+                            else:
+                                print(f"[DEBUG] ⚠️ Event Hub streaming not available - agent registration will proceed without streaming")
+                        else:
+                            print(f"[DEBUG] ⚠️ Event Hub streamer not configured - agent registration will proceed without streaming")
+                    except Exception as e:
+                        print(f"[DEBUG] ⚠️ Event Hub streaming error (non-blocking): {e}")
+                        # Event Hub errors should not block agent registration
+                    
+                    return {"success": True, "message": f"Agent {agent_address} registered successfully"}
+                else:
+                    print(f"[DEBUG] ❌ Self-registration failed for: {agent_address}")
+                    return {"success": False, "error": "Registration failed"}
+            else:
+                # Fallback to regular registration for other manager types
+                print(f"[DEBUG] ℹ️ Using fallback registration for manager type: {type(self.manager).__name__}")
+                self.manager.register_agent(agent_address)
+                
+                # Stream agent registration to Event Hub
+                print(f"[DEBUG] 🌊 Attempting to stream agent registration to Event Hub (fallback)...")
+                try:
+                    streamer = await get_event_hub_streamer()
+                    if streamer:
+                        stream_success = await streamer.stream_agent_registered(agent_address)
+                        if stream_success:
+                            print(f"[DEBUG] ✅ Agent registration event streamed to Event Hub successfully (fallback)")
+                        else:
+                            print(f"[DEBUG] ⚠️ Event Hub streaming not available - agent registration will proceed without streaming (fallback)")
+                    else:
+                        print(f"[DEBUG] ⚠️ Event Hub streamer not configured - agent registration will proceed without streaming (fallback)")
+                except Exception as e:
+                    print(f"[DEBUG] ⚠️ Event Hub streaming error (non-blocking, fallback): {e}")
+                    # Event Hub errors should not block agent registration
+                
+                return {"success": True, "message": f"Agent {agent_address} registered successfully (fallback)"}
+                
+        except Exception as e:
+            print(f"[DEBUG] ❌ Self-registration error: {e}")
+            import traceback
+            print(f"[DEBUG] ❌ Self-registration traceback: {traceback.format_exc()}")
+            return {"success": False, "error": str(e)}
+
+    async def _register_agent_by_address(self, request: Request):
+        """Register a remote agent by its address/URL."""
+        try:
+            message_data = await request.json()
+            agent_address = message_data.get('address')
+            
+            print(f"[DEBUG] 🔗 Register agent by address request: {agent_address}")
+            
+            if not agent_address:
+                return {"success": False, "error": "Agent address is required"}
+            
+            # Validate URL format
+            try:
+                from urllib.parse import urlparse
+                parsed = urlparse(agent_address)
+                if not parsed.scheme or not parsed.netloc:
+                    return {"success": False, "error": "Invalid URL format"}
+            except Exception:
+                return {"success": False, "error": "Invalid URL format"}
+            
+            # Handle registration based on manager type
+            if isinstance(self.manager, FoundryHostManager):
+                print(f"[DEBUG] 🚀 Using FoundryHostManager for agent registration")
+                
+                # Ensure the host agent is initialized before use
+                await self.manager.ensure_host_agent_initialized()
+                
+                # Use the existing register_remote_agent method from foundry_agent_a2a.py
+                success = await self.manager._host_agent.register_remote_agent(agent_address)
+                
+                if success:
+                    print(f"[DEBUG] ✅ Agent registration successful: {agent_address}")
+                    return {"success": True, "message": f"Agent at {agent_address} registered successfully"}
+                else:
+                    print(f"[DEBUG] ❌ Agent registration failed: {agent_address}")
+                    return {"success": False, "error": f"Failed to register agent at {agent_address}"}
+            else:
+                # Fallback for other manager types
+                print(f"[DEBUG] ℹ️ Using fallback registration for manager type: {type(self.manager).__name__}")
+                self.manager.register_agent(agent_address)
+                return {"success": True, "message": f"Agent at {agent_address} registered successfully"}
+                
+        except Exception as e:
+            print(f"[DEBUG] ❌ Register agent by address error: {e}")
+            import traceback
+            print(f"[DEBUG] ❌ Register agent by address traceback: {traceback.format_exc()}")
+            return {"success": False, "error": f"Registration failed: {str(e)}"}
+
+    async def _list_agents(self):
+        return ListAgentResponse(result=self.manager.agents)
+
+    async def _check_agent_health(self, agent_url: str) -> bool:
+        """Simple health check for remote agents with caching."""
+        if not agent_url:
+            return False
+        
+        current_time = time.time()
+        
+        # Check cache first (cache for 30 seconds to reduce load and prevent flapping)
+        if agent_url in self._health_cache:
+            status, timestamp = self._health_cache[agent_url]
+            if current_time - timestamp < 30.0:  # Increased from 10 to 30 seconds to reduce flapping
+                print(f"[DEBUG] Using cached health status for {agent_url}: {'✓' if status else '✗'}")
+                return status
+        
+        try:
+            # Parse the URL to construct health endpoint
+            parsed = urlparse(agent_url)
+            if not parsed.hostname:
+                self._health_cache[agent_url] = (False, current_time)
+                return False
+            
+            # Construct health check URL - preserve the path and add /health
+            base_url = agent_url.rstrip('/')  # Remove trailing slash
+            health_url = f"{base_url}/health"
+            
+            # Health check with longer timeout for more reliable agent detection
+            timeout_value = 8.0  # Increased from 3.0 to 8.0 seconds for more reliable detection
+            print(f"[DEBUG] Health check timeout set to: {timeout_value}s for {health_url}")
+            async with httpx.AsyncClient(timeout=timeout_value) as client:  # More generous timeout for network latency
+                response = await client.get(health_url)
+                is_healthy = response.status_code == 200
+                print(f"[DEBUG] Health check {health_url}: {'✓ ONLINE' if is_healthy else '✗ OFFLINE'} (status: {response.status_code})")
+                self._health_cache[agent_url] = (is_healthy, current_time)
+                return is_healthy
+        except Exception as e:
+            error_msg = str(e)
+            print(f"[DEBUG] Health check failed for {agent_url}: {error_msg}")
+            print(f"[DEBUG] Exception type: {type(e).__name__}")
+            # Cache failure result
+            self._health_cache[agent_url] = (False, current_time)
+            return False
+
+    async def _get_agents(self):
+        """Get current agent registry in a simple format for WebSocket sync."""
+        try:
+            print("[DEBUG] Starting agent registry sync with health checks...")
+            agents = self.manager.agents
+            
+            # First, collect all agent URLs for concurrent health checks
+            agent_urls = [getattr(agent, 'url', None) for agent in agents if hasattr(agent, 'name')]
+            
+            # Do concurrent health checks for all agents at once
+            health_tasks = [self._check_agent_health(url) for url in agent_urls]
+            health_results = await asyncio.gather(*health_tasks, return_exceptions=True)
+            
+            # Convert health check results to a mapping
+            health_map = {}
+            for i, url in enumerate(agent_urls):
+                if i < len(health_results) and not isinstance(health_results[i], Exception):
+                    health_map[url] = health_results[i]
+                else:
+                    health_map[url] = False  # Default to offline on error
+            
+            # Convert to detailed format for UI
+            agent_list = []
+            for agent in agents:
+                if hasattr(agent, 'name'):
+                    agent_url = getattr(agent, 'url', None)
+                    agent_status = health_map.get(agent_url, False)
+                    
+                    agent_data = {
+                        'name': agent.name,
+                        'description': getattr(agent, 'description', ''),
+                        'url': agent_url,
+                        'version': getattr(agent, 'version', ''),
+                        'iconUrl': getattr(agent, 'iconUrl', None),
+                        'provider': getattr(agent, 'provider', None),
+                        'documentationUrl': getattr(agent, 'documentationUrl', None),
+                        'capabilities': {
+                            'streaming': getattr(getattr(agent, 'capabilities', None), 'streaming', False),
+                            'pushNotifications': getattr(getattr(agent, 'capabilities', None), 'pushNotifications', False),
+                            'stateTransitionHistory': getattr(getattr(agent, 'capabilities', None), 'stateTransitionHistory', False),
+                            'extensions': getattr(getattr(agent, 'capabilities', None), 'extensions', [])
+                        } if hasattr(agent, 'capabilities') and agent.capabilities else {
+                            'streaming': False,
+                            'pushNotifications': False,
+                            'stateTransitionHistory': False,
+                            'extensions': []
+                        },
+                        'skills': [
+                            {
+                                'id': skill.id,
+                                'name': skill.name,
+                                'description': skill.description,
+                                'tags': getattr(skill, 'tags', []),
+                                'examples': getattr(skill, 'examples', []),
+                                'inputModes': getattr(skill, 'inputModes', []),
+                                'outputModes': getattr(skill, 'outputModes', [])
+                            }
+                            for skill in getattr(agent, 'skills', [])
+                        ] if hasattr(agent, 'skills') else [],
+                        'defaultInputModes': getattr(agent, 'defaultInputModes', []),
+                        'defaultOutputModes': getattr(agent, 'defaultOutputModes', []),
+                        'type': 'remote',  # Mark as remote agent
+                        'status': 'online' if agent_status else 'offline'
+                    }
+                    agent_list.append(agent_data)
+            
+            print(f"[DEBUG] Completed agent registry sync: {len(agent_list)} agents processed")
+            return {
+                "success": True,
+                "agents": agent_list,
+                "count": len(agent_list)
+            }
+        except Exception as e:
+            print(f"[DEBUG] Error in agent registry sync: {str(e)}")
+            return {
+                "success": False,
+                "error": str(e),
+                "agents": [],
+                "count": 0
+            }
+
+    def _files(self, file_id):
+        if file_id not in self._file_cache:
+            raise Exception('file not found')
+        part = self._file_cache[file_id]
+        if 'image' in part.file.mimeType:
+            return Response(
+                content=base64.b64decode(part.file.bytes),
+                media_type=part.file.mimeType,
+            )
+        return Response(content=part.file.bytes, media_type=part.file.mimeType)
+
+    async def _update_api_key(self, request: Request):
+        """Update the API key"""
+        try:
+            data = await request.json()
+            api_key = data.get('api_key', '')
+
+            if api_key:
+                # Update in the manager
+                self.update_api_key(api_key)
+                return {'status': 'success'}
+            return {'status': 'error', 'message': 'No API key provided'}
+        except Exception as e:
+            return {'status': 'error', 'message': str(e)}
+
+    async def _get_root_instruction(self):
+        """Get the current root instruction"""
+        try:
+            if hasattr(self.manager, 'get_current_root_instruction'):
+                instruction = await self.manager.get_current_root_instruction()
+                return {
+                    'status': 'success',
+                    'instruction': instruction
+                }
+            else:
+                return {
+                    'status': 'error',
+                    'message': 'Root instruction management not supported by current manager'
+                }
+        except Exception as e:
+            return {
+                'status': 'error',
+                'message': str(e)
+            }
+
+    async def _update_root_instruction(self, request: Request):
+        """Update the root instruction"""
+        try:
+            data = await request.json()
+            new_instruction = data.get('instruction', '')
+
+            if not new_instruction.strip():
+                return {
+                    'status': 'error',
+                    'message': 'No instruction provided or instruction is empty'
+                }
+
+            if hasattr(self.manager, 'update_root_instruction'):
+                success = await self.manager.update_root_instruction(new_instruction)
+                if success:
+                    return {
+                        'status': 'success',
+                        'message': 'Root instruction updated successfully'
+                    }
+                else:
+                    return {
+                        'status': 'error',
+                        'message': 'Failed to update root instruction'
+                    }
+            else:
+                return {
+                    'status': 'error',
+                    'message': 'Root instruction management not supported by current manager'
+                }
+        except Exception as e:
+            return {
+                'status': 'error',
+                'message': str(e)
+            }
+
+    async def _reset_root_instruction(self):
+        """Reset to default root instruction"""
+        try:
+            if hasattr(self.manager, 'reset_root_instruction'):
+                success = await self.manager.reset_root_instruction()
+                if success:
+                    return {
+                        'status': 'success',
+                        'message': 'Root instruction reset to default successfully'
+                    }
+                else:
+                    return {
+                        'status': 'error',
+                        'message': 'Failed to reset root instruction'
+                    }
+            else:
+                return {
+                    'status': 'error',
+                    'message': 'Root instruction management not supported by current manager'
+                }
+        except Exception as e:
+            return {
+                'status': 'error',
+                'message': str(e)
+            }

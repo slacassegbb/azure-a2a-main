@@ -1,0 +1,41 @@
+version: '3.8'
+
+services:
+  citichat-frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # Build-time environment variables
+        NEXT_PUBLIC_AZURE_EVENTHUB_CONNECTION_STRING: "${NEXT_PUBLIC_AZURE_EVENTHUB_CONNECTION_STRING}"
+        NEXT_PUBLIC_AZURE_EVENTHUB_NAME: "${NEXT_PUBLIC_AZURE_EVENTHUB_NAME}"
+        NEXT_PUBLIC_AZURE_EVENTHUB_NAMESPACE: "${NEXT_PUBLIC_AZURE_EVENTHUB_NAMESPACE}"
+        NEXT_PUBLIC_AZURE_EVENTHUB_CONSUMER_GROUP: "${NEXT_PUBLIC_AZURE_EVENTHUB_CONSUMER_GROUP}"
+        NEXT_PUBLIC_A2A_API_URL: "${NEXT_PUBLIC_A2A_API_URL}"
+        NEXT_PUBLIC_DEV_MODE: "${NEXT_PUBLIC_DEV_MODE}"
+        NEXT_PUBLIC_USE_MOCK_EVENTHUB: "${NEXT_PUBLIC_USE_MOCK_EVENTHUB}"
+    ports:
+      - "3000:3000"
+    environment:
+      # Runtime environment variables
+      - NODE_ENV=production
+      - NEXT_PUBLIC_AZURE_EVENTHUB_CONNECTION_STRING=${NEXT_PUBLIC_AZURE_EVENTHUB_CONNECTION_STRING}
+      - NEXT_PUBLIC_AZURE_EVENTHUB_NAME=${NEXT_PUBLIC_AZURE_EVENTHUB_NAME}
+      - NEXT_PUBLIC_AZURE_EVENTHUB_NAMESPACE=${NEXT_PUBLIC_AZURE_EVENTHUB_NAMESPACE}
+      - NEXT_PUBLIC_AZURE_EVENTHUB_CONSUMER_GROUP=${NEXT_PUBLIC_AZURE_EVENTHUB_CONSUMER_GROUP}
+      - NEXT_PUBLIC_A2A_API_URL=${NEXT_PUBLIC_A2A_API_URL}
+      - NEXT_PUBLIC_DEV_MODE=${NEXT_PUBLIC_DEV_MODE}
+      - NEXT_PUBLIC_USE_MOCK_EVENTHUB=${NEXT_PUBLIC_USE_MOCK_EVENTHUB}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+    networks:
+      - citichat-network
+
+networks:
+  citichat-network:
+    driver: bridge

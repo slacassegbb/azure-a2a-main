@@ -1,0 +1,683 @@
+[
+  {
+    "name": "AI Foundry Classification Triage Agent",
+    "description": "An intelligent incident classification and triage agent powered by Azure AI Foundry. Specializes in analyzing customer issues, classifying incidents into proper categories, assessing priority levels, and routing cases to appropriate teams using ServiceNow standards.",
+    "version": "1.0.0",
+    "url": "http://localhost:8001/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "incident_classification",
+        "name": "Incident Classification",
+        "description": "Classify customer incidents into categories such as Fraud, Technical Issues, Payment Issues, Card Issues, Account Services, Security, and Inquiries",
+        "examples": [
+          "I lost my card while traveling",
+          "There is an unauthorized charge on my account",
+          "I cannot log into my banking app",
+          "My payment failed to go through"
+        ],
+        "tags": [
+          "classification",
+          "incident",
+          "triage",
+          "categorization"
+        ]
+      },
+      {
+        "id": "priority_assessment",
+        "name": "Priority Assessment",
+        "description": "Determine urgency, impact, and priority levels for incidents using ServiceNow standard mapping",
+        "examples": [
+          "Assess priority for fraud incident",
+          "Determine urgency for account blocked",
+          "Evaluate impact of system outage",
+          "Calculate priority matrix for technical issue"
+        ],
+        "tags": [
+          "priority",
+          "urgency",
+          "impact",
+          "assessment",
+          "servicenow"
+        ]
+      },
+      {
+        "id": "routing_triage",
+        "name": "Routing & Triage",
+        "description": "Route incidents to appropriate teams and provide triage recommendations based on classification",
+        "examples": [
+          "Route fraud case to security team",
+          "Escalate critical payment issue",
+          "Assign technical issue to IT support",
+          "Triage account service request"
+        ],
+        "tags": [
+          "routing",
+          "triage",
+          "escalation",
+          "team-assignment"
+        ]
+      },
+      {
+        "id": "field_mapping",
+        "name": "ServiceNow Field Mapping",
+        "description": "Map incident details to proper ServiceNow fields including category, subcategory, description, and metadata",
+        "examples": [
+          "Map incident to ServiceNow fields",
+          "Generate proper short description",
+          "Categorize into subcategory",
+          "Create structured ticket data"
+        ],
+        "tags": [
+          "servicenow",
+          "mapping",
+          "fields",
+          "metadata"
+        ]
+      },
+      {
+        "id": "keyword_analysis",
+        "name": "Keyword Analysis",
+        "description": "Analyze customer messages for classification keywords and context cues to determine incident type",
+        "examples": [
+          "Analyze message for fraud keywords",
+          "Identify technical issue indicators",
+          "Extract payment problem signals",
+          "Detect security concerns"
+        ],
+        "tags": [
+          "keywords",
+          "analysis",
+          "context",
+          "nlp"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "AI Foundry Deep Search Knowledge Agent",
+    "description": "An intelligent customer support agent powered by Azure AI Foundry with deep search capabilities through comprehensive support documentation covering account management, billing, payments, fraud protection, and technical support.",
+    "version": "1.0.0",
+    "url": "http://localhost:8002/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "document_search",
+        "name": "Document Search",
+        "description": "Deep search through customer support documents including account management, billing, payments, complaints, and technical support",
+        "examples": [
+          "How do I close my account?",
+          "What are the fees for wire transfers?",
+          "How to dispute a charge on my account?",
+          "What do I do if I suspect fraud on my card?"
+        ],
+        "tags": [
+          "search",
+          "documents",
+          "knowledge-base",
+          "customer-support"
+        ]
+      },
+      {
+        "id": "account_support",
+        "name": "Account Support",
+        "description": "Comprehensive support for account opening, closure, and management procedures",
+        "examples": [
+          "Steps to open a new account",
+          "Account closure procedures",
+          "Required documents for account setup",
+          "Account management best practices"
+        ],
+        "tags": [
+          "account",
+          "opening",
+          "closure",
+          "management"
+        ]
+      },
+      {
+        "id": "billing_payments",
+        "name": "Billing & Payments",
+        "description": "Information about billing, payments, fees, and charges",
+        "examples": [
+          "Understanding monthly fees",
+          "Payment methods and options",
+          "How to set up automatic payments",
+          "Fee schedule and billing cycle information"
+        ],
+        "tags": [
+          "billing",
+          "payments",
+          "fees",
+          "charges"
+        ]
+      },
+      {
+        "id": "fraud_security",
+        "name": "Fraud & Security",
+        "description": "Guidance on fraud prevention, unauthorized transactions, and security measures",
+        "examples": [
+          "What to do if my card is stolen",
+          "Reporting unauthorized transactions",
+          "Security features and protections",
+          "Fraud prevention tips"
+        ],
+        "tags": [
+          "fraud",
+          "security",
+          "unauthorized",
+          "protection"
+        ]
+      },
+      {
+        "id": "technical_support",
+        "name": "Technical Support",
+        "description": "Online banking, mobile app, and technical assistance",
+        "examples": [
+          "Online banking login issues",
+          "Mobile app troubleshooting",
+          "Password reset procedures",
+          "Technical feature guidance"
+        ],
+        "tags": [
+          "technical",
+          "online-banking",
+          "mobile",
+          "troubleshooting"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Sentiment Analysis Agent",
+    "description": "This agent determines the sentiment of a customer given context, and personalizes the experience based on sentiment and context.",
+    "version": "1.0.0",
+    "url": "http://localhost:8003/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "sentiment_analysis",
+        "name": "Sentiment Analysis Tool",
+        "description": "Analyzes the sentiment of a customer given context and personalizes the experience based on sentiment and context.",
+        "examples": [
+          "How does the customer feel about our service?",
+          "Analyze the sentiment of this feedback: \"I love the new features!\"",
+          "What is the mood of this message: \"I am frustrated with the wait time.\""
+        ],
+        "tags": [
+          "sentiment",
+          "analysis",
+          "personalization"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "ServiceNow, Web & Knowledge Agent",
+    "description": "An intelligent agent specialized in ServiceNow management, Bank system actions, web search, and file/knowledge/document search. Can simulate ServiceNow incidents, users, and knowledge base operations, perform any Bank action (block card, check balance, report fraud, etc.), search the web for current information, and search through uploaded documents/files for specific information, all with realistic synthetic responses.",
+    "version": "1.0.0",
+    "url": "http://localhost:8000/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "salesforce_management",
+        "name": "ServiceNow Management",
+        "description": "Create, search, and manage ServiceNow incidents, users, and knowledge base articles. Simulates ServiceNow actions with realistic synthetic data.",
+        "examples": [
+          "Create a new ServiceNow incident",
+          "Search for incidents assigned to a user",
+          "Update incident status",
+          "List ServiceNow users",
+          "Search ServiceNow knowledge base"
+        ],
+        "tags": [
+          "servicenow",
+          "incident",
+          "it",
+          "support"
+        ]
+      },
+      {
+        "id": "Bank_actions",
+        "name": "Bank Actions",
+        "description": "Simulate any action on the Bank system (block/unblock card, check balance, report fraud, create disputes, issue refunds, etc.) and return synthetic responses.",
+        "examples": [
+          "Block a credit card",
+          "Unblock a credit card",
+          "Check account balance",
+          "Report a fraudulent transaction",
+          "Create a dispute for a transaction",
+          "Issue a refund for a transaction",
+          "Check transaction details"
+        ],
+        "tags": [
+          "banking",
+          "finance",
+          "card",
+          "dispute",
+          "refund"
+        ]
+      },
+      {
+        "id": "web_search",
+        "name": "Web Search",
+        "description": "Search the web for current information using Bing or other integrated search tools.",
+        "examples": [
+          "Find the latest news about a company",
+          "Search for troubleshooting steps online",
+          "Get current weather information"
+        ],
+        "tags": [
+          "web",
+          "search",
+          "bing",
+          "internet"
+        ]
+      },
+      {
+        "id": "file_knowledge_search",
+        "name": "File & Knowledge Search",
+        "description": "Search through uploaded documents, files, and knowledge bases for specific information.",
+        "examples": [
+          "Search uploaded PDF for a keyword",
+          "Find information in a user manual",
+          "Extract data from a document"
+        ],
+        "tags": [
+          "file",
+          "document",
+          "knowledge",
+          "search"
+        ]
+      },
+      {
+        "id": "human_interaction",
+        "name": "Human Expert Escalation",
+        "description": "Escalate complex issues to human experts or facilitate human-in-the-loop interactions when automated responses are insufficient.",
+        "examples": [
+          "Escalate this issue to a human expert",
+          "I need to speak with a person",
+          "Request human assistance for complex decision",
+          "Connect me with a human agent"
+        ],
+        "tags": [
+          "human-interaction",
+          "escalation",
+          "expert",
+          "human-capable"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "SportsResultAgent",
+    "description": "This agent provides sports results for various sports leagues such as MLB, NBA, NASCAR, and Golf.",
+    "version": "0.1.0",
+    "url": "https://sports-results-agent.ashydesert-9d471906.westus2.azurecontainerapps.io/rpc/v1",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "sports_results_agent",
+        "name": "Sports Results Agent",
+        "description": "Provides sports results from various sports leagues. Include scores, who won, and other relevant information.",
+        "examples": [
+          "Show score for Pirates game last night",
+          "What was the final score of the game 7 NBA finals and who won?",
+          "Who won the 2025 US Golf Open Championship and where was it played?"
+        ],
+        "tags": [
+          "mlb",
+          "nba",
+          "nascar",
+          "golf",
+          "college football"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "AI Foundry Claims Specialist Agent",
+    "description": "An intelligent multi-line claims specialist powered by Azure AI Foundry. Provides coverage validation, settlement calculations, documentation checklists, and compliance guidance across auto, property, travel, and health insurance claims.",
+    "version": "1.0.0",
+    "url": "http://localhost:9001/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "auto_claims_assessment",
+        "name": "Auto Claims Assessment",
+        "description": "Evaluate auto insurance losses, apply deductibles, total loss thresholds, and rental allowances using auto_claims.md guidance.",
+        "examples": [
+          "My car was rear-ended and the repair shop quoted $6,500. How much will insurance cover?",
+          "Do I get a rental car while my vehicle is repaired?",
+          "The thief stole my car and it was recovered with damage—what happens next?",
+          "Is hail damage covered under my comprehensive policy?"
+        ],
+        "tags": [
+          "auto",
+          "claims",
+          "settlement",
+          "deductible"
+        ]
+      },
+      {
+        "id": "property_claims_management",
+        "name": "Property Claims Management",
+        "description": "Guide homeowners and property claims: covered perils, mitigation steps, documentation, and settlement math from home_claims.md.",
+        "examples": [
+          "A pipe burst in my basement and ruined the flooring—what documentation do you need?",
+          "There was a kitchen fire; how do I calculate depreciation on cabinetry?",
+          "Do I have coverage for wind damage to my roof?",
+          "What temporary housing benefits apply during repairs?"
+        ],
+        "tags": [
+          "home",
+          "property",
+          "water-damage",
+          "perils"
+        ]
+      },
+      {
+        "id": "travel_claim_support",
+        "name": "Travel Claim Support",
+        "description": "Assess trip cancellation, baggage, and emergency medical claims using travel_claims.md coverage and exclusions.",
+        "examples": [
+          "I had to cancel my trip because I was hospitalized—can I get reimbursed?",
+          "My luggage was delayed for two days; what can I claim?",
+          "What proof is required for emergency evacuation abroad?",
+          "Does a government travel advisory trigger cancellation coverage?"
+        ],
+        "tags": [
+          "travel",
+          "cancellation",
+          "baggage",
+          "medical"
+        ]
+      },
+      {
+        "id": "health_claim_guidance",
+        "name": "Health Claim Guidance",
+        "description": "Explain deductibles, coinsurance, and documentation needs for medical claims per health_claims.md.",
+        "examples": [
+          "How much will I owe for a $12,000 inpatient surgery?",
+          "Is my specialty medication covered and what is the copay?",
+          "Do emergency out-of-network services get paid at in-network rates?",
+          "What documents are required for a maternity claim?"
+        ],
+        "tags": [
+          "health",
+          "medical",
+          "coinsurance",
+          "documentation"
+        ]
+      },
+      {
+        "id": "claims_documentation_compliance",
+        "name": "Documentation & Compliance",
+        "description": "Provide required forms, fraud checks, and regulatory timelines using universal_claims.md, procedures_faq.md, and regulatory_compliance.md.",
+        "examples": [
+          "What documents do I submit for a coordinated benefits claim?",
+          "How quickly must I report a loss to stay within policy guidelines?",
+          "What red flags should I be aware of for potential fraud escalation?",
+          "How do we communicate claim denials while staying compliant?"
+        ],
+        "tags": [
+          "documentation",
+          "compliance",
+          "fraud",
+          "regulation"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "AI Foundry Assessment & Estimation Agent",
+    "description": "An intelligent assessment specialist powered by Azure AI Foundry. Performs multi-line damage evaluations, cost estimations, and structured reporting for auto, property, travel, and health scenarios.",
+    "version": "1.0.0",
+    "url": "http://localhost:9002/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "auto_damage_assessment",
+        "name": "Auto Damage Assessment",
+        "description": "Analyze collision/comprehensive losses, estimate labor/materials, and recommend severity using auto_estimation.md tables.",
+        "examples": [
+          "Front bumper and headlight replacement – provide estimated cost and labor hours",
+          "Hail damage across hood and roof – severity and paint estimate",
+          "Flooded SUV interior – determine total loss threshold",
+          "Rear-end collision with airbags deployed – labor/material cost breakdown"
+        ],
+        "tags": [
+          "auto",
+          "damage",
+          "estimation",
+          "labor-hours"
+        ]
+      },
+      {
+        "id": "property_damage_estimation",
+        "name": "Property Damage Estimation",
+        "description": "Assess dwelling and contents losses, apply depreciation, and flag mitigation steps per property_estimation.md.",
+        "examples": [
+          "Basement flood affecting drywall and flooring – provide estimated repair cost",
+          "Kitchen fire damaging cabinets and appliances – breakdown labor vs materials",
+          "Windstorm removing 30% of roof shingles – estimate replacement cost",
+          "Contents smoke damage – calculate ACV vs replacement cost"
+        ],
+        "tags": [
+          "property",
+          "dwelling",
+          "contents",
+          "depreciation"
+        ]
+      },
+      {
+        "id": "travel_loss_estimation",
+        "name": "Travel Loss Estimation",
+        "description": "Estimate trip interruption, baggage loss, and medical evacuation costs using travel_estimation.md benchmarks.",
+        "examples": [
+          "Trip cancellation due to illness – estimate reimbursable costs",
+          "Lost baggage including laptop and clothing – provide replacement value",
+          "Medical emergency abroad – estimate ER, hospital, and evacuation costs",
+          "Cruise interruption – calculate prorated trip value"
+        ],
+        "tags": [
+          "travel",
+          "trip",
+          "baggage",
+          "medical"
+        ]
+      },
+      {
+        "id": "health_cost_estimation",
+        "name": "Health Cost Estimation",
+        "description": "Estimate medical service costs, bundled treatments, and specialist visits using health_estimation.md guidance.",
+        "examples": [
+          "Appendectomy with 3-day stay – estimate total cost range",
+          "MRI plus specialist consult – provide bundled estimate",
+          "ER visit for stitches and X-ray – calculate typical charges",
+          "Specialty drug therapy – monthly cost range"
+        ],
+        "tags": [
+          "health",
+          "medical",
+          "cost-estimation"
+        ]
+      },
+      {
+        "id": "estimation_quality_assurance",
+        "name": "Estimation Quality & QA",
+        "description": "Apply universal estimation workflow, depreciation rules, and QA checklists from universal_estimation.md and procedures_faq.md.",
+        "examples": [
+          "Provide step-by-step assessment workflow for new assignment",
+          "Apply depreciation to electronics and furniture for contents loss",
+          "Explain severity categorization based on cost thresholds",
+          "List QA checklist items before submitting estimate report"
+        ],
+        "tags": [
+          "workflow",
+          "qa",
+          "depreciation",
+          "reporting"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "AI Foundry Fraud Intelligence Agent",
+    "description": "An intelligent fraud specialist powered by Azure AI Foundry. Evaluates claims for red flags, organizes evidence, and recommends SIU escalation across auto, property, travel, and health domains.",
+    "version": "1.0.0",
+    "url": "http://localhost:9004/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "auto_fraud_detection",
+        "name": "Auto Fraud Detection",
+        "description": "Identify staged collisions, inflated injuries, and documentation anomalies using fraud_auto.md guidance.",
+        "examples": [
+          "Low-speed collision with high medical bills—evaluate fraud indicators",
+          "Vehicle theft claim with missing keys—outline red flags",
+          "Multiple prior auto claims in 18 months—assess escalation needs",
+          "Handwritten repair receipts with inconsistencies—flag concerns"
+        ],
+        "tags": [
+          "auto",
+          "fraud",
+          "siu",
+          "red-flags"
+        ]
+      },
+      {
+        "id": "property_fraud_detection",
+        "name": "Property Fraud Detection",
+        "description": "Spot intentional fire, inflated contents, and contractor fraud patterns per fraud_property.md.",
+        "examples": [
+          "Fire shortly after coverage increase—analyze red flags",
+          "Contents claim with no receipts—evaluate fraud risk",
+          "Roof claim citing sudden damage—compare against fraud indicators",
+          "Contractor estimate triple market rate—recommend actions"
+        ],
+        "tags": [
+          "property",
+          "fire",
+          "contents",
+          "fraud"
+        ]
+      },
+      {
+        "id": "travel_fraud_detection",
+        "name": "Travel Fraud Detection",
+        "description": "Detect forged medical notes, baggage padding, and duplicate cancellations using fraud_travel.md.",
+        "examples": [
+          "Trip cancellation with questionable medical note—verify fraud signs",
+          "Lost baggage claim with luxury items—assess proof requirements",
+          "Duplicate receipts across travelers—highlight escalation triggers",
+          "Trip booked then cancelled immediately—identify scheme type"
+        ],
+        "tags": [
+          "travel",
+          "cancellation",
+          "baggage",
+          "fraud"
+        ]
+      },
+      {
+        "id": "health_fraud_screening",
+        "name": "Health Fraud Screening",
+        "description": "Analyze phantom billing, upcoding, and prescription anomalies per fraud_health.md.",
+        "examples": [
+          "Provider billing 15 MRIs in one day—summarize red flags",
+          "Out-of-network surgery with inflated rates—flag investigation steps",
+          "Frequent prescription refills—recommend monitoring actions",
+          "Elective procedure coded as emergency—assess documentation gaps"
+        ],
+        "tags": [
+          "health",
+          "billing",
+          "provider",
+          "fraud"
+        ]
+      },
+      {
+        "id": "fraud_workflow_and_escalation",
+        "name": "Fraud Workflow & Escalation",
+        "description": "Apply universal fraud red flags, anomaly patterns, and SIU referral rules from fraud_universal.md and fraud_procedures_faq.md.",
+        "examples": [
+          "Compile fraud evidence summary for SIU referral",
+          "Determine if multiple red flags trigger escalation",
+          "Outline documentation needed before escalating",
+          "Explain fraud ring indicators in cluster of claims"
+        ],
+        "tags": [
+          "workflow",
+          "siu",
+          "red-flags",
+          "compliance"
+        ]
+      }
+    ]
+  }
+]

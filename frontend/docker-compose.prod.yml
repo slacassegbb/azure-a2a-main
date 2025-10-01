@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  citichat-frontend:
+    environment:
+      # Production environment settings
+      - NODE_ENV=production
+      - NEXT_PUBLIC_DEV_MODE=false
+      # Remove connection string in production, use managed identity
+      - NEXT_PUBLIC_AZURE_EVENTHUB_CONNECTION_STRING=
+      # Use managed identity and namespace in production
+      - NEXT_PUBLIC_AZURE_EVENTHUB_NAMESPACE=${AZURE_EVENTHUB_NAMESPACE}
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+    # Production logging
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

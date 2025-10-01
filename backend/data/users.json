@@ -1,0 +1,115 @@
+{
+  "users": [
+    {
+      "user_id": "user_1",
+      "email": "simon@example.com",
+      "password_hash": "ef92b778bafe771e89245b89ecbc08a44a4e166c06659911881f383d4473e94f",
+      "name": "Simon",
+      "role": "Product Manager",
+      "description": "Experienced product manager with focus on AI and automation tools",
+      "skills": [
+        "Product Strategy",
+        "User Research",
+        "Agile Development",
+        "AI/ML Products"
+      ],
+      "color": "#3B82F6",
+      "created_at": "2025-09-14T12:53:24.818383Z",
+      "last_login": null
+    },
+    {
+      "user_id": "user_2",
+      "email": "admin@example.com",
+      "password_hash": "240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9",
+      "name": "Admin",
+      "role": "System Administrator",
+      "description": "Full system administrator with expertise in cloud infrastructure and security",
+      "skills": [
+        "System Administration",
+        "Cloud Architecture",
+        "Security",
+        "DevOps"
+      ],
+      "color": "#EF4444",
+      "created_at": "2025-09-14T12:53:24.818441Z",
+      "last_login": "2025-09-14T23:48:04.890624Z"
+    },
+    {
+      "user_id": "user_3",
+      "email": "test@example.com",
+      "password_hash": "ecd71870d1963316a97e3ac3408c9835ad8cf0f3c1bc703527c30265534f75ae",
+      "name": "Test User",
+      "role": "Software Developer",
+      "description": "Full-stack developer specializing in web applications and APIs",
+      "skills": [
+        "JavaScript",
+        "Python",
+        "React",
+        "Node.js",
+        "API Development"
+      ],
+      "color": "#10B981",
+      "created_at": "2025-09-14T12:53:24.818453Z",
+      "last_login": "2025-09-18T17:25:04.399214Z"
+    },
+    {
+      "user_id": "user_4",
+      "email": "owen@example.com",
+      "password_hash": "2788899d568b45342a4b89aa2ac67f84e03bc429e93598260c5b75924be5ebe1",
+      "name": "Owen",
+      "role": "Software Developer",
+      "description": "best software developer in town",
+      "skills": [
+        "Python"
+      ],
+      "color": "#53d5fd",
+      "created_at": "2025-09-14T13:19:46.808203Z",
+      "last_login": "2025-09-25T20:05:35.852432Z"
+    },
+    {
+      "user_id": "user_5",
+      "email": "david@example.com",
+      "password_hash": "0f14089313b20c1723ec1d660b0aaa4f473cf5b321cd370f2d48b7bcf9a7b234",
+      "name": "David Miller",
+      "role": "Customer",
+      "description": "Gold Loyalty Customer",
+      "skills": [
+        "Professional"
+      ],
+      "color": "#e32400",
+      "created_at": "2025-09-16T11:43:52.075871Z",
+      "last_login": "2025-09-30T18:17:02.510541Z"
+    },
+    {
+      "user_id": "user_6",
+      "email": "julia@example.com",
+      "password_hash": "cdbd41d016cdec10d0ff2291a6bdae398b565a831622bedcd4dcafa69252b5e7",
+      "name": "Julia Stephens",
+      "role": "Claims specialist",
+      "description": "",
+      "skills": [
+        "claims processing",
+        "fraud detection"
+      ],
+      "color": "#a96800",
+      "created_at": "2025-09-25T15:05:41.352356Z",
+      "last_login": "2025-09-25T18:35:19.137461Z"
+    },
+    {
+      "user_id": "user_7",
+      "email": "supportagent@example.com",
+      "password_hash": "19bc8f5a4f0f4e10b9b4f5d2360350c9af0b0d6fb061f23e889c11983fd1de79",
+      "name": "Support Agent",
+      "role": "Customer Support Representative",
+      "description": "A helpful customer support representative",
+      "skills": [
+        "Customer Care",
+        "Troubleshooting",
+        "Escalation"
+      ],
+      "color": "#3B82F6",
+      "created_at": "2025-09-25T20:02:17.660908Z",
+      "last_login": "2025-09-25T21:10:22.285967Z"
+    }
+  ]
+}

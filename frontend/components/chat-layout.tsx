@@ -1,0 +1,182 @@
+"use client"
+
+import { useState, useEffect } from "react"
+import { AgentNetwork } from "@/components/agent-network"
+import { ChatPanel } from "@/components/chat-panel"
+import { FileHistory } from "@/components/file-history"
+import { useEventHub } from "@/hooks/use-event-hub"
+import { ChatHistorySidebar } from "./chat-history-sidebar"
+import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels"
+
+const initialDagNodes = [
+  { id: "User Input", group: "user" },
+  { id: "Query Parser", group: "processing" },
+  { id: "Intent Classifier", group: "processing" },
+  { id: "Response Synthesizer", group: "processing" },
+  { id: "Final Output", group: "output" },
+]
+
+const initialDagLinks = [
+  { source: "User Input", target: "Query Parser" },
+  { source: "Query Parser", target: "Intent Classifier" },
+  { source: "Response Synthesizer", target: "Final Output" },
+]
+
+export function ChatLayout() {
+  const DEBUG = process.env.NEXT_PUBLIC_DEBUG_LOGS === 'true'
+  const [isLeftSidebarCollapsed, setLeftSidebarCollapsed] = useState(false)
+  const [isRightSidebarCollapsed, setRightSidebarCollapsed] = useState(false)
+
+  // This state represents the Host Agent's knowledge of registered agents.
+  // It starts empty and gets populated by the WebSocket agent registry sync.
+  const [registeredAgents, setRegisteredAgents] = useState<any[]>([])
+  const [dagNodes, setDagNodes] = useState(() => [
+    ...initialDagNodes,
+  ])
+  const [dagLinks, setDagLinks] = useState(() => [
+    ...initialDagLinks,
+  ])
+
+  // Use the Event Hub hook for proper client-side initialization
+  const { subscribe, unsubscribe, emit } = useEventHub()
+
+  // This useEffect hook represents the "Host Agent" listening to the Event Hub.
+  useEffect(() => {
+    // Handle registry sync events from WebSocket
+    const handleAgentRegistrySync = (data: any) => {
+      if (DEBUG) console.log("[ChatLayout] Received agent registry sync")
+      if (data.agents && Array.isArray(data.agents)) {
+        const transformedAgents = data.agents.map((agent: any) => ({
+          id: agent.name.toLowerCase().replace(/\s+/g, '-'),
+          name: agent.name,
+          description: agent.description,
+          status: agent.status || "online",
+          version: agent.version,
+          endpoint: agent.url,
+          organization: "Registry Agent",
+          capabilities: agent.capabilities,
+          skills: agent.skills,
+          defaultInputModes: agent.defaultInputModes,
+          defaultOutputModes: agent.defaultOutputModes,
+          avatar: '/placeholder.svg?height=32&width=32'
+        }))
+        
+        setRegisteredAgents(transformedAgents)
+        if (DEBUG) console.log("[ChatLayout] Updated sidebar with", transformedAgents.length, "agents from registry sync")
+        
+        // Update DAG nodes - remove existing agent nodes and add new ones
+        setDagNodes(prev => {
+          const nonAgentNodes = prev.filter(node => node.group !== "agent")
+          const newAgentNodes = transformedAgents.map((agent: any) => ({ id: agent.name, group: "agent" }))
+          return [...nonAgentNodes, ...newAgentNodes]
+        })
+        
+        // Update DAG links - remove existing agent links and add new ones
+        setDagLinks(prev => {
+          const nonAgentLinks = prev.filter(link => 
+            !transformedAgents.some((agent: any) => agent.name === link.source || agent.name === link.target)
+          )
+          const newAgentLinks = transformedAgents.flatMap((agent: any) => [
+            { source: "Intent Classifier", target: agent.name },
+            { source: agent.name, target: "Response Synthesizer" }
+          ])
+          return [...nonAgentLinks, ...newAgentLinks]
+        })
+      }
+    }    // Handle other Event Hub events for logging/debugging
+    const handleMessage = (data: any) => {
+      if (DEBUG) console.log("[ChatLayout] Message event")
+      // ChatPanel already handles message events and emits final_response
+      // This avoids duplicate or malformed final_response events here.
+    }
+
+    const handleConversationCreated = (data: any) => {
+      if (DEBUG) console.log("[ChatLayout] Conversation created")
+      // Forward to chat panel to start inference tracking (use different event name to avoid loop)
+      emit("conversation_started", data)
+    }
+
+    const handleTaskUpdated = (data: any) => {
+      if (DEBUG) console.log("[ChatLayout] Task updated")
+      // Forward task updates to chat panel for status display
+      emit("status_update", {
+        inferenceId: data.taskId || `task_${Date.now()}`,
+        agent: data.agentName || "Unknown Agent",  // Use agentName to match backend events
+        status: data.state || "Processing..."  // Use state instead of status
+      })
+    }
+
+    const handleFileUploaded = (data: any) => {
+      if (DEBUG) console.log("[ChatLayout] File uploaded")
+    }
+
+    const handleFormSubmitted = (data: any) => {
+      if (DEBUG) console.log("[ChatLayout] Form submitted")
+    }
+
+    // Subscribe to Event Hub events
+    subscribe("agent_registry_sync", handleAgentRegistrySync)
+    subscribe("message", handleMessage)
+    subscribe("conversation_created", handleConversationCreated)
+    subscribe("task_updated", handleTaskUpdated)
+    subscribe("file_uploaded", handleFileUploaded)
+    subscribe("form_submitted", handleFormSubmitted)
+
+    if (DEBUG) console.log("[ChatLayout] Subscribed to Event Hub events")
+
+    // Component initialization complete
+    if (DEBUG) console.log("[ChatLayout] Event Hub subscriptions ready")
+
+    // Clean up the subscriptions when the component unmounts.
+    return () => {
+      unsubscribe("agent_registry_sync", handleAgentRegistrySync)
+      unsubscribe("message", handleMessage)
+      unsubscribe("conversation_created", handleConversationCreated)
+      unsubscribe("task_updated", handleTaskUpdated)
+      unsubscribe("file_uploaded", handleFileUploaded)
+      unsubscribe("form_submitted", handleFormSubmitted)
+      if (DEBUG) console.log("[ChatLayout] Unsubscribed from Event Hub events")
+    }
+  }, [subscribe, unsubscribe, emit])
+
+  return (
+    <div className="h-full w-full">
+      <PanelGroup direction="horizontal">
+        {/* Left Sidebar */}
+        <Panel defaultSize={20} minSize={15} maxSize={30}>
+          <div className="flex flex-col h-full">
+            <ChatHistorySidebar
+              isCollapsed={isLeftSidebarCollapsed}
+              onToggle={() => setLeftSidebarCollapsed(!isLeftSidebarCollapsed)}
+            />
+            {!isLeftSidebarCollapsed && (
+              <div className="p-2 space-y-2">
+                <FileHistory />
+              </div>
+            )}
+          </div>
+        </Panel>
+        
+        <PanelResizeHandle className="w-2 bg-border hover:bg-accent transition-colors" />
+        
+        {/* Main Chat Area */}
+        <Panel defaultSize={60} minSize={40}>
+          <div className="flex flex-col min-w-0 border-x h-full">
+            <ChatPanel dagNodes={dagNodes} dagLinks={dagLinks} />
+          </div>
+        </Panel>
+        
+        <PanelResizeHandle className="w-2 bg-border hover:bg-accent transition-colors" />
+        
+        {/* Right Sidebar - Agent Network */}
+        <Panel defaultSize={20} minSize={15} maxSize={35}>
+          <AgentNetwork
+            registeredAgents={registeredAgents}
+            isCollapsed={isRightSidebarCollapsed}
+            onToggle={() => setRightSidebarCollapsed(!isRightSidebarCollapsed)}
+          />
+        </Panel>
+      </PanelGroup>
+    </div>
+  )
+}
