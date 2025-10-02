@@ -1,0 +1,26 @@
+{
+  "sessions": [
+    {
+      "id": "0d1fded0-7810-4dfb-9dfe-d0c54249acb0",
+      "name": "David Miller's Room",
+      "owner_id": "user_5",
+      "created_at": "2025-10-01T20:29:23.055570+00:00",
+      "members": [
+        "user_5",
+        "user_1",
+        "user_2"
+      ],
+      "agents": []
+    },
+    {
+      "id": "d24eaf9e-c369-479c-a4cb-aeab557e41e2",
+      "name": "Owen's Room",
+      "owner_id": "user_4",
+      "created_at": "2025-10-01T20:55:13.932495+00:00",
+      "members": [
+        "user_4"
+      ],
+      "agents": []
+    }
+  ]
+}
