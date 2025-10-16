@@ -1,0 +1,1444 @@
+"""
+AI Foundry Legal Agent implementation with Compliance and Regulatory Capabilities.
+Adapted from the ADK agent pattern to work with Azure AI Foundry for legal operations.
+
+IMPORTANT: QUOTA REQUIREMENTS FOR AZURE AI FOUNDRY AGENTS
+=========================================================
+
+Based on Microsoft support documentation and user reports, Azure AI Foundry agents
+require a MINIMUM of 20,000 TPM (Tokens Per Minute) to function properly without
+rate limiting issues.
+
+If you're experiencing "Rate limit exceeded" errors with normal usage:
+
+1. Check your current TPM quota in Azure AI Foundry portal:
+   - Go to Management > Quota
+   - Look for your model deployment TPM allocation
+
+2. If your TPM is below 20,000, request a quota increase:
+   - In Azure portal, create a support request
+   - Select "Service and subscription limits (quotas)" as Issue type
+   - Select "Cognitive Services" as Quota type
+   - Request at least 20,000 TPM for your model
+   - Specify you need it for Azure AI Foundry agents with Bing Search
+
+3. Consider using different regions:
+   - Some regions have higher default quotas
+   - US West 3 with Global Standard deployment type often works
+   - Try gpt-4o instead of gpt-4 if available
+
+4. Alternative deployment types:
+   - Global Standard deployments often have higher limits
+   - Data Zone deployments may have different quota availability
+
+Common symptoms when TPM is too low:
+- Rate limit errors on the first or second request
+- "Try again in X seconds" even with minimal usage
+- Agents failing during file search setup or Bing search operations
+
+Reference: https://learn.microsoft.com/en-us/answers/questions/2237624/getting-rate-limit-exceeded-when-testing-ai-agent
+"""
+import os
+import time
+import datetime
+import asyncio
+import logging
+import json
+from typing import Optional, Dict, Any, List
+
+from azure.ai.agents import AgentsClient
+from azure.ai.agents.models import Agent, ThreadMessage, ThreadRun, AgentThread, ToolOutput, MessageRole, BingGroundingTool, ListSortOrder, FilePurpose, FileSearchTool, McpTool, RequiredMcpToolCall, SubmitToolApprovalAction, ToolApproval
+from azure.ai.agents.operations import ThreadsOperations
+from azure.ai.projects import AIProjectClient
+from azure.identity import DefaultAzureCredential
+import glob
+
+logger = logging.getLogger(__name__)
+
+
+class FoundryLegalAgent:
+    """
+    AI Foundry Legal Agent with compliance management, regulatory research, and legal document analysis capabilities.
+    This class adapts the ADK agent pattern for Azure AI Foundry legal operations.
+    
+    QUOTA REQUIREMENTS: Ensure your model deployment has at least 20,000 TPM
+    allocated to avoid rate limiting issues with Azure AI Foundry agents.
+    """
+    
+    # Class-level shared resources for file search (created once)
+    _shared_vector_store = None
+    _shared_uploaded_files = []
+    _shared_file_search_tool = None
+    _file_search_setup_lock = asyncio.Lock()
+    
+    def __init__(self):
+        self.endpoint = os.environ["AZURE_AI_FOUNDRY_PROJECT_ENDPOINT"]
+        self.credential = DefaultAzureCredential()
+        self.agent: Optional[Agent] = None
+        self.threads: Dict[str, str] = {}  # thread_id -> thread_id mapping
+        self.vector_store = None
+        self.uploaded_files = []
+        self._file_search_tool = None  # Cache the file search tool
+        self._agents_client = None  # Cache the agents client
+        self._project_client = None  # Cache the project client
+        
+    def is_initialized(self) -> bool:
+        """Check if the agent has been created and initialized."""
+        return self.agent is not None
+        
+    def _get_client(self) -> AgentsClient:
+        """Get a cached AgentsClient instance to reduce API calls."""
+        if self._agents_client is None:
+            self._agents_client = AgentsClient(
+                endpoint=self.endpoint,
+                credential=self.credential,
+            )
+        return self._agents_client
+        
+    def _get_project_client(self) -> AIProjectClient:
+        """Get a cached AIProjectClient instance to reduce API calls."""
+        if self._project_client is None:
+            self._project_client = AIProjectClient(
+                endpoint=self.endpoint,
+                credential=self.credential,
+            )
+        return self._project_client
+    
+    async def _setup_file_search(self, files_directory: str = "documents") -> Optional[FileSearchTool]:
+        """Upload files from local directory and create vector store for file search - ONCE per class."""
+        async with FoundryLegalAgent._file_search_setup_lock:
+            # If we already have a shared file search tool, return it
+            if FoundryLegalAgent._shared_file_search_tool is not None:
+                logger.info("Reusing existing shared file search tool")
+                return FoundryLegalAgent._shared_file_search_tool
+            
+            try:
+                # Check if files directory exists
+                if not os.path.exists(files_directory):
+                    logger.info(f"No {files_directory} directory found, skipping file search setup")
+                    return None
+                
+                # Find all supported files in the directory
+                supported_extensions = ['*.txt', '*.md', '*.pdf', '*.docx', '*.json', '*.csv']
+                file_paths = set()  # Use set to avoid duplicates
+                for ext in supported_extensions:
+                    file_paths.update(glob.glob(os.path.join(files_directory, ext)))
+                    file_paths.update(glob.glob(os.path.join(files_directory, "**", ext), recursive=True))
+                
+                file_paths = list(file_paths)  # Convert back to list
+                
+                if not file_paths:
+                    logger.info(f"No supported files found in {files_directory}, skipping file search setup")
+                    return None
+                
+                logger.info(f"Found {len(file_paths)} files to upload: {[os.path.basename(f) for f in file_paths]}")
+                
+                # Upload files ONCE
+                file_ids = []
+                project_client = self._get_project_client()
+                for file_path in file_paths:
+                    try:
+                        logger.info(f"Uploading file: {os.path.basename(file_path)}")
+                        file = project_client.agents.files.upload_and_poll(
+                            file_path=file_path, 
+                            purpose=FilePurpose.AGENTS
+                        )
+                        file_ids.append(file.id)
+                        FoundryLegalAgent._shared_uploaded_files.append(file.id)
+                        logger.info(f"Uploaded file: {os.path.basename(file_path)} (ID: {file.id})")
+                    except Exception as e:
+                        logger.warning(f"Failed to upload {file_path}: {e}")
+                
+                if not file_ids:
+                    logger.warning("No files were successfully uploaded")
+                    return None
+                
+                # Create vector store ONCE using project client
+                logger.info("Creating shared vector store with uploaded files...")
+                FoundryLegalAgent._shared_vector_store = project_client.agents.vector_stores.create_and_poll(
+                    file_ids=file_ids, 
+                    name="shared_legal_vectorstore"
+                )
+                logger.info(f"Created shared vector store: {FoundryLegalAgent._shared_vector_store.id}")
+                
+                # Create file search tool ONCE
+                file_search = FileSearchTool(vector_store_ids=[FoundryLegalAgent._shared_vector_store.id])
+                logger.info(f"File search capability prepared, type: {type(file_search)}")
+                logger.debug(f"FileSearchTool object: {file_search}")
+                
+                # Verify the object has the expected attributes
+                if not hasattr(file_search, 'definitions'):
+                    logger.error(f"FileSearchTool missing 'definitions' attribute. Object: {file_search}")
+                    return None
+                if not hasattr(file_search, 'resources'):
+                    logger.error(f"FileSearchTool missing 'resources' attribute. Object: {file_search}")
+                    return None
+                
+                # Cache the shared file search tool
+                FoundryLegalAgent._shared_file_search_tool = file_search
+                logger.info("Cached shared file search tool for future use")
+                    
+                return file_search
+                    
+            except Exception as e:
+                logger.error(f"Error setting up file search: {e}")
+                return None
+        
+    async def create_agent(self) -> Agent:
+        """Create the AI Foundry agent with legal compliance capabilities."""
+        if self.agent:
+            logger.info("Agent already exists, returning existing instance")
+            return self.agent
+        
+        # Start with legal function tools (no MCP for now to avoid server errors)
+        legal_tools = self._get_legal_tools()
+        tools = legal_tools
+        logger.info("Added legal function tools for simulation")
+        
+        project_client = self._get_project_client()
+        
+        # Add Bing search tool if available
+        try:
+            bing_connection = project_client.connections.get(name="agentbing")
+            bing = BingGroundingTool(connection_id=bing_connection.id)
+            tools.extend(bing.definitions)
+            logger.info("Added Bing search capability")
+        except Exception as e:
+            logger.warning(f"Could not add Bing search: {e}")
+            logger.info("Agent will work without web search capabilities")
+        
+        # Add file search tool if files are available
+        if self._file_search_tool is None:
+            self._file_search_tool = await self._setup_file_search()
+        
+        if self._file_search_tool:
+            logger.info(f"Using file search tool, type: {type(self._file_search_tool)}")
+            
+            if hasattr(self._file_search_tool, 'definitions'):
+                tools.extend(self._file_search_tool.definitions)
+                logger.info("Extended tools with file search definitions")
+            
+            if hasattr(self._file_search_tool, 'resources'):
+                tool_resources = self._file_search_tool.resources
+                logger.info("Added file search resources")
+            else:
+                tool_resources = None
+                
+            logger.info("Added file search capability")
+        else:
+            tool_resources = None
+        
+        # Use context manager and create agent with all tools
+        with project_client:
+            if tool_resources:
+                self.agent = project_client.agents.create_agent(
+                    model="gpt-4o",
+                    name="foundry-legal-agent",
+                    instructions=self._get_agent_instructions(),
+                    tools=tools,
+                    tool_resources=tool_resources
+                )
+            else:
+                self.agent = project_client.agents.create_agent(
+                    model="gpt-4o",
+                    name="foundry-legal-agent",
+                    instructions=self._get_agent_instructions(),
+                    tools=tools
+                )
+        
+        logger.info(f"Created AI Foundry agent: {self.agent.id}")
+        return self.agent
+    
+    def _get_agent_instructions(self) -> str:
+        """Get simplified agent instructions for legal compliance capabilities."""
+        return f"""
+You are a legal and compliance assistant powered by Azure AI Foundry.
+
+Your capabilities include:
+- Searching the web for current legal and regulatory information
+- Analyzing uploaded legal documents and compliance materials
+- Providing regulatory guidance and compliance assessments
+- Drafting legal responses that meet regulatory standards
+
+Available Legal Tools:
+- legal_analyze_compliance: Analyze compliance requirements for specific regulations
+- legal_assess_risk: Assess legal and compliance risks for business activities
+- legal_draft_response: Draft regulatory-compliant responses with proper disclaimers
+- legal_research_regulation: Research specific regulations and their requirements
+- legal_generate_dsar: Generate Data Subject Access Request responses
+- legal_incident_report: Create incident reports for compliance violations
+- legal_audit_trail: Generate audit trails for compliance activities
+- legal_escalate_case: Escalate complex legal matters to human counsel
+
+Available Compliance Actions:
+- compliance_action: Simulate compliance operations (GDPR assessment, SOX audit, etc.)
+
+Guidelines:
+- Use web search for current legal information
+- Use file search for document analysis
+- Use legal tools for compliance assessments
+- Use compliance_action for regulatory operations
+- Generate realistic legal responses with proper disclaimers
+
+Current date: {datetime.datetime.now().isoformat()}
+"""
+    
+    def _get_legal_tools(self) -> List[Dict[str, Any]]:
+        """Define legal function tools for testing and simulation."""
+        return [
+            {
+                "type": "function",
+                "function": {
+                    "name": "legal_analyze_compliance",
+                    "description": "Analyze compliance requirements for specific regulations",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "regulation": {
+                                "type": "string",
+                                "description": "Regulation to analyze (GDPR, SOX, CCPA, LGPD, etc.)"
+                            },
+                            "business_context": {
+                                "type": "string",
+                                "description": "Business context or activity to assess"
+                            },
+                            "jurisdiction": {
+                                "type": "string",
+                                "description": "Jurisdiction for compliance assessment"
+                            },
+                            "data_types": {
+                                "type": "string",
+                                "description": "Types of data involved in the activity"
+                            }
+                        },
+                        "required": ["regulation"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "legal_assess_risk",
+                    "description": "Assess legal and compliance risks for business activities",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "activity": {
+                                "type": "string",
+                                "description": "Business activity to assess"
+                            },
+                            "risk_factors": {
+                                "type": "string",
+                                "description": "Specific risk factors to consider"
+                            },
+                            "mitigation_strategies": {
+                                "type": "boolean",
+                                "description": "Whether to include mitigation strategies",
+                                "default": True
+                            }
+                        },
+                        "required": ["activity"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "legal_draft_response",
+                    "description": "Draft regulatory-compliant responses with proper disclaimers",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "request_type": {
+                                "type": "string",
+                                "description": "Type of request (DSAR, regulatory inquiry, compliance question)"
+                            },
+                            "subject": {
+                                "type": "string",
+                                "description": "Subject matter of the response"
+                            },
+                            "jurisdiction": {
+                                "type": "string",
+                                "description": "Relevant jurisdiction for legal requirements"
+                            },
+                            "include_disclaimer": {
+                                "type": "boolean",
+                                "description": "Whether to include legal disclaimers",
+                                "default": True
+                            }
+                        },
+                        "required": ["request_type", "subject"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "legal_research_regulation",
+                    "description": "Research specific regulations and their requirements",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "regulation": {
+                                "type": "string",
+                                "description": "Regulation to research"
+                            },
+                            "specific_requirement": {
+                                "type": "string",
+                                "description": "Specific requirement or article to focus on"
+                            },
+                            "jurisdiction": {
+                                "type": "string",
+                                "description": "Jurisdiction for the regulation"
+                            }
+                        },
+                        "required": ["regulation"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "legal_generate_dsar",
+                    "description": "Generate Data Subject Access Request responses",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "data_subject": {
+                                "type": "string",
+                                "description": "Data subject identifier or name"
+                            },
+                            "request_type": {
+                                "type": "string",
+                                "description": "Type of DSAR (access, rectification, erasure, portability)",
+                                "enum": ["access", "rectification", "erasure", "portability", "restriction"]
+                            },
+                            "data_categories": {
+                                "type": "string",
+                                "description": "Categories of data requested"
+                            }
+                        },
+                        "required": ["data_subject", "request_type"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "legal_incident_report",
+                    "description": "Create incident reports for compliance violations",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "incident_type": {
+                                "type": "string",
+                                "description": "Type of incident (data breach, compliance violation, etc.)"
+                            },
+                            "severity": {
+                                "type": "string",
+                                "description": "Severity level (low, medium, high, critical)",
+                                "enum": ["low", "medium", "high", "critical"]
+                            },
+                            "description": {
+                                "type": "string",
+                                "description": "Description of the incident"
+                            },
+                            "affected_data": {
+                                "type": "string",
+                                "description": "Types of data affected"
+                            }
+                        },
+                        "required": ["incident_type", "severity", "description"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "legal_audit_trail",
+                    "description": "Generate audit trails for compliance activities",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "activity": {
+                                "type": "string",
+                                "description": "Activity being audited"
+                            },
+                            "compliance_framework": {
+                                "type": "string",
+                                "description": "Compliance framework (SOX, GDPR, etc.)"
+                            },
+                            "retention_period": {
+                                "type": "integer",
+                                "description": "Retention period in years",
+                                "default": 7
+                            }
+                        },
+                        "required": ["activity"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "legal_escalate_case",
+                    "description": "Escalate complex legal matters to human counsel",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "case_complexity": {
+                                "type": "string",
+                                "description": "Complexity level (low, medium, high, critical)",
+                                "enum": ["low", "medium", "high", "critical"]
+                            },
+                            "escalation_reason": {
+                                "type": "string",
+                                "description": "Reason for escalation"
+                            },
+                            "urgency": {
+                                "type": "string",
+                                "description": "Urgency level (normal, urgent, emergency)",
+                                "enum": ["normal", "urgent", "emergency"]
+                            }
+                        },
+                        "required": ["case_complexity", "escalation_reason"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {   
+                    "name": "compliance_action",
+                    "description": "Simulate any compliance action (e.g., GDPR assessment, SOX audit, CCPA compliance, data breach response, regulatory filing, compliance report, policy review, training material) and return a synthetic response.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "action": {
+                                "type": "string",
+                                "description": "The compliance action to perform (e.g., 'gdpr_assessment', 'sox_audit', 'ccpa_compliance', 'data_breach_response', 'regulatory_filing', 'compliance_report', 'policy_review', 'training_material')"
+                            },
+                            "parameters": {
+                                "type": "object",
+                                "description": "Parameters required for the action (e.g., data_types, business_context, jurisdiction, etc.)"
+                            }
+                        },
+                        "required": ["action"]
+                    }
+                }
+            }
+        ]
+
+    async def create_thread(self, thread_id: Optional[str] = None) -> AgentThread:
+        """Create or retrieve a conversation thread."""
+        if thread_id and thread_id in self.threads:
+            # Return thread info - we'll need to get it fresh each time
+            pass
+            
+        client = self._get_client()
+        thread = client.threads.create()
+        self.threads[thread.id] = thread.id
+        logger.info(f"Created thread: {thread.id}")
+        return thread
+    
+    async def send_message(self, thread_id: str, content: str, role: str = "user") -> ThreadMessage:
+        """Send a message to the conversation thread."""
+        client = self._get_client()
+        message = client.messages.create(
+            thread_id=thread_id,
+            role=role,
+            content=content
+        )
+        logger.info(f"Created message in thread {thread_id}: {message.id}")
+
+
+
+
+        return message
+    
+    async def run_conversation_stream(self, thread_id: str, user_message: str):
+        """Async generator: yields progress/tool call messages and final assistant response(s) in real time."""
+        if not self.agent:
+            await self.create_agent()
+
+        await self.send_message(thread_id, user_message)
+        client = self._get_client()
+        run = client.runs.create(thread_id=thread_id, agent_id=self.agent.id)
+
+        max_iterations = 25
+        iterations = 0
+        retry_count = 0
+        max_retries = 3
+        tool_calls_yielded = set()
+        stuck_run_count = 0
+        max_stuck_runs = 3
+
+        while run.status in ["queued", "in_progress", "requires_action"] and iterations < max_iterations:
+            iterations += 1
+            await asyncio.sleep(2)
+            
+            # Check for new tool calls in real-time (only show what we can actually detect)
+            try:
+                run_steps = client.run_steps.list(thread_id, run.id)
+                for run_step in run_steps:
+                    if (hasattr(run_step, "step_details") and
+                        hasattr(run_step.step_details, "type") and
+                        run_step.step_details.type == "tool_calls" and
+                        hasattr(run_step.step_details, "tool_calls")):
+                        for tool_call in run_step.step_details.tool_calls:
+                            if tool_call and hasattr(tool_call, "type"):
+                                tool_type = tool_call.type
+                                if tool_type not in tool_calls_yielded:
+                                    # Show actual tool calls that we can detect
+                                    tool_description = self._get_tool_description(tool_type, tool_call)
+                                    yield f"🛠️ Remote agent executing: {tool_description}"
+                                    tool_calls_yielded.add(tool_type)
+            except Exception as e:
+                # Continue if we can't get run steps yet
+                pass
+
+            try:
+                run = client.runs.get(thread_id=thread_id, run_id=run.id)
+            except Exception as e:
+                if "rate limit" in str(e).lower() or "429" in str(e):
+                    retry_count += 1
+                    if retry_count <= max_retries:
+                        backoff_time = min(15 * (2 ** retry_count), 45)
+                        await asyncio.sleep(backoff_time)
+                        continue
+                    else:
+                        yield "Error: Rate limit exceeded, please try again later"
+                        return
+                else:
+                    yield f"Error: {str(e)}"
+                    return
+
+            if run.status == "failed":
+                print(f"[DEBUG] Full run object on failure: {run}")
+                print(f"[DEBUG] run.last_error: {run.last_error}")
+                yield f"Error: {run.last_error}"
+                return
+
+            if run.status == "requires_action":
+                logger.info(f"Run {run.id} requires action - checking for tool calls")
+                try:
+                    # Check if there are actually tool calls to handle
+                    if hasattr(run, 'required_action') and run.required_action:
+                        logger.info(f"Found required action: {run.required_action}")
+                        await self._handle_tool_calls(run, thread_id)
+                    else:
+                        logger.warning(f"Run status is 'requires_action' but no required_action found - this may indicate a stuck run")
+                        stuck_run_count += 1
+                        if stuck_run_count >= max_stuck_runs:
+                            logger.error(f"Run {run.id} is stuck in requires_action state without tool calls after {stuck_run_count} attempts")
+                            yield f"Error: Run is stuck in requires_action state - please try again"
+                            return
+                        # Try to get the run again to see if it has progressed
+                        run = client.runs.get(thread_id=thread_id, run_id=run.id)
+                except Exception as e:
+                    yield f"Error handling tool calls: {str(e)}"
+                    return
+
+        if run.status == "failed":
+            yield f"Error: {run.last_error}"
+            return
+
+        if iterations >= max_iterations:
+            yield "Error: Request timed out"
+            return
+
+        # After run is complete, yield the assistant's response(s) with citation formatting
+        messages = list(client.messages.list(thread_id=thread_id, order=ListSortOrder.ASCENDING))
+        print(f"[DEBUG] Found {len(messages)} messages in thread")
+        for msg in reversed(messages):
+            print(f"[DEBUG] Processing message: role={msg.role}, content_count={len(msg.content) if msg.content else 0}")
+            if msg.role == "assistant" and msg.content:
+                for content_item in msg.content:
+                    print(f"[DEBUG] Processing content item: type={type(content_item)}")
+                    if hasattr(content_item, 'text'):
+                        text_content = content_item.text.value
+                        print(f"[DEBUG] Original text content: {text_content[:200]}...")
+                        citations = []
+                        # Extract citations as before
+                        if hasattr(content_item.text, 'annotations') and content_item.text.annotations:
+                            print(f"[DEBUG] Found {len(content_item.text.annotations)} annotations")
+                            main_text = content_item.text.value if hasattr(content_item.text, 'value') else str(content_item.text)
+                            for i, annotation in enumerate(content_item.text.annotations):
+                                print(f"[DEBUG] Processing annotation {i}: {type(annotation)}")
+                                # File citations
+                                if hasattr(annotation, 'file_citation') and annotation.file_citation:
+                                    file_citation = annotation.file_citation
+                                    quote = getattr(file_citation, 'quote', '') or ''
+                                    file_id = getattr(file_citation, 'file_id', '') or ''
+                                    annotation_text = getattr(annotation, 'text', '') or ''
+                                    citation_context = self._extract_citation_context(main_text, annotation, quote)
+                                    citation_text = self._create_meaningful_citation_text(quote, citation_context, file_id)
+                                    citations.append({
+                                        'type': 'file',
+                                        'text': citation_text,
+                                        'file_id': file_id,
+                                        'quote': quote,
+                                        'context': citation_context,
+                                        'annotation_text': annotation_text
+                                    })
+                                    print(f"[DEBUG] Added file citation: {citation_text}")
+                                # File path citations
+                                elif hasattr(annotation, 'file_path') and annotation.file_path:
+                                    file_path = annotation.file_path
+                                    file_id = getattr(file_path, 'file_id', '') or ''
+                                    try:
+                                        project_client = self._get_project_client()
+                                        file_info = project_client.agents.files.get(file_id)
+                                        if hasattr(file_info, 'filename') and file_info.filename:
+                                            citation_text = file_info.filename
+                                        else:
+                                            citation_text = f"File Reference (ID: {file_id[-8:]})"
+                                    except Exception as e:
+                                        citation_text = f"File Reference (ID: {file_id[-8:]})"
+                                    citations.append({
+                                        'type': 'file_path',
+                                        'text': citation_text,
+                                        'file_id': file_id
+                                    })
+                                    print(f"[DEBUG] Added file_path citation: {citation_text}")
+                                # URL citations
+                                elif hasattr(annotation, 'url_citation') and annotation.url_citation:
+                                    url_citation = annotation.url_citation
+                                    url = getattr(url_citation, 'url', '') or '#'
+                                    title = getattr(url_citation, 'title', '') or 'Web Source'
+                                    citations.append({
+                                        'type': 'web',
+                                        'text': title,
+                                        'url': url
+                                    })
+                                    print(f"[DEBUG] Added URL citation: {title} -> {url}")
+                        else:
+                            print(f"[DEBUG] No annotations found in content item")
+                        
+                        print(f"[DEBUG] Total citations found: {len(citations)}")
+                        if citations:
+                            print(f"[DEBUG] Citations: {citations}")
+                        else:
+                            print(f"[DEBUG] No citations found - this is why sources are missing!")
+                        formatted_response = self._format_response_with_citations(text_content, citations)
+                        print(f"[DEBUG] Formatted response: {formatted_response[:200]}...")
+                        print(f"[DEBUG] Full formatted response length: {len(formatted_response)}")
+                        print(f"[DEBUG] Sources section in response: {'📚 Sources:' in formatted_response}")
+                        if '📚 Sources:' in formatted_response:
+                            sources_start = formatted_response.find('📚 Sources:')
+                            print(f"[DEBUG] Sources section: {formatted_response[sources_start:sources_start+200]}...")
+                        yield formatted_response
+                break
+    
+    def _format_response_with_citations(self, text_content: str, citations: List[Dict]) -> str:
+        """Format the response text with clickable citations for Gradio UI."""
+        if not citations:
+            return text_content
+        
+        logger.debug(f"Processing {len(citations)} citations before deduplication")
+        
+        # Smart deduplication that preserves meaningful content
+        unique_citations = []
+        seen_citations = set()
+        
+        for citation in citations:
+            # Create a unique key based on meaningful content
+            if citation['type'] == 'web':
+                key = f"web_{citation.get('url', '')}"
+            elif citation['type'] in ['file', 'file_path']:
+                file_id = citation.get('file_id', '')
+                quote = citation.get('quote', '').strip()
+                context = citation.get('context', '').strip()
+                
+                # Use content-based uniqueness for better deduplication
+                if quote and len(quote) > 20:
+                    # Use first 50 chars of quote for uniqueness
+                    content_key = quote[:50].lower().replace(' ', '').replace('\n', '')
+                    key = f"file_content_{content_key}"
+                elif context and len(context) > 20:
+                    # Use first 50 chars of context for uniqueness
+                    content_key = context[:50].lower().replace(' ', '').replace('\n', '')
+                    key = f"file_context_{content_key}"
+                else:
+                    # Fallback to file_id
+                    key = f"file_{file_id}"
+            else:
+                # For other types, use text content
+                text_key = citation.get('text', '')[:50].lower().replace(' ', '')
+                key = f"{citation['type']}_{text_key}"
+            
+            # Only add if we haven't seen this content before
+            if key not in seen_citations:
+                seen_citations.add(key)
+                unique_citations.append(citation)
+        
+        logger.debug(f"After deduplication: {len(unique_citations)} unique citations")
+        
+        # Start with the main text and clean up citation markers
+        formatted_text = text_content
+        
+        # Remove Azure AI Foundry citation markers like 【4:0†source】
+        import re
+        formatted_text = re.sub(r'【\d+:\d+†source】', '', formatted_text)
+        
+        # Add a sources section if we have citations
+        if unique_citations:
+            formatted_text += "\n\n**📚 Sources:**\n"
+            
+            citation_num = 1
+            for citation in unique_citations:
+                if citation['type'] == 'web':
+                    formatted_text += f"{citation_num}. 🌐 [{citation.get('text', 'Web Source')}]({citation.get('url', '#')})\n"
+                elif citation['type'] in ['file', 'file_path']:
+                    # Use our improved method to get meaningful citation text
+                    meaningful_text = self._get_readable_file_name(citation)
+                    formatted_text += f"{citation_num}. 📄 **{meaningful_text}** *(from uploaded documents)*\n"
+                citation_num += 1
+            
+            logger.info(f"Generated sources section with {len(unique_citations)} citations")
+        
+        return formatted_text
+    
+
+    
+    def _extract_bing_citations(self, text_content: str) -> tuple[str, List[Dict]]:
+        """Extract Bing search citations from the response text."""
+        import re
+        
+        citations = []
+        
+        # Method 1: Look for citation patterns like [^1^], [^2^], etc.
+        citation_pattern = r'\[\^(\d+)\^\]'
+        citation_matches = re.findall(citation_pattern, text_content)
+        
+        # Method 2: Look for structured source sections
+        # Bing often includes sources at the end like "Sources:\n1. Title - URL"
+        source_section_pattern = r'(?:Sources?|References?):\s*\n((?:.*\n?)*)'
+        source_matches = re.search(source_section_pattern, text_content, re.IGNORECASE | re.MULTILINE)
+        
+        if source_matches:
+            source_text = source_matches.group(1)
+            # Parse individual sources like "1. Title - URL"
+            source_line_pattern = r'(\d+)\.\s*([^-\n]+?)\s*-\s*(https?://[^\s\n]+)'
+            for match in re.finditer(source_line_pattern, source_text):
+                source_num, title, url = match.groups()
+                # Clean up the title by removing trailing whitespace
+                clean_title = title.strip() if title else f"Source {source_num}"
+                citations.append({
+                    'type': 'web',
+                    'text': clean_title,
+                    'url': url.strip()
+                })
+        
+        # Method 3: Look for URLs in the text (fallback)
+        if not citations:
+            url_pattern = r'https?://[^\s\)\]\>]+(?=[\s\)\]\>\n]|$)'
+            urls = re.findall(url_pattern, text_content)
+            
+            # Try to find context around URLs for better link text
+            for i, url in enumerate(urls[:5]):  # Limit to first 5 URLs
+                # Look for text before the URL that might be a title
+                url_context_pattern = rf'([^.\n]*?)\s*{re.escape(url)}'
+                context_match = re.search(url_context_pattern, text_content)
+                
+                if context_match:
+                    context = context_match.group(1).strip()
+                    # Clean up the context to get a reasonable title
+                    title = context[-50:] if len(context) > 50 else context
+                    title = title.strip('.,;:')
+                else:
+                    title = f"Web Source {i+1}"
+                
+                citations.append({
+                    'type': 'web',
+                    'text': title or f"Web Source {i+1}",
+                    'url': url
+                })
+        
+        return text_content, citations
+    
+    def _extract_foundry_citations(self, text_content: str) -> List[Dict]:
+        """Extract Azure AI Foundry style citations like 【4:4†source】."""
+        import re
+        
+        citations = []
+        
+        # Look for Azure AI Foundry citation patterns with Japanese brackets 【4:4†source】
+        foundry_pattern = r'【(\d+):(\d+)†source】'
+        foundry_matches = re.findall(foundry_pattern, text_content)
+        
+        if foundry_matches:
+            # These citations reference file search results
+            for i, (doc_num, ref_num) in enumerate(foundry_matches):
+                citations.append({
+                    'type': 'file',
+                    'text': f"Document {doc_num} (Reference {ref_num})",
+                    'file_id': f"doc_{doc_num}_{ref_num}",  # Placeholder since we don't have the actual file ID
+                    'quote': ''
+                })
+        
+        return citations
+
+    async def _handle_tool_calls(self, run: ThreadRun, thread_id: str):
+        """Handle tool calls during agent execution."""
+        logger.info(f"Handling tool calls for run {run.id}")
+        
+        if not hasattr(run, 'required_action') or not run.required_action:
+            logger.warning(f"No required action found in run {run.id}")
+            return
+            
+        required_action = run.required_action
+        logger.info(f"Required action type: {type(required_action)}")
+        logger.info(f"Required action attributes: {dir(required_action)}")
+        
+        if not hasattr(required_action, 'submit_tool_outputs') or not required_action.submit_tool_outputs:
+            logger.warning(f"No tool outputs required in run {run.id}")
+            return
+            
+        try:
+            tool_calls = required_action.submit_tool_outputs.tool_calls
+            if not tool_calls:
+                logger.warning("No tool calls found in required action")
+                return
+            
+            tool_outputs = []
+
+            async def handle_single_tool_call(tool_call):
+                function_name = tool_call.function.name
+                arguments = tool_call.function.arguments
+                logger.info(f"Processing tool call: {function_name} with args: {arguments}")
+                logger.debug(f"Tool call ID: {tool_call.id}")
+                
+                # Handle legal tool responses - let LLM generate realistic data dynamically
+                if function_name.startswith("legal_"):
+                    import json
+                    try:
+                        args = json.loads(arguments) if isinstance(arguments, str) else arguments
+                    except:
+                        args = {}
+                    
+                    # Simple, dynamic approach - let LLM handle all the details
+                    output = {
+                        "status": "success",
+                        "function": function_name,
+                        "parameters": args,
+                        "instruction": "Generate realistic legal data for this operation. Create appropriate legal responses with realistic field values, proper formatting, and authentic-looking data."
+                    }
+                    
+                    return {
+                        "tool_call_id": tool_call.id,
+                        "output": json.dumps(output)
+                    }
+                # --- Compliance action simulation using LLM for dynamic responses ---
+                elif function_name == "compliance_action":
+                    import json
+                    from datetime import datetime
+                    try:
+                        args = json.loads(arguments) if isinstance(arguments, str) else arguments
+                    except:
+                        args = {}
+                    action = args.get("action", "unknown_action")
+                    params = args.get("parameters", {})
+                    
+                    # Let LLM generate realistic synthetic data dynamically
+                    output = {
+                        "status": "success",
+                        "function": function_name,
+                        "parameters": args,
+                        "instruction": f"Generate realistic compliance data for the '{action}' operation. Create appropriate compliance records with realistic field values, proper formatting, and authentic-looking data."
+                    }
+                    
+                    return {
+                        "tool_call_id": tool_call.id,
+                        "output": json.dumps(output)
+                    }
+                else:
+                    # For Bing grounding, file search, and other tool calls, they're handled automatically by the system
+                    logger.info(f"Skipping system tool call: {function_name} (handled automatically by Azure AI Foundry)")
+                    
+                    # Return empty output to acknowledge the tool call was processed
+                    return {
+                        "tool_call_id": tool_call.id,
+                        "output": "{}"
+                    }
+
+            # Process all tool calls sequentially to avoid conflicts
+            results = []
+            for tool_call in tool_calls:
+                result = await handle_single_tool_call(tool_call)
+                if result:
+                    results.append(result)
+                # Small delay between tools
+                await asyncio.sleep(0.5)
+            
+            # Filter out any None results
+            tool_outputs = [r for r in results if r is not None]
+
+            if not tool_outputs:
+                logger.info("No valid tool outputs generated - submitting empty outputs to move run forward")
+                # Submit empty tool outputs to move the run forward
+                tool_outputs = [{"tool_call_id": tc.id, "output": "{}"} for tc in tool_calls if hasattr(tc, 'id') and tc.id]
+                
+            logger.debug(f"Tool outputs to submit: {tool_outputs}")
+            
+        except Exception as e:
+            logger.error(f"Error processing tool calls: {e}")
+            logger.error(f"Required action structure: {required_action}")
+            raise
+        
+        # Submit the tool outputs or approvals
+        client = self._get_client()
+        try:
+            # Determine the action type based on what we have
+            action_type = "submit_tool_outputs"  # Default to tool outputs
+            
+            if action_type == "submit_tool_outputs":
+                # Create tool outputs in the expected format
+                formatted_outputs = []
+                for output in tool_outputs:
+                    formatted_outputs.append(ToolOutput(
+                        tool_call_id=output["tool_call_id"],
+                        output=output["output"]
+                    ))
+                
+                logger.debug(f"Submitting formatted tool outputs: {formatted_outputs}")
+                
+                client.runs.submit_tool_outputs(
+                    thread_id=thread_id,
+                    run_id=run.id,
+                    tool_outputs=formatted_outputs
+                )
+                logger.info(f"Submitted {len(formatted_outputs)} tool outputs")
+            elif action_type == "submit_tool_approval":
+                # For tool approvals, we need to approve the MCP tool calls
+                logger.info(f"Handling tool approval for {len(tool_calls)} tool calls")
+                
+                tool_approvals = []
+                for tool_call in tool_calls:
+                    if isinstance(tool_call, RequiredMcpToolCall):
+                        try:
+                            logger.info(f"Approving MCP tool call: {tool_call}")
+                            tool_approvals.append(
+                                ToolApproval(
+                                    tool_call_id=tool_call.id,
+                                    approve=True,
+                                    headers={}  # Add any required headers here
+                                )
+                            )
+                        except Exception as e:
+                            logger.error(f"Error approving tool_call {tool_call.id}: {e}")
+                
+                if tool_approvals:
+                    client.runs.submit_tool_outputs(
+                        thread_id=thread_id,
+                        run_id=run.id,
+                        tool_approvals=tool_approvals
+                    )
+                    logger.info(f"Approved {len(tool_approvals)} MCP tool calls")
+                else:
+                    logger.warning("No valid tool approvals to submit")
+        except Exception as e:
+            logger.error(f"Failed to submit tool outputs: {e}")
+            logger.error(f"Raw tool outputs structure: {tool_outputs}")
+            # Try submitting without ToolOutput wrapper as fallback
+            try:
+                logger.info("Trying fallback submission with raw dict format")
+                client.runs.submit_tool_outputs(
+                    thread_id=thread_id,
+                    run_id=run.id,
+                    tool_outputs=tool_outputs
+                )
+                logger.info(f"Fallback submission successful")
+            except Exception as e2:
+                logger.error(f"Fallback submission also failed: {e2}")
+                raise e
+        
+    async def cleanup_agent(self):
+        """Clean up the agent resources (individual instance only)."""
+        # DISABLED: Don't auto-delete the agent to allow reuse across multiple requests
+        # if self.agent:
+        #     client = self._get_client()
+        #     client.delete_agent(self.agent.id)
+        #     logger.info(f"Deleted agent: {self.agent.id}")
+        #     self.agent = None
+        
+        # Clear cached clients but keep the agent alive
+        # self._agents_client = None
+        # self._project_client = None
+        
+        # Note: Agent is preserved for reuse, shared file search resources are left for other instances to use
+        logger.info("Individual agent cleanup completed (agent preserved for reuse, shared resources preserved)")
+    
+    @classmethod
+    async def cleanup_shared_resources(cls):
+        """Clean up shared legal document search resources (call when shutting down completely)."""
+        try:
+            if cls._shared_vector_store or cls._shared_uploaded_files:
+                # We need a project client to clean up, create a temporary one
+                temp_agent = cls()
+                project_client = temp_agent._get_project_client()
+                
+                # Delete vector store
+                if cls._shared_vector_store:
+                    project_client.agents.delete_vector_store(cls._shared_vector_store.id)
+                    logger.info(f"Deleted shared legal vector store: {cls._shared_vector_store.id}")
+                    cls._shared_vector_store = None
+            
+                # Delete uploaded files
+                for file_id in cls._shared_uploaded_files:
+                    try:
+                        project_client.agents.delete_file(file_id=file_id)
+                        logger.info(f"Deleted shared legal file: {file_id}")
+                    except Exception as e:
+                        logger.warning(f"Failed to delete shared legal file {file_id}: {e}")
+                
+                cls._shared_uploaded_files = []
+                cls._shared_file_search_tool = None
+                logger.info("Shared legal document search resources cleaned up")
+                
+        except Exception as e:
+            logger.error(f"Error cleaning up shared legal document search resources: {e}")
+
+
+
+    def _get_readable_file_name(self, citation: Dict) -> str:
+        """Get meaningful citation text based on content, not just file names."""
+        
+        # Priority 1: Use actual quote/content if available and meaningful
+        quote = citation.get('quote', '').strip()
+        if quote and len(quote) > 20:  # Ensure substantial content
+            # Clean and truncate the quote for readability
+            clean_quote = quote.replace('\n', ' ').replace('\r', ' ')
+            if len(clean_quote) > 100:
+                clean_quote = clean_quote[:97] + "..."
+            return f'"{clean_quote}"'
+        
+        # Priority 2: Extract meaningful content from the citation text itself
+        citation_text = citation.get('text', '').strip()
+        if citation_text and 'Document excerpt:' in citation_text:
+            # Already formatted as an excerpt
+            return citation_text
+        
+        # Priority 3: Try to create meaningful content from available text
+        if citation_text and len(citation_text) > 20:
+            clean_text = citation_text.replace('\n', ' ').replace('\r', ' ')
+            if len(clean_text) > 100:
+                clean_text = clean_text[:97] + "..."
+            return f'Document excerpt: "{clean_text}"'
+        
+        # Priority 4: Use file information if available
+        file_id = citation.get('file_id', '')
+        if file_id:
+            return f"Document (ID: {file_id[-8:]})"  # Use last 8 chars for brevity
+        
+        # Fallback: Generic but still informative
+        source_type = citation.get('type', 'document')
+        return f"Referenced {source_type}"
+
+    def _extract_citation_context(self, main_text: str, annotation, quote: str) -> str:
+        """Extract meaningful context around a citation from the main response text."""
+        try:
+            # If we have a quote, try to find it in the main text and get surrounding context
+            if quote and len(quote.strip()) > 10:
+                import re
+                # Look for the quote or similar content in the main text
+                quote_words = quote.strip().split()[:5]  # First 5 words
+                if len(quote_words) >= 2:
+                    pattern = r'.{0,50}' + re.escape(' '.join(quote_words[:2])) + r'.{0,50}'
+                    match = re.search(pattern, main_text, re.IGNORECASE)
+                    if match:
+                        context = match.group(0).strip()
+                        return context
+            
+            # Fallback: Try to get context around citation markers
+            if hasattr(annotation, 'text') and annotation.text:
+                marker = annotation.text
+                # Look for the citation marker in the main text
+                marker_pos = main_text.find(marker)
+                if marker_pos != -1:
+                    # Extract 100 characters before and after the marker
+                    start = max(0, marker_pos - 100)
+                    end = min(len(main_text), marker_pos + len(marker) + 100)
+                    context = main_text[start:end].strip()
+                    # Clean up the context
+                    context = context.replace(marker, '').strip()
+                    if context:
+                        return context
+            
+            return ""
+        except Exception as e:
+            logger.debug(f"Error extracting citation context: {e}")
+            return ""
+
+    def _create_meaningful_citation_text(self, quote: str, context: str, file_id: str) -> str:
+        """Create meaningful citation text using available information."""
+        
+        # Priority 1: Use substantial quote content
+        if quote and len(quote.strip()) > 20:
+            clean_quote = quote.replace('\n', ' ').replace('\r', ' ').strip()
+            if len(clean_quote) > 100:
+                clean_quote = clean_quote[:97] + "..."
+            return f'Document excerpt: "{clean_quote}"'
+        
+        # Priority 2: Use extracted context
+        if context and len(context.strip()) > 20:
+            clean_context = context.replace('\n', ' ').replace('\r', ' ').strip()
+            if len(clean_context) > 100:
+                clean_context = clean_context[:97] + "..."
+            return f'Document content: "{clean_context}"'
+        
+        # Priority 3: Try to get meaningful filename
+        if file_id:
+            try:
+                project_client = self._get_project_client()
+                file_info = project_client.agents.files.get(file_id)
+                if hasattr(file_info, 'filename') and file_info.filename:
+                    # Clean up the filename for display
+                    filename = file_info.filename
+                    if filename.endswith('.pdf'):
+                        filename = filename[:-4]  # Remove .pdf extension
+                    return f'Document: "{filename}"'
+            except Exception as e:
+                logger.debug(f"Could not retrieve filename for {file_id}: {e}")
+        
+        # Priority 4: Use shortened file ID
+        if file_id and len(file_id) > 8:
+            return f"Document (ID: {file_id[-8:]})"
+        elif file_id:
+            return f"Document (ID: {file_id})"
+        
+        # Fallback
+        return "Referenced document"
+
+    async def run_conversation(self, thread_id: str, user_message: str):
+        """Collects all streamed messages and returns as a tuple (responses, tools_called) for host agent compatibility."""
+        results = []
+        tools_called = []
+        tool_descriptions = []  # Track enhanced tool descriptions
+        
+        async for msg in self.run_conversation_stream(thread_id, user_message):
+            results.append(msg)
+            # Extract tool call info from progress messages
+            if msg.startswith("🛠️ Remote agent executing:"):
+                tool_description = msg.replace("🛠️ Remote agent executing: ", "").strip()
+                if tool_description not in tool_descriptions:
+                    tool_descriptions.append(tool_description)
+                    # Extract a simple tool name for backward compatibility
+                    if ":" in tool_description:
+                        tool_name = tool_description.split(":")[0].strip()
+                    else:
+                        tool_name = tool_description
+                    if tool_name not in tools_called:
+                        tools_called.append(tool_description)  # Use the full description
+
+        # After streaming is complete, collect all actual tool calls from run steps
+        try:
+            client = self._get_client()
+            # Find the most recent run for this thread
+            runs = client.runs.list(thread_id=thread_id)
+            if runs.data:
+                latest_run = runs.data[0]  # Most recent run
+                run_steps = client.run_steps.list(thread_id, latest_run.id)
+                step_count = 0
+                logger.info("Listing all run steps:")
+               
+                for run_step in run_steps:
+                    step_count += 1
+                    logger.info(f"Step {step_count}: {run_step}")
+                   
+                    if (run_step.step_details and
+                        hasattr(run_step.step_details, "type") and
+                        run_step.step_details.type == "tool_calls" and
+                        hasattr(run_step.step_details, "tool_calls")):
+                        for tool_call in run_step.step_details.tool_calls:
+                            if tool_call and hasattr(tool_call, "type"):
+                                tool_type = tool_call.type
+                                tool_description = self._get_tool_description(tool_type, tool_call)
+                                if tool_description not in tools_called:
+                                    tools_called.append(tool_description)
+                                    logger.info(f"Found tool call: {tool_description}")
+        except Exception as e:
+            logger.error(f"Error collecting tool calls: {e}")
+        
+        return (results, tools_called)
+
+    def _get_tool_description(self, tool_type: str, tool_call) -> str:
+        """Helper to get a more meaningful tool description from the tool call."""
+        try:
+            # Try to get the actual function name from the tool call
+            if hasattr(tool_call, 'function') and hasattr(tool_call.function, 'name'):
+                function_name = tool_call.function.name
+                # Try to get arguments if available
+                if hasattr(tool_call.function, 'arguments'):
+                    try:
+                        import json
+                        args = json.loads(tool_call.function.arguments)
+                        # Create a more descriptive message based on function name and args
+                        if function_name == "bing_grounding" or function_name == "web_search":
+                            query = args.get('query', '')
+                            if query:
+                                return f"Searching the web for: '{query[:50]}{'...' if len(query) > 50 else ''}'"
+                            else:
+                                return "Performing web search"
+                        elif function_name == "file_search":
+                            query = args.get('query', '')
+                            if query:
+                                return f"Searching documents for: '{query[:50]}{'...' if len(query) > 50 else ''}'"
+                            else:
+                                return "Searching through uploaded documents"
+                        elif function_name.startswith("legal_"):
+                            # Handle Legal functions
+                            if function_name == "legal_analyze_compliance":
+                                regulation = args.get('regulation', '')
+                                return f"Analyzing compliance for: '{regulation[:50]}{'...' if len(regulation) > 50 else ''}'"
+                            elif function_name == "legal_assess_risk":
+                                activity = args.get('activity', '')
+                                return f"Assessing legal risks for: '{activity[:50]}{'...' if len(activity) > 50 else ''}'"
+                            elif function_name == "legal_draft_response":
+                                request_type = args.get('request_type', '')
+                                return f"Drafting legal response for: {request_type}"
+                            elif function_name == "legal_research_regulation":
+                                regulation = args.get('regulation', '')
+                                return f"Researching regulation: '{regulation[:30]}{'...' if len(regulation) > 30 else ''}'"
+                            elif function_name == "legal_generate_dsar":
+                                data_subject = args.get('data_subject', '')
+                                return f"Generating DSAR for: {data_subject[:30]}{'...' if len(data_subject) > 30 else ''}"
+                            elif function_name == "legal_incident_report":
+                                incident_type = args.get('incident_type', '')
+                                return f"Creating incident report for: {incident_type}"
+                            elif function_name == "legal_audit_trail":
+                                activity = args.get('activity', '')
+                                return f"Generating audit trail for: {activity[:30]}{'...' if len(activity) > 30 else ''}"
+                            elif function_name == "legal_escalate_case":
+                                case_complexity = args.get('case_complexity', '')
+                                return f"Escalating case with complexity: {case_complexity}"
+                            elif function_name == "compliance_action":
+                                action = args.get('action', 'unknown_action')
+                                if action == "gdpr_assessment":
+                                    return f"Conducting GDPR compliance assessment"
+                                elif action == "sox_audit":
+                                    return f"Performing SOX compliance audit"
+                                elif action == "ccpa_compliance":
+                                    return f"Evaluating CCPA compliance"
+                                elif action == "data_breach_response":
+                                    return f"Generating data breach response plan"
+                                elif action == "regulatory_filing":
+                                    return f"Preparing regulatory filing"
+                                elif action == "compliance_report":
+                                    return f"Generating compliance status report"
+                                elif action == "policy_review":
+                                    return f"Reviewing compliance policies"
+                                elif action == "training_material":
+                                    return f"Creating compliance training materials"
+                                else:
+                                    return f"Simulating Compliance action: {action}"
+                            else:
+                                return f"Executing Legal function: {function_name.replace('legal_', '').replace('_', ' ')}"
+                        elif function_name.startswith("search_"):
+                            search_term = args.get('search_term', args.get('query', ''))
+                            if search_term:
+                                return f"Searching legal database for: '{search_term[:50]}{'...' if len(search_term) > 50 else ''}'"
+                            else:
+                                return f"Executing {function_name} in legal system"
+                        elif function_name.startswith("get_"):
+                            return f"Retrieving {function_name.replace('get_', '').replace('_', ' ')} from legal database"
+                        elif function_name.startswith("create_"):
+                            return f"Creating new {function_name.replace('create_', '').replace('_', ' ')} in legal system"
+                        elif function_name.startswith("list_"):
+                            return f"Listing {function_name.replace('list_', '').replace('_', ' ')} from legal database"
+                        else:
+                            return f"Executing {function_name}"
+                    except (json.JSONDecodeError, AttributeError):
+                        return f"Executing {function_name}"
+                else:
+                    return f"Executing {function_name}"
+            else:
+                # Fallback to tool type if function name not available
+                return f"Executing {tool_type}"
+        except Exception as e:
+            # Final fallback
+            return f"Executing tool: {tool_type}"
+
+
+
+
+async def create_foundry_legal_agent() -> FoundryLegalAgent:
+    """Factory function to create and initialize a Foundry legal agent."""
+    agent = FoundryLegalAgent()
+    await agent.create_agent()
+    return agent
+
+
+# Example usage for testing
+async def demo_agent_interaction():
+    """Demo function showing how to use the Foundry legal agent."""
+    agent = await create_foundry_legal_agent()
+    
+    try:
+        # Create a conversation thread
+        thread = await agent.create_thread()
+        
+        # Example interaction
+        message = "Hello! Can you help me with my legal compliance, regulatory research, and document analysis?"
+        print(f"\nUser: {message}")
+        async for response in agent.run_conversation(thread.id, message):
+            print(f"Assistant: {response}")
+                
+    finally:
+        # DISABLED: Don't auto-cleanup agent to allow reuse
+        # await agent.cleanup_agent()
+        # Only clean up shared resources on final shutdown if really needed
+        # await FoundryLegalAgent.cleanup_shared_resources()
+        logger.info("Demo completed - agent preserved for reuse")
+
+
+def test_citation_improvement():
+    """Test function to demonstrate citation improvements."""
+    agent = FoundryLegalAgent()
+    
+    # Simulate the old problematic citation format
+    old_citations = [
+        {'type': 'file', 'text': 'Document Citation (【4:0†source】)', 'file_id': 'file123', 'quote': 'GDPR Article 6(1)(a) requires explicit consent for data processing'},
+        {'type': 'file', 'text': 'Document Citation (【4:0†source】)', 'file_id': 'file123', 'quote': 'GDPR Article 6(1)(a) requires explicit consent for data processing'},
+        {'type': 'file', 'text': 'Document Citation (【4:2†source】)', 'file_id': 'file123', 'quote': 'SOX Section 404 requires internal control assessments'},
+        {'type': 'file', 'text': 'Document 4 (Reference 0)', 'file_id': 'file123', 'quote': ''},
+        {'type': 'file', 'text': 'Document 4 (Reference 0)', 'file_id': 'file123', 'quote': ''},
+        {'type': 'file', 'text': 'Document 4 (Reference 2)', 'file_id': 'file123', 'quote': ''},
+    ]
+    
+    test_response = """To handle a GDPR compliance assessment, follow the steps below:
+Data Processing Analysis:
+Review all data processing activities for lawful basis. GDPR Article 6(1)(a) requires explicit consent for data processing【4:0†source】.
+Alternatively, organizations can rely on legitimate interest under Article 6(1)(f) provided they conduct a balancing test【4:0†source】.
+Data Subject Rights Implementation:
+Ensure all data subject rights are properly implemented and accessible.
+Data retention policies must be clearly defined and communicated to data subjects【4:0†source】.
+Cross-Border Transfer Assessment:
+Review any international data transfers and ensure adequate safeguards are in place【4:0†source】.
+The organization's data protection officer will oversee compliance and handle data subject requests【4:0†source】.
+Incident Response Procedures:
+Update data breach notification procedures to meet 72-hour reporting requirements【4:0†source】.
+Legal and Compliance Actions:
+Consider conducting a Data Protection Impact Assessment (DPIA) for high-risk processing activities【4:2†source】.
+Continue to monitor compliance with evolving regulatory requirements【4:2†source】.
+Audit and Documentation:
+Regular audits ensure ongoing compliance. SOX Section 404 requires internal control assessments for financial systems【4:2†source】.
+Following these actions promptly helps maintain compliance and reduces regulatory risk."""
+    
+    # Test the improved citation formatting
+    improved_response = agent._format_response_with_citations(test_response, old_citations)
+    
+    print("=== LEGAL CITATION IMPROVEMENT DEMONSTRATION ===")
+    print("\nOLD FORMAT (before improvement):")
+    print("- Multiple identical 'Document Citation (【4:0†source】)' entries")
+    print("- Generic 'Document 4 (Reference 0)' without context")
+    print("- No actual file names or meaningful descriptions")
+    print("- Repetitive and cluttered sources section")
+    
+    print("\nNEW FORMAT (after improvement):")
+    print(improved_response)
+    
+    return improved_response
+
+
+if __name__ == "__main__":
+    asyncio.run(demo_agent_interaction())

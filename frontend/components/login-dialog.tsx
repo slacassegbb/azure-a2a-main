@@ -91,14 +91,15 @@ export function LoginDialog({ onLogin }: LoginDialogProps) {
     setError("")
 
     try {
-      let endpoint = "http://localhost:12000/api/auth/login"
+      const baseUrl = process.env.NEXT_PUBLIC_A2A_API_URL || "http://localhost:12000"
+      let endpoint = `${baseUrl}/api/auth/login`
       let requestBody: any = {
         email: email.trim(),
         password: password,
       }
 
       if (isRegisterMode) {
-        endpoint = "http://localhost:12000/api/auth/register"
+        endpoint = `${baseUrl}/api/auth/register`
         requestBody = {
           email: email.trim(),
           password: password,

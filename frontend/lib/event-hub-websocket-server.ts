@@ -109,9 +109,9 @@ if (require.main === module) {
   const server = new EventHubWebSocketServer({
     port: 8080,
     eventHubConfig: {
-      fullyQualifiedNamespace: process.env.EVENT_HUB_NAMESPACE || '',
-      eventHubName: process.env.EVENT_HUB_NAME || '',
-      consumerGroup: process.env.EVENT_HUB_CONSUMER_GROUP || '$Default',
+      fullyQualifiedNamespace: process.env.NEXT_PUBLIC_AZURE_EVENTHUB_NAMESPACE || '',
+      eventHubName: process.env.NEXT_PUBLIC_AZURE_EVENTHUB_NAME || '',
+      consumerGroup: process.env.NEXT_PUBLIC_AZURE_EVENTHUB_CONSUMER_GROUP || '$Default',
       useManagedIdentity: true
     }
   });

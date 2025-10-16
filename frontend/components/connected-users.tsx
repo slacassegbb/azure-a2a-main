@@ -28,7 +28,8 @@ export function ConnectedUsers() {
 
   const fetchActiveUsers = async () => {
     try {
-      const response = await fetch("http://localhost:12000/api/auth/active-users")
+      const baseUrl = process.env.NEXT_PUBLIC_A2A_API_URL || "http://localhost:12000"
+      const response = await fetch(`${baseUrl}/api/auth/active-users`)
       const data = await response.json()
       
       if (data.success) {

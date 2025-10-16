@@ -565,7 +565,8 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle }: Props)
   const loadCurrentInstruction = async () => {
     try {
       setIsLoading(true)
-      const response = await fetch("http://localhost:12000/agent/root-instruction")
+      const baseUrl = process.env.NEXT_PUBLIC_A2A_API_URL || "http://localhost:12000"
+      const response = await fetch(`${baseUrl}/agent/root-instruction`)
       const data = await response.json()
       
       if (data.status === 'success') {
@@ -584,7 +585,8 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle }: Props)
   const updateInstruction = async () => {
     try {
       setIsLoading(true)
-      const response = await fetch("http://localhost:12000/agent/root-instruction", {
+      const baseUrl = process.env.NEXT_PUBLIC_A2A_API_URL || "http://localhost:12000"
+      const response = await fetch(`${baseUrl}/agent/root-instruction`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -614,7 +616,8 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle }: Props)
   const resetToDefault = async () => {
     try {
       setIsLoading(true)
-      const response = await fetch("http://localhost:12000/agent/root-instruction/reset", {
+      const baseUrl = process.env.NEXT_PUBLIC_A2A_API_URL || "http://localhost:12000"
+      const response = await fetch(`${baseUrl}/agent/root-instruction/reset`, {
         method: 'POST',
       })
       
@@ -639,7 +642,8 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle }: Props)
   const clearMemory = async () => {
     setIsClearingMemory(true)
     try {
-      const response = await fetch('http://localhost:12000/clear-memory', {
+      const baseUrl = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
+      const response = await fetch(`${baseUrl}/clear-memory`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

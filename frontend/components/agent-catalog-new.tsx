@@ -45,7 +45,8 @@ export function AgentCatalog() {
     try {
       setLoading(true)
       setError(null)
-      const response = await fetch('http://localhost:12000/api/agents')
+      const baseUrl = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
+      const response = await fetch(`${baseUrl}/api/agents`)
       
       if (!response.ok) {
         throw new Error(`Failed to fetch agents: ${response.status}`)

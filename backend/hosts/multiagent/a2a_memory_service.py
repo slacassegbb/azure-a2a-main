@@ -3,6 +3,7 @@ import os
 import json
 import uuid
 from datetime import datetime
+from pathlib import Path
 from dotenv import load_dotenv
 from azure.core.credentials import AzureKeyCredential
 from azure.search.documents import SearchClient
@@ -18,7 +19,8 @@ import time
 from azure.core.exceptions import ResourceNotFoundError
 import openai
 
-load_dotenv()
+ROOT_ENV_PATH = Path(__file__).resolve().parents[3] / ".env"
+load_dotenv(dotenv_path=ROOT_ENV_PATH, override=False)
 
 # Azure Cognitive Search configuration
 service_endpoint = os.getenv("AZURE_SEARCH_SERVICE_ENDPOINT")

@@ -593,7 +593,8 @@ export function ChatPanel({ dagNodes, dagLinks }: ChatPanelProps) {
         const formData = new FormData()
         formData.append('file', file)
 
-        const response = await fetch('http://localhost:12000/upload', {
+        const baseUrl = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
+        const response = await fetch(`${baseUrl}/upload`, {
           method: 'POST',
           body: formData
         })
@@ -822,7 +823,8 @@ export function ChatPanel({ dagNodes, dagLinks }: ChatPanelProps) {
         })
       })
 
-      const response = await fetch('http://localhost:12000/message/send', {
+      const baseUrl = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
+      const response = await fetch(`${baseUrl}/message/send`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

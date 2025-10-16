@@ -4,7 +4,7 @@
  * This provides TypeScript functions to interact with the A2A conversation endpoints
  */
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:12000'
+const API_BASE_URL = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
 
 export interface Conversation {
   conversation_id: string

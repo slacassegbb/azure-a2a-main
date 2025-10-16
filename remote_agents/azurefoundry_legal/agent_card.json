@@ -1,0 +1,161 @@
+{
+    "name": "Legal Compliance Agent",
+    "description": "An intelligent legal and compliance assistant powered by Azure AI Foundry, specializing in regulatory compliance, legal research, and risk management.",
+    "version": "1.0.0",
+    "author": "Azure AI Foundry Legal Team",
+    "contact": {
+        "email": "legal-support@azurefoundry.com",
+        "url": "https://azure.microsoft.com/en-us/products/ai-foundry"
+    },
+    "capabilities": {
+        "legal_analysis": {
+            "description": "Analyze compliance requirements for specific regulations (GDPR, SOX, CCPA, etc.)",
+            "parameters": {
+                "regulation": "string",
+                "business_context": "string",
+                "jurisdiction": "string",
+                "data_types": "string"
+            }
+        },
+        "risk_assessment": {
+            "description": "Assess legal and compliance risks for business activities",
+            "parameters": {
+                "activity": "string",
+                "risk_factors": "string",
+                "mitigation_strategies": "boolean"
+            }
+        },
+        "regulatory_research": {
+            "description": "Research specific regulations and their requirements",
+            "parameters": {
+                "regulation": "string",
+                "specific_requirement": "string",
+                "jurisdiction": "string"
+            }
+        },
+        "compliance_assessment": {
+            "description": "Conduct comprehensive compliance assessments",
+            "parameters": {
+                "framework": "string",
+                "scope": "string",
+                "audit_type": "string"
+            }
+        },
+        "document_analysis": {
+            "description": "Analyze legal documents and compliance materials",
+            "parameters": {
+                "document_type": "string",
+                "analysis_focus": "string",
+                "compliance_framework": "string"
+            }
+        },
+        "dsar_processing": {
+            "description": "Generate Data Subject Access Request responses",
+            "parameters": {
+                "data_subject": "string",
+                "request_type": "string",
+                "data_categories": "string"
+            }
+        },
+        "incident_reporting": {
+            "description": "Create incident reports for compliance violations",
+            "parameters": {
+                "incident_type": "string",
+                "severity": "string",
+                "description": "string",
+                "affected_data": "string"
+            }
+        },
+        "audit_trail": {
+            "description": "Generate audit trails for compliance activities",
+            "parameters": {
+                "activity": "string",
+                "compliance_framework": "string",
+                "retention_period": "integer"
+            }
+        }
+    },
+    "skills": [
+        {
+            "name": "GDPR Compliance",
+            "description": "Expert knowledge of General Data Protection Regulation requirements and implementation"
+        },
+        {
+            "name": "SOX Compliance",
+            "description": "Sarbanes-Oxley Act compliance assessment and audit support"
+        },
+        {
+            "name": "CCPA Compliance",
+            "description": "California Consumer Privacy Act compliance analysis and guidance"
+        },
+        {
+            "name": "Legal Research",
+            "description": "Comprehensive legal research capabilities for regulatory frameworks"
+        },
+        {
+            "name": "Risk Assessment",
+            "description": "Legal and compliance risk assessment with mitigation strategies"
+        },
+        {
+            "name": "Document Analysis",
+            "description": "Analysis of legal documents, contracts, and compliance materials"
+        },
+        {
+            "name": "Incident Response",
+            "description": "Data breach and compliance incident response planning"
+        },
+        {
+            "name": "Audit Support",
+            "description": "Compliance audit preparation and documentation support"
+        }
+    ],
+    "supported_regulations": [
+        "GDPR",
+        "SOX",
+        "CCPA",
+        "LGPD",
+        "PIPEDA",
+        "ISO 27001",
+        "NIST Cybersecurity Framework",
+        "HIPAA",
+        "PCI DSS"
+    ],
+    "jurisdictions": [
+        "EU",
+        "UK",
+        "US",
+        "California",
+        "Brazil",
+        "Canada",
+        "Australia",
+        "Japan",
+        "Singapore"
+    ],
+    "document_types": [
+        "Privacy Policies",
+        "Terms of Service",
+        "Data Processing Agreements",
+        "Compliance Reports",
+        "Audit Documentation",
+        "Incident Reports",
+        "Risk Assessments",
+        "Training Materials"
+    ],
+    "disclaimers": [
+        "This agent provides general legal information and compliance guidance only",
+        "Not a substitute for professional legal advice",
+        "Always consult with qualified legal counsel for specific legal matters",
+        "Compliance assessments are based on current regulations and may require updates"
+    ],
+    "metadata": {
+        "agent_type": "legal_compliance",
+        "framework": "azure_ai_foundry",
+        "version": "1.0.0",
+        "last_updated": "2025-01-27",
+        "supported_languages": [
+            "en"
+        ],
+        "response_time": "< 30 seconds",
+        "availability": "24/7"
+    }
+}

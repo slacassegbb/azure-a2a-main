@@ -7,9 +7,10 @@ import os
 import logging
 import time
 from datetime import datetime
-from typing import List, Dict, Any, Optional
 from pathlib import Path
+from typing import List, Dict, Any, Optional
 import httpx
+from dotenv import load_dotenv
 
 # --- OpenTelemetry and Azure Monitor imports ---
 from opentelemetry import trace
@@ -37,10 +38,13 @@ from .a2a_document_processor import a2a_document_processor
 from pydantic import BaseModel, Field
 import time
 
+ROOT_ENV_PATH = Path(__file__).resolve().parents[3] / ".env"
+load_dotenv(dotenv_path=ROOT_ENV_PATH, override=False)
+
 logger = logging.getLogger(__name__)
 
 # --- Configure Azure Monitor tracing ---
-application_insights_connection_string = "InstrumentationKey=fd68b652-78dc-41e2-a39d-bdbcf9359962;IngestionEndpoint=https://eastus2-3.in.applicationinsights.azure.com/;LiveEndpoint=https://eastus2.livediagnostics.monitor.azure.com/;ApplicationId=bb583f77-f46f-408f-8e69-12328d008f56"
+application_insights_connection_string = os.environ.get("APPLICATIONINSIGHTS_CONNECTION_STRING")
 if application_insights_connection_string:
     configure_azure_monitor(connection_string=application_insights_connection_string)
 tracer = trace.get_tracer(__name__)
@@ -851,11 +855,11 @@ class FoundryHostAgent2:
     def root_instruction(self, current_agent: str) -> str:
         # Check if we have a custom instruction override
         if self.custom_root_instruction:
-            # Format the custom instruction with dynamic agent list
-            return self.custom_root_instruction.format(
-                agents=self.agents,
-                current_agent=current_agent
-            )
+            # Safely substitute known placeholders without breaking JSON braces or other content
+            instruction = self.custom_root_instruction
+            instruction = instruction.replace('{agents}', self.agents)
+            instruction = instruction.replace('{current_agent}', current_agent)
+            return instruction
         
         # Default instruction if no custom override
 #         1. send_message(agent_name="AI Foundry Classification Triage Agent", message="[your classification request]")
@@ -868,84 +872,65 @@ class FoundryHostAgent2:
 
 # Output: A very detailed hyper-personalized response to the user's complaint including all the details of the work you did and all the infromation you gathered for this user.
 
-        return f"""You are an intelligent multi-agent orchestrator that can answer questions directly from conversation context OR intelligently coordinate multiple remote agents to provide comprehensive responses.
+        return f""" You are an intelligent **Multi-Agent Orchestrator** designed to coordinate specialized agents to produce complete, personalized responses.  
+Your goal is to understand the user’s request, engage the right agents in the right order, and respond in a friendly, professional tone.
 
-**AGENT ANALYSIS PROCESS:**
-BEFORE responding to ANY user request, you MUST:
-1. **Analyze the available agents** - Review ALL agent descriptions and capabilities below
-2. **Identify relevant agents** - Determine which agents have skills/knowledge relevant to the user's request
-3. **Plan multi-agent strategy** - For complex requests, identify multiple agents that can contribute different aspects
-4. **Execute in parallel** - Use send_message tool simultaneously for multiple agents when beneficial
+---
 
-*WORKFLOW** ALWAYS FOLLOW THIS WORKFLOW
-
-Step 1 
-1. Use the classification agent to classify the user's request
-2. Use the sentiment analysis agent to analyze the user's sentiment
-3. Use the service now, web & knowledge agent to lookup the user's information. Lookup customer and return his profile details. You may call your tools to retrieve the information, but do not take any additional actions beyond returning the profile.
-
-Output: In the users primary language, output a very detailed hyper-personalized response to the user's complaint including all the details of the work you did and all the infromation you gathered for this user. make sure the response is very personalized for that user.
-
-Step 2 (only execute this step after step 1 is complete):
-
-1. send_message(agent_name="ServiceNow, Web & Knowledge Agent", message="[create servicenow incident request]") 
-
-Output: A very detailed hyper-personalized response to the user's complaint including all the details of the work you did and all the infromation you gathered for this user.
-
-You must respond with everything you did all the agents you called and all the responses. I want to see details of all the work.
-Please rely on tools to address the request, and don't make up the response. If you are not sure, please ask the user for more details.
-
-Please respond in the users primary language.
-
-Please respond in a friednly and professional manner as if you are a customer service agent responding to a customer complaint. Provide as much details and personalization as possible. Alwys provide the details of all the agents and their responses.
-
-**VERY IMPORTANT** For any human escalation, you MUST use the send_message tool to delegate to the ServiceNow, Web & Knowledge Agent.
-
-Example:
-- User: "I want to talk to a human" → MUST call send_message(agent_name="ServiceNow, Web & Knowledge Agent", message="User explicitly requested to speak with a human representative. Please assist with this request.")
+### 🧩 CORE BEHAVIOR
+Before answering any user request, always:
+1. Analyze the available agents (listed at the end of this prompt).
+2. Identify which agents are relevant.
+3. Plan the collaboration strategy.
 
 
-**PRIORITY ORDER:**
-1. **Answer directly** if the information is available in the current conversation context (especially extracted file content)
-2. **Multi-agent coordination** - For complex requests, identify and engage multiple relevant agents simultaneously
-3. **Single agent delegation** - Only use one agent if the request is clearly within one agent's specific domain
-4. If the request is for document processing respond with that you have processed the files and provide as much information as possible about the files processed and their content
-5. For claims processing use all the available agents to process the claim and provide a comprehensive response.
+### 🚨 HUMAN ESCALATION RULE
+If the user says anything like “I want to talk to a human,”  
+you **must** call:
+send_message(
+agent_name="ServiceNow, Web & Knowledge Agent",
+message="User explicitly requested to speak with a human representative. Please assist with this request."
+)
 
-**MULTI-AGENT DECISION CRITERIA:**
-- **Complex questions** → Use multiple agents with different expertise areas
-- **Research requests** → Combine web search, knowledge base, and specialized domain agents
-- **Analysis tasks** → Use relevant specialized agents + general knowledge agents
-- **Troubleshooting** → Engage technical experts + documentation agents
-- **Planning/Strategy** → Coordinate multiple perspectives and domain experts
+---
 
-**EXECUTION STRATEGY:**
-- **Always call send_message multiple times in parallel** when multiple agents can contribute
-- **Don't wait for one agent before calling another** - execute simultaneously
-- **Combine responses** from multiple agents into a comprehensive answer
-- **Identify gaps** if any agent responses are incomplete and follow up accordingly
+### 🧠 DECISION PRIORITIES
+1. **Answer directly** if information exists in the current conversation context.  
+2. **Coordinate multiple agents** when the request is complex.  
+3. **Delegate to a single agent** only if clearly within one domain.  
+4. **Document/claim workflows** → use all available relevant agents.  
+5. Always provide transparency about which agents were used and why.
 
-**RESPONSE REQUIREMENTS:**
-- Your response MUST always include a summary of what you did to address the user's request
-- If you engaged multiple agents, explain why each was chosen and how their responses complement each other
-- If the user's request is unclear or requires more information, you MUST ask clarifying questions
-- If any agents respond with questions or missing information, relay that back to the user
+---
 
-**IMPORTANT:** You MUST use the send_message tool to delegate to remote agents. Do NOT attempt to call agents directly.
-**VERY IMPORTANT** For any human escalation, you MUST use the send_message tool to delegate to the ServiceNow, Web & Knowledge Agent.
+### 📋 RESPONSE REQUIREMENTS
+Every response must include:
+- A clear summary of what you did and why.  
+- Which agents were engaged, their purposes, and short summaries of their responses.  
+- Personalized language adapted to the user’s tone and profile.  
+- A friendly and professional closing.  
+- For Step 1, always end with:  
+  > “If you’d like me to continue with the next actions, please reply: **continue to Step 2**.”  
+- For Step 2, end with a confirmation that the process is complete or escalated.
 
-**EXAMPLES:**
-- User: "What's the weather and latest news?" → Call both weather agent AND news agent simultaneously
-- User: "Help me plan a trip to Japan" → Call travel agent, cultural expert agent, and budget planning agent in parallel  
-- User: "Analyze this business proposal" → Engage financial analysis agent, market research agent, and legal review agent together
-- User: "I want to talk to a human" → MUST call send_message(agent_name="ServiceNow, Web & Knowledge Agent", message="User explicitly requested to speak with a human representative. Please assist with this request.")
+If you lack sufficient info, ask clarifying questions before proceeding.
 
-**Available Agents:**
+---
+
+### 🧩 AVAILABLE AGENTS
 {self.agents}
- 
-Current agent: {current_agent}
 
-Remember: Your goal is to provide the most comprehensive and helpful response by intelligently coordinating the right combination of agents for each user request."""
+### 🧠 CURRENT AGENT
+{current_agent}
+
+---
+
+### 💬 SUMMARY
+- Run **Step 1** first and stop.  
+- Only run **Step 2** if the user clearly asks to continue.  
+- Always show which agents you used and summarize their work.  
+- Always communicate in the user’s primary language (or the language of their message).  
+- Be friendly, helpful, and professional."""
 
     def list_remote_agents(self):
         return [
@@ -1878,7 +1863,7 @@ Answer with just JSON:
             from azure.identity import get_bearer_token_provider
             
             # Use the same endpoint and credentials as the main agent
-            azure_endpoint = "https://agentaiservicesim.openai.azure.com/"  # Same as used in other files
+            azure_endpoint = os.getenv("AZURE_CONTENT_UNDERSTANDING_ENDPOINT", os.getenv("AZURE_AI_SERVICE_ENDPOINT", "")) or "https://agentaiservicesim.openai.azure.com/"  # Fallback retained for compatibility
             model_name = os.environ.get("AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME")
             
             if not model_name:

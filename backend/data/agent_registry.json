@@ -679,5 +679,152 @@
         ]
       }
     ]
+  },
+  {
+    "name": "Legal Compliance & Regulatory Agent",
+    "description": "An intelligent legal and compliance agent specialized in regulatory analysis, risk assessment, document analysis, and incident response. Can analyze compliance requirements for GDPR, SOX, CCPA and other regulations, assess legal risks, research regulatory requirements, analyze legal documents, handle incident reporting, search the web for current legal information, and search through uploaded legal documents and compliance materials, all with professional legal guidance.",
+    "version": "1.0.0",
+    "url": "http://localhost:8006/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "legal_compliance",
+        "name": "Legal Compliance",
+        "description": "Analyze compliance requirements for specific regulations (GDPR, SOX, CCPA, etc.) and provide regulatory guidance.",
+        "examples": [
+          "Assess GDPR compliance for data processing",
+          "Conduct SOX compliance audit",
+          "Evaluate CCPA compliance requirements",
+          "Analyze regulatory requirements for a business activity"
+        ],
+        "tags": [
+          "legal",
+          "compliance",
+          "gdpr",
+          "sox",
+          "ccpa",
+          "regulatory"
+        ]
+      },
+      {
+        "id": "risk_assessment",
+        "name": "Risk Assessment",
+        "description": "Assess legal and compliance risks for business activities and provide mitigation strategies.",
+        "examples": [
+          "Assess legal risks for a new business activity",
+          "Evaluate compliance risks for data processing",
+          "Provide risk mitigation strategies",
+          "Conduct regulatory risk assessment"
+        ],
+        "tags": [
+          "risk",
+          "assessment",
+          "legal",
+          "compliance",
+          "mitigation"
+        ]
+      },
+      {
+        "id": "regulatory_research",
+        "name": "Regulatory Research",
+        "description": "Research specific regulations and their requirements using legal databases and web search.",
+        "examples": [
+          "Research GDPR Article 6 requirements",
+          "Find SOX Section 404 compliance requirements",
+          "Look up CCPA data subject rights",
+          "Research regulatory guidance for data transfers"
+        ],
+        "tags": [
+          "research",
+          "regulatory",
+          "legal",
+          "compliance",
+          "gdpr",
+          "sox"
+        ]
+      },
+      {
+        "id": "document_analysis",
+        "name": "Document Analysis",
+        "description": "Analyze legal documents, contracts, and compliance materials for regulatory requirements.",
+        "examples": [
+          "Analyze privacy policy for GDPR compliance",
+          "Review data processing agreement",
+          "Assess contract for regulatory requirements",
+          "Analyze compliance documentation"
+        ],
+        "tags": [
+          "document",
+          "analysis",
+          "legal",
+          "contract",
+          "compliance"
+        ]
+      },
+      {
+        "id": "incident_response",
+        "name": "Incident Response",
+        "description": "Handle data breach and compliance incident reporting with proper procedures.",
+        "examples": [
+          "Create data breach incident report",
+          "Generate compliance violation report",
+          "Provide incident response procedures",
+          "Assess incident severity and impact"
+        ],
+        "tags": [
+          "incident",
+          "response",
+          "breach",
+          "compliance",
+          "reporting"
+        ]
+      },
+      {
+        "id": "web_search",
+        "name": "Web Search",
+        "description": "Search the web for current legal and regulatory information using Bing or other integrated search tools.",
+        "examples": [
+          "Find latest regulatory updates",
+          "Search for legal precedents",
+          "Get current compliance guidance",
+          "Research regulatory enforcement actions"
+        ],
+        "tags": [
+          "web",
+          "search",
+          "bing",
+          "internet",
+          "legal",
+          "regulatory"
+        ]
+      },
+      {
+        "id": "file_knowledge_search",
+        "name": "File & Knowledge Search",
+        "description": "Search through uploaded legal documents, compliance materials, and knowledge bases for specific information.",
+        "examples": [
+          "Search legal documents for specific requirements",
+          "Find compliance guidance in uploaded materials",
+          "Extract regulatory information from documents",
+          "Search through compliance policies"
+        ],
+        "tags": [
+          "file",
+          "document",
+          "knowledge",
+          "search",
+          "legal",
+          "compliance"
+        ]
+      }
+    ]
   }
 ]

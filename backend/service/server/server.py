@@ -4,6 +4,7 @@ import os
 import threading
 import time
 import uuid
+from pathlib import Path
 from typing import cast, Any, Dict
 from urllib.parse import urlparse
 
@@ -69,7 +70,8 @@ def get_message_id(obj: Any, default: str = None) -> str:
 
 from .foundry_host_manager import FoundryHostManager
 
-load_dotenv()
+ROOT_ENV_PATH = Path(__file__).resolve().parents[3] / ".env"
+load_dotenv(dotenv_path=ROOT_ENV_PATH, override=False)
 
 # Create a persistent event loop for async tasks
 main_loop = asyncio.new_event_loop()

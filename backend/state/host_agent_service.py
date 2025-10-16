@@ -3,12 +3,18 @@ import os
 import sys
 import traceback
 import uuid
+from pathlib import Path
 
 from typing import Any
 
 from a2a.types import FileWithBytes, Message, Part, Role, Task, TaskState
 from service.client.client import ConversationClient
 from service.azure_eventhub_streamer import get_event_hub_streamer
+from dotenv import load_dotenv
+
+
+ROOT_ENV_PATH = Path(__file__).resolve().parents[2] / ".env"
+load_dotenv(dotenv_path=ROOT_ENV_PATH, override=False)
 
 
 def get_context_id(obj: Any, default: str = None) -> str:
@@ -90,7 +96,7 @@ from .state import (
 )
 
 
-server_url = 'http://localhost:12000'
+server_url = os.environ.get('BACKEND_SERVER_URL', os.environ.get('A2A_BACKEND_URL', 'http://localhost:12000'))
 
 
 async def ListConversations() -> list[Conversation]:

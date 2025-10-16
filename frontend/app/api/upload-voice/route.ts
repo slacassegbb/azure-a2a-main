@@ -6,7 +6,7 @@ export async function POST(request: NextRequest) {
     const formData = await request.formData()
     
     // Get the backend URL from environment or default
-    const backendUrl = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:12000'
+    const backendUrl = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
     
     // Forward the request to the Python backend
     const response = await fetch(`${backendUrl}/upload-voice`, {

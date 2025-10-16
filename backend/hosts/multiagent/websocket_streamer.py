@@ -97,7 +97,8 @@ class WebSocketStreamer:
     The WebSocket server runs alongside the FastAPI backend server.
     """
     
-    def __init__(self, websocket_url: str = "http://localhost:8080"):
+    def __init__(self, websocket_url: str | None = None):
+        websocket_url = websocket_url or os.environ.get("WEBSOCKET_SERVER_URL", "http://localhost:8080")
         """Initialize the WebSocket streamer.
         
         Args:

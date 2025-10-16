@@ -26,24 +26,25 @@ import sys
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
-# Set hardcoded environment variables FIRST before any other imports
-os.environ["A2A_HOST"] = "FOUNDRY"
-# Configure for managed identity authentication (recommended for production)
-os.environ["A2A_UI_HOST"] = "0.0.0.0"
-os.environ["A2A_UI_PORT"] = "12000"
-os.environ["GOOGLE_API_KEY"] = "AIzaSyDpGncMj-krxNvCRTLgV8T0dI9GYdJLOM0"
-os.environ["AZURE_AI_FOUNDRY_PROJECT_ENDPOINT"] = "https://foundrya2a.services.ai.azure.com/api/projects/firstProject"
-os.environ["AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME"] = "gpt-4o"
-os.environ["AZURE_TENANT_ID"] = "a017dcc8-2769-4af1-9ebe-6e99d6d72ab3"
+from dotenv import load_dotenv
 
-# Azure Content Understanding Configuration (use same endpoint as AI Foundry)
-os.environ["AZURE_AI_SERVICE_ENDPOINT"] = "https://agentaiservicesim.openai.azure.com/"
-os.environ["AZURE_AI_SERVICE_API_VERSION"] = "2024-12-01-preview"
+
+ROOT_ENV_PATH = Path(__file__).resolve().parents[1] / ".env"
+load_dotenv(dotenv_path=ROOT_ENV_PATH, override=False)
+
+# Set default environment variables if not provided
+os.environ.setdefault("A2A_HOST", "FOUNDRY")
+# Configure for managed identity authentication (recommended for production)
+os.environ.setdefault("A2A_UI_HOST", "0.0.0.0")
+os.environ.setdefault("A2A_UI_PORT", "12000")
+os.environ.setdefault("DEBUG_MODE", "false")
+
+# Azure Content Understanding Configuration (defaults to matching AI Foundry)
+os.environ.setdefault("AZURE_AI_SERVICE_ENDPOINT", os.environ.get("AZURE_CONTENT_UNDERSTANDING_ENDPOINT", ""))
+os.environ.setdefault("AZURE_AI_SERVICE_API_VERSION", os.environ.get("AZURE_CONTENT_UNDERSTANDING_API_VERSION", "2024-12-01-preview"))
 
 # WebSocket Configuration for local development
-os.environ["WEBSOCKET_SERVER_URL"] = "http://localhost:8080"
-
-os.environ["DEBUG_MODE"] = "false"
+os.environ.setdefault("WEBSOCKET_SERVER_URL", "http://localhost:8080")
 
 # Configure for Managed Identity authentication
 # Replace with your managed identity's client ID
@@ -76,8 +77,8 @@ from dataclasses import dataclass
 from typing import Optional, Dict, Any, List
 
 # Authentication constants and classes
-SECRET_KEY = "your-secret-key-change-in-production"
-ALGORITHM = "HS256"
+SECRET_KEY = os.environ.get("SECRET_KEY", "change-me")
+ALGORITHM = os.environ.get("JWT_ALGORITHM", "HS256")
 
 @dataclass
 class User:
