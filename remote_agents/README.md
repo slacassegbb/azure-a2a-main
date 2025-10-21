@@ -25,6 +25,7 @@ uv run . --ui            # start A2A server + Gradio UI (if supported)
 | `azurefoundry_claims` | Insurance claims specialist; coverage, settlement, documentation | 9001 | 9101 | Multi‑line claims (auto, property, travel, health) |
 | `azurefoundry_fraud` | Fraud analysis and response workflows | 9004 | 9104 | Detection, investigation, and reporting utilities |
 | `azurefoundry_assessment` | Assessment workflows (evals, scoring, summaries) | 9002 | 9102 | Launch with `--ui` for the demo UI |
+| `azurefoundry_branding` | Branding & content governance for copy, prompts, and visual direction | 9020 | 9120 | Grounds responses in `documents/company_branding.md` |
 | `google_adk` | Google GenAI ADK example A2A agent | 8003 | — | Configure Google API key; no UI by default |
 
 ## Environment (common)
