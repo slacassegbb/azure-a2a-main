@@ -8,8 +8,7 @@ import base64
 import os
 import tempfile
 import time
-import uuid
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, List
 
 from foundry_agent import FoundryDeepSearchAgent
 
@@ -19,7 +18,6 @@ from a2a.server.events.event_queue import EventQueue
 from a2a.server.tasks import TaskUpdater
 from a2a.types import (
     AgentCard,
-    FilePart,
     FileWithBytes,
     FileWithUri,
     Part,
@@ -73,7 +71,6 @@ class FoundryDeepSearchAgentExecutor(AgentExecutor):
                     raise
 
     def __init__(self, card: AgentCard):
-        self._card = card
         self._active_threads: Dict[str, str] = {}  # context_id -> thread_id mapping
         self._waiting_for_input: Dict[str, str] = {}
         self._pending_updaters: Dict[str, TaskUpdater] = {}
@@ -179,12 +176,12 @@ class FoundryDeepSearchAgentExecutor(AgentExecutor):
                 message=new_agent_text_message(f"Error: {e}", context_id=context_id)
             )
 
-    async def _run_agent_with_monitoring(
-        self, 
-        agent, 
-        thread_id: str, 
-        user_message: str, 
-        task_updater: TaskUpdater, 
+    async def _handle_tool_calls(
+        self,
+        agent: FoundryDeepSearchAgent,
+        thread_id: str,
+        user_message: str,
+        task_updater: TaskUpdater,
         context_id: str
     ):
         """Run the agent with real-time monitoring of tool calls and status updates."""
@@ -237,17 +234,6 @@ class FoundryDeepSearchAgentExecutor(AgentExecutor):
             
         return (responses, tools_called)
 
-    async def _cleanup_thread_later(self, agent: FoundryDeepSearchAgent, thread_id: str):
-        """Clean up a thread after a delay to avoid interfering with active runs."""
-        try:
-            # Wait much longer to ensure any active runs are complete and rate limits reset
-            await asyncio.sleep(60)  # Wait 1 minute before cleanup
-            client = agent._get_client()
-            client.threads.delete(thread_id)
-            logger.info(f"Delayed cleanup: deleted Azure thread {thread_id}")
-        except Exception as e:
-            logger.warning(f"Delayed cleanup failed for thread {thread_id}: {e}")
-
     def _convert_parts_to_text(self, parts: List[Part]) -> str:
         """Convert message parts to plain text, saving any files locally."""
         texts: List[str] = []
@@ -255,19 +241,18 @@ class FoundryDeepSearchAgentExecutor(AgentExecutor):
             p = part.root
             if isinstance(p, TextPart):
                 texts.append(p.text)
-            elif isinstance(p, FilePart):
-                if isinstance(p.file, FileWithUri):
-                    texts.append(f"[File at {p.file.uri}]")
-                elif isinstance(p.file, FileWithBytes):
-                    try:
-                        data = base64.b64decode(p.file.bytes)
-                        fname = p.file.name or "file"
-                        path = os.path.join(tempfile.gettempdir(), fname)
-                        with open(path, 'wb') as f:
-                            f.write(data)
-                        texts.append(f"[Saved {fname} to {path}]")
-                    except Exception as ex:
-                        texts.append(f"[Error saving file: {ex}]")
+            elif isinstance(p.file, FileWithUri):
+                texts.append(f"[File at {p.file.uri}]")
+            elif isinstance(p.file, FileWithBytes):
+                try:
+                    data = base64.b64decode(p.file.bytes)
+                    fname = p.file.name or "file"
+                    path = os.path.join(tempfile.gettempdir(), fname)
+                    with open(path, 'wb') as f:
+                        f.write(data)
+                    texts.append(f"[Saved {fname} to {path}]")
+                except Exception as ex:
+                    texts.append(f"[Error saving file: {ex}]")
         return " ".join(texts)
 
     async def execute(
@@ -337,33 +322,7 @@ class FoundryDeepSearchAgentExecutor(AgentExecutor):
 
 def create_foundry_agent_executor(card: AgentCard) -> FoundryDeepSearchAgentExecutor:
     return FoundryDeepSearchAgentExecutor(card)
-
-
-async def create_foundry_agent_executor_with_startup(card: AgentCard) -> FoundryDeepSearchAgentExecutor:
-    """Create deep search executor and initialize the shared agent at startup."""
-    await FoundryDeepSearchAgentExecutor.initialize_at_startup()
-    return FoundryDeepSearchAgentExecutor(card)
-
-
+ 
 async def initialize_foundry_deep_search_agents_at_startup():
-    """
-    Convenience function to initialize shared deep search agent resources at application startup.
-    Call this once during your application's startup phase.
-    
-    Example usage in your main application:
-    
-    ```python
-    # In your main startup code (e.g., main.py or app initialization)
-    import asyncio
-    from foundry_agent_executor import initialize_foundry_deep_search_agents_at_startup
-    
-    async def startup():
-        print("🚀 Starting deep search application...")
-        await initialize_foundry_deep_search_agents_at_startup()
-        print("✅ Deep search agent initialization complete, ready to handle requests")
-    
-    # Run at startup
-    asyncio.run(startup())
-    ```
-    """
+    """Initialize shared deep search agent resources during application startup."""
     await FoundryDeepSearchAgentExecutor.initialize_at_startup()

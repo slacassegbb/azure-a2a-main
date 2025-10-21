@@ -238,7 +238,7 @@
   },
   {
     "name": "ServiceNow, Web & Knowledge Agent",
-    "description": "An intelligent agent specialized in ServiceNow management, Bank system actions, web search, and file/knowledge/document search. Can simulate ServiceNow incidents, users, and knowledge base operations, perform any Bank action (block card, check balance, report fraud, etc.), search the web for current information, and search through uploaded documents/files for specific information, all with realistic synthetic responses.",
+    "description": "An intelligent agent specialized in ServiceNow management, Bank system actions, web search, and file/knowledge/document search.",
     "version": "1.0.0",
     "url": "http://localhost:8000/",
     "defaultInputModes": [
@@ -270,7 +270,7 @@
         ]
       },
       {
-        "id": "Bank_actions",
+        "id": "bank_actions",
         "name": "Bank Actions",
         "description": "Simulate any action on the Bank system (block/unblock card, check balance, report fraud, create disputes, issue refunds, etc.) and return synthetic responses.",
         "examples": [
@@ -823,6 +823,103 @@
           "search",
           "legal",
           "compliance"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "AI Foundry Image Generator Agent",
+    "description": "An Azure AI Foundry-powered creative assistant that transforms prompts into production-ready image briefs and renders.",
+    "version": "1.0.0",
+    "url": "http://localhost:9010/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "concept_art_generation",
+        "name": "Concept Art Generation",
+        "description": "Craft imaginative scenarios, creatures, and environments for concept art prompts.",
+        "examples": [
+          "Design a floating city skyline at sunset with bioluminescent waterfalls",
+          "Illustrate a dragon rider soaring above volcanic clouds",
+          "Create a futuristic cyberpunk alleyway with neon rain reflections",
+          "Render an enchanted forest clearing with glowing flora"
+        ],
+        "tags": [
+          "concept-art",
+          "fantasy",
+          "world-building"
+        ]
+      },
+      {
+        "id": "product_visualization",
+        "name": "Product Visualization",
+        "description": "Produce marketing-ready renders and hero shots for consumer products.",
+        "examples": [
+          "Create a studio-lit hero shot for a matte black smartwatch on marble",
+          "Visualize a minimalist perfume bottle with soft morning light",
+          "Design a vibrant energy drink can with splash effects",
+          "Render a premium set of wireless earbuds in a lifestyle setting"
+        ],
+        "tags": [
+          "product",
+          "marketing",
+          "renders"
+        ]
+      },
+      {
+        "id": "brand_style_adaptation",
+        "name": "Brand Style Adaptation",
+        "description": "Align generated visuals with brand palettes, typography, and mood boards.",
+        "examples": [
+          "Match the client’s pastel palette and flat design aesthetic for social banners",
+          "Create imagery in the style of vintage travel posters for a new campaign",
+          "Adapt product visuals to a noir comic-book style",
+          "Generate a set of lifestyle scenes following the brand lookbook"
+        ],
+        "tags": [
+          "brand",
+          "style-guide",
+          "consistency"
+        ]
+      },
+      {
+        "id": "style_enhancement",
+        "name": "Style Enhancement Guidance",
+        "description": "Suggest camera framing, lighting, and color grading tweaks for prompts.",
+        "examples": [
+          "Recommend depth-of-field and bokeh settings for a portrait prompt",
+          "Adjust a nighttime cityscape prompt for cinematic contrast",
+          "Refine a macro botanical prompt with soft light and pastel tones",
+          "Enhance a fantasy landscape with dynamic lighting cues"
+        ],
+        "tags": [
+          "lighting",
+          "composition",
+          "color"
+        ]
+      },
+      {
+        "id": "prompt_safety_review",
+        "name": "Prompt Safety Review",
+        "description": "Validate prompts for policy compliance and safe content generation.",
+        "examples": [
+          "Check an image prompt for potential IP infringement",
+          "Ensure a request for a public figure adheres to policy guidelines",
+          "Advise on safe alternatives for sensitive content prompts",
+          "Flag disallowed content and suggest compliant phrasing"
+        ],
+        "tags": [
+          "safety",
+          "policy",
+          "validation"
         ]
       }
     ]

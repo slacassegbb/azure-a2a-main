@@ -408,6 +408,18 @@ async def process_file_part(file_part, artifact_info=None):
             filename = artifact_info['file_name']
         print(f"[A2ADocumentProcessor] Processing file: {filename}")
         
+        filename_lower = filename.lower()
+        if "-mask" in filename_lower or "_mask" in filename_lower:
+            print(f"[A2ADocumentProcessor] Skipping mask file {filename}")
+            return {
+                "success": True,
+                "content": "",
+                "filename": filename,
+                "file_type": determine_file_type(filename),
+                "skipped": True,
+                "reason": "mask file"
+            }
+
         # Save file temporarily for processing
         import tempfile
         import os
@@ -472,6 +484,8 @@ async def process_file_part(file_part, artifact_info=None):
             print(f"[A2ADocumentProcessor] No content extracted from file")
             return {"success": False, "error": "No content extracted"}
         
+        processed_content = _strip_markdown_fences(processed_content)
+        
         # Create A2A-compliant interaction structure
         interaction_data = {
             "agent_name": "DocumentProcessor",
@@ -501,7 +515,7 @@ async def process_file_part(file_part, artifact_info=None):
         # Return both success status AND the extracted content for immediate use
         return {
             "success": True,
-            "content": processed_content,
+            "content": _strip_markdown_fences(processed_content),
             "filename": filename,
             "file_type": determine_file_type(filename)
         }
@@ -518,7 +532,23 @@ class A2ADocumentProcessor:
     
     async def process_file_part(self, file_part, artifact_info=None):
         """Process file part - delegates to the main function"""
-        return await process_file_part(file_part, artifact_info)
+        processed_content = await process_file_part(file_part, artifact_info)
+        return _strip_markdown_fences(processed_content)
+
+
+def _strip_markdown_fences(content: str) -> str:
+    """Remove common ```markdown fences and standalone triple backticks."""
+    if not isinstance(content, str):
+        return content
+
+    cleaned = content.strip()
+
+    # Remove "```markdown" markers and standalone ``` fences
+    cleaned = re.sub(r"```(?:markdown)?", "", cleaned, flags=re.IGNORECASE)
+    # Collapse excess whitespace introduced by removals
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+
+    return cleaned.strip()
 
 # Create instance for import
 a2a_document_processor = A2ADocumentProcessor() 

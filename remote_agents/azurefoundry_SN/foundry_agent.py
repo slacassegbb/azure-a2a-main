@@ -39,19 +39,19 @@ Common symptoms when TPM is too low:
 Reference: https://learn.microsoft.com/en-us/answers/questions/2237624/getting-rate-limit-exceeded-when-testing-ai-agent
 """
 import os
-import time
 import datetime
 import asyncio
 import logging
 import json
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, List
 
 from azure.ai.agents import AgentsClient
-from azure.ai.agents.models import Agent, ThreadMessage, ThreadRun, AgentThread, ToolOutput, MessageRole, BingGroundingTool, ListSortOrder, FilePurpose, FileSearchTool, McpTool, RequiredMcpToolCall, SubmitToolApprovalAction, ToolApproval
-from azure.ai.agents.operations import ThreadsOperations
+from azure.ai.agents.models import Agent, ThreadMessage, ThreadRun, AgentThread, BingGroundingTool, ListSortOrder, FilePurpose, FileSearchTool, McpTool, ToolApproval
 from azure.ai.projects import AIProjectClient
 from azure.identity import DefaultAzureCredential
 import glob
+import re
+from azure.ai.agents.models import ToolApproval
 
 logger = logging.getLogger(__name__)
 
@@ -76,15 +76,9 @@ class FoundrySNAgent:
         self.credential = DefaultAzureCredential()
         self.agent: Optional[Agent] = None
         self.threads: Dict[str, str] = {}  # thread_id -> thread_id mapping
-        self.vector_store = None
-        self.uploaded_files = []
         self._file_search_tool = None  # Cache the file search tool
         self._agents_client = None  # Cache the agents client
         self._project_client = None  # Cache the project client
-        
-    def is_initialized(self) -> bool:
-        """Check if the agent has been created and initialized."""
-        return self.agent is not None
         
     def _get_client(self) -> AgentsClient:
         """Get a cached AgentsClient instance to reduce API calls."""
@@ -249,7 +243,7 @@ class FoundrySNAgent:
                     return False
             
             # Run the connectivity test
-            connectivity_ok = await test_mcp_basic()
+            await test_mcp_basic()
             
             # Create MCP tool with specific allowed tools to avoid discovery timeout issues
             logger.info("🔧 CREATING McpTool OBJECT...")
@@ -269,9 +263,6 @@ class FoundrySNAgent:
             mcp_tool.update_headers("User-Agent", "Azure-AI-Foundry-Agent")
             logger.info("✅ Set MCP headers using update_headers method")
             
-            # Store reference to mcp_tool for later use
-            self._mcp_tool = mcp_tool
-
             tools = mcp_tool.definitions
             
             # Don't set tool_resources here - let file search handle it
@@ -418,7 +409,7 @@ Available Bank Actions (simulated):
         Do NOT fabricate ServiceNow data. Always execute the appropriate ServiceNow MCP tools and base responses strictly on real tool results. If a lookup returns no records, state that explicitly.
 
 Key guidelines:
-        - INCIDENT NUMBER ENFORCEMENT: If the user message contains an incident number matching /\bINC\d{6,}\b/ (e.g., INC0010009), you MUST call sn_get_incident(number) BEFORE replying. Do not answer without executing this tool. If no record is found, state that explicitly and then suggest next actions.
+        - INCIDENT NUMBER ENFORCEMENT: If the user message contains an incident number matching /\\bINC\\d{6,}\\b/ (e.g., INC0010009), you MUST call sn_get_incident(number) BEFORE replying. Do not answer without executing this tool. If no record is found, state that explicitly and then suggest next actions.
         - Person-to-incidents ENFORCEMENT: If the user asks for a person's incidents (e.g., "David Miller's incidents"), you MUST call sn_search_incidents with the person's name (or username/email). Do not answer without executing this tool.
         - ABSOLUTE RULE for person lookups: NEVER fabricate caller filters manually. Run sn_search_incidents first with the provided name. If sn_search_incidents returns no results and you have a confirmed username, you MAY then call sn_get_user_incidents as a secondary check.
         - INCIDENT RESPONSES: Do NOT use file_search or rely on uploaded documents for incident information. Always cite results pulled directly from the ServiceNow MCP tools.
@@ -478,446 +469,6 @@ EXAMPLES that require escalation:
 For all other requests, handle them yourself. Do NOT escalate unless the user clearly requests it.
 """
     
-    def _get_calendar_tools(self) -> List[Dict[str, Any]]:
-        """Define calendar tools for the agent."""
-        calendar_tools = [
-            {
-                "type": "function",
-                "function": {
-                    "name": "check_availability",
-                    "description": "Check if a time slot is available in the user's calendar",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "start_time": {
-                                "type": "string",
-                                "description": "Start time in RFC3339 format"
-                            },
-                            "end_time": {
-                                "type": "string", 
-                                "description": "End time in RFC3339 format"
-                            },
-                            "calendar_id": {
-                                "type": "string",
-                                "description": "Calendar ID (defaults to 'primary')",
-                                "default": "primary"
-                            }
-                        },
-                        "required": ["start_time", "end_time"]
-                    }
-                }
-            },
-            {
-                "type": "function", 
-                "function": {
-                    "name": "get_upcoming_events",
-                    "description": "Get upcoming events from the user's calendar",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "max_results": {
-                                "type": "integer",
-                                "description": "Maximum number of events to return",
-                                "default": 10
-                            },
-                            "time_range_hours": {
-                                "type": "integer", 
-                                "description": "Number of hours from now to check",
-                                "default": 24
-                            }
-                        }
-                    }
-                }
-            }
-        ]
-        
-        # Add ServiceNow tools (legacy function-style examples retained for reference, but not used)
-        salesforce_tools = [
-            {
-                "type": "function",
-                "function": {
-                    "name": "create_case",
-                    "description": "Create a new incident in ServiceNow",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "subject": {
-                                "type": "string",
-                                "description": "Brief description of the case"
-                            },
-                            "description": {
-                                "type": "string",
-                                "description": "Detailed description of the case"
-                            },
-                            "priority": {
-                                "type": "integer",
-                                "description": "Priority level (1=Critical, 2=High, 3=Medium, 4=Low, 5=Planning)",
-                                "enum": [1, 2, 3, 4, 5]
-                            },
-                            "severity": {
-                                "type": "integer",
-                                "description": "Severity level (1=Critical, 2=High, 3=Medium, 4=Low)",
-                                "enum": [1, 2, 3, 4]
-                            },
-                            "status": {
-                                "type": "string",
-                                "description": "Case status (New, In Progress, Resolved, Closed)",
-                                "enum": ["New", "In Progress", "Resolved", "Closed"]
-                            }
-                        },
-                        "required": ["subject"]
-                    }
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "search_records",
-                    "description": "Search for records in ServiceNow tables",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "query": {
-                                "type": "string",
-                                "description": "Search query (e.g., 'Priority=1', 'Status=New')"
-                            },
-                            "object": {
-                                "type": "string",
-                                "description": "ServiceNow table to search (default: Incident)",
-                                "default": "Case"
-                            },
-                            "limit": {
-                                "type": "integer",
-                                "description": "Maximum number of records to return",
-                                "default": 10
-                            }
-                        }
-                    }
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "get_case",
-                    "description": "Get a specific case by number or Id",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "case_id": {
-                                "type": "string",
-                                "description": "Case number (e.g., 500123456) or Id"
-                            }
-                        },
-                        "required": ["case_id"]
-                    }
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "search_user",
-                    "description": "Search for a user profile in ServiceNow by name, username, or email. Use this when asked to 'search for user X', 'find user X profile', or 'look up user X'. Returns user profile information.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "search_term": {
-                                "type": "string",
-                                "description": "The name, username, or email to search for (e.g., 'john.doe', 'John Doe', 'john@company.com')"
-                            },
-                            "limit": {
-                                "type": "integer",
-                                "description": "Maximum number of users to return",
-                                "default": 5
-                            }
-                        },
-                        "required": ["search_term"]
-                    }
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "get_user_cases",
-                    "description": "Get all cases for a specific user by name/username. Use this when asked to 'find user X and list cases', 'show cases for user X', or 'get cases for David Miller'. Returns case list, not user profile.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "username": {
-                                "type": "string",
-                                "description": "The username, full name, or email to search for (e.g., 'john.doe', 'John Doe', 'john@company.com')"
-                            },
-                            "limit": {
-                                "type": "integer",
-                                "description": "Maximum number of cases to return",
-                                "default": 10
-                            }
-                        },
-                        "required": ["username"]
-                    }
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "list_users",
-                    "description": "List available users in ServiceNow for debugging purposes",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "limit": {
-                                "type": "integer",
-                                "description": "Maximum number of users to return",
-                                "default": 5
-                            }
-                        }
-                    }
-                }
-            }
-        ]
-        
-        return calendar_tools + salesforce_tools
-    
-    def _get_salesforce_tools(self) -> List[Dict[str, Any]]:
-        """Define ServiceNow-like function tools for testing and simulation (kept for reference)."""
-        return [
-            {
-                "type": "function",
-                "function": {
-                    "name": "sf_create_case",
-                    "description": "Create a new incident in ServiceNow",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "subject": {
-                                "type": "string",
-                                "description": "Brief description of the case"
-                            },
-                            "description": {
-                                "type": "string",
-                                "description": "Detailed description of the case"
-                            },
-                            "category": {
-                                "type": "string",
-                                "description": "Case category (Fraud, Technical Issue, Payment Issue, Card Issue, Account Service, Security, Inquiry, Other)",
-                                "enum": ["Fraud", "Technical Issue", "Payment Issue", "Card Issue", "Account Service", "Security", "Inquiry", "Other"]
-                            },
-                            "priority": {
-                                "type": "integer",
-                                "description": "Priority level (1=Critical, 2=High, 3=Medium, 4=Low, 5=Planning)",
-                                "enum": [1, 2, 3, 4, 5]
-                            },
-                            "severity": {
-                                "type": "integer",
-                                "description": "Severity level (1=Critical, 2=High, 3=Medium, 4=Low)",
-                                "enum": [1, 2, 3, 4]
-                            },
-                            "contact_id": {
-                                "type": "string",
-                                "description": "Username or ID of the person reporting the case"
-                            }
-                        },
-                        "required": ["subject"]
-                    }
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "sf_search_cases",
-                    "description": "Search for existing incidents in ServiceNow",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "query": {
-                                "type": "string",
-                                "description": "Search query (e.g., 'Category=Fraud', 'Status=New', 'ContactId=john.doe')"
-                            },
-                            "limit": {
-                                "type": "integer",
-                                "description": "Maximum number of records to return",
-                                "default": 10
-                            },
-                            "category": {
-                                "type": "string",
-                                "description": "Filter by category"
-                            },
-                            "status": {
-                                "type": "string",
-                                "description": "Filter by status (New, In Progress, Resolved, Closed)"
-                            }
-                        }
-                    }
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "sf_get_case",
-                    "description": "Get a specific incident by number or sys_id",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "case_id": {
-                                "type": "string",
-                                "description": "Case number (e.g., 500123456) or Id"
-                            }
-                        },
-                        "required": ["case_id"]
-                    }
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "sf_search_user",
-                    "description": "Search for user profiles in ServiceNow",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "search_term": {
-                                "type": "string",
-                                "description": "Name, username, or email to search for"
-                            },
-                            "limit": {
-                                "type": "integer",
-                                "description": "Maximum number of users to return",
-                                "default": 5
-                            }
-                        },
-                        "required": ["search_term"]
-                    }
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "sf_get_user_cases",
-                    "description": "Get all incidents for a specific user",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "username": {
-                                "type": "string",
-                                "description": "Username, full name, or email"
-                            },
-                            "status": {
-                                "type": "string",
-                                "description": "Filter by case status (optional)"
-                            },
-                            "limit": {
-                                "type": "integer",
-                                "description": "Maximum number of cases to return",
-                                "default": 10
-                            }
-                        },
-                        "required": ["username"]
-                    }
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "sf_update_case",
-                    "description": "Update an existing incident in ServiceNow",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "case_id": {
-                                "type": "string",
-                                "description": "Case number or Id to update"
-                            },
-                            "status": {
-                                "type": "string",
-                                "description": "New status (New, In Progress, Resolved, Closed)"
-                            },
-                            "work_notes": {
-                                "type": "string",
-                                "description": "Work notes to add to the case"
-                            },
-                            "owner_id": {
-                                "type": "string",
-                                "description": "Assign case to a user"
-                            },
-                            "resolution_notes": {
-                                "type": "string",
-                                "description": "Resolution notes when closing case"
-                            }
-                        },
-                        "required": ["case_id"]
-                    }
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "sf_list_users",
-                    "description": "List available users in ServiceNow",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "limit": {
-                                "type": "integer",
-                                "description": "Maximum number of users to return",
-                                "default": 10
-                            },
-                            "department": {
-                                "type": "string",
-                                "description": "Filter by department"
-                            }
-                        }
-                    }
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "sf_search_knowledge",
-                    "description": "Search ServiceNow knowledge base articles",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "query": {
-                                "type": "string",
-                                "description": "Search query for knowledge articles"
-                            },
-                            "category": {
-                                "type": "string",
-                                "description": "Filter by knowledge category"
-                            },
-                            "limit": {
-                                "type": "integer",
-                                "description": "Maximum number of articles to return",
-                                "default": 5
-                            }
-                        },
-                        "required": ["query"]
-                    }
-                }
-            },
-            {
-                "type": "function",
-                "function": {   
-                    "name": "bank_action",
-                    "description": "Simulate any action on the Bank system (e.g., block card, check balance, report fraud, create dispute, issue refund, etc.) and return a synthetic response.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "action": {
-                                "type": "string",
-                                "description": "The Bank action to perform (e.g., 'block_card', 'check_balance', 'report_fraud', 'create_dispute', 'issue_refund', 'unblock_card', 'check_transaction', etc.)"
-                            },
-                            "parameters": {
-                                "type": "object",
-                                "description": "Parameters required for the action (e.g., card_number, amount, reason, transaction_id, merchant_name, etc.)"
-                            }
-                        },
-                        "required": ["action"]
-                    }
-                }
-            }
-        ]
-
-
     async def create_thread(self, thread_id: Optional[str] = None) -> AgentThread:
         """Create or retrieve a conversation thread."""
         client = self._get_client()
@@ -989,13 +540,11 @@ For all other requests, handle them yourself. Do NOT escalate unless the user cl
                 try:
                     name_match = _re.search(r"Customer\s+([A-Z][a-z]+\s+[A-Z][a-z]+)", user_message)
                     keyword_present = _re.search(r"\bVPN\b", user_message, flags=_re.IGNORECASE) is not None
-                    days_match = _re.search(r"last\s+(\d{1,3})\s+days", user_message, flags=_re.IGNORECASE)
                     wants_update = _re.search(r"\bupdate\b|\bwork note\b|\bset (it|state) to\b", user_message, flags=_re.IGNORECASE) is not None
                     mentions_incidents = _re.search(r"\bincidents?\b", user_message, flags=_re.IGNORECASE) is not None
 
                     if (name_match and mentions_incidents) or (keyword_present and mentions_incidents):
                         person = name_match.group(1) if name_match else "the specified user"
-                        days = int(days_match.group(1)) if days_match else 90
                         kw = "VPN" if keyword_present else ""
                         username_guess = None
                         try:
@@ -1017,8 +566,6 @@ For all other requests, handle them yourself. Do NOT escalate unless the user cl
                             base_query_parts.append(f"ORassigned_to.nameLIKE{kw}")
                         
                         # Use simple keyword search without complex date filtering
-                        full_query = "^".join(base_query_parts) if base_query_parts else ""
-
                         compound_hint = (
                             "SYSTEM TOOL HINT: This is a compound ServiceNow request. Before replying, you MUST execute these MCP tools: \n"
                             f"- sn_search_user with search_term='{person}'.\n"
@@ -1390,7 +937,6 @@ For all other requests, handle them yourself. Do NOT escalate unless the user cl
         formatted_text = text_content
         
         # Remove Azure AI Foundry citation markers like 【4:0†source】
-        import re
         formatted_text = re.sub(r'【\d+:\d+†source】', '', formatted_text)
         
         # Add a sources section if we have citations
@@ -1413,479 +959,6 @@ For all other requests, handle them yourself. Do NOT escalate unless the user cl
     
 
     
-    def _extract_bing_citations(self, text_content: str) -> tuple[str, List[Dict]]:
-        """Extract Bing search citations from the response text."""
-        import re
-        
-        citations = []
-        
-        # Method 1: Look for citation patterns like [^1^], [^2^], etc.
-        citation_pattern = r'\[\^(\d+)\^\]'
-        citation_matches = re.findall(citation_pattern, text_content)
-        
-        # Method 2: Look for structured source sections
-        # Bing often includes sources at the end like "Sources:\n1. Title - URL"
-        source_section_pattern = r'(?:Sources?|References?):\s*\n((?:.*\n?)*)'
-        source_matches = re.search(source_section_pattern, text_content, re.IGNORECASE | re.MULTILINE)
-        
-        if source_matches:
-            source_text = source_matches.group(1)
-            # Parse individual sources like "1. Title - URL"
-            source_line_pattern = r'(\d+)\.\s*([^-\n]+?)\s*-\s*(https?://[^\s\n]+)'
-            for match in re.finditer(source_line_pattern, source_text):
-                source_num, title, url = match.groups()
-                # Clean up the title by removing trailing whitespace
-                clean_title = title.strip() if title else f"Source {source_num}"
-                citations.append({
-                    'type': 'web',
-                    'text': clean_title,
-                    'url': url.strip()
-                })
-        
-        # Method 3: Look for URLs in the text (fallback)
-        if not citations:
-            url_pattern = r'https?://[^\s\)\]\>]+(?=[\s\)\]\>\n]|$)'
-            urls = re.findall(url_pattern, text_content)
-            
-            # Try to find context around URLs for better link text
-            for i, url in enumerate(urls[:5]):  # Limit to first 5 URLs
-                # Look for text before the URL that might be a title
-                url_context_pattern = rf'([^.\n]*?)\s*{re.escape(url)}'
-                context_match = re.search(url_context_pattern, text_content)
-                
-                if context_match:
-                    context = context_match.group(1).strip()
-                    # Clean up the context to get a reasonable title
-                    title = context[-50:] if len(context) > 50 else context
-                    title = title.strip('.,;:')
-                else:
-                    title = f"Web Source {i+1}"
-                
-                citations.append({
-                    'type': 'web',
-                    'text': title or f"Web Source {i+1}",
-                    'url': url
-                })
-        
-        return text_content, citations
-    
-    def _extract_foundry_citations(self, text_content: str) -> List[Dict]:
-        """Extract Azure AI Foundry style citations like 【4:4†source】."""
-        import re
-        
-        citations = []
-        
-        # Look for Azure AI Foundry citation patterns with Japanese brackets 【4:4†source】
-        foundry_pattern = r'【(\d+):(\d+)†source】'
-        foundry_matches = re.findall(foundry_pattern, text_content)
-        
-        if foundry_matches:
-            # These citations reference file search results
-            for i, (doc_num, ref_num) in enumerate(foundry_matches):
-                citations.append({
-                    'type': 'file',
-                    'text': f"Document {doc_num} (Reference {ref_num})",
-                    'file_id': f"doc_{doc_num}_{ref_num}",  # Placeholder since we don't have the actual file ID
-                    'quote': ''
-                })
-        
-        return citations
-
-    async def _handle_tool_calls(self, run: ThreadRun, thread_id: str):
-        """Handle tool calls during agent execution, including MCP tool approval."""
-        logger.info(f"Handling tool calls for run {run.id}")
-        
-        if not hasattr(run, 'required_action') or not run.required_action:
-            logger.warning(f"No required action found in run {run.id}")
-            return
-            
-        required_action = run.required_action
-        logger.info(f"Required action type: {type(required_action)}")
-        logger.info(f"Required action attributes: {dir(required_action)}")
-        
-        # Check if this is a SubmitToolApprovalAction (MCP tools)
-        if hasattr(required_action, 'submit_tool_approval') and required_action.submit_tool_approval:
-            logger.info("🔧 MCP TOOL APPROVAL REQUIRED - Implementing official Microsoft pattern")
-            await self._handle_mcp_tool_approval(run, thread_id, required_action)
-            return
-            
-        # Legacy tool output handling (for non-MCP tools)
-        if hasattr(required_action, 'submit_tool_outputs') and required_action.submit_tool_outputs:
-            logger.info("🔄 Legacy tool output handling (non-MCP tools)")
-            await self._handle_legacy_tool_outputs(run, thread_id, required_action)
-            return
-            
-        logger.warning(f"Unknown required action type: {type(required_action)}")
-
-    async def _handle_mcp_tool_approval(self, run: ThreadRun, thread_id: str, required_action):
-        """Handle MCP tool approval using the official Microsoft pattern."""
-        logger.info("🚀 IMPLEMENTING MCP TOOL APPROVAL...")
-        
-        try:
-            tool_calls = required_action.submit_tool_approval.tool_calls
-            if not tool_calls:
-                logger.warning("No tool calls provided - cancelling run")
-                client = self._get_client()
-                client.runs.cancel(thread_id=thread_id, run_id=run.id)
-                return
-            
-            logger.info(f"Found {len(tool_calls)} MCP tool calls to approve")
-            
-            tool_approvals = []
-            for tool_call in tool_calls:
-                logger.info(f"🔧 Processing MCP tool call: {tool_call}")
-                
-                # Check if this is an MCP tool call
-                if hasattr(tool_call, 'type') and tool_call.type == 'mcp':
-                    logger.info(f"✅ MCP tool call detected: {tool_call.name}")
-                    logger.info(f"   Arguments: {tool_call.arguments}")
-                    logger.info(f"   Server label: {tool_call.server_label}")
-                    
-                    try:
-                        # Create tool approval for MCP tools
-                        tool_approval = ToolApproval(
-                            tool_call_id=tool_call.id,
-                            approve=True,
-                            headers=self._mcp_tool.headers if hasattr(self, '_mcp_tool') else {},
-                        )
-                        tool_approvals.append(tool_approval)
-                        logger.info(f"✅ Created tool approval for MCP tool: {tool_call.name}")
-                        
-                    except Exception as e:
-                        logger.error(f"❌ Error creating tool approval for {tool_call.id}: {e}")
-                        logger.error(f"   Tool call object: {tool_call}")
-                        logger.error(f"   Tool call attributes: {dir(tool_call)}")
-                else:
-                    logger.warning(f"⚠️ Non-MCP tool call detected: {getattr(tool_call, 'type', 'unknown')}")
-            
-            # Submit all tool approvals
-            if tool_approvals:
-                logger.info(f"🚀 Submitting {len(tool_approvals)} MCP tool approvals...")
-                client = self._get_client()
-                
-                try:
-                    client.runs.submit_tool_outputs(
-                        thread_id=thread_id,
-                        run_id=run.id,
-                        tool_approvals=tool_approvals
-                    )
-                    logger.info("✅ MCP tool approvals submitted successfully!")
-                    logger.info("   Azure AI Foundry will now execute the MCP tools")
-                    logger.info("   Check MCP server logs for incoming requests")
-                    
-                except Exception as e:
-                    logger.error(f"❌ Failed to submit MCP tool approvals: {e}")
-                    logger.error(f"   Error type: {type(e)}")
-                    import traceback
-                    logger.error(f"   Full traceback: {traceback.format_exc()}")
-                    
-                    # Try to get more error details
-                    if hasattr(e, 'response') and hasattr(e.response, 'text'):
-                        logger.error(f"   Response text: {e.response.text}")
-                    if hasattr(e, 'status_code'):
-                        logger.error(f"   Status code: {e.status_code}")
-            else:
-                logger.warning("⚠️ No MCP tool approvals created - cancelling run")
-                client = self._get_client()
-                client.runs.cancel(thread_id=thread_id, run_id=run.id)
-                
-        except Exception as e:
-            logger.error(f"❌ ERROR IN MCP TOOL APPROVAL: {e}")
-            logger.error(f"   Error type: {type(e)}")
-            import traceback
-            logger.error(f"   Full traceback: {traceback.format_exc()}")
-            
-            # Try to cancel the run to prevent it from hanging
-            try:
-                client = self._get_client()
-                client.runs.cancel(thread_id=thread_id, run_id=run.id)
-                logger.info("✅ Run cancelled due to MCP tool approval error")
-            except Exception as cancel_error:
-                logger.error(f"❌ Failed to cancel run: {cancel_error}")
-
-    async def _handle_legacy_tool_outputs(self, run: ThreadRun, thread_id: str, required_action):
-        """Handle legacy tool output submission (for non-MCP tools)."""
-        logger.info("🔄 Processing legacy tool outputs...")
-        
-        try:
-            tool_calls = required_action.submit_tool_outputs.tool_calls
-            if not tool_calls:
-                logger.warning("No tool calls found in required action")
-                return
-            
-            tool_outputs = []
-
-            async def handle_single_tool_call(tool_call):
-                function_name = tool_call.function.name
-                arguments = tool_call.function.arguments
-                logger.info(f"🔧 PROCESSING TOOL CALL: {function_name}")
-                logger.info(f"   Arguments: {arguments}")
-                logger.info(f"   Tool call ID: {tool_call.id}")
-                logger.info(f"   Tool call type: {type(tool_call)}")
-                
-                # Enhanced logging for MCP tool calls
-                if hasattr(tool_call, 'type'):
-                    logger.info(f"   Tool call type attribute: {tool_call.type}")
-                    if tool_call.type == 'mcp':
-                        logger.info(f"🔧 MCP TOOL CALL BEING PROCESSED!")
-                        logger.info(f"   This indicates Azure Foundry successfully connected to MCP server")
-                        logger.info(f"   But the tool execution might fail due to protocol issues")
-                
-                # Log all available attributes for debugging
-                logger.debug(f"🔍 ALL TOOL CALL ATTRIBUTES:")
-                for attr in dir(tool_call):
-                    if not attr.startswith('_'):
-                        try:
-                            value = getattr(tool_call, attr)
-                            logger.debug(f"     {attr}: {value}")
-                        except:
-                            logger.debug(f"     {attr}: <could not access>")
-                
-                # Handle Salesforce tool responses - let LLM generate realistic data dynamically
-                if function_name.startswith("sf_"):
-                    import json
-                    try:
-                        args = json.loads(arguments) if isinstance(arguments, str) else arguments
-                    except:
-                        args = {}
-                    
-                    # Simple, dynamic approach - let LLM handle all the details
-                    output = {
-                        "status": "success",
-                        "function": function_name,
-                        "parameters": args,
-                        "instruction": "Generate realistic ServiceNow data for this operation. Create appropriate ServiceNow records with realistic field values, proper formatting, and authentic-looking data."
-                    }
-                    
-                    return {
-                        "tool_call_id": tool_call.id,
-                        "output": json.dumps(output)
-                    }
-                # --- Bank action simulation using LLM for dynamic responses ---
-                elif function_name == "bank_action":
-                    import json
-                    from datetime import datetime
-                    try:
-                        args = json.loads(arguments) if isinstance(arguments, str) else arguments
-                    except:
-                        args = {}
-                    action = args.get("action", "unknown_action")
-                    params = args.get("parameters", {})
-                    
-                    # Let LLM generate realistic synthetic data dynamically
-                    output = {
-                        "status": "success",
-                        "function": function_name,
-                        "parameters": args,
-                        "instruction": f"""Generate realistic Bank system data for the '{action}' operation. Create appropriate Bank records with realistic field values, proper formatting, and authentic-looking data. Include realistic IDs, timestamps, status messages, and processing times. Make the response look like it came from a real banking system.
-
-IMPORTANT: After generating the technical response data, provide a detailed customer-friendly explanation that includes SPECIFIC DETAILS:
-
-1. **Include specific account/card details**: Use the actual card numbers, account IDs, transaction IDs, amounts, merchant names, etc. from the parameters provided
-2. **Personalize the response**: If a customer name is mentioned (like "David Miller"), include their name and any relevant account details
-3. **Show exact amounts and dates**: Use the specific amounts, dates, and transaction details provided
-4. **Include realistic account information**: Generate realistic account numbers, card numbers, routing numbers, etc.
-5. **Provide specific next steps**: Give exact timelines, reference numbers, and contact details
-
-Example: Instead of "Your card has been blocked", say "David Miller's credit card ending in 5678 (Account #1234567890) has been blocked. The card was issued on 03/15/2022 and had a credit limit of $10,000."
-
-The response should include both the technical system response AND the customer-friendly explanation."""
-                    }
-                    
-                    return {
-                        "tool_call_id": tool_call.id,
-                        "output": json.dumps(output)
-                    }
-                # --- Calendar action simulation using LLM for dynamic responses ---
-                elif function_name == "calendar_action":
-                    import json
-                    from datetime import datetime, timedelta
-                    try:
-                        args = json.loads(arguments) if isinstance(arguments, str) else arguments
-                    except:
-                        args = {}
-                    action = args.get("action", "unknown_action")
-                    params = args.get("parameters", {})
-                    
-                    # Let LLM generate realistic synthetic data dynamically
-                    output = {
-                        "status": "success",
-                        "function": function_name,
-                        "parameters": args,
-                        "instruction": f"""Generate realistic Calendar system data for the '{action}' operation. Create appropriate Calendar records with realistic field values, proper formatting, and authentic-looking data. Include realistic event IDs, timestamps, attendee lists, and calendar details. Make the response look like it came from a real calendar system.
-
-IMPORTANT: After generating the technical response data, provide a detailed user-friendly explanation that includes SPECIFIC DETAILS:
-
-1. **Include specific event details**: Use the actual event names, dates, times, locations, and attendee information from the parameters provided
-2. **Personalize the response**: If a person's name is mentioned, include their name and any relevant calendar details
-3. **Show exact dates and times**: Use the specific dates, times, and duration details provided
-4. **Include realistic calendar information**: Generate realistic event IDs, calendar IDs, and meeting links
-5. **Provide specific next steps**: Give exact confirmation details, reminder times, and follow-up actions
-
-Example: Instead of "Meeting scheduled", say "Team Standup meeting scheduled for David Miller on Friday, March 15th, 2024 from 9:00 AM to 9:30 AM EST. Meeting ID: CAL-2024-0315-0900, Calendar: Work Calendar. Reminder set for 15 minutes before. Attendees: David Miller, Sarah Johnson, Mike Chen."
-
-The response should include both the technical system response AND the user-friendly explanation."""
-                    }
-                    
-                    return {
-                        "tool_call_id": tool_call.id,
-                        "output": json.dumps(output)
-                    }
-                # --- Web search simulation using LLM for dynamic responses ---
-                elif function_name == "web_search":
-                    import json
-                    try:
-                        args = json.loads(arguments) if isinstance(arguments, str) else arguments
-                    except:
-                        args = {}
-                    query = args.get("query", "unknown query")
-                    
-                    # Let LLM generate realistic synthetic data dynamically
-                    output = {
-                        "status": "success",
-                        "function": function_name,
-                        "parameters": args,
-                        "instruction": f"""Generate realistic web search results for the query: '{query}'. Create appropriate search results with realistic URLs, titles, snippets, and relevance scores. Make the response look like it came from a real web search engine.
-
-IMPORTANT: After generating the technical response data, provide a detailed user-friendly explanation that includes SPECIFIC DETAILS:
-
-1. **Include specific search details**: Use the actual query terms, search parameters, and filters from the parameters provided
-2. **Personalize the response**: If specific terms or context are mentioned, include them in the search results
-3. **Show exact search results**: Use the specific query, number of results, and search scope provided
-4. **Include realistic search information**: Generate realistic URLs, titles, snippets, and relevance scores
-5. **Provide specific next steps**: Give exact result counts, pagination details, and refinement suggestions
-
-Example: Instead of "Search completed", say "Web search completed for 'Azure AI Foundry MCP integration' with 1,247 results found. Top result: 'Getting Started with MCP in Azure AI Foundry' from Microsoft Docs (https://docs.microsoft.com/azure/ai-foundry/mcp-integration) with 98% relevance. Search completed in 0.23 seconds. Showing results 1-10 of 1,247."
-
-The response should include both the technical system response AND the user-friendly explanation."""
-                    }
-                    
-                    return {
-                        "tool_call_id": tool_call.id,
-                        "output": json.dumps(output)
-                    }
-                else:
-                    # For unknown functions, return a generic success response
-                    return {
-                        "tool_call_id": tool_call.id,
-                        "output": json.dumps({
-                            "status": "success",
-                            "function": function_name,
-                            "message": f"Function {function_name} executed successfully with arguments: {arguments}"
-                        })
-                    }
-
-            # Process all tool calls concurrently
-            tasks = [handle_single_tool_call(tool_call) for tool_call in tool_calls]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            
-            # Filter out exceptions and collect valid outputs
-            for result in results:
-                if isinstance(result, dict) and "tool_call_id" in result and "output" in result:
-                    tool_outputs.append(ToolOutput(**result))
-                else:
-                    logger.error(f"Invalid tool call result: {result}")
-
-            # Submit tool outputs
-            if tool_outputs:
-                logger.info(f"Submitting {len(tool_outputs)} tool outputs")
-                client = self._get_client()
-                client.runs.submit_tool_outputs(
-                    thread_id=thread_id,
-                    run_id=run.id,
-                    tool_outputs=tool_outputs
-                )
-                logger.info("Tool outputs submitted successfully")
-            else:
-                logger.warning("No valid tool outputs to submit")
-
-        except Exception as e:
-            logger.error(f"Error handling tool calls: {e}")
-            import traceback
-            logger.error(f"Full traceback: {traceback.format_exc()}")
-
-    async def cleanup_agent(self):
-        """Clean up the agent resources (individual instance only)."""
-        # DISABLED: Don't auto-delete the agent to allow reuse across multiple requests
-        # if self.agent:
-        #     client = self._get_client()
-        #     client.delete_agent(self.agent.id)
-        #     logger.info(f"Deleted agent: {self.agent.id}")
-        #     self.agent = None
-        
-        # Clear cached clients but keep the agent alive
-        # self._agents_client = None
-        # self._project_client = None
-        
-        # Note: Agent is preserved for reuse, shared file search resources are left for other instances to use
-        logger.info("Individual agent cleanup completed (agent preserved for reuse, shared resources preserved)")
-    
-    @classmethod
-    async def cleanup_shared_resources(cls):
-        """Clean up shared file search resources (call when shutting down completely)."""
-        try:
-            if cls._shared_vector_store or cls._shared_uploaded_files:
-                # We need a project client to clean up, create a temporary one
-                temp_agent = cls()
-                project_client = temp_agent._get_project_client()
-                
-                # Delete vector store
-                if cls._shared_vector_store:
-                    project_client.agents.delete_vector_store(cls._shared_vector_store.id)
-                    logger.info(f"Deleted shared vector store: {cls._shared_vector_store.id}")
-                    cls._shared_vector_store = None
-            
-                # Delete uploaded files
-                for file_id in cls._shared_uploaded_files:
-                    try:
-                        project_client.agents.delete_file(file_id=file_id)
-                        logger.info(f"Deleted shared file: {file_id}")
-                    except Exception as e:
-                        logger.warning(f"Failed to delete shared file {file_id}: {e}")
-                
-                cls._shared_uploaded_files = []
-                cls._shared_file_search_tool = None
-                logger.info("Shared file search resources cleaned up")
-                
-        except Exception as e:
-            logger.error(f"Error cleaning up shared file search resources: {e}")
-
-
-
-    def _get_readable_file_name(self, citation: Dict) -> str:
-        """Get meaningful citation text based on content, not just file names."""
-        
-        # Priority 1: Use actual quote/content if available and meaningful
-        quote = citation.get('quote', '').strip()
-        if quote and len(quote) > 20:  # Ensure substantial content
-            # Clean and truncate the quote for readability
-            clean_quote = quote.replace('\n', ' ').replace('\r', ' ')
-            if len(clean_quote) > 100:
-                clean_quote = clean_quote[:97] + "..."
-            return f'"{clean_quote}"'
-        
-        # Priority 2: Extract meaningful content from the citation text itself
-        citation_text = citation.get('text', '').strip()
-        if citation_text and 'Document excerpt:' in citation_text:
-            # Already formatted as an excerpt
-            return citation_text
-        
-        # Priority 3: Try to create meaningful content from available text
-        if citation_text and len(citation_text) > 20:
-            clean_text = citation_text.replace('\n', ' ').replace('\r', ' ')
-            if len(clean_text) > 100:
-                clean_text = clean_text[:97] + "..."
-            return f'Document excerpt: "{clean_text}"'
-        
-        # Priority 4: Use file information if available
-        file_id = citation.get('file_id', '')
-        if file_id:
-            return f"Document (ID: {file_id[-8:]})"  # Use last 8 chars for brevity
-        
-        # Fallback: Generic but still informative
-        source_type = citation.get('type', 'document')
-        return f"Referenced {source_type}"
-
     def _extract_citation_context(self, main_text: str, annotation, quote: str) -> str:
         """Extract meaningful context around a citation from the main response text."""
         try:
@@ -1960,6 +1033,144 @@ The response should include both the technical system response AND the user-frie
         
         # Fallback
         return "Referenced document"
+
+    def _get_readable_file_name(self, citation: Dict) -> str:
+        """Derive a human-readable label for a citation entry."""
+        quote = citation.get('quote', '').strip()
+        if quote and len(quote) > 20:
+            clean_quote = quote.replace('\n', ' ').replace('\r', ' ')
+            if len(clean_quote) > 100:
+                clean_quote = clean_quote[:97] + "..."
+            return f'"{clean_quote}"'
+
+        citation_text = citation.get('text', '').strip()
+        if citation_text and len(citation_text) > 10:
+            clean_text = citation_text.replace('\n', ' ').replace('\r', ' ')
+            if len(clean_text) > 100:
+                clean_text = clean_text[:97] + "..."
+            return clean_text
+
+        context = citation.get('context', '').strip()
+        if context and len(context) > 20:
+            clean_context = context.replace('\n', ' ').replace('\r', ' ')
+            if len(clean_context) > 100:
+                clean_context = clean_context[:97] + "..."
+            return clean_context
+
+        file_id = citation.get('file_id') or citation.get('file_path')
+        if file_id:
+            try:
+                project_client = self._get_project_client()
+                file_info = project_client.agents.files.get(file_id)
+                if hasattr(file_info, 'filename') and file_info.filename:
+                    cleaned_name = file_info.filename.replace('_', ' ')
+                    if len(cleaned_name) > 80:
+                        cleaned_name = cleaned_name[:77] + '...'
+                    return cleaned_name
+            except Exception as e:
+                logger.debug(f"Could not fetch filename for citation: {e}")
+
+        if citation_text:
+            return citation_text
+
+        return "Referenced document"
+
+    async def _handle_tool_calls(self, run: ThreadRun, thread_id: str):
+        """Handle tool calls or approval requests coming back from Azure AI Foundry."""
+        if not hasattr(run, "required_action") or not run.required_action:
+            logger.warning("No required_action present on run; nothing to handle")
+            return
+
+        required_action = run.required_action
+        action_type = None
+        tool_calls = []
+
+        if hasattr(required_action, "submit_tool_outputs") and required_action.submit_tool_outputs:
+            action_type = "submit_tool_outputs"
+            tool_calls = getattr(required_action.submit_tool_outputs, "tool_calls", []) or []
+        elif hasattr(required_action, "submit_tool_approval") and required_action.submit_tool_approval:
+            action_type = "submit_tool_approval"
+            tool_calls = getattr(required_action.submit_tool_approval, "tool_calls", []) or []
+        else:
+            logger.warning(
+                "Required action missing submit_tool_outputs/submit_tool_approval attributes: %s",
+                dir(required_action)
+            )
+            return
+
+        if not tool_calls:
+            logger.warning("Required action contained no tool calls; nothing to process")
+            return
+
+        client = self._get_client()
+
+        if action_type == "submit_tool_outputs":
+            logger.info("Handling %d tool output call(s)", len(tool_calls))
+            tool_outputs = []
+
+            for tool_call in tool_calls:
+                try:
+                    function_name = getattr(getattr(tool_call, "function", None), "name", "unknown")
+                    arguments = getattr(getattr(tool_call, "function", None), "arguments", "{}")
+                    logger.info("Processing tool output call %s with args %s", function_name, arguments)
+
+                    dummy_result = {
+                        "status": "success",
+                        "message": f"Tool '{function_name}' executed (simulated).",
+                        "data": {
+                            "result": "simulated_result",
+                            "arguments": arguments,
+                        },
+                    }
+
+                    tool_outputs.append({
+                        "tool_call_id": tool_call.id,
+                        "output": json.dumps(dummy_result),
+                    })
+                except Exception as exc:
+                    logger.error("Error constructing tool output for call %s: %s", getattr(tool_call, "id", "?"), exc)
+
+            if tool_outputs:
+                logger.debug("Submitting %d tool outputs", len(tool_outputs))
+                client.runs.submit_tool_outputs(
+                    thread_id=thread_id,
+                    run_id=run.id,
+                    tool_outputs=tool_outputs,
+                )
+            else:
+                logger.warning("No tool outputs generated; submitting empty acknowledgements")
+                fallback_outputs = [{"tool_call_id": tc.id, "output": "{}"} for tc in tool_calls if hasattr(tc, "id")]
+                if fallback_outputs:
+                    client.runs.submit_tool_outputs(
+                        thread_id=thread_id,
+                        run_id=run.id,
+                        tool_outputs=fallback_outputs,
+                    )
+
+            return
+
+        # Otherwise handle submit_tool_approval
+        logger.info("Handling %d tool approval request(s)", len(tool_calls))
+        approvals = []
+
+        for tool_call in tool_calls:
+            try:
+                approvals.append(ToolApproval(tool_call_id=tool_call.id, approve=True, headers={}))
+                logger.info("Prepared approval for tool call %s", tool_call.id)
+            except Exception as exc:
+                logger.error("Could not prepare approval for tool call %s: %s", getattr(tool_call, "id", "?"), exc)
+
+        if not approvals:
+            logger.warning("No approvals generated; skipping submission")
+            return
+
+        client.runs.submit_tool_outputs(
+            thread_id=thread_id,
+            run_id=run.id,
+            tool_approvals=approvals,
+        )
+        logger.info("Submitted %d tool approval(s)", len(approvals))
+
 
     async def run_conversation(self, thread_id: str, user_message: str):
         """Collects all streamed messages and returns as a tuple (responses, tools_called) for host agent compatibility."""
@@ -2126,7 +1337,6 @@ async def create_foundry_SN_agent() -> FoundrySNAgent:
     return agent
 
 
-# Example usage for testing
 async def demo_agent_interaction():
     """Demo function showing how to use the Foundry calendar, web search, and file search agent."""
     agent = await create_foundry_SN_agent()
@@ -2142,60 +1352,7 @@ async def demo_agent_interaction():
             print(f"Assistant: {response}")
                 
     finally:
-        # DISABLED: Don't auto-cleanup agent to allow reuse
-        # await agent.cleanup_agent()
-        # Only clean up shared resources on final shutdown if really needed
-        # await FoundrySNAgent.cleanup_shared_resources()
         logger.info("Demo completed - agent preserved for reuse")
-
-
-def test_citation_improvement():
-    """Test function to demonstrate citation improvements."""
-    agent = FoundrySNAgent()
-    
-    # Simulate the old problematic citation format
-    old_citations = [
-        {'type': 'file', 'text': 'Document Citation (【4:0†source】)', 'file_id': 'file123', 'quote': 'For Bank, the 24/7 number is 1-800-950-5114'},
-        {'type': 'file', 'text': 'Document Citation (【4:0†source】)', 'file_id': 'file123', 'quote': 'For Bank, the 24/7 number is 1-800-950-5114'},
-        {'type': 'file', 'text': 'Document Citation (【4:2†source】)', 'file_id': 'file123', 'quote': 'Federal laws limit consumer liability to $50'},
-        {'type': 'file', 'text': 'Document 4 (Reference 0)', 'file_id': 'file123', 'quote': ''},
-        {'type': 'file', 'text': 'Document 4 (Reference 0)', 'file_id': 'file123', 'quote': ''},
-        {'type': 'file', 'text': 'Document 4 (Reference 2)', 'file_id': 'file123', 'quote': ''},
-    ]
-    
-    test_response = """To handle a stolen credit card incident, follow the steps below:
-Immediate Reporting:
-Notify the bank immediately by calling their lost card hotline. For Bank, the 24/7 number is 1-800-950-5114 (for U.S. credit cards)【4:0†source】.
-Alternatively, customers can use the bank's online account or mobile app to report the card as stolen and in some cases, lock or freeze the card temporarily【4:0†source】.
-Card Deactivation and Replacement:
-The bank will deactivate the stolen card to prevent unauthorized use.
-A replacement card will be issued within 5-7 business days; expedited delivery may be available for a fee【4:0†source】.
-Fraudulent Charges Check:
-Review recent account transactions. Report any suspicious or unauthorized charges alongside lodging the stolen card report【4:0†source】.
-The bank's fraud team will handle disputes and potentially provide refunds for fraudulent activities once the investigation confirms them【4:0†source】.
-Update Recurring Payments:
-Update any automatic payments or saved card details with the newly issued card information to prevent interruptions in payments【4:0†source】.
-Legal and Security Actions:
-Consider filing a fraud alert with major credit bureaus or even a police report if identity theft is suspected【4:2†source】.
-Continue to monitor accounts for any further unauthorized transactions【4:2†source】.
-Liability Protection:
-Timely reporting ensures you are not held liable for unauthorized charges. Federal laws limit consumer liability to $50, but Citibank's policy is $0 for confirmed fraud cases【4:2†source】.
-Following these actions promptly helps minimize losses and ensures a quick resolution."""
-    
-    # Test the improved citation formatting
-    improved_response = agent._format_response_with_citations(test_response, old_citations)
-    
-    print("=== CITATION IMPROVEMENT DEMONSTRATION ===")
-    print("\nOLD FORMAT (before improvement):")
-    print("- Multiple identical 'Document Citation (【4:0†source】)' entries")
-    print("- Generic 'Document 4 (Reference 0)' without context")
-    print("- No actual file names or meaningful descriptions")
-    print("- Repetitive and cluttered sources section")
-    
-    print("\nNEW FORMAT (after improvement):")
-    print(improved_response)
-    
-    return improved_response
 
 
 if __name__ == "__main__":

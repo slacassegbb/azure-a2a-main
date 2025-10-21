@@ -11,5 +11,3 @@ export function useEventHub() {
   return useEventHubContext();
 }
 
-export default useEventHub;
-

@@ -9,6 +9,3 @@ export const warnDebug = (...args: any[]) => {
   if (DEBUG) console.warn(...args)
 }
 
-// Errors should generally still surface regardless of flag.
-export const errorLog = (...args: any[]) => console.error(...args)
-

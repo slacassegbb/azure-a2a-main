@@ -39,9 +39,13 @@ async def register_with_host_agent(
         bool: True if registration successful, False otherwise
     """
     if not host_url:
-        host_url = os.getenv('A2A_HOST_AGENT_URL', 'http://localhost:12000')
-    
-    registration_url = f"{host_url}/agent/self-register"
+        host_url = get_host_agent_url()
+
+    if not host_url:
+        logger.info("ℹ️ Host agent URL not provided; skipping self-registration")
+        return False
+
+    registration_url = f"{host_url.rstrip('/')}/agent/self-register"
     
     for attempt in range(max_retries):
         try:
@@ -94,35 +98,11 @@ async def register_with_host_agent(
 
 def get_host_agent_url() -> str:
     """Get the host agent URL from environment variables or default."""
-    return os.getenv('A2A_HOST_AGENT_URL', 'http://localhost:12000')
+    if 'A2A_HOST' in os.environ:
+        host_url = os.getenv('A2A_HOST', '')
+    elif 'A2A_HOST_AGENT_URL' in os.environ:
+        host_url = os.getenv('A2A_HOST_AGENT_URL', '')
+    else:
+        return 'http://localhost:12000'
 
-
-async def register_with_host_agent_async_startup(agent_card: AgentCard) -> None:
-    """
-    Async startup variant that runs registration in the background.
-    
-    This is useful for agents that need to start their server immediately
-    and handle registration as a background task.
-    """
-    try:
-        success = await register_with_host_agent(agent_card)
-        if success:
-            logger.info(f"🎉 Background registration successful for '{agent_card.name}'")
-        else:
-            logger.info(f"📡 Background registration failed for '{agent_card.name}' - agent still functional")
-    except Exception as e:
-        logger.warning(f"⚠️ Background registration error for '{agent_card.name}': {e}")
-
-
-def register_with_host_agent_background(agent_card: AgentCard) -> None:
-    """
-    Fire-and-forget background registration.
-    
-    Starts registration as a background task without blocking agent startup.
-    """
-    async def _register():
-        await register_with_host_agent_async_startup(agent_card)
-    
-    # Start registration as background task
-    asyncio.create_task(_register())
-    logger.info(f"🚀 Started background registration task for '{agent_card.name}'") 
+    return host_url.strip() 

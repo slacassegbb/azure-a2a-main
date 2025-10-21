@@ -159,6 +159,13 @@ Current agent: {current_agent['active_agent']}
             raise ValueError(f'Agent {agent_name} not found')
         state = tool_context.state
         state['agent'] = agent_name
+
+        # Reset action flags each time we dispatch a task so stale escalation
+        # markers from previous runs don't leak into the next response cycle.
+        if hasattr(tool_context, 'actions'):
+            tool_context.actions.skip_summarization = False
+            tool_context.actions.escalate = False
+
         client = self.remote_agent_connections[agent_name]
         if not client:
             raise ValueError(f'Client not available for {agent_name}')
@@ -248,8 +255,12 @@ async def convert_part(part: Part, tool_context: ToolContext):
                 mime_type=part.root.file.mimeType, data=file_bytes
             )
         )
-        await tool_context.save_artifact(file_id, file_part)
+        artifact_response = await tool_context.save_artifact(file_id, file_part)
+        if isinstance(artifact_response, DataPart) and getattr(artifact_response, 'data', None):
+            print(f"[DEBUG] convert_part: received artifact response with data {artifact_response.data}")
         tool_context.actions.skip_summarization = True
         tool_context.actions.escalate = True
+        if isinstance(artifact_response, DataPart):
+            return artifact_response
         return DataPart(data={'artifact-file-id': file_id})
     return f'Unknown type: {part.kind}'

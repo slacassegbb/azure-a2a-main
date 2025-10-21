@@ -7,7 +7,7 @@ An Azure AI Foundry agent specialized in detecting fraud across auto, property, 
 - 🚨 **Red Flag Detection** – Maps claim facts to known schemes, anomaly patterns, and escalation triggers.
 - 📚 **Evidence Documentation** – Summarizes supporting documents, data discrepancies, and follow-up actions.
 - 🌐 **Dual Operation Modes** – Run as an A2A server on port `9004` or launch the Gradio UI on port `9104` for interactive investigations.
-- 🤝 **Self-Registration** – Automatically registers with a host agent (default `http://localhost:12000`).
+- 🤝 **Self-Registration** – Automatically registers with a host agent configured via `A2A_HOST` (defaults to `http://localhost:12000`).
 
 ## Project Structure
 ```
@@ -39,12 +39,24 @@ AZURE_AI_FOUNDRY_PROJECT_ENDPOINT=your-endpoint
 AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME=your-model
 ```
 
+### 3a. Configure A2A Server
+```env
+# Hostname or base domain the agent binds to (defaults to localhost)
+A2A_ENDPOINT=localhost
+
+# Port for the agent's A2A API
+A2A_PORT=9004
+
+# Host agent URL for self-registration (empty string disables)
+A2A_HOST=http://localhost:12000
+```
+
 ### 4. Run the Agent
-- **A2A server** (default `9004`):
+- **A2A server** (defaults to `A2A_ENDPOINT:A2A_PORT`, e.g. `http://localhost:9004`):
   ```bash
   uv run .
   ```
-  Health check: `http://localhost:9004/health`
+  Health check: `http://$A2A_ENDPOINT:$A2A_PORT/health`
 
 - **Gradio UI + A2A server**:
   ```bash
@@ -79,8 +91,8 @@ With the host agent running (`demo/ui`), start the fraud agent and run `python t
 - Use the Gradio console output to observe real-time fraud reasoning and tool calls.
 
 ## Defaults & Overrides
-- A2A Server: `9004` (override with `--port`)
+- A2A Server: `A2A_ENDPOINT:A2A_PORT` (defaults to `localhost:9004`, override via env or `--port`)
 - Gradio UI: `9104` (override with `--ui-port`)
-- Host Agent URL: `http://localhost:12000` (override with `A2A_HOST_AGENT_URL`)
+- Host Agent URL: `A2A_HOST` (defaults to `http://localhost:12000`, accepts empty string to disable)
 
 Keep investigators ahead of fraud rings with timely, evidence-backed insights. 🕵️‍♂️

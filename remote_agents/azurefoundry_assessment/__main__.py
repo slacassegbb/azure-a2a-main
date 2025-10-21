@@ -3,7 +3,6 @@ import logging
 import os
 import traceback
 from collections.abc import AsyncIterator
-from pprint import pformat
 import threading
 
 import click
@@ -20,16 +19,49 @@ from starlette.routing import Route
 from a2a.server.apps import A2AStarletteApplication
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.tasks import InMemoryTaskStore
-from a2a.types import AgentCapabilities, AgentCard, AgentSkill
+from a2a.types import AgentCard, AgentSkill
 
 load_dotenv()
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
+def _normalize_env_value(raw_value: str | None) -> str:
+    if raw_value is None:
+        return ''
+    return raw_value.strip()
+
+
+def _resolve_default_host() -> str:
+    value = _normalize_env_value(os.getenv('A2A_ENDPOINT'))
+    return value or 'localhost'
+
+
+def _resolve_default_port() -> int:
+    raw_port = _normalize_env_value(os.getenv('A2A_PORT'))
+    if raw_port:
+        try:
+            return int(raw_port)
+        except ValueError:
+            logger.warning("Invalid A2A_PORT value '%s'; defaulting to 9002", raw_port)
+    return 9002
+
+
+def resolve_agent_url(bind_host: str, bind_port: int) -> str:
+    endpoint = _normalize_env_value(os.getenv('A2A_ENDPOINT'))
+    if endpoint:
+        if endpoint.startswith(('http://', 'https://')):
+            return endpoint.rstrip('/') + '/'
+        host_for_url = endpoint
+    else:
+        host_for_url = bind_host if bind_host != "0.0.0.0" else _resolve_default_host()
+
+    return f"http://{host_for_url}:{bind_port}/"
+
 # Import self-registration utility
 try:
-    from utils.self_registration import register_with_host_agent
+    from utils.self_registration import register_with_host_agent, get_host_agent_url
     SELF_REGISTRATION_AVAILABLE = True
     logger.info("✅ Self-registration utility loaded")
 except ImportError:
@@ -37,28 +69,19 @@ except ImportError:
     async def register_with_host_agent(agent_card, host_url=None):
         logger.info("ℹ️ Self-registration utility not available - skipping registration")
         return False
+    def get_host_agent_url() -> str:
+        return ""
     SELF_REGISTRATION_AVAILABLE = False
 
 # Updated ports to avoid conflicts with other agents
-DEFAULT_HOST = 'localhost'
-DEFAULT_PORT = 9002  # Assessment agent A2A port
+DEFAULT_HOST = _resolve_default_host()
+DEFAULT_PORT = _resolve_default_port()  # Assessment agent A2A port
 DEFAULT_UI_PORT = 9102  # Assessment agent UI port
 
-# UI Configuration - Updated for Assessment agent
-APP_NAME = "foundry_assessment_app"
-USER_ID = "default_user"
-SESSION_ID = "default_session"
+HOST_AGENT_URL = _normalize_env_value(get_host_agent_url())
 
 # Global reference to the agent executor to check for pending tasks
 agent_executor_instance = None
-
-# Global state for UI notifications
-pending_request_notification = {"has_pending": False, "request_text": "", "context_id": ""}
-
-#CITIBANK_HOST_AGENT_URL = "https://citibank-host-agent.whiteplant-4c581c75.canadaeast.azurecontainerapps.io"
-CITIBANK_HOST_AGENT_URL = "http://localhost:12000"
-#CITIBANK_HOST_AGENT_URL = "https://contoso-a2a.whiteplant-4c581c75.canadaeast.azurecontainerapps.io/"
-
 
 def create_a2a_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
     """Create A2A server application for Azure Foundry Assessment & Estimation agent."""
@@ -128,14 +151,16 @@ def create_a2a_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
         ),
     ]
 
+    resolved_host_for_url = host if host != "0.0.0.0" else DEFAULT_HOST
+
     agent_card = AgentCard(
         name='AI Foundry Assessment & Estimation Agent',
         description="An intelligent assessment specialist powered by Azure AI Foundry. Performs multi-line damage evaluations, cost estimations, and structured reporting for auto, property, travel, and health scenarios.",
-        url=f'http://localhost:9002/',
+        url=resolve_agent_url(resolved_host_for_url, port),
         version='1.0.0',
         defaultInputModes=['text'],
         defaultOutputModes=['text'],
-        capabilities=AgentCapabilities(streaming=True),
+        capabilities={"streaming": True},
         skills=skills,
     )
 
@@ -157,7 +182,7 @@ def create_a2a_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
     routes = a2a_app.routes()
     
     # Add health check endpoint
-    async def health_check(request: Request) -> PlainTextResponse:
+    async def health_check(_: Request) -> PlainTextResponse:
         return PlainTextResponse('AI Foundry Assessment & Estimation Agent is running!')
     
     routes.append(
@@ -187,8 +212,12 @@ async def register_agent_with_host(agent_card):
         # Wait a moment for server to fully start
         await asyncio.sleep(2)
         try:
-            logger.info(f"🤝 Attempting to register '{agent_card.name}' with host agent...")
-            registration_success = await register_with_host_agent(agent_card, host_url=CITIBANK_HOST_AGENT_URL)
+            if not HOST_AGENT_URL:
+                logger.info("ℹ️ Host agent URL not configured; skipping registration attempt.")
+                return
+
+            logger.info(f"🤝 Attempting to register '{agent_card.name}' with host agent at {HOST_AGENT_URL}...")
+            registration_success = await register_with_host_agent(agent_card, host_url=HOST_AGENT_URL)
             if registration_success:
                 logger.info(f"🎉 '{agent_card.name}' successfully registered with host agent!")
             else:
@@ -212,7 +241,7 @@ def start_background_registration(agent_card):
 
 async def get_foundry_response(
     message: str,
-    history: list[gr.ChatMessage],
+    _history: list[gr.ChatMessage],
 ) -> AsyncIterator[gr.ChatMessage]:
     """Get response from Azure Foundry Assessment & Estimation agent for Gradio UI."""
     global agent_executor_instance
@@ -374,14 +403,16 @@ async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_p
         ),
     ]
 
+    resolved_host_for_url = host if host != "0.0.0.0" else DEFAULT_HOST
+
     agent_card = AgentCard(
         name='AI Foundry Assessment & Estimation Agent',
         description="An intelligent assessment specialist powered by Azure AI Foundry. Performs multi-line damage evaluations, cost estimations, and structured reporting for auto, property, travel, and health scenarios.",
-        url=f'http://localhost:9002/',
+        url=resolve_agent_url(resolved_host_for_url, a2a_port),
         version='1.0.0',
         defaultInputModes=['text'],
         defaultOutputModes=['text'],
-        capabilities=AgentCapabilities(streaming=True),
+            capabilities={"streaming": True},
         skills=skills,
     )
     
@@ -391,6 +422,10 @@ async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_p
     def check_system_status():
         """Check system status for the Assessment Agent."""
         return "✅ **Status:** Assessment Agent Ready – Share your inspection details for a cost estimate!"
+
+    display_host = resolved_host_for_url
+    ui_display_url = f"http://{display_host}:{ui_port}"
+    a2a_display_url = resolve_agent_url(display_host, a2a_port).rstrip('/')
 
     with gr.Blocks(theme=gr.themes.Ocean(), title="AI Foundry Assessment & Estimation Agent") as demo:
         gr.Image(
@@ -406,8 +441,8 @@ async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_p
         gr.Markdown(f"""
         ## 📏 AI Foundry Assessment & Estimation Agent
 
-        **Direct UI Access:** http://localhost:{ui_port}  
-        **A2A API Access:** http://localhost:{a2a_port}
+        **Direct UI Access:** {ui_display_url}  
+        **A2A API Access:** {a2a_display_url}
 
         **Assessment Expertise:** Purpose-built for precise loss estimation across multiple insurance lines:
 
@@ -442,7 +477,7 @@ async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_p
         timer.tick(fn=check_system_status, outputs=status_display)
 
         # Add a hidden component that triggers refresh via JavaScript
-        refresh_timer = gr.HTML("""
+        gr.HTML("""
         <script>
         setInterval(function() {
             // Find the refresh button by its text content
@@ -457,8 +492,24 @@ async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_p
         </script>
         """, visible=False)
 
-        chat_interface = gr.ChatInterface(
-            get_foundry_response,
+        async def _ui_process(message, history):
+            if foundry_agent_executor._last_received_files:
+                print("[Assessment UI] Latest file references from host agent:")
+                for file_info in foundry_agent_executor._last_received_files:
+                    print(
+                        f"  • name={file_info.get('name')} uri={file_info.get('uri')} mime={file_info.get('mime')}"
+                    )
+            chunks = []
+            async for chunk in get_foundry_response(message, history):
+                chunks.append(chunk)
+            if not chunks:
+                return []
+            if len(chunks) == 1:
+                return chunks[0]
+            return chunks
+
+        gr.ChatInterface(
+            _ui_process,
             title="",
             description="Describe the loss inspection and I'll build an estimate, note severity, outline assumptions, and list QA next steps.",
             examples=[
@@ -466,7 +517,7 @@ async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_p
                 "Basement flood soaked drywall and flooring—provide replacement cost and QA reminders.",
                 "Trip cancelled due to illness—estimate reimbursable costs and document requests.",
                 "Hospital stay with CT scan—give cost range and assumptions.",
-                "Before submitting, list QA checklist items to verify." 
+                "Before submitting, list QA checklist items to verify."
             ],
         )
 
@@ -568,14 +619,16 @@ def main(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
         ),
     ]
 
+    resolved_host_for_url = host if host != "0.0.0.0" else DEFAULT_HOST
+
     agent_card = AgentCard(
         name='AI Foundry Assessment & Estimation Agent',
         description="An intelligent assessment specialist powered by Azure AI Foundry. Performs multi-line damage evaluations, cost estimations, and structured reporting for auto, property, travel, and health scenarios.",
-        url=f'http://localhost:9002/',
+        url=resolve_agent_url(resolved_host_for_url, port),
         version='1.0.0',
         defaultInputModes=['text'],
         defaultOutputModes=['text'],
-        capabilities=AgentCapabilities(streaming=True),
+        capabilities={"streaming": True},
         skills=skills,
     )
     

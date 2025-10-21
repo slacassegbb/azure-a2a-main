@@ -37,10 +37,8 @@ docker build -t citichat-frontend .
 
 # Build with environment variables
 docker build \
-  --build-arg NEXT_PUBLIC_AZURE_EVENTHUB_CONNECTION_STRING="your-connection-string" \
-  --build-arg NEXT_PUBLIC_AZURE_EVENTHUB_NAME="a2a-events" \
-  --build-arg NEXT_PUBLIC_AZURE_EVENTHUB_CONSUMER_GROUP="$Default" \
   --build-arg NEXT_PUBLIC_A2A_API_URL="http://localhost:12000" \
+  --build-arg NEXT_PUBLIC_WEBSOCKET_URL="ws://localhost:8080/events" \
   --build-arg NEXT_PUBLIC_DEV_MODE="false" \
   -t citichat-frontend .
 ```
@@ -53,10 +51,8 @@ docker run -p 3000:3000 citichat-frontend
 
 # Run with environment variables
 docker run -p 3000:3000 \
-  -e NEXT_PUBLIC_AZURE_EVENTHUB_CONNECTION_STRING="your-connection-string" \
-  -e NEXT_PUBLIC_AZURE_EVENTHUB_NAME="a2a-events" \
-  -e NEXT_PUBLIC_AZURE_EVENTHUB_CONSUMER_GROUP="$Default" \
   -e NEXT_PUBLIC_A2A_API_URL="http://localhost:12000" \
+  -e NEXT_PUBLIC_WEBSOCKET_URL="ws://localhost:8080/events" \
   citichat-frontend
 ```
 
@@ -65,15 +61,11 @@ docker run -p 3000:3000 \
 The following environment variables can be set at build time and/or runtime:
 
 ### Required
-- `NEXT_PUBLIC_AZURE_EVENTHUB_NAME` - Event Hub name
-- `NEXT_PUBLIC_AZURE_EVENTHUB_CONNECTION_STRING` - Connection string (dev only)
+- `NEXT_PUBLIC_A2A_API_URL` - A2A backend API URL
 
 ### Optional
-- `NEXT_PUBLIC_AZURE_EVENTHUB_NAMESPACE` - Event Hub namespace (production)
-- `NEXT_PUBLIC_AZURE_EVENTHUB_CONSUMER_GROUP` - Consumer group (default: $Default)
-- `NEXT_PUBLIC_A2A_API_URL` - A2A backend API URL
+- `NEXT_PUBLIC_WEBSOCKET_URL` - Override WebSocket relay endpoint (default: `ws://localhost:8080/events`)
 - `NEXT_PUBLIC_DEV_MODE` - Development mode flag
-- `NEXT_PUBLIC_USE_MOCK_EVENTHUB` - Force mock Event Hub
 
 ## Health Check
 
@@ -92,10 +84,9 @@ Response example:
   "uptime": 125.234,
   "environment": "production",
   "version": "0.1.0",
-  "eventHub": {
-    "configured": true,
-    "name": "a2a-events",
-    "consumerGroup": "$Default"
+  "websocket": {
+    "url": "ws://localhost:8080/events",
+    "usingDefaultUrl": true
   }
 }
 ```
@@ -131,8 +122,8 @@ az container create \
   --image your-registry.azurecr.io/citichat-frontend:latest \
   --ports 3000 \
   --environment-variables \
-    NEXT_PUBLIC_AZURE_EVENTHUB_NAME=a2a-events \
-    NEXT_PUBLIC_AZURE_EVENTHUB_NAMESPACE=your-namespace.servicebus.windows.net
+    NEXT_PUBLIC_A2A_API_URL=https://your-backend.example.com \
+    NEXT_PUBLIC_WEBSOCKET_URL=wss://your-backend.example.com/events
 ```
 
 ### Azure Container Apps
@@ -149,7 +140,7 @@ Use the production docker-compose configuration as a reference for Container App
 
 ### Runtime Issues
 
-1. **Event Hub connection**: Check environment variables and consumer group
+1. **WebSocket connection**: Verify the relay URL and ensure the backend WebSocket server is running
 2. **Port conflicts**: Ensure port 3000 is available
 3. **Health check**: Monitor `/api/health` endpoint
 

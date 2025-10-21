@@ -39,16 +39,14 @@ Common symptoms when TPM is too low:
 Reference: https://learn.microsoft.com/en-us/answers/questions/2237624/getting-rate-limit-exceeded-when-testing-ai-agent
 """
 import os
-import time
 import datetime
 import asyncio
 import logging
 import json
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, List
 
 from azure.ai.agents import AgentsClient
-from azure.ai.agents.models import Agent, ThreadMessage, ThreadRun, AgentThread, ToolOutput, MessageRole, BingGroundingTool, ListSortOrder, FilePurpose, FileSearchTool, McpTool, RequiredMcpToolCall, SubmitToolApprovalAction, ToolApproval
-from azure.ai.agents.operations import ThreadsOperations
+from azure.ai.agents.models import Agent, ThreadMessage, ThreadRun, AgentThread, ToolOutput, BingGroundingTool, ListSortOrder, FilePurpose, FileSearchTool, RequiredMcpToolCall, ToolApproval
 from azure.ai.projects import AIProjectClient
 from azure.identity import DefaultAzureCredential
 import glob
@@ -76,15 +74,9 @@ class FoundryDeepSearchAgent:
         self.credential = DefaultAzureCredential()
         self.agent: Optional[Agent] = None
         self.threads: Dict[str, str] = {}  # thread_id -> thread_id mapping
-        self.vector_store = None
-        self.uploaded_files = []
         self._file_search_tool = None  # Cache the file search tool
         self._agents_client = None  # Cache the agents client
         self._project_client = None  # Cache the project client
-        
-    def is_initialized(self) -> bool:
-        """Check if the agent has been created and initialized."""
-        return self.agent is not None
         
     def _get_client(self) -> AgentsClient:
         """Get a cached AgentsClient instance to reduce API calls."""
@@ -580,83 +572,80 @@ Remember: Your goal is to resolve customer issues efficiently by providing accur
     
 
     
-    def _extract_bing_citations(self, text_content: str) -> tuple[str, List[Dict]]:
-        """Extract Bing search citations from the response text."""
-        import re
-        
-        citations = []
-        
-        # Method 1: Look for citation patterns like [^1^], [^2^], etc.
-        citation_pattern = r'\[\^(\d+)\^\]'
-        citation_matches = re.findall(citation_pattern, text_content)
-        
-        # Method 2: Look for structured source sections
-        # Bing often includes sources at the end like "Sources:\n1. Title - URL"
-        source_section_pattern = r'(?:Sources?|References?):\s*\n((?:.*\n?)*)'
-        source_matches = re.search(source_section_pattern, text_content, re.IGNORECASE | re.MULTILINE)
-        
-        if source_matches:
-            source_text = source_matches.group(1)
-            # Parse individual sources like "1. Title - URL"
-            source_line_pattern = r'(\d+)\.\s*([^-\n]+?)\s*-\s*(https?://[^\s\n]+)'
-            for match in re.finditer(source_line_pattern, source_text):
-                source_num, title, url = match.groups()
-                # Clean up the title by removing trailing whitespace
-                clean_title = title.strip() if title else f"Source {source_num}"
-                citations.append({
-                    'type': 'web',
-                    'text': clean_title,
-                    'url': url.strip()
-                })
-        
-        # Method 3: Look for URLs in the text (fallback)
-        if not citations:
-            url_pattern = r'https?://[^\s\)\]\>]+(?=[\s\)\]\>\n]|$)'
-            urls = re.findall(url_pattern, text_content)
+    def _extract_citation_context(self, main_text: str, annotation, quote: str) -> str:
+        """Extract meaningful context around a citation from the main response text."""
+        try:
+            # If we have a quote, try to find it in the main text and get surrounding context
+            if quote and len(quote.strip()) > 10:
+                import re
+                # Look for the quote or similar content in the main text
+                quote_words = quote.strip().split()[:5]  # First 5 words
+                if len(quote_words) >= 2:
+                    pattern = r'.{0,50}' + re.escape(' '.join(quote_words[:2])) + r'.{0,50}'
+                    match = re.search(pattern, main_text, re.IGNORECASE)
+                    if match:
+                        context = match.group(0).strip()
+                        return context
             
-            # Try to find context around URLs for better link text
-            for i, url in enumerate(urls[:5]):  # Limit to first 5 URLs
-                # Look for text before the URL that might be a title
-                url_context_pattern = rf'([^.\n]*?)\s*{re.escape(url)}'
-                context_match = re.search(url_context_pattern, text_content)
-                
-                if context_match:
-                    context = context_match.group(1).strip()
-                    # Clean up the context to get a reasonable title
-                    title = context[-50:] if len(context) > 50 else context
-                    title = title.strip('.,;:')
-                else:
-                    title = f"Web Source {i+1}"
-                
-                citations.append({
-                    'type': 'web',
-                    'text': title or f"Web Source {i+1}",
-                    'url': url
-                })
+            # Fallback: Try to get context around citation markers
+            if hasattr(annotation, 'text') and annotation.text:
+                marker = annotation.text
+                # Look for the citation marker in the main text
+                marker_pos = main_text.find(marker)
+                if marker_pos != -1:
+                    # Extract 100 characters before and after the marker
+                    start = max(0, marker_pos - 100)
+                    end = min(len(main_text), marker_pos + len(marker) + 100)
+                    context = main_text[start:end].strip()
+                    # Clean up the context
+                    context = context.replace(marker, '').strip()
+                    if context:
+                        return context
+            
+            return ""
+        except Exception as e:
+            logger.debug(f"Error extracting citation context: {e}")
+            return ""
+
+    def _create_meaningful_citation_text(self, quote: str, context: str, file_id: str) -> str:
+        """Create meaningful citation text using available information."""
         
-        return text_content, citations
-    
-    def _extract_foundry_citations(self, text_content: str) -> List[Dict]:
-        """Extract Azure AI Foundry style citations like 【4:4†source】."""
-        import re
+        # Priority 1: Use substantial quote content
+        if quote and len(quote.strip()) > 20:
+            clean_quote = quote.replace('\n', ' ').replace('\r', ' ').strip()
+            if len(clean_quote) > 100:
+                clean_quote = clean_quote[:97] + "..."
+            return f'Document excerpt: "{clean_quote}"'
         
-        citations = []
+        # Priority 2: Use extracted context
+        if context and len(context.strip()) > 20:
+            clean_context = context.replace('\n', ' ').replace('\r', ' ').strip()
+            if len(clean_context) > 100:
+                clean_context = clean_context[:97] + "..."
+            return f'Document content: "{clean_context}"'
         
-        # Look for Azure AI Foundry citation patterns with Japanese brackets 【4:4†source】
-        foundry_pattern = r'【(\d+):(\d+)†source】'
-        foundry_matches = re.findall(foundry_pattern, text_content)
+        # Priority 3: Try to get meaningful filename
+        if file_id:
+            try:
+                project_client = self._get_project_client()
+                file_info = project_client.agents.files.get(file_id)
+                if hasattr(file_info, 'filename') and file_info.filename:
+                    # Clean up the filename for display
+                    filename = file_info.filename
+                    if filename.endswith('.pdf'):
+                        filename = filename[:-4]  # Remove .pdf extension
+                    return f'Document: "{filename}"'
+            except Exception as e:
+                logger.debug(f"Could not retrieve filename for {file_id}: {e}")
         
-        if foundry_matches:
-            # These citations reference file search results
-            for i, (doc_num, ref_num) in enumerate(foundry_matches):
-                citations.append({
-                    'type': 'file',
-                    'text': f"Document {doc_num} (Reference {ref_num})",
-                    'file_id': f"doc_{doc_num}_{ref_num}",  # Placeholder since we don't have the actual file ID
-                    'quote': ''
-                })
+        # Priority 4: Use shortened file ID
+        if file_id and len(file_id) > 8:
+            return f"Document (ID: {file_id[-8:]})"
+        elif file_id:
+            return f"Document (ID: {file_id})"
         
-        return citations
+        # Fallback
+        return "Referenced document"
 
     async def _handle_tool_calls(self, run: ThreadRun, thread_id: str):
         """Handle tool calls during agent execution."""
@@ -694,14 +683,6 @@ Remember: Your goal is to resolve customer issues efficiently by providing accur
                 return {
                     "tool_call_id": tool_call.id,
                     "output": "{}"
-                }
-                # Ensure we have a valid tool_call_id
-                if not hasattr(tool_call, 'id') or not tool_call.id:
-                    logger.error(f"Tool call missing ID: {tool_call}")
-                    return None
-                return {
-                    "tool_call_id": tool_call.id,
-                    "output": json.dumps(output)
                 }
 
             # Run all tool calls in parallel
@@ -787,52 +768,6 @@ Remember: Your goal is to resolve customer issues efficiently by providing accur
                 logger.error(f"Fallback submission also failed: {e2}")
                 raise e
         
-    async def cleanup_agent(self):
-        """Clean up the agent resources (individual instance only)."""
-        # DISABLED: Don't auto-delete the agent to allow reuse across multiple requests
-        # if self.agent:
-        #     client = self._get_client()
-        #     client.delete_agent(self.agent.id)
-        #     logger.info(f"Deleted agent: {self.agent.id}")
-        #     self.agent = None
-        
-        # Clear cached clients but keep the agent alive
-        # self._agents_client = None
-        # self._project_client = None
-        
-        # Note: Agent is preserved for reuse, shared file search resources are left for other instances to use
-        logger.info("Individual agent cleanup completed (agent preserved for reuse, shared resources preserved)")
-    
-    @classmethod
-    async def cleanup_shared_resources(cls):
-        """Clean up shared customer support document search resources (call when shutting down completely)."""
-        try:
-            if cls._shared_vector_store or cls._shared_uploaded_files:
-                # We need a project client to clean up, create a temporary one
-                temp_agent = cls()
-                project_client = temp_agent._get_project_client()
-                
-                # Delete vector store
-                if cls._shared_vector_store:
-                    project_client.agents.delete_vector_store(cls._shared_vector_store.id)
-                    logger.info(f"Deleted shared vector store: {cls._shared_vector_store.id}")
-                    cls._shared_vector_store = None
-            
-                # Delete uploaded files
-                for file_id in cls._shared_uploaded_files:
-                    try:
-                        project_client.agents.delete_file(file_id=file_id)
-                        logger.info(f"Deleted shared file: {file_id}")
-                    except Exception as e:
-                        logger.warning(f"Failed to delete shared file {file_id}: {e}")
-                
-                cls._shared_uploaded_files = []
-                cls._shared_file_search_tool = None
-                logger.info("Shared customer support document search resources cleaned up")
-                
-        except Exception as e:
-            logger.error(f"Error cleaning up shared customer support document search resources: {e}")
-
     def _get_readable_file_name(self, citation: Dict) -> str:
         """Get meaningful citation text based on content, not just file names."""
         
@@ -866,133 +801,6 @@ Remember: Your goal is to resolve customer issues efficiently by providing accur
         # Fallback: Generic but still informative
         source_type = citation.get('type', 'document')
         return f"Referenced {source_type}"
-
-    def _extract_citation_context(self, main_text: str, annotation, quote: str) -> str:
-        """Extract meaningful context around a citation from the main response text."""
-        try:
-            # If we have a quote, try to find it in the main text and get surrounding context
-            if quote and len(quote.strip()) > 10:
-                import re
-                # Look for the quote or similar content in the main text
-                quote_words = quote.strip().split()[:5]  # First 5 words
-                if len(quote_words) >= 2:
-                    pattern = r'.{0,50}' + re.escape(' '.join(quote_words[:2])) + r'.{0,50}'
-                    match = re.search(pattern, main_text, re.IGNORECASE)
-                    if match:
-                        context = match.group(0).strip()
-                        return context
-            
-            # Fallback: Try to get context around citation markers
-            if hasattr(annotation, 'text') and annotation.text:
-                marker = annotation.text
-                # Look for the citation marker in the main text
-                marker_pos = main_text.find(marker)
-                if marker_pos != -1:
-                    # Extract 100 characters before and after the marker
-                    start = max(0, marker_pos - 100)
-                    end = min(len(main_text), marker_pos + len(marker) + 100)
-                    context = main_text[start:end].strip()
-                    # Clean up the context
-                    context = context.replace(marker, '').strip()
-                    if context:
-                        return context
-            
-            return ""
-        except Exception as e:
-            logger.debug(f"Error extracting citation context: {e}")
-            return ""
-
-    def _create_meaningful_citation_text(self, quote: str, context: str, file_id: str) -> str:
-        """Create meaningful citation text using available information."""
-        
-        # Priority 1: Use substantial quote content
-        if quote and len(quote.strip()) > 20:
-            clean_quote = quote.replace('\n', ' ').replace('\r', ' ').strip()
-            if len(clean_quote) > 100:
-                clean_quote = clean_quote[:97] + "..."
-            return f'Document excerpt: "{clean_quote}"'
-        
-        # Priority 2: Use extracted context
-        if context and len(context.strip()) > 20:
-            clean_context = context.replace('\n', ' ').replace('\r', ' ').strip()
-            if len(clean_context) > 100:
-                clean_context = clean_context[:97] + "..."
-            return f'Document content: "{clean_context}"'
-        
-        # Priority 3: Try to get meaningful filename
-        if file_id:
-            try:
-                project_client = self._get_project_client()
-                file_info = project_client.agents.files.get(file_id)
-                if hasattr(file_info, 'filename') and file_info.filename:
-                    # Clean up the filename for display
-                    filename = file_info.filename
-                    if filename.endswith('.pdf'):
-                        filename = filename[:-4]  # Remove .pdf extension
-                    return f'Document: "{filename}"'
-            except Exception as e:
-                logger.debug(f"Could not retrieve filename for {file_id}: {e}")
-        
-        # Priority 4: Use shortened file ID
-        if file_id and len(file_id) > 8:
-            return f"Document (ID: {file_id[-8:]})"
-        elif file_id:
-            return f"Document (ID: {file_id})"
-        
-        # Fallback
-        return "Referenced document"
-
-    async def run_conversation(self, thread_id: str, user_message: str):
-        """Collects all streamed messages and returns as a tuple (responses, tools_called) for host agent compatibility."""
-        results = []
-        tools_called = []
-        tool_descriptions = []  # Track enhanced tool descriptions
-        
-        async for msg in self.run_conversation_stream(thread_id, user_message):
-            results.append(msg)
-            # Extract tool call info from progress messages
-            if msg.startswith("🛠️ Remote agent executing:"):
-                tool_description = msg.replace("🛠️ Remote agent executing: ", "").strip()
-                if tool_description not in tool_descriptions:
-                    tool_descriptions.append(tool_description)
-                    # Extract a simple tool name for backward compatibility
-                    if ":" in tool_description:
-                        tool_name = tool_description.split(":")[0].strip()
-                    else:
-                        tool_name = tool_description
-                    if tool_name not in tools_called:
-                        tools_called.append(tool_description)  # Use the full description
-
-        # After streaming is complete, collect all actual tool calls from run steps
-        try:
-            client = self._get_client()
-            # Find the most recent run for this thread
-            runs = client.runs.list(thread_id=thread_id)
-            if runs.data:
-                latest_run = runs.data[0]  # Most recent run
-                run_steps = client.run_steps.list(thread_id, latest_run.id)
-                step_count = 0
-                logger.info("Listing all run steps:")
-               
-                for run_step in run_steps:
-                    step_count += 1
-                    logger.info(f"Step {step_count}: {run_step}")
-                   
-                    if (run_step.step_details and
-                        hasattr(run_step.step_details, "type") and
-                        run_step.step_details.type == "tool_calls" and
-                        hasattr(run_step.step_details, "tool_calls")):
-                        for tool_call in run_step.step_details.tool_calls:
-                            if tool_call and hasattr(tool_call, "type"):
-                                tool_type = tool_call.type
-                                tool_description = self._get_tool_description(tool_type, tool_call)
-                                if tool_description not in tools_called:
-                                    tools_called.append(tool_description)
-                                    logger.info(f"Found tool call: {tool_description}")
-        except Exception as e:
-            logger.error(f"Error collecting tool calls: {e}")
-        
-        return (results, tools_called)
 
     def _get_tool_description(self, tool_type: str, tool_call) -> str:
         """Helper to get a more meaningful tool description from the tool call."""
@@ -1044,86 +852,6 @@ Remember: Your goal is to resolve customer issues efficiently by providing accur
             return f"Executing tool: {tool_type}"
 
 
-
-
-async def create_foundry_deep_search_agent() -> FoundryDeepSearchAgent:
-    """Factory function to create and initialize a Foundry Deep Search Knowledge agent."""
-    agent = FoundryDeepSearchAgent()
-    await agent.create_agent()
-    return agent
-
-
-# Example usage for testing
-async def demo_agent_interaction():
-    """Demo function showing how to use the Foundry Deep Search Knowledge agent for customer support."""
-    agent = await create_foundry_deep_search_agent()
-    
-    try:
-        # Create a conversation thread
-        thread = await agent.create_thread()
-        
-        # Example interaction
-        message = "Hello! I need help with my account. How do I close my account and what fees might be involved?"
-        print(f"\nUser: {message}")
-        async for response in agent.run_conversation_stream(thread.id, message):
-            print(f"Assistant: {response}")
-                
-    finally:
-        # DISABLED: Don't auto-cleanup agent to allow reuse
-        # await agent.cleanup_agent()
-        # Only clean up shared resources on final shutdown if really needed
-        # await FoundryDeepSearchAgent.cleanup_shared_resources()
-        logger.info("Demo completed - agent preserved for reuse")
-
-
-def test_citation_improvement():
-    """Test function to demonstrate citation improvements."""
-    agent = FoundryDeepSearchAgent()
-    
-    # Simulate the old problematic citation format
-    old_citations = [
-        {'type': 'file', 'text': 'Document Citation (【4:0†source】)', 'file_id': 'file123', 'quote': 'For Citibank, the 24/7 number is 1-800-950-5114'},
-        {'type': 'file', 'text': 'Document Citation (【4:0†source】)', 'file_id': 'file123', 'quote': 'For Citibank, the 24/7 number is 1-800-950-5114'},
-        {'type': 'file', 'text': 'Document Citation (【4:0†source】)', 'file_id': 'file123', 'quote': 'For Citibank, the 24/7 number is 1-800-950-5114'},
-        {'type': 'file', 'text': 'Document Citation (【4:2†source】)', 'file_id': 'file123', 'quote': 'Federal laws limit consumer liability to $50'},
-        {'type': 'file', 'text': 'Document 4 (Reference 0)', 'file_id': 'file123', 'quote': ''},
-        {'type': 'file', 'text': 'Document 4 (Reference 0)', 'file_id': 'file123', 'quote': ''},
-        {'type': 'file', 'text': 'Document 4 (Reference 2)', 'file_id': 'file123', 'quote': ''},
-    ]
-    
-    test_response = """To handle a stolen credit card incident, follow the steps below:
-Immediate Reporting:
-Notify the bank immediately by calling their lost card hotline. For Citibank, the 24/7 number is 1-800-950-5114 (for U.S. Citi credit cards)【4:0†source】.
-Alternatively, customers can use the bank's online account or mobile app to report the card as stolen and in some cases, lock or freeze the card temporarily【4:0†source】.
-Card Deactivation and Replacement:
-The bank will deactivate the stolen card to prevent unauthorized use.
-A replacement card will be issued within 5-7 business days; expedited delivery may be available for a fee【4:0†source】.
-Fraudulent Charges Check:
-Review recent account transactions. Report any suspicious or unauthorized charges alongside lodging the stolen card report【4:0†source】.
-The bank's fraud team will handle disputes and potentially provide refunds for fraudulent activities once the investigation confirms them【4:0†source】.
-Update Recurring Payments:
-Update any automatic payments or saved card details with the newly issued card information to prevent interruptions in payments【4:0†source】.
-Legal and Security Actions:
-Consider filing a fraud alert with major credit bureaus or even a police report if identity theft is suspected【4:2†source】.
-Continue to monitor accounts for any further unauthorized transactions【4:2†source】.
-Liability Protection:
-Timely reporting ensures you are not held liable for unauthorized charges. Federal laws limit consumer liability to $50, but Citibank's policy is $0 for confirmed fraud cases【4:2†source】.
-Following these actions promptly helps minimize losses and ensures a quick resolution."""
-    
-    # Test the improved citation formatting
-    improved_response = agent._format_response_with_citations(test_response, old_citations)
-    
-    print("=== CITATION IMPROVEMENT DEMONSTRATION ===")
-    print("\nOLD FORMAT (before improvement):")
-    print("- Multiple identical 'Document Citation (【4:0†source】)' entries")
-    print("- Generic 'Document 4 (Reference 0)' without context")
-    print("- No actual file names or meaningful descriptions")
-    print("- Repetitive and cluttered sources section")
-    
-    print("\nNEW FORMAT (after improvement):")
-    print(improved_response)
-    
-    return improved_response
 
 
 if __name__ == "__main__":

@@ -58,16 +58,16 @@ print("[DEBUG] Azure Tenant ID:", os.environ.get("AZURE_TENANT_ID"))
 import httpx
 import uvicorn
 import uuid
-import os as os_module
+import mimetypes
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, UploadFile, File, Request, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.responses import JSONResponse
 from service.server.server import ConversationServer
 from service.websocket_streamer import get_websocket_streamer, cleanup_websocket_streamer
 from service.websocket_server import start_websocket_server, stop_websocket_server, set_auth_service
 from service.agent_registry import get_registry
-from state import host_agent_service
 from pydantic import BaseModel
 from datetime import datetime, timedelta, UTC
 import jwt
@@ -388,7 +388,7 @@ async def lifespan(app: FastAPI):
     
     # Start WebSocket server for UI communication
     try:
-        websocket_server = start_websocket_server(host="localhost", port=8080)
+        start_websocket_server(host="localhost", port=8080)
         print("[INFO] WebSocket server started successfully on ws://localhost:8080")
         
         # Give the WebSocket server a moment to start listening
@@ -1131,6 +1131,7 @@ Read-Host "Press Enter to close this window"
                 "error": str(e)
             }
 
+
     # Add a root endpoint that shows available endpoints
     @app.get("/")
     async def root():
@@ -1154,9 +1155,6 @@ Read-Host "Press Enter to close this window"
     # Setup the connection details from environment
     host = os.environ.get('A2A_UI_HOST', '0.0.0.0')
     port = int(os.environ.get('A2A_UI_PORT', '12000'))
-
-    # Set the client to talk to the server
-    host_agent_service.server_url = f'http://{host}:{port}'
 
     print(f"[INFO] Starting A2A Backend API server on {host}:{port}")
     print(f"[INFO] Health check available at: http://{host}:{port}/health")

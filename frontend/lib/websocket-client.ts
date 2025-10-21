@@ -265,8 +265,12 @@ export class WebSocketClient {
       
       // Handle different event types
       switch (eventType) {
-        case 'message':
+        case 'message': {
           this.handleMessageEvent(eventData);
+          break;
+        }
+        case 'remote_agent_activity':
+          this.emit('remote_agent_activity', eventData);
           break;
         case 'conversation':
           this.handleConversationEvent(eventData);
@@ -340,12 +344,15 @@ export class WebSocketClient {
     
     logDebug('[WebSocket] Processed message event:', messageEvent);
     
+
     this.emit('message', messageEvent);
     if (DEBUG) {
       // Only emit extra aliases when debugging to reduce subscriber churn
       this.emit('message_sent', messageEvent);
       this.emit('message_received', messageEvent);
     }
+
+    return messageEvent;
   }
 
   private handleConversationEvent(eventData: any) {
@@ -679,6 +686,3 @@ export class MockWebSocketClient {
   }
 }
 
-// For backward compatibility with azure-event-hub.ts interface
-export { WebSocketClient as AzureEventHubClient };
-export { MockWebSocketClient as MockEventHub };

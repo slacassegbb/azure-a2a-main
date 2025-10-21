@@ -22,15 +22,48 @@ from dotenv import load_dotenv
 # Load the project root .env first so shared secrets are available.
 ROOT_ENV_PATH = Path(__file__).resolve().parents[2] / ".env"
 load_dotenv(ROOT_ENV_PATH, override=False)
-# Then allow a local .env next to the agent to override if desired.
-load_dotenv()
+# Then allow a local .env next to the agent to override root defaults when desired.
+load_dotenv(Path(__file__).resolve().parent / ".env", override=True)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
+def _normalize_env_value(raw_value: str | None) -> str:
+    if raw_value is None:
+        return ''
+    return raw_value.strip()
+
+
+def _resolve_default_host() -> str:
+    value = _normalize_env_value(os.getenv('A2A_ENDPOINT'))
+    return value or 'localhost'
+
+
+def _resolve_default_port() -> int:
+    raw_port = _normalize_env_value(os.getenv('A2A_PORT'))
+    if raw_port:
+        try:
+            return int(raw_port)
+        except ValueError:
+            logger.warning("Invalid A2A_PORT value '%s'; defaulting to 8003", raw_port)
+    return 8003
+
+
+def resolve_agent_url(bind_host: str, bind_port: int) -> str:
+    endpoint = _normalize_env_value(os.getenv('A2A_ENDPOINT'))
+    if endpoint:
+        if endpoint.startswith(('http://', 'https://')):
+            return endpoint.rstrip('/') + '/'
+        host_for_url = endpoint
+    else:
+        host_for_url = bind_host if bind_host != "0.0.0.0" else _resolve_default_host()
+
+    return f"http://{host_for_url}:{bind_port}/"
+
 # Import self-registration utility
 try:
-    from utils.self_registration import register_with_host_agent
+    from utils.self_registration import register_with_host_agent, get_host_agent_url
     SELF_REGISTRATION_AVAILABLE = True
     logger.info("✅ Self-registration utility loaded")
 except ImportError:
@@ -40,9 +73,10 @@ except ImportError:
         return False
     SELF_REGISTRATION_AVAILABLE = False
 
-#CITIBANK_HOST_AGENT_URL = "https://citibank-host-agent.whiteplant-4c581c75.canadaeast.azurecontainerapps.io"
-CITIBANK_HOST_AGENT_URL = "http://localhost:12000"
-#CITIBANK_HOST_AGENT_URL = "https://contoso-a2a.whiteplant-4c581c75.canadaeast.azurecontainerapps.io"
+HOST_AGENT_URL = _normalize_env_value(get_host_agent_url())
+
+DEFAULT_HOST = _resolve_default_host()
+DEFAULT_PORT = _resolve_default_port()
 
 
 class MissingAPIKeyError(Exception):
@@ -55,8 +89,8 @@ class MissingAPIKeyError(Exception):
 
 
 @click.command()
-@click.option('--host', default='localhost')
-@click.option('--port', default=8003)
+@click.option('--host', default=DEFAULT_HOST)
+@click.option('--port', default=DEFAULT_PORT, type=int)
 def main(host, port):
     try:
         # Check for API key only if Vertex AI is not configured
@@ -78,12 +112,14 @@ def main(host, port):
                 'What is the mood of this message: "I am frustrated with the wait time."',
             ],
         )
+        resolved_host_for_url = host if host != "0.0.0.0" else DEFAULT_HOST
+
         agent_card = AgentCard(
             name='Sentiment Analysis Agent',
             description='This agent determines the sentiment of a customer given context, and personalizes the experience based on sentiment and context.',
             #url=f'http://{host}:{port}/',
             #url=f'https://agent1.ngrok.app/agent4/',
-            url=f'http://localhost:8003/',
+            url=resolve_agent_url(resolved_host_for_url, port),
             version='1.0.0',
             defaultInputModes=SentimentAnalysisAgent.SUPPORTED_CONTENT_TYPES,
             defaultOutputModes=SentimentAnalysisAgent.SUPPORTED_CONTENT_TYPES,
@@ -129,8 +165,8 @@ def main(host, port):
                 # Wait a moment for server to fully start
                 await asyncio.sleep(2)
                 try:
-                    logger.info(f"🤝 Attempting to register '{agent_card.name}' with host agent...")
-                    registration_success = await register_with_host_agent(agent_card, host_url=CITIBANK_HOST_AGENT_URL)
+                    logger.info(f"🤝 Attempting to register '{agent_card.name}' with host agent at {HOST_AGENT_URL or '[not configured]'}...")
+                    registration_success = await register_with_host_agent(agent_card, host_url=HOST_AGENT_URL or None)
                     if registration_success:
                         logger.info(f"🎉 '{agent_card.name}' successfully registered with host agent!")
                     else:
@@ -139,7 +175,7 @@ def main(host, port):
                     logger.warning(f"⚠️ Registration attempt failed: {e}")
         
         # Start background registration
-        if SELF_REGISTRATION_AVAILABLE:
+        if SELF_REGISTRATION_AVAILABLE and HOST_AGENT_URL:
             import threading
             def run_registration():
                 print("[DEBUG] Entered run_registration thread")
@@ -150,7 +186,10 @@ def main(host, port):
             registration_thread.start()
             logger.info(f"🚀 '{agent_card.name}' starting with background registration enabled")
         else:
-            logger.info(f"📡 '{agent_card.name}' starting without self-registration")
+            if not HOST_AGENT_URL:
+                logger.info(f"📡 '{agent_card.name}' starting without self-registration (A2A_HOST not configured)")
+            else:
+                logger.info(f"📡 '{agent_card.name}' starting without self-registration")
         
         import uvicorn
 

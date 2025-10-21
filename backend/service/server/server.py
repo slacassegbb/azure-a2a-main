@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 
 from a2a.types import FilePart, FileWithUri, Message, Part, TextPart, DataPart
 from fastapi import APIRouter, FastAPI, Request, Response
-from service.azure_eventhub_streamer import get_event_hub_streamer
+from service.websocket_streamer import get_websocket_streamer
 
 from service.types import (
     CreateConversationResponse,
@@ -354,29 +354,32 @@ class ConversationServer:
                 if success:
                     print(f"[DEBUG] ✅ Self-registration successful for: {agent_address}")
                     
-                    # Stream agent self-registration to Event Hub
-                    print(f"[DEBUG] 🌊 Attempting to stream agent self-registration to Event Hub...")
+                    # Stream agent self-registration over WebSocket
+                    print(f"[DEBUG] 🌊 Attempting to stream agent self-registration to WebSocket...")
                     try:
-                        streamer = await get_event_hub_streamer()
+                        streamer = await get_websocket_streamer()
                         if streamer:
+                            capabilities = agent_card.capabilities if agent_card else {}
+                            capabilities = serialize_capabilities(capabilities)
+
                             agent_info = {
                                 "name": agent_card.name if agent_card else self._extract_agent_name_from_address(agent_address),
                                 "type": "generic",  # Hardcoded since AgentCard doesn't have type attribute
-                                "capabilities": agent_card.capabilities if agent_card else [],
+                                "capabilities": capabilities,
                                 "endpoint": agent_address,
                                 "metadata": agent_card_data if agent_card_data else {}
                             }
-                            print(f"[DEBUG] 🌊 Agent info for Event Hub: {agent_info}")
+                            print(f"[DEBUG] 🌊 Agent info for WebSocket streaming: {agent_info}")
                             stream_success = await streamer.stream_agent_self_registered(agent_info)
                             if stream_success:
-                                print(f"[DEBUG] ✅ Agent self-registration event streamed to Event Hub successfully")
+                                print(f"[DEBUG] ✅ Agent self-registration event streamed over WebSocket successfully")
                             else:
-                                print(f"[DEBUG] ⚠️ Event Hub streaming not available - agent registration will proceed without streaming")
+                                print(f"[DEBUG] ⚠️ WebSocket streaming not available - agent registration will proceed without streaming")
                         else:
-                            print(f"[DEBUG] ⚠️ Event Hub streamer not configured - agent registration will proceed without streaming")
+                            print(f"[DEBUG] ⚠️ WebSocket streamer not configured - agent registration will proceed without streaming")
                     except Exception as e:
-                        print(f"[DEBUG] ⚠️ Event Hub streaming error (non-blocking): {e}")
-                        # Event Hub errors should not block agent registration
+                        print(f"[DEBUG] ⚠️ WebSocket streaming error (non-blocking): {e}")
+                        # Streaming errors should not block agent registration
                     
                     return {"success": True, "message": f"Agent {agent_address} registered successfully"}
                 else:
@@ -387,21 +390,21 @@ class ConversationServer:
                 print(f"[DEBUG] ℹ️ Using fallback registration for manager type: {type(self.manager).__name__}")
                 self.manager.register_agent(agent_address)
                 
-                # Stream agent registration to Event Hub
-                print(f"[DEBUG] 🌊 Attempting to stream agent registration to Event Hub (fallback)...")
+                # Stream agent registration over WebSocket
+                print(f"[DEBUG] 🌊 Attempting to stream agent registration to WebSocket (fallback)...")
                 try:
-                    streamer = await get_event_hub_streamer()
+                    streamer = await get_websocket_streamer()
                     if streamer:
                         stream_success = await streamer.stream_agent_registered(agent_address)
                         if stream_success:
-                            print(f"[DEBUG] ✅ Agent registration event streamed to Event Hub successfully (fallback)")
+                            print(f"[DEBUG] ✅ Agent registration event streamed over WebSocket successfully (fallback)")
                         else:
-                            print(f"[DEBUG] ⚠️ Event Hub streaming not available - agent registration will proceed without streaming (fallback)")
+                            print(f"[DEBUG] ⚠️ WebSocket streaming not available - agent registration will proceed without streaming (fallback)")
                     else:
-                        print(f"[DEBUG] ⚠️ Event Hub streamer not configured - agent registration will proceed without streaming (fallback)")
+                        print(f"[DEBUG] ⚠️ WebSocket streamer not configured - agent registration will proceed without streaming (fallback)")
                 except Exception as e:
-                    print(f"[DEBUG] ⚠️ Event Hub streaming error (non-blocking, fallback): {e}")
-                    # Event Hub errors should not block agent registration
+                    print(f"[DEBUG] ⚠️ WebSocket streaming error (non-blocking, fallback): {e}")
+                    # Streaming errors should not block agent registration
                 
                 return {"success": True, "message": f"Agent {agent_address} registered successfully (fallback)"}
                 

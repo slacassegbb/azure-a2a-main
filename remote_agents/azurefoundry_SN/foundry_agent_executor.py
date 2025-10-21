@@ -8,9 +8,7 @@ import base64
 import os
 import tempfile
 import time
-import uuid
 from typing import Optional, Dict, Any, List
-import re
 
 from foundry_agent import FoundrySNAgent
 
@@ -31,23 +29,6 @@ from a2a.utils.message import new_agent_text_message
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
-
-
-def extract_and_format_context(user_message: str) -> (str, str):
-    """Extract context and current request from the user message string."""
-    context_match = re.search(
-        r"Relevant context from previous interactions:(.*)Current request:(.*)",
-        user_message,
-        re.DOTALL
-    )
-    if context_match:
-        context_block = context_match.group(1).strip()
-        current_request = context_match.group(2).strip()
-        # Optionally, further parse context_block for better formatting
-        return context_block, current_request
-    else:
-        # Fallback: treat the whole message as the current request
-        return "", user_message
 
 
 class FoundryAgentExecutor(AgentExecutor):
@@ -91,7 +72,6 @@ class FoundryAgentExecutor(AgentExecutor):
                     raise
 
     def __init__(self, card: AgentCard):
-        self._card = card
         self._active_threads: Dict[str, str] = {}  # context_id -> thread_id mapping
         self._waiting_for_input: Dict[str, str] = {}
         self._pending_updaters: Dict[str, TaskUpdater] = {}
@@ -129,149 +109,46 @@ class FoundryAgentExecutor(AgentExecutor):
         return thread_id
 
     def _notify_ui_of_pending_request(self, context_id: str, request_text: str):
-        """Notify the UI about a new pending request."""
-        try:
-            from __main__ import pending_request_notification
-            pending_request_notification.update({
-                "has_pending": True,
-                "request_text": request_text,
-                "context_id": context_id
-            })
-            logger.info(f"UI notified of pending request for context {context_id}")
-        except ImportError:
-            logger.debug("UI notification not available (A2A-only mode)")
-
-    def _get_conversation_context_from_request(self, request_context: RequestContext) -> str:
-        """Extract conversation context from the RequestContext."""
-        try:
-            if not request_context:
-                logger.info("No RequestContext available")
-                return ""
-            
-            # Debug: Let's see what's actually in the RequestContext
-            logger.info(f"RequestContext attributes: {dir(request_context)}")
-            logger.info(f"RequestContext type: {type(request_context)}")
-            
-            # Check if we have a task
-            if hasattr(request_context, 'task') and request_context.task:
-                logger.info(f"Found task: {request_context.task}")
-                if hasattr(request_context.task, 'history') and request_context.task.history:
-                    logger.info(f"Found {len(request_context.task.history)} messages in task history")
-                    
-                    context_messages = []
-                    for msg in request_context.task.history:
-                        if hasattr(msg, 'role') and hasattr(msg, 'parts'):
-                            # Extract text content from message parts
-                            text_content = ""
-                            for part in msg.parts:
-                                if hasattr(part, 'root') and hasattr(part.root, 'text'):
-                                    text_content += part.root.text
-                            
-                            if text_content.strip():
-                                if msg.role == 'user':
-                                    context_messages.append(f"User: {text_content.strip()}")
-                                    logger.info(f"Added user context: {text_content.strip()[:50]}...")
-                                elif msg.role == 'agent':
-                                    # Truncate long assistant responses
-                                    content = text_content.strip()
-                                    if len(content) > 200:
-                                        content = content[:197] + "..."
-                                    context_messages.append(f"Assistant: {content}")
-                                    logger.info(f"Added assistant context: {content[:50]}...")
-                    
-                    # Return the last 4 messages for context (2 exchanges)
-                    recent_context = context_messages[-4:] if len(context_messages) > 4 else context_messages
-                    result = "\n".join(recent_context)
-                    logger.info(f"Final conversation context from RequestContext: {result[:100]}...")
-                    return result
-                else:
-                    logger.info("Task has no history")
-            else:
-                logger.info("No task found in RequestContext")
-            
-            # Check if we have a userMessage
-            if hasattr(request_context, 'userMessage') and request_context.userMessage:
-                logger.info(f"Found userMessage: {request_context.userMessage}")
-                # For now, just return the user message as context
-                if hasattr(request_context.userMessage, 'parts'):
-                    text_content = ""
-                    for part in request_context.userMessage.parts:
-                        if hasattr(part, 'root') and hasattr(part.root, 'text'):
-                            text_content += part.root.text
-                    if text_content.strip():
-                        return f"User: {text_content.strip()}"
-            
-            logger.info("No conversation context found in RequestContext")
-            return ""
-            
-        except Exception as e:
-            logger.warning(f"Failed to extract conversation context from RequestContext: {e}")
-            return ""
-
-    async def _get_conversation_context(self, agent, thread_id: str) -> str:
-        """Retrieve conversation context from the Azure AI Foundry thread."""
-        try:
-            client = agent._get_client()
-            from azure.ai.agents.models import ListSortOrder
-            messages = list(client.messages.list(thread_id=thread_id, order=ListSortOrder.ASCENDING))
-            
-            logger.info(f"Retrieved {len(messages)} messages from thread {thread_id}")
-            
-            if len(messages) <= 1:  # Only the current message
-                logger.info("Only current message found, no previous context")
-                return ""
-            
-            # Get the last few messages for context (excluding the current message)
-            context_messages = []
-            for i, msg in enumerate(messages[:-1]):  # Exclude the current message
-                logger.info(f"Processing message {i}: role={msg.role}, content_count={len(msg.content) if msg.content else 0}")
-                
-                if msg.role == "user" and msg.content:
-                    # Get user message content
-                    user_content = ""
-                    for content_item in msg.content:
-                        if hasattr(content_item, 'text') and hasattr(content_item.text, 'value'):
-                            user_content += content_item.text.value
-                    if user_content.strip():
-                        context_messages.append(f"User: {user_content.strip()}")
-                        logger.info(f"Added user context: {user_content.strip()[:50]}...")
-                
-                elif msg.role == "assistant" and msg.content:
-                    # Get assistant message content
-                    assistant_content = ""
-                    for content_item in msg.content:
-                        if hasattr(content_item, 'text') and hasattr(content_item.text, 'value'):
-                            assistant_content += content_item.text.value
-                    if assistant_content.strip():
-                        # Truncate long assistant responses
-                        content = assistant_content.strip()
-                        if len(content) > 200:
-                            content = content[:197] + "..."
-                        context_messages.append(f"Assistant: {content}")
-                        logger.info(f"Added assistant context: {content[:50]}...")
-            
-            # Return the last 4 messages for context (2 exchanges)
-            recent_context = context_messages[-4:] if len(context_messages) > 4 else context_messages
-            result = "\n".join(recent_context)
-            logger.info(f"Final conversation context: {result[:100]}...")
-            return result
-            
-        except Exception as e:
-            logger.warning(f"Failed to retrieve conversation context: {e}")
-            return ""
+        """Log pending requests so dashboards can poll executor state."""
+        logger.info(
+            "UI pending request update",
+            extra={"context_id": context_id, "request_preview": request_text[:120]}
+        )
 
     async def send_human_response(self, context_id: str, human_response: str) -> bool:
         """Send human response to complete a pending input_required task."""
         if context_id in self._waiting_for_input and context_id in self._pending_updaters:
             updater = self._pending_updaters[context_id]
             await updater.complete(
-                message=new_agent_text_message(
-                    f"Expert Response: {human_response}", context_id=context_id
-                )
+                message=new_agent_text_message(human_response, context_id=context_id)
             )
             if context_id in self._input_events:
                 self._input_events[context_id].set()
             logger.info(f"Completed input_required task for context {context_id}")
+
+            # Also publish the human response back into the Azure Foundry thread so the
+            # host agent can surface it instead of repeating the escalation banner.
+            try:
+                thread_id = self._active_threads.get(context_id)
+                if thread_id:
+                    agent = await self._get_or_create_agent()
+                    await agent.send_message(thread_id, human_response, role="assistant")
+                    logger.info(
+                        "Posted human response to Foundry thread %s for context %s",
+                        thread_id,
+                        context_id,
+                    )
+                else:
+                    logger.warning(
+                        "No thread id recorded for context %s; human reply not posted to Foundry thread",
+                        context_id,
+                    )
+            except Exception as e:
+                logger.warning(
+                    "Failed to append human response to Foundry thread for context %s: %s",
+                    context_id,
+                    e,
+                )
             return True
         logger.warning(f"No pending input_required task for context {context_id}")
         return False
@@ -437,78 +314,6 @@ class FoundryAgentExecutor(AgentExecutor):
                 message=new_agent_text_message(f"Error: {e}", context_id=context_id)
             )
 
-    async def _run_agent_with_monitoring(
-        self, 
-        agent, 
-        thread_id: str, 
-        user_message: str, 
-        task_updater: TaskUpdater, 
-        context_id: str
-    ):
-        """Run the agent with real-time monitoring of tool calls and status updates."""
-        responses = []
-        tools_called = []
-        seen_tools = set()
-        
-        try:
-            async for event in agent.run_conversation_stream(thread_id, user_message):
-                # Check if this is a tool call event from remote agent
-                if event.startswith("🛠️ Remote agent executing:"):
-                    tool_description = event.replace("🛠️ Remote agent executing: ", "").strip()
-                    if tool_description not in seen_tools:
-                        seen_tools.add(tool_description)
-                        tools_called.append(tool_description)
-                        # Emit tool call in real-time
-                        tool_event_msg = new_agent_text_message(
-                            f"🛠️ {tool_description}", context_id=context_id
-                        )
-                        await task_updater.update_status(
-                            TaskState.working,
-                            message=tool_event_msg
-                        )
-                # Check if this is a processing message
-                elif event.startswith("🤖") or event.startswith("🧠") or event.startswith("🔍") or event.startswith("📝"):
-                    # Emit processing message in real-time
-                    processing_msg = new_agent_text_message(
-                        event, context_id=context_id
-                    )
-                    await task_updater.update_status(
-                        TaskState.working,
-                        message=processing_msg
-                    )
-                # Check if this is an error
-                elif event.startswith("Error:"):
-                    await task_updater.failed(
-                        message=new_agent_text_message(event, context_id=context_id)
-                    )
-                    return ([], [])
-                # Check for human escalation
-                elif event.strip().upper().startswith("HUMAN_ESCALATION_REQUIRED"):
-                    responses.append(event)
-                    return (responses, tools_called)
-                # Otherwise, treat as a regular response
-                else:
-                    responses.append(event)
-                    
-        except Exception as e:
-            await task_updater.failed(
-                message=new_agent_text_message(f"Agent execution error: {e}", context_id=context_id)
-            )
-            return ([], [])
-            
-        return (responses, tools_called)
-
-    async def _cleanup_thread_later(self, agent: FoundrySNAgent, thread_id: str):
-        """Clean up a thread after a delay to avoid interfering with active runs."""
-        try:
-            # Wait much longer to ensure any active runs are complete and rate limits reset
-            await asyncio.sleep(60)  # Wait 1 minute before cleanup
-            client = agent._get_client()
-            client.threads.delete(thread_id)
-            logger.info(f"Delayed cleanup: deleted Azure thread {thread_id}")
-        except Exception as e:
-            logger.warning(f"Delayed cleanup failed for thread {thread_id}: {e}")
-
     def _convert_parts_to_text(self, parts: List[Part]) -> str:
         """Convert message parts to plain text, saving any files locally."""
         texts: List[str] = []
@@ -598,12 +403,6 @@ class FoundryAgentExecutor(AgentExecutor):
 
 
 def create_foundry_agent_executor(card: AgentCard) -> FoundryAgentExecutor:
-    return FoundryAgentExecutor(card)
-
-
-async def create_foundry_agent_executor_with_startup(card: AgentCard) -> FoundryAgentExecutor:
-    """Create executor and initialize the shared agent at startup."""
-    await FoundryAgentExecutor.initialize_at_startup()
     return FoundryAgentExecutor(card)
 
 

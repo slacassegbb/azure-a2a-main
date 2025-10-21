@@ -3,7 +3,6 @@ import logging
 import os
 import traceback
 from collections.abc import AsyncIterator
-from pprint import pformat
 import threading
 
 import click
@@ -27,9 +26,42 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
+def _normalize_env_value(raw_value: str | None) -> str:
+    if raw_value is None:
+        return ''
+    return raw_value.strip()
+
+
+def _resolve_default_host() -> str:
+    value = _normalize_env_value(os.getenv('A2A_ENDPOINT'))
+    return value or 'localhost'
+
+
+def _resolve_default_port() -> int:
+    raw_port = _normalize_env_value(os.getenv('A2A_PORT'))
+    if raw_port:
+        try:
+            return int(raw_port)
+        except ValueError:
+            logger.warning("Invalid A2A_PORT value '%s'; defaulting to 8001", raw_port)
+    return 8001
+
+
+def resolve_agent_url(bind_host: str, bind_port: int) -> str:
+    endpoint = _normalize_env_value(os.getenv('A2A_ENDPOINT'))
+    if endpoint:
+        if endpoint.startswith(('http://', 'https://')):
+            return endpoint.rstrip('/') + '/'
+        host_for_url = endpoint
+    else:
+        host_for_url = bind_host if bind_host != "0.0.0.0" else _resolve_default_host()
+
+    return f"http://{host_for_url}:{bind_port}/"
+
 # Import self-registration utility
 try:
-    from utils.self_registration import register_with_host_agent
+    from utils.self_registration import register_with_host_agent, get_host_agent_url
     SELF_REGISTRATION_AVAILABLE = True
     logger.info("✅ Self-registration utility loaded")
 except ImportError:
@@ -37,27 +69,20 @@ except ImportError:
     async def register_with_host_agent(agent_card, host_url=None):
         logger.info("ℹ️ Self-registration utility not available - skipping registration")
         return False
+    def get_host_agent_url() -> str:
+        return ""
     SELF_REGISTRATION_AVAILABLE = False
 
 # Updated ports to avoid conflicts with both azurefoundry_SN and azurefoundry_Deep_Search agents
-DEFAULT_HOST = 'localhost'
-DEFAULT_PORT = 8001  # Changed from 10009 to avoid conflict
+DEFAULT_HOST = _resolve_default_host()
+DEFAULT_PORT = _resolve_default_port()  # Changed from 10009 to avoid conflict
 DEFAULT_UI_PORT = 8089  # Changed from 8087 to avoid conflict
 
 # UI Configuration - Updated for Classification Triage agent
-APP_NAME = "foundry_classification_app"  # Changed for classification agent
-USER_ID = "default_user"
-SESSION_ID = "default_session"
-
 # Global reference to the agent executor to check for pending tasks
 agent_executor_instance = None
 
-# Global state for UI notifications
-pending_request_notification = {"has_pending": False, "request_text": "", "context_id": ""}
-
-#CITIBANK_HOST_AGENT_URL = "https://citibank-host-agent.whiteplant-4c581c75.canadaeast.azurecontainerapps.io"
-CITIBANK_HOST_AGENT_URL = "http://localhost:12000"
-#CITIBANK_HOST_AGENT_URL = "https://contoso-a2a.whiteplant-4c581c75.canadaeast.azurecontainerapps.io/"
+HOST_AGENT_URL = _normalize_env_value(get_host_agent_url())
 
 
 def create_a2a_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
@@ -134,7 +159,7 @@ def create_a2a_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
         description="An intelligent incident classification and triage agent powered by Azure AI Foundry. Specializes in analyzing customer issues, classifying incidents into proper categories, assessing priority levels, and routing cases to appropriate teams using ServiceNow standards.",
         #url=f'http://{host}:{port}/',
         #url=f'https://agent1.ngrok.app/agent2/',
-        url=f'http://localhost:8001/',
+        url=resolve_agent_url(host, port),
         version='1.0.0',
         defaultInputModes=['text'],
         defaultOutputModes=['text'],
@@ -161,8 +186,8 @@ def create_a2a_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
     routes = a2a_app.routes()
     
     # Add health check endpoint
-    async def health_check(request: Request) -> PlainTextResponse:
-        return PlainTextResponse('AI Foundry Classification Triage Agent is running!')
+    async def health_check(_: Request) -> PlainTextResponse:
+        return PlainTextResponse('AI Foundry Insurance Classification Agent is running!')
     
     routes.append(
         Route(
@@ -192,7 +217,7 @@ async def register_agent_with_host(agent_card):
         await asyncio.sleep(2)
         try:
             logger.info(f"🤝 Attempting to register '{agent_card.name}' with host agent...")
-            registration_success = await register_with_host_agent(agent_card, host_url=CITIBANK_HOST_AGENT_URL)
+            registration_success = await register_with_host_agent(agent_card, host_url=HOST_AGENT_URL or None)
             if registration_success:
                 logger.info(f"🎉 '{agent_card.name}' successfully registered with host agent!")
             else:
@@ -216,7 +241,7 @@ def start_background_registration(agent_card):
 
 async def get_foundry_response(
     message: str,
-    history: list[gr.ChatMessage],
+    _history: list[gr.ChatMessage],
 ) -> AsyncIterator[gr.ChatMessage]:
     """Get response from Azure Foundry Classification Triage agent for Gradio UI."""
     global agent_executor_instance
@@ -383,7 +408,7 @@ async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_p
         description="An intelligent incident classification and triage agent powered by Azure AI Foundry. Specializes in analyzing customer issues, classifying incidents into proper categories, assessing priority levels, and routing cases to appropriate teams using ServiceNow standards.",
         #url=f'http://{host if host != "0.0.0.0" else DEFAULT_HOST}:{a2a_port}/',
         #url=f'https://agent1.ngrok.app/agent2/',
-        url=f'http://localhost:8001/',
+        url=resolve_agent_url(host, a2a_port),
         version='1.0.0',
         defaultInputModes=['text'],
         defaultOutputModes=['text'],
@@ -409,11 +434,14 @@ async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_p
             container=False,
             show_fullscreen_button=False,
         )
+        display_host = host if host != "0.0.0.0" else DEFAULT_HOST
+        ui_display_url = f"http://{display_host}:{ui_port}"
+        a2a_display_url = resolve_agent_url(display_host, a2a_port).rstrip('/')
         gr.Markdown(f"""
         ## 🎯 AI Foundry Classification Triage Agent
         
-        **Direct UI Access:** http://localhost:{ui_port}  
-        **A2A API Access:** http://localhost:{a2a_port}
+        **Direct UI Access:** {ui_display_url}  
+        **A2A API Access:** {a2a_display_url}
         
         **Incident Classification & Triage:** This agent specializes in analyzing and classifying customer incidents using ServiceNow standards:
         
@@ -443,7 +471,7 @@ async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_p
         timer.tick(fn=check_system_status, outputs=status_display)
         
         # Add a hidden component that triggers refresh via JavaScript
-        refresh_timer = gr.HTML("""
+        gr.HTML("""
         <script>
         setInterval(function() {
             // Find the refresh button by its text content
@@ -458,7 +486,7 @@ async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_p
         </script>
         """, visible=False)
         
-        chat_interface = gr.ChatInterface(
+        gr.ChatInterface(
             get_foundry_response,
             title="",  # Title is now in markdown above
             description="Send me any customer incident and I'll analyze, classify, and provide triage recommendations with proper ServiceNow field mappings.",
@@ -575,7 +603,7 @@ def main(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
         description="An intelligent incident classification and triage agent powered by Azure AI Foundry. Specializes in analyzing customer issues, classifying incidents into proper categories, assessing priority levels, and routing cases to appropriate teams using ServiceNow standards.",
         #url=f'http://{host}:{port}/',
         #url=f'https://agent1.ngrok.app/agent2/',
-        url=f'http://localhost:8001/',
+        url=resolve_agent_url(host, port),
         version='1.0.0',
         defaultInputModes=['text'],
         defaultOutputModes=['text'],

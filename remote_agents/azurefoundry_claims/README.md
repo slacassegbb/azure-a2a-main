@@ -8,7 +8,7 @@ An Azure AI Foundry agent tailored for multi-line insurance claims support. This
 - 📑 **Documentation Checklists** – Lists required proof-of-loss items, forms, and follow-up steps to keep adjusters productive.
 - ⚖️ **Compliance & Fraud Signals** – Highlights regulatory timelines, escalation triggers, and fraud indicators from the reference guides.
 - 🌐 **Dual Operation Modes** – Run as an A2A server (port `9001`) or launch the Gradio UI (port `9101`) for direct conversations.
-- 🤝 **Self-Registration** – Automatically registers with the host agent running at `http://localhost:12000` (configurable).
+- 🤝 **Self-Registration** – Automatically registers with the host agent configured via `A2A_HOST` (defaults to `http://localhost:12000`).
 
 ## Project Structure
 ```
@@ -42,12 +42,24 @@ AZURE_AI_FOUNDRY_PROJECT_ENDPOINT=your-project-endpoint
 AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME=your-model-deployment
 ```
 
+### 3a. Configure A2A Server
+```env
+# Hostname or base domain the agent binds to (defaults to localhost)
+A2A_ENDPOINT=localhost
+
+# Port for the agent's A2A API
+A2A_PORT=9001
+
+# Host agent URL for self-registration (empty string disables)
+A2A_HOST=http://localhost:12000
+```
+
 ### 4. Run the Agent
-- **A2A server only** (default port 9001)
+- **A2A server only** (defaults to `A2A_ENDPOINT:A2A_PORT`, e.g. `http://localhost:9001`)
   ```bash
   uv run .
   ```
-  Health check: `http://localhost:9001/health`
+  Health check: `http://$A2A_ENDPOINT:$A2A_PORT/health`
 
 - **Gradio UI + A2A server**
   ```bash
@@ -73,7 +85,7 @@ With the host agent running (`demo/ui`), start the claims agent and check the Re
 ## Testing Utilities
 - `python test_client.py` – exercises health check, card retrieval, and messaging workflows against the running agent.
 - `python test_bing_search.py` – quick check that web/Bing search is available when environment quotas allow it.
-- `python test_self_registration.py` – confirms the agent can register with the host agent endpoint specified by `A2A_HOST_AGENT_URL`.
+- `python test_self_registration.py` – confirms the agent can register with the host agent endpoint specified by `A2A_HOST` (falls back to `A2A_HOST_AGENT_URL`).
 
 ## Troubleshooting
 - Ensure Azure AI Foundry quotas (TPM) are sufficient; agents typically require ≥20k TPM for smooth operation.
@@ -82,8 +94,8 @@ With the host agent running (`demo/ui`), start the claims agent and check the Re
 - Use the Gradio UI console output for detailed streaming and tool-call diagnostics.
 
 ## Default Ports & Environment Overrides
-- A2A Server: `9001` (override with `--port`)
+- A2A Server: `A2A_ENDPOINT:A2A_PORT` (defaults to `localhost:9001`, override via env or `--port`)
 - Gradio UI: `9101` (override with `--ui-port`)
-- Host Agent URL: `http://localhost:12000` (override with `A2A_HOST_AGENT_URL`)
+- Host Agent URL: `A2A_HOST` (defaults to `http://localhost:12000`, accepts empty string to disable)
 
 Happy adjusting! 🧾

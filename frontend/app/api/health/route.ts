@@ -3,18 +3,17 @@ import { NextRequest, NextResponse } from 'next/server';
 export async function GET(request: NextRequest) {
   try {
     // Basic health check
+    const websocketUrl = process.env.NEXT_PUBLIC_WEBSOCKET_URL || 'ws://localhost:8080/events';
+
     const healthCheck = {
       status: 'healthy',
       timestamp: new Date().toISOString(),
       uptime: process.uptime(),
       environment: process.env.NODE_ENV,
       version: process.env.npm_package_version || '1.0.0',
-      eventHub: {
-        configured: !!(process.env.NEXT_PUBLIC_AZURE_EVENTHUB_NAME && 
-                      (process.env.NEXT_PUBLIC_AZURE_EVENTHUB_CONNECTION_STRING || 
-                       process.env.NEXT_PUBLIC_AZURE_EVENTHUB_NAMESPACE)),
-        name: process.env.NEXT_PUBLIC_AZURE_EVENTHUB_NAME || 'not-configured',
-        consumerGroup: process.env.NEXT_PUBLIC_AZURE_EVENTHUB_CONSUMER_GROUP || '$Default'
+      websocket: {
+        url: websocketUrl,
+        usingDefaultUrl: !process.env.NEXT_PUBLIC_WEBSOCKET_URL
       }
     };
 

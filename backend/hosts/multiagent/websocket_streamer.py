@@ -406,12 +406,3 @@ async def cleanup_websocket_streamer():
         logger.info("WebSocket streamer cleaned up")
 
 
-# For backward compatibility, provide the same interface as azure_eventhub_streamer
-async def get_event_hub_streamer() -> Optional[WebSocketStreamer]:
-    """Compatibility function - returns WebSocket streamer instead of Event Hub."""
-    return await get_websocket_streamer()
-
-
-async def cleanup_event_hub_streamer():
-    """Compatibility function - cleans up WebSocket streamer."""
-    await cleanup_websocket_streamer()

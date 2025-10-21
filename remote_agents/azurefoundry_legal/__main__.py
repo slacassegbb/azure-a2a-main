@@ -2,16 +2,12 @@ import asyncio
 import logging
 import os
 import traceback
-from collections.abc import AsyncIterator
-from pprint import pformat
 import threading
 import json
 import datetime
-import random
 import re
 from typing import Dict, List, Tuple, Optional
 import pandas as pd
-import base64
 
 import click
 import gradio as gr
@@ -34,9 +30,42 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
+def _normalize_env_value(raw_value: str | None) -> str:
+    if raw_value is None:
+        return ''
+    return raw_value.strip()
+
+
+def _resolve_default_host() -> str:
+    value = _normalize_env_value(os.getenv('A2A_ENDPOINT'))
+    return value or 'localhost'
+
+
+def _resolve_default_port() -> int:
+    raw_port = _normalize_env_value(os.getenv('A2A_PORT'))
+    if raw_port:
+        try:
+            return int(raw_port)
+        except ValueError:
+            logger.warning("Invalid A2A_PORT value '%s'; defaulting to 8006", raw_port)
+    return 8006
+
+
+def resolve_agent_url(bind_host: str, bind_port: int) -> str:
+    endpoint = _normalize_env_value(os.getenv('A2A_ENDPOINT'))
+    if endpoint:
+        if endpoint.startswith(('http://', 'https://')):
+            return endpoint.rstrip('/') + '/'
+        host_for_url = endpoint
+    else:
+        host_for_url = bind_host if bind_host != "0.0.0.0" else _resolve_default_host()
+
+    return f"http://{host_for_url}:{bind_port}/"
+
 # Import self-registration utility
 try:
-    from utils.self_registration import register_with_host_agent
+    from utils.self_registration import register_with_host_agent, get_host_agent_url
     SELF_REGISTRATION_AVAILABLE = True
     logger.info("✅ Self-registration utility loaded")
 except ImportError:
@@ -44,27 +73,17 @@ except ImportError:
     async def register_with_host_agent(agent_card, host_url=None):
         logger.info("ℹ️ Self-registration utility not available - skipping registration")
         return False
+    def get_host_agent_url() -> str:
+        return ""
     SELF_REGISTRATION_AVAILABLE = False
 
-DEFAULT_HOST = 'localhost'
-DEFAULT_PORT = 8006  # Changed to avoid conflict with other agents
+DEFAULT_HOST = _resolve_default_host()
+DEFAULT_PORT = _resolve_default_port()  # Changed to avoid conflict with other agents
 DEFAULT_UI_PORT = 8095  # Changed to avoid conflict with other agents
 
-# UI Configuration
-APP_NAME = "foundry_expert_app"
-USER_ID = "default_user"
-SESSION_ID = "default_session"
-
-#CITIBANK_HOST_AGENT_URL = "https://citibank-host-agent.whiteplant-4c581c75.canadaeast.azurecontainerapps.io"
-CITIBANK_HOST_AGENT_URL = "http://localhost:12000"
-#CITIBANK_HOST_AGENT_URL = "https://contoso-a2a.whiteplant-4c581c75.canadaeast.azurecontainerapps.io"
 # Global reference to the agent executor to check for pending tasks
+HOST_AGENT_URL = _normalize_env_value(get_host_agent_url())
 agent_executor_instance = None
-
-# Global state for UI notifications
-pending_request_notification = {"has_pending": False, "request_text": "", "context_id": ""}
-
-LEGAL_HOST_AGENT_URL = "https://contoso-a2a.whiteplant-4c581c75.canadaeast.azurecontainerapps.io"
 
 
 class LegalComplianceDashboard:
@@ -103,8 +122,6 @@ class LegalComplianceDashboard:
         self.current_case = self.gdpr_compliance_case
         
         # Add missing attributes for dashboard data
-        self.compliance_status = "Active"
-        self.open_issues = []
         self.recent_transactions = []
         self.accounts = []
         self.open_tickets = []
@@ -135,31 +152,6 @@ class LegalComplianceDashboard:
                 "balance": "R$3,240.10",
                 "status": "Active",
                 "last_transaction": "Jul 2, 2025"
-            }
-        ]
-        
-        # David Miller account information (for human requests)
-        self.david_miller_accounts = [
-            {
-                "account_type": "Checking",
-                "account_number": "****1234",
-                "balance": "$12,450.67",
-                "status": "Active",
-                "last_transaction": "Jan 15, 2024"
-            },
-            {
-                "account_type": "Savings",
-                "account_number": "****5678",
-                "balance": "$45,230.12",
-                "status": "Active", 
-                "last_transaction": "Jan 12, 2024"
-            },
-            {
-                "account_type": "Credit Card",
-                "account_number": "****9012",
-                "balance": "$2,340.50",
-                "status": "Active",
-                "last_transaction": "Jan 15, 2024"
             }
         ]
         
@@ -572,13 +564,15 @@ def create_a2a_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
         )
     ]
 
+    resolved_host_for_url = host if host != "0.0.0.0" else DEFAULT_HOST
+
     # Create agent card
     agent_card = AgentCard(
         name='Legal Compliance & Regulatory Agent',
         description="An intelligent legal and compliance agent specialized in regulatory analysis, risk assessment, document analysis, and incident response. Can analyze compliance requirements for GDPR, SOX, CCPA and other regulations, assess legal risks, research regulatory requirements, analyze legal documents, handle incident reporting, search the web for current legal information, and search through uploaded legal documents and compliance materials, all with professional legal guidance.",
        # url=f'http://{host}:{port}/',
         #url=f'https://agent1.ngrok.app/agent5/',
-        url=f'http://localhost:8006/',
+        url=resolve_agent_url(resolved_host_for_url, port),
         version='1.0.0',
         defaultInputModes=['text'],
         defaultOutputModes=['text'],
@@ -605,7 +599,7 @@ def create_a2a_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
     routes = a2a_app.routes()
     
     # Add health check endpoint
-    async def health_check(request: Request) -> PlainTextResponse:
+    async def health_check(_request: Request) -> PlainTextResponse:
         return PlainTextResponse('AI Foundry Legal Agent is running!')
     
     routes.append(
@@ -635,8 +629,12 @@ async def register_agent_with_host(agent_card):
         # Wait a moment for server to fully start
         await asyncio.sleep(2)
         try:
-            logger.info(f"🤝 Attempting to register '{agent_card.name}' with host agent...")
-            registration_success = await register_with_host_agent(agent_card, host_url=CITIBANK_HOST_AGENT_URL)
+            if not HOST_AGENT_URL:
+                logger.info("ℹ️ Host agent URL not configured; skipping registration attempt.")
+                return
+
+            logger.info(f"🤝 Attempting to register '{agent_card.name}' with host agent at {HOST_AGENT_URL}...")
+            registration_success = await register_with_host_agent(agent_card, host_url=HOST_AGENT_URL)
             if registration_success:
                 logger.info(f"🎉 '{agent_card.name}' successfully registered with host agent!")
             else:
@@ -656,110 +654,6 @@ def start_background_registration(agent_card):
         logger.info(f"🚀 '{agent_card.name}' starting with background registration enabled")
     else:
         logger.info(f"📡 '{agent_card.name}' starting without self-registration")
-
-
-async def get_foundry_response(
-    message: str,
-    history: list[gr.ChatMessage],
-) -> AsyncIterator[gr.ChatMessage]:
-    """Get response from Azure Foundry agent for Gradio UI."""
-    global agent_executor_instance
-    try:
-        # Check if there are pending input_required tasks (user is responding to a request)
-        if agent_executor_instance and agent_executor_instance._waiting_for_input:
-            # Get the first pending task (in a real system, you might want to be more specific)
-            context_id = next(iter(agent_executor_instance._waiting_for_input.keys()))
-            request_text = agent_executor_instance._waiting_for_input[context_id]
-            
-            # If the user message is just checking for requests
-            if message.lower().strip() in ["", "status", "check", "pending"] or len(message.strip()) == 0:
-                yield gr.ChatMessage(
-                    role="assistant",
-                    content=f"🤖 **Pending Host Agent Request:**\n\n{request_text}\n\n*Please provide your expert response by typing your answer below.*"
-                )
-                return
-            
-            # This is the human expert's response
-            yield gr.ChatMessage(
-                role="assistant",
-                content=f"✅ **Sending your response to Host Agent...**\n\nExpert Response: \"{message}\""
-            )
-            
-            # Send the human response to complete the waiting task
-            success = await agent_executor_instance.send_human_response(context_id, message)
-            
-            if success:
-                yield gr.ChatMessage(
-                    role="assistant",
-                    content="✅ **Response sent successfully!** The Host Agent has received your expert input and will continue processing."
-                )
-                # Clear the pending request notification
-                global pending_request_notification
-                pending_request_notification = {"has_pending": False, "request_text": "", "context_id": ""}
-            else:
-                yield gr.ChatMessage(
-                    role="assistant",
-                    content="❌ **Error:** Could not send response to Host Agent. The task may have expired."
-                )
-            
-            return
-        
-        # Regular foundry agent interaction
-        # Get the shared agent that was initialized at startup
-        foundry_agent = await FoundryLegalAgentExecutor.get_shared_agent()
-        
-        if not foundry_agent:
-            yield gr.ChatMessage(
-                role="assistant",
-                content="❌ Agent not initialized. Please restart the application.",
-            )
-            return
-        
-        # Create a thread for this conversation
-        thread = await foundry_agent.create_thread()
-        thread_id = thread.id
-        
-        # Send a status update
-        yield gr.ChatMessage(
-            role="assistant",
-            content="🤖 **Processing your request...**",
-        )
-        
-        # Run the conversation using the streaming method
-        response_count = 0
-        async for response in foundry_agent.run_conversation_stream(thread_id, message):
-            print("[DEBUG] get_foundry_response: response=", response)
-            if isinstance(response, str):
-                if response.strip():
-                    # Filter out processing messages
-                    if not any(phrase in response.lower() for phrase in [
-                        "processing your request", "🤖 processing", "processing..."
-                    ]):
-                        yield gr.ChatMessage(role="assistant", content=response)
-                        response_count += 1
-            else:
-                # handle other types if needed
-                print(f"[DEBUG] get_foundry_response: Unexpected response type: {type(response)}")
-                yield gr.ChatMessage(
-                    role="assistant",
-                    content=f"An error occurred while processing your request: {str(response)}. Please check the server logs for details.",
-                )
-                response_count += 1
-        
-        # If no responses were yielded, show a default message
-        if response_count == 0:
-            yield gr.ChatMessage(
-                role="assistant", 
-                content="I processed your request but didn't receive a response. Please try again."
-            )
-            
-    except Exception as e:
-        logger.error(f"Error in get_foundry_response (Type: {type(e)}): {e}")
-        traceback.print_exc()
-        yield gr.ChatMessage(
-            role="assistant",
-            content=f"An error occurred while processing your request: {str(e)}. Please check the server logs for details.",
-        )
 
 
 async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_port: int = DEFAULT_PORT):
@@ -886,12 +780,14 @@ async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_p
         )
     ]
 
+    resolved_host_for_url = host if host != "0.0.0.0" else DEFAULT_HOST
+
     agent_card = AgentCard(
         name='Legal Compliance & Regulatory Agent',
         description="An intelligent legal and compliance agent specialized in regulatory analysis, risk assessment, document analysis, and incident response. Can analyze compliance requirements for GDPR, SOX, CCPA and other regulations, assess legal risks, research regulatory requirements, analyze legal documents, handle incident reporting, search the web for current legal information, and search through uploaded legal documents and compliance materials, all with professional legal guidance.",
         #url=f'http://{host if host != "0.0.0.0" else DEFAULT_HOST}:{a2a_port}/',
         #url=f'https://agent1.ngrok.app/agent5/',
-        url=f'http://localhost:8006/',
+        url=resolve_agent_url(resolved_host_for_url, a2a_port),
         version='1.0.0',
         defaultInputModes=['text'],
         defaultOutputModes=['text'],
@@ -928,7 +824,7 @@ async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_p
                 
                 for i, match in enumerate(matches):
                     try:
-                        number, agent_name, content = match
+                        _, agent_name, content = match
                         print(f"[DEBUG] Processing memory match {i+1}: agent={agent_name}, content_length={len(content)}")
                         print(f"[DEBUG] Content preview: {content[:200]}...")
                         
@@ -1218,6 +1114,10 @@ User: 1500$, yesterday"""
     }
     """
 
+    display_host = resolved_host_for_url
+    ui_display_url = f"http://{display_host}:{ui_port}"
+    a2a_display_url = resolve_agent_url(display_host, a2a_port).rstrip('/')
+
     with gr.Blocks(css=dashboard_css, theme=gr.themes.Ocean(), title="Legal Compliance Dashboard - AI Foundry Legal Agent") as demo:
         
         # Dashboard Header
@@ -1228,7 +1128,7 @@ User: 1500$, yesterday"""
                     <h1 style="margin: 0;">Legal Compliance Agent (A2A)</h1>
                     <h3 style="margin: 5px 0;">An intelligent Azure Foundry agent specialized in legal compliance, regulatory research, risk assessment, and document analysis.</h3>
                     <p style="margin: 5px 0;">Legal Workstation | Session: Active | Time: <span id="current-time"></span></p>
-                    <p style="margin: 5px 0;"><strong>Direct UI Access:</strong> http://localhost:{ui_port} | <strong>A2A API Access:</strong> http://localhost:{a2a_port}</p>
+                    <p style="margin: 5px 0;"><strong>Direct UI Access:</strong> {ui_display_url} | <strong>A2A API Access:</strong> {a2a_display_url}</p>
                 </div>
             </div>
         </div>
@@ -1246,7 +1146,7 @@ User: 1500$, yesterday"""
         timer = gr.Timer(2)
         
         # Add a hidden component that triggers refresh via JavaScript
-        refresh_timer = gr.HTML("""
+        gr.HTML("""
         <script>
         setInterval(function() {
             // Find the refresh button by its text content
@@ -1638,12 +1538,14 @@ async def main_async(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
         )
     ]
 
+    resolved_host_for_url = host if host != "0.0.0.0" else DEFAULT_HOST
+
     agent_card = AgentCard(
         name='Legal Compliance & Regulatory Agent',
         description="An intelligent legal and compliance agent specialized in regulatory analysis, risk assessment, document analysis, and incident response. Can analyze compliance requirements for GDPR, SOX, CCPA and other regulations, assess legal risks, research regulatory requirements, analyze legal documents, handle incident reporting, search the web for current legal information, and search through uploaded legal documents and compliance materials, all with professional legal guidance.",
         #url=f'http://{host}:{port}/',
         #url=f'https://agent1.ngrok.app/agent5/',
-        url=f'http://localhost:8006/',
+        url=resolve_agent_url(resolved_host_for_url, port),
         version='1.0.0',
         defaultInputModes=['text'],
         defaultOutputModes=['text'],

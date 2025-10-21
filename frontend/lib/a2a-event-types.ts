@@ -1,8 +1,8 @@
 /**
- * TypeScript interfaces for A2A Event Hub data structures
+ * TypeScript interfaces for A2A event-stream data structures
  * 
  * These interfaces define the structure of events sent from the A2A system
- * to Azure Event Hub for consumption by external frontends.
+ * over the WebSocket relay for consumption by external frontends.
  */
 
 // Base event envelope structure
@@ -239,10 +239,10 @@ export function isRemoteAgentToolCallEvent(data: A2AEventData): data is RemoteAg
   return 'isRemoteAgent' in data && 'isToolCall' in data && 'agentName' in data;
 }
 
-// Helper function to parse Event Hub message
-export function parseA2AEvent(eventHubMessage: string): A2AEventEnvelope | null {
+// Helper function to parse a WebSocket event payload
+export function parseA2AEvent(eventStreamMessage: string): A2AEventEnvelope | null {
   try {
-    const parsed = JSON.parse(eventHubMessage);
+    const parsed = JSON.parse(eventStreamMessage);
     
     // Validate basic structure
     if (!parsed.eventType || !parsed.timestamp || !parsed.eventId || !parsed.data) {

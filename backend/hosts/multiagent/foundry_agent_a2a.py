@@ -1,6 +1,7 @@
 import asyncio
 import ast
 import base64
+import re
 import json
 import uuid
 import os
@@ -8,7 +9,7 @@ import logging
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Iterable
 import httpx
 from dotenv import load_dotenv
 
@@ -23,6 +24,7 @@ from a2a.types import (
     Artifact,
     DataPart,
     FilePart,
+    FileWithBytes,
     FileWithUri,
     Message,
     MessageSendConfiguration,
@@ -102,6 +104,28 @@ def get_task_id(obj: Any, default: str = None) -> str:
         return getattr(obj, 'taskId', getattr(obj, 'task_id', getattr(obj, 'id', default or str(uuid.uuid4()))))
     except Exception:
         return default or str(uuid.uuid4())
+
+
+def _normalize_env_bool(raw_value: str | None, default: bool = False) -> bool:
+    """Normalize boolean environment flags that may include quotes or mixed casing."""
+    if raw_value is None:
+        return default
+    normalized = raw_value.strip().strip('"').strip("'").lower()
+    if normalized in {"1", "true", "yes", "y", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "n", "off"}:
+        return False
+    return default
+
+
+def _normalize_env_int(raw_value: str | None, default: int) -> int:
+    """Normalize integer environment variables that may include quotes."""
+    if raw_value is None:
+        return default
+    try:
+        return int(raw_value.strip().strip('"').strip("'"))
+    except (TypeError, ValueError):
+        return default
 
 class SessionContext(BaseModel):
     """A2A protocol state management - threads handle conversation history.
@@ -331,32 +355,86 @@ class FoundryHostAgent2:
     def _init_azure_blob_client(self):
         """Initialize Azure Blob Storage client if environment variables are configured."""
         try:
+            self._azure_blob_client = None
+            self._azure_blob_container = os.getenv('AZURE_BLOB_CONTAINER', 'a2a-files')
             azure_storage_connection_string = os.getenv('AZURE_STORAGE_CONNECTION_STRING')
             azure_storage_account_name = os.getenv('AZURE_STORAGE_ACCOUNT_NAME')
             
             if azure_storage_connection_string:
-                from azure.storage.blob.aio import BlobServiceClient
+                from azure.storage.blob import BlobServiceClient
                 self._azure_blob_client = BlobServiceClient.from_connection_string(azure_storage_connection_string)
-                print(f"✅ Azure Blob Storage initialized with connection string")
+                print("✅ Azure Blob Storage initialized with connection string (sync client)")
                 print(f"Connection string starts with: {azure_storage_connection_string[:50]}...")
+                print(f"Azure storage account: {self._azure_blob_client.account_name}")
             elif azure_storage_account_name:
-                from azure.storage.blob.aio import BlobServiceClient
-                # Use DefaultAzureCredential for authentication
+                from azure.storage.blob import BlobServiceClient
                 account_url = f"https://{azure_storage_account_name}.blob.core.windows.net"
                 self._azure_blob_client = BlobServiceClient(account_url, credential=self.credential)
-                print(f"✅ Azure Blob Storage initialized with managed identity: {account_url}")
+                print(f"✅ Azure Blob Storage initialized with managed identity (sync client): {account_url}")
             else:
-                print(f"❌ Azure Blob Storage not configured - using local storage only")
+                print("❌ Azure Blob Storage not configured - using local storage only")
                 print(f"AZURE_STORAGE_CONNECTION_STRING: {azure_storage_connection_string}")
                 print(f"AZURE_STORAGE_ACCOUNT_NAME: {azure_storage_account_name}")
-                
+                self._azure_blob_container = None
+            
+            if self._azure_blob_client:
+                print(f"🪣 Target Azure Blob container: {self._azure_blob_container}")
+                loop = asyncio.get_running_loop()
+                loop.create_task(self._verify_blob_connection())
+            else:
+                print("ℹ️ Azure Blob client not initialized; uploads will use local storage")
+
         except ImportError as e:
-            print(f"❌ Azure Storage SDK not installed - using local storage only")
+            print("❌ Azure Storage SDK not installed - using local storage only")
             print(f"ImportError details: {e}")
         except Exception as e:
             print(f"❌ Failed to initialize Azure Blob Storage: {e}")
             print(f"Exception type: {type(e).__name__}")
             self._azure_blob_client = None
+
+    async def _verify_blob_connection(self):
+        """Log diagnostics about the configured Azure Blob container."""
+        if not self._azure_blob_client or not self._azure_blob_container:
+            print("ℹ️ Azure Blob verification skipped: client or container not set")
+            return
+
+        try:
+            print("🔍 Azure Blob check: resolving container client...")
+            container_client = self._azure_blob_client.get_container_client(self._azure_blob_container)
+
+            print("🔍 Azure Blob check: ensuring container exists...")
+            try:
+                await asyncio.to_thread(container_client.create_container)
+                print(f"✅ Azure Blob container '{self._azure_blob_container}' created")
+            except Exception as create_err:
+                from azure.core.exceptions import ResourceExistsError
+                if isinstance(create_err, ResourceExistsError):
+                    print(f"ℹ️ Azure Blob container '{self._azure_blob_container}' already exists")
+                else:
+                    raise
+
+            print("🔍 Azure Blob check: listing blobs (up to 5 entries)...")
+            blob_count = 0
+            for blob in container_client.list_blobs(name_starts_with="a2a-artifacts/"):
+                print(f"   • Existing blob: {blob.name} (size={blob.size})")
+                blob_count += 1
+                if blob_count >= 5:
+                    print("   • ... additional blobs omitted ...")
+                    break
+            if blob_count == 0:
+                print("   • No blobs found yet in this container")
+
+            print("🔍 Azure Blob check: uploading connectivity probe...")
+            probe_blob_name = f"a2a-artifacts/_connectivity_probe_.txt"
+            probe_client = container_client.get_blob_client(probe_blob_name)
+            probe_payload = f"connection verified at {datetime.utcnow().isoformat()}"
+            await asyncio.to_thread(probe_client.upload_blob, probe_payload, overwrite=True)
+            print(f"✅ Azure Blob probe uploaded: {probe_blob_name}")
+
+        except Exception as e:
+            print(f"❌ Azure Blob verification failed: {e}")
+            import traceback
+            print(traceback.format_exc())
 
     def _clear_memory_on_startup(self):
         """Clear memory index automatically on startup for clean testing"""
@@ -687,7 +765,7 @@ class FoundryHostAgent2:
             else:
                 print(f"[DEBUG] ℹ️ Agent {card.name} already in host manager list")
         
-        # Emit agent registration event to Event Hub for UI visibility
+        # Emit agent registration event to WebSocket for UI visibility
         self._emit_agent_registration_event(card)
         
         # Update agent instructions if agent already exists
@@ -873,7 +951,7 @@ class FoundryHostAgent2:
 # Output: A very detailed hyper-personalized response to the user's complaint including all the details of the work you did and all the infromation you gathered for this user.
 
         return f""" You are an intelligent **Multi-Agent Orchestrator** designed to coordinate specialized agents to produce complete, personalized responses.  
-Your goal is to understand the user’s request, engage the right agents in the right order, and respond in a friendly, professional tone.
+Your goal is to understand the user's request, engage the right agents in the right order, and respond in a friendly, professional tone.
 
 ---
 
@@ -885,7 +963,7 @@ Before answering any user request, always:
 
 
 ### 🚨 HUMAN ESCALATION RULE
-If the user says anything like “I want to talk to a human,”  
+If the user says anything like "I want to talk to a human,"  
 you **must** call:
 send_message(
 agent_name="ServiceNow, Web & Knowledge Agent",
@@ -907,11 +985,9 @@ message="User explicitly requested to speak with a human representative. Please 
 Every response must include:
 - A clear summary of what you did and why.  
 - Which agents were engaged, their purposes, and short summaries of their responses.  
-- Personalized language adapted to the user’s tone and profile.  
+- Personalized language adapted to the user's tone and profile.  
 - A friendly and professional closing.  
-- For Step 1, always end with:  
-  > “If you’d like me to continue with the next actions, please reply: **continue to Step 2**.”  
-- For Step 2, end with a confirmation that the process is complete or escalated.
+
 
 If you lack sufficient info, ask clarifying questions before proceeding.
 
@@ -926,10 +1002,8 @@ If you lack sufficient info, ask clarifying questions before proceeding.
 ---
 
 ### 💬 SUMMARY
-- Run **Step 1** first and stop.  
-- Only run **Step 2** if the user clearly asks to continue.  
 - Always show which agents you used and summarize their work.  
-- Always communicate in the user’s primary language (or the language of their message).  
+- Always communicate in the user's primary language (or the language of their message).  
 - Be friendly, helpful, and professional."""
 
     def list_remote_agents(self):
@@ -1396,7 +1470,7 @@ If you lack sufficient info, ask clarifying questions before proceeding.
                 pass
 
     def _emit_agent_registration_event(self, agent_card: AgentCard):
-        """Emit agent registration event to Event Hub for UI sidebar visibility."""
+        """Emit agent registration event to WebSocket for UI sidebar visibility."""
         print(f"[DEBUG] Emitting agent registration event for: {agent_card.name}")
         try:
             import asyncio
@@ -1431,7 +1505,7 @@ If you lack sufficient info, ask clarifying questions before proceeding.
                     import traceback
                     traceback.print_exc()
             
-            # Create background task for Event Hub streaming
+            # Create background task for WebSocket streaming
             asyncio.create_task(stream_registration_event())
             
         except Exception as e:
@@ -2074,12 +2148,38 @@ Answer with just JSON:
             contextId = session_context.contextId
             messageId = str(uuid.uuid4())  # Generate fresh message ID for this specific call
 
-            # Create the request with contextualized message
+            prepared_parts: List[Any] = [Part(root=TextPart(text=contextualized_message))]
+            session_parts = []
+            if hasattr(session_context, "_latest_processed_parts"):
+                session_parts = getattr(session_context, "_latest_processed_parts", []) or []
+
+            if session_parts:
+                print(f"📦 Prepared {len(session_parts)} parts for remote agent {agent_name} (context {contextId})")
+                for idx, prepared_part in enumerate(session_parts):
+                    part_root = getattr(prepared_part, "root", prepared_part)
+                    kind = getattr(part_root, "kind", getattr(part_root, "type", type(part_root).__name__))
+                    print(f"  • Prepared part {idx}: kind={kind}")
+                    if hasattr(part_root, "file") and getattr(part_root.file, "uri", None):
+                        print(f"    → file name={getattr(part_root.file, 'name', 'unknown')} uri={part_root.file.uri}")
+                    if isinstance(part_root, DataPart) and getattr(part_root, "data", None):
+                        print(f"    → data keys={list(part_root.data.keys())}")
+
+                    if isinstance(prepared_part, Part):
+                        prepared_parts.append(prepared_part)
+                    elif isinstance(prepared_part, (TextPart, DataPart, FilePart)):
+                        prepared_parts.append(Part(root=prepared_part))
+                    elif isinstance(prepared_part, dict):
+                        prepared_parts.append(Part(root=DataPart(data=prepared_part)))
+                    elif hasattr(prepared_part, "root"):
+                        prepared_parts.append(Part(root=prepared_part.root))
+                    elif prepared_part is not None:
+                        prepared_parts.append(Part(root=TextPart(text=str(prepared_part))))
+
             request = MessageSendParams(
                 id=str(uuid.uuid4()),
                 message=Message(
                     role='user',
-                    parts=[TextPart(text=contextualized_message)],
+                    parts=prepared_parts,
                     messageId=messageId,
                     contextId=contextId,
                     taskId=taskId,
@@ -2327,6 +2427,18 @@ Answer with just JSON:
             print(f"send_message called for agent: {agent_name}")
             print(f"Original message: {message}")
             print(f"Contextualized message: {contextualized_message}")
+
+            if hasattr(session_context, "_latest_processed_parts") and session_context._latest_processed_parts:
+                print(f"📦 Prepared {len(session_context._latest_processed_parts)} parts for remote agent {agent_name} (context {contextId})")
+                for idx, prepared_part in enumerate(session_context._latest_processed_parts):
+                    part_root = getattr(prepared_part, "root", prepared_part)
+                    kind = getattr(part_root, "kind", getattr(part_root, "type", "unknown"))
+                    print(f"  • Prepared part {idx}: kind={kind}")
+                    if hasattr(part_root, "file") and getattr(part_root.file, "uri", None):
+                        print(f"    → file name={getattr(part_root.file, 'name', 'unknown')} uri={part_root.file.uri}")
+                    if isinstance(part_root, DataPart) and getattr(part_root, "data", None):
+                        print(f"    → data keys={list(part_root.data.keys())}")
+
             print(f"MessageSendParams (as dict): {request.model_dump()}")
             
             # Track start time for processing duration
@@ -2421,6 +2533,10 @@ Answer with just JSON:
                 # ENHANCED: Handle different task states with evaluation and graceful failure handling
                 if task.status.state == TaskState.completed:
                     # SUCCESS: Reset retry count and optionally evaluate
+                    if hasattr(tool_context, 'actions'):
+                        tool_context.actions.skip_summarization = False
+                        tool_context.actions.escalate = False
+
                     self._reset_retry_count(session_context)
                     
                     if self.enable_task_evaluation:
@@ -2547,17 +2663,17 @@ Original request: {message}"""
                                 else:
                                     print("[DEBUG] WebSocket streamer not available for remote agent response")
                             except Exception as e:
-                                print(f"[DEBUG] Error streaming remote agent response to Event Hub: {e}")
-                                # Don't let Event Hub errors break the main flow
+                                print(f"[DEBUG] Error streaming remote agent response to WebSocket: {e}")
+                                # Don't let WebSocket errors break the main flow
                                 pass
                             
                         except ImportError:
-                            # Event Hub module not available, continue without streaming
-                            print("[DEBUG] Event Hub module not available for response")
+                            # WebSocket module not available, continue without streaming
+                            print("[DEBUG] WebSocket module not available for response")
                             pass
                         except Exception as e:
                             print(f"[DEBUG] Error setting up remote agent response streaming: {e}")
-                            # Don't let Event Hub errors break the main flow
+                            # Don't let WebSocket errors break the main flow
                             pass
                     else:
                         print(f"[DEBUG] Individual agent response streaming suppressed for agent: {agent_name} (default behavior - only host agent responds to user)")
@@ -2741,17 +2857,17 @@ Original request: {message}"""
                             else:
                                 print("[DEBUG] WebSocket streamer not available for direct message")
                         except Exception as e:
-                            print(f"[DEBUG] Error streaming remote agent direct message to Event Hub: {e}")
-                            # Don't let Event Hub errors break the main flow
+                            print(f"[DEBUG] Error streaming remote agent direct message to WebSocket: {e}")
+                            # Don't let WebSocket errors break the main flow
                             pass
                         
                     except ImportError:
-                        # Event Hub module not available, continue without streaming
-                        print("[DEBUG] Event Hub module not available for direct message")
+                        # WebSocket module not available, continue without streaming
+                        print("[DEBUG] WebSocket module not available for direct message")
                         pass
                     except Exception as e:
                         print(f"[DEBUG] Error setting up direct message streaming: {e}")
-                        # Don't let Event Hub errors break the main flow
+                        # Don't let WebSocket errors break the main flow
                         pass
                 else:
                     print(f"[DEBUG] Individual agent direct message streaming suppressed for agent: {agent_name} (default behavior - only host agent responds to user)")
@@ -3278,6 +3394,9 @@ Original request: {message}"""
             print(f"🔍 Step I: Agent ready with ID: {self.agent.get('id', 'unknown') if self.agent else 'STILL_NULL'}")
             
             session_context = self.get_session_context(context_id)
+            # Reset any cached parts from prior turns so we don't resend stale attachments
+            if hasattr(session_context, "_latest_processed_parts"):
+                session_context._latest_processed_parts = []
             
             # Create or get thread
             thread_created = False
@@ -3296,9 +3415,9 @@ Original request: {message}"""
             print(f"🔍 DEBUG: About to process {len(message_parts)} message parts")
             
             # Process all message parts (including files) BEFORE sending to thread
-            #tool_context = DummyToolContext(session_context, self.azure_blob_client)
-            tool_context = DummyToolContext(SessionContext(), self._azure_blob_client)
-            processed_parts = []
+            # Use the SAME session_context so prepared parts are visible to send_message
+            tool_context = DummyToolContext(session_context, self._azure_blob_client)
+            processed_parts: List[Any] = []
             print(f"🔍 DEBUG: processed_parts list initialized")
             
             # Count files to show appropriate status
@@ -3332,8 +3451,15 @@ Original request: {message}"""
                 print(f"🔍 PART DEBUG: About to call convert_part for part {i}")
                 try:
                     processed_result = await self.convert_part(part, tool_context, context_id)
-                    print(f"🔍 PART DEBUG: convert_part result for part {i}: {type(processed_result)} - {str(processed_result)[:100]}...")
-                    processed_parts.append(processed_result)
+                    if isinstance(processed_result, list):
+                        print(f"🔍 PART DEBUG: convert_part result for part {i}: list of {len(processed_result)} items")
+                        processed_parts.extend(processed_result)
+                    else:
+                        if isinstance(processed_result, DataPart) and hasattr(processed_result, "data"):
+                            print(f"🔍 PART DEBUG: convert_part result for part {i}: DataPart -> {processed_result.data}")
+                        else:
+                            print(f"🔍 PART DEBUG: convert_part result for part {i}: {type(processed_result)} - {str(processed_result)[:120]}...")
+                        processed_parts.append(processed_result)
                 except Exception as e:
                     print(f"❌ CRITICAL ERROR in convert_part for part {i}: {e}")
                     import traceback
@@ -3341,6 +3467,63 @@ Original request: {message}"""
                     raise
             
             print(f"Processed {len(processed_parts)} parts")
+
+            # Convert processed results into A2A Part wrappers for delegation
+            prepared_parts_for_agents: List[Part] = []
+
+            def _wrap_for_agent(item: Any) -> List[Part]:
+                wrapped: List[Part] = []
+
+                if isinstance(item, Part):
+                    wrapped.append(item)
+                elif isinstance(item, DataPart):
+                    wrapped.append(Part(root=item))
+
+                    if isinstance(item.data, dict):
+                        artifact_uri = item.data.get("artifact-uri")
+                        file_name = item.data.get("file-name") or item.data.get("artifact-id") or "uploaded-file"
+                        mime_type = item.data.get("mime", "application/octet-stream")
+
+                        if artifact_uri:
+                            wrapped.append(
+                                Part(
+                                    root=FilePart(
+                                        file=FileWithUri(
+                                            name=file_name,
+                                            mimeType=mime_type,
+                                            uri=artifact_uri,
+                                        )
+                                    )
+                                )
+                            )
+
+                        if item.data.get("extracted_content"):
+                            wrapped.append(
+                                Part(root=TextPart(text=str(item.data["extracted_content"])))
+                            )
+
+                elif isinstance(item, FilePart):
+                    wrapped.append(Part(root=item))
+
+                elif isinstance(item, TextPart):
+                    wrapped.append(Part(root=item))
+
+                elif isinstance(item, str):
+                    wrapped.append(Part(root=TextPart(text=item)))
+
+                elif isinstance(item, dict):
+                    wrapped.append(Part(root=DataPart(data=item)))
+
+                elif item is not None:
+                    wrapped.append(Part(root=TextPart(text=str(item))))
+
+                return wrapped
+
+            for processed in processed_parts:
+                prepared_parts_for_agents.extend(_wrap_for_agent(processed))
+
+            session_context._latest_processed_parts = prepared_parts_for_agents
+            print(f"📦 Prepared {len(prepared_parts_for_agents)} parts to attach for remote agents")
             
             # If files were processed, include information about them in the message
             file_info = []
@@ -3367,6 +3550,67 @@ Original request: {message}"""
                 enhanced_message = f"{user_message}\n\n[Files uploaded: {'; '.join(file_info)}]"
             if file_contents:
                 enhanced_message = f"{enhanced_message}\n\n{''.join(file_contents)}"
+
+            has_base_attachment = False
+            has_mask_attachment = False
+
+            def _flatten_processed(items: Iterable[Any]) -> Iterable[Any]:
+                for item in items:
+                    if isinstance(item, (list, tuple, set)):
+                        yield from _flatten_processed(item)
+                    else:
+                        yield item
+
+            for result in _flatten_processed(processed_parts):
+                candidate_part = None
+                candidate_data: Optional[Dict[str, Any]] = None
+
+                if isinstance(result, DataPart) and isinstance(result.data, dict):
+                    candidate_data = result.data
+                elif isinstance(result, FilePart):
+                    candidate_part = result
+                elif isinstance(result, Part):
+                    inner = getattr(result, "root", None)
+                    if isinstance(inner, DataPart) and isinstance(inner.data, dict):
+                        candidate_data = inner.data
+                    elif isinstance(inner, FilePart):
+                        candidate_part = inner
+
+                if candidate_data:
+                    role_val = (candidate_data.get("role") or (candidate_data.get("metadata") or {}).get("role") or "").lower()
+                    if role_val == "base":
+                        has_base_attachment = True
+                    if role_val == "mask":
+                        has_mask_attachment = True
+
+                if candidate_part:
+                    role_attr = getattr(candidate_part.file, "role", None)
+                    name_attr = getattr(candidate_part.file, "name", "").lower()
+                    role_lower = str(role_attr).lower() if role_attr else ""
+                    if role_lower == "base" or name_attr.endswith("_base.png"):
+                        has_base_attachment = True
+                    if role_lower == "mask" or "_mask" in name_attr or "-mask" in name_attr:
+                        has_mask_attachment = True
+
+            if has_base_attachment:
+                guidance_lines = [
+                    "IMPORTANT: Treat this request as an image edit using the provided attachments.",
+                    "Reuse the supplied base image exactly; do not regenerate a new scene or subject.",
+                ]
+                if has_mask_attachment:
+                    guidance_lines.append(
+                        "Apply the requested changes strictly within the transparent region of the provided mask and leave all other pixels unchanged."
+                    )
+                else:
+                    guidance_lines.append(
+                        "Apply the requested changes directly to the supplied base image only."
+                    )
+
+                guidance_block = "\n".join(guidance_lines)
+                if enhanced_message:
+                    enhanced_message = f"{guidance_block}\n\n{enhanced_message}"
+                else:
+                    enhanced_message = guidance_block
             
             print(f"Enhanced message: {enhanced_message}")
             
@@ -3540,25 +3784,34 @@ Original request: {message}"""
                                 extracted_contents.append(f"**{file_name}:**\n{content}")
                                 has_extracted_content = True
                 
-                # If we have extracted content, replace the host agent's response with the extracted content
+                final_responses: List[str] = []
+
+                # Include the assessment agent responses first if available
+                if responses:
+                    if isinstance(responses, list):
+                        final_responses.extend(str(r) for r in responses if r)
+                    else:
+                        final_responses.append(str(responses))
+
+                # If we have extracted content, prepend it and save to thread context
                 if has_extracted_content:
                     extracted_content_message = (
                         "The file has been processed. Here is the extracted content:\n\n" + 
                         "\n\n---\n\n".join(extracted_contents)
                     )
-                    
-                    # CRITICAL FIX: Send the extracted content to the thread so it's available for follow-up questions
                     print(f"📝 Sending extracted content to thread for future context...")
                     await self.send_message_to_thread(thread_id, extracted_content_message, role="assistant")
-                    
-                    final_responses = [extracted_content_message]
-                else:
-                    # Use the original host agent response
-                    final_responses = responses if responses else ["No response received"]
-                    
-                    # Add file upload acknowledgment if files were uploaded but no content extracted
-                    if processed_parts and any(isinstance(p, DataPart) for p in processed_parts):
-                        final_responses.append(f"File processing completed. {len([p for p in processed_parts if isinstance(p, DataPart)])} file(s) uploaded and stored as artifacts.")
+                    final_responses.insert(0, extracted_content_message)
+
+                # Fallback if nothing collected yet
+                if not final_responses:
+                    final_responses = ["No response received"]
+
+                # Add acknowledgement when files processed but no extracted content
+                if (processed_parts and any(isinstance(p, DataPart) for p in processed_parts) and not has_extracted_content):
+                    final_responses.append(
+                        f"File processing completed. {len([p for p in processed_parts if isinstance(p, DataPart)])} file(s) uploaded and stored as artifacts."
+                    )
                 
                 print(f"🔍 DEBUG: final_responses set to: {final_responses} (FIRST PATH)")
                 print(f"🔍 DEBUG: final_responses count: {len(final_responses)} (FIRST PATH)")
@@ -3636,17 +3889,17 @@ Original request: {message}"""
                             else:
                                 print("[DEBUG] WebSocket streamer not available for host agent final response")
                         except Exception as e:
-                            print(f"[DEBUG] Error streaming host agent final response to Event Hub: {e}")
-                            # Don't let Event Hub errors break the main flow
+                            print(f"[DEBUG] Error streaming host agent final response to WebSocket: {e}")
+                            # Don't let WebSocket errors break the main flow
                             pass
                         
                     except ImportError:
-                        # Event Hub module not available, continue without streaming
-                        print("[DEBUG] Event Hub module not available for host agent response")
+                        # WebSocket module not available, continue without streaming
+                        print("[DEBUG] WebSocket module not available for host agent response")
                         pass
                     except Exception as e:
                         print(f"[DEBUG] Error setting up host agent response streaming: {e}")
-                        # Don't let Event Hub errors break the main flow
+                        # Don't let WebSocket errors break the main flow
                         pass
                 else:
                     print(f"[DEBUG] Host agent response already sent for context {context_id}, skipping duplicate")
@@ -3974,17 +4227,17 @@ Original request: {message}"""
                             else:
                                 print("[DEBUG] WebSocket streamer not available for host agent final response (run_conversation)")
                         except Exception as e:
-                            print(f"[DEBUG] Error streaming host agent final response to Event Hub (run_conversation): {e}")
-                            # Don't let Event Hub errors break the main flow
+                            print(f"[DEBUG] Error streaming host agent final response to WebSocket (run_conversation): {e}")
+                            # Don't let WebSocket errors break the main flow
                             pass
                         
                     except ImportError:
-                        # Event Hub module not available, continue without streaming
-                        print("[DEBUG] Event Hub module not available for host agent response (run_conversation)")
+                        # WebSocket module not available, continue without streaming
+                        print("[DEBUG] WebSocket module not available for host agent response (run_conversation)")
                         pass
                     except Exception as e:
                         print(f"[DEBUG] Error setting up host agent response streaming (run_conversation): {e}")
-                        # Don't let Event Hub errors break the main flow
+                        # Don't let WebSocket errors break the main flow
                         pass
                 else:
                     print(f"[DEBUG] Host agent response already sent for context {context_id}, skipping duplicate (run_conversation)")
@@ -4292,23 +4545,91 @@ Original request: {message}"""
                 combined_text = "\n\n---\n\n".join(
                     payload.get("response", "") for payload in successful_tool_outputs if isinstance(payload.get("response"), str)
                 )
-                aggregated_payload = {
-                    "kind": "function_response",
-                    "name": "aggregated_send_message",
-                    "response": combined_text
-                }
-                return aggregated_payload
-            
+                return combined_text
+
+            if isinstance(last_tool_output, dict):
+                response_text = last_tool_output.get("response")
+                if isinstance(response_text, str):
+                    return response_text
+
             return last_tool_output
 
     async def convert_parts(self, parts: List[Part], tool_context: Any, context_id: str = None):
         rval = []
         print(f"convert_parts: processing {len(parts)} parts")
+        latest_parts: List[Any] = []
+        session_context = getattr(tool_context, "state", None)
+        if session_context is not None:
+            setattr(session_context, "_latest_processed_parts", latest_parts)
+
         for i, p in enumerate(parts):
             result = await self.convert_part(p, tool_context, context_id)
-            rval.append(result)
-        
-        return rval
+            if result is None:
+                continue
+            if isinstance(result, list):
+                rval.extend(result)
+            else:
+                rval.append(result)
+
+        flattened_parts = []
+        pending_file_parts: List[FilePart] = []
+        refine_payload = None
+
+        for item in rval:
+            if isinstance(item, DataPart):
+                if hasattr(item, "data") and isinstance(item.data, dict):
+                    artifact_uri = item.data.get("artifact-uri")
+                    metadata = {
+                        "artifact-id": item.data.get("artifact-id"),
+                        "storage-type": item.data.get("storage-type"),
+                        "file-name": item.data.get("file-name"),
+                        "artifact-uri": artifact_uri,
+                    }
+
+                    flattened_parts.append(
+                        DataPart(data=metadata)
+                    )
+
+                    if artifact_uri:
+                        file_part = FilePart(
+                            file=FileWithUri(
+                                name=item.data.get("file-name", metadata["artifact-id"]) or metadata["artifact-id"],
+                                mimeType=item.data.get("media-type", "application/octet-stream"),
+                                uri=artifact_uri,
+                            )
+                        )
+                        flattened_parts.append(file_part)
+                        pending_file_parts.append(file_part)
+
+                    if "extracted_content" in item.data:
+                        flattened_parts.append(
+                            TextPart(text=str(item.data["extracted_content"]))
+                        )
+                else:
+                    flattened_parts.append(TextPart(text=str(item.data)))
+            elif isinstance(item, (TextPart, FilePart, DataPart)):
+                flattened_parts.append(item)
+            elif isinstance(item, dict):
+                if item.get("kind") == "refine-image":
+                    refine_payload = item
+                else:
+                    text = item.get("response") or item.get("text") or json.dumps(item, ensure_ascii=False)
+                    flattened_parts.append(TextPart(text=text))
+            elif item is not None:
+                flattened_parts.append(TextPart(text=str(item)))
+
+        latest_parts.extend(flattened_parts)
+
+        if refine_payload:
+            refine_part = DataPart(data=refine_payload)
+            flattened_parts.append(refine_part)
+            latest_parts.append(refine_part)
+
+        # If we collected file parts, ensure downstream agents can access them
+        if pending_file_parts:
+            latest_parts.extend(pending_file_parts)
+
+        return flattened_parts
 
     async def convert_part(self, part: Part, tool_context: Any, context_id: str = None):
         # Don't print the entire part (contains large base64 data)
@@ -4337,8 +4658,34 @@ Original request: {message}"""
 
         # Fallback to standard A2A Part handling
         if hasattr(part, 'root') and part.root.kind == 'text':
-            text_content = part.root.text
+            text_content = part.root.text or ""
             print(f"[DEBUG] convert_part: text part content: {text_content[:200]}...")
+
+            refine_matches = list(re.finditer(r"\[refine-image\]\s+(https?://\S+)", text_content, flags=re.IGNORECASE))
+            mask_matches = list(re.finditer(r"\[refine-mask\]\s+(https?://\S+)", text_content, flags=re.IGNORECASE))
+
+            if refine_matches:
+                image_url = refine_matches[-1].group(1)
+                mask_url = mask_matches[-1].group(1) if mask_matches else None
+
+                cleaned_text = re.sub(r"\[refine-image\]\s+https?://\S+", "", text_content, flags=re.IGNORECASE)
+                cleaned_text = re.sub(r"\[refine-mask\]\s+https?://\S+", "", cleaned_text, flags=re.IGNORECASE)
+
+                refine_data = {"kind": "refine-image", "image_url": image_url}
+                if mask_url:
+                    refine_data["mask_url"] = mask_url
+
+                session_context = getattr(tool_context, "state", None)
+                if session_context is not None:
+                    latest_parts = getattr(session_context, "_latest_processed_parts", None)
+                    if latest_parts is None:
+                        latest_parts = []
+                        setattr(session_context, "_latest_processed_parts", latest_parts)
+                    latest_parts.append(DataPart(data=refine_data))
+                    print(f"[DEBUG] convert_part: captured refine request with image_url={image_url}")
+
+                return cleaned_text or "Refine the previous image."
+
             return text_content
         elif hasattr(part, 'root') and part.root.kind == 'data':
             print(f"DataPart data: {part.root.data} (type: {type(part.root.data)})")
@@ -4349,6 +4696,9 @@ Original request: {message}"""
             print(f"🔍 FILE DEBUG: Starting file processing for: {file_id}")
             
             file_bytes = None
+            summary_text = None
+            artifact_response = None
+            file_role_attr = getattr(part.root.file, 'role', None)
             
             # Check if this is an uploaded file with URI
             if hasattr(part.root.file, 'uri') and part.root.file.uri:
@@ -4398,58 +4748,86 @@ Original request: {message}"""
                         return f"Error: No file data found for {file_id}"
                 except Exception as e:
                     print(f"❌ Error decoding file bytes: {e}")
+                    print(f"❌ FILE DEBUG: Decoding traceback: {traceback.format_exc()}")
                     return f"Error: Failed to decode file {file_id}: {str(e)}"
             
             if not file_bytes:
+                http_uri = getattr(part.root.file, 'uri', None)
+                if http_uri and str(http_uri).lower().startswith(("http://", "https://")):
+                    try:
+                        import httpx
+
+                        with httpx.Client(timeout=60.0, follow_redirects=True) as http_client:
+                            resp = http_client.get(http_uri)
+                            resp.raise_for_status()
+                            file_bytes = resp.content
+                    except Exception as download_err:
+                        print(f"❌ FILE DEBUG: Failed to fetch remote file {http_uri}: {download_err}")
+                        return f"Error: Could not load file data for {file_id}: {download_err}"
+
+                    metadata = {
+                        'artifact-id': str(uuid.uuid4()),
+                        'artifact-uri': http_uri,
+                        'storage-type': 'external',
+                        'file-name': file_id,
+                        'mime': getattr(part.root.file, 'mimeType', 'application/octet-stream'),
+                        'media-type': getattr(part.root.file, 'mimeType', 'application/octet-stream'),
+                        'description': 'external image attachment',
+                    }
+                    if file_role_attr:
+                        metadata['role'] = str(file_role_attr).lower()
+                        meta_inner = metadata.setdefault('metadata', {})
+                        meta_inner['role'] = str(file_role_attr).lower()
+
+                    data_part = DataPart(data=metadata)
+
+                    # also embed the bytes so the remote agent can access them without public URI
+                    bytes_file_part = FilePart(
+                        kind='file',
+                        file=FileWithBytes(
+                            name=file_id,
+                            mimeType=getattr(part.root.file, 'mimeType', 'application/octet-stream'),
+                            bytes=base64.b64encode(file_bytes).decode('utf-8'),
+                            role=str(file_role_attr).lower() if file_role_attr else None,
+                        ),
+                    )
+
+                    session_context = getattr(tool_context, "state", None)
+                    if session_context is not None:
+                        latest_parts = getattr(session_context, "_latest_processed_parts", None)
+                        if latest_parts is None:
+                            latest_parts = []
+                            setattr(session_context, "_latest_processed_parts", latest_parts)
+                        latest_parts.append(data_part)
+                        latest_parts.append(bytes_file_part)
+
+                    return [data_part, bytes_file_part]
+
                 print(f"❌ No file bytes loaded")
                 return f"Error: Could not load file data for {file_id}"
-            
-            # For uploaded files, process them directly with the document processor
-            if hasattr(part.root.file, 'uri') and part.root.file.uri and part.root.file.uri.startswith('/uploads/'):
-                print(f"📄 FILE DEBUG: Processing uploaded file with document processor...")
-                try:
-                    if not file_bytes:
-                        print(f"❌ FILE DEBUG: No file bytes loaded, cannot process")
-                        return f"File: {file_id} (could not load file data)"
-                    
-                    # For PDFs, let's use a simple approach - just indicate we processed it
-                    # Process document with document processor
-                    artifact_info = {
-                        'artifact_uri': part.root.file.uri,
-                        'file_name': file_id,
-                        'file_bytes': file_bytes
-                    }
-                    
-                    print(f"FILE DEBUG: Calling document processor for {file_id}")
-                    processing_result = await a2a_document_processor.process_file_part(part.root.file, artifact_info)
-                    
-                    if processing_result and isinstance(processing_result, dict) and processing_result.get("success"):
-                        content = processing_result.get("content", "")
-                        print(f"FILE DEBUG: Document processing successful, content length: {len(content)}")
-                        
-                        # Emit completion status event
-                        if context_id:
-                            await self._emit_status_event(f"file processed successfully: {file_id}", context_id)
-                        
-                        return f"File: {file_id}\nContent:\n{content}"
-                    else:
-                        error = processing_result.get("error", "Unknown error") if isinstance(processing_result, dict) else "Processing failed"
-                        print(f"FILE DEBUG: Document processing failed: {error}")
-                        return f"File: {file_id} (processing failed: {error})"
-                        # Simple PDF content extraction (placeholder for now)
-                        print(f"� FILE DEBUG: Processing PDF file {file_id} ({len(file_bytes)} bytes)")
-                        
-                except Exception as e:
-                    print(f"❌ FILE DEBUG: Error processing uploaded file: {e}")
-                    import traceback
-                    print(f"❌ FILE DEBUG: Processing traceback: {traceback.format_exc()}")
-                    return f"File: {file_id} (processing error: {str(e)})"
             
             # Enhanced security: Validate file before processing
             if len(file_bytes) > 50 * 1024 * 1024:  # 50MB limit
                 return DataPart(data={'error': 'File too large', 'max_size': '50MB'})
             
             print(f"File validation passed, proceeding with artifact creation")
+            
+            file_id_lower = (file_id or "").lower()
+            is_mask_artifact = (
+                file_id_lower.endswith("-mask.png")
+                or file_id_lower.endswith("_mask.png")
+                or "-mask" in file_id_lower
+                or "_mask" in file_id_lower
+            )
+            if not file_role_attr and file_id_lower.endswith("_base.png"):
+                file_role_attr = "base"
+
+            artifact_info: dict[str, Any] = {
+                'file_name': file_id,
+                'file_bytes': file_bytes,
+            }
+            if file_role_attr:
+                artifact_info['role'] = str(file_role_attr).lower()
             
             # Use save_artifact following A2A best practices (pure A2A implementation)
             if hasattr(tool_context, 'save_artifact'):
@@ -4463,8 +4841,10 @@ Original request: {message}"""
                         'kind': 'file',
                         'file': {
                             'name': file_id,
-                            'mimeType': part.root.file.mimeType,
-                            'data': file_bytes  # Raw bytes, not base64
+                            'mimeType': getattr(part.root.file, 'mimeType', 'application/octet-stream'),
+                            'data': file_bytes,  # Raw bytes, not base64
+                            'force_blob': is_mask_artifact,
+                            **({'role': str(file_role_attr)} if file_role_attr else {}),
                         }
                     }
                     print(f"Successfully created A2A file part")
@@ -4475,58 +4855,140 @@ Original request: {message}"""
                     tool_context.actions.skip_summarization = True
                     tool_context.actions.escalate = True
                     
-                    print(f"save_artifact completed, now processing file content...")
-                    
-                    # Process file content and store in A2A memory service
-                    try:
-                        # Extract artifact info for document processing
-                        artifact_info = None
-                        if isinstance(artifact_response, DataPart) and hasattr(artifact_response, 'data'):
-                            artifact_info = {
-                                'artifact_id': artifact_response.data.get('artifact-id'),
-                                'artifact_uri': artifact_response.data.get('artifact-uri'),
-                                'file_name': artifact_response.data.get('file-name'),
-                                'storage_type': artifact_response.data.get('storage-type')
-                            }
-                            
-                            # For local files, get the file bytes directly from tool_context
-                            if artifact_info.get('storage_type') == 'local':
-                                artifact_id = artifact_info.get('artifact_id')
-                                if hasattr(tool_context, '_artifacts') and artifact_id in tool_context._artifacts:
-                                    artifact_data = tool_context._artifacts[artifact_id]
-                                    if 'file_bytes' in artifact_data:
-                                        artifact_info['file_bytes'] = artifact_data['file_bytes']
-                                        print(f"Added file bytes to artifact_info for local file: {len(artifact_data['file_bytes'])} bytes")
+                    if isinstance(artifact_response, DataPart) and hasattr(artifact_response, 'data'):
+                        if file_role_attr:
+                            artifact_response.data['role'] = str(file_role_attr).lower()
+                            meta = artifact_response.data.get('metadata') or {}
+                            meta['role'] = str(file_role_attr).lower()
+                            artifact_response.data['metadata'] = meta
+                        artifact_info.update({
+                            'artifact_id': artifact_response.data.get('artifact-id'),
+                            'artifact_uri': artifact_response.data.get('artifact-uri'),
+                            'storage_type': artifact_response.data.get('storage-type')
+                        })
                         
-                        # Process the file and store extracted content in memory
-                        processing_result = await a2a_document_processor.process_file_part(part, artifact_info)
-                        if processing_result.get("success"):
-                            print(f"✅ File content processed and stored in memory service")
-                            # Add extracted content to artifact response for immediate display
-                            if isinstance(artifact_response, DataPart) and hasattr(artifact_response, 'data'):
-                                artifact_response.data['extracted_content'] = processing_result.get("content", "")
-                                artifact_response.data['content_preview'] = processing_result.get("content", "")[:500] + "..." if len(processing_result.get("content", "")) > 500 else processing_result.get("content", "")
-                        else:
-                            print(f"⚠️ File content processing failed: {processing_result.get('error', 'Unknown error')}")
-                            
-                    except Exception as e:
-                        print(f"⚠️ Error during document processing: {e}")
-                        # Don't fail the whole file upload if document processing fails
-                        import traceback
-                        print(f"Document processing traceback: {traceback.format_exc()}")
-                    
-                    print(f"save_artifact completed, returning response")
-                    # Return the full A2A artifact response
-                    return artifact_response
+                        # For local files, get the file bytes directly from tool_context
+                        if artifact_info.get('storage_type') == 'local':
+                            artifact_id = artifact_info.get('artifact_id')
+                            if hasattr(tool_context, '_artifacts') and artifact_id in tool_context._artifacts:
+                                artifact_data = tool_context._artifacts[artifact_id]
+                                if 'file_bytes' in artifact_data:
+                                    artifact_info['file_bytes'] = artifact_data['file_bytes']
+                                    print(f"Added file bytes to artifact_info for local file: {len(artifact_data['file_bytes'])} bytes")
                 except Exception as e:
                     print(f"Exception in save_artifact process: {e}")
                     import traceback
                     print(f"Full traceback: {traceback.format_exc()}")
-                    return DataPart(data={'error': f'Failed to process file: {str(e)}'})
+                    artifact_response = DataPart(data={'error': f'Failed to process file: {str(e)}'})
             else:
                 print(f"ERROR: tool_context has no save_artifact method")
-                return DataPart(data={'error': 'Artifact storage not available'})
-        return f'Unknown type: {getattr(part, "kind", None)}'
+            
+            if is_mask_artifact:
+                print(f"Skipping document processing for mask artifact: {file_id}")
+                mask_metadata_part: Optional[DataPart] = None
+                mask_file_part: Optional[FilePart] = None
+
+                if isinstance(artifact_response, DataPart) and hasattr(artifact_response, 'data'):
+                    artifact_response.data['description'] = artifact_response.data.get('description', 'image mask attachment')
+                    artifact_response.data['skip-document-processing'] = True
+                    artifact_response.data['role'] = 'mask'
+                    metadata = artifact_response.data.get('metadata') or {}
+                    metadata['role'] = 'mask'
+                    artifact_response.data['metadata'] = metadata
+                    mask_metadata_part = artifact_response
+
+                    artifact_uri = artifact_response.data.get('artifact-uri')
+                    if artifact_uri:
+                        mask_file_part = FilePart(
+                            kind="file",
+                            file=FileWithUri(
+                                name=file_id,
+                                mimeType=artifact_response.data.get('media-type', getattr(part.root.file, 'mimeType', 'application/octet-stream')),
+                                uri=artifact_uri,
+                            ),
+                        )
+                else:
+                    artifact_uri = artifact_info.get('artifact_uri') or getattr(part.root.file, 'uri', None)
+                    metadata = {
+                        'artifact-id': artifact_info.get('artifact_id') or str(uuid.uuid4()),
+                        'artifact-uri': artifact_uri,
+                        'storage-type': artifact_info.get('storage_type', 'unknown'),
+                        'file-name': artifact_info.get('file_name'),
+                        'description': 'image mask attachment',
+                        'skip-document-processing': True,
+                        'role': 'mask',
+                        'metadata': {'role': 'mask'},
+                    }
+                    mask_metadata_part = DataPart(data=metadata)
+
+                    if artifact_uri:
+                        mask_file_part = FilePart(
+                            kind="file",
+                            file=FileWithUri(
+                                name=file_id,
+                                mimeType=getattr(part.root.file, 'mimeType', 'application/octet-stream'),
+                                uri=artifact_uri,
+                            ),
+                        )
+
+                if mask_file_part is None:
+                    print(f"No accessible URI for mask; embedding bytes for {file_id}")
+                    mask_file_part = FilePart(
+                        kind="file",
+                        file=FileWithBytes(
+                            name=file_id,
+                            mimeType=getattr(part.root.file, 'mimeType', 'application/octet-stream'),
+                            bytes=file_bytes,
+                        )
+                    )
+
+                session_context = getattr(tool_context, "state", None)
+                if session_context is not None:
+                    latest_parts = getattr(session_context, "_latest_processed_parts", None)
+                    if latest_parts is None:
+                        latest_parts = []
+                        setattr(session_context, "_latest_processed_parts", latest_parts)
+                    latest_parts.append(mask_metadata_part)
+                    latest_parts.append(mask_file_part)
+
+                return [mask_metadata_part, mask_file_part]
+
+            # Process the file content and store in A2A memory service
+            try:
+                print(f"FILE DEBUG: Calling document processor for {file_id}")
+                processing_result = await a2a_document_processor.process_file_part(part.root.file, artifact_info)
+                
+                if processing_result and isinstance(processing_result, dict) and processing_result.get("success"):
+                    content = processing_result.get("content", "")
+                    print(f"FILE DEBUG: Document processing successful, content length: {len(content)}")
+                    
+                    # Emit completion status event
+                    if context_id:
+                        await self._emit_status_event(f"file processed successfully: {file_id}", context_id)
+                    
+                    summary_text = f"File: {file_id}\nContent:\n{content}"
+                    
+                    if isinstance(artifact_response, DataPart) and hasattr(artifact_response, 'data'):
+                        artifact_response.data['extracted_content'] = content
+                        artifact_response.data['content_preview'] = content[:500] + "..." if len(content) > 500 else content
+                else:
+                    error = processing_result.get("error", "Unknown error") if isinstance(processing_result, dict) else "Processing failed"
+                    print(f"FILE DEBUG: Document processing failed: {error}")
+                    summary_text = f"File: {file_id} (processing failed: {error})"
+            except Exception as e:
+                print(f"❌ FILE DEBUG: Error processing uploaded file: {e}")
+                import traceback
+                print(f"❌ FILE DEBUG: Processing traceback: {traceback.format_exc()}")
+                summary_text = f"File: {file_id} (processing error: {str(e)})"
+            
+            if isinstance(artifact_response, DataPart):
+                print(f"save_artifact completed, returning response with data: {artifact_response.data}")
+                return artifact_response
+            
+            if summary_text:
+                return summary_text
+            
+            return DataPart(data={'error': f'File {file_id} processed without artifact metadata'})
 
     async def register_remote_agent(self, agent_address: str, agent_card: Optional[AgentCard] = None) -> bool:
         """Handle self-registration from remote agents.
@@ -4582,7 +5044,7 @@ Original request: {message}"""
         asyncio.create_task(self._emit_granular_agent_event("foundry-host-agent", status_text))
 
     async def _emit_status_event(self, status_text: str, context_id: str):
-        """Emit status event to Event Hub for real-time frontend updates."""
+        """Emit status event to WebSocket for real-time frontend updates."""
         # Use WebSocket streaming for real-time status updates
         await self._emit_granular_agent_event("foundry-host-agent", status_text)
 
@@ -4669,6 +5131,7 @@ class DummyToolContext:
         try:
             # Extract file data with robust error handling (A2A-native format)
             print(f"Extracting file data from file_part type: {type(file_part)}")
+            file_role = None
             
             if isinstance(file_part, dict):
                 # Handle A2A-native format
@@ -4677,6 +5140,7 @@ class DummyToolContext:
                     file_bytes = file_info['data']
                     mime_type = file_info.get('mimeType', 'application/octet-stream')
                     print(f"Extracted {len(file_bytes)} bytes from A2A file part")
+                    file_role = file_info.get('role')
                 else:
                     print(f"Could not extract file bytes from A2A file part: {file_part.keys()}")
                     return DataPart(data={'error': 'Invalid A2A file format'})
@@ -4685,10 +5149,12 @@ class DummyToolContext:
                 file_bytes = file_part.inline_data.data
                 mime_type = getattr(file_part.inline_data, 'mime_type', 'application/octet-stream')
                 print(f"Extracted {len(file_bytes)} bytes from inline_data")
+                file_role = getattr(file_part.inline_data, 'role', None)
             elif hasattr(file_part, 'data'):
                 file_bytes = file_part.data
                 mime_type = 'application/octet-stream'
                 print(f"Extracted {len(file_bytes)} bytes from data attribute")
+                file_role = getattr(file_part, 'role', None)
             else:
                 print(f"Could not extract file bytes from artifact: {type(file_part)}")
                 return DataPart(data={'error': 'Invalid file format'})
@@ -4702,21 +5168,35 @@ class DummyToolContext:
             # Determine storage strategy based on file size and configuration
             use_azure_blob = self._should_use_azure_blob(len(file_bytes))
             
-            if use_azure_blob and hasattr(self, '_azure_blob_client'):
+            force_blob_flag = False
+            if isinstance(file_part, dict) and file_part.get('kind') == 'file' and 'file' in file_part:
+                force_blob_flag = file_part['file'].get('force_blob', False)
+
+            if (use_azure_blob or force_blob_flag) and hasattr(self, '_azure_blob_client'):
                 # A2A URI mechanism with Azure Blob Storage
                 print(f"Using Azure Blob Storage for large file")
-                file_uri = await self._upload_to_azure_blob(artifact_id, file_id, file_bytes, mime_type)
+                try:
+                    file_uri = self._upload_to_azure_blob(artifact_id, file_id, file_bytes, mime_type)
+                    print(f"✅ Azure Blob upload succeeded: {file_uri[:80]}...")
+                except Exception as blob_err:
+                    print(f"❌ Azure Blob upload exception caught:")
+                    print(f"   Exception type: {type(blob_err).__name__}")
+                    print(f"   Exception message: {str(blob_err)}")
+                    import traceback
+                    print(f"   Full traceback:")
+                    for line in traceback.format_exc().split('\n'):
+                        if line.strip():
+                            print(f"   {line}")
+                    raise
                 
                 # Create A2A compliant Artifact with URI reference
                 # Following official A2A specification: FilePart.file = FileWithUri
-                file_part = FilePart(
-                    kind="file",
-                    file=FileWithUri(
-                        name=file_id,
-                        mimeType=mime_type,
-                        uri=file_uri  # Azure Blob URI with SAS token
-                    )
+                file_with_uri = FileWithUri(
+                    name=file_id,
+                    mimeType=mime_type,
+                    uri=file_uri  # Azure Blob URI with SAS token
                 )
+                file_part = FilePart(kind="file", file=file_with_uri)
                 
                 artifact = Artifact(
                     artifactId=artifact_id,
@@ -4738,7 +5218,8 @@ class DummyToolContext:
                     'artifact': artifact,
                     'storage_type': 'azure_blob',
                     'uri': file_uri,
-                    'created_at': datetime.utcnow().isoformat()
+                    'created_at': datetime.utcnow().isoformat(),
+                    'role': str(file_role).lower() if file_role else None,
                 }
                 
                 print(f"A2A Artifact stored in Azure Blob: {artifact_id} -> {file_uri}")
@@ -4754,14 +5235,12 @@ class DummyToolContext:
                 
                 # Create A2A compliant Artifact object with local reference
                 # Following official A2A specification: FilePart.file = FileWithUri
-                file_part = FilePart(
-                    kind="file",
-                    file=FileWithUri(
-                        name=file_id,
-                        mimeType=mime_type,
-                        uri=f"{self.artifact_base_url}/{artifact_id}"  # Local HTTP endpoint
-                    )
+                file_with_uri = FileWithUri(
+                    name=file_id,
+                    mimeType=mime_type,
+                    uri=f"{self.artifact_base_url}/{artifact_id}"  # Local HTTP endpoint
                 )
+                file_part = FilePart(kind="file", file=file_with_uri)
                 
                 artifact = Artifact(
                     artifactId=artifact_id,
@@ -4785,7 +5264,8 @@ class DummyToolContext:
                     'file_bytes': file_bytes,
                     'local_path': file_path,
                     'storage_type': 'local',
-                    'created_at': datetime.utcnow().isoformat()
+                    'created_at': datetime.utcnow().isoformat(),
+                    'role': str(file_role).lower() if file_role else None,
                 }
                 
                 print(f"A2A Artifact stored locally: {artifact_id} for file: {file_id}")
@@ -4803,6 +5283,9 @@ class DummyToolContext:
                 'status': 'stored',
                 'message': f'File {file_id} successfully stored as A2A artifact {artifact_id}'
             })
+            if file_role:
+                response.data['role'] = str(file_role).lower()
+                response.data['metadata'] = {**response.data.get('metadata', {}), 'role': str(file_role).lower()}
             
             return response
             
@@ -4818,47 +5301,67 @@ class DummyToolContext:
     
     def _should_use_azure_blob(self, file_size_bytes: int) -> bool:
         """Determine whether to use Azure Blob based on file size and configuration."""
-        # Use Azure Blob for files larger than 1MB or if always enabled
-        size_threshold = int(os.getenv('AZURE_BLOB_SIZE_THRESHOLD', 1024 * 1024))  # 1MB default
-        force_azure = os.getenv('FORCE_AZURE_BLOB', 'false').lower() == 'true'
-        has_azure_config = hasattr(self, '_azure_blob_client') and self._azure_blob_client is not None
-        
+        # Use Azure Blob for files larger than threshold or when forced via env flag.
+        raw_threshold = os.getenv('AZURE_BLOB_SIZE_THRESHOLD')
+        size_threshold = _normalize_env_int(raw_threshold, 1024 * 1024)
+        force_azure = _normalize_env_bool(os.getenv('FORCE_AZURE_BLOB'), False)
+        has_azure_config = self._azure_blob_client is not None
+ 
         print(f"Azure Blob decision factors:")
         print(f"   - File size: {file_size_bytes:,} bytes")
         print(f"   - Size threshold: {size_threshold:,} bytes")
         print(f"   - Force Azure: {force_azure}")
         print(f"   - Has Azure client: {has_azure_config}")
         print(f"   - Size exceeds threshold: {file_size_bytes > size_threshold}")
-        
-        decision = has_azure_config and (file_size_bytes > size_threshold or force_azure)
+ 
+        decision = has_azure_config and (force_azure or file_size_bytes > size_threshold)
         print(f"🎯 Azure Blob decision: {'YES' if decision else 'NO'}")
-        
+ 
         return decision
     
-    async def _upload_to_azure_blob(self, artifact_id: str, file_name: str, file_bytes: bytes, mime_type: str) -> str:
+    def _upload_to_azure_blob(self, artifact_id: str, file_name: str, file_bytes: bytes, mime_type: str) -> str:
         """Upload file to Azure Blob Storage and return A2A-compliant URI with SAS token."""
         from azure.storage.blob import BlobServiceClient, generate_blob_sas, BlobSasPermissions, ContentSettings
         from datetime import datetime, timedelta
         import os
         
         try:
+            print(f"🔥 _upload_to_azure_blob ENTRY (SYNC)")
+            print(f"   artifact_id: {artifact_id}")
+            print(f"   file_name: {file_name}")
+            print(f"   file_bytes size: {len(file_bytes)} bytes")
+            print(f"   mime_type: {mime_type}")
+            print(f"   self._azure_blob_client: {self._azure_blob_client}")
+            
+            if not self._azure_blob_client:
+                print(f"❌ _upload_to_azure_blob: Azure Blob client is None!")
+                raise Exception("Azure Blob client not initialized")
+            
             # Generate blob name with artifact ID for uniqueness
-            blob_name = f"a2a-artifacts/{artifact_id}/{file_name}"
+            safe_file_name = file_name.replace('/', '_').replace('\\', '_')
+            blob_name = f"a2a-artifacts/{artifact_id}/{safe_file_name}"
+            print(f"   blob_name: {blob_name}")
             
             # Upload to Azure Blob
+            container_name = os.getenv('AZURE_BLOB_CONTAINER', 'a2a-files')
+            print(f"   container_name: {container_name}")
+            
             blob_client = self._azure_blob_client.get_blob_client(
-                container=os.getenv('AZURE_BLOB_CONTAINER', 'a2a-files'),
+                container=container_name,
                 blob=blob_name
             )
+            print(f"   blob_client created: {blob_client}")
             
             # Create proper ContentSettings object
             content_settings = ContentSettings(
                 content_type=mime_type,
                 content_disposition=f'attachment; filename="{file_name}"'
             )
+            print(f"   content_settings created")
             
-            # Upload with metadata
-            await blob_client.upload_blob(
+            # Upload with metadata (synchronous call)
+            print(f"   🔄 Starting blob upload...")
+            blob_client.upload_blob(
                 file_bytes,
                 content_settings=content_settings,
                 metadata={
@@ -4869,6 +5372,7 @@ class DummyToolContext:
                 },
                 overwrite=True
             )
+            print(f"   ✅ Blob uploaded successfully!")
             
             # Extract account key from connection string for SAS token generation
             connection_string = os.getenv('AZURE_STORAGE_CONNECTION_STRING')
@@ -4881,6 +5385,7 @@ class DummyToolContext:
                         break
             
             if account_key:
+                print(f"   🔐 Generating SAS token...")
                 # Generate SAS token for secure access (A2A best practice)
                 sas_token = generate_blob_sas(
                     account_name=blob_client.account_name,
@@ -4893,15 +5398,22 @@ class DummyToolContext:
                 
                 # Return A2A-compliant URI with SAS token
                 blob_uri = f"{blob_client.url}?{sas_token}"
+                print(f"   ✅ SAS token generated: {blob_uri[:80]}...")
             else:
                 # Fallback: return blob URL without SAS token (less secure)
                 blob_uri = blob_client.url
-                print(f"Warning: No account key found for SAS token generation")
+                print(f"   ⚠️ No account key found for SAS token generation, using blob URL: {blob_uri[:80]}...")
             
+            print(f"🔥 _upload_to_azure_blob EXIT - returning URI")
             return blob_uri
             
         except Exception as e:
-            print(f"Error uploading to Azure Blob: {e}")
+            print(f"❌ _upload_to_azure_blob ERROR: {e}")
+            print(f"   Exception type: {type(e).__name__}")
+            import traceback
+            print(f"   Full traceback:")
+            for line in traceback.format_exc().split('\n'):
+                print(f"   {line}")
             raise Exception(f"Azure Blob upload failed: {str(e)}")
     
     def get_artifact(self, artifact_id: str):

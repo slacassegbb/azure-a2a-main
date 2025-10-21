@@ -8,8 +8,7 @@ import base64
 import os
 import tempfile
 import time
-import uuid
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, List
 
 from foundry_agent import FoundryAssessmentAgent
 
@@ -17,15 +16,7 @@ from a2a.server.agent_execution import AgentExecutor
 from a2a.server.agent_execution.context import RequestContext
 from a2a.server.events.event_queue import EventQueue
 from a2a.server.tasks import TaskUpdater
-from a2a.types import (
-    AgentCard,
-    FilePart,
-    FileWithBytes,
-    FileWithUri,
-    Part,
-    TaskState,
-    TextPart,
-)
+from a2a.types import AgentCard, DataPart, FilePart, FileWithBytes, FileWithUri, Part, TaskState, TextPart
 from a2a.utils.message import new_agent_text_message
 
 logger = logging.getLogger(__name__)
@@ -73,11 +64,11 @@ class FoundryAssessmentAgentExecutor(AgentExecutor):
                     raise
 
     def __init__(self, card: AgentCard):
-        self._card = card
         self._active_threads: Dict[str, str] = {}  # context_id -> thread_id mapping
         self._waiting_for_input: Dict[str, str] = {}
         self._pending_updaters: Dict[str, TaskUpdater] = {}
         self._input_events: Dict[str, asyncio.Event] = {}
+        self._last_received_files: List[Dict[str, str]] = []
 
     async def _get_or_create_agent(self) -> FoundryAssessmentAgent:
         """Get the shared Foundry Assessment agent (with fallback to lazy creation)."""
@@ -118,6 +109,45 @@ class FoundryAssessmentAgentExecutor(AgentExecutor):
         context_id: str,
         task_updater: TaskUpdater,
     ) -> None:
+        received_files: List[Dict[str, str]] = []
+        if message_parts:
+            for part in message_parts:
+                if hasattr(part, "root"):
+                    root_part = part.root
+
+                    if isinstance(root_part, FilePart):
+                        file_obj = root_part.file
+                        if isinstance(file_obj, FileWithUri):
+                            received_files.append({
+                                "name": getattr(file_obj, "name", "unknown"),
+                                "uri": getattr(file_obj, "uri", ""),
+                                "mime": getattr(file_obj, "mimeType", ""),
+                            })
+                        elif isinstance(file_obj, FileWithBytes):
+                            received_files.append({
+                                "name": getattr(file_obj, "name", "unknown"),
+                                "uri": "",
+                                "mime": getattr(file_obj, "mimeType", ""),
+                                "bytes": len(getattr(file_obj, "bytes", b""))
+                            })
+
+                    elif isinstance(root_part, DataPart):
+                        data = getattr(root_part, "data", None)
+                        if isinstance(data, dict) and data.get("artifact-uri"):
+                            received_files.append({
+                                "name": data.get("file-name", "unknown"),
+                                "uri": data.get("artifact-uri", ""),
+                                "mime": data.get("mime", ""),
+                            })
+
+        if received_files:
+            self._last_received_files = received_files
+            print("[Assessment Executor] Received file references:")
+            for file_meta in received_files:
+                print(f"  • name={file_meta.get('name')} uri={file_meta.get('uri')} mime={file_meta.get('mime')}")
+            logger.info("📎 Received file references in A2A message", extra={"files": received_files, "context_id": context_id})
+        else:
+            logger.info("📎 No file references received in A2A message for context %s", context_id)
         try:
             user_message = self._convert_parts_to_text(message_parts)
             agent = await self._get_or_create_agent()
@@ -179,75 +209,6 @@ class FoundryAssessmentAgentExecutor(AgentExecutor):
                 message=new_agent_text_message(f"Error: {e}", context_id=context_id)
             )
 
-    async def _run_agent_with_monitoring(
-        self, 
-        agent, 
-        thread_id: str, 
-        user_message: str, 
-        task_updater: TaskUpdater, 
-        context_id: str
-    ):
-        """Run the agent with real-time monitoring of tool calls and status updates."""
-        responses = []
-        tools_called = []
-        seen_tools = set()
-        
-        try:
-            async for event in agent.run_conversation_stream(thread_id, user_message):
-                # Check if this is a tool call event from remote agent
-                if event.startswith("🛠️ Remote agent executing:"):
-                    tool_description = event.replace("🛠️ Remote agent executing: ", "").strip()
-                    if tool_description not in seen_tools:
-                        seen_tools.add(tool_description)
-                        tools_called.append(tool_description)
-                        # Emit tool call in real-time
-                        tool_event_msg = new_agent_text_message(
-                            f"🛠️ {tool_description}", context_id=context_id
-                        )
-                        await task_updater.update_status(
-                            TaskState.working,
-                            message=tool_event_msg
-                        )
-                # Check if this is a processing message
-                elif event.startswith("🤖") or event.startswith("🧠") or event.startswith("🔍") or event.startswith("📝"):
-                    # Emit processing message in real-time
-                    processing_msg = new_agent_text_message(
-                        event, context_id=context_id
-                    )
-                    await task_updater.update_status(
-                        TaskState.working,
-                        message=processing_msg
-                    )
-                # Check if this is an error
-                elif event.startswith("Error:"):
-                    await task_updater.failed(
-                        message=new_agent_text_message(event, context_id=context_id)
-                    )
-                    return ([], [])
-
-                # Otherwise, treat as a regular response
-                else:
-                    responses.append(event)
-                    
-        except Exception as e:
-            await task_updater.failed(
-                message=new_agent_text_message(f"Agent execution error: {e}", context_id=context_id)
-            )
-            return ([], [])
-            
-        return (responses, tools_called)
-
-    async def _cleanup_thread_later(self, agent: FoundryAssessmentAgent, thread_id: str):
-        """Clean up a thread after a delay to avoid interfering with active runs."""
-        try:
-            # Wait much longer to ensure any active runs are complete and rate limits reset
-            await asyncio.sleep(60)  # Wait 1 minute before cleanup
-            client = agent._get_client()
-            client.threads.delete(thread_id)
-            logger.info(f"Delayed cleanup: deleted Azure thread {thread_id}")
-        except Exception as e:
-            logger.warning(f"Delayed cleanup failed for thread {thread_id}: {e}")
-
     def _convert_parts_to_text(self, parts: List[Part]) -> str:
         """Convert message parts to plain text, saving any files locally."""
         texts: List[str] = []
@@ -255,6 +216,16 @@ class FoundryAssessmentAgentExecutor(AgentExecutor):
             p = part.root
             if isinstance(p, TextPart):
                 texts.append(p.text)
+            elif isinstance(p, DataPart):
+                if isinstance(p.data, dict):
+                    uri = p.data.get("artifact-uri")
+                    file_name = p.data.get("file-name", "file")
+                    if uri:
+                        texts.append(f"[File reference: {file_name} at {uri}]")
+                    else:
+                        texts.append(str(p.data))
+                else:
+                    texts.append(str(p.data))
             elif isinstance(p.file, FileWithUri):
                 texts.append(f"[File at {p.file.uri}]")
             elif isinstance(p.file, FileWithBytes):
@@ -335,12 +306,6 @@ class FoundryAssessmentAgentExecutor(AgentExecutor):
 
 
 def create_foundry_agent_executor(card: AgentCard) -> FoundryAssessmentAgentExecutor:
-    return FoundryAssessmentAgentExecutor(card)
-
-
-async def create_foundry_agent_executor_with_startup(card: AgentCard) -> FoundryAssessmentAgentExecutor:
-    """Create assessment executor and initialize the shared agent at startup."""
-    await FoundryAssessmentAgentExecutor.initialize_at_startup()
     return FoundryAssessmentAgentExecutor(card)
 
 

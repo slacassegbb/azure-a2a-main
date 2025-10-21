@@ -39,7 +39,6 @@ Common symptoms when TPM is too low:
 Reference: https://learn.microsoft.com/en-us/answers/questions/2237624/getting-rate-limit-exceeded-when-testing-ai-agent
 """
 import os
-import time
 import datetime
 import asyncio
 import logging
@@ -47,8 +46,7 @@ import json
 from typing import Optional, Dict, Any, List
 
 from azure.ai.agents import AgentsClient
-from azure.ai.agents.models import Agent, ThreadMessage, ThreadRun, AgentThread, ToolOutput, MessageRole, BingGroundingTool, ListSortOrder, FilePurpose, FileSearchTool, McpTool, RequiredMcpToolCall, SubmitToolApprovalAction, ToolApproval
-from azure.ai.agents.operations import ThreadsOperations
+from azure.ai.agents.models import Agent, ThreadMessage, ThreadRun, AgentThread, ToolOutput, BingGroundingTool, ListSortOrder, FilePurpose, FileSearchTool, RequiredMcpToolCall, ToolApproval
 from azure.ai.projects import AIProjectClient
 from azure.identity import DefaultAzureCredential
 import glob
@@ -76,15 +74,9 @@ class FoundryLegalAgent:
         self.credential = DefaultAzureCredential()
         self.agent: Optional[Agent] = None
         self.threads: Dict[str, str] = {}  # thread_id -> thread_id mapping
-        self.vector_store = None
-        self.uploaded_files = []
         self._file_search_tool = None  # Cache the file search tool
         self._agents_client = None  # Cache the agents client
         self._project_client = None  # Cache the project client
-        
-    def is_initialized(self) -> bool:
-        """Check if the agent has been created and initialized."""
-        return self.agent is not None
         
     def _get_client(self) -> AgentsClient:
         """Get a cached AgentsClient instance to reduce API calls."""
@@ -799,85 +791,6 @@ Current date: {datetime.datetime.now().isoformat()}
         return formatted_text
     
 
-    
-    def _extract_bing_citations(self, text_content: str) -> tuple[str, List[Dict]]:
-        """Extract Bing search citations from the response text."""
-        import re
-        
-        citations = []
-        
-        # Method 1: Look for citation patterns like [^1^], [^2^], etc.
-        citation_pattern = r'\[\^(\d+)\^\]'
-        citation_matches = re.findall(citation_pattern, text_content)
-        
-        # Method 2: Look for structured source sections
-        # Bing often includes sources at the end like "Sources:\n1. Title - URL"
-        source_section_pattern = r'(?:Sources?|References?):\s*\n((?:.*\n?)*)'
-        source_matches = re.search(source_section_pattern, text_content, re.IGNORECASE | re.MULTILINE)
-        
-        if source_matches:
-            source_text = source_matches.group(1)
-            # Parse individual sources like "1. Title - URL"
-            source_line_pattern = r'(\d+)\.\s*([^-\n]+?)\s*-\s*(https?://[^\s\n]+)'
-            for match in re.finditer(source_line_pattern, source_text):
-                source_num, title, url = match.groups()
-                # Clean up the title by removing trailing whitespace
-                clean_title = title.strip() if title else f"Source {source_num}"
-                citations.append({
-                    'type': 'web',
-                    'text': clean_title,
-                    'url': url.strip()
-                })
-        
-        # Method 3: Look for URLs in the text (fallback)
-        if not citations:
-            url_pattern = r'https?://[^\s\)\]\>]+(?=[\s\)\]\>\n]|$)'
-            urls = re.findall(url_pattern, text_content)
-            
-            # Try to find context around URLs for better link text
-            for i, url in enumerate(urls[:5]):  # Limit to first 5 URLs
-                # Look for text before the URL that might be a title
-                url_context_pattern = rf'([^.\n]*?)\s*{re.escape(url)}'
-                context_match = re.search(url_context_pattern, text_content)
-                
-                if context_match:
-                    context = context_match.group(1).strip()
-                    # Clean up the context to get a reasonable title
-                    title = context[-50:] if len(context) > 50 else context
-                    title = title.strip('.,;:')
-                else:
-                    title = f"Web Source {i+1}"
-                
-                citations.append({
-                    'type': 'web',
-                    'text': title or f"Web Source {i+1}",
-                    'url': url
-                })
-        
-        return text_content, citations
-    
-    def _extract_foundry_citations(self, text_content: str) -> List[Dict]:
-        """Extract Azure AI Foundry style citations like 【4:4†source】."""
-        import re
-        
-        citations = []
-        
-        # Look for Azure AI Foundry citation patterns with Japanese brackets 【4:4†source】
-        foundry_pattern = r'【(\d+):(\d+)†source】'
-        foundry_matches = re.findall(foundry_pattern, text_content)
-        
-        if foundry_matches:
-            # These citations reference file search results
-            for i, (doc_num, ref_num) in enumerate(foundry_matches):
-                citations.append({
-                    'type': 'file',
-                    'text': f"Document {doc_num} (Reference {ref_num})",
-                    'file_id': f"doc_{doc_num}_{ref_num}",  # Placeholder since we don't have the actual file ID
-                    'quote': ''
-                })
-        
-        return citations
-
     async def _handle_tool_calls(self, run: ThreadRun, thread_id: str):
         """Handle tool calls during agent execution."""
         logger.info(f"Handling tool calls for run {run.id}")
@@ -937,7 +850,6 @@ Current date: {datetime.datetime.now().isoformat()}
                     except:
                         args = {}
                     action = args.get("action", "unknown_action")
-                    params = args.get("parameters", {})
                     
                     # Let LLM generate realistic synthetic data dynamically
                     output = {
@@ -1052,54 +964,6 @@ Current date: {datetime.datetime.now().isoformat()}
                 logger.error(f"Fallback submission also failed: {e2}")
                 raise e
         
-    async def cleanup_agent(self):
-        """Clean up the agent resources (individual instance only)."""
-        # DISABLED: Don't auto-delete the agent to allow reuse across multiple requests
-        # if self.agent:
-        #     client = self._get_client()
-        #     client.delete_agent(self.agent.id)
-        #     logger.info(f"Deleted agent: {self.agent.id}")
-        #     self.agent = None
-        
-        # Clear cached clients but keep the agent alive
-        # self._agents_client = None
-        # self._project_client = None
-        
-        # Note: Agent is preserved for reuse, shared file search resources are left for other instances to use
-        logger.info("Individual agent cleanup completed (agent preserved for reuse, shared resources preserved)")
-    
-    @classmethod
-    async def cleanup_shared_resources(cls):
-        """Clean up shared legal document search resources (call when shutting down completely)."""
-        try:
-            if cls._shared_vector_store or cls._shared_uploaded_files:
-                # We need a project client to clean up, create a temporary one
-                temp_agent = cls()
-                project_client = temp_agent._get_project_client()
-                
-                # Delete vector store
-                if cls._shared_vector_store:
-                    project_client.agents.delete_vector_store(cls._shared_vector_store.id)
-                    logger.info(f"Deleted shared legal vector store: {cls._shared_vector_store.id}")
-                    cls._shared_vector_store = None
-            
-                # Delete uploaded files
-                for file_id in cls._shared_uploaded_files:
-                    try:
-                        project_client.agents.delete_file(file_id=file_id)
-                        logger.info(f"Deleted shared legal file: {file_id}")
-                    except Exception as e:
-                        logger.warning(f"Failed to delete shared legal file {file_id}: {e}")
-                
-                cls._shared_uploaded_files = []
-                cls._shared_file_search_tool = None
-                logger.info("Shared legal document search resources cleaned up")
-                
-        except Exception as e:
-            logger.error(f"Error cleaning up shared legal document search resources: {e}")
-
-
-
     def _get_readable_file_name(self, citation: Dict) -> str:
         """Get meaningful citation text based on content, not just file names."""
         
@@ -1389,55 +1253,6 @@ async def demo_agent_interaction():
         # Only clean up shared resources on final shutdown if really needed
         # await FoundryLegalAgent.cleanup_shared_resources()
         logger.info("Demo completed - agent preserved for reuse")
-
-
-def test_citation_improvement():
-    """Test function to demonstrate citation improvements."""
-    agent = FoundryLegalAgent()
-    
-    # Simulate the old problematic citation format
-    old_citations = [
-        {'type': 'file', 'text': 'Document Citation (【4:0†source】)', 'file_id': 'file123', 'quote': 'GDPR Article 6(1)(a) requires explicit consent for data processing'},
-        {'type': 'file', 'text': 'Document Citation (【4:0†source】)', 'file_id': 'file123', 'quote': 'GDPR Article 6(1)(a) requires explicit consent for data processing'},
-        {'type': 'file', 'text': 'Document Citation (【4:2†source】)', 'file_id': 'file123', 'quote': 'SOX Section 404 requires internal control assessments'},
-        {'type': 'file', 'text': 'Document 4 (Reference 0)', 'file_id': 'file123', 'quote': ''},
-        {'type': 'file', 'text': 'Document 4 (Reference 0)', 'file_id': 'file123', 'quote': ''},
-        {'type': 'file', 'text': 'Document 4 (Reference 2)', 'file_id': 'file123', 'quote': ''},
-    ]
-    
-    test_response = """To handle a GDPR compliance assessment, follow the steps below:
-Data Processing Analysis:
-Review all data processing activities for lawful basis. GDPR Article 6(1)(a) requires explicit consent for data processing【4:0†source】.
-Alternatively, organizations can rely on legitimate interest under Article 6(1)(f) provided they conduct a balancing test【4:0†source】.
-Data Subject Rights Implementation:
-Ensure all data subject rights are properly implemented and accessible.
-Data retention policies must be clearly defined and communicated to data subjects【4:0†source】.
-Cross-Border Transfer Assessment:
-Review any international data transfers and ensure adequate safeguards are in place【4:0†source】.
-The organization's data protection officer will oversee compliance and handle data subject requests【4:0†source】.
-Incident Response Procedures:
-Update data breach notification procedures to meet 72-hour reporting requirements【4:0†source】.
-Legal and Compliance Actions:
-Consider conducting a Data Protection Impact Assessment (DPIA) for high-risk processing activities【4:2†source】.
-Continue to monitor compliance with evolving regulatory requirements【4:2†source】.
-Audit and Documentation:
-Regular audits ensure ongoing compliance. SOX Section 404 requires internal control assessments for financial systems【4:2†source】.
-Following these actions promptly helps maintain compliance and reduces regulatory risk."""
-    
-    # Test the improved citation formatting
-    improved_response = agent._format_response_with_citations(test_response, old_citations)
-    
-    print("=== LEGAL CITATION IMPROVEMENT DEMONSTRATION ===")
-    print("\nOLD FORMAT (before improvement):")
-    print("- Multiple identical 'Document Citation (【4:0†source】)' entries")
-    print("- Generic 'Document 4 (Reference 0)' without context")
-    print("- No actual file names or meaningful descriptions")
-    print("- Repetitive and cluttered sources section")
-    
-    print("\nNEW FORMAT (after improvement):")
-    print(improved_response)
-    
-    return improved_response
 
 
 if __name__ == "__main__":

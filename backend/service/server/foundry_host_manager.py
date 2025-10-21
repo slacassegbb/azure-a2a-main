@@ -5,6 +5,7 @@ import time
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 import httpx
+import json
 
 # Ensure backend root (which contains hosts and utils) is importable
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
@@ -70,6 +71,7 @@ class FoundryHostManager(ApplicationManager):
         self._host_agent_initialized = False
         
         self._context_to_conversation: Dict[str, str] = {}
+        self._pending_artifacts: Dict[str, List[Dict[str, Any]]] = {}
         self.user_id = 'test_user'
         self.app_name = 'A2A'
         self._task_map: Dict[str, str] = {}
@@ -221,7 +223,7 @@ class FoundryHostManager(ApplicationManager):
                     else:
                         print("[DEBUG] Failed to stream conversation creation")
                 else:
-                    print("[DEBUG] Event Hub streamer not available for conversation creation")
+                    print("[DEBUG] WebSocket streamer not available for conversation creation")
                 
             except Exception as e:
                 print(f"[DEBUG] Error streaming conversation creation: {e}")
@@ -249,7 +251,7 @@ class FoundryHostManager(ApplicationManager):
         )
         self.add_task(task)
         
-        # Stream task creation to Event Hub
+        # Stream task creation to WebSocket
         print("[DEBUG] Streaming task creation to WebSocket...")
         try:
             from service.websocket_streamer import get_websocket_streamer
@@ -267,21 +269,21 @@ class FoundryHostManager(ApplicationManager):
                 
                 success = await streamer._send_event("task_created", event_data, context_id)
                 if success:
-                    print(f"[DEBUG] Task creation streamed to Event Hub: {event_data}")
+                    print(f"[DEBUG] Task creation streamed to WebSocket: {event_data}")
                 else:
-                    print("[DEBUG] Failed to stream task creation to Event Hub")
+                    print("[DEBUG] Failed to stream task creation to WebSocket")
             else:
-                print("[DEBUG] Event Hub streamer not available for task creation")
+                print("[DEBUG] WebSocket streamer not available for task creation")
             
         except Exception as e:
-            print(f"[DEBUG] Error streaming task creation to Event Hub: {e}")
+            print(f"[DEBUG] Error streaming task creation to WebSocket: {e}")
             import traceback
             traceback.print_exc()
         
         # Route to FoundryHostAgent
         tool_call_events = []
         def event_logger(event_dict):
-            # Convert tool call event dict to Event with enhanced details and stream to Event Hub
+            # Convert tool call event dict to Event with enhanced details and stream to WebSocket
             from a2a.types import Message, Part, TextPart
             
             # Extract agent name from event or use default
@@ -343,22 +345,22 @@ class FoundryHostManager(ApplicationManager):
                                 else:
                                     print("[DEBUG] Failed to stream tool call event")
                             else:
-                                print("[DEBUG] Event Hub streamer not available for tool call")
+                                print("[DEBUG] WebSocket streamer not available for tool call")
                         except Exception as e:
-                            print(f"[DEBUG] Error streaming tool call to Event Hub: {e}")
-                            # Don't let Event Hub errors break the main flow
+                            print(f"[DEBUG] Error streaming tool call to WebSocket: {e}")
+                            # Don't let WebSocket errors break the main flow
                             pass
                     
                     # Use background task for event_logger callback (can't make this function async)
                     asyncio.create_task(stream_tool_call())
                     
                 except ImportError:
-                    # Event Hub module not available, continue without streaming
-                    print("[DEBUG] Event Hub module not available for tool call")
+                    # WebSocket module not available, continue without streaming
+                    print("[DEBUG] WebSocket module not available for tool call")
                     pass
                 except Exception as e:
                     print(f"[DEBUG] Error setting up tool call streaming: {e}")
-                    # Don't let Event Hub errors break the main flow
+                    # Don't let WebSocket errors break the main flow
                     pass
             # Stream tool response events to WebSocket for granular visibility
             elif 'output' in event_dict:
@@ -402,22 +404,22 @@ class FoundryHostManager(ApplicationManager):
                                 else:
                                     print("[DEBUG] Failed to stream tool response event")
                             else:
-                                print("[DEBUG] Event Hub streamer not available for tool response")
+                                print("[DEBUG] WebSocket streamer not available for tool response")
                         except Exception as e:
-                            print(f"[DEBUG] Error streaming tool response to Event Hub: {e}")
-                            # Don't let Event Hub errors break the main flow
+                            print(f"[DEBUG] Error streaming tool response to WebSocket: {e}")
+                            # Don't let WebSocket errors break the main flow
                             pass
                     
                     # Use background task for event_logger callback (can't make this function async)
                     asyncio.create_task(stream_tool_response())
                     
                 except ImportError:
-                    # Event Hub module not available, continue without streaming
-                    print("[DEBUG] Event Hub module not available for tool response")
+                    # WebSocket module not available, continue without streaming
+                    print("[DEBUG] WebSocket module not available for tool response")
                     pass
                 except Exception as e:
                     print(f"[DEBUG] Error setting up tool response streaming: {e}")
-                    # Don't let Event Hub errors break the main flow
+                    # Don't let WebSocket errors break the main flow
                     pass
         # Pass the entire message with all parts (including files) to the host agent
         user_text = message.parts[0].root.text if message.parts and message.parts[0].root.kind == 'text' else ""
@@ -458,7 +460,7 @@ class FoundryHostManager(ApplicationManager):
 
                 streamer = await get_websocket_streamer()
                 if not streamer:
-                    print("[DEBUG] Event Hub streamer not available for task status")
+                    print("[DEBUG] WebSocket streamer not available for task status")
                     return
 
                 status_str = target_state.name if hasattr(target_state, 'name') else str(target_state)
@@ -519,33 +521,92 @@ class FoundryHostManager(ApplicationManager):
                 if streamer:
                     # Send in A2A MessageEventData format with proper agent attribution
                     event_data = {
-                        "messageId": get_message_id(msg),
+                        "messageId": get_message_id(msg) or str(uuid.uuid4()),
                         "conversationId": context_id,
                         "contextId": context_id,
                         "role": "assistant",
-                        "content": [
-                            {
-                                "type": "text",
-                                "content": str(resp),
-                                "mediaType": "text/plain"
-                            }
-                        ],
+                        "content": [],
                         "direction": "incoming",
-                        "agentName": actor_name,  # Use the actual agent name instead of hardcoded "assistant"
-                        "timestamp": __import__('datetime').datetime.utcnow().isoformat()
+                        "agentName": actor_name,
+                        "timestamp": __import__('datetime').datetime.utcnow().isoformat(),
                     }
-                    
-                    # Send as proper A2A message event
-                    success = await streamer._send_event("message", event_data, context_id)
-                    if success:
-                        print(f"[DEBUG] Message streamed to Event Hub: {event_data}")
+
+                    if isinstance(resp, str):
+                        event_data["content"].append({
+                            "type": "text",
+                            "content": resp,
+                            "mediaType": "text/plain",
+                        })
+                    elif hasattr(resp, "parts"):
+                        text_parts = []
+                        image_parts = []
+                        for part in resp.parts:
+                            root = part.root
+                            if isinstance(root, TextPart):
+                                text_parts.append(root.text)
+                            elif isinstance(root, DataPart) and isinstance(root.data, dict):
+                                artifact_uri = root.data.get("artifact-uri")
+                                if artifact_uri:
+                                    image_parts.append({
+                                        "type": "image",
+                                        "uri": artifact_uri,
+                                        "fileName": root.data.get("file-name"),
+                                        "fileSize": root.data.get("file-size"),
+                                        "mediaType": root.data.get("media-type", "image/png"),
+                                        "storageType": root.data.get("storage-type", "azure_blob"),
+                                        "status": root.data.get("status"),
+                                        "sourceUrl": root.data.get("source-url"),
+                                    })
+                                else:
+                                    text_parts.append(json.dumps(root.data))
+                        if text_parts:
+                            event_data["content"].append({
+                                "type": "text",
+                                "content": "\n\n".join(text_parts),
+                                "mediaType": "text/plain",
+                            })
+                        if image_parts:
+                            pending_list = self._pending_artifacts.setdefault(context_id, [])
+                            pending_list.extend(image_parts)
+                        for image_part in image_parts:
+                            event_data["content"].append(image_part)
                     else:
-                        print("[DEBUG] Failed to stream message to Event Hub")
+                        event_data["content"].append({
+                            "type": "text",
+                            "content": str(resp),
+                            "mediaType": "text/plain",
+                        })
+
+                    if not any(item.get("type") == "image" for item in event_data["content"]):
+                        pending_images = self._pending_artifacts.pop(context_id, [])
+                        for image_part in pending_images:
+                            event_data["content"].append(image_part)
+                    else:
+                        self._pending_artifacts.pop(context_id, None)
+
+                    success = await streamer._send_event("message", event_data, context_id)
+                    for content_item in event_data["content"]:
+                        if content_item.get("type") == "image":
+                            print(f"[DEBUG] Found file content with uri: {content_item.get('uri')}")
+                        if content_item.get("type") == "image" and content_item.get("uri"):
+                            await streamer._send_event(
+                                "remote_agent_activity",
+                                {
+                                    "agentName": actor_name,
+                                    "content": f"Image available: {content_item['uri']}",
+                                    "timestamp": __import__('datetime').datetime.utcnow().isoformat(),
+                                },
+                                context_id,
+                            )
+                    if success:
+                        print(f"[DEBUG] Message streamed to WebSocket: {event_data}")
+                    else:
+                        print("[DEBUG] Failed to stream message to WebSocket")
                 else:
-                    print("[DEBUG] Event Hub streamer not available")
+                    print("[DEBUG] WebSocket streamer not available")
                 
             except Exception as e:
-                print(f"[DEBUG] Error streaming to Event Hub: {e}")
+                print(f"[DEBUG] Error streaming to WebSocket: {e}")
                 import traceback
                 traceback.print_exc()
             

@@ -23,10 +23,8 @@ RUN npm ci
 COPY . .
 
 # Hardcoded environment variables for build
-ENV NEXT_PUBLIC_AZURE_EVENTHUB_CONNECTION_STRING="Endpoint=sb://agenteventhub.servicebus.windows.net/;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=ALdiv+VO/qgv0881yGoI7VD5PuPemz9i/+AEhLr0DQY="
-ENV NEXT_PUBLIC_AZURE_EVENTHUB_NAME="a2a-events"
-ENV NEXT_PUBLIC_AZURE_EVENTHUB_CONSUMER_GROUP="\$Default"
 ENV NEXT_PUBLIC_A2A_API_URL="http://localhost:12000"
+ENV NEXT_PUBLIC_WEBSOCKET_URL="ws://localhost:8080/events"
 ENV NEXT_PUBLIC_DEV_MODE="false"
 ENV NEXT_TELEMETRY_DISABLED=1
 
@@ -47,10 +45,8 @@ ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
 
 # Hardcoded runtime environment variables
-ENV NEXT_PUBLIC_AZURE_EVENTHUB_CONNECTION_STRING="Endpoint=sb://agenteventhub.servicebus.windows.net/;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=ALdiv+VO/qgv0881yGoI7VD5PuPemz9i/+AEhLr0DQY="
-ENV NEXT_PUBLIC_AZURE_EVENTHUB_NAME="a2a-events"
-ENV NEXT_PUBLIC_AZURE_EVENTHUB_CONSUMER_GROUP="\$Default"
 ENV NEXT_PUBLIC_A2A_API_URL="http://localhost:12000"
+ENV NEXT_PUBLIC_WEBSOCKET_URL="ws://localhost:8080/events"
 ENV NEXT_PUBLIC_DEV_MODE="false"
 
 # Copy production dependencies

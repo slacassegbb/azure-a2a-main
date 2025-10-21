@@ -4,7 +4,8 @@ import { useState, useEffect, useRef, useCallback } from "react"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Paperclip, Mic, MicOff, Send, Bot, User, Network } from "lucide-react"
+import { Badge } from "@/components/ui/badge"
+import { Paperclip, Mic, MicOff, Send, Bot, User, Network, Paintbrush } from "lucide-react"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { D3Dag } from "./d3-dag"
@@ -51,6 +52,13 @@ type Message = {
   username?: string
   // User color for the avatar
   userColor?: string
+  attachments?: {
+    uri: string
+    fileName?: string
+    fileSize?: number
+    mediaType?: string
+    storageType?: string
+  }[]
 }
 
 const initialMessages: Message[] = [
@@ -61,6 +69,334 @@ const initialMessages: Message[] = [
     agent: "Greeting Bot",
   },
 ]
+
+type MaskEditorDialogProps = {
+  open: boolean
+  imageUrl: string
+  onClose: () => void
+  onSave: (blob: Blob) => Promise<void> | void
+}
+
+function MaskEditorDialog({ open, imageUrl, onClose, onSave }: MaskEditorDialogProps) {
+  const imageRef = useRef<HTMLImageElement>(null)
+  const overlayRef = useRef<HTMLCanvasElement>(null)
+  const [imageLoaded, setImageLoaded] = useState(false)
+  const [brushSize, setBrushSize] = useState(80)
+  const [mode, setMode] = useState<"paint" | "erase">("paint")
+  const isDrawingRef = useRef(false)
+  const lastPointRef = useRef<{ x: number; y: number } | null>(null)
+  const [maskDirty, setMaskDirty] = useState(false)
+
+  const resetCanvas = useCallback(() => {
+    const overlay = overlayRef.current
+    if (overlay) {
+      const ctx = overlay.getContext("2d")
+      if (ctx) {
+        ctx.clearRect(0, 0, overlay.width, overlay.height)
+      }
+    }
+    setMaskDirty(false)
+  }, [])
+
+  const handleImageLoad = useCallback(() => {
+    const imageEl = imageRef.current
+    const overlay = overlayRef.current
+    if (!imageEl || !overlay) {
+      return
+    }
+
+    const width = imageEl.naturalWidth || imageEl.width
+    const height = imageEl.naturalHeight || imageEl.height
+    overlay.width = width
+    overlay.height = height
+
+    const ctx = overlay.getContext("2d")
+    if (ctx) {
+      ctx.clearRect(0, 0, width, height)
+    }
+
+    setMaskDirty(false)
+    setImageLoaded(true)
+  }, [])
+
+  const handleImageError = useCallback(() => {
+    setImageLoaded(false)
+  }, [])
+
+  useEffect(() => {
+    if (!open) {
+      setImageLoaded(false)
+      setMaskDirty(false)
+      const overlay = overlayRef.current
+      const ctx = overlay?.getContext("2d")
+      if (ctx && overlay) {
+        ctx.clearRect(0, 0, overlay.width, overlay.height)
+      }
+    }
+  }, [open])
+
+  useEffect(() => {
+    const overlay = overlayRef.current
+    const ctx = overlay?.getContext("2d")
+    if (ctx && overlay) {
+      ctx.clearRect(0, 0, overlay.width, overlay.height)
+    }
+    setMaskDirty(false)
+    setImageLoaded(false)
+  }, [imageUrl])
+
+  const getRelativePoint = useCallback((event: React.PointerEvent<HTMLCanvasElement>) => {
+    const overlay = overlayRef.current
+    if (!overlay) {
+      return { x: 0, y: 0 }
+    }
+    const rect = overlay.getBoundingClientRect()
+    const scaleX = overlay.width / rect.width
+    const scaleY = overlay.height / rect.height
+    const x = (event.clientX - rect.left) * scaleX
+    const y = (event.clientY - rect.top) * scaleY
+    return { x, y }
+  }, [])
+
+  const paintStroke = useCallback((event: React.PointerEvent<HTMLCanvasElement>) => {
+    const overlay = overlayRef.current
+    if (!overlay) {
+      return
+    }
+    const ctx = overlay.getContext("2d")
+    if (!ctx) {
+      return
+    }
+
+    const point = getRelativePoint(event)
+    const lastPoint = lastPointRef.current || point
+
+    ctx.save()
+    ctx.lineJoin = "round"
+    ctx.lineCap = "round"
+    ctx.lineWidth = brushSize
+
+    if (mode === "paint") {
+      ctx.globalCompositeOperation = "source-over"
+      ctx.strokeStyle = "rgba(239, 68, 68, 0.65)"
+    } else {
+      ctx.globalCompositeOperation = "destination-out"
+      ctx.strokeStyle = "rgba(0, 0, 0, 1)"
+    }
+
+    ctx.beginPath()
+    ctx.moveTo(lastPoint.x, lastPoint.y)
+    ctx.lineTo(point.x, point.y)
+    ctx.stroke()
+
+    if (mode === "paint") {
+      ctx.globalCompositeOperation = "source-over"
+      ctx.fillStyle = "rgba(239, 68, 68, 0.65)"
+      ctx.beginPath()
+      ctx.arc(point.x, point.y, brushSize / 2, 0, Math.PI * 2)
+      ctx.fill()
+    }
+
+    ctx.restore()
+    lastPointRef.current = point
+    setMaskDirty(true)
+  }, [brushSize, getRelativePoint, mode])
+
+  const handlePointerDown = useCallback((event: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!imageLoaded) {
+      return
+    }
+    event.preventDefault()
+    const overlay = overlayRef.current
+    if (!overlay) {
+      return
+    }
+    const point = getRelativePoint(event)
+    lastPointRef.current = point
+    isDrawingRef.current = true
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId)
+    } catch (err) {
+      console.warn("Pointer capture failed", err)
+    }
+    paintStroke(event)
+  }, [getRelativePoint, imageLoaded, paintStroke])
+
+  const handlePointerMove = useCallback((event: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!isDrawingRef.current) {
+      return
+    }
+    event.preventDefault()
+    paintStroke(event)
+  }, [paintStroke])
+
+  const stopDrawing = useCallback((event?: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!isDrawingRef.current) {
+      return
+    }
+    isDrawingRef.current = false
+    lastPointRef.current = null
+    if (event) {
+      try {
+        event.currentTarget.releasePointerCapture(event.pointerId)
+      } catch (err) {
+        // Ignore release errors
+      }
+    }
+  }, [])
+
+  const exportMask = useCallback(() => {
+    const overlay = overlayRef.current
+    if (!overlay || !imageLoaded) {
+      return
+    }
+
+    const exportCanvas = document.createElement("canvas")
+    exportCanvas.width = overlay.width
+    exportCanvas.height = overlay.height
+
+    const exportCtx = exportCanvas.getContext("2d")
+    const sourceCtx = overlay.getContext("2d")
+
+    if (!exportCtx || !sourceCtx) {
+      return
+    }
+
+    const overlayData = sourceCtx.getImageData(0, 0, overlay.width, overlay.height)
+    const exportData = exportCtx.createImageData(overlay.width, overlay.height)
+
+    for (let i = 0; i < exportData.data.length; i += 4) {
+      exportData.data[i] = 255
+      exportData.data[i + 1] = 255
+      exportData.data[i + 2] = 255
+      exportData.data[i + 3] = 255
+    }
+
+    for (let i = 0; i < overlayData.data.length; i += 4) {
+      const alpha = overlayData.data[i + 3]
+      if (alpha > 10) {
+        exportData.data[i] = 0
+        exportData.data[i + 1] = 0
+        exportData.data[i + 2] = 0
+        exportData.data[i + 3] = 0
+      }
+    }
+
+    exportCtx.putImageData(exportData, 0, 0)
+
+    exportCanvas.toBlob(async (blob) => {
+      if (!blob) {
+        return
+      }
+      await onSave(blob)
+      onClose()
+    }, "image/png", 1)
+  }, [onClose, onSave])
+
+  return (
+    <Dialog open={open} onOpenChange={(value) => !value && onClose()}>
+      <DialogContent className="max-w-5xl w-full">
+        <DialogHeader>
+          <DialogTitle>Paint a mask for targeted refinement</DialogTitle>
+        </DialogHeader>
+        <div className="flex flex-col gap-4">
+          <div className="text-sm text-muted-foreground">
+            Highlight the area you want the model to change. Painted regions become transparent in the mask so only that area is edited.
+          </div>
+          <div className="flex flex-col lg:flex-row gap-4">
+            <div className="flex-1">
+              <div className="relative w-full border rounded-lg overflow-hidden bg-black/10"
+                   style={{ maxHeight: "70vh" }}>
+                <img
+                  ref={imageRef}
+                  src={imageUrl}
+                  alt="Image for mask refinement"
+                  className="w-full h-auto pointer-events-none select-none"
+                  onLoad={handleImageLoad}
+                  onError={handleImageError}
+                  draggable={false}
+                />
+                <canvas
+                  ref={overlayRef}
+                  className="absolute inset-0 w-full h-full cursor-crosshair"
+                  onPointerDown={handlePointerDown}
+                  onPointerMove={handlePointerMove}
+                  onPointerUp={stopDrawing}
+                  onPointerLeave={stopDrawing}
+                  onContextMenu={(e) => e.preventDefault()}
+                  style={{ display: imageLoaded ? "block" : "none" }}
+                />
+                {!imageLoaded && (
+                  <div className="absolute inset-0 flex items-center justify-center text-sm text-muted-foreground bg-background/70">
+                    Loading image…
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="w-full lg:w-64 flex-shrink-0 space-y-4">
+              <div>
+                <p className="text-sm font-medium mb-2">Brush size</p>
+                <input
+                  type="range"
+                  min={10}
+                  max={200}
+                  value={brushSize}
+                  onChange={(event) => setBrushSize(Number(event.target.value))}
+                  className="w-full"
+                />
+                <div className="text-xs text-muted-foreground mt-1">{brushSize}px</div>
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  variant={mode === "paint" ? "default" : "secondary"}
+                  size="sm"
+                  onClick={() => setMode("paint")}
+                >
+                  <Paintbrush className="h-4 w-4 mr-2" />Paint
+                </Button>
+                <Button
+                  variant={mode === "erase" ? "default" : "secondary"}
+                  size="sm"
+                  onClick={() => setMode("erase")}
+                >
+                  Erase
+                </Button>
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="flex-1"
+                  onClick={resetCanvas}
+                  disabled={!maskDirty}
+                >
+                  Clear mask
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={onClose}
+                >
+                  Cancel
+                </Button>
+              </div>
+              <Button
+                onClick={exportMask}
+                disabled={!imageLoaded}
+                className="w-full"
+              >
+                Save mask &amp; continue
+              </Button>
+              <p className="text-xs text-muted-foreground">
+                Tip: Use paint to mark the area you want to transform. Switch to erase for quick adjustments.
+              </p>
+            </div>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  )
+}
 
 type ChatPanelProps = {
   dagNodes: any[]
@@ -87,6 +423,11 @@ export function ChatPanel({ dagNodes, dagLinks }: ChatPanelProps) {
   const [activeNode, setActiveNode] = useState<string | null>(null)
   const [processedMessageIds, setProcessedMessageIds] = useState<Set<string>>(new Set())
   const [uploadedFiles, setUploadedFiles] = useState<any[]>([])
+  const [refineTarget, setRefineTarget] = useState<any | null>(null)
+  const [maskAttachment, setMaskAttachment] = useState<any | null>(null)
+  const [maskUploadInFlight, setMaskUploadInFlight] = useState(false)
+  const [maskEditorOpen, setMaskEditorOpen] = useState(false)
+  const [maskEditorSource, setMaskEditorSource] = useState<{ uri: string; meta?: any } | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [isDragOver, setIsDragOver] = useState(false)
   
@@ -100,6 +441,16 @@ export function ChatPanel({ dagNodes, dagLinks }: ChatPanelProps) {
       setUploadedFiles([])
     }
   }, [isConnected, uploadedFiles.length])
+
+  useEffect(() => {
+    if (!refineTarget) {
+      setMaskAttachment(null)
+      setMaskEditorOpen(false)
+      setMaskEditorSource(null)
+    } else {
+      setMaskAttachment(null)
+    }
+  }, [refineTarget])
 
   // Also clear uploaded files on component mount (page refresh)
   useEffect(() => {
@@ -328,6 +679,25 @@ export function ChatPanel({ dagNodes, dagLinks }: ChatPanelProps) {
         // Only process assistant messages to avoid duplicating user messages
         if (data.role === "assistant" || data.role === "system") {
           const textContent = data.content.find((c: any) => c.type === "text")?.content || ""
+          const imageContents = data.content.filter((c: any) => c.type === "image")
+          console.log("[ChatPanel] Image parts count:", imageContents.length)
+          const derivedImageAttachments = [] as any[]
+          const markdownUrlRegex = /\[[^\]]*\]\((https?:\/\/[^)]+)\)|(https?:\/\/[^\s]+\.(?:png|jpe?g|gif|webp)(?:\?[^\s)]+)?)/gi
+          let match: RegExpExecArray | null
+          while ((match = markdownUrlRegex.exec(textContent)) !== null) {
+            const url = (match[1] || match[2] || "").trim()
+            if (!url) continue
+            const extension = url.split('?')[0].toLowerCase().split('.').pop()
+            if (!extension || !["png", "jpg", "jpeg", "gif", "webp"].includes(extension)) {
+              continue
+            }
+            const uriWithToken = url
+            derivedImageAttachments.push({
+              uri: uriWithToken,
+              mediaType: `image/${extension === "jpg" ? "jpeg" : extension}`,
+              fileName: url.split("/").pop() || `image.${extension}`,
+            })
+          }
           let agentName = data.agentName || "System"
           
           // If this is a new agent we haven't seen before, register it
@@ -337,6 +707,32 @@ export function ChatPanel({ dagNodes, dagLinks }: ChatPanelProps) {
               status: "online",
               avatar: "/placeholder.svg?height=32&width=32"
             })
+          }
+          
+          const existingUris = new Set(imageContents.map((img: any) => img.uri))
+          const filteredDerived = derivedImageAttachments.filter(att => !existingUris.has(att.uri))
+          const allImageAttachments = [...imageContents, ...filteredDerived]
+          if (allImageAttachments.length > 0) {
+            const attachmentId = `${data.messageId}_attachments`
+            if (!processedMessageIds.has(attachmentId)) {
+              setProcessedMessageIds(prev => new Set([...prev, attachmentId]))
+              const attachmentMessage: Message = {
+                id: attachmentId,
+                role: "assistant",
+                agent: agentName,
+                attachments: allImageAttachments.map((img: any) => ({
+                  uri: img.uri,
+                  fileName: img.fileName,
+                  fileSize: img.fileSize,
+                  storageType: img.storageType,
+                  mediaType: img.mediaType || "image/png",
+                })),
+              }
+              console.log("[ChatPanel] Adding attachment message:", attachmentMessage)
+              setMessages(prev => [...prev, attachmentMessage])
+            } else {
+              console.log("[ChatPanel] Attachment message already processed, skipping:", attachmentId)
+            }
           }
           
           console.log("[ChatPanel] Processing assistant message:", {
@@ -351,6 +747,7 @@ export function ChatPanel({ dagNodes, dagLinks }: ChatPanelProps) {
               role: data.role === "user" ? "user" : "assistant",
               content: textContent,
               agent: agentName,
+              attachments: [],
             },
           })
         } else {
@@ -535,9 +932,9 @@ export function ChatPanel({ dagNodes, dagLinks }: ChatPanelProps) {
     const handleFinalResponse = (data: { inferenceId: string; message: Omit<Message, "id"> }) => {
       console.log("[ChatPanel] Final response received:", data)
       
-      // Use the inference ID + content hash for more robust duplicate detection
-      const contentHash = data.message.content ? data.message.content.slice(0, 50) : ""
-      const responseId = `response_${data.inferenceId}_${contentHash}`
+      const contentKey = data.message.content ?? ""
+      const agentKey = data.message.agent ?? "assistant"
+      const responseId = `response_${data.inferenceId}_${agentKey}_${contentKey}`
       
       // Check if we've already processed this exact message
       if (processedMessageIds.has(responseId)) {
@@ -554,11 +951,15 @@ export function ChatPanel({ dagNodes, dagLinks }: ChatPanelProps) {
         type: "inference_summary",
         steps: inferenceSteps,
       }
+
       const finalMessage: Message = {
         id: responseId,
-        ...data.message,
+        role: data.message.role === "user" ? "user" : "assistant",
+        content: data.message.content,
+        agent: data.message.agent,
       }
 
+      // Add summary and final text response; attachments are streamed separately via message_attachment events
       setMessages((prev) => [...prev, summaryMessage, finalMessage])
       setIsInferencing(false)
       setInferenceSteps([])
@@ -734,7 +1135,8 @@ export function ChatPanel({ dagNodes, dagLinks }: ChatPanelProps) {
   }, [voiceRecording.audioBlob, voiceRecording.isRecording, voiceRecording.isProcessing, handleVoiceTranscription])
 
   const handleSend = async () => {
-    if (!input.trim() || isInferencing) return
+    if (isInferencing) return
+    if (!input.trim() && !refineTarget) return
 
     // If we're still using the default conversation ID, create a real conversation first
     let actualConversationId = conversationId
@@ -817,11 +1219,52 @@ export function ChatPanel({ dagNodes, dagLinks }: ChatPanelProps) {
             file: {
               name: file.filename,
               uri: file.uri,
-              mime_type: file.content_type
+              mime_type: file.content_type,
+              role: 'overlay',
             }
           }
         })
       })
+
+      const existingUris = new Set(parts.filter(p => p.root?.kind === 'file').map(p => p.root.file.uri))
+
+      if (refineTarget?.imageUrl && !existingUris.has(refineTarget.imageUrl)) {
+        const baseOriginalName = refineTarget.imageMeta?.fileName || `refine-${Date.now()}.png`
+        const baseStem = baseOriginalName.replace(/\.[^.]+$/, '')
+        const baseTaggedName = `${baseStem}_base.png`
+
+        parts.push({
+          root: {
+            kind: 'file',
+            file: {
+              name: baseTaggedName,
+              uri: refineTarget.imageUrl,
+              mime_type: refineTarget.imageMeta?.mediaType || 'image/png',
+              role: 'base',
+            },
+          },
+        })
+        existingUris.add(refineTarget.imageUrl)
+      }
+
+      if (maskAttachment && !existingUris.has(maskAttachment.uri)) {
+        const maskOriginalName = maskAttachment.filename || `mask-${Date.now()}.png`
+        const maskStem = maskOriginalName.replace(/\.[^.]+$/, '')
+        const maskTaggedName = maskStem.endsWith('_mask') ? `${maskStem}.png` : `${maskStem}_mask.png`
+
+        parts.push({
+          root: {
+            kind: 'file',
+            file: {
+              name: maskTaggedName,
+              uri: maskAttachment.uri,
+              mime_type: maskAttachment.content_type || 'image/png',
+              role: 'mask',
+            }
+          }
+        })
+        existingUris.add(maskAttachment.uri)
+      }
 
       const baseUrl = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
       const response = await fetch(`${baseUrl}/message/send`, {
@@ -854,6 +1297,8 @@ export function ChatPanel({ dagNodes, dagLinks }: ChatPanelProps) {
     // Clear input and uploaded files after successful send
     setInput("")
     setUploadedFiles([])
+    setRefineTarget(null)
+    setMaskAttachment(null)
   }
 
   return (
@@ -921,44 +1366,120 @@ export function ChatPanel({ dagNodes, dagLinks }: ChatPanelProps) {
                       className={`rounded-lg p-3 max-w-md ${message.role === "user" ? "bg-primary text-primary-foreground" : "bg-muted"
                         }`}
                     >
-                      <div className="text-sm prose prose-sm max-w-none dark:prose-invert">
-                        <ReactMarkdown
-                          remarkPlugins={[remarkGfm]}
-                          rehypePlugins={[rehypeHighlight]}
-                          components={{
-                            // Customize rendering for better chat bubble styling
-                            p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
-                            code: ({ node, inline, className, children, ...props }: any) => 
-                              inline ? (
-                                <code className="bg-black/10 dark:bg-white/10 px-1 py-0.5 rounded text-xs" {...props}>
+                      {message.attachments && message.attachments.length > 0 ? (
+                        <div className="flex flex-col gap-3">
+                          {message.attachments.map((attachment, attachmentIndex) => {
+                            const isImage = (attachment.mediaType || "").startsWith("image/")
+                            if (isImage) {
+                              return (
+                                <div key={`${message.id}-attachment-${attachmentIndex}`} className="flex flex-col gap-2">
+                                  <a
+                                    href={attachment.uri}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="block overflow-hidden rounded-lg border border-border bg-background"
+                                  >
+                                    <img
+                                      src={attachment.uri}
+                                      alt={attachment.fileName || "Image attachment"}
+                                      className="w-full h-auto"
+                                    />
+                                    <div className="px-3 py-2 text-xs text-muted-foreground border-t border-border bg-muted/50">
+                                      {attachment.fileName || "Image attachment"}
+                                    </div>
+                                  </a>
+                                  {message.role === "assistant" && (
+                                    <div className="flex flex-wrap gap-2">
+                                      <Button
+                                        variant={refineTarget?.imageUrl === attachment.uri ? "default" : "secondary"}
+                                        size="sm"
+                                        className="self-start"
+                                        onClick={() => {
+                                          if (refineTarget?.imageUrl === attachment.uri) {
+                                            setRefineTarget(null)
+                                            setMaskAttachment(null)
+                                          } else {
+                                            setRefineTarget({
+                                              imageUrl: attachment.uri,
+                                              imageMeta: attachment,
+                                            })
+                                            setMaskAttachment(null)
+                                          }
+                                        }}
+                                      >
+                                        {refineTarget?.imageUrl === attachment.uri ? "Cancel refine" : "Refine this image"}
+                                      </Button>
+                                      {refineTarget?.imageUrl === attachment.uri && (
+                                        <Button
+                                          variant="outline"
+                                          size="sm"
+                                          disabled={maskUploadInFlight}
+                                          onClick={() => {
+                                            setMaskEditorSource({ uri: attachment.uri, meta: attachment })
+                                            setMaskEditorOpen(true)
+                                          }}
+                                        >
+                                          {maskUploadInFlight ? "Saving mask…" : maskAttachment ? "Edit mask" : "Paint mask"}
+                                        </Button>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              )
+                            }
+
+                            return (
+                              <a
+                                key={`${message.id}-attachment-${attachmentIndex}`}
+                                href={attachment.uri}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="block rounded-md border border-dashed border-border px-3 py-2 text-xs text-muted-foreground hover:bg-muted/50 transition-colors"
+                              >
+                                {attachment.fileName || attachment.uri}
+                              </a>
+                            )
+                          })}
+                        </div>
+                      ) : (
+                        <div className="text-sm prose prose-sm max-w-none dark:prose-invert">
+                          <ReactMarkdown
+                            remarkPlugins={[remarkGfm]}
+                            rehypePlugins={[rehypeHighlight]}
+                            components={{
+                              p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
+                              code: ({ node, inline, className, children, ...props }: any) => 
+                                inline ? (
+                                  <code className="bg-black/10 dark:bg-white/10 px-1 py-0.5 rounded text-xs" {...props}>
+                                    {children}
+                                  </code>
+                                ) : (
+                                  <code className="block bg-black/10 dark:bg-white/10 p-2 rounded text-xs overflow-x-auto" {...props}>
+                                    {children}
+                                  </code>
+                                ),
+                              pre: ({ children }) => <div className="my-2">{children}</div>,
+                              ul: ({ children }) => <ul className="mb-2 last:mb-0 pl-4">{children}</ul>,
+                              ol: ({ children }) => <ol className="mb-2 last:mb-0 pl-4">{children}</ol>,
+                              li: ({ children }) => <li className="mb-1">{children}</li>,
+                              h1: ({ children }) => <h1 className="text-base font-bold mb-2">{children}</h1>,
+                              h2: ({ children }) => <h2 className="text-sm font-bold mb-2">{children}</h2>,
+                              h3: ({ children }) => <h3 className="text-sm font-semibold mb-1">{children}</h3>,
+                              blockquote: ({ children }) => (
+                                <blockquote className="border-l-2 border-gray-300 dark:border-gray-600 pl-2 my-2 italic">
                                   {children}
-                                </code>
-                              ) : (
-                                <code className="block bg-black/10 dark:bg-white/10 p-2 rounded text-xs overflow-x-auto" {...props}>
-                                  {children}
-                                </code>
+                                </blockquote>
                               ),
-                            pre: ({ children }) => <div className="my-2">{children}</div>,
-                            ul: ({ children }) => <ul className="mb-2 last:mb-0 pl-4">{children}</ul>,
-                            ol: ({ children }) => <ol className="mb-2 last:mb-0 pl-4">{children}</ol>,
-                            li: ({ children }) => <li className="mb-1">{children}</li>,
-                            h1: ({ children }) => <h1 className="text-base font-bold mb-2">{children}</h1>,
-                            h2: ({ children }) => <h2 className="text-sm font-bold mb-2">{children}</h2>,
-                            h3: ({ children }) => <h3 className="text-sm font-semibold mb-1">{children}</h3>,
-                            blockquote: ({ children }) => (
-                              <blockquote className="border-l-2 border-gray-300 dark:border-gray-600 pl-2 my-2 italic">
-                                {children}
-                              </blockquote>
-                            ),
-                          }}
-                        >
-                          {message.content || ""}
-                        </ReactMarkdown>
-                      </div>
-                      {message.role === "assistant" && message.agent && (
-                        <p className="text-xs text-muted-foreground mt-1">{message.agent}</p>
+                            }}
+                          >
+                            {message.content || ""}
+                          </ReactMarkdown>
+                        </div>
                       )}
                     </div>
+                    {message.role === "assistant" && message.agent && (
+                        <p className="text-xs text-muted-foreground mt-1">{message.agent}</p>
+                      )}
                   </div>
                   {message.role === "user" && (() => {
                     const { bgColor, iconColor } = getAvatarStyles(message.userColor)
@@ -1034,6 +1555,23 @@ export function ChatPanel({ dagNodes, dagLinks }: ChatPanelProps) {
               })}
             </div>
           )}
+          {refineTarget && (
+            <div className="mb-2 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+              <span>Refining image: {refineTarget.imageMeta?.fileName || refineTarget.imageUrl}</span>
+              <Button
+                variant="outline"
+                size="xs"
+                onClick={() => setRefineTarget(null)}
+              >
+                Cancel
+              </Button>
+              {maskAttachment && (
+                <Badge variant="outline" className="text-xs border-emerald-300 text-emerald-700 bg-emerald-100/70">
+                  Mask attached: {maskAttachment.filename?.split("/").pop() || maskAttachment.filename}
+                </Badge>
+              )}
+            </div>
+          )}
 
           {/* Voice recording status */}
           {(voiceRecording.isRecording || voiceRecording.isProcessing) && (
@@ -1106,13 +1644,54 @@ export function ChatPanel({ dagNodes, dagLinks }: ChatPanelProps) {
               >
                 {voiceRecording.isRecording ? <MicOff size={18} /> : <Mic size={18} />}
               </Button>
-              <Button onClick={handleSend} disabled={isInferencing || !input.trim()}>
+              <Button onClick={handleSend} disabled={isInferencing || (!input.trim() && !refineTarget)}>
                 <Send size={18} />
               </Button>
             </div>
           </div>
         </div>
       </div>
+      {maskEditorSource && refineTarget && (
+        <MaskEditorDialog
+          open={maskEditorOpen}
+          imageUrl={maskEditorSource.uri}
+          onClose={() => setMaskEditorOpen(false)}
+          onSave={async (blob) => {
+            if (!blob) return
+            setMaskUploadInFlight(true)
+            try {
+              const formData = new FormData()
+              const filename = `${(refineTarget.imageMeta?.fileName || "mask")?.replace(/\.[^.]+$/, "")}-mask.png`
+              const maskFile = new File([blob], filename, { type: "image/png" })
+              formData.append('file', maskFile)
+
+              const baseUrl = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
+              const response = await fetch(`${baseUrl}/upload`, {
+                method: 'POST',
+                body: formData
+              })
+              const result = await response.json()
+              if (result.success) {
+                const uploadedMask = {
+                  ...result,
+                  filename,
+                  content_type: 'image/png',
+                }
+                setMaskAttachment(uploadedMask)
+                if ((window as any).addFileToHistory) {
+                  (window as any).addFileToHistory(uploadedMask)
+                }
+              } else {
+                console.error('Mask upload failed:', result.error)
+              }
+            } catch (error) {
+              console.error('Mask upload error:', error)
+            } finally {
+              setMaskUploadInFlight(false)
+            }
+          }}
+        />
+      )}
     </div>
   )
 }

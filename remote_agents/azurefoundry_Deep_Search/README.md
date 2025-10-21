@@ -52,6 +52,19 @@ AZURE_AI_FOUNDRY_PROJECT_ENDPOINT=Your Azure AI Foundry Project Endpoint
 AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME=Your Azure AI Foundry Deployment Model Name
 ```
 
+### 3a. Configure A2A Server
+
+```env
+# Hostname or base domain the agent binds to (defaults to localhost)
+A2A_ENDPOINT=localhost
+
+# Port for the agent's A2A API
+A2A_PORT=8002
+
+# Host agent URL for self-registration (empty string disables)
+A2A_HOST=http://localhost:12000
+```
+
 ### 4. Run the Demo
 
 #### Option A: A2A Server Mode (Default)
@@ -60,8 +73,8 @@ AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME=Your Azure AI Foundry Deployment Model Name
 # Start Your Azure AI Foundry Agent A2A server
 uv run .
 
-# The server will be available at: http://localhost:10007
-# Health check at: http://localhost:10007/health
+# The server will be available at: http://$A2A_ENDPOINT:$A2A_PORT
+# Health check at: http://$A2A_ENDPOINT:$A2A_PORT/health
 ```
 
 #### Option B: Web UI Mode (Gradio Interface)
@@ -70,18 +83,18 @@ uv run .
 # Start with Gradio Web UI + A2A server
 uv run . --ui
 
-# Web UI will be available at: http://localhost:8085
-# A2A server will be available at: http://localhost:10007
+# Web UI will be available at: http://localhost:8087
+# A2A server will be available at: http://$A2A_ENDPOINT:$A2A_PORT
 ```
 
 #### Option C: Custom Ports
 
 ```bash
 # Customize ports
-uv run . --ui --ui-port 8080 --port 10008
+uv run . --ui --ui-port 8089 --port 8010
 
 # Or just A2A server on custom port
-uv run . --port 10008
+uv run . --port 8010
 ```
 
 #### Testing the A2A Server
@@ -107,24 +120,30 @@ When the agent starts, it automatically:
 
 ### Configuration
 
-Self-registration is controlled by the `A2A_HOST_AGENT_URL` environment variable:
+Self-registration is controlled by the `A2A_HOST` environment variable (falls back to `A2A_HOST_AGENT_URL` for legacy setups):
 
 ```bash
 # Default (tries to register with host agent on localhost:12000)
 uv run .
 
 # Custom host agent URL
-A2A_HOST_AGENT_URL=http://your-host-agent:8080 uv run .
+A2A_HOST=http://your-host-agent:8080 uv run .
 
 # Disable self-registration (empty URL)
-A2A_HOST_AGENT_URL="" uv run .
+A2A_HOST="" uv run .
 ```
 
 ### Environment Variables
 
 ```env
 # Host agent URL for self-registration (optional)
-A2A_HOST_AGENT_URL=http://localhost:12000  # Default
+A2A_HOST=http://localhost:12000  # Default
+# Legacy fallback (still supported)
+A2A_HOST_AGENT_URL=http://localhost:12000
+
+# A2A binding configuration
+A2A_ENDPOINT=localhost
+A2A_PORT=8002
 ```
 
 ### Complete Multi-Agent Setup
@@ -142,7 +161,7 @@ A2A_HOST_AGENT_URL=http://localhost:12000  # Default
    ```
 
 3. **Verify Registration**:
-   - Open the host agent UI: http://localhost:12000
+   - Open the host agent UI: value of `A2A_HOST` (default http://localhost:12000)
    - Go to "Remote Agents" tab
    - Look for "AI Foundry Expert Agent" in the list
 
@@ -238,9 +257,9 @@ The project includes a beautiful Gradio web interface that provides:
 - "Help me optimize my schedule for tomorrow"
 
 ### Access Points
-- **Web UI**: http://localhost:8085 (default)
-- **A2A API**: http://localhost:10007 (default)
-- **Health Check**: http://localhost:10007/health
+- **Web UI**: http://localhost:8087 (default)
+- **A2A API**: http://$A2A_ENDPOINT:$A2A_PORT (default http://localhost:8002)
+- **Health Check**: http://$A2A_ENDPOINT:$A2A_PORT/health
 
 ## Technical Architecture
 

@@ -41,9 +41,13 @@ async def register_with_host_agent(
         bool: True if registration successful, False otherwise
     """
     if not host_url:
-        host_url = os.getenv('A2A_HOST_AGENT_URL', 'http://localhost:12000')
-    
-    registration_url = f"{host_url}/agent/self-register"
+        host_url = get_host_agent_url()
+
+    if not host_url:
+        logger.info("ℹ️ Host agent URL not provided; skipping self-registration")
+        return False
+
+    registration_url = f"{host_url.rstrip('/')}/agent/self-register"
     
     logger.info(f"[DEBUG] host_url resolved to: {host_url}")
     logger.info(f"[DEBUG] registration_url resolved to: {registration_url}")
@@ -100,7 +104,14 @@ async def register_with_host_agent(
 
 def get_host_agent_url() -> str:
     """Get the host agent URL from environment variables or default."""
-    return os.getenv('A2A_HOST_AGENT_URL', 'http://localhost:12000')
+    if 'A2A_HOST' in os.environ:
+        host_url = os.getenv('A2A_HOST', '')
+    elif 'A2A_HOST_AGENT_URL' in os.environ:
+        host_url = os.getenv('A2A_HOST_AGENT_URL', '')
+    else:
+        return 'http://localhost:12000'
+
+    return host_url.strip()
 
 
 async def register_with_host_agent_async_startup(agent_card: AgentCard) -> None:

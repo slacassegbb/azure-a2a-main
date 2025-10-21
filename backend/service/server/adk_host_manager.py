@@ -265,7 +265,7 @@ class ADKHostManager(ApplicationManager):
                             else:
                                 print("[DEBUG] Failed to stream conversation creation")
                         else:
-                            print("[DEBUG] Event Hub streamer not available for conversation creation")
+                            print("[DEBUG] WebSocket streamer not available for conversation creation")
                     except Exception as e:
                         print(f"[DEBUG] SPECIFIC ERROR in conversation streaming: {e}")
                         import traceback
@@ -672,6 +672,8 @@ class ADKHostManager(ApplicationManager):
                         )
                     )
                 )
+            elif part.data and isinstance(part.data, dict):
+                parts.append(Part(root=DataPart(data=part.data)))
             # These aren't managed by the A2A message structure, these are internal
             # details of ADK, we will simply flatten these to json representations.
             elif part.video_metadata:

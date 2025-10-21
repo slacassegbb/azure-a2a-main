@@ -19,7 +19,7 @@ This agent automatically registers itself with the host agent on startup:
 🎯 **Zero Configuration**: Just start the agent and it appears in the host agent's registry  
 🔄 **Resilient**: Handles host agent unavailability gracefully  
 📡 **Background**: Registration happens without blocking agent startup  
-⚙️ **Configurable**: Set `A2A_HOST_AGENT_URL` to point to your host agent  
+⚙️ **Configurable**: Set `A2A_HOST` (or legacy `A2A_HOST_AGENT_URL`) to point to your host agent  
 
 ### Startup Flow
 ```
@@ -36,14 +36,14 @@ This agent automatically registers itself with the host agent on startup:
     cd samples/python/agents/google_adk
     ```
 
-2. Create an environment file with your API key:
+2. Create an environment file with your configuration:
    ```bash
-   echo "GOOGLE_API_KEY=your_api_key_here" > .env
-   ```
-
-3. (Optional) Set the host agent URL if different from default:
-   ```bash
-   echo "A2A_HOST_AGENT_URL=http://localhost:12000" >> .env
+   cat <<'EOF' > .env
+   GOOGLE_API_KEY=your_api_key_here
+   A2A_ENDPOINT=localhost
+   A2A_PORT=8003
+   A2A_HOST=http://localhost:12000
+   EOF
    ```
 
 4. Run the agent:
@@ -52,7 +52,7 @@ This agent automatically registers itself with the host agent on startup:
     ```
     
     The agent will:
-    - Start on `http://localhost:10002` 
+    - Start on `http://localhost:8003` 
     - Automatically attempt registration with host agent
     - Show registration status in logs
 
@@ -82,7 +82,7 @@ If you want to test without the host agent:
 ```bash
 # Connect to the agent directly (specify the agent URL with correct port)
 cd samples/python/hosts/cli
-uv run . --agent http://localhost:10002
+uv run . --agent http://localhost:8003
 
 # If you changed the port when starting the agent, use that port instead
 # uv run . --agent http://localhost:YOUR_PORT
@@ -93,7 +93,10 @@ uv run . --agent http://localhost:10002
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `GOOGLE_API_KEY` | *Required* | Your Google AI API key |
-| `A2A_HOST_AGENT_URL` | `http://localhost:12000` | URL of the host agent for registration |
+| `A2A_ENDPOINT` | `localhost` | Hostname/interface to bind the agent server |
+| `A2A_PORT` | `8003` | Port for the agent's A2A API |
+| `A2A_HOST` | `http://localhost:12000` | Host agent URL (empty string disables registration) |
+| `A2A_HOST_AGENT_URL` | `http://localhost:12000` | Legacy fallback for host agent URL |
 
 ## Features
 

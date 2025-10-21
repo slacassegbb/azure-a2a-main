@@ -8,8 +8,7 @@ import base64
 import os
 import tempfile
 import time
-import uuid
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, List
 
 from foundry_agent import FoundryFraudAgent
 
@@ -19,7 +18,6 @@ from a2a.server.events.event_queue import EventQueue
 from a2a.server.tasks import TaskUpdater
 from a2a.types import (
     AgentCard,
-    FilePart,
     FileWithBytes,
     FileWithUri,
     Part,
@@ -73,7 +71,6 @@ class FoundryFraudAgentExecutor(AgentExecutor):
                     raise
 
     def __init__(self, card: AgentCard):
-        self._card = card
         self._active_threads: Dict[str, str] = {}  # context_id -> thread_id mapping
         self._waiting_for_input: Dict[str, str] = {}
         self._pending_updaters: Dict[str, TaskUpdater] = {}
@@ -177,12 +174,12 @@ class FoundryFraudAgentExecutor(AgentExecutor):
                 message=new_agent_text_message(f"Error: {e}", context_id=context_id)
             )
 
-    async def _run_agent_with_monitoring(
-        self, 
-        agent, 
-        thread_id: str, 
-        user_message: str, 
-        task_updater: TaskUpdater, 
+    async def _handle_tool_calls(
+        self,
+        agent: FoundryFraudAgent,
+        thread_id: str,
+        user_message: str,
+        task_updater: TaskUpdater,
         context_id: str
     ):
         """Run the agent with real-time monitoring of tool calls and status updates."""
@@ -234,17 +231,6 @@ class FoundryFraudAgentExecutor(AgentExecutor):
             return ([], [])
             
         return (responses, tools_called)
-
-    async def _cleanup_thread_later(self, agent: FoundryFraudAgent, thread_id: str):
-        """Clean up a thread after a delay to avoid interfering with active runs."""
-        try:
-            # Wait much longer to ensure any active runs are complete and rate limits reset
-            await asyncio.sleep(60)  # Wait 1 minute before cleanup
-            client = agent._get_client()
-            client.threads.delete(thread_id)
-            logger.info(f"Delayed cleanup: deleted Azure thread {thread_id}")
-        except Exception as e:
-            logger.warning(f"Delayed cleanup failed for thread {thread_id}: {e}")
 
     def _convert_parts_to_text(self, parts: List[Part]) -> str:
         """Convert message parts to plain text, saving any files locally."""
@@ -334,33 +320,8 @@ class FoundryFraudAgentExecutor(AgentExecutor):
 
 def create_foundry_agent_executor(card: AgentCard) -> FoundryFraudAgentExecutor:
     return FoundryFraudAgentExecutor(card)
-
-
-async def create_foundry_agent_executor_with_startup(card: AgentCard) -> FoundryFraudAgentExecutor:
-    """Create fraud executor and initialize the shared agent at startup."""
-    await FoundryFraudAgentExecutor.initialize_at_startup()
-    return FoundryFraudAgentExecutor(card)
-
-
-async def initialize_foundry_fraud_agents_at_startup():
-    """
-    Convenience function to initialize shared fraud agent resources at application startup.
-    Call this once during your application's startup phase.
-
-    Example usage in your main application:
-
-    ```python
-    # In your main startup code (e.g., main.py or app initialization)
-    import asyncio
-    from foundry_agent_executor import initialize_foundry_fraud_agents_at_startup
-
-    async def startup():
-        print("🚀 Starting fraud application...")
-        await initialize_foundry_fraud_agents_at_startup()
-        print("✅ Fraud agent initialization complete, ready to handle requests")
-
-    # Run at startup
-    asyncio.run(startup())
-    ```
-    """
+ 
+ 
+async def initialize_foundry_fraud_agents_at_startup() -> None:
+    """Initialize the shared fraud agent during application startup."""
     await FoundryFraudAgentExecutor.initialize_at_startup()

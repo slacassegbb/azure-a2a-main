@@ -6,12 +6,9 @@
     "build": "next build",
     "dev": "next dev",
     "lint": "next lint",
-    "start": "next start",
-    "test:eventhub": "node scripts/test-event-hub.js"
+    "start": "next start"
   },
   "dependencies": {
-    "@azure/event-hubs": "^5.11.7",
-    "@azure/identity": "^4.2.1",
     "@hookform/resolvers": "^3.9.1",
     "@radix-ui/react-accordion": "1.2.2",
     "@radix-ui/react-alert-dialog": "1.1.4",
@@ -70,6 +67,8 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "dotenv": "^16.6.1",
+    "eslint": "^9.38.0",
+    "eslint-config-next": "^15.5.6",
     "postcss": "^8.5",
     "tailwindcss": "^3.4.17",
     "typescript": "^5"
