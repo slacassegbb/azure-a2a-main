@@ -20,6 +20,7 @@ from a2a.types import (
     AgentCard,
     FileWithBytes,
     FileWithUri,
+    DataPart,
     Part,
     TaskState,
     TextPart,
@@ -241,9 +242,9 @@ class FoundryDeepSearchAgentExecutor(AgentExecutor):
             p = part.root
             if isinstance(p, TextPart):
                 texts.append(p.text)
-            elif isinstance(p.file, FileWithUri):
+            elif hasattr(p, "file") and isinstance(p.file, FileWithUri):
                 texts.append(f"[File at {p.file.uri}]")
-            elif isinstance(p.file, FileWithBytes):
+            elif hasattr(p, "file") and isinstance(p.file, FileWithBytes):
                 try:
                     data = base64.b64decode(p.file.bytes)
                     fname = p.file.name or "file"
@@ -253,6 +254,17 @@ class FoundryDeepSearchAgentExecutor(AgentExecutor):
                     texts.append(f"[Saved {fname} to {path}]")
                 except Exception as ex:
                     texts.append(f"[Error saving file: {ex}]")
+            elif isinstance(p, DataPart):
+                # Include a compact representation of structured data
+                try:
+                    import json as _json
+                    payload = getattr(p, "data", None)
+                    if payload is None:
+                        payload = getattr(p, "value", None)
+                    summary = payload if isinstance(payload, str) else _json.dumps(payload)[:500]
+                    texts.append(f"[Data: {summary}]")
+                except Exception:
+                    texts.append("[Data payload]")
         return " ".join(texts)
 
     async def execute(

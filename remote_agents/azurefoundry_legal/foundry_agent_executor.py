@@ -22,6 +22,7 @@ from a2a.types import (
     FilePart,
     FileWithBytes,
     FileWithUri,
+    DataPart,
     Part,
     TaskState,
     TextPart,
@@ -313,6 +314,17 @@ class FoundryLegalAgentExecutor(AgentExecutor):
                         texts.append(f"[Saved {fname} to {path}]")
                     except Exception as ex:
                         texts.append(f"[Error saving file: {ex}]")
+            elif isinstance(p, DataPart):
+                # Include a compact representation of structured data
+                try:
+                    import json as _json
+                    payload = getattr(p, "data", None)
+                    if payload is None:
+                        payload = getattr(p, "value", None)
+                    summary = payload if isinstance(payload, str) else _json.dumps(payload)[:500]
+                    texts.append(f"[Data: {summary}]")
+                except Exception:
+                    texts.append("[Data payload]")
         return " ".join(texts)
 
     async def execute(
