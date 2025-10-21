@@ -1,4 +1,4 @@
-# ADK Agent with Self-Registration
+# ADK Sentiment Analysis Agent
 
 This sample uses the Agent Development Kit (ADK) to create a simple **Sentiment Analysis Agent** that is hosted as an A2A server.
 
