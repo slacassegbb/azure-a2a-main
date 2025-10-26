@@ -1,2 +1,32 @@
+# Environment files
 .env
+.env.local
+.env.development
+.env.production
+
+# Logs
+*.log
+
+# Python cache & bytecode
+__pycache__/
+**/__pycache__/
+*.py[cod]
+
+# Virtual environments
+env/
+venv/
+.venv/
+
+# Generated media and uploads
+backend/images/
+backend/markdown/
+backend/pdf/
+backend/uploads/
+remote_agents/azurefoundry_image_generator/static/outputs/
+
+# Service logs
+remote_agents/azurefoundry_branding/azure_servicenow_agent.log
+remote_agents/azurefoundry_image_generator/azure_servicenow_agent.log
+
+# Media files
 *.mp4
