@@ -1,5 +1,5 @@
-numpy==1.26.4
-scikit-learn==1.4.2
+numpy>=1.26.4
+scikit-learn>=1.5.0
 httpx>=0.28.1
 httpx-sse>=0.4.0
 pydantic>=2.10.6

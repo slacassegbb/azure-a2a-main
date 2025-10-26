@@ -142,6 +142,11 @@ class SessionContext(BaseModel):
     agent_task_states: dict[str, str] = Field(default_factory=dict)
     # Per-agent cooldown (epoch seconds) after rate limiting
     agent_cooldowns: dict[str, float] = Field(default_factory=dict)
+    # Most recent host-side turn (for cross-agent continuity)
+    last_host_turn_text: Optional[str] = Field(default=None)
+    last_host_turn_agent: Optional[str] = Field(default=None)
+    # Rolling list of host turns (newer entries at the end)
+    host_turn_history: List[Dict[str, str]] = Field(default_factory=list)
 
 class FoundryHostAgent2:
     def __init__(
@@ -195,6 +200,25 @@ class FoundryHostAgent2:
         # Task evaluation settings
         self.enable_task_evaluation = enable_task_evaluation
         self.max_retries = 2
+
+        # Host conversation hand-off controls
+        include_flag = os.environ.get("A2A_INCLUDE_LAST_HOST_TURN", "true").strip().lower()
+        self.include_last_host_turn = include_flag not in {"false", "0", "no"}
+        self.last_host_turn_max_chars = _normalize_env_int(
+            os.environ.get("A2A_LAST_HOST_TURN_MAX_CHARS"),
+            1500,
+        )
+        self.last_host_turns = max(
+            1,
+            min(
+                5,
+                _normalize_env_int(os.environ.get("A2A_LAST_HOST_TURNS"), 1),
+            ),
+        )
+        self.memory_summary_max_chars = max(
+            200,
+            _normalize_env_int(os.environ.get("A2A_MEMORY_SUMMARY_MAX_CHARS"), 2000),
+        )
 
         # Initialize Azure Blob Storage client if configured
         self._azure_blob_client = None
@@ -362,14 +386,21 @@ class FoundryHostAgent2:
             
             if azure_storage_connection_string:
                 from azure.storage.blob import BlobServiceClient
-                self._azure_blob_client = BlobServiceClient.from_connection_string(azure_storage_connection_string)
+                self._azure_blob_client = BlobServiceClient.from_connection_string(
+                    azure_storage_connection_string,
+                    api_version="2023-11-03",
+                )
                 print("✅ Azure Blob Storage initialized with connection string (sync client)")
                 print(f"Connection string starts with: {azure_storage_connection_string[:50]}...")
                 print(f"Azure storage account: {self._azure_blob_client.account_name}")
             elif azure_storage_account_name:
                 from azure.storage.blob import BlobServiceClient
                 account_url = f"https://{azure_storage_account_name}.blob.core.windows.net"
-                self._azure_blob_client = BlobServiceClient(account_url, credential=self.credential)
+                self._azure_blob_client = BlobServiceClient(
+                    account_url,
+                    credential=self.credential,
+                    api_version="2023-11-03",
+                )
                 print(f"✅ Azure Blob Storage initialized with managed identity (sync client): {account_url}")
             else:
                 print("❌ Azure Blob Storage not configured - using local storage only")
@@ -631,7 +662,7 @@ class FoundryHostAgent2:
             
             payload = {
                 "assistant_id": agent_id,  # Note: Azure AI Foundry uses 'assistant_id'
-                "parallel_tool_calls": True  # EXPLICITLY enable parallel tool calls
+                "parallel_tool_calls": True  # Serialize tool calls within the Foundry run
             }
             print(f"🔍 DEBUG: Payload: {payload}")
             
@@ -938,73 +969,62 @@ class FoundryHostAgent2:
             instruction = instruction.replace('{agents}', self.agents)
             instruction = instruction.replace('{current_agent}', current_agent)
             return instruction
-        
-        # Default instruction if no custom override
-#         1. send_message(agent_name="AI Foundry Classification Triage Agent", message="[your classification request]")
-# 2. send_message(agent_name="Sentiment Analysis Agent", message="[your sentiment analysis request]")
-# 3. send_message(agent_name="ServiceNow, Web & Knowledge Agent", message="[your customer lookup request]") 
-
-# Step 2 (only execute this step after step 1 is complete):
-
-# 1. send_message(agent_name="ServiceNow, Web & Knowledge Agent", message="[create servicenow incident request]") 
-
-# Output: A very detailed hyper-personalized response to the user's complaint including all the details of the work you did and all the infromation you gathered for this user.
 
         return f""" You are an intelligent **Multi-Agent Orchestrator** designed to coordinate specialized agents to produce complete, personalized responses.  
-Your goal is to understand the user's request, engage the right agents in the right order, and respond in a friendly, professional tone.
+                Your goal is to understand the user's request, engage the right agents in the right order, and respond in a friendly, professional tone.
 
----
+                ---
 
-### 🧩 CORE BEHAVIOR
-Before answering any user request, always:
-1. Analyze the available agents (listed at the end of this prompt).
-2. Identify which agents are relevant.
-3. Plan the collaboration strategy.
-
-
-### 🚨 HUMAN ESCALATION RULE
-If the user says anything like "I want to talk to a human,"  
-you **must** call:
-send_message(
-agent_name="ServiceNow, Web & Knowledge Agent",
-message="User explicitly requested to speak with a human representative. Please assist with this request."
-)
-
----
-
-### 🧠 DECISION PRIORITIES
-1. **Answer directly** if information exists in the current conversation context.  
-2. **Coordinate multiple agents** when the request is complex.  
-3. **Delegate to a single agent** only if clearly within one domain.  
-4. **Document/claim workflows** → use all available relevant agents.  
-5. Always provide transparency about which agents were used and why.
-
----
-
-### 📋 RESPONSE REQUIREMENTS
-Every response must include:
-- A clear summary of what you did and why.  
-- Which agents were engaged, their purposes, and short summaries of their responses.  
-- Personalized language adapted to the user's tone and profile.  
-- A friendly and professional closing.  
+                ### 🧩 CORE BEHAVIOR
+                Before answering any user request, always:
+                1. Analyze the available agents (listed at the end of this prompt).
+                2. Identify which agents are relevant.
+                3. Plan the collaboration strategy.
 
 
-If you lack sufficient info, ask clarifying questions before proceeding.
+                ### 🚨 HUMAN ESCALATION RULE
+                If the user says anything like "I want to talk to a human,"  
+                you **must** call:
+                send_message(
+                agent_name="ServiceNow, Web & Knowledge Agent",
+                message="User explicitly requested to speak with a human representative. Please assist with this request."
+                )
 
----
+                ---
 
-### 🧩 AVAILABLE AGENTS
-{self.agents}
+                ### 🧠 DECISION PRIORITIES
+                1. **Answer directly** if information exists in the current conversation context.  
+                2. **Coordinate multiple agents** when the request is complex.  
+                3. **Delegate to a single agent** only if clearly within one domain.  
+                4. **Document/claim workflows** → use all available relevant agents.  
+                5. Always provide transparency about which agents were used and why.
 
-### 🧠 CURRENT AGENT
-{current_agent}
+                ---
 
----
+                ### 📋 RESPONSE REQUIREMENTS
+                Every response must include:
+                - A clear summary of what you did and why.  
+                - Which agents were engaged, their purposes, and short summaries of their responses.  
+                - Personalized language adapted to the user's tone and profile.  
+                - A friendly and professional closing.  
 
-### 💬 SUMMARY
-- Always show which agents you used and summarize their work.  
-- Always communicate in the user's primary language (or the language of their message).  
-- Be friendly, helpful, and professional."""
+
+                If you lack sufficient info, ask clarifying questions before proceeding.
+
+                ---
+
+                ### 🧩 AVAILABLE AGENTS
+                {self.agents}
+
+                ### 🧠 CURRENT AGENT
+                {current_agent}
+
+                ---
+
+                ### 💬 SUMMARY
+                - Always show which agents you used and summarize their work.  
+                - Always communicate in the user's primary language (or the language of their message).  
+                - Be friendly, helpful, and professional."""
 
     def list_remote_agents(self):
         return [
@@ -2077,6 +2097,44 @@ Answer with just JSON:
         """Reset retry count after successful completion"""
         session_context.retry_count = 0
 
+    def _update_last_host_turn(
+        self,
+        session_context: SessionContext,
+        agent_name: str,
+        responses: List[Any],
+    ) -> None:
+        """Cache the most recent host-side turn so we can hand it to the next agent."""
+        if not self.include_last_host_turn or not responses:
+            return
+
+        text_chunks: List[str] = []
+        for item in responses:
+            if isinstance(item, str):
+                text = item.strip()
+                if text:
+                    text_chunks.append(text)
+
+        if not text_chunks:
+            return
+
+        combined = "\n\n".join(text_chunks)
+        if len(combined) > self.last_host_turn_max_chars:
+            combined = combined[: self.last_host_turn_max_chars] + "..."
+
+        session_context.last_host_turn_text = combined
+        session_context.last_host_turn_agent = agent_name
+        history = list(getattr(session_context, "host_turn_history", []))
+        history.append({"agent": agent_name, "text": combined})
+        if len(history) > self.last_host_turns:
+            history = history[-self.last_host_turns :]
+        session_context.host_turn_history = history
+        logger.debug(
+            "[A2A] Cached host turn for agent %s (len=%d, history=%d)",
+            agent_name,
+            len(combined),
+            len(getattr(session_context, "host_turn_history", [])),
+        )
+
     async def send_message(
         self,
         agent_name: str,
@@ -2124,7 +2182,12 @@ Answer with just JSON:
                 raise ValueError(f"Client not available for {agent_name}")
 
             # Add conversation context to message (this can be optimized further)
-            contextualized_message = await self._add_context_to_message(message, session_context, thread_id=None)
+            contextualized_message = await self._add_context_to_message(
+                message,
+                session_context,
+                thread_id=None,
+                target_agent_name=agent_name,
+            )
 
             # Respect any active cooldown for this agent due to throttling
             try:
@@ -2280,6 +2343,8 @@ Answer with just JSON:
                             response_parts.extend(
                                 await self.convert_parts(artifact.parts, tool_context)
                             )
+
+                    self._update_last_host_turn(session_context, agent_name, response_parts)
                     
                     # Store interaction in background (don't await to avoid blocking streaming execution)
                     asyncio.create_task(self._store_a2a_interaction_background(
@@ -2369,11 +2434,14 @@ Answer with just JSON:
                                 if task2.artifacts:
                                     for artifact in task2.artifacts:
                                         retry_parts.extend(await self.convert_parts(artifact.parts, tool_context))
+                                self._update_last_host_turn(session_context, agent_name, retry_parts)
                                 return retry_parts
 
                             if task2.status.state == TaskState.input_required:
                                 if task2.status.message:
-                                    return await self.convert_parts(task2.status.message.parts, tool_context)
+                                    retry_input = await self.convert_parts(task2.status.message.parts, tool_context)
+                                    self._update_last_host_turn(session_context, agent_name, retry_input)
+                                    return retry_input
                                 return [f"Agent {agent_name} requires additional input"]
 
                             if task2.status.state == TaskState.failed:
@@ -2384,7 +2452,9 @@ Answer with just JSON:
                             return [f"Agent {agent_name} is processing your request"]
 
                         if isinstance(retry_response, Message):
-                            return await self.convert_parts(retry_response.parts, tool_context)
+                            retry_result = await self.convert_parts(retry_response.parts, tool_context)
+                            self._update_last_host_turn(session_context, agent_name, retry_result)
+                            return retry_result
 
                         return [str(retry_response)]
 
@@ -2394,6 +2464,7 @@ Answer with just JSON:
                     print(f"⚠️ [STREAMING] Agent {agent_name} requires input")
                     if task.status.message:
                         response_parts = await self.convert_parts(task.status.message.parts, tool_context)
+                        self._update_last_host_turn(session_context, agent_name, response_parts)
                         return response_parts
                     return [f"Agent {agent_name} requires additional input"]
                     
@@ -2404,6 +2475,7 @@ Answer with just JSON:
             elif isinstance(response, Message):
                 # Direct message response
                 result = await self.convert_parts(response.parts, tool_context)
+                self._update_last_host_turn(session_context, agent_name, result)
                 
                 # Store interaction in background
                 asyncio.create_task(self._store_a2a_interaction_background(
@@ -2418,6 +2490,7 @@ Answer with just JSON:
                 
             elif isinstance(response, str):
                 print(f"[STREAMING] String response from {agent_name}: {response[:200]}...")
+                self._update_last_host_turn(session_context, agent_name, [response])
                 return [response]
                 
             else:
@@ -2966,7 +3039,13 @@ Original request: {message}"""
                 
                 return response
 
-    async def _add_context_to_message(self, message: str, session_context: SessionContext, thread_id: str = None) -> str:
+    async def _add_context_to_message(
+        self,
+        message: str,
+        session_context: SessionContext,
+        thread_id: str = None,
+        target_agent_name: Optional[str] = None,
+    ) -> str:
         """Add relevant conversation context and memory insights to the message for better agent responses.
         
         Following Google A2A best practices: host manages context and includes it in agent messages.
@@ -3067,8 +3146,8 @@ Original request: {message}"""
                         # Add to context if we found content
                         if content_summary:
                             # Truncate long content for context efficiency
-                            if len(content_summary) > 2000:
-                                content_summary = content_summary[:2000] + "..."
+                            if len(content_summary) > self.memory_summary_max_chars:
+                                content_summary = content_summary[: self.memory_summary_max_chars] + "..."
                             context_parts.append(f"  {i}. From {agent_name}: {content_summary}")
                         else:
                             print(f"⚠️ No content found in memory result {i} from {agent_name}")
@@ -3084,6 +3163,49 @@ Original request: {message}"""
             print(f"❌ Error searching memory: {e}")
             context_parts.append("Note: Unable to retrieve relevant context from memory")
         
+        # Include recent host-side turns if available and not sourced from the same agent
+        if self.include_last_host_turn:
+            history: List[Dict[str, str]] = list(getattr(session_context, "host_turn_history", []))
+
+            # Back-compat: fall back to single cached turn if list empty
+            if not history and getattr(session_context, "last_host_turn_text", None):
+                history = [
+                    {
+                        "agent": getattr(session_context, "last_host_turn_agent", "host_agent"),
+                        "text": getattr(session_context, "last_host_turn_text", ""),
+                    }
+                ]
+
+            selected: List[Dict[str, str]] = []
+            for entry in reversed(history):  # newest first
+                agent = entry.get("agent")
+                text = (entry.get("text") or "").strip()
+                if not text:
+                    continue
+                if target_agent_name and agent == target_agent_name:
+                    continue
+                selected.append({"agent": agent or "host_agent", "text": text})
+                if len(selected) >= self.last_host_turns:
+                    break
+
+            if selected:
+                logger.debug(
+                    "[A2A] Injecting %d host turn(s) into message for %s",
+                    len(selected),
+                    target_agent_name or "unknown",
+                )
+                context_parts.append("Previous context from host conversation:")
+                for idx, entry in enumerate(selected, start=1):
+                    truncated_text = entry["text"]
+                    if len(truncated_text) > self.last_host_turn_max_chars:
+                        truncated_text = truncated_text[: self.last_host_turn_max_chars] + "..."
+                    context_parts.append(f"  {idx}. From {entry['agent']}: {truncated_text}")
+            else:
+                logger.debug(
+                    "[A2A] No eligible host turns to inject for agent %s",
+                    target_agent_name,
+                )
+
         # Fallback: Add minimal recent thread context only if memory search failed
         if not context_parts and thread_id:
             try:
@@ -3483,6 +3605,14 @@ Original request: {message}"""
                         artifact_uri = item.data.get("artifact-uri")
                         file_name = item.data.get("file-name") or item.data.get("artifact-id") or "uploaded-file"
                         mime_type = item.data.get("mime", "application/octet-stream")
+                        role_value = (item.data.get("role") or (item.data.get("metadata") or {}).get("role"))
+
+                        metadata_block = item.data.get("metadata") or {}
+                        if role_value and metadata_block.get("role") != role_value:
+                            metadata_block = {**metadata_block, "role": role_value}
+                            item.data["metadata"] = metadata_block
+                        if role_value and item.data.get("role") != role_value:
+                            item.data["role"] = role_value
 
                         if artifact_uri:
                             wrapped.append(
@@ -3492,6 +3622,7 @@ Original request: {message}"""
                                             name=file_name,
                                             mimeType=mime_type,
                                             uri=artifact_uri,
+                                            role=role_value,
                                         )
                                     )
                                 )
@@ -3553,6 +3684,8 @@ Original request: {message}"""
 
             has_base_attachment = False
             has_mask_attachment = False
+            base_filenames: List[str] = []
+            mask_filenames: List[str] = []
 
             def _flatten_processed(items: Iterable[Any]) -> Iterable[Any]:
                 for item in items:
@@ -3580,27 +3713,44 @@ Original request: {message}"""
                     role_val = (candidate_data.get("role") or (candidate_data.get("metadata") or {}).get("role") or "").lower()
                     if role_val == "base":
                         has_base_attachment = True
+                        name_hint = candidate_data.get("file-name") or candidate_data.get("name")
+                        if name_hint:
+                            base_filenames.append(str(name_hint))
                     if role_val == "mask":
                         has_mask_attachment = True
+                        name_hint = candidate_data.get("file-name") or candidate_data.get("name")
+                        if name_hint:
+                            mask_filenames.append(str(name_hint))
 
                 if candidate_part:
                     role_attr = getattr(candidate_part.file, "role", None)
-                    name_attr = getattr(candidate_part.file, "name", "").lower()
+                    part_name = getattr(candidate_part.file, "name", "")
+                    name_attr = part_name.lower()
                     role_lower = str(role_attr).lower() if role_attr else ""
                     if role_lower == "base" or name_attr.endswith("_base.png"):
                         has_base_attachment = True
+                        if part_name:
+                            base_filenames.append(part_name)
                     if role_lower == "mask" or "_mask" in name_attr or "-mask" in name_attr:
                         has_mask_attachment = True
+                        if part_name:
+                            mask_filenames.append(part_name)
 
             if has_base_attachment:
                 guidance_lines = [
                     "IMPORTANT: Treat this request as an image edit using the provided attachments.",
                     "Reuse the supplied base image exactly; do not regenerate a new scene or subject.",
                 ]
+                if base_filenames:
+                    unique_base = ", ".join(sorted({str(name) for name in base_filenames}))
+                    guidance_lines.append(f"Base image attachment(s): {unique_base}.")
                 if has_mask_attachment:
                     guidance_lines.append(
                         "Apply the requested changes strictly within the transparent region of the provided mask and leave all other pixels unchanged."
                     )
+                    if mask_filenames:
+                        unique_masks = ", ".join(sorted({str(name) for name in mask_filenames}))
+                        guidance_lines.append(f"Mask attachment(s): {unique_masks} (must include transparency).")
                 else:
                     guidance_lines.append(
                         "Apply the requested changes directly to the supplied base image only."
@@ -3960,7 +4110,12 @@ Original request: {message}"""
             })
             
             # Add conversation context to message before sending to thread
-            contextualized_message = await self._add_context_to_message(user_message, session_context, thread_id=thread_id)
+            contextualized_message = await self._add_context_to_message(
+                user_message,
+                session_context,
+                thread_id=thread_id,
+                target_agent_name=None,
+            )
             
             # Send contextualized message to thread
             await self.send_message_to_thread(thread_id, contextualized_message)
@@ -4571,6 +4726,96 @@ Original request: {message}"""
             else:
                 rval.append(result)
 
+        def _infer_role(explicit_role: Optional[str], name_hint: Optional[str]) -> Optional[str]:
+            if explicit_role:
+                return str(explicit_role).lower()
+
+            if not name_hint:
+                return None
+
+            name_lower = str(name_hint).lower()
+
+            if "mask" in name_lower or name_lower.endswith("-mask.png") or name_lower.endswith("_mask.png"):
+                return "mask"
+
+            if (
+                name_lower.endswith("-base.png")
+                or name_lower.endswith("_base.png")
+                or "_base" in name_lower
+            ):
+                return "base"
+
+            image_exts = (
+                ".png",
+                ".jpg",
+                ".jpeg",
+                ".gif",
+                ".bmp",
+                ".webp",
+                ".tif",
+                ".tiff",
+                ".heic",
+                ".heif",
+                ".jfif",
+                ".apng",
+            )
+
+            if name_lower.endswith(image_exts) or "logo" in name_lower:
+                return "overlay"
+
+            return None
+
+        uri_to_parts: Dict[str, List[Any]] = {}
+        assigned_roles: Dict[str, str] = {}
+
+        def _normalize_uri(value: Optional[str]) -> Optional[str]:
+            if not value:
+                return None
+            normalized = str(value).strip()
+            if not normalized:
+                return None
+            base, _, _ = normalized.partition("?")
+            return base.lower()
+
+        def _register_part_uri(part: Any, uri: Optional[str]) -> None:
+            normalized_uri = _normalize_uri(uri)
+            if not normalized_uri:
+                return
+            uri_to_parts.setdefault(normalized_uri, []).append(part)
+
+        def _register_role(uri: Optional[str], role: Optional[str]) -> None:
+            if not role:
+                return
+            normalized_uri = _normalize_uri(uri)
+            if not normalized_uri:
+                return
+            assigned_roles[normalized_uri] = str(role).lower()
+
+        def _apply_role_to_part(part: Any, role: Optional[str]) -> None:
+            if not role:
+                return
+            normalized_role = str(role).lower()
+            target = part.root if isinstance(part, Part) else part
+            if isinstance(target, DataPart) and isinstance(target.data, dict):
+                target.data["role"] = normalized_role
+                meta = target.data.get("metadata") or {}
+                meta["role"] = normalized_role
+                target.data["metadata"] = meta
+            elif isinstance(target, FilePart):
+                meta = target.metadata or {}
+                meta["role"] = normalized_role
+                target.metadata = meta
+
+        def _extract_uri_from_part(part: Any) -> Optional[str]:
+            target = part.root if isinstance(part, Part) else part
+            if isinstance(target, DataPart) and isinstance(target.data, dict):
+                return target.data.get("artifact-uri") or target.data.get("uri")
+            if isinstance(target, FilePart):
+                file_obj = target.file
+                if isinstance(file_obj, FileWithUri):
+                    return getattr(file_obj, "uri", None)
+            return None
+
         flattened_parts = []
         pending_file_parts: List[FilePart] = []
         refine_payload = None
@@ -4579,16 +4824,36 @@ Original request: {message}"""
             if isinstance(item, DataPart):
                 if hasattr(item, "data") and isinstance(item.data, dict):
                     artifact_uri = item.data.get("artifact-uri")
+                    existing_role = item.data.get("role") or (item.data.get("metadata") or {}).get("role")
+                    name_hint = item.data.get("file-name") or item.data.get("name") or item.data.get("artifact-id")
+                    role_value = _infer_role(existing_role, name_hint)
+
+                    if role_value and str(role_value).lower() != (existing_role or "").lower():
+                        item.data["role"] = role_value
+                        metadata_block = item.data.get("metadata") or {}
+                        metadata_block["role"] = role_value
+                        item.data["metadata"] = metadata_block
+
                     metadata = {
                         "artifact-id": item.data.get("artifact-id"),
                         "storage-type": item.data.get("storage-type"),
                         "file-name": item.data.get("file-name"),
                         "artifact-uri": artifact_uri,
                     }
+                    existing_meta = (item.data.get("metadata") or {}).copy()
+                    if role_value:
+                        metadata["role"] = role_value
+                        existing_meta["role"] = role_value
+                    elif existing_role:
+                        metadata["role"] = existing_role
+                        existing_meta["role"] = existing_role
+                    metadata["metadata"] = existing_meta
 
-                    flattened_parts.append(
-                        DataPart(data=metadata)
-                    )
+                    data_part = DataPart(data=metadata)
+                    flattened_parts.append(data_part)
+                    _register_part_uri(data_part, artifact_uri)
+                    if role_value:
+                        _register_role(artifact_uri, role_value)
 
                     if artifact_uri:
                         file_part = FilePart(
@@ -4596,10 +4861,13 @@ Original request: {message}"""
                                 name=item.data.get("file-name", metadata["artifact-id"]) or metadata["artifact-id"],
                                 mimeType=item.data.get("media-type", "application/octet-stream"),
                                 uri=artifact_uri,
-                            )
+                            ),
                         )
                         flattened_parts.append(file_part)
                         pending_file_parts.append(file_part)
+                        _register_part_uri(file_part, artifact_uri)
+                        if role_value:
+                            _register_role(artifact_uri, role_value)
 
                     if "extracted_content" in item.data:
                         flattened_parts.append(
@@ -4609,6 +4877,7 @@ Original request: {message}"""
                     flattened_parts.append(TextPart(text=str(item.data)))
             elif isinstance(item, (TextPart, FilePart, DataPart)):
                 flattened_parts.append(item)
+                _register_part_uri(item, _extract_uri_from_part(item))
             elif isinstance(item, dict):
                 if item.get("kind") == "refine-image":
                     refine_payload = item
@@ -4628,6 +4897,38 @@ Original request: {message}"""
         # If we collected file parts, ensure downstream agents can access them
         if pending_file_parts:
             latest_parts.extend(pending_file_parts)
+
+        base_uri_hint = _normalize_uri((refine_payload or {}).get("image_url"))
+        mask_uri_hint = _normalize_uri((refine_payload or {}).get("mask_url"))
+
+        if base_uri_hint or mask_uri_hint:
+            for part in flattened_parts:
+                candidate_uri = _normalize_uri(_extract_uri_from_part(part))
+                if base_uri_hint and candidate_uri == base_uri_hint:
+                    _apply_role_to_part(part, "base")
+                    _register_role(candidate_uri, "base")
+                if mask_uri_hint and candidate_uri == mask_uri_hint:
+                    _apply_role_to_part(part, "mask")
+                    _register_role(candidate_uri, "mask")
+
+        for uri_value, parts_list in uri_to_parts.items():
+            if assigned_roles.get(uri_value):
+                continue
+            for part in parts_list:
+                _apply_role_to_part(part, "overlay")
+            assigned_roles[uri_value] = "overlay"
+
+        def _apply_assigned_roles(parts: Iterable[Any]) -> None:
+            for part in parts:
+                uri = _normalize_uri(_extract_uri_from_part(part))
+                if not uri:
+                    continue
+                role_for_uri = assigned_roles.get(uri)
+                if role_for_uri:
+                    _apply_role_to_part(part, role_for_uri)
+
+        _apply_assigned_roles(flattened_parts)
+        _apply_assigned_roles(latest_parts)
 
         return flattened_parts
 
@@ -4821,6 +5122,10 @@ Original request: {message}"""
             )
             if not file_role_attr and file_id_lower.endswith("_base.png"):
                 file_role_attr = "base"
+            if not file_role_attr and not is_mask_artifact:
+                image_exts = (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tif", ".tiff")
+                if any(file_id_lower.endswith(ext) for ext in image_exts):
+                    file_role_attr = "overlay"
 
             artifact_info: dict[str, Any] = {
                 'file_name': file_id,
@@ -4905,6 +5210,7 @@ Original request: {message}"""
                                 name=file_id,
                                 mimeType=artifact_response.data.get('media-type', getattr(part.root.file, 'mimeType', 'application/octet-stream')),
                                 uri=artifact_uri,
+                                role="mask",
                             ),
                         )
                 else:
@@ -4928,6 +5234,7 @@ Original request: {message}"""
                                 name=file_id,
                                 mimeType=getattr(part.root.file, 'mimeType', 'application/octet-stream'),
                                 uri=artifact_uri,
+                                role="mask",
                             ),
                         )
 
@@ -4939,6 +5246,7 @@ Original request: {message}"""
                             name=file_id,
                             mimeType=getattr(part.root.file, 'mimeType', 'application/octet-stream'),
                             bytes=file_bytes,
+                            role="mask",
                         )
                     )
 
@@ -5172,6 +5480,8 @@ class DummyToolContext:
             if isinstance(file_part, dict) and file_part.get('kind') == 'file' and 'file' in file_part:
                 force_blob_flag = file_part['file'].get('force_blob', False)
 
+            file_uri: Optional[str] = None
+
             if (use_azure_blob or force_blob_flag) and hasattr(self, '_azure_blob_client'):
                 # A2A URI mechanism with Azure Blob Storage
                 print(f"Using Azure Blob Storage for large file")
@@ -5187,17 +5497,21 @@ class DummyToolContext:
                     for line in traceback.format_exc().split('\n'):
                         if line.strip():
                             print(f"   {line}")
-                    raise
+                    # Fall back to local storage path below
+                    file_uri = None
                 
+            normalized_role = str(file_role).lower() if file_role else None
+
+            if file_uri:
                 # Create A2A compliant Artifact with URI reference
-                # Following official A2A specification: FilePart.file = FileWithUri
                 file_with_uri = FileWithUri(
                     name=file_id,
                     mimeType=mime_type,
-                    uri=file_uri  # Azure Blob URI with SAS token
+                    uri=file_uri,
+                    role=normalized_role,
                 )
                 file_part = FilePart(kind="file", file=file_with_uri)
-                
+
                 artifact = Artifact(
                     artifactId=artifact_id,
                     name=file_id,
@@ -5209,21 +5523,21 @@ class DummyToolContext:
                         "storageType": "azure_blob",
                         "contentType": mime_type,
                         "securityScan": "pending",
-                        "accessMethod": "uri"
+                        "accessMethod": "uri",
+                        **({"role": normalized_role} if normalized_role else {}),
                     }
                 )
-                
-                # Store metadata in memory (URI-based, no local file bytes)
+
                 self._artifacts[artifact_id] = {
                     'artifact': artifact,
                     'storage_type': 'azure_blob',
                     'uri': file_uri,
                     'created_at': datetime.utcnow().isoformat(),
-                    'role': str(file_role).lower() if file_role else None,
+                    'role': normalized_role,
                 }
-                
+
                 print(f"A2A Artifact stored in Azure Blob: {artifact_id} -> {file_uri}")
-                
+
             else:
                 # Local storage with inline bytes (current implementation)
                 print(f"Using local storage for file")
@@ -5238,7 +5552,8 @@ class DummyToolContext:
                 file_with_uri = FileWithUri(
                     name=file_id,
                     mimeType=mime_type,
-                    uri=f"{self.artifact_base_url}/{artifact_id}"  # Local HTTP endpoint
+                    uri=f"{self.artifact_base_url}/{artifact_id}",  # Local HTTP endpoint
+                    role=normalized_role,
                 )
                 file_part = FilePart(kind="file", file=file_with_uri)
                 
@@ -5254,7 +5569,8 @@ class DummyToolContext:
                         "storageType": "local",
                         "contentType": mime_type,
                         "securityScan": "pending",
-                        "accessMethod": "uri"
+                        "accessMethod": "uri",
+                        **({"role": normalized_role} if normalized_role else {}),
                     }
                 )
                 
@@ -5265,7 +5581,7 @@ class DummyToolContext:
                     'local_path': file_path,
                     'storage_type': 'local',
                     'created_at': datetime.utcnow().isoformat(),
-                    'role': str(file_role).lower() if file_role else None,
+                    'role': normalized_role,
                 }
                 
                 print(f"A2A Artifact stored locally: {artifact_id} for file: {file_id}")
@@ -5384,25 +5700,44 @@ class DummyToolContext:
                         account_key = part.split('=', 1)[1]
                         break
             
+            sas_token = None
             if account_key:
-                print(f"   🔐 Generating SAS token...")
-                # Generate SAS token for secure access (A2A best practice)
+                print(f"   🔐 Generating SAS token with account key...")
                 sas_token = generate_blob_sas(
                     account_name=blob_client.account_name,
                     container_name=blob_client.container_name,
                     blob_name=blob_name,
                     account_key=account_key,
                     permission=BlobSasPermissions(read=True),
-                    expiry=datetime.utcnow() + timedelta(hours=24)  # 24-hour access
+                    expiry=datetime.utcnow() + timedelta(hours=24),
+                    version="2023-11-03",
                 )
-                
-                # Return A2A-compliant URI with SAS token
+            else:
+                # Attempt user-delegation SAS when using Azure AD credentials
+                try:
+                    print(f"   🔐 Requesting user delegation key for SAS...")
+                    delegation_key = self._azure_blob_client.get_user_delegation_key(
+                        key_start_time=datetime.utcnow() - timedelta(minutes=5),
+                        key_expiry_time=datetime.utcnow() + timedelta(hours=24),
+                    )
+                    sas_token = generate_blob_sas(
+                        account_name=blob_client.account_name,
+                        container_name=blob_client.container_name,
+                        blob_name=blob_name,
+                        user_delegation_key=delegation_key,
+                        permission=BlobSasPermissions(read=True),
+                        expiry=datetime.utcnow() + timedelta(hours=24),
+                        version="2023-11-03",
+                    )
+                    print(f"   ✅ User delegation SAS generated")
+                except Exception as ude_err:
+                    print(f"   ⚠️ Failed to generate user delegation SAS: {ude_err}")
+
+            if sas_token:
                 blob_uri = f"{blob_client.url}?{sas_token}"
                 print(f"   ✅ SAS token generated: {blob_uri[:80]}...")
             else:
-                # Fallback: return blob URL without SAS token (less secure)
-                blob_uri = blob_client.url
-                print(f"   ⚠️ No account key found for SAS token generation, using blob URL: {blob_uri[:80]}...")
+                raise RuntimeError("Unable to generate SAS token for blob upload")
             
             print(f"🔥 _upload_to_azure_blob EXIT - returning URI")
             return blob_uri

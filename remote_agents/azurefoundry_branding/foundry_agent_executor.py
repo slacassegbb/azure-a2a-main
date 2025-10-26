@@ -152,6 +152,16 @@ class FoundryBrandingAgentExecutor(AgentExecutor):
             logger.info("📎 No file references received in A2A message for context %s", context_id)
         try:
             user_message = self._convert_parts_to_text(message_parts)
+            if user_message:
+                preview = user_message if len(user_message) <= 2000 else user_message[:2000] + "..."
+                logger.info(
+                    "🧾 A2A conversation payload (%d chars) for context %s:\n%s",
+                    len(user_message),
+                    context_id,
+                    preview,
+                )
+            else:
+                logger.info("🧾 Received empty A2A conversation payload for context %s", context_id)
             agent = await self._get_or_create_agent()
             thread_id = await self._get_or_create_thread(context_id, agent)
             

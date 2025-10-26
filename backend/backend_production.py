@@ -356,7 +356,16 @@ class HTTPXClientWrapper:
 
     def start(self):
         """ Instantiate the client. Call from the FastAPI startup hook."""
-        self.async_client = httpx.AsyncClient(timeout=30)
+        # Some remote agents (e.g., image generators) stream results slowly, so we
+        # need a generous read timeout to avoid dropping long-running SSE streams.
+        self.async_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(
+                connect=10.0,
+                read=120.0,
+                write=120.0,
+                pool=30.0,
+            )
+        )
 
     async def stop(self):
         """ Gracefully shutdown. Call from FastAPI shutdown hook."""
