@@ -1,7 +1,7 @@
 cd backend
 source venv/bin/activate
 python -m pip install -r requirements.txt
-python bckend_production.py
+python backend_production.py
 
 cd frontend
 npm install

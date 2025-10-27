@@ -1,32 +1,16 @@
 # ⚡ Azure A2A Multi-Agent System
 
-> _“If you’ve made it this far, you’re either deeply passionate about multi-agent systems… or an extremely committed nerd.”_
+This repository is an **experimental (and evolving)** implementation of an **Azure-based A2A multi-agent orchestration system**. 
 
-Either way — welcome, you're in the right place.
+It demonstrates how to design, host, and scale a distributed network of intelligent agents using open protocols (A2A, MCP), Azure AI Foundry, and Azure-native services for memory, and observability. The goal is to create an interoperable, production-grade framework that allows agents to communicate, collaborate, and reason together across environments and organizations.
 
-This repository is an **experimental (and evolving)** implementation of an **Azure-based A2A multi-agent orchestration system**. It works, it’s real, and yes — there are **bugs**, **rough edges**, and a **backlog long enough to qualify as its own roadmap (see backlog below**.
+This repository contains the complete documentation and setup instructions including the Host Orchestrator (backend), Frontend UI (frontend), and a collection of specialized remote agents (remote_agents). Each remote agent runs independently and can connect to the Host Orchestrator through open protocols like A2A (Agent-to-Agent) and MCP (Model Context Protocol). 
 
-I’ve poured an unreasonable number of late nights and coffee-fueled weekends into this, and while I absolutely love building it, one thing has become clear:
-
-> **No single person should build an entire multi-agent system alone.**  
-> _(For both technical reasons and for my social life to survive.)_
-
-That’s why this project is **open-sourced — not as a finished product, but as a foundation**. A **blueprint** we can all push forward together.
+You’ll find detailed guides to install, configure, and run the full system, along with sample agents that showcase realistic enterprise workflows including the Claims, Fraud, Legal, Branding, Classification, Deep Search, Assessment & Estimation, Customer Support (MCP), Image Generation, and Sentiment Analysis (Google ADK) agents.
 
 ---
 
-### 🚀 Call to Action
-
-If this sparks something in you — **jump in**:
-
-- Open an issue  
-- Fork it and break things  
-- Improve it, challenge it, extend it  
-- Propose wild ideas — seriously
-
-Let’s turn this into the **multi-agent framework we all wish existed.**
-
-### 🎥 Live Demos
+### 🎥 Demonstration of Azure A2A Multi-Agent System
 
 | Claims Workflow (Intro to Azure A2A + Multimodal + Memory) | Customer Support Workflow (MCP Remote Agents + Workflows + Human in the Loop) |
 |-------------------------------------|--------------------------------------------------------|
@@ -48,23 +32,36 @@ A full companion paper is included with this repository, explaining the vision, 
 
 ---
 
-## 🛠️ Local Setup & Installation Guide
+## 🛠️ Local & Cloud Deployement
 
-This guide covers **local development only**.  
-The architecture is cloud-ready, but **Azure deployment (Bicep/Terraform, public MCP endpoints, cross-cloud remote agents)** will be documented separately.
+This guide focuses on local development, but the architecture is cloud-ready and can be easily deployed to Azure using Bicep or Terraform, allowing you to host and run both host and remote agents in the cloud.
+
+Backend – Runs the Host Orchestrator and core A2A services (registry, memory, orchestration logic).
+Frontend – Provides the multi-agent user interface for managing sessions and visualizing interactions.
+Remote Agents – Specialized agents deployed independently with **local** endpoints that connect to the host via the A2A protocol.
+
+Instructions below explain how to set up each component and run the system locally before deploying it to the cloud.
 
 ---
 
-### ✅ Prerequisites (Local Environment)
+## ✅ Prerequisites
 
 Install the following locally:
 
-- Python 3.10+
-- Node.js & npm *(required for the full multi-agent UI)*
 - Git and VS Code *(recommended)*
-- Optional: Docker *(if you prefer containerized local agents)*
+- Python 3.13+
+- Optional: Docker 
+
+Provision the following services in your Microsoft Azure subscription:
+- Azure AI Foundry 
+- Search Service (Optional but recommended)
+- Storage Account (Optional but recommended)
+- Application Insights (Optional)
 
 ---
+
+
+## 🛠️ Installation and Setup Guide (Backend, Frontend and Remote Agents)
 
 ### 📦 1. Clone the Repository
 
@@ -75,26 +72,21 @@ cd azure-a2a-main
 
 ---
 
-### 🔧 2. Configure Environment Variables
+### 🔧 2. Configure the root Environment Variables
 
-There is **one `.env.example` file in the root** of this repo.
+There is **one `.env.example` file in the root** of this repo. 
+
+- Create a copy of the file and rename it to .env
 
 ```bash
 cp .env.example .env
 ```
 
-Open `.env` and configure your keys and service endpoints.
+Open `.env` and configure your keys and service endpoints. Instructions are provided in the example file for each key and setup. Please ensure that the required Microsoft Azure services are provisioned in your subscription.
 
 ---
 
 ### ⚙️ 3. Start the Host Orchestrator (Backend)
-
-```bash
-cd backend
-source venv/bin/activate
-python -m pip install -r requirements.txt
-python backend_production.py
-```
 
 The **Host Orchestrator** acts as the core intelligence and coordination hub:
 
@@ -103,9 +95,35 @@ The **Host Orchestrator** acts as the core intelligence and coordination hub:
 - Provides Azure AI Fondry agent orchestration to run distributed A2A multi-agent workflows 
 - Websocket for backend and frontend integration: http://localhost:8080
 - A2A Backend API server on http://localhost:12000
+
+```bash
+cd backend
+python3 -m venv .venv (windows: python -m venv venv)
+source venv/bin/activate (windows: .\venv\Scripts\Activate.ps1)
+python -m pip install -r requirements.txt
+
+**Optional for Multi-Modal Document processing**
+brew install --cask LibreOffice (windows: winget install TheDocumentFoundation.LibreOffice)
+
+**make sure to have logged in Azure : in terminal or PowerShell enter **az login**
+
+python backend_production.py
+```
+
 ---
 
 ### 🖥️ 4. Start the Multi-Agent UI (Frontend)
+
+The **Frontend** provides an interactive web interface for managing, orchestrating, and visualizing multi-agent sessions.
+
+- Connects to the Host Orchestrator via WebSocket for real-time updates and event streaming
+- Allows users to create, manage, and monitor multi-agent conversations and distributed task workflows
+- Visualizes agent interactions, delegations, and tool execution traces
+- Supports file uploads, multimodal content processing, and voice interaction
+- Includes a local agent catalog for browsing and registering agents dynamically
+- Runs locally at http://localhost:3000 by default
+
+First download 👉 https://nodejs.org/en/download/
 
 ```bash
 cd frontend
@@ -119,78 +137,114 @@ Then open:
 http://localhost:3000
 ```
 
-> This is the **full orchestration UI** — visualizing agent connections, capability discovery, delegation chains, memory activity, and MCP routing in real time.
-
 ---
 
-### 📎 5. Enable Host Multimodal Document Processing
+## 🤖 Remote Agents Setup Guide ()
 
-The **Host Orchestrator** supports multimodal file processing (PDF, DOCX, etc.) for ingestion into memory.
+A set of sample specialized A2A remote agents is provided in the remote_agents folder. 
 
-Install **LibreOffice** locally:
+Needs description of all agents and their directories..
 
-```bash
-brew install --cask libreoffice
-```
+- (A2A) Azure AI Foundry Agent **Assessment & Estimation Agent** (Directory: remote_agents\azurefoundry_assessment) (A2A_PORT=9002)
 
----
+    The AI Foundry Assessment & Estimation Agent is an Azure-based A2A-compatible agent grounded in synthetic data for multi-line insurance assessment and cost estimation. It covers auto, property, travel, and health domains, applying structured workflows and QA rules. The agent runs as both an API service and interactive Gradio UI, integrating seamlessly with a Host Orchestrator for multi-agent collaboration.
 
-### 🤖 6. Start Any Remote Agent Locally
+- (A2A) Azure AI Foundry Agent **Branding Agent** (Directory: remote_agents\azurefoundry_branding) (A2A_PORT=9033)
 
-A set of sample remote agents is provided in the remote_agents folder. You can use them as-is to test your scenarios or treat them as templates to adapt and build agents for your own use cases. Before running any remote agent, make sure to configure its .env file—use the included .env.example as your starting point.
+    The AI Foundry Branding & Content Agent is an Azure-based A2A-compatible agent grounded in synthetic branding data that enforces visual and tonal consistency. It provides guidance on brand colors, lighting, composition, and copy tone to ensure all creative outputs stay on-brand. The agent runs as both an API service and interactive Gradio UI, integrating with a Host Orchestrator for collaborative content creation.
+
+- (A2A) Azure AI Foundry Agent **Claims Agent** (Directory: remote_agents\azurefoundry_claims) (A2A_PORT=9001)
+
+    The AI Foundry Claims Specialist Agent is an Azure-based A2A-compatible agent grounded in synthetic insurance data for realistic multi-line claims processing. It provides intelligent coverage validation, settlement estimation, documentation guidance, and regulatory compliance across auto, property, travel, and health domains. The agent operates as both an API service and interactive Gradio UI, integrating with a Host Orchestrator for coordinated claims handling and escalation.
+
+- (A2A) Azure AI Foundry Agent **Classification Agent** (Directory: remote_agents\azurefoundry_classification) (A2A_PORT=8001)
+
+    The AI Foundry Classification Triage Agent is an Azure-based A2A-compatible agent grounded in synthetic customer support data for realistic incident handling. It classifies incoming issues into categories like fraud, payment, security, or technical problems, assesses their priority, and routes them to the right teams using ServiceNow standards. The agent runs as both an API service and interactive Gradio UI, integrating with a Host Orchestrator for automated triage and escalation workflows.
+
+- (A2A) Azure AI Foundry Agent **Deep Search Agent** (Directory: remote_agents\azurefoundry_Deep_Search) (A2A_PORT=8002)
+
+    The AI Foundry Deep Search Knowledge Agent is an Azure-based A2A-compatible agent grounded in synthetic customer support documentation. It performs deep semantic search across topics like account management, billing, fraud prevention, and technical support to deliver precise, context-aware answers. The agent operates as both an API service and interactive Gradio UI, integrating with a Host Orchestrator for enterprise knowledge retrieval and customer assistance workflows.
+
+- (A2A) Azure AI Foundry Agent **Fraud Agent** (Directory: remote_agents\azurefoundry_fraud) (A2A_PORT=9004)
+
+    The AI Foundry Fraud Intelligence Agent is an Azure-based A2A-compatible agent grounded in synthetic fraud investigation data for realistic multi-line insurance analysis. It detects red flags, evaluates claim patterns, and recommends SIU escalation across auto, property, travel, and health domains. The agent operates as both an API service and interactive Gradio UI, integrating with a Host Orchestrator for coordinated fraud detection and compliance workflows.
+
+- (A2A) Azure AI Foundry Agent **Image Generation Agent** (Directory: remote_agents\azurefoundry_image_generator) (A2A_PORT=9010) **Experimental**
+
+    The AI Foundry Image Generator Agent is an Azure-based A2A-compatible creative agent that transforms text prompts into high-quality images and performs advanced image editing. It supports in-painting, masking, and prompt-based modifications to refine or extend existing visuals. The agent operates as both an API service , integrating with a Host Orchestrator for coordinated visual creation and editing workflows.
+
+- (A2A) Azure AI Foundry Agent **Legal Agent** (Directory: remote_agents\azurefoundry_legal) (A2A_PORT=8006)
+
+    The AI Foundry Legal Compliance & Regulatory Agent is an Azure-based A2A-compatible agent grounded in synthetic legal and compliance data. It analyzes regulatory frameworks like GDPR, SOX, and CCPA, performs risk assessments, and reviews contracts and compliance documents for legal integrity. The agent operates as both an API service and interactive Gradio dashboard, integrating with a Host Orchestrator for coordinated governance and audit workflows
+
+- (A2A) Azure AI Foundry Agent **Customer Support Agent (MCP)** (Directory: remote_agents\azurefoundry_SN) (A2A_PORT=8000) **Experimental**
+
+    The AI Foundry Expert Agent is an Azure-based A2A and MCO-compatible agent grounded in synthetic enterprise and support data. It can execute ServiceNow actions via MCP server (create and update indicents, look up customers ...), executes banking actions, performs web (with bing added to foundry agent portal) and document searches, and manages human-in-the-loop escalations. The agent runs as both an API service and interactive Gradio UI, integrating with a Host Orchestrator to automate IT service management, banking workflows, and expert escalation scenarios.
+
+- (A2A) Google ADK Agent **Sentiment Agent (MCP)** (Directory: remote_agents\google_adk) (A2A_PORT=8003)
+
+    The Sentiment Analysis Agent is a Google ADK A2A-compatible agent grounded in synthetic customer interaction data. It detects emotional tone, classifies sentiment, and personalizes responses across customer feedback, chats, and service interactions. The agent operates as a lightweight API service that integrates with a Host Orchestrator to enhance customer understanding, improve satisfaction, and guide next-step decisions based on detected sentiment.
+
+You can use them as-is to test your scenarios or treat them as templates for building your own agents. Each agent can be easily customized, and the documents folder lets you add your own data for grounding and testing.
+
+Important: Before running any remote agent, make sure to create your own .env file in each remote agent directory—use the included .env.example as your starting point.
+
+### Running the agents
 
 ```bash
 cd remote_agents/<agent-name>
-python3 -m venv .venv
-source .venv/bin/activate
+python3 -m venv .venv (windows: python -m venv venv)
+source .venv/bin/activate (windows: .\venv\Scripts\Activate.ps1)
 pip install uv
-uv run .
+uv run . (use 'uv run . --ui' to run gradio UI)
 ```
 
 Once started, these agents become available in the Agent Catalog and can be registered into an active session. You can also bring your own A2A-compliant agents by simply connecting them via their endpoint or IP address. If the backend is already running, any agent you start will automatically register itself to the current session.
 
 ---
 
-### 🌐 7. (Optional) Google ADK Remote Agent (Cross-Cloud Example)
+### 🌐 Instructions for the Google ADK Sentiment Agent (Cross-Cloud Example)
 
 To demonstrate cross-cloud remote agents outside Azure, you can use the specialized Google ADK Sentiment Analysis Agent. Just update its .env file with your own Google ADK key before starting it.
 
 ```bash
 cd remote_agents/google-adk-agent   # or your path
-python3 -m venv .venv
-source .venv/bin/activate
+python3 -m venv .venv (windows: python -m venv venv)
+source .venv/bin/activate (windows: .\venv\Scripts\Activate.ps1)
 pip install a2a-sdk
 python __main__.py
 ```
 
 ---
 
-### 🌐 8. (Optional) Customer Support MCP Agent (ServiceNow MCP integration, Knowledge Grounding, Bing Search, Human in the Loop)  
+### 🌐 8. Customer Support MCP Agent (ServiceNow MCP integration)
 
-For a more advanced example, a Customer Support MCP Agent with extensive capabilities is available in the azurefoundry_sn directory. This agent is experimental but fully functional.
+This agent is experimental but fully functional.
 
-An MCP Server is also provided in the MCP_SERVICENOW directory to demonstrate ServiceNow MCP integration. To use it in your own ServiceNow environment, you’ll need to supply your own ServiceNow credentials in the .env file.
+To setup the MCP server An MCP Server is also provided in the MCP_SERVICENOW/servicenow-mcp directory to demonstrate ServiceNow MCP integration. 
 
-Important: Azure AI Foundry agents require a public MCP endpoint, not localhost as currently configured. You can either:
+**To use it in your own ServiceNow environment, you’ll need to supply your own ServiceNow credentials in the .env file.**
+
+**Important:** Azure AI Foundry agents require a public MCP endpoint, not localhost as currently configured. You can either:
 
 - Deploy the MCP server in a container or host with a public URL, or
-- Use NGROK to expose localhost.
-  
-Make sure to replace all instances of https://agent1.ngrok.app/mcp/ in foundry_agent.py with your own public endpoint.
+- Use NGROK to expose localhost. 
 
-Additionally, the Customer Support MCP Agent can run as a standalone agent and includes its own Gradio UI, which you can use to test it independently or demonstrate human-in-the-loop orchestration between the host and remote agent.
+The Customer Support MCP Agent can run as a standalone agent and includes its own Gradio UI, which you can use to test it independently or demonstrate human-in-the-loop orchestration between the host and remote agent.
+
+Running the Customer Support MCP Agent
 
 ```bash
-MCP Server Setup: (make sure you have a Service Now instance and set your. .env variables in the root directory of the MCP server folder)
+
 cd /azurefoundry_SN/MCP_SERVICENOW/servicenow-mcp
 python -m mcp_server_servicenow.cli --transport http --host 127.0.0.1 --port 8005 (change 127.0.0.1 to your public endpoint if not using NGROK)
 
 Launch the Customer Support MCP Agent with UI
 
 cd remote_agents/azurefoundry_SN
-python3 -m venv .venv
-source .venv/bin/activate
-uv run . --ui (use the --ui to also load the gradio app on localhost, this agent has it's own UI interface)
+python3 -m venv .venv (windows: python -m venv venv)
+source .venv/bin/activate (windows: .\venv\Scripts\Activate.ps1)
+uv run . --ui (use the --ui to also load the gradio app on localhost)
 ```
 Then open:
 
@@ -202,12 +256,10 @@ http://localhost:8085
 
 ### 🎉 Local Multi-Agent Network Running
 
-Once the host, UI, and at least one agent are live, you have a **fully local A2A driven multi-agent system**.
+Start the backend, the frontend, and connect your agents or register them manually.
 
 ---
-
-> ☁️ **Cloud Deployment Note:**  
-> This system is architected for **Azure hosting with public MCP endpoints, Bicep/Terraform provisioning, and distributed remote agents across clouds** — that deployment guide will be published next.  
+ 
 
 
 
