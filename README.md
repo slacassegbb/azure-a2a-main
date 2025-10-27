@@ -143,129 +143,86 @@ http://localhost:3000
 
 ## 🤖 Remote Agents Setup Guide
 
-A set of sample specialized A2A remote agents is provided in the `remote_agents` folder.
+A set of sample specialized A2A remote agents is provided in the `remote_agents` folder. 
 
-> *Needs description of all agents and their directories..*
+*Needs description of all agents and their directories..*
 
 ---
 
-### Agents Overview (click to expand each)
-
-<details>
-  <summary>
-    <img alt="Assessment & Estimation" src="https://img.shields.io/badge/Assessment%20%26%20Estimation-A2A_PORT%3D9002-1f6feb?labelColor=0d1117&style=for-the-badge" />
-  </summary>
-
-**(A2A) Azure AI Foundry Agent — Assessment & Estimation Agent**  
+### 🟦 (A2A) Azure AI Foundry — **Assessment & Estimation Agent**
 **Directory:** `remote_agents\azurefoundry_assessment` · **A2A_PORT=9002**
 
 The AI Foundry Assessment & Estimation Agent is an Azure-based A2A-compatible agent grounded in synthetic data for multi-line insurance assessment and cost estimation. It covers auto, property, travel, and health domains, applying structured workflows and QA rules. The agent runs as both an API service and interactive Gradio UI, integrating seamlessly with a Host Orchestrator for multi-agent collaboration.
-</details>
 
-<details>
-  <summary>
-    <img alt="Branding" src="https://img.shields.io/badge/Branding-A2A_PORT%3D9033-bf5aff?labelColor=0d1117&style=for-the-badge" />
-  </summary>
+---
 
-**(A2A) Azure AI Foundry Agent — Branding Agent**  
-**Directory:** `remote_agents\azurefoundry_branding` · **A2A_PORT=9033**
+### 🟩 (A2A) Azure AI Foundry — **Branding Agent**
+**Directory:** `remote_agents\azurefoundry_branding` · **A2A_PORT=9033`
 
 The AI Foundry Branding & Content Agent is an Azure-based A2A-compatible agent grounded in synthetic branding data that enforces visual and tonal consistency. It provides guidance on brand colors, lighting, composition, and copy tone to ensure all creative outputs stay on-brand. The agent runs as both an API service and interactive Gradio UI, integrating with a Host Orchestrator for collaborative content creation.
-</details>
 
-<details>
-  <summary>
-    <img alt="Claims" src="https://img.shields.io/badge/Claims-A2A_PORT%3D9001-2ea043?labelColor=0d1117&style=for-the-badge" />
-  </summary>
+---
 
-**(A2A) Azure AI Foundry Agent — Claims Agent**  
-**Directory:** `remote_agents\azurefoundry_claims` · **A2A_PORT=9001**
+### 🟧 (A2A) Azure AI Foundry — **Claims Agent**
+**Directory:** `remote_agents\azurefoundry_claims` · **A2A_PORT=9001`
 
 The AI Foundry Claims Specialist Agent is an Azure-based A2A-compatible agent grounded in synthetic insurance data for realistic multi-line claims processing. It provides intelligent coverage validation, settlement estimation, documentation guidance, and regulatory compliance across auto, property, travel, and health domains. The agent operates as both an API service and interactive Gradio UI, integrating with a Host Orchestrator for coordinated claims handling and escalation.
-</details>
 
-<details>
-  <summary>
-    <img alt="Classification" src="https://img.shields.io/badge/Classification-A2A_PORT%3D8001-f0883e?labelColor=0d1117&style=for-the-badge" />
-  </summary>
+---
 
-**(A2A) Azure AI Foundry Agent — Classification Agent**  
-**Directory:** `remote_agents\azurefoundry_classification` · **A2A_PORT=8001**
+### 🟥 (A2A) Azure AI Foundry — **Classification Agent**
+**Directory:** `remote_agents\azurefoundry_classification` · **A2A_PORT=8001`
 
 The AI Foundry Classification Triage Agent is an Azure-based A2A-compatible agent grounded in synthetic customer support data for realistic incident handling. It classifies incoming issues into categories like fraud, payment, security, or technical problems, assesses their priority, and routes them to the right teams using ServiceNow standards. The agent runs as both an API service and interactive Gradio UI, integrating with a Host Orchestrator for automated triage and escalation workflows.
-</details>
 
-<details>
-  <summary>
-    <img alt="Deep Search" src="https://img.shields.io/badge/Deep%20Search-A2A_PORT%3D8002-ff7b72?labelColor=0d1117&style=for-the-badge" />
-  </summary>
+---
 
-**(A2A) Azure AI Foundry Agent — Deep Search Agent**  
-**Directory:** `remote_agents\azurefoundry_Deep_Search` · **A2A_PORT=8002**
+### 🟪 (A2A) Azure AI Foundry — **Deep Search Agent**
+**Directory:** `remote_agents\azurefoundry_Deep_Search` · **A2A_PORT=8002`
 
 The AI Foundry Deep Search Knowledge Agent is an Azure-based A2A-compatible agent grounded in synthetic customer support documentation. It performs deep semantic search across topics like account management, billing, fraud prevention, and technical support to deliver precise, context-aware answers. The agent operates as both an API service and interactive Gradio UI, integrating with a Host Orchestrator for enterprise knowledge retrieval and customer assistance workflows.
-</details>
 
-<details>
-  <summary>
-    <img alt="Fraud" src="https://img.shields.io/badge/Fraud-A2A_PORT%3D9004-f85149?labelColor=0d1117&style=for-the-badge" />
-  </summary>
+---
 
-**(A2A) Azure AI Foundry Agent — Fraud Agent**  
-**Directory:** `remote_agents\azurefoundry_fraud` · **A2A_PORT=9004**
+### 🟫 (A2A) Azure AI Foundry — **Fraud Agent**
+**Directory:** `remote_agents\azurefoundry_fraud` · **A2A_PORT=9004`
 
 The AI Foundry Fraud Intelligence Agent is an Azure-based A2A-compatible agent grounded in synthetic fraud investigation data for realistic multi-line insurance analysis. It detects red flags, evaluates claim patterns, and recommends SIU escalation across auto, property, travel, and health domains. The agent operates as both an API service and interactive Gradio UI, integrating with a Host Orchestrator for coordinated fraud detection and compliance workflows.
-</details>
 
-<details>
-  <summary>
-    <img alt="Image Generation" src="https://img.shields.io/badge/Image%20Generation%20(Experimental)-A2A_PORT%3D9010-8e9196?labelColor=0d1117&style=for-the-badge" />
-  </summary>
+---
 
-**(A2A) Azure AI Foundry Agent — Image Generation Agent** *(Experimental)*  
-**Directory:** `remote_agents\azurefoundry_image_generator` · **A2A_PORT=9010**
+### ⬛ (A2A) Azure AI Foundry — **Image Generation Agent** *(Experimental)*
+**Directory:** `remote_agents\azurefoundry_image_generator` · **A2A_PORT=9010`
 
 The AI Foundry Image Generator Agent is an Azure-based A2A-compatible creative agent that **transforms text prompts into high-quality images** and performs **advanced image editing**. It supports **in-painting, masking, and prompt-based modifications** to refine or extend existing visuals. The agent operates as an API service, integrating with a Host Orchestrator for coordinated visual creation and editing workflows.
-</details>
 
-<details>
-  <summary>
-    <img alt="Legal" src="https://img.shields.io/badge/Legal-A2A_PORT%3D8006-8957e5?labelColor=0d1117&style=for-the-badge" />
-  </summary>
+---
 
-**(A2A) Azure AI Foundry Agent — Legal Agent**  
-**Directory:** `remote_agents\azurefoundry_legal` · **A2A_PORT=8006**
+### 🟨 (A2A) Azure AI Foundry — **Legal Agent**
+**Directory:** `remote_agents\azurefoundry_legal` · **A2A_PORT=8006`
 
 The AI Foundry Legal Compliance & Regulatory Agent is an Azure-based A2A-compatible agent grounded in synthetic legal and compliance data. It analyzes regulatory frameworks like GDPR, SOX, and CCPA, performs risk assessments, and reviews contracts and compliance documents for legal integrity. The agent operates as both an API service and interactive Gradio dashboard, integrating with a Host Orchestrator for coordinated governance and audit workflows.
-</details>
 
-<details>
-  <summary>
-    <img alt="Customer Support (MCP)" src="https://img.shields.io/badge/Customer%20Support%20(MCP)%20(Experimental)-A2A_PORT%3D8000-00a3a3?labelColor=0d1117&style=for-the-badge" />
-  </summary>
+---
 
-**(A2A) Azure AI Foundry Agent — Customer Support Agent (MCP)** *(Experimental)*  
-**Directory:** `remote_agents\azurefoundry_SN` · **A2A_PORT=8000**
+### 🟦 (A2A + MCP) Azure AI Foundry — **Customer Support Agent (MCP)** *(Experimental)*
+**Directory:** `remote_agents\azurefoundry_SN` · **A2A_PORT=8000`
 
 The AI Foundry Expert Agent is an Azure-based **A2A and MCP-compatible** agent grounded in synthetic enterprise and support data. It can execute **ServiceNow actions via MCP server** (create and update **incidents**, look up customers, etc.), execute banking actions, perform web (with Bing added to Foundry agent portal) and document searches, and manage **human-in-the-loop** escalations. The agent runs as both an API service and interactive Gradio UI, integrating with a Host Orchestrator to automate IT service management, banking workflows, and expert escalation scenarios.
-</details>
 
-<details>
-  <summary>
-    <img alt="Sentiment (Google ADK)" src="https://img.shields.io/badge/Sentiment%20(Google%20ADK)-A2A_PORT%3D8003-3fb950?labelColor=0d1117&style=for-the-badge" />
-  </summary>
+---
 
-**(A2A) Google ADK Agent — Sentiment Agent (MCP)**  
-**Directory:** `remote_agents\google_adk` · **A2A_PORT=8003**
+### 🟩 (A2A) Google ADK — **Sentiment Agent (MCP)**
+**Directory:** `remote_agents\google_adk` · **A2A_PORT=8003`
 
 The Sentiment Analysis Agent is a Google ADK A2A-compatible agent grounded in synthetic customer interaction data. It detects emotional tone, classifies sentiment, and personalizes responses across customer feedback, chats, and service interactions. The agent operates as a lightweight API service that integrates with a Host Orchestrator to enhance customer understanding, improve satisfaction, and guide next-step decisions based on detected sentiment.
-</details>
 
 ---
 
 You can use them as-is to test your scenarios or treat them as templates for building your own agents. Each agent can be easily customized, and the `documents` folder lets you add your own data for grounding and testing.
 
 **Important:** Before running any remote agent, make sure to create your own `.env` file in each remote agent directory—use the included `.env.example` as your starting point.
+
 
 ### Running the agents
 
