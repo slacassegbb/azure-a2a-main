@@ -105,7 +105,7 @@ python -m pip install -r requirements.txt
 **Optional for Multi-Modal Document processing**
 brew install --cask LibreOffice (windows: winget install TheDocumentFoundation.LibreOffice)
 
-**make sure to have logged in Azure : in terminal or PowerShell enter **az login**
+Importat: Make sure your are logged in Azure : in terminal or PowerShell enter **az login
 
 python backend_production.py
 ```
