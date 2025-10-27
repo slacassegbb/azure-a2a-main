@@ -147,8 +147,6 @@ http://localhost:3000
 
 A set of sample specialized A2A remote agents is provided in the `remote_agents` folder. 
 
-*Needs description of all agents and their directories..*
-
 ---
 
 ### 🟦 Azure AI Foundry (A2A) — **Assessment & Estimation Agent**
