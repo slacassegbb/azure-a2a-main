@@ -141,11 +141,11 @@ http://localhost:3000
 
 ---
 
+<small><small>
+
 ## 🤖 Remote Agents Setup Guide
 
-<small>
-
-A set of sample specialized A2A remote agents is provided in the `remote_agents` folder.
+A set of sample specialized A2A remote agents is provided in the `remote_agents` folder. 
 
 *Needs description of all agents and their directories..*
 
@@ -224,6 +224,8 @@ The Sentiment Analysis Agent is a Google ADK A2A-compatible agent grounded in sy
 You can use them as-is to test your scenarios or treat them as templates for building your own agents. Each agent can be easily customized, and the `documents` folder lets you add your own data for grounding and testing.
 
 **Important:** Before running any remote agent, make sure to create your own `.env` file in each remote agent directory—use the included `.env.example` as your starting point.
+
+</small></small>
 
 </small>
 
