@@ -205,9 +205,10 @@ class FoundryImageGeneratorAgentExecutor(AgentExecutor):
                     # Emit the final response
                     if responses:
                         artifacts = agent.pop_latest_artifacts()
+                        artifact_parts = []
                         if artifacts:
-                            parts = [Part(root=DataPart(data=artifact)) for artifact in artifacts]
-                            artifact_message = new_agent_parts_message(parts=parts, context_id=context_id)
+                            artifact_parts = [Part(root=DataPart(data=artifact)) for artifact in artifacts]
+                            artifact_message = new_agent_parts_message(parts=artifact_parts, context_id=context_id)
                             responses.append(artifact_message)
                             await task_updater.update_status(
                                 TaskState.working,
@@ -219,8 +220,15 @@ class FoundryImageGeneratorAgentExecutor(AgentExecutor):
                         )
                         if final_text_response is None:
                             final_text_response = "Image generated successfully."
+                        
+                        # Include both text summary AND artifact parts in final completion message
+                        # This ensures downstream agents receive file metadata for agent-to-agent file exchange
+                        final_parts = [Part(root=TextPart(text=final_text_response, kind='text'))]
+                        if artifact_parts:
+                            final_parts.extend(artifact_parts)
+                        
                         await task_updater.complete(
-                            message=new_agent_text_message(final_text_response, context_id=context_id)
+                            message=new_agent_parts_message(parts=final_parts, context_id=context_id)
                         )
                     else:
                         await task_updater.complete(

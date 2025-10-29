@@ -11,7 +11,7 @@ import logging
 import os
 import time
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Callable
+from typing import Any, Dict, List, Optional, Callable, Set
 import httpx
 
 from state.state import StateMessage, StateConversation, StateTask, StateEvent
@@ -95,6 +95,8 @@ class WebSocketStreamer:
         self.events_endpoint = f"{websocket_url}/events"
         self.http_client = None
         self.is_initialized = False
+        # Track emitted files per conversation to prevent duplicates within same conversation only
+        self._emitted_file_uris: Dict[str, Set[str]] = {}  # {conversation_id: {file_uri, ...}}
         
         logger.info(f"WebSocket streamer initialized with URL: {websocket_url}")
     
@@ -290,7 +292,26 @@ class WebSocketStreamer:
     # === File Events ===
     
     async def stream_file_uploaded(self, file_info: Dict[str, Any], conversation_id: str) -> bool:
-        """Stream a file uploaded event."""
+        """Stream a file uploaded event.
+        
+        Deduplicates based on file URI to prevent duplicate entries in File History
+        when the same file is emitted from multiple sources (streaming + final response).
+        Deduplication is scoped per conversation to avoid blocking files in new conversations.
+        """
+        file_uri = file_info.get('uri', '')
+        
+        # Initialize conversation tracking if needed
+        if conversation_id not in self._emitted_file_uris:
+            self._emitted_file_uris[conversation_id] = set()
+        
+        # Deduplicate: Skip if this URI was already emitted in THIS conversation
+        if file_uri in self._emitted_file_uris[conversation_id]:
+            logger.debug(f"Skipping duplicate file_uploaded event for URI in conversation {conversation_id[:8]}...: {file_uri[:80]}...")
+            return True  # Return True to indicate no error
+        
+        # Mark URI as emitted for this conversation
+        self._emitted_file_uris[conversation_id].add(file_uri)
+        
         data = {
             "conversationId": conversation_id,
             "fileInfo": file_info,

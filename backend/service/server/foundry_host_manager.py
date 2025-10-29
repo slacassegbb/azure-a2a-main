@@ -12,7 +12,7 @@ BACKEND_ROOT = Path(__file__).resolve().parents[2]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
-from a2a.types import AgentCard, Message, Task, TextPart, TaskStatus, TaskState, FilePart, FileWithUri, FileWithBytes
+from a2a.types import AgentCard, Message, Task, TextPart, DataPart, TaskStatus, TaskState, FilePart, FileWithUri, FileWithBytes
 from hosts.multiagent.foundry_agent_a2a import FoundryHostAgent2
 from service.server.application_manager import ApplicationManager
 from service.types import Conversation, Event
@@ -69,6 +69,9 @@ class FoundryHostManager(ApplicationManager):
         self._http_client = http_client
         self._host_agent = None
         self._host_agent_initialized = False
+        
+        # Note: File deduplication is now handled by websocket_streamer per-conversation tracking
+        # Removed self._emitted_file_uris to avoid duplicate deduplication systems
         
         self._context_to_conversation: Dict[str, str] = {}
         self._pending_artifacts: Dict[str, List[Dict[str, Any]]] = {}
@@ -129,6 +132,19 @@ class FoundryHostManager(ApplicationManager):
         elif isinstance(resp, dict) and 'kind' in resp:
             print(f"[DEBUG] Processing as single dict with kind")
             items = [resp]
+        # Handle single dict with artifact metadata (from DataPart)
+        elif isinstance(resp, dict) and ('artifact-uri' in resp or 'artifact-id' in resp):
+            print(f"[DEBUG] Processing as artifact dict - wrapping in DataPart")
+            print(f"[DEBUG] Artifact URI: {resp.get('artifact-uri', '')[:150]}")
+            from a2a.types import DataPart
+            parts.append(DataPart(data=resp))
+            return Message(
+                role='agent',
+                parts=parts,
+                contextId=context_id,
+                taskId=task_id,
+                messageId=str(uuid.uuid4()),
+            )
         # Handle Message object
         elif hasattr(resp, 'parts'):
             print(f"[DEBUG] Processing as Message object with {len(resp.parts) if resp.parts else 0} parts")
@@ -489,9 +505,13 @@ class FoundryHostManager(ApplicationManager):
                 traceback.print_exc()
 
         for resp_index, resp in enumerate(responses):
-            print("[DEBUG] Response:", resp)
+            print(f"[DEBUG] Response {resp_index}: type={type(resp)}, is_dict={isinstance(resp, dict)}")
+            if isinstance(resp, dict):
+                print(f"[DEBUG] Response {resp_index} dict keys: {list(resp.keys())}")
+                print(f"[DEBUG] Response {resp_index} has artifact-uri: {'artifact-uri' in resp}")
             print("[DEBUG] Response parts:", getattr(resp, 'parts', None))
             msg = self.foundry_content_to_message(resp, context_id, task_id)
+            print(f"[DEBUG] Message created with {len(msg.parts) if hasattr(msg, 'parts') else 0} parts")
             if conversation:
                 conversation.messages.append(msg)
             if not hasattr(task, 'history') or task.history is None:
@@ -536,22 +556,29 @@ class FoundryHostManager(ApplicationManager):
                         "timestamp": __import__('datetime').datetime.utcnow().isoformat(),
                     }
 
+                    print(f"[DEBUG] WebSocket streaming - resp type: {type(resp)}, msg has parts: {hasattr(msg, 'parts')}")
+                    if hasattr(msg, "parts"):
+                        print(f"[DEBUG] Processing message with {len(msg.parts)} parts")
+                    
                     if isinstance(resp, str):
                         event_data["content"].append({
                             "type": "text",
                             "content": resp,
                             "mediaType": "text/plain",
                         })
-                    elif hasattr(resp, "parts"):
+                    elif hasattr(msg, "parts"):
                         text_parts = []
                         image_parts = []
-                        for part in resp.parts:
+                        for part in msg.parts:
+                            print(f"[DEBUG] Processing part: {type(part)}, has root: {hasattr(part, 'root')}")
                             root = part.root
                             if isinstance(root, TextPart):
                                 text_parts.append(root.text)
                             elif isinstance(root, DataPart) and isinstance(root.data, dict):
                                 artifact_uri = root.data.get("artifact-uri")
+                                print(f"[DEBUG] Found DataPart with dict, has artifact-uri: {bool(artifact_uri)}")
                                 if artifact_uri:
+                                    print(f"[DEBUG] Adding image to content: {root.data.get('file-name')}")
                                     image_parts.append({
                                         "type": "image",
                                         "uri": artifact_uri,
@@ -594,11 +621,13 @@ class FoundryHostManager(ApplicationManager):
                         if content_item.get("type") == "image":
                             print(f"[DEBUG] Found file content with uri: {content_item.get('uri')}")
                         if content_item.get("type") == "image" and content_item.get("uri"):
+                            file_uri = content_item.get("uri")
                             # Emit file_uploaded event so it appears in File History
+                            # Deduplication is handled by websocket streamer's per-conversation tracking
                             file_info = {
                                 "file_id": str(uuid.uuid4()),
                                 "filename": content_item.get("fileName", "agent-artifact.png"),
-                                "uri": content_item.get("uri"),
+                                "uri": file_uri,
                                 "size": content_item.get("fileSize", 0),
                                 "content_type": content_item.get("mediaType", "image/png"),
                                 "source_agent": actor_name,

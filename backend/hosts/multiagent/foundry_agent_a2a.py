@@ -1337,6 +1337,30 @@ Analyze the plan and determine the next step. If you need information that isn't
                         if recommended_agent and recommended_agent in self.cards:
                             print(f"🚀 [Agent Mode] Calling agent: {recommended_agent}")
                             
+                            # For sequential tasks, keep only the MOST RECENT file of each role
+                            # This prevents file accumulation that confuses agents
+                            if hasattr(session_context, '_latest_processed_parts') and len(session_context._latest_processed_parts) > 1:
+                                from collections import defaultdict
+                                old_count = len(session_context._latest_processed_parts)
+                                role_to_latest = defaultdict(lambda: None)
+                                
+                                # Keep only the most recent file for each role
+                                for part in reversed(session_context._latest_processed_parts):  # reversed = most recent first
+                                    if isinstance(part, DataPart) and isinstance(part.data, dict):
+                                        role = part.data.get('role')
+                                        if role and role not in role_to_latest:
+                                            role_to_latest[role] = part
+                                    elif hasattr(part, 'root') and isinstance(part.root, DataPart) and isinstance(part.root.data, dict):
+                                        role = part.root.data.get('role')
+                                        if role and role not in role_to_latest:
+                                            role_to_latest[role] = part
+                                
+                                # Replace accumulated files with only the most recent per role
+                                if role_to_latest:
+                                    latest_files = list(role_to_latest.values())
+                                    session_context._latest_processed_parts = latest_files
+                                    print(f"📎 [Agent Mode] Deduplicated files: {old_count} files → {len(latest_files)} files (kept most recent per role)")
+                            
                             # Create dummy tool context for send_message
                             dummy_context = DummyToolContext(session_context, self._azure_blob_client)
                             
@@ -2634,6 +2658,12 @@ Answer with just JSON:
             session_parts = []
             if hasattr(session_context, "_latest_processed_parts"):
                 session_parts = getattr(session_context, "_latest_processed_parts", []) or []
+            
+            # DEBUG: Log what we're about to send
+            print(f"🔍 [DEBUG] Before sending to {agent_name}:")
+            print(f"  • _latest_processed_parts exists: {hasattr(session_context, '_latest_processed_parts')}")
+            print(f"  • session_parts count: {len(session_parts)}")
+            print(f"  • agent_mode: {getattr(session_context, 'agent_mode', False)}")
 
             if session_parts:
                 print(f"📦 Prepared {len(session_parts)} parts for remote agent {agent_name} (context {contextId})")
@@ -2641,10 +2671,30 @@ Answer with just JSON:
                     part_root = getattr(prepared_part, "root", prepared_part)
                     kind = getattr(part_root, "kind", getattr(part_root, "type", type(part_root).__name__))
                     print(f"  • Prepared part {idx}: kind={kind}")
-                    if hasattr(part_root, "file") and getattr(part_root.file, "uri", None):
+                    
+                    # Enhanced file part logging with role information
+                    if isinstance(part_root, FilePart) and hasattr(part_root, "file"):
+                        file_obj = part_root.file
+                        file_name = getattr(file_obj, 'name', 'unknown')
+                        file_uri = getattr(file_obj, 'uri', 'no-uri')
+                        file_role = (part_root.metadata or {}).get("role", "no-role") if hasattr(part_root, "metadata") else "no-role"
+                        print(f"    → FilePart: name={file_name} role={file_role}")
+                        print(f"    → URI: {file_uri[:80]}..." if len(file_uri) > 80 else f"    → URI: {file_uri}")
+                    elif hasattr(part_root, "file") and getattr(part_root.file, "uri", None):
                         print(f"    → file name={getattr(part_root.file, 'name', 'unknown')} uri={part_root.file.uri}")
+                    
+                    # Enhanced DataPart logging with role information
                     if isinstance(part_root, DataPart) and getattr(part_root, "data", None):
-                        print(f"    → data keys={list(part_root.data.keys())}")
+                        data_keys = list(part_root.data.keys()) if isinstance(part_root.data, dict) else []
+                        print(f"    → data keys={data_keys}")
+                        if isinstance(part_root.data, dict):
+                            role = part_root.data.get("role", "no-role")
+                            artifact_uri = part_root.data.get("artifact-uri", "")
+                            file_name = part_root.data.get("file-name", "unknown")
+                            if role != "no-role" or artifact_uri:
+                                print(f"    → DataPart file: {file_name} role={role}")
+                                if artifact_uri:
+                                    print(f"    → Artifact URI: {artifact_uri[:80]}..." if len(artifact_uri) > 80 else f"    → Artifact URI: {artifact_uri}")
 
                     if isinstance(prepared_part, Part):
                         prepared_parts.append(prepared_part)
@@ -2694,27 +2744,28 @@ Answer with just JSON:
                             if hasattr(event, 'status') and event.status:
                                 if hasattr(event.status, 'message') and event.status.message:
                                     if hasattr(event.status.message, 'parts') and event.status.message.parts:
+                                        # Process ALL parts - don't break early so we catch all image artifacts
                                         for part in event.status.message.parts:
                                             # Check for text parts
                                             if hasattr(part, 'root') and hasattr(part.root, 'text'):
                                                 status_text = part.root.text
-                                                break
+                                                # Continue processing to find image artifacts - don't break!
                                             # Check for image artifacts in DataPart
                                             elif hasattr(part, 'root') and hasattr(part.root, 'data') and isinstance(part.root.data, dict):
                                                 artifact_uri = part.root.data.get('artifact-uri')
                                                 if artifact_uri:
                                                     print(f"[DEBUG] Found image artifact in streaming event: {artifact_uri}")
                                                     # Emit file_uploaded event
-                                                    async def emit_file_event():
+                                                    async def emit_file_event(part_data=part.root.data, uri=artifact_uri):
                                                         try:
-                                                            from hosts.multiagent.websocket_streamer import get_websocket_streamer
+                                                            from service.websocket_streamer import get_websocket_streamer
                                                             streamer = await get_websocket_streamer()
                                                             if streamer:
                                                                 file_info = {
                                                                     "file_id": str(uuid.uuid4()),
-                                                                    "filename": part.root.data.get("file-name", "agent-artifact.png"),
-                                                                    "uri": artifact_uri,
-                                                                    "size": part.root.data.get("file-size", 0),
+                                                                    "filename": part_data.get("file-name", "agent-artifact.png"),
+                                                                    "uri": uri,
+                                                                    "size": part_data.get("file-size", 0),
                                                                     "content_type": "image/png",
                                                                     "source_agent": agent_name,
                                                                     "contextId": get_context_id(event)
@@ -2762,6 +2813,15 @@ Answer with just JSON:
             if isinstance(response, Task):
                 task = response
                 
+                # DEBUG: Log task response structure
+                print(f"🔍 [DEBUG] Received Task response from {agent_name}:")
+                print(f"  • Task ID: {task.id if hasattr(task, 'id') else 'N/A'}")
+                print(f"  • Task state: {task.status.state if hasattr(task, 'status') else 'N/A'}")
+                print(f"  • Has status.message: {hasattr(task, 'status') and hasattr(task.status, 'message') and task.status.message is not None}")
+                print(f"  • Has artifacts: {hasattr(task, 'artifacts') and task.artifacts is not None}")
+                if hasattr(task, 'artifacts') and task.artifacts:
+                    print(f"  • Artifacts count: {len(task.artifacts)}")
+                
                 # Update session context only with essential info
                 context_id = get_context_id(task)
                 if context_id:
@@ -2779,6 +2839,18 @@ Answer with just JSON:
                 # Handle task states
                 if task.status.state == TaskState.completed:
                     response_parts = []
+                    
+                    # DEBUG: Check what's in the task
+                    print(f"🔍 [DEBUG] Task completed - checking contents:")
+                    print(f"  • task.status.message exists: {task.status.message is not None}")
+                    if task.status.message:
+                        print(f"  • task.status.message.parts count: {len(task.status.message.parts) if task.status.message.parts else 0}")
+                    print(f"  • task.artifacts exists: {task.artifacts is not None}")
+                    if task.artifacts:
+                        print(f"  • task.artifacts count: {len(task.artifacts)}")
+                        for idx, art in enumerate(task.artifacts):
+                            print(f"  • artifact[{idx}].parts count: {len(art.parts) if art.parts else 0}")
+                    
                     if task.status.message:
                         response_parts.extend(
                             await self.convert_parts(task.status.message.parts, tool_context)
@@ -2788,6 +2860,20 @@ Answer with just JSON:
                             response_parts.extend(
                                 await self.convert_parts(artifact.parts, tool_context)
                             )
+
+                    # DEBUG: Log what's now in _latest_processed_parts after conversion
+                    if hasattr(session_context, "_latest_processed_parts"):
+                        latest = session_context._latest_processed_parts
+                        print(f"🔍 [DEBUG] After convert_parts, _latest_processed_parts has {len(latest)} items:")
+                        for idx, item in enumerate(latest):
+                            if isinstance(item, (TextPart, DataPart, FilePart)):
+                                print(f"  • Item {idx}: {type(item).__name__}")
+                            elif isinstance(item, dict):
+                                print(f"  • Item {idx}: dict (keys={list(item.keys())[:5]}...)")
+                            elif isinstance(item, str):
+                                print(f"  • Item {idx}: string (len={len(item)})")
+                            else:
+                                print(f"  • Item {idx}: {type(item)}")
 
                     self._update_last_host_turn(session_context, agent_name, response_parts)
                     
@@ -3827,8 +3913,18 @@ Original request: {message}"""
             print(f"📝 Step 3: Creating inbound response parts...")
             response_parts = []
             for i, response in enumerate(host_response):
+                # Skip artifact dicts - they're for UI display, not for memory storage
+                if isinstance(response, dict) and ('artifact-uri' in response or 'artifact-id' in response):
+                    print(f"📝 Step 3.{i+1}: Skipping artifact dict (not storing in memory)")
+                    continue
+                    
                 print(f"📝 Step 3.{i+1}: Creating Part for response {i+1}")
-                text_part = TextPart(kind="text", text=response)
+                # Convert non-string responses to JSON string
+                if isinstance(response, str):
+                    text = response
+                else:
+                    text = json.dumps(response, ensure_ascii=False)
+                text_part = TextPart(kind="text", text=text)
                 part = Part(root=text_part)
                 response_parts.append(part)
                 print(f"✅ Step 3.{i+1}: Created Part successfully")
@@ -3966,7 +4062,30 @@ Original request: {message}"""
             print(f"🔍 DEBUG: Agent mode set to: {agent_mode}")
             # Reset any cached parts from prior turns so we don't resend stale attachments
             if hasattr(session_context, "_latest_processed_parts"):
-                session_context._latest_processed_parts = []
+                # In agent mode, preserve files so they flow between agents
+                # In user mode, clear stale attachments from previous turns
+                if not session_context.agent_mode:
+                    session_context._latest_processed_parts = []
+                else:
+                    # Keep files but log for debugging
+                    file_count = len(session_context._latest_processed_parts)
+                    print(f"📎 [Agent Mode] Preserving {file_count} file parts for agent-to-agent communication")
+                    # Log file details for debugging
+                    for idx, part in enumerate(session_context._latest_processed_parts):
+                        if hasattr(part, 'root'):
+                            if isinstance(part.root, FilePart):
+                                file_name = getattr(part.root.file, 'name', 'unknown')
+                                file_role = (part.root.metadata or {}).get("role", "no-role")
+                                print(f"  • File {idx}: {file_name} (role={file_role})")
+                            elif isinstance(part.root, DataPart) and isinstance(part.root.data, dict):
+                                role = part.root.data.get('role', 'no-role')
+                                name = part.root.data.get('file-name', 'unknown')
+                                uri = part.root.data.get('artifact-uri', 'no-uri')
+                                print(f"  • DataPart {idx}: {name} (role={role}, uri={uri[:50]}...)")
+                        elif isinstance(part, dict):
+                            role = part.get('role', 'no-role')
+                            name = part.get('file-name', part.get('name', 'unknown'))
+                            print(f"  • Dict {idx}: {name} (role={role})")
             
             # Create or get thread
             thread_created = False
@@ -4302,8 +4421,43 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
                             final_response = self._extract_message_content(messages[0])
                             print(f"✅ [Agent Mode] Final synthesis extracted: {final_response[:200] if final_response else '(EMPTY!)'}...")
                             
-                            # Return as list for compatibility
+                            # Include accumulated artifacts from orchestration (e.g., generated images)
+                            # This ensures the UI can display images with "Refine this image" buttons
                             final_responses = [final_response]
+                            print(f"🔍 [DEBUG] Checking for artifacts to include in final response...")
+                            print(f"🔍 [DEBUG] session_context has _latest_processed_parts: {hasattr(session_context, '_latest_processed_parts')}")
+                            if hasattr(session_context, '_latest_processed_parts'):
+                                print(f"🔍 [DEBUG] _latest_processed_parts length: {len(session_context._latest_processed_parts)}")
+                                artifact_dicts = []
+                                for idx, part in enumerate(session_context._latest_processed_parts):
+                                    print(f"🔍 [DEBUG] Part {idx}: type={type(part)}")
+                                    
+                                    # Check for wrapped Part objects with .root
+                                    if hasattr(part, 'root'):
+                                        print(f"🔍 [DEBUG] Part {idx} has .root, root type: {type(part.root)}")
+                                        if isinstance(part.root, DataPart) and isinstance(part.root.data, dict) and 'artifact-uri' in part.root.data:
+                                            print(f"🔍 [DEBUG] Part {idx} wrapped DataPart with artifact-uri ✓")
+                                            artifact_dicts.append(part.root.data)
+                                    
+                                    # Check for unwrapped DataPart objects (no .root)
+                                    elif isinstance(part, DataPart):
+                                        print(f"🔍 [DEBUG] Part {idx} is unwrapped DataPart, data type: {type(part.data)}")
+                                        if isinstance(part.data, dict) and 'artifact-uri' in part.data:
+                                            print(f"🔍 [DEBUG] Part {idx} unwrapped DataPart with artifact-uri ✓")
+                                            artifact_dicts.append(part.data)
+                                
+                                print(f"🔍 [DEBUG] Found {len(artifact_dicts)} artifact dicts")
+                                if artifact_dicts:
+                                    print(f"📦 [Agent Mode] Including {len(artifact_dicts)} artifact(s) in final response for UI display")
+                                    final_responses.extend(artifact_dicts)
+                                    for idx, artifact_data in enumerate(artifact_dicts):
+                                        uri = artifact_data.get('artifact-uri', '')
+                                        filename = artifact_data.get('file-name', 'unknown')
+                                        print(f"  • Artifact {idx+1}: {filename} (URI has SAS: {'?' in uri})")
+                                else:
+                                    print(f"⚠️ [DEBUG] No artifact dicts found in _latest_processed_parts")
+                            else:
+                                print(f"⚠️ [DEBUG] session_context does not have _latest_processed_parts")
                         else:
                             print(f"⚠️ [Agent Mode] No messages in synthesis response")
                             final_responses = ["Task orchestration completed successfully."]
@@ -5273,10 +5427,20 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
     async def convert_parts(self, parts: List[Part], tool_context: Any, context_id: str = None):
         rval = []
         print(f"convert_parts: processing {len(parts)} parts")
-        latest_parts: List[Any] = []
         session_context = getattr(tool_context, "state", None)
+        
+        # In agent mode, preserve existing parts; otherwise start fresh
         if session_context is not None:
+            if hasattr(session_context, "agent_mode") and session_context.agent_mode:
+                # Agent mode: Preserve existing files from previous agents
+                latest_parts = getattr(session_context, "_latest_processed_parts", [])
+                print(f"📎 [Agent Mode] Preserving {len(latest_parts)} existing file parts from previous agents")
+            else:
+                # User mode: Start fresh for each response
+                latest_parts: List[Any] = []
             setattr(session_context, "_latest_processed_parts", latest_parts)
+        else:
+            latest_parts: List[Any] = []
 
         for i, p in enumerate(parts):
             result = await self.convert_part(p, tool_context, context_id)
@@ -5304,6 +5468,11 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
                 or name_lower.endswith("_base.png")
                 or "_base" in name_lower
             ):
+                return "base"
+
+            # Recognize generated/edited images from image generator agents as base images
+            # This enables proper file exchange between agents (e.g., generator -> vision -> generator)
+            if "generated_" in name_lower or "edit_" in name_lower:
                 return "base"
 
             image_exts = (
@@ -5442,12 +5611,25 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
             elif isinstance(item, dict):
                 if item.get("kind") == "refine-image":
                     refine_payload = item
+                elif "artifact-uri" in item or "artifact-id" in item:
+                    # This is artifact metadata from an agent - wrap in DataPart
+                    artifact_uri = item.get("artifact-uri", "")
+                    print(f"📦 [DEBUG] Wrapping artifact dict in DataPart:")
+                    print(f"   artifact-uri (first 150 chars): {artifact_uri[:150]}")
+                    print(f"   Has SAS token (?): {'?' in artifact_uri}")
+                    artifact_data_part = DataPart(data=item)
+                    flattened_parts.append(artifact_data_part)
+                    # Don't add to latest_parts here - it will be added via extend below to avoid duplicates
+                    _register_part_uri(artifact_data_part, item.get("artifact-uri"))
+                    if item.get("role"):
+                        _register_role(item.get("artifact-uri"), item.get("role"))
                 else:
                     text = item.get("response") or item.get("text") or json.dumps(item, ensure_ascii=False)
                     flattened_parts.append(TextPart(text=text))
             elif item is not None:
                 flattened_parts.append(TextPart(text=str(item)))
 
+        # Add all flattened parts to latest_parts (includes artifacts already wrapped in DataParts above)
         latest_parts.extend(flattened_parts)
 
         if refine_payload:
@@ -5490,6 +5672,18 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
 
         _apply_assigned_roles(flattened_parts)
         _apply_assigned_roles(latest_parts)
+
+        # DEBUG: Log what we're returning
+        print(f"🔍 [DEBUG] convert_parts returning {len(flattened_parts)} parts:")
+        for idx, part in enumerate(flattened_parts):
+            if isinstance(part, (TextPart, DataPart, FilePart)):
+                print(f"  • Part {idx}: {type(part).__name__} (kind={getattr(part, 'kind', 'N/A')})")
+            elif isinstance(part, dict):
+                print(f"  • Part {idx}: dict with keys={list(part.keys())}")
+            elif isinstance(part, str):
+                print(f"  • Part {idx}: string (length={len(part)})")
+            else:
+                print(f"  • Part {idx}: {type(part)}")
 
         return flattened_parts
 

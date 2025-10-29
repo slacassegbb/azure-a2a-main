@@ -5,7 +5,7 @@ import { CheckCircle2, Loader, Workflow } from "lucide-react"
 import { useEffect, useRef } from "react"
 
 type InferenceStepsProps = {
-  steps: { agent: string; status: string }[]
+  steps: { agent: string; status: string; imageUrl?: string; imageName?: string }[]
   isInferencing: boolean
 }
 
@@ -32,11 +32,25 @@ export function InferenceSteps({ steps, isInferencing }: InferenceStepsProps) {
             className="space-y-2 max-h-48 overflow-y-auto scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-transparent"
           >
             {steps.map((step, index) => (
-              <li key={index} className="flex items-center gap-2 text-xs text-muted-foreground">
-                <CheckCircle2 className="h-3 w-3 text-green-500 flex-shrink-0" />
-                <span>
-                  <span className="font-semibold text-foreground">{step.agent}:</span> {step.status}
-                </span>
+              <li key={index} className="flex items-start gap-2 text-xs text-muted-foreground">
+                <CheckCircle2 className="h-3 w-3 text-green-500 flex-shrink-0 mt-0.5" />
+                <div className="flex-1 min-w-0">
+                  <span>
+                    <span className="font-semibold text-foreground">{step.agent}:</span> {step.status}
+                  </span>
+                  {step.imageUrl && (
+                    <div className="mt-1">
+                      <img 
+                        src={step.imageUrl} 
+                        alt={step.imageName || 'Generated image'}
+                        className="w-20 h-20 object-cover rounded border border-gray-200"
+                        onError={(e) => {
+                          e.currentTarget.style.display = 'none'
+                        }}
+                      />
+                    </div>
+                  )}
+                </div>
               </li>
             ))}
           </ul>
@@ -57,11 +71,25 @@ export function InferenceSteps({ steps, isInferencing }: InferenceStepsProps) {
         <AccordionContent>
           <ul className="space-y-2 pt-2 max-h-48 overflow-y-auto scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-transparent">
             {steps.map((step, index) => (
-              <li key={index} className="flex items-center gap-2 text-sm text-muted-foreground">
-                <CheckCircle2 className="h-4 w-4 text-green-500 flex-shrink-0" />
-                <span>
-                  <span className="font-semibold text-foreground">{step.agent}:</span> {step.status}
-                </span>
+              <li key={index} className="flex items-start gap-2 text-sm text-muted-foreground">
+                <CheckCircle2 className="h-4 w-4 text-green-500 flex-shrink-0 mt-0.5" />
+                <div className="flex-1 min-w-0">
+                  <span>
+                    <span className="font-semibold text-foreground">{step.agent}:</span> {step.status}
+                  </span>
+                  {step.imageUrl && (
+                    <div className="mt-1">
+                      <img 
+                        src={step.imageUrl} 
+                        alt={step.imageName || 'Generated image'}
+                        className="w-24 h-24 object-cover rounded border border-gray-200"
+                        onError={(e) => {
+                          e.currentTarget.style.display = 'none'
+                        }}
+                      />
+                    </div>
+                  )}
+                </div>
               </li>
             ))}
           </ul>

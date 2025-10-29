@@ -293,12 +293,13 @@ Your mission is to transform user prompts into detailed creative briefs, gather 
 ## Core Responsibilities
 
 1. Clarify the creative intent, subject, mood, style, and technical settings.
-2. Suggest refinements (lighting, composition, palettes) when prompts are underspecified.
+2. When a prompt is underspecified, you may suggest possible refinements (lighting, composition, palettes) in your TEXT RESPONSE, but DO NOT automatically apply them.
 3. Reference documents in `documents/` for brand, palette, or art direction when helpful.
 4. Keep prompts safe, avoiding disallowed or copyrighted content.
-5. Call `generate_image` with a concise, production-ready prompt and optional style metadata.
-6. When refining an existing image, pass along any reference attachments that arrive in the conversation (for example FileParts with SAS URIs). If an explicit `image_url`/`mask_url` parameter is provided, use it; otherwise infer refinement mode from the available attachments.
-6. Return a summary of the generated image concept and tool output.
+5. **CRITICAL**: Call `generate_image` EXACTLY ONCE per user request. Do NOT generate an image and then immediately refine it unless explicitly asked to do so.
+6. **CRITICAL**: ALWAYS set `n=1` to generate exactly ONE image per request. NEVER generate multiple images (n > 1) unless explicitly asked.
+7. When refining an existing image, pass along any reference attachments that arrive in the conversation (for example FileParts with SAS URIs). If an explicit `image_url`/`mask_url` parameter is provided, use it; otherwise infer refinement mode from the available attachments.
+8. Return a summary of the generated image concept and tool output.
 
 ### Multi-turn Refinement
 - If the user says "refine the previous image" or provides a URL, call `generate_image` with that URL in `image_url` and describe the refinement in the prompt.
@@ -1158,6 +1159,12 @@ Always validate the prompt for safety before invoking the tool.
         style = payload.get("style")
         size = payload.get("size", "1024x1024")
         n_images = int(payload.get("n", 1))
+        
+        # SAFETY: Force n=1 for agent-to-agent mode to prevent multiple image generation
+        # This prevents the agent from creating variations when a single image is requested
+        if n_images > 1:
+            logger.warning(f"Agent requested n={n_images} images, forcing n=1 for agent-to-agent mode")
+            n_images = 1
 
         requested_model_raw = payload.get("model")
         if isinstance(requested_model_raw, str) and requested_model_raw.strip() and requested_model_raw.strip() != "gpt-image-1":
@@ -1301,6 +1308,8 @@ Always validate the prompt for safety before invoking the tool.
                         "provider-image-call-id": entry.get("image_call_id"),
                         "provider": "openai",
                         "model": model_to_use,
+                        "role": "base",  # Explicitly mark generated images as base for agent-to-agent file exchange
+                        "metadata": {"role": "base"},  # Include in metadata for a2a protocol
                     }
                     artifact_record["local-path"] = str(saved_path)
                     if entry.get("file_size_bytes") is not None:
@@ -1749,6 +1758,8 @@ Always validate the prompt for safety before invoking the tool.
                         "provider-image-call-id": entry.get("image_call_id"),
                         "provider": "openai",
                         "model": model,
+                        "role": "base",  # Explicitly mark edited images as base for agent-to-agent file exchange
+                        "metadata": {"role": "base"},  # Include in metadata for a2a protocol
                     }
                     artifact_record["local-path"] = str(saved_path)
                     if entry.get("file_size_bytes") is not None:

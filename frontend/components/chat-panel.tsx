@@ -47,7 +47,7 @@ type Message = {
   content?: string
   agent?: string
   type?: "inference_summary"
-  steps?: { agent: string; status: string }[]
+  steps?: { agent: string; status: string; imageUrl?: string; imageName?: string }[]
   // Just username for showing who sent the message
   username?: string
   // User color for the avatar
@@ -420,7 +420,7 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode }: ChatPanelProps) {
   const [messages, setMessages] = useState<Message[]>(initialMessages)
   const [input, setInput] = useState("")
   const [isInferencing, setIsInferencing] = useState(false)
-  const [inferenceSteps, setInferenceSteps] = useState<{ agent: string; status: string }[]>([])
+  const [inferenceSteps, setInferenceSteps] = useState<{ agent: string; status: string; imageUrl?: string; imageName?: string }[]>([])
   const [activeNode, setActiveNode] = useState<string | null>(null)
   const [processedMessageIds, setProcessedMessageIds] = useState<Set<string>>(new Set())
   const [uploadedFiles, setUploadedFiles] = useState<any[]>([])
@@ -682,23 +682,25 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode }: ChatPanelProps) {
           const textContent = data.content.find((c: any) => c.type === "text")?.content || ""
           const imageContents = data.content.filter((c: any) => c.type === "image")
           console.log("[ChatPanel] Image parts count:", imageContents.length)
+          // Disable markdown URL extraction - images should come from file_uploaded events with proper SAS tokens
+          // Extracting URLs from text can result in URLs without access tokens
           const derivedImageAttachments = [] as any[]
-          const markdownUrlRegex = /\[[^\]]*\]\((https?:\/\/[^)]+)\)|(https?:\/\/[^\s]+\.(?:png|jpe?g|gif|webp)(?:\?[^\s)]+)?)/gi
-          let match: RegExpExecArray | null
-          while ((match = markdownUrlRegex.exec(textContent)) !== null) {
-            const url = (match[1] || match[2] || "").trim()
-            if (!url) continue
-            const extension = url.split('?')[0].toLowerCase().split('.').pop()
-            if (!extension || !["png", "jpg", "jpeg", "gif", "webp"].includes(extension)) {
-              continue
-            }
-            const uriWithToken = url
-            derivedImageAttachments.push({
-              uri: uriWithToken,
-              mediaType: `image/${extension === "jpg" ? "jpeg" : extension}`,
-              fileName: url.split("/").pop() || `image.${extension}`,
-            })
-          }
+          // const markdownUrlRegex = /\[[^\]]*\]\((https?:\/\/[^)]+)\)|(https?:\/\/[^\s]+\.(?:png|jpe?g|gif|webp)(?:\?[^\s)]+)?)/gi
+          // let match: RegExpExecArray | null
+          // while ((match = markdownUrlRegex.exec(textContent)) !== null) {
+          //   const url = (match[1] || match[2] || "").trim()
+          //   if (!url) continue
+          //   const extension = url.split('?')[0].toLowerCase().split('.').pop()
+          //   if (!extension || !["png", "jpg", "jpeg", "gif", "webp"].includes(extension)) {
+          //     continue
+          //   }
+          //   const uriWithToken = url
+          //   derivedImageAttachments.push({
+          //     uri: uriWithToken,
+          //     mediaType: `image/${extension === "jpg" ? "jpeg" : extension}`,
+          //     fileName: url.split("/").pop() || `image.${extension}`,
+          //   })
+          // }
           let agentName = data.agentName || "System"
           
           // If this is a new agent we haven't seen before, register it
@@ -827,6 +829,7 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode }: ChatPanelProps) {
     subscribe("tool_call", handleToolCall)
     subscribe("tool_response", handleToolResponse)
     subscribe("remote_agent_activity", handleRemoteAgentActivity)
+    subscribe("file_uploaded", handleFileUploaded)
 
     return () => {
       unsubscribe("task_updated", handleTaskUpdate)
@@ -844,6 +847,7 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode }: ChatPanelProps) {
       unsubscribe("tool_call", handleToolCall)
       unsubscribe("tool_response", handleToolResponse)
       unsubscribe("remote_agent_activity", handleRemoteAgentActivity)
+      unsubscribe("file_uploaded", handleFileUploaded)
     }
   }, [subscribe, unsubscribe, emit])
 
@@ -919,6 +923,25 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode }: ChatPanelProps) {
         setInferenceSteps(prev => [...prev, { 
           agent: data.agentName, 
           status: data.content 
+        }])
+      }
+    }
+
+    // Handle file uploaded events from agents
+    const handleFileUploaded = (data: any) => {
+      console.log("[ChatPanel] File uploaded from agent:", data)
+      if (data?.fileInfo && data.fileInfo.source_agent) {
+        const isImage = data.fileInfo.content_type?.startsWith('image/') || 
+          ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp'].includes(
+            (data.fileInfo.filename || '').toLowerCase().split('.').pop() || ''
+          )
+        
+        // Add to inference steps (with thumbnail for images, text for other files)
+        setInferenceSteps(prev => [...prev, { 
+          agent: data.fileInfo.source_agent, 
+          status: `📎 Generated ${data.fileInfo.filename}`,
+          imageUrl: isImage && data.fileInfo.uri ? data.fileInfo.uri : undefined,
+          imageName: data.fileInfo.filename
         }])
       }
     }
