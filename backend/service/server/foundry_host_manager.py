@@ -191,12 +191,13 @@ class FoundryHostManager(ApplicationManager):
             messageId=str(uuid.uuid4()),
         )
 
-    async def process_message(self, message: Message):
+    async def process_message(self, message: Message, agent_mode: bool = False):
         await self.ensure_host_agent_initialized()
         message_id = get_message_id(message)
         if message_id:
             self._pending_message_ids.append(message_id)
         context_id = get_context_id(message) or str(uuid.uuid4())
+        print(f"[DEBUG] process_message: Agent Mode = {agent_mode}")
         conversation = self.get_conversation(context_id)
         if not conversation:
             conversation = Conversation(conversation_id=context_id, is_active=True)
@@ -230,15 +231,18 @@ class FoundryHostManager(ApplicationManager):
                 import traceback
                 traceback.print_exc()
         
+        print("[DEBUG] About to append message to conversation...")
         self._messages.append(message)
         if conversation:
             conversation.messages.append(message)
+        print("[DEBUG] About to add event...")
         self.add_event(Event(
             id=str(uuid.uuid4()),
             actor='user',
             content=message,
             timestamp=__import__('datetime').datetime.utcnow().timestamp(),
         ))
+        print("[DEBUG] About to create task...")
         # Create a Task for this request (ADK parity)
         task_id = str(uuid.uuid4())
         task_description = message.parts[0].root.text if message.parts else "Agent task"
@@ -280,6 +284,7 @@ class FoundryHostManager(ApplicationManager):
             import traceback
             traceback.print_exc()
         
+        print("[DEBUG] Task creation complete, setting up event logger...")
         # Route to FoundryHostAgent
         tool_call_events = []
         def event_logger(event_dict):
@@ -423,8 +428,8 @@ class FoundryHostManager(ApplicationManager):
                     pass
         # Pass the entire message with all parts (including files) to the host agent
         user_text = message.parts[0].root.text if message.parts and message.parts[0].root.kind == 'text' else ""
-        print(f"[DEBUG] About to call run_conversation_with_parts with message parts: {len(message.parts)} parts")
-        responses = await self._host_agent.run_conversation_with_parts(message.parts, context_id, event_logger=event_logger)
+        print(f"[DEBUG] About to call run_conversation_with_parts with message parts: {len(message.parts)} parts, agent_mode: {agent_mode}")
+        responses = await self._host_agent.run_conversation_with_parts(message.parts, context_id, event_logger=event_logger, agent_mode=agent_mode)
         print(f"[DEBUG] FoundryHostAgent responses count: {len(responses) if responses else 'None'}")
         print(f"[DEBUG] FoundryHostAgent responses: {responses}")
         
@@ -589,6 +594,19 @@ class FoundryHostManager(ApplicationManager):
                         if content_item.get("type") == "image":
                             print(f"[DEBUG] Found file content with uri: {content_item.get('uri')}")
                         if content_item.get("type") == "image" and content_item.get("uri"):
+                            # Emit file_uploaded event so it appears in File History
+                            file_info = {
+                                "file_id": str(uuid.uuid4()),
+                                "filename": content_item.get("fileName", "agent-artifact.png"),
+                                "uri": content_item.get("uri"),
+                                "size": content_item.get("fileSize", 0),
+                                "content_type": content_item.get("mediaType", "image/png"),
+                                "source_agent": actor_name,
+                                "contextId": context_id
+                            }
+                            await streamer.stream_file_uploaded(file_info, context_id)
+                            print(f"[DEBUG] File uploaded event sent for agent artifact: {file_info['filename']}")
+                            
                             await streamer._send_event(
                                 "remote_agent_activity",
                                 {

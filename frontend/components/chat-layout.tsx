@@ -26,6 +26,7 @@ export function ChatLayout() {
   const DEBUG = process.env.NEXT_PUBLIC_DEBUG_LOGS === 'true'
   const [isLeftSidebarCollapsed, setLeftSidebarCollapsed] = useState(false)
   const [isRightSidebarCollapsed, setRightSidebarCollapsed] = useState(false)
+  const [agentMode, setAgentMode] = useState(false)
 
   // This state represents the Host Agent's knowledge of registered agents.
   // It starts empty and gets populated by the WebSocket agent registry sync.
@@ -107,7 +108,13 @@ export function ChatLayout() {
     }
 
     const handleFileUploaded = (data: any) => {
-      if (DEBUG) console.log("[ChatLayout] File uploaded")
+      if (DEBUG) console.log("[ChatLayout] File uploaded:", data)
+      
+      // Add file to File History
+      if (data?.fileInfo && (window as any).addFileToHistory) {
+        (window as any).addFileToHistory(data.fileInfo)
+        console.log("[ChatLayout] Added file to history:", data.fileInfo.filename)
+      }
     }
 
     const handleFormSubmitted = (data: any) => {
@@ -162,7 +169,7 @@ export function ChatLayout() {
         {/* Main Chat Area */}
         <Panel defaultSize={60} minSize={40}>
           <div className="flex flex-col min-w-0 border-x h-full">
-            <ChatPanel dagNodes={dagNodes} dagLinks={dagLinks} />
+            <ChatPanel dagNodes={dagNodes} dagLinks={dagLinks} agentMode={agentMode} />
           </div>
         </Panel>
         
@@ -174,6 +181,8 @@ export function ChatLayout() {
             registeredAgents={registeredAgents}
             isCollapsed={isRightSidebarCollapsed}
             onToggle={() => setRightSidebarCollapsed(!isRightSidebarCollapsed)}
+            agentMode={agentMode}
+            onAgentModeChange={setAgentMode}
           />
         </Panel>
       </PanelGroup>

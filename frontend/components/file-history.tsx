@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Badge } from "@/components/ui/badge"
-import { Trash2, Download, Eye } from "lucide-react"
+import { Trash2, Download, Eye, ExternalLink } from "lucide-react"
 
 interface FileRecord {
   id: string
@@ -165,9 +165,22 @@ export function FileHistory({ className, onFileSelect }: FileHistoryProps) {
                       <span className="text-sm mt-0.5">{getFileIcon(file.filename, file.contentType)}</span>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-1">
-                          <span className="text-xs font-medium truncate" title={file.originalName}>
-                            {file.originalName}
-                          </span>
+                          {file.uri ? (
+                            <a
+                              href={file.uri}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-xs font-medium truncate hover:underline hover:text-blue-600 flex items-center gap-1 group"
+                              title={`${file.originalName} - Click to open in new tab`}
+                            >
+                              <span className="truncate">{file.originalName}</span>
+                              <ExternalLink size={10} className="flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" />
+                            </a>
+                          ) : (
+                            <span className="text-xs font-medium truncate" title={file.originalName}>
+                              {file.originalName}
+                            </span>
+                          )}
                         </div>
                         <div className="flex items-center gap-2 mt-1">
                           <span className="text-xs text-muted-foreground">

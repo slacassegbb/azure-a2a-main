@@ -8,6 +8,8 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Textarea } from "@/components/ui/textarea"
+import { Switch } from "@/components/ui/switch"
+import { Label } from "@/components/ui/label"
 import { PanelRightClose, PanelRightOpen, ShieldCheck, ChevronDown, ChevronRight, Globe, Hash, Zap, FileText, ExternalLink, Settings, Clock, CheckCircle, XCircle, AlertCircle, Pause, Brain, Search, MessageSquare, Database, Shield, BarChart3, Gavel, Users, Bot, Trash2, User } from "lucide-react"
 import { SimulateAgentRegistration } from "./simulate-agent-registration"
 import { ConnectedUsers } from "./connected-users"
@@ -73,6 +75,8 @@ type Props = {
   registeredAgents: Agent[]
   isCollapsed: boolean
   onToggle: () => void
+  agentMode: boolean
+  onAgentModeChange: (enabled: boolean) => void
 }
 
 // Store persistent color assignments for agents
@@ -121,7 +125,7 @@ function hasHumanInteractionSkill(agent: Agent): boolean {
   return agent.skills?.some(skill => skill.id === 'human_interaction') ?? false
 }
 
-export function AgentNetwork({ registeredAgents, isCollapsed, onToggle }: Props) {
+export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, agentMode, onAgentModeChange }: Props) {
   const [expandedAgents, setExpandedAgents] = useState<Set<string>>(new Set())
   const [isSystemPromptDialogOpen, setIsSystemPromptDialogOpen] = useState(false)
   const [currentInstruction, setCurrentInstruction] = useState("")
@@ -783,6 +787,32 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle }: Props)
                   <span className="text-sm font-medium text-muted-foreground">Connected Users</span>
                 </div>
                 <ConnectedUsers />
+              </div>
+            )}
+            
+            {/* Agent Mode Toggle */}
+            {!isCollapsed && (
+              <div className="mb-4 px-1">
+                <Card className="p-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Brain className="h-4 w-4 text-muted-foreground" />
+                      <Label htmlFor="agent-mode" className="text-sm font-medium cursor-pointer">
+                        Agent Mode
+                      </Label>
+                    </div>
+                    <Switch 
+                      id="agent-mode"
+                      checked={agentMode} 
+                      onCheckedChange={onAgentModeChange}
+                    />
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-2">
+                    {agentMode 
+                      ? "Using specialized agent-to-agent communication mode" 
+                      : "Using standard multi-agent orchestration mode"}
+                  </p>
+                </Card>
               </div>
             )}
             

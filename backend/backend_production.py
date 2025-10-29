@@ -1000,6 +1000,72 @@ Read-Host "Press Enter to close this window"
                 "message": f"Error starting agent: {str(e)}"
             }
 
+    # Helper function to upload to Azure Blob Storage
+    def upload_to_azure_blob(file_id: str, file_name: str, file_bytes: bytes, mime_type: str) -> str:
+        """Upload file to Azure Blob Storage and return public SAS URL."""
+        try:
+            from azure.storage.blob import BlobServiceClient, generate_blob_sas, BlobSasPermissions, ContentSettings
+            
+            # Get Azure connection details
+            connection_string = os.getenv('AZURE_STORAGE_CONNECTION_STRING')
+            if not connection_string:
+                print(f"[WARN] AZURE_STORAGE_CONNECTION_STRING not set, returning local path")
+                return f"/uploads/{file_id}"
+            
+            # Initialize blob client
+            blob_service_client = BlobServiceClient.from_connection_string(connection_string)
+            container_name = os.getenv('AZURE_BLOB_CONTAINER', 'a2a-files')
+            
+            # Generate blob name
+            safe_file_name = file_name.replace('/', '_').replace('\\', '_')
+            blob_name = f"uploads/{file_id}/{safe_file_name}"
+            
+            # Upload to blob
+            blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob_name)
+            content_settings = ContentSettings(
+                content_type=mime_type,
+                content_disposition=f'inline; filename="{file_name}"'
+            )
+            
+            blob_client.upload_blob(
+                file_bytes,
+                content_settings=content_settings,
+                metadata={
+                    'file_id': file_id,
+                    'original_name': file_name,
+                    'upload_time': datetime.now(UTC).isoformat()
+                },
+                overwrite=True
+            )
+            
+            # Generate SAS token with 24-hour expiry
+            account_key = None
+            for part in connection_string.split(';'):
+                if part.startswith('AccountKey='):
+                    account_key = part.split('=', 1)[1]
+                    break
+            
+            if account_key:
+                sas_token = generate_blob_sas(
+                    account_name=blob_client.account_name,
+                    container_name=container_name,
+                    blob_name=blob_name,
+                    account_key=account_key,
+                    permission=BlobSasPermissions(read=True),
+                    expiry=datetime.now(UTC) + timedelta(hours=24),
+                    version="2023-11-03"
+                )
+                blob_url = f"{blob_client.url}?{sas_token}"
+                print(f"[DEBUG] File uploaded to Azure Blob: {blob_url[:100]}...")
+                return blob_url
+            else:
+                print(f"[WARN] Could not generate SAS token, returning blob URL without SAS")
+                return blob_client.url
+                
+        except Exception as e:
+            print(f"[ERROR] Azure Blob upload failed: {e}, falling back to local storage")
+            return f"/uploads/{file_id}"
+
     # Add file upload endpoint
     @app.post("/upload")
     async def upload_file(file: UploadFile = File(...)):
@@ -1017,18 +1083,28 @@ Read-Host "Press Enter to close this window"
             filename = f"{file_id}{file_extension}"
             file_path = UPLOADS_DIR / filename
 
-            # Save file
+            # Read file content
+            content = await file.read()
+            
+            # Save file locally (as backup)
             with open(file_path, "wb") as buffer:
-                content = await file.read()
                 buffer.write(content)
             
             print(f"[DEBUG] File uploaded: {file.filename} -> {filename} ({len(content)} bytes)")
+            
+            # Upload to Azure Blob and get public SAS URL
+            blob_url = upload_to_azure_blob(
+                file_id=file_id,
+                file_name=file.filename or filename,
+                file_bytes=content,
+                mime_type=file.content_type or 'application/octet-stream'
+            )
             
             return {
                 "success": True,
                 "filename": file.filename,
                 "file_id": file_id,
-                "uri": f"/uploads/{file_id}",
+                "uri": blob_url,  # Now returns Azure Blob SAS URL
                 "size": len(content),
                 "content_type": file.content_type
             }

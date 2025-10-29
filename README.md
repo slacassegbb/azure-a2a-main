@@ -99,7 +99,7 @@ The **Host Orchestrator** acts as the core intelligence and coordination hub:
 ```bash
 cd backend
 python3 -m venv .venv    # (Windows: python -m venv venv)
-source venv/bin/activate # (Windows: .env\Scripts\Activate.ps1)
+source venv/bin/activate # (Windows: .\venv\Scripts\Activate.ps1)
 python -m pip install -r requirements.txt
 
 # Optional for Multi-Modal Document Processing
@@ -232,7 +232,7 @@ You can use them as-is to test your scenarios or treat them as templates for bui
 ```bash
 cd remote_agents/<agent-name>
 python3 -m venv .venv    # (Windows: python -m venv venv)
-source .venv/bin/activate # (Windows: .env\Scripts\Activate.ps1)
+source .venv/bin/activate # (Windows: .\venv\Scripts\Activate.ps11)
 pip install uv
 uv run .                  # use 'uv run . --ui' to run Gradio UI
 ```
@@ -248,7 +248,7 @@ To demonstrate cross-cloud remote agents outside Azure, you can use the speciali
 ```bash
 cd remote_agents/google-adk-agent   # or your path
 python3 -m venv .venv    # (Windows: python -m venv venv)
-source .venv/bin/activate # (Windows: .env\Scripts\Activate.ps1)
+source .venv/bin/activate # (Windows: .\venv\Scripts\Activate.ps1)
 pip install a2a-sdk
 python __main__.py
 ```
@@ -279,7 +279,7 @@ python -m mcp_server_servicenow.cli --transport http --host 127.0.0.1 --port 800
 # Launch the Customer Support MCP Agent with UI
 cd remote_agents/azurefoundry_SN
 python3 -m venv .venv    # (Windows: python -m venv venv)
-source .venv/bin/activate # (Windows: .env\Scripts\Activate.ps1)
+source .venv/bin/activate # (Windows: .\venv\Scripts\Activate.ps1)
 uv run . --ui            # use --ui to also load the Gradio app on localhost
 ```
 

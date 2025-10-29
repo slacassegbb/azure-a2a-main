@@ -227,6 +227,10 @@ class ConversationServer:
 
     async def _send_message(self, request: Request):
         message_data = await request.json()
+        # Extract agent mode from params if present
+        agent_mode = message_data.get('params', {}).get('agentMode', False)
+        print(f"[DEBUG] _send_message: Agent Mode = {agent_mode}")
+        
         # Transform the message data to handle frontend format
         transformed_params = self._transform_message_data(message_data['params'])
         message = Message(**transformed_params)
@@ -243,7 +247,7 @@ class ConversationServer:
             )
         else:
             t = threading.Thread(
-                target=lambda: asyncio.run_coroutine_threadsafe(self.manager.process_message(message), main_loop)
+                target=lambda: asyncio.run_coroutine_threadsafe(self.manager.process_message(message, agent_mode), main_loop)
             )
         t.start()
         

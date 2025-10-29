@@ -401,9 +401,10 @@ function MaskEditorDialog({ open, imageUrl, onClose, onSave }: MaskEditorDialogP
 type ChatPanelProps = {
   dagNodes: any[]
   dagLinks: any[]
+  agentMode: boolean
 }
 
-export function ChatPanel({ dagNodes, dagLinks }: ChatPanelProps) {
+export function ChatPanel({ dagNodes, dagLinks, agentMode }: ChatPanelProps) {
   const DEBUG = process.env.NEXT_PUBLIC_DEBUG_LOGS === 'true'
   // Use the shared Event Hub hook so we subscribe to the same client as the rest of the app
   const { subscribe, unsubscribe, emit, sendMessage, isConnected } = useEventHub()
@@ -1277,7 +1278,8 @@ export function ChatPanel({ dagNodes, dagLinks }: ChatPanelProps) {
             messageId: userMessage.id,
             contextId: actualConversationId,
             role: 'user',
-            parts: parts
+            parts: parts,
+            agentMode: agentMode  // Include agent mode in message params
           }
         })
       })

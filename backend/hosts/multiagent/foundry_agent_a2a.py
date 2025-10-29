@@ -9,9 +9,10 @@ import logging
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import List, Dict, Any, Optional, Iterable
+from typing import List, Dict, Any, Optional, Iterable, Literal
 import httpx
 from dotenv import load_dotenv
+from openai import AsyncAzureOpenAI
 
 # --- OpenTelemetry and Azure Monitor imports ---
 from opentelemetry import trace
@@ -136,6 +137,7 @@ class SessionContext(BaseModel):
     task_state: Optional[str] = None
     session_active: bool = True
     retry_count: int = 0  # Add retry_count as a proper field
+    agent_mode: bool = False  # Agent mode flag for specialized prompts and behavior
     # Maintain per-agent task IDs to avoid sending a taskId created by a different agent.
     agent_task_ids: dict[str, str] = Field(default_factory=dict)
     # Track per-agent task states so we avoid reusing terminal tasks
@@ -147,6 +149,43 @@ class SessionContext(BaseModel):
     last_host_turn_agent: Optional[str] = Field(default=None)
     # Rolling list of host turns (newer entries at the end)
     host_turn_history: List[Dict[str, str]] = Field(default_factory=list)
+
+
+# --- Agent Mode Orchestration Models ---
+TaskStateEnum = Literal["pending", "running", "completed", "failed", "cancelled"]
+GoalStatus = Literal["incomplete", "completed"]
+
+
+class AgentModeTask(BaseModel):
+    """Represents a single remote-agent task within an agent mode plan."""
+    task_id: str = Field(..., description="Unique A2A task identifier.")
+    task_description: str = Field(..., description="Single remote-agent instruction.")
+    recommended_agent: Optional[str] = Field(None, description="Agent name to execute this task.")
+    output: Optional[Dict[str, Any]] = Field(None, description="A2A remote-agent output payload.")
+    state: TaskStateEnum = Field("pending", description="Current A2A task state.")
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    error_message: Optional[str] = Field(None, description="Error message if task failed.")
+
+
+class AgentModePlan(BaseModel):
+    """Overall plan anchored to a user goal, mutated by the host orchestrator."""
+    goal: str = Field(..., description="User query or objective.")
+    goal_status: GoalStatus = Field("incomplete", description="Completion state of the goal.")
+    tasks: List[AgentModeTask] = Field(default_factory=list, description="List of all tasks in the plan.")
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class NextStep(BaseModel):
+    """Structured delta returned by the Host Orchestrator LLM."""
+    goal_status: GoalStatus = Field(..., description="Whether the goal is completed or not.")
+    next_task: Optional[Dict[str, Optional[str]]] = Field(
+        None,
+        description='{"task_description": str, "recommended_agent": str|None} if incomplete, else null.'
+    )
+    reasoning: str = Field(..., description="Short explanation of the decision.")
+
 
 class FoundryHostAgent2:
     def __init__(
@@ -199,6 +238,9 @@ class FoundryHostAgent2:
         
         # Task evaluation settings
         self.enable_task_evaluation = enable_task_evaluation
+        
+        # Agent Mode: Track original goals for follow-up messages
+        self._active_conversations: Dict[str, str] = {}  # contextId -> original_goal
         self.max_retries = 2
 
         # Host conversation hand-off controls
@@ -647,7 +689,7 @@ class FoundryHostAgent2:
             print(f"❌ DEBUG: Exception in _http_list_messages: {e}")
             return []
 
-    async def _http_create_run(self, thread_id: str, agent_id: str) -> Dict[str, Any]:
+    async def _http_create_run(self, thread_id: str, agent_id: str, session_context: Optional[SessionContext] = None) -> Dict[str, Any]:
         """Create a run via HTTP API"""
         try:
             print(f"🔍 DEBUG: _http_create_run ENTRY - thread_id: {thread_id}, agent_id: {agent_id}")
@@ -660,9 +702,18 @@ class FoundryHostAgent2:
             api_url = f"{endpoint}/threads/{thread_id}/runs"
             print(f"🔍 DEBUG: API URL: {api_url}")
             
+            # Determine parallel_tool_calls and instructions based on agent mode
+            agent_mode = session_context.agent_mode if session_context else False
+            parallel_tool_calls = not agent_mode  # When agent mode is ON, parallel is OFF
+            print(f"🔍 DEBUG: Agent Mode: {agent_mode}, Parallel Tool Calls: {parallel_tool_calls}")
+            
+            # Get instructions based on agent mode
+            instructions = self.root_instruction('foundry-host-agent', agent_mode)
+            
             payload = {
                 "assistant_id": agent_id,  # Note: Azure AI Foundry uses 'assistant_id'
-                "parallel_tool_calls": True  # Serialize tool calls within the Foundry run
+                "parallel_tool_calls": parallel_tool_calls,
+                "instructions": instructions  # Override instructions based on agent mode
             }
             print(f"🔍 DEBUG: Payload: {payload}")
             
@@ -961,7 +1012,7 @@ class FoundryHostAgent2:
         ]
         return tools
 
-    def root_instruction(self, current_agent: str) -> str:
+    def root_instruction(self, current_agent: str, agent_mode: bool = False) -> str:
         # Check if we have a custom instruction override
         if self.custom_root_instruction:
             # Safely substitute known placeholders without breaking JSON braces or other content
@@ -969,6 +1020,30 @@ class FoundryHostAgent2:
             instruction = instruction.replace('{agents}', self.agents)
             instruction = instruction.replace('{current_agent}', current_agent)
             return instruction
+
+        # Use agent mode prompt if enabled
+        if agent_mode:
+            return f"""You are a specialized **Agent Coordinator** operating in agent-to-agent communication mode.
+                
+                In this mode, you act as a direct facilitator between specialized agents, focusing on:
+                1. **Sequential delegation**: Route tasks to agents one at a time based on their expertise
+                2. **Clear communication**: Provide precise instructions to each agent
+                3. **Information synthesis**: Collect responses and prepare coherent answers
+                4. **Minimal intervention**: Let agents handle their specialized tasks independently
+                
+                ### 🤖 AVAILABLE AGENTS
+                {self.agents}
+                
+                ### 🧠 CURRENT AGENT
+                {current_agent}
+                
+                ### 📋 GUIDELINES
+                - Route each request to the most appropriate single agent
+                - Wait for responses before coordinating with additional agents if needed
+                - Synthesize agent responses into clear, direct answers
+                - Maintain professional, efficient communication
+                
+                Focus on precision and clarity in agent-to-agent coordination."""
 
         return f""" You are an intelligent **Multi-Agent Orchestrator** designed to coordinate specialized agents to produce complete, personalized responses.  
                 Your goal is to understand the user's request, engage the right agents in the right order, and respond in a friendly, professional tone.
@@ -1031,6 +1106,333 @@ class FoundryHostAgent2:
             {'name': card.name, 'description': card.description}
             for card in self.cards.values()
         ]
+
+    async def _call_azure_openai_structured(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        response_model: type[BaseModel],
+        context_id: str
+    ) -> BaseModel:
+        """Call Azure OpenAI with structured output using OpenAI SDK."""
+        try:
+            print(f"🤖 [Agent Mode] Calling Azure OpenAI for structured output...")
+            await self._emit_status_event("Planning next task with AI...", context_id)
+            
+            # Extract base endpoint from AI Foundry project endpoint
+            endpoint = os.environ["AZURE_AI_FOUNDRY_PROJECT_ENDPOINT"]
+            model_name = os.environ["AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME"]
+            
+            # Get base endpoint: https://foundrya2a.services.ai.azure.com
+            base_endpoint = endpoint.split('/api/projects')[0] if '/api/projects' in endpoint else endpoint
+            print(f"🤖 [Agent Mode] Azure endpoint: {base_endpoint}")
+            print(f"🤖 [Agent Mode] Model deployment: {model_name}")
+            
+            # Get Azure credential token
+            from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+            credential = DefaultAzureCredential()
+            token_provider = get_bearer_token_provider(credential, "https://cognitiveservices.azure.com/.default")
+            
+            # Create Azure OpenAI client with token auth
+            client = AsyncAzureOpenAI(
+                azure_endpoint=base_endpoint,
+                azure_ad_token_provider=token_provider,
+                api_version="2024-08-01-preview"  # Version that supports structured outputs
+            )
+            
+            print(f"🤖 [Agent Mode] Making structured output request with OpenAI SDK...")
+            
+            # Use OpenAI SDK's parse method for structured outputs
+            completion = await client.beta.chat.completions.parse(
+                model=model_name,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                response_format=response_model,
+                temperature=0.7,
+                max_tokens=2000
+            )
+            
+            parsed = completion.choices[0].message.parsed
+            print(f"🤖 [Agent Mode] Got structured response: {parsed.model_dump_json()[:200]}...")
+            return parsed
+                    
+        except Exception as e:
+            print(f"❌ [Agent Mode] Error calling Azure OpenAI: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
+
+    async def _agent_mode_orchestration_loop(
+        self,
+        user_message: str,
+        context_id: str,
+        session_context: SessionContext,
+        event_logger=None
+    ) -> List[str]:
+        """
+        Agent Mode orchestration loop: iteratively plan and execute tasks until goal is complete.
+        Returns list of response strings for final synthesis.
+        """
+        print(f"🎯 [Agent Mode] Starting orchestration loop for goal: {user_message[:100]}...")
+        await self._emit_status_event("Initializing Agent Mode orchestration...", context_id)
+        
+        # Determine if this is a follow-up or new conversation
+        if context_id in self._active_conversations:
+            # Follow-up message - append to original goal
+            original_goal = self._active_conversations[context_id]
+            goal_text = f"{original_goal}\n\n[Additional Information Provided]: {user_message}"
+            print(f"🔄 [Agent Mode] Follow-up detected - appending to original goal")
+        else:
+            # New conversation - track it
+            goal_text = user_message
+            self._active_conversations[context_id] = user_message
+            print(f"🆕 [Agent Mode] New conversation started")
+        
+        # Initialize plan
+        plan = AgentModePlan(goal=goal_text, goal_status="incomplete")
+        iteration = 0
+        max_iterations = 20  # Safety limit
+        
+        # Collect all responses for final synthesis
+        all_task_outputs = []
+        
+        # Log initial plan
+        print(f"\n{'='*80}")
+        print(f"📋 [Agent Mode] INITIAL PLAN")
+        print(f"{'='*80}")
+        print(f"Goal: {plan.goal}")
+        print(f"Status: {plan.goal_status}")
+        print(f"Tasks: {len(plan.tasks)} (empty initially)")
+        print(f"{'='*80}\n")
+        
+        # System prompt for orchestrator
+        system_prompt = """You are the Host Orchestrator in an A2A multi-agent system.
+
+Responsibilities:
+- Evaluate whether the user's goal is achieved based on the full plan (all tasks, states, and outputs).
+- If the goal is incomplete, propose exactly ONE next remote-agent task that advances the goal.
+
+Guidelines:
+- Always reason over the entire plan; do not ignore earlier tasks or outputs.
+- Never alter or repeat completed tasks unless retrying is justified.
+- Keep each next task atomic and delegable to a single agent.
+- If no agent fits, set recommended_agent=null.
+- If the goal is achieved, return goal_status="completed" and next_task=null.
+- Consider failed tasks in your planning - you can retry with modifications or try alternative approaches.
+
+### 🎯 DELEGATION FIRST PRINCIPLE
+- ALWAYS delegate to an appropriate agent if you have ANY actionable information related to the goal
+- Even if information seems incomplete, let the AGENT decide if they can proceed or need more details
+- Do NOT pre-emptively decide "we need more info" without trying to delegate first
+- The agents are experts - trust them to handle their domain and ask for what they need
+
+### 🚨 CRITICAL: WHEN TO STOP (LOOP DETECTION & USER INPUT)
+- ONLY mark goal as "completed" in these specific cases:
+  1. The goal is actually fully accomplished with successful task outputs
+  2. You have 2+ completed tasks where agents explicitly asked the USER for information
+  3. The last agent response clearly states they need user input to proceed
+- If NO tasks have been created yet, DO NOT mark as completed - create a task first!
+- When agents request information, synthesize their questions and present to the user
+- When the user provides information in a follow-up, create a NEW task with that information"""
+        
+        while plan.goal_status == "incomplete" and iteration < max_iterations:
+            iteration += 1
+            print(f"🔄 [Agent Mode] Iteration {iteration}/{max_iterations}")
+            await self._emit_status_event(f"Planning step {iteration}...", context_id)
+            
+            # Build user prompt with current plan state
+            available_agents = [
+                {"name": card.name, "description": card.description}
+                for card in self.cards.values()
+            ]
+            
+            user_prompt = f"""Goal:
+{plan.goal}
+
+Current Plan (JSON):
+{json.dumps(plan.model_dump(), indent=2, default=str)}
+
+Available Agents (JSON):
+{json.dumps(available_agents, indent=2)}
+
+Analyze the plan and determine the next step. If you need information that isn't in the goal or task outputs above, mark the goal as completed to request it from the user."""
+            
+            # Get next step from orchestrator
+            try:
+                next_step = await self._call_azure_openai_structured(
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    response_model=NextStep,
+                    context_id=context_id
+                )
+                
+                print(f"🤖 [Agent Mode] Orchestrator decision: {next_step.reasoning}")
+                print(f"🤖 [Agent Mode] Goal status: {next_step.goal_status}")
+                await self._emit_status_event(f"Reasoning: {next_step.reasoning}", context_id)
+                
+                # Update plan status
+                plan.goal_status = next_step.goal_status
+                plan.updated_at = datetime.utcnow()
+                
+                # Log plan state after orchestrator decision
+                print(f"\n{'='*80}")
+                print(f"📋 [Agent Mode] PLAN STATE (Iteration {iteration})")
+                print(f"{'='*80}")
+                print(f"Goal: {plan.goal}")
+                print(f"Goal Status: {plan.goal_status}")
+                print(f"Total Tasks: {len(plan.tasks)}")
+                for i, task in enumerate(plan.tasks, 1):
+                    print(f"\n  Task {i}:")
+                    print(f"    Description: {task.task_description}")
+                    print(f"    Agent: {task.recommended_agent or 'None'}")
+                    print(f"    State: {task.state}")
+                    if task.error_message:
+                        print(f"    Error: {task.error_message}")
+                    if task.output:
+                        output_preview = str(task.output).replace('\n', ' ')[:100]
+                        print(f"    Output: {output_preview}...")
+                print(f"\n  Next Step Reasoning: {next_step.reasoning}")
+                if next_step.next_task:
+                    print(f"  Next Task: {next_step.next_task.get('task_description', 'N/A')}")
+                    print(f"  Target Agent: {next_step.next_task.get('recommended_agent', 'N/A')}")
+                print(f"{'='*80}\n")
+                
+                if next_step.goal_status == "completed":
+                    print(f"✅ [Agent Mode] Goal completed after {iteration} iterations!")
+                    await self._emit_status_event("Goal achieved! Generating final response...", context_id)
+                    break
+                
+                # Execute next task if provided
+                if next_step.next_task:
+                    task_desc = next_step.next_task.get("task_description")
+                    recommended_agent = next_step.next_task.get("recommended_agent")
+                    
+                    if not task_desc:
+                        print(f"⚠️ [Agent Mode] No task description provided, breaking loop")
+                        break
+                    
+                    # Create new task
+                    task = AgentModeTask(
+                        task_id=str(uuid.uuid4()),
+                        task_description=task_desc,
+                        recommended_agent=recommended_agent,
+                        state="running"
+                    )
+                    plan.tasks.append(task)
+                    
+                    print(f"📋 [Agent Mode] New task: {task_desc}")
+                    print(f"🎯 [Agent Mode] Target agent: {recommended_agent or 'None specified'}")
+                    await self._emit_status_event(f"Executing: {task_desc}", context_id)
+                    
+                    # Stream task creation event
+                    await self._emit_granular_agent_event(
+                        agent_name=recommended_agent or "orchestrator",
+                        status_text=f"Task created: {task_desc}"
+                    )
+                    
+                    # Execute task via send_message
+                    try:
+                        if recommended_agent and recommended_agent in self.cards:
+                            print(f"🚀 [Agent Mode] Calling agent: {recommended_agent}")
+                            
+                            # Create dummy tool context for send_message
+                            dummy_context = DummyToolContext(session_context, self._azure_blob_client)
+                            
+                            # Call send_message (existing method)
+                            responses = await self.send_message(
+                                agent_name=recommended_agent,
+                                message=task_desc,
+                                tool_context=dummy_context,
+                                suppress_streaming=False  # Show in UI
+                            )
+                            
+                            # Extract A2A task state and output
+                            if responses and len(responses) > 0:
+                                response_obj = responses[0] if isinstance(responses, list) else responses
+                                
+                                # Check if we got a Task object with A2A state
+                                if isinstance(response_obj, Task):
+                                    task.state = response_obj.status.state
+                                    task.output = {
+                                        "task_id": response_obj.id,
+                                        "state": response_obj.status.state,
+                                        "result": response_obj.result if hasattr(response_obj, 'result') else None,
+                                        "artifacts": [a.model_dump() for a in response_obj.artifacts] if response_obj.artifacts else []
+                                    }
+                                    
+                                    if task.state == "failed":
+                                        task.error_message = response_obj.status.message or "Task failed"
+                                        print(f"❌ [Agent Mode] Task failed: {task.error_message}")
+                                    else:
+                                        print(f"✅ [Agent Mode] Task completed with state: {task.state}")
+                                        all_task_outputs.append(str(response_obj.result))
+                                else:
+                                    # Handle string response
+                                    task.state = "completed"
+                                    task.output = {"result": str(response_obj)}
+                                    all_task_outputs.append(str(response_obj))
+                                    print(f"✅ [Agent Mode] Task completed successfully")
+                            else:
+                                task.state = "failed"
+                                task.error_message = "No response from agent"
+                                print(f"❌ [Agent Mode] No response from agent")
+                        else:
+                            task.state = "failed"
+                            task.error_message = f"Agent '{recommended_agent}' not found"
+                            print(f"❌ [Agent Mode] Agent not found: {recommended_agent}")
+                    
+                    except Exception as e:
+                        task.state = "failed"
+                        task.error_message = str(e)
+                        print(f"❌ [Agent Mode] Task execution error: {e}")
+                    
+                    finally:
+                        task.updated_at = datetime.utcnow()
+                        print(f"📊 [Agent Mode] Task final state: {task.state}")
+                        
+                        # Log task completion details
+                        print(f"\n{'~'*80}")
+                        print(f"✅ [Agent Mode] TASK COMPLETED")
+                        print(f"{'~'*80}")
+                        print(f"Task ID: {task.task_id}")
+                        print(f"Description: {task.task_description}")
+                        print(f"Agent: {task.recommended_agent or 'None'}")
+                        print(f"Final State: {task.state}")
+                        if task.error_message:
+                            print(f"Error: {task.error_message}")
+                        if task.output:
+                            print(f"Output: {json.dumps(task.output, indent=2, default=str)[:500]}...")
+                        print(f"{'~'*80}\n")
+                
+            except Exception as e:
+                print(f"❌ [Agent Mode] Orchestration error: {e}")
+                await self._emit_status_event(f"Error in orchestration: {str(e)}", context_id)
+                break
+        
+        if iteration >= max_iterations:
+            print(f"⚠️ [Agent Mode] Reached maximum iterations ({max_iterations})")
+            await self._emit_status_event("Maximum iterations reached, completing...", context_id)
+        
+        # Log final plan summary
+        print(f"\n{'='*80}")
+        print(f"🎬 [Agent Mode] FINAL PLAN SUMMARY")
+        print(f"{'='*80}")
+        print(f"Goal: {plan.goal}")
+        print(f"Final Status: {plan.goal_status}")
+        print(f"Total Iterations: {iteration}")
+        print(f"Total Tasks Created: {len(plan.tasks)}")
+        print(f"\nTask Breakdown:")
+        for i, task in enumerate(plan.tasks, 1):
+            print(f"  {i}. [{task.state.upper()}] {task.task_description[:60]}...")
+            print(f"     Agent: {task.recommended_agent or 'None'}")
+        print(f"\nTask Outputs Collected: {len(all_task_outputs)}")
+        print(f"{'='*80}\n")
+        
+        # Generate final response from all outputs
+        print(f"🎬 [Agent Mode] Orchestration complete. {len(all_task_outputs)} task outputs collected")
+        return all_task_outputs
 
     async def get_current_root_instruction(self) -> str:
         """Get the current root instruction (custom or default)"""
@@ -1626,8 +2028,24 @@ class FoundryHostAgent2:
         return "Status update"
 
     def _extract_message_content(self, message) -> str:
-        """Extract text content from a message object."""
+        """Extract text content from a message object or dictionary."""
         try:
+            # Handle dictionary format (from HTTP API responses)
+            if isinstance(message, dict):
+                content = message.get('content', [])
+                if isinstance(content, list):
+                    for item in content:
+                        if isinstance(item, dict) and item.get('type') == 'text':
+                            text = item.get('text', {})
+                            # Handle nested text object or direct string
+                            if isinstance(text, dict):
+                                return text.get('value', '')
+                            return str(text)
+                elif isinstance(content, str):
+                    return content
+                return ""
+            
+            # Handle object format (from SDK responses)
             if hasattr(message, 'parts'):
                 for part in message.parts:
                     if hasattr(part, 'root') and hasattr(part.root, 'text'):
@@ -1637,7 +2055,8 @@ class FoundryHostAgent2:
             elif hasattr(message, 'content'):
                 return str(message.content)
             return ""
-        except:
+        except Exception as e:
+            print(f"⚠️ DEBUG: Error extracting message content: {e}")
             return ""
 
     def get_session_context(self, context_id: str) -> SessionContext:
@@ -2276,9 +2695,35 @@ Answer with just JSON:
                                 if hasattr(event.status, 'message') and event.status.message:
                                     if hasattr(event.status.message, 'parts') and event.status.message.parts:
                                         for part in event.status.message.parts:
+                                            # Check for text parts
                                             if hasattr(part, 'root') and hasattr(part.root, 'text'):
                                                 status_text = part.root.text
                                                 break
+                                            # Check for image artifacts in DataPart
+                                            elif hasattr(part, 'root') and hasattr(part.root, 'data') and isinstance(part.root.data, dict):
+                                                artifact_uri = part.root.data.get('artifact-uri')
+                                                if artifact_uri:
+                                                    print(f"[DEBUG] Found image artifact in streaming event: {artifact_uri}")
+                                                    # Emit file_uploaded event
+                                                    async def emit_file_event():
+                                                        try:
+                                                            from hosts.multiagent.websocket_streamer import get_websocket_streamer
+                                                            streamer = await get_websocket_streamer()
+                                                            if streamer:
+                                                                file_info = {
+                                                                    "file_id": str(uuid.uuid4()),
+                                                                    "filename": part.root.data.get("file-name", "agent-artifact.png"),
+                                                                    "uri": artifact_uri,
+                                                                    "size": part.root.data.get("file-size", 0),
+                                                                    "content_type": "image/png",
+                                                                    "source_agent": agent_name,
+                                                                    "contextId": get_context_id(event)
+                                                                }
+                                                                await streamer.stream_file_uploaded(file_info, get_context_id(event))
+                                                                print(f"[DEBUG] File uploaded event sent for streaming artifact: {file_info['filename']}")
+                                                        except Exception as e:
+                                                            print(f"[DEBUG] Error emitting file_uploaded event: {e}")
+                                                    asyncio.create_task(emit_file_event())
                                 elif hasattr(event.status, 'state'):
                                     state = event.status.state
                                     if hasattr(state, 'value'):
@@ -3472,7 +3917,7 @@ Original request: {message}"""
                 
         return cleaned_parts
 
-    async def run_conversation_with_parts(self, message_parts: List[Part], context_id: Optional[str] = None, event_logger=None) -> Any:
+    async def run_conversation_with_parts(self, message_parts: List[Part], context_id: Optional[str] = None, event_logger=None, agent_mode: bool = False) -> Any:
         """Run conversation with A2A message parts (including files)."""
         print(f"⭐ ENTRY: run_conversation_with_parts called with {len(message_parts) if message_parts else 0} parts")
         try:
@@ -3516,6 +3961,9 @@ Original request: {message}"""
             print(f"🔍 Step I: Agent ready with ID: {self.agent.get('id', 'unknown') if self.agent else 'STILL_NULL'}")
             
             session_context = self.get_session_context(context_id)
+            # Set agent mode in session context
+            session_context.agent_mode = agent_mode
+            print(f"🔍 DEBUG: Agent mode set to: {agent_mode}")
             # Reset any cached parts from prior turns so we don't resend stale attachments
             if hasattr(session_context, "_latest_processed_parts"):
                 session_context._latest_processed_parts = []
@@ -3770,13 +4218,126 @@ Original request: {message}"""
             await self.send_message_to_thread(thread_id, enhanced_message)
             print(f"🔍 Message sent to thread successfully")
             
+            # Check if we're in Agent Mode
+            if session_context.agent_mode:
+                print(f"🎯 [Agent Mode] Agent Mode ENABLED - using orchestration loop")
+                await self._emit_status_event("Agent Mode: Starting task orchestration...", context_id)
+                
+                # Use agent mode orchestration loop
+                try:
+                    orchestration_outputs = await self._agent_mode_orchestration_loop(
+                        user_message=enhanced_message,
+                        context_id=context_id,
+                        session_context=session_context,
+                        event_logger=event_logger
+                    )
+                    
+                    # Generate final synthesis using Azure AI Foundry agent
+                    print(f"🎬 [Agent Mode] Generating final response synthesis...")
+                    await self._emit_status_event("Synthesizing final response...", context_id)
+                    
+                    # Create synthesis prompt with all task outputs
+                    # Tell the agent NOT to use tools, just synthesize
+                    synthesis_prompt = f"""Based on the following task outputs, provide a comprehensive answer to the user's question: "{enhanced_message}"
+
+Task Outputs:
+{chr(10).join(f"- {output}" for output in orchestration_outputs)}
+
+IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessary information is provided above. Simply synthesize these outputs into a clear, cohesive response that directly answers the user's question."""
+                    
+                    # Send synthesis prompt to thread
+                    await self.send_message_to_thread(thread_id, synthesis_prompt, "user")
+                    
+                    # Create run for synthesis
+                    print(f"🔍 DEBUG: Creating synthesis run...")
+                    run = await self._http_create_run(thread_id, self.agent['id'], session_context)
+                    print(f"🔍 DEBUG: Synthesis run created: {run['id']}")
+                    
+                    # Poll for completion
+                    max_iterations = 30
+                    poll_iteration = 0
+                    import asyncio
+                    while run['status'] in ['queued', 'in_progress']:
+                        poll_iteration += 1
+                        if poll_iteration > max_iterations:
+                            print(f"⚠️ [Agent Mode] Synthesis polling timeout")
+                            break
+                        
+                        await asyncio.sleep(2)
+                        run = await self._http_get_run(thread_id, run['id'])
+                        print(f"🔍 DEBUG: Synthesis run status: {run['status']}")
+                    
+                    # If requires_action, submit empty outputs to force completion
+                    if run['status'] == 'requires_action':
+                        print(f"⚠️ [Agent Mode] Synthesis trying to call tools - forcing skip")
+                        try:
+                            # Get the tool calls and submit empty responses
+                            tool_calls = run.get('required_action', {}).get('submit_tool_outputs', {}).get('tool_calls', [])
+                            if tool_calls:
+                                tool_outputs = [
+                                    {"tool_call_id": tc['id'], "output": "Tool calls not allowed during synthesis. Please provide final answer based on provided information."}
+                                    for tc in tool_calls
+                                ]
+                                run = await self._http_submit_tool_outputs(thread_id, run['id'], tool_outputs)
+                                # Continue polling
+                                poll_iteration = 0
+                                while run['status'] in ['queued', 'in_progress'] and poll_iteration < max_iterations:
+                                    poll_iteration += 1
+                                    await asyncio.sleep(2)
+                                    run = await self._http_get_run(thread_id, run['id'])
+                                    print(f"🔍 DEBUG: Synthesis run status after tool skip: {run['status']}")
+                        except Exception as e:
+                            print(f"⚠️ [Agent Mode] Error skipping synthesis tools: {e}")
+                    
+                    # Get final response from thread
+                    if run['status'] == 'completed':
+                        messages = await self._http_list_messages(thread_id, limit=1)
+                        if messages:
+                            print(f"🔍 DEBUG: Retrieved {len(messages)} message(s) from synthesis thread")
+                            print(f"🔍 DEBUG: Message structure: {type(messages[0])}")
+                            print(f"🔍 DEBUG: Message keys: {messages[0].keys() if isinstance(messages[0], dict) else 'N/A'}")
+                            if isinstance(messages[0], dict) and 'content' in messages[0]:
+                                print(f"🔍 DEBUG: Content structure: {messages[0]['content'][:500] if isinstance(messages[0]['content'], str) else messages[0]['content']}")
+                            
+                            final_response = self._extract_message_content(messages[0])
+                            print(f"✅ [Agent Mode] Final synthesis extracted: {final_response[:200] if final_response else '(EMPTY!)'}...")
+                            
+                            # Return as list for compatibility
+                            final_responses = [final_response]
+                        else:
+                            print(f"⚠️ [Agent Mode] No messages in synthesis response")
+                            final_responses = ["Task orchestration completed successfully."]
+                    else:
+                        print(f"⚠️ [Agent Mode] Synthesis run did not complete: {run['status']}")
+                        final_responses = ["Task orchestration completed but synthesis failed."]
+                    
+                    # Store the interaction and return
+                    print("About to store User→Host interaction for context_id: {context_id}")
+                    await self._store_user_host_interaction_safe(
+                        user_message_parts=message_parts,
+                        user_message_text=enhanced_message,
+                        host_response=final_responses,
+                        context_id=context_id,
+                        span=span
+                    )
+                    
+                    print(f"🎯 [Agent Mode] Orchestration complete, returning {len(final_responses)} responses")
+                    return final_responses
+                    
+                except Exception as e:
+                    print(f"❌ [Agent Mode] Orchestration error: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    final_responses = [f"Agent Mode orchestration encountered an error: {str(e)}"]
+                    return final_responses
+            
             # Continue with standard conversation flow using HTTP API
             print(f"🔍 DEBUG: =================== STARTING RUN CREATION ===================")
             print(f"🔍 DEBUG: About to create run with agent_id: {self.agent['id']} (FIRST PATH)")
             await self._emit_status_event("creating AI agent run", context_id)
             
             print(f"🔍 DEBUG: Calling _http_create_run...")
-            run = await self._http_create_run(thread_id, self.agent['id'])
+            run = await self._http_create_run(thread_id, self.agent['id'], session_context)
             print(f"🔍 DEBUG: Run created successfully with ID: {run['id']}, status: {run['status']} (FIRST PATH)")
             print(f"🔍 DEBUG: =================== RUN CREATED SUCCESSFULLY ===================")
             await self._emit_status_event(f"AI run started - status: {run['status']}", context_id)
@@ -4131,7 +4692,7 @@ Original request: {message}"""
             
             # Run the agent using HTTP API
             print(f"🔍 DEBUG: About to create run with agent_id: {self.agent['id']}")
-            run = await self._http_create_run(thread_id, self.agent['id'])
+            run = await self._http_create_run(thread_id, self.agent['id'], session_context)
             print(f"🔍 DEBUG: Run created successfully with ID: {run['id']}, status: {run['status']}")
             
             # Track run initiation
