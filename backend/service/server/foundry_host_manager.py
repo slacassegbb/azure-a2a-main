@@ -800,24 +800,19 @@ class FoundryHostManager(ApplicationManager):
                     self._agents.append(agent_card)
                     print(f"[DEBUG] ✅ Added {agent_card.name} to UI agent list")
                     
-                    # Immediately broadcast agent registry update via WebSocket
+                    # Trigger immediate WebSocket sync to update UI in real-time
+                    # Note: The actual broadcast happens in server.py after this method returns
+                    # This is just a backup in case it's not triggered there
                     try:
-                        from service.websocket_server import get_websocket_manager
-                        websocket_manager = get_websocket_manager()
-                        if websocket_manager:
-                            registry_event = {
-                                "type": "agent_registry_update",
-                                "data": {
-                                    "agents": [{"name": a.name, "url": a.url, "description": a.description} for a in self._agents]
-                                },
-                                "timestamp": time.time()
-                            }
-                            # Use asyncio to ensure the broadcast happens
-                            import asyncio
-                            asyncio.create_task(websocket_manager.broadcast_event(registry_event))
-                            print(f"[DEBUG] 🔔 Immediately broadcasted agent registry update for {agent_card.name}")
-                    except Exception as broadcast_error:
-                        print(f"[DEBUG] ⚠️ Failed to broadcast immediate update: {broadcast_error}")
+                        from service.websocket_server import get_websocket_server
+                        websocket_server = get_websocket_server()
+                        if websocket_server:
+                            websocket_server.trigger_immediate_sync()
+                            print(f"[DEBUG] 🔔 Triggered immediate agent registry sync for {agent_card.name}")
+                        else:
+                            print(f"[DEBUG] ⚠️ WebSocket server not available for immediate sync")
+                    except Exception as sync_error:
+                        print(f"[DEBUG] ⚠️ Failed to trigger immediate sync: {sync_error}")
                         
                 else:
                     print(f"[DEBUG] ℹ️ Agent {agent_address} already in UI list")

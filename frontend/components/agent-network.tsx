@@ -525,12 +525,8 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, agentMod
       return { icon: AlertCircle, color: "text-gray-400", label: "Unknown" }
     }
 
-    // Check connection status first
-    if (status.connectionStatus === "offline") {
-      return { icon: XCircle, color: "text-gray-400", label: "Offline" }
-    }
-
-    // Check task status
+    // Check task status FIRST - task state takes priority over connection status
+    // This prevents showing agents as "offline" when they're actually working on long tasks
     if (status.currentTask) {
       switch (status.currentTask.state) {
         case "working":
@@ -550,6 +546,11 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, agentMod
         default:
           return { icon: AlertCircle, color: "text-gray-400", label: "Unknown" }
       }
+    }
+
+    // Only check connection status if there's no active task
+    if (status.connectionStatus === "offline") {
+      return { icon: XCircle, color: "text-gray-400", label: "Offline" }
     }
 
     // Default to online/idle

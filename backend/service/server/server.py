@@ -14,6 +14,7 @@ from dotenv import load_dotenv
 from a2a.types import FilePart, FileWithUri, Message, Part, TextPart, DataPart
 from fastapi import APIRouter, FastAPI, Request, Response
 from service.websocket_streamer import get_websocket_streamer
+from service.websocket_server import get_websocket_server
 
 from service.types import (
     CreateConversationResponse,
@@ -358,6 +359,17 @@ class ConversationServer:
                 if success:
                     print(f"[DEBUG] ✅ Self-registration successful for: {agent_address}")
                     
+                    # Trigger immediate WebSocket sync to update UI in real-time
+                    try:
+                        websocket_server = get_websocket_server()
+                        if websocket_server:
+                            websocket_server.trigger_immediate_sync()
+                            print(f"[DEBUG] 🔔 Triggered immediate agent registry sync for UI update")
+                        else:
+                            print(f"[DEBUG] ⚠️ WebSocket server not available for immediate sync")
+                    except Exception as sync_error:
+                        print(f"[DEBUG] ⚠️ Failed to trigger immediate sync: {sync_error}")
+                    
                     # Stream agent self-registration over WebSocket
                     print(f"[DEBUG] 🌊 Attempting to stream agent self-registration to WebSocket...")
                     try:
@@ -450,6 +462,18 @@ class ConversationServer:
                 
                 if success:
                     print(f"[DEBUG] ✅ Agent registration successful: {agent_address}")
+                    
+                    # Trigger immediate WebSocket sync to update UI in real-time
+                    try:
+                        websocket_server = get_websocket_server()
+                        if websocket_server:
+                            websocket_server.trigger_immediate_sync()
+                            print(f"[DEBUG] 🔔 Triggered immediate agent registry sync for UI update")
+                        else:
+                            print(f"[DEBUG] ⚠️ WebSocket server not available for immediate sync")
+                    except Exception as sync_error:
+                        print(f"[DEBUG] ⚠️ Failed to trigger immediate sync: {sync_error}")
+                    
                     return {"success": True, "message": f"Agent at {agent_address} registered successfully"}
                 else:
                     print(f"[DEBUG] ❌ Agent registration failed: {agent_address}")

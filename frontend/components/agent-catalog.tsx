@@ -279,15 +279,8 @@ export function AgentCatalog() {
           description: `Successfully registered ${agent.name} at ${agent.endpoint}`,
         })
         
-        // Trigger immediate sidebar refresh
-        // Wait a moment for the registration to complete, then trigger a refresh
-        setTimeout(() => {
-          emit("refresh_agent_list", { reason: "agent_registered" })
-          console.log('[Agent Catalog] Triggered sidebar refresh after registration')
-        }, 1000)
-        
-        // The WebSocket server will automatically sync the agent registry
-        // within 15 seconds via its periodic polling mechanism
+        // The agent registry will update immediately via WebSocket real-time sync
+        console.log('[Agent Catalog] Agent registered - UI will update in real-time')
       } else {
         const errorMessage = result.error || "Failed to register agent"
         toast({
