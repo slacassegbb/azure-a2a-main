@@ -138,6 +138,7 @@ class SessionContext(BaseModel):
     session_active: bool = True
     retry_count: int = 0  # Add retry_count as a proper field
     agent_mode: bool = False  # Agent mode flag for specialized prompts and behavior
+    enable_inter_agent_memory: bool = True  # Allow agents to access conversation context (default ON)
     # Maintain per-agent task IDs to avoid sending a taskId created by a different agent.
     agent_task_ids: dict[str, str] = Field(default_factory=dict)
     # Track per-agent task states so we avoid reusing terminal tasks
@@ -1026,7 +1027,7 @@ class FoundryHostAgent2:
             return f"""You are a specialized **Agent Coordinator** operating in agent-to-agent communication mode.
                 
                 In this mode, you act as a direct facilitator between specialized agents, focusing on:
-                1. **Sequential delegation**: Route tasks to agents one at a time based on their expertise
+                1. **Sequential delegation**: Route tasks to agents one at a time based on their expertise and skills
                 2. **Clear communication**: Provide precise instructions to each agent
                 3. **Information synthesis**: Collect responses and prepare coherent answers
                 4. **Minimal intervention**: Let agents handle their specialized tasks independently
@@ -1034,11 +1035,13 @@ class FoundryHostAgent2:
                 ### 🤖 AVAILABLE AGENTS
                 {self.agents}
                 
+                Each agent may have a "skills" field listing their specific capabilities. Use these skills to select the best agent for each task.
+                
                 ### 🧠 CURRENT AGENT
                 {current_agent}
                 
                 ### 📋 GUIDELINES
-                - Route each request to the most appropriate single agent
+                - Route each request to the most appropriate single agent based on their skills
                 - Wait for responses before coordinating with additional agents if needed
                 - Synthesize agent responses into clear, direct answers
                 - Maintain professional, efficient communication
@@ -1052,9 +1055,9 @@ class FoundryHostAgent2:
 
                 ### 🧩 CORE BEHAVIOR
                 Before answering any user request, always:
-                1. Analyze the available agents (listed at the end of this prompt).
-                2. Identify which agents are relevant.
-                3. Plan the collaboration strategy.
+                1. Analyze the available agents (listed at the end of this prompt), including their skills.
+                2. Identify which agents are relevant based on their specialized capabilities.
+                3. Plan the collaboration strategy leveraging each agent's skills.
 
 
                 ### 🚨 HUMAN ESCALATION RULE
@@ -1080,8 +1083,8 @@ class FoundryHostAgent2:
                 Every response must include:
                 - A clear summary of what you did and why.  
                 - Which agents were engaged, their purposes, and short summaries of their responses.  
-                - Personalized language adapted to the user's tone and profile.  
-                - A friendly and professional closing.  
+                - A friendly and professional summary of the response.  
+                - Keep it short and to the point.
 
 
                 If you lack sufficient info, ask clarifying questions before proceeding.
@@ -1090,6 +1093,8 @@ class FoundryHostAgent2:
 
                 ### 🧩 AVAILABLE AGENTS
                 {self.agents}
+                
+                Each agent may have a "skills" field listing their specific capabilities. Use these skills to select the best agent(s) for each task.
 
                 ### 🧠 CURRENT AGENT
                 {current_agent}
@@ -1097,15 +1102,31 @@ class FoundryHostAgent2:
                 ---
 
                 ### 💬 SUMMARY
-                - Always show which agents you used and summarize their work.  
-                - Always communicate in the user's primary language (or the language of their message).  
+                - Always show which agents you used and summarize their work.   
                 - Be friendly, helpful, and professional."""
 
     def list_remote_agents(self):
-        return [
-            {'name': card.name, 'description': card.description}
-            for card in self.cards.values()
-        ]
+        agents = []
+        for card in self.cards.values():
+            agent_info = {
+                'name': card.name,
+                'description': card.description
+            }
+            
+            # Add skills if present
+            if hasattr(card, 'skills') and card.skills:
+                skills_list = []
+                for skill in card.skills:
+                    skill_dict = {
+                        "id": getattr(skill, 'id', ''),
+                        "name": getattr(skill, 'name', ''),
+                        "description": getattr(skill, 'description', ''),
+                    }
+                    skills_list.append(skill_dict)
+                agent_info['skills'] = skills_list
+            
+            agents.append(agent_info)
+        return agents
 
     async def _call_azure_openai_structured(
         self,
@@ -1221,12 +1242,23 @@ Guidelines:
 - If no agent fits, set recommended_agent=null.
 - If the goal is achieved, return goal_status="completed" and next_task=null.
 - Consider failed tasks in your planning - you can retry with modifications or try alternative approaches.
+- **MAXIMIZE AGENT UTILIZATION**: Always try to use as many relevant agents as possible to complete the goal and their specialized skills. Break down complex goals into multiple tasks that can leverage different agents' specialized capabilities. Don't solve everything with one agent when multiple agents can contribute their expertise.
+- **USE SKILLS FOR SELECTION**: Each agent has a "skills" field listing their specific capabilities. Use these skills to make informed decisions about which agent is best suited for each task.
+- You may also use the same agent multiple times if it is relevant to the goal.
+
+### 🔄 TASK DECOMPOSITION PRINCIPLES
+- **Read ALL Agent Skills First**: Before creating any task, carefully read through the skill descriptions of ALL available agents to understand what each can provide.
+- **Identify Skill Dependencies**: Determine if completing the goal requires outputs from multiple agents. If Agent B needs information/context that Agent A specializes in, Agent A must be tasked first.
+- **Match Task to Skill Domain**: Each task should align with exactly ONE agent's skill domain. If a concept in the goal matches words in an agent's skill name or description, that agent should handle that aspect.
+- **Information Producers vs Consumers**: Some agents produce information/context/specifications (e.g., skills about "guidelines", "direction", "specifications"). Others consume that information to execute (e.g., skills about "generate", "create", "build"). Producers come first.
+- **Sequential Task Chain**: When the goal involves multiple skill domains, create Task 1 for the information producer, let it complete, then Task 2 for the executor using Task 1's output.
+- **No Shortcuts**: Don't try to have one agent do another agent's specialty work. Decompose properly even if it means more tasks.
 
 ### 🎯 DELEGATION FIRST PRINCIPLE
 - ALWAYS delegate to an appropriate agent if you have ANY actionable information related to the goal
-- Even if information seems incomplete, let the AGENT decide if they can proceed or need more details
-- Do NOT pre-emptively decide "we need more info" without trying to delegate first
-- The agents are experts - trust them to handle their domain and ask for what they need
+- **BUT** check if the task requires prerequisite skills from a different agent - if so, delegate to that agent FIRST
+- Each agent should work within their skill domain - use the "skills" field to match task requirements to agent capabilities
+- Tasks should arrive at agents with all necessary context already gathered by appropriate upstream agents
 
 ### 🚨 CRITICAL: WHEN TO STOP (LOOP DETECTION & USER INPUT)
 - ONLY mark goal as "completed" in these specific cases:
@@ -1243,10 +1275,26 @@ Guidelines:
             await self._emit_status_event(f"Planning step {iteration}...", context_id)
             
             # Build user prompt with current plan state
-            available_agents = [
-                {"name": card.name, "description": card.description}
-                for card in self.cards.values()
-            ]
+            available_agents = []
+            for card in self.cards.values():
+                agent_info = {
+                    "name": card.name,
+                    "description": card.description
+                }
+                
+                # Add skills if present
+                if hasattr(card, 'skills') and card.skills:
+                    skills_list = []
+                    for skill in card.skills:
+                        skill_dict = {
+                            "id": getattr(skill, 'id', ''),
+                            "name": getattr(skill, 'name', ''),
+                            "description": getattr(skill, 'description', ''),
+                        }
+                        skills_list.append(skill_dict)
+                    agent_info['skills'] = skills_list
+                
+                available_agents.append(agent_info)
             
             user_prompt = f"""Goal:
 {plan.goal}
@@ -3581,7 +3629,24 @@ Original request: {message}"""
         
         Following Google A2A best practices: host manages context and includes it in agent messages.
         Uses semantic search to find relevant context rather than chronological thread history.
+        
+        NOTE: Context injection behavior:
+        - Both Standard Mode and Agent Mode: Controlled by enable_inter_agent_memory flag
+        - Default is ON (True) - agents receive context for better responses
+        - Can be disabled via UI toggle for isolated, deterministic execution
         """
+        enable_memory = getattr(session_context, 'enable_inter_agent_memory', True)
+        is_agent_mode = hasattr(session_context, 'agent_mode') and session_context.agent_mode
+        
+        # Check if context injection should be skipped
+        if not enable_memory:
+            mode_label = "Agent Mode" if is_agent_mode else "Standard Mode"
+            print(f"🎯 [{mode_label}] Skipping context injection - inter-agent memory disabled")
+            return message
+        else:
+            mode_label = "Agent Mode" if is_agent_mode else "Standard Mode"
+            print(f"🎯 [{mode_label}] Including context - inter-agent memory enabled")
+        
         context_parts = []
         
         # Primary approach: Use semantic memory search for relevant context
@@ -4013,7 +4078,7 @@ Original request: {message}"""
                 
         return cleaned_parts
 
-    async def run_conversation_with_parts(self, message_parts: List[Part], context_id: Optional[str] = None, event_logger=None, agent_mode: bool = False) -> Any:
+    async def run_conversation_with_parts(self, message_parts: List[Part], context_id: Optional[str] = None, event_logger=None, agent_mode: bool = False, enable_inter_agent_memory: bool = False) -> Any:
         """Run conversation with A2A message parts (including files)."""
         print(f"⭐ ENTRY: run_conversation_with_parts called with {len(message_parts) if message_parts else 0} parts")
         try:
@@ -4059,7 +4124,8 @@ Original request: {message}"""
             session_context = self.get_session_context(context_id)
             # Set agent mode in session context
             session_context.agent_mode = agent_mode
-            print(f"🔍 DEBUG: Agent mode set to: {agent_mode}")
+            session_context.enable_inter_agent_memory = enable_inter_agent_memory
+            print(f"🔍 DEBUG: Agent mode set to: {agent_mode}, Inter-agent memory: {enable_inter_agent_memory}")
             # Reset any cached parts from prior turns so we don't resend stale attachments
             if hasattr(session_context, "_latest_processed_parts"):
                 # In agent mode, preserve files so they flow between agents
@@ -6087,6 +6153,49 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
             print(f"❌ Failed to register remote agent from {agent_address}: {e}")
             import traceback
             print(f"❌ Registration error traceback: {traceback.format_exc()}")
+            return False
+
+    async def unregister_remote_agent(self, agent_name: str) -> bool:
+        """Handle unregistration of remote agents.
+        
+        Args:
+            agent_name: The name of the agent to unregister
+            
+        Returns:
+            bool: True if unregistration successful, False otherwise
+        """
+        try:
+            print(f"🗑️ Unregistration request for agent: {agent_name}")
+            
+            # Check if agent exists
+            if agent_name not in self.remote_agent_connections and agent_name not in self.cards:
+                print(f"❌ Agent {agent_name} not found in registry")
+                return False
+            
+            # Remove from remote_agent_connections
+            if agent_name in self.remote_agent_connections:
+                del self.remote_agent_connections[agent_name]
+                print(f"✅ Removed {agent_name} from remote_agent_connections")
+            
+            # Remove from cards
+            if agent_name in self.cards:
+                del self.cards[agent_name]
+                print(f"✅ Removed {agent_name} from cards")
+            
+            # Update the agents list used in prompts
+            self.agents = json.dumps(self.list_remote_agents(), indent=2)
+            print(f"✅ Updated agents list for prompts")
+            
+            print(f"✅ Successfully unregistered agent: {agent_name}")
+            print(f"📊 Total registered agents: {len(self.remote_agent_connections)}")
+            print(f"📋 Agent names: {list(self.remote_agent_connections.keys())}")
+            
+            return True
+            
+        except Exception as e:
+            print(f"❌ Failed to unregister agent {agent_name}: {e}")
+            import traceback
+            print(f"❌ Unregistration error traceback: {traceback.format_exc()}")
             return False
 
     @staticmethod

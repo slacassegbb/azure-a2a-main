@@ -135,6 +135,9 @@ class ConversationServer:
         app.add_api_route(
             '/agent/self-register', self._self_register_agent, methods=['POST']
         )
+        app.add_api_route(
+            '/agent/unregister', self._unregister_agent, methods=['POST']
+        )
         app.add_api_route('/agent/list', self._list_agents, methods=['POST'])
         app.add_api_route('/agents', self._get_agents, methods=['GET'])
         app.add_api_route(
@@ -228,9 +231,10 @@ class ConversationServer:
 
     async def _send_message(self, request: Request):
         message_data = await request.json()
-        # Extract agent mode from params if present
+        # Extract agent mode and inter-agent memory from params if present
         agent_mode = message_data.get('params', {}).get('agentMode', False)
-        print(f"[DEBUG] _send_message: Agent Mode = {agent_mode}")
+        enable_inter_agent_memory = message_data.get('params', {}).get('enableInterAgentMemory', False)
+        print(f"[DEBUG] _send_message: Agent Mode = {agent_mode}, Inter-Agent Memory = {enable_inter_agent_memory}")
         
         # Transform the message data to handle frontend format
         transformed_params = self._transform_message_data(message_data['params'])
@@ -248,7 +252,7 @@ class ConversationServer:
             )
         else:
             t = threading.Thread(
-                target=lambda: asyncio.run_coroutine_threadsafe(self.manager.process_message(message, agent_mode), main_loop)
+                target=lambda: asyncio.run_coroutine_threadsafe(self.manager.process_message(message, agent_mode, enable_inter_agent_memory), main_loop)
             )
         t.start()
         
@@ -428,6 +432,50 @@ class ConversationServer:
             print(f"[DEBUG] ❌ Self-registration error: {e}")
             import traceback
             print(f"[DEBUG] ❌ Self-registration traceback: {traceback.format_exc()}")
+            return {"success": False, "error": str(e)}
+
+    async def _unregister_agent(self, request: Request):
+        """Handle agent unregistration requests."""
+        try:
+            message_data = await request.json()
+            agent_name = message_data.get('agentName')
+            
+            print(f"[DEBUG] 🗑️ Unregister agent request: {agent_name}")
+            
+            if not agent_name:
+                print(f"[DEBUG] ❌ No agent name provided in unregister request")
+                return {"success": False, "error": "agentName required"}
+            
+            # Handle unregistration based on manager type
+            if isinstance(self.manager, FoundryHostManager):
+                success = await self.manager.unregister_agent(agent_name)
+                
+                if success:
+                    print(f"[DEBUG] ✅ Agent unregistered successfully: {agent_name}")
+                    
+                    # Trigger immediate WebSocket sync to update UI
+                    try:
+                        websocket_server = get_websocket_server()
+                        if websocket_server:
+                            websocket_server.trigger_immediate_sync()
+                            print(f"[DEBUG] 🔔 Triggered immediate agent registry sync after unregistration")
+                        else:
+                            print(f"[DEBUG] ⚠️ WebSocket server not available for immediate sync")
+                    except Exception as sync_error:
+                        print(f"[DEBUG] ⚠️ Failed to trigger immediate sync: {sync_error}")
+                    
+                    return {"success": True, "message": f"Agent {agent_name} unregistered successfully"}
+                else:
+                    print(f"[DEBUG] ❌ Agent unregistration failed: {agent_name}")
+                    return {"success": False, "error": "Agent not found or unregistration failed"}
+            else:
+                print(f"[DEBUG] ❌ Unregistration not supported for manager type: {type(self.manager).__name__}")
+                return {"success": False, "error": "Unregistration not supported for this manager type"}
+                
+        except Exception as e:
+            print(f"[DEBUG] ❌ Unregister agent error: {e}")
+            import traceback
+            print(f"[DEBUG] ❌ Unregister agent traceback: {traceback.format_exc()}")
             return {"success": False, "error": str(e)}
 
     async def _register_agent_by_address(self, request: Request):

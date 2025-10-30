@@ -478,8 +478,8 @@
     ]
   },
   {
-    "name": "AI Foundry Assessment & Estimation Agent",
-    "description": "An intelligent assessment specialist powered by Azure AI Foundry. Performs multi-line damage evaluations, cost estimations, and structured reporting for auto, property, travel, and health scenarios.",
+    "name": "AI Foundry Branding & Content Agent",
+    "description": "An intelligent branding partner powered by Azure AI Foundry. Provides on-brand messaging, visual direction, and creative prompts grounded in the Company Branding Guide.",
     "version": "1.0.0",
     "url": "http://localhost:9002/",
     "defaultInputModes": [
@@ -493,87 +493,88 @@
     },
     "skills": [
       {
-        "id": "auto_damage_assessment",
-        "name": "Auto Damage Assessment",
-        "description": "Analyze collision/comprehensive losses, estimate labor/materials, and recommend severity using auto_estimation.md tables.",
+        "id": "brand_strategy_alignment",
+        "name": "Brand Strategy Alignment",
+        "description": "Map campaign goals, audiences, and messaging pillars to the Company Branding Guide, ensuring voice, tone, and terminology remain on-brand.",
         "examples": [
-          "Front bumper and headlight replacement – provide estimated cost and labor hours",
-          "Hail damage across hood and roof – severity and paint estimate",
-          "Flooded SUV interior – determine total loss threshold",
-          "Rear-end collision with airbags deployed – labor/material cost breakdown"
+          "Outline messaging pillars for a product-launch email aligned to the brand voice",
+          "Review draft tagline options and recommend the on-brand choice with rationale",
+          "Summarize how a campaign concept supports our innovation + trust positioning",
+          "Identify missing brand attributes in a draft hero statement and propose fixes"
         ],
         "tags": [
-          "auto",
-          "damage",
-          "estimation",
-          "labor-hours"
+          "branding",
+          "strategy",
+          "messaging",
+          "tone"
         ]
       },
       {
-        "id": "property_damage_estimation",
-        "name": "Property Damage Estimation",
-        "description": "Assess dwelling and contents losses, apply depreciation, and flag mitigation steps per property_estimation.md.",
+        "id": "visual_identity_direction",
+        "name": "Visual Identity Direction",
+        "description": "Provide art direction, mood, and composition notes anchored in brand colors, lighting, and imagery guidelines from `company_branding.md`.",
         "examples": [
-          "Basement flood affecting drywall and flooring – provide estimated repair cost",
-          "Kitchen fire damaging cabinets and appliances – breakdown labor vs materials",
-          "Windstorm removing 30% of roof shingles – estimate replacement cost",
-          "Contents smoke damage – calculate ACV vs replacement cost"
+          "Translate the brand palette into a prompt for a hero illustration",
+          "Advise on lighting and depth for a LinkedIn carousel background",
+          "Recommend iconography and layout for a landing page hero graphic",
+          "Evaluate a storyboard concept for adherence to brand mood and colors"
         ],
         "tags": [
-          "property",
-          "dwelling",
-          "contents",
-          "depreciation"
+          "visual",
+          "design",
+          "palette",
+          "composition"
         ]
       },
       {
-        "id": "travel_loss_estimation",
-        "name": "Travel Loss Estimation",
-        "description": "Estimate trip interruption, baggage loss, and medical evacuation costs using travel_estimation.md benchmarks.",
+        "id": "brand_voice_copywriting",
+        "name": "Brand Voice Copywriting",
+        "description": "Draft or refine copy so it reflects the confident, professional, forward-looking voice defined in the branding guide.",
         "examples": [
-          "Trip cancellation due to illness – estimate reimbursable costs",
-          "Lost baggage including laptop and clothing – provide replacement value",
-          "Medical emergency abroad – estimate ER, hospital, and evacuation costs",
-          "Cruise interruption – calculate prorated trip value"
+          "Rewrite social captions to emphasize calm confidence and innovation",
+          "Transform a technical paragraph into on-brand website copy",
+          "Craft CTA variations that stay within voice and typography rules",
+          "Edit onboarding email copy to remove off-brand phrasing"
         ],
         "tags": [
-          "travel",
-          "trip",
-          "baggage",
-          "medical"
+          "copywriting",
+          "voice",
+          "tone",
+          "editing"
         ]
       },
       {
-        "id": "health_cost_estimation",
-        "name": "Health Cost Estimation",
-        "description": "Estimate medical service costs, bundled treatments, and specialist visits using health_estimation.md guidance.",
+        "id": "generative_prompt_engineering",
+        "name": "Generative Prompt Engineering",
+        "description": "Create positive and negative prompts for image/video generation that encode brand palette, lighting, typography, and prohibited elements.",
         "examples": [
-          "Appendectomy with 3-day stay – estimate total cost range",
-          "MRI plus specialist consult – provide bundled estimate",
-          "ER visit for stitches and X-ray – calculate typical charges",
-          "Specialty drug therapy – monthly cost range"
+          "Draft a stable diffusion prompt for a brand-aligned product hero image",
+          "Provide Midjourney prompt + negatives for a futuristic workspace scene",
+          "Generate prompt variants for thumbnails following brand composition rules",
+          "Audit an existing AI prompt and adjust it to match company branding"
         ],
         "tags": [
-          "health",
-          "medical",
-          "cost-estimation"
+          "prompt",
+          "imaging",
+          "ai-art",
+          "guidelines"
         ]
       },
       {
-        "id": "estimation_quality_assurance",
-        "name": "Estimation Quality & QA",
-        "description": "Apply universal estimation workflow, depreciation rules, and QA checklists from universal_estimation.md and procedures_faq.md.",
+        "id": "brand_review_feedback",
+        "name": "Brand Review & QA",
+        "description": "Evaluate supplied copy, prompts, or visuals and document brand compliance gaps with actionable corrections.",
         "examples": [
-          "Provide step-by-step assessment workflow for new assignment",
-          "Apply depreciation to electronics and furniture for contents loss",
-          "Explain severity categorization based on cost thresholds",
-          "List QA checklist items before submitting estimate report"
+          "Assess a video script for voice consistency and suggest edits",
+          "Flag off-brand colors in a design mock and propose replacements",
+          "Provide a brand compliance checklist for a cross-channel campaign",
+          "Summarize risks before publishing content created by external partners"
         ],
         "tags": [
-          "workflow",
+          "review",
           "qa",
-          "depreciation",
-          "reporting"
+          "compliance",
+          "feedback"
         ]
       }
     ]
@@ -863,7 +864,7 @@
   },
   {
     "name": "AI Foundry Image Generator Agent",
-    "description": "An Azure AI Foundry-powered creative assistant that transforms prompts into production-ready image briefs and renders.",
+    "description": "An Azure AI Foundry agent that can generate and edit images.",
     "version": "1.0.0",
     "url": "http://localhost:9066/",
     "defaultInputModes": [
@@ -877,83 +878,35 @@
     },
     "skills": [
       {
-        "id": "concept_art_generation",
-        "name": "Concept Art Generation",
-        "description": "Craft imaginative scenarios, creatures, and environments for concept art prompts.",
+        "id": "generate_image",
+        "name": "Generate Image",
+        "description": "Create new images from text prompts with various styles, subjects, and compositions.",
         "examples": [
-          "Design a floating city skyline at sunset with bioluminescent waterfalls",
-          "Illustrate a dragon rider soaring above volcanic clouds",
-          "Create a futuristic cyberpunk alleyway with neon rain reflections",
-          "Render an enchanted forest clearing with glowing flora"
+          "Generate a mountain landscape with a dog",
+          "Create a product visualization for marketing materials",
+          "Design concept art for a fantasy scene",
+          "Produce an image matching specific brand guidelines"
         ],
         "tags": [
-          "concept-art",
-          "fantasy",
-          "world-building"
+          "image-generation",
+          "text-to-image",
+          "creative"
         ]
       },
       {
-        "id": "product_visualization",
-        "name": "Product Visualization",
-        "description": "Produce marketing-ready renders and hero shots for consumer products.",
+        "id": "edit_image",
+        "name": "Edit Image",
+        "description": "Modify existing images through inpainting, outpainting, style transfer, or targeted edits.",
         "examples": [
-          "Create a studio-lit hero shot for a matte black smartwatch on marble",
-          "Visualize a minimalist perfume bottle with soft morning light",
-          "Design a vibrant energy drink can with splash effects",
-          "Render a premium set of wireless earbuds in a lifestyle setting"
+          "Remove background from an image",
+          "Change the color scheme of an existing image",
+          "Add or remove objects from a scene",
+          "Extend an image beyond its original boundaries"
         ],
         "tags": [
-          "product",
-          "marketing",
-          "renders"
-        ]
-      },
-      {
-        "id": "brand_style_adaptation",
-        "name": "Brand Style Adaptation",
-        "description": "Align generated visuals with brand palettes, typography, and mood boards.",
-        "examples": [
-          "Match the client’s pastel palette and flat design aesthetic for social banners",
-          "Create imagery in the style of vintage travel posters for a new campaign",
-          "Adapt product visuals to a noir comic-book style",
-          "Generate a set of lifestyle scenes following the brand lookbook"
-        ],
-        "tags": [
-          "brand",
-          "style-guide",
-          "consistency"
-        ]
-      },
-      {
-        "id": "style_enhancement",
-        "name": "Style Enhancement Guidance",
-        "description": "Suggest camera framing, lighting, and color grading tweaks for prompts.",
-        "examples": [
-          "Recommend depth-of-field and bokeh settings for a portrait prompt",
-          "Adjust a nighttime cityscape prompt for cinematic contrast",
-          "Refine a macro botanical prompt with soft light and pastel tones",
-          "Enhance a fantasy landscape with dynamic lighting cues"
-        ],
-        "tags": [
-          "lighting",
-          "composition",
-          "color"
-        ]
-      },
-      {
-        "id": "prompt_safety_review",
-        "name": "Prompt Safety Review",
-        "description": "Validate prompts for policy compliance and safe content generation.",
-        "examples": [
-          "Check an image prompt for potential IP infringement",
-          "Ensure a request for a public figure adheres to policy guidelines",
-          "Advise on safe alternatives for sensitive content prompts",
-          "Flag disallowed content and suggest compliant phrasing"
-        ],
-        "tags": [
-          "safety",
-          "policy",
-          "validation"
+          "image-editing",
+          "modification",
+          "refinement"
         ]
       }
     ]

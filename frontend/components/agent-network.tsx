@@ -77,6 +77,8 @@ type Props = {
   onToggle: () => void
   agentMode: boolean
   onAgentModeChange: (enabled: boolean) => void
+  enableInterAgentMemory: boolean
+  onInterAgentMemoryChange: (enabled: boolean) => void
 }
 
 // Store persistent color assignments for agents
@@ -125,7 +127,7 @@ function hasHumanInteractionSkill(agent: Agent): boolean {
   return agent.skills?.some(skill => skill.id === 'human_interaction') ?? false
 }
 
-export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, agentMode, onAgentModeChange }: Props) {
+export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, agentMode, onAgentModeChange, enableInterAgentMemory, onInterAgentMemoryChange }: Props) {
   const [expandedAgents, setExpandedAgents] = useState<Set<string>>(new Set())
   const [isSystemPromptDialogOpen, setIsSystemPromptDialogOpen] = useState(false)
   const [currentInstruction, setCurrentInstruction] = useState("")
@@ -672,6 +674,36 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, agentMod
     }
   }
 
+  const handleRemoveAgent = async (agentName: string) => {
+    if (!confirm(`Are you sure you want to remove ${agentName}? This will unregister the agent from the host.`)) {
+      return
+    }
+
+    try {
+      const baseUrl = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
+      const response = await fetch(`${baseUrl}/agent/unregister`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ agentName }),
+      })
+
+      const data = await response.json()
+
+      if (data.success) {
+        console.log('Agent removed successfully:', agentName)
+        // The UI will update automatically via WebSocket agent registry sync
+      } else {
+        console.error('Failed to remove agent:', data.message)
+        alert('Failed to remove agent: ' + data.message)
+      }
+    } catch (error) {
+      console.error('Error removing agent:', error)
+      alert('Error removing agent: ' + error)
+    }
+  }
+
   const openSystemPromptDialog = () => {
     setIsSystemPromptDialogOpen(true)
     loadCurrentInstruction()
@@ -762,6 +794,22 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, agentMod
               <CardContent className="p-2 pt-0 md:p-4 md:pt-0">
                 <div className="space-y-3">
                   <p className="text-xs text-muted-foreground">Oversees agent network.</p>
+                  
+                  {/* Inter-Agent Memory Toggle */}
+                  <div className="flex items-center justify-between py-2">
+                    <div className="flex items-center gap-2">
+                      <Database className="h-4 w-4 text-muted-foreground" />
+                      <Label htmlFor="inter-agent-memory" className="text-sm font-medium cursor-pointer">
+                        Inter-Agent Memory
+                      </Label>
+                    </div>
+                    <Switch 
+                      id="inter-agent-memory"
+                      checked={enableInterAgentMemory} 
+                      onCheckedChange={onInterAgentMemoryChange}
+                    />
+                  </div>
+                  
                   <Button 
                     variant="outline" 
                     size="sm" 
@@ -964,7 +1012,20 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, agentMod
                               </p>
                             )}
                           </div>
-                          {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                          <div className="flex items-center gap-1">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 w-7 p-0 hover:bg-destructive/10 hover:text-destructive"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                handleRemoveAgent(agentName)
+                              }}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                            {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                          </div>
                         </div>
                       </CardHeader>
                     </CollapsibleTrigger>

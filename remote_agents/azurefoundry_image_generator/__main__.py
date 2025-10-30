@@ -87,66 +87,30 @@ def create_a2a_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
     """Create A2A server application for the Azure Foundry Image Generator agent."""
     global agent_executor_instance
 
-    # Define agent skills for creative image generation support
+    # Define agent skills for image generation and editing
     skills = [
         AgentSkill(
-            id='concept_art_generation',
-            name='Concept Art Generation',
-            description="Craft imaginative scenarios, creatures, and environments for concept art prompts.",
-            tags=['concept-art', 'fantasy', 'world-building'],
+            id='generate_image',
+            name='Generate Image',
+            description="Create new images from text prompts with various styles, subjects, and compositions.",
+            tags=['image-generation', 'text-to-image', 'creative'],
             examples=[
-                'Design a floating city skyline at sunset with bioluminescent waterfalls',
-                'Illustrate a dragon rider soaring above volcanic clouds',
-                'Create a futuristic cyberpunk alleyway with neon rain reflections',
-                'Render an enchanted forest clearing with glowing flora'
+                'Generate a mountain landscape with a dog',
+                'Create a product visualization for marketing materials',
+                'Design concept art for a fantasy scene',
+                'Produce an image matching specific brand guidelines'
             ],
         ),
         AgentSkill(
-            id='product_visualization',
-            name='Product Visualization',
-            description="Produce marketing-ready renders and hero shots for consumer products.",
-            tags=['product', 'marketing', 'renders'],
+            id='edit_image',
+            name='Edit Image',
+            description="Modify existing images through inpainting, outpainting, style transfer, or targeted edits.",
+            tags=['image-editing', 'modification', 'refinement'],
             examples=[
-                'Create a studio-lit hero shot for a matte black smartwatch on marble',
-                'Visualize a minimalist perfume bottle with soft morning light',
-                'Design a vibrant energy drink can with splash effects',
-                'Render a premium set of wireless earbuds in a lifestyle setting'
-            ],
-        ),
-        AgentSkill(
-            id='brand_style_adaptation',
-            name='Brand Style Adaptation',
-            description="Align generated visuals with brand palettes, typography, and mood boards.",
-            tags=['brand', 'style-guide', 'consistency'],
-            examples=[
-                'Match the client’s pastel palette and flat design aesthetic for social banners',
-                'Create imagery in the style of vintage travel posters for a new campaign',
-                'Adapt product visuals to a noir comic-book style',
-                'Generate a set of lifestyle scenes following the brand lookbook'
-            ],
-        ),
-        AgentSkill(
-            id='style_enhancement',
-            name='Style Enhancement Guidance',
-            description="Suggest camera framing, lighting, and color grading tweaks for prompts.",
-            tags=['lighting', 'composition', 'color'],
-            examples=[
-                'Recommend depth-of-field and bokeh settings for a portrait prompt',
-                'Adjust a nighttime cityscape prompt for cinematic contrast',
-                'Refine a macro botanical prompt with soft light and pastel tones',
-                'Enhance a fantasy landscape with dynamic lighting cues'
-            ],
-        ),
-        AgentSkill(
-            id='prompt_safety_review',
-            name='Prompt Safety Review',
-            description="Validate prompts for policy compliance and safe content generation.",
-            tags=['safety', 'policy', 'validation'],
-            examples=[
-                'Check an image prompt for potential IP infringement',
-                'Ensure a request for a public figure adheres to policy guidelines',
-                'Advise on safe alternatives for sensitive content prompts',
-                'Flag disallowed content and suggest compliant phrasing'
+                'Remove background from an image',
+                'Change the color scheme of an existing image',
+                'Add or remove objects from a scene',
+                'Extend an image beyond its original boundaries'
             ],
         ),
     ]
@@ -155,7 +119,7 @@ def create_a2a_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
 
     agent_card = AgentCard(
         name='AI Foundry Image Generator Agent',
-        description="An Azure AI Foundry-powered creative assistant that transforms prompts into production-ready image briefs and renders.",
+        description="An Azure AI Foundry agent that can generate and edit images.",
         url=resolve_agent_url(resolved_host_for_url, port),
         version='1.0.0',
         defaultInputModes=['text'],
@@ -342,63 +306,27 @@ async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_p
     # Start background registration for UI mode
     skills = [
         AgentSkill(
-            id='concept_art_generation',
-            name='Concept Art Generation',
-            description="Craft imaginative scenarios, creatures, and environments for concept art prompts.",
-            tags=['concept-art', 'fantasy', 'world-building'],
+            id='generate_image',
+            name='Generate Image',
+            description="Create new images from text prompts with various styles, subjects, and compositions.",
+            tags=['image-generation', 'text-to-image', 'creative'],
             examples=[
-                'Design a floating city skyline at sunset with bioluminescent waterfalls',
-                'Illustrate a dragon rider soaring above volcanic clouds',
-                'Create a futuristic cyberpunk alleyway with neon rain reflections',
-                'Render an enchanted forest clearing with glowing flora'
+                'Generate a mountain landscape with a dog',
+                'Create a product visualization for marketing materials',
+                'Design concept art for a fantasy scene',
+                'Produce an image matching specific brand guidelines'
             ],
         ),
         AgentSkill(
-            id='product_visualization',
-            name='Product Visualization',
-            description="Produce marketing-ready renders and hero shots for consumer products.",
-            tags=['product', 'marketing', 'renders'],
+            id='edit_image',
+            name='Edit Image',
+            description="Modify existing images through inpainting, outpainting, style transfer, or targeted edits.",
+            tags=['image-editing', 'modification', 'refinement'],
             examples=[
-                'Create a studio-lit hero shot for a matte black smartwatch on marble',
-                'Visualize a minimalist perfume bottle with soft morning light',
-                'Design a vibrant energy drink can with splash effects',
-                'Render a premium set of wireless earbuds in a lifestyle setting'
-            ],
-        ),
-        AgentSkill(
-            id='brand_style_adaptation',
-            name='Brand Style Adaptation',
-            description="Align generated visuals with brand palettes, typography, and mood boards.",
-            tags=['brand', 'style-guide', 'consistency'],
-            examples=[
-                'Match the client’s pastel palette and flat design aesthetic for social banners',
-                'Create imagery in the style of vintage travel posters for a new campaign',
-                'Adapt product visuals to a noir comic-book style',
-                'Generate a set of lifestyle scenes following the brand lookbook'
-            ],
-        ),
-        AgentSkill(
-            id='style_enhancement',
-            name='Style Enhancement Guidance',
-            description="Suggest camera framing, lighting, and color grading tweaks for prompts.",
-            tags=['lighting', 'composition', 'color'],
-            examples=[
-                'Recommend depth-of-field and bokeh settings for a portrait prompt',
-                'Adjust a nighttime cityscape prompt for cinematic contrast',
-                'Refine a macro botanical prompt with soft light and pastel tones',
-                'Enhance a fantasy landscape with dynamic lighting cues'
-            ],
-        ),
-        AgentSkill(
-            id='prompt_safety_review',
-            name='Prompt Safety Review',
-            description="Validate prompts for policy compliance and safe content generation.",
-            tags=['safety', 'policy', 'validation'],
-            examples=[
-                'Check an image prompt for potential IP infringement',
-                'Ensure a request for a public figure adheres to policy guidelines',
-                'Advise on safe alternatives for sensitive content prompts',
-                'Flag disallowed content and suggest compliant phrasing'
+                'Remove background from an image',
+                'Change the color scheme of an existing image',
+                'Add or remove objects from a scene',
+                'Extend an image beyond its original boundaries'
             ],
         ),
     ]
@@ -407,12 +335,12 @@ async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_p
 
     agent_card = AgentCard(
         name='AI Foundry Image Generator Agent',
-        description="An Azure AI Foundry-powered creative assistant that transforms prompts into production-ready image briefs and renders.",
+        description="An Azure AI Foundry agent that can generate and edit images.",
         url=resolve_agent_url(resolved_host_for_url, a2a_port),
         version='1.0.0',
         defaultInputModes=['text'],
         defaultOutputModes=['text'],
-            capabilities={"streaming": True},
+        capabilities={"streaming": True},
         skills=skills,
     )
     
@@ -553,63 +481,27 @@ def main(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
     # Create agent card for registration
     skills = [
         AgentSkill(
-            id='concept_art_generation',
-            name='Concept Art Generation',
-            description="Craft imaginative scenarios, creatures, and environments for concept art prompts.",
-            tags=['concept-art', 'fantasy', 'world-building'],
+            id='generate_image',
+            name='Generate Image',
+            description="Create new images from text prompts with various styles, subjects, and compositions.",
+            tags=['image-generation', 'text-to-image', 'creative'],
             examples=[
-                'Design a floating city skyline at sunset with bioluminescent waterfalls',
-                'Illustrate a dragon rider soaring above volcanic clouds',
-                'Create a futuristic cyberpunk alleyway with neon rain reflections',
-                'Render an enchanted forest clearing with glowing flora'
+                'Generate a mountain landscape with a dog',
+                'Create a product visualization for marketing materials',
+                'Design concept art for a fantasy scene',
+                'Produce an image matching specific brand guidelines'
             ],
         ),
         AgentSkill(
-            id='product_visualization',
-            name='Product Visualization',
-            description="Produce marketing-ready renders and hero shots for consumer products.",
-            tags=['product', 'marketing', 'renders'],
+            id='edit_image',
+            name='Edit Image',
+            description="Modify existing images through inpainting, outpainting, style transfer, or targeted edits.",
+            tags=['image-editing', 'modification', 'refinement'],
             examples=[
-                'Create a studio-lit hero shot for a matte black smartwatch on marble',
-                'Visualize a minimalist perfume bottle with soft morning light',
-                'Design a vibrant energy drink can with splash effects',
-                'Render a premium set of wireless earbuds in a lifestyle setting'
-            ],
-        ),
-        AgentSkill(
-            id='brand_style_adaptation',
-            name='Brand Style Adaptation',
-            description="Align generated visuals with brand palettes, typography, and mood boards.",
-            tags=['brand', 'style-guide', 'consistency'],
-            examples=[
-                'Match the client’s pastel palette and flat design aesthetic for social banners',
-                'Create imagery in the style of vintage travel posters for a new campaign',
-                'Adapt product visuals to a noir comic-book style',
-                'Generate a set of lifestyle scenes following the brand lookbook'
-            ],
-        ),
-        AgentSkill(
-            id='style_enhancement',
-            name='Style Enhancement Guidance',
-            description="Suggest camera framing, lighting, and color grading tweaks for prompts.",
-            tags=['lighting', 'composition', 'color'],
-            examples=[
-                'Recommend depth-of-field and bokeh settings for a portrait prompt',
-                'Adjust a nighttime cityscape prompt for cinematic contrast',
-                'Refine a macro botanical prompt with soft light and pastel tones',
-                'Enhance a fantasy landscape with dynamic lighting cues'
-            ],
-        ),
-        AgentSkill(
-            id='prompt_safety_review',
-            name='Prompt Safety Review',
-            description="Validate prompts for policy compliance and safe content generation.",
-            tags=['safety', 'policy', 'validation'],
-            examples=[
-                'Check an image prompt for potential IP infringement',
-                'Ensure a request for a public figure adheres to policy guidelines',
-                'Advise on safe alternatives for sensitive content prompts',
-                'Flag disallowed content and suggest compliant phrasing'
+                'Remove background from an image',
+                'Change the color scheme of an existing image',
+                'Add or remove objects from a scene',
+                'Extend an image beyond its original boundaries'
             ],
         ),
     ]
@@ -618,7 +510,7 @@ def main(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
 
     agent_card = AgentCard(
         name='AI Foundry Image Generator Agent',
-        description="An Azure AI Foundry-powered creative assistant that transforms prompts into production-ready image briefs and renders.",
+        description="An Azure AI Foundry agent that can generate and edit images.",
         url=resolve_agent_url(resolved_host_for_url, port),
         version='1.0.0',
         defaultInputModes=['text'],

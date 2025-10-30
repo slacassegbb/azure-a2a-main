@@ -304,8 +304,7 @@ export function AgentCatalog() {
   if (loading) {
     return (
       <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold">Agent Catalog</h2>
+        <div className="flex items-center justify-end">
           <Button variant="outline" size="sm" disabled>
             <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
             Loading...
@@ -319,8 +318,7 @@ export function AgentCatalog() {
   if (error) {
     return (
       <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold">Agent Catalog</h2>
+        <div className="flex items-center justify-end">
           <Button variant="outline" size="sm" onClick={refreshAgents}>
             <RefreshCw className="h-4 w-4 mr-2" />
             Retry
@@ -335,16 +333,12 @@ export function AgentCatalog() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold">Agent Catalog</h2>
+      <div className="flex items-center justify-end">
         <Button variant="outline" size="sm" onClick={refreshAgents}>
           <RefreshCw className="h-4 w-4 mr-2" />
           Refresh
         </Button>
       </div>
-      <p className="text-sm text-muted-foreground">
-        Browse and start pre-configured agents for various tasks.
-      </p>
       
       <div className="grid gap-2">
         {catalogAgents.map((agent) => {

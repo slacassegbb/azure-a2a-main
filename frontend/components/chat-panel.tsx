@@ -402,9 +402,10 @@ type ChatPanelProps = {
   dagNodes: any[]
   dagLinks: any[]
   agentMode: boolean
+  enableInterAgentMemory: boolean
 }
 
-export function ChatPanel({ dagNodes, dagLinks, agentMode }: ChatPanelProps) {
+export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemory }: ChatPanelProps) {
   const DEBUG = process.env.NEXT_PUBLIC_DEBUG_LOGS === 'true'
   // Use the shared Event Hub hook so we subscribe to the same client as the rest of the app
   const { subscribe, unsubscribe, emit, sendMessage, isConnected } = useEventHub()
@@ -459,15 +460,19 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode }: ChatPanelProps) {
     setUploadedFiles([])
   }, []) // Empty dependency array = only run on mount
 
-  // Auto-create conversation if using default ID
+  // Track if we're in the process of creating a conversation to avoid race conditions
+  const [isCreatingConversation, setIsCreatingConversation] = useState(false)
+
+  // Auto-create conversation immediately on mount (removed delay to fix race condition)
   useEffect(() => {
     if (DEBUG) console.log('[ChatPanel] Auto-creation useEffect triggered with conversationId:', conversationId)
     
     const autoCreateConversation = async () => {
-      // Only auto-create if we're using the default context and don't have a proper conversation ID
-      if (conversationId === 'frontend-chat-context') {
+      // Only auto-create if we're using the default context and not already creating one
+      if (conversationId === 'frontend-chat-context' && !isCreatingConversation) {
         try {
-          if (DEBUG) console.log('[ChatPanel] Auto-creating initial conversation after delay...')
+          setIsCreatingConversation(true)
+          if (DEBUG) console.log('[ChatPanel] Auto-creating initial conversation...')
           const newConversation = await createConversation()
           if (newConversation) {
             if (DEBUG) console.log('[ChatPanel] Auto-created conversation:', newConversation.conversation_id)
@@ -479,17 +484,19 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode }: ChatPanelProps) {
           }
         } catch (error) {
           console.error('[ChatPanel] Failed to auto-create conversation:', error)
+        } finally {
+          setIsCreatingConversation(false)
         }
       } else {
-        if (DEBUG) console.log('[ChatPanel] Not auto-creating conversation because conversationId is not default:', conversationId)
+        if (DEBUG) console.log('[ChatPanel] Not auto-creating conversation. conversationId:', conversationId, 'isCreating:', isCreatingConversation)
       }
     }
     
-    // Add a delay to ensure the sidebar has loaded and set up event listeners first
-    const timeoutId = setTimeout(autoCreateConversation, 800)
+    // Small delay to ensure sidebar is mounted, but much shorter to reduce race condition window
+    const timeoutId = setTimeout(autoCreateConversation, 100)
     
     return () => clearTimeout(timeoutId)
-  }, [conversationId, router])
+  }, [conversationId, router, isCreatingConversation])
 
   // Reset messages when conversation ID changes (new chat)
   useEffect(() => {
@@ -969,22 +976,35 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode }: ChatPanelProps) {
       // Mark this message as processed
       setProcessedMessageIds(prev => new Set([...prev, responseId]))
       
-      const summaryMessage: Message = {
-        id: `summary_${data.inferenceId}`,
-        role: "system",
-        type: "inference_summary",
-        steps: inferenceSteps,
+      // Only add messages if they have content
+      const messagesToAdd: Message[] = []
+      
+      // Only add summary if there are actual steps
+      if (inferenceSteps.length > 0) {
+        const summaryMessage: Message = {
+          id: `summary_${data.inferenceId}`,
+          role: "system",
+          type: "inference_summary",
+          steps: inferenceSteps,
+        }
+        messagesToAdd.push(summaryMessage)
       }
 
-      const finalMessage: Message = {
-        id: responseId,
-        role: data.message.role === "user" ? "user" : "assistant",
-        content: data.message.content,
-        agent: data.message.agent,
+      // Only add final message if it has content
+      if (data.message.content && data.message.content.trim().length > 0) {
+        const finalMessage: Message = {
+          id: responseId,
+          role: data.message.role === "user" ? "user" : "assistant",
+          content: data.message.content,
+          agent: data.message.agent,
+        }
+        messagesToAdd.push(finalMessage)
       }
 
-      // Add summary and final text response; attachments are streamed separately via message_attachment events
-      setMessages((prev) => [...prev, summaryMessage, finalMessage])
+      // Add messages only if we have any
+      if (messagesToAdd.length > 0) {
+        setMessages((prev) => [...prev, ...messagesToAdd])
+      }
       setIsInferencing(false)
       setInferenceSteps([])
       setActiveNode(null)
@@ -1162,24 +1182,41 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode }: ChatPanelProps) {
     if (isInferencing) return
     if (!input.trim() && !refineTarget) return
 
-    // If we're still using the default conversation ID, create a real conversation first
+    // If we're still using the default conversation ID, wait for or create a real conversation first
     let actualConversationId = conversationId
     if (conversationId === 'frontend-chat-context') {
-      try {
-        console.log('[ChatPanel] Creating conversation before sending message...')
-        const newConversation = await createConversation()
-        if (newConversation) {
-          actualConversationId = newConversation.conversation_id
-          console.log('[ChatPanel] Created conversation:', actualConversationId)
-          // Notify sidebar about the new conversation
-          notifyConversationCreated(newConversation)
-          // Update URL immediately
-          const newUrl = `/?conversationId=${actualConversationId}`
-          router.replace(newUrl)
+      // Wait a moment if conversation is being created
+      if (isCreatingConversation) {
+        console.log('[ChatPanel] Waiting for conversation creation to complete...')
+        // Wait up to 2 seconds for the conversation to be created
+        for (let i = 0; i < 20; i++) {
+          await new Promise(resolve => setTimeout(resolve, 100))
+          if (!isCreatingConversation && conversationId !== 'frontend-chat-context') {
+            actualConversationId = conversationId
+            console.log('[ChatPanel] Conversation created, proceeding with:', actualConversationId)
+            break
+          }
         }
-      } catch (error) {
-        console.error('[ChatPanel] Failed to create conversation:', error)
-        return // Don't send message if conversation creation failed
+      }
+      
+      // If still no conversation after waiting, create one now
+      if (actualConversationId === 'frontend-chat-context') {
+        try {
+          console.log('[ChatPanel] Creating conversation before sending message...')
+          const newConversation = await createConversation()
+          if (newConversation) {
+            actualConversationId = newConversation.conversation_id
+            console.log('[ChatPanel] Created conversation:', actualConversationId)
+            // Notify sidebar about the new conversation
+            notifyConversationCreated(newConversation)
+            // Update URL immediately
+            const newUrl = `/?conversationId=${actualConversationId}`
+            router.replace(newUrl)
+          }
+        } catch (error) {
+          console.error('[ChatPanel] Failed to create conversation:', error)
+          return // Don't send message if conversation creation failed
+        }
       }
     }
 
@@ -1302,7 +1339,8 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode }: ChatPanelProps) {
             contextId: actualConversationId,
             role: 'user',
             parts: parts,
-            agentMode: agentMode  // Include agent mode in message params
+            agentMode: agentMode,  // Include agent mode in message params
+            enableInterAgentMemory: enableInterAgentMemory  // Include inter-agent memory flag
           }
         })
       })
@@ -1371,8 +1409,20 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode }: ChatPanelProps) {
           <div className="flex flex-col gap-4 p-4">
             {messages.map((message, index) => {
               if (message.type === "inference_summary") {
-                return <InferenceSteps key={`${message.id}-${index}`} steps={message.steps || []} isInferencing={false} />
+                // Only render if there are actual steps
+                if (!message.steps || message.steps.length === 0) {
+                  return null
+                }
+                return <InferenceSteps key={`${message.id}-${index}`} steps={message.steps} isInferencing={false} />
               }
+              
+              // Skip rendering messages with no content and no attachments
+              const hasContent = message.content && message.content.trim().length > 0
+              const hasAttachments = message.attachments && message.attachments.length > 0
+              if (!hasContent && !hasAttachments) {
+                return null
+              }
+              
               return (
                 <div
                   key={`${message.id}-${index}`}

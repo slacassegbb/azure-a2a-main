@@ -27,6 +27,7 @@ export function ChatLayout() {
   const [isLeftSidebarCollapsed, setLeftSidebarCollapsed] = useState(false)
   const [isRightSidebarCollapsed, setRightSidebarCollapsed] = useState(false)
   const [agentMode, setAgentMode] = useState(false)
+  const [enableInterAgentMemory, setEnableInterAgentMemory] = useState(true)
 
   // This state represents the Host Agent's knowledge of registered agents.
   // It starts empty and gets populated by the WebSocket agent registry sync.
@@ -169,7 +170,12 @@ export function ChatLayout() {
         {/* Main Chat Area */}
         <Panel defaultSize={60} minSize={40}>
           <div className="flex flex-col min-w-0 border-x h-full">
-            <ChatPanel dagNodes={dagNodes} dagLinks={dagLinks} agentMode={agentMode} />
+            <ChatPanel 
+              dagNodes={dagNodes} 
+              dagLinks={dagLinks} 
+              agentMode={agentMode}
+              enableInterAgentMemory={enableInterAgentMemory}
+            />
           </div>
         </Panel>
         
@@ -183,6 +189,8 @@ export function ChatLayout() {
             onToggle={() => setRightSidebarCollapsed(!isRightSidebarCollapsed)}
             agentMode={agentMode}
             onAgentModeChange={setAgentMode}
+            enableInterAgentMemory={enableInterAgentMemory}
+            onInterAgentMemoryChange={setEnableInterAgentMemory}
           />
         </Panel>
       </PanelGroup>

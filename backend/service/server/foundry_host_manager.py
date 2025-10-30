@@ -207,13 +207,13 @@ class FoundryHostManager(ApplicationManager):
             messageId=str(uuid.uuid4()),
         )
 
-    async def process_message(self, message: Message, agent_mode: bool = False):
+    async def process_message(self, message: Message, agent_mode: bool = False, enable_inter_agent_memory: bool = False):
         await self.ensure_host_agent_initialized()
         message_id = get_message_id(message)
         if message_id:
             self._pending_message_ids.append(message_id)
         context_id = get_context_id(message) or str(uuid.uuid4())
-        print(f"[DEBUG] process_message: Agent Mode = {agent_mode}")
+        print(f"[DEBUG] process_message: Agent Mode = {agent_mode}, Inter-Agent Memory = {enable_inter_agent_memory}")
         conversation = self.get_conversation(context_id)
         if not conversation:
             conversation = Conversation(conversation_id=context_id, is_active=True)
@@ -444,8 +444,8 @@ class FoundryHostManager(ApplicationManager):
                     pass
         # Pass the entire message with all parts (including files) to the host agent
         user_text = message.parts[0].root.text if message.parts and message.parts[0].root.kind == 'text' else ""
-        print(f"[DEBUG] About to call run_conversation_with_parts with message parts: {len(message.parts)} parts, agent_mode: {agent_mode}")
-        responses = await self._host_agent.run_conversation_with_parts(message.parts, context_id, event_logger=event_logger, agent_mode=agent_mode)
+        print(f"[DEBUG] About to call run_conversation_with_parts with message parts: {len(message.parts)} parts, agent_mode: {agent_mode}, enable_inter_agent_memory: {enable_inter_agent_memory}")
+        responses = await self._host_agent.run_conversation_with_parts(message.parts, context_id, event_logger=event_logger, agent_mode=agent_mode, enable_inter_agent_memory=enable_inter_agent_memory)
         print(f"[DEBUG] FoundryHostAgent responses count: {len(responses) if responses else 'None'}")
         print(f"[DEBUG] FoundryHostAgent responses: {responses}")
         
@@ -821,6 +821,53 @@ class FoundryHostManager(ApplicationManager):
             
         except Exception as e:
             print(f"[DEBUG] ❌ Host manager registration error: {e}")
+            return False
+
+    async def unregister_agent(self, agent_name: str) -> bool:
+        """Handle agent unregistration requests.
+        
+        This method is called when an agent needs to be removed from the host.
+        
+        Args:
+            agent_name: The name of the agent to unregister
+            
+        Returns:
+            bool: True if unregistration successful, False otherwise
+        """
+        try:
+            print(f"[DEBUG] 🗑️ Host manager handling unregistration for: {agent_name}")
+            
+            # Ensure agent is initialized
+            await self.ensure_host_agent_initialized()
+            
+            # Use the FoundryHostAgent's unregistration method
+            success = await self._host_agent.unregister_remote_agent(agent_name)
+            
+            if success:
+                # Also remove from our local agent list for UI consistency
+                self._agents = [a for a in self._agents if a.name != agent_name]
+                print(f"[DEBUG] ✅ Removed {agent_name} from UI agent list")
+                
+                # Trigger immediate WebSocket sync to update UI
+                try:
+                    from service.websocket_server import get_websocket_server
+                    websocket_server = get_websocket_server()
+                    if websocket_server:
+                        websocket_server.trigger_immediate_sync()
+                        print(f"[DEBUG] 🔔 Triggered immediate agent registry sync after removing {agent_name}")
+                    else:
+                        print(f"[DEBUG] ⚠️ WebSocket server not available for immediate sync")
+                except Exception as sync_error:
+                    print(f"[DEBUG] ⚠️ Failed to trigger immediate sync: {sync_error}")
+            else:
+                print(f"[DEBUG] ❌ Agent {agent_name} not found or unregistration failed")
+                
+            return success
+            
+        except Exception as e:
+            print(f"[DEBUG] ❌ Host manager unregistration error: {e}")
+            import traceback
+            print(f"[DEBUG] ❌ Unregistration traceback: {traceback.format_exc()}")
             return False
 
     @property

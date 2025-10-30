@@ -8,6 +8,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { cn } from "@/lib/utils"
 import { listConversations, createConversation, deleteConversation, listMessages, notifyConversationCreated, type Conversation } from "@/lib/conversation-api"
 import { LoginDialog } from "@/components/login-dialog"
+import { useEventHub } from "@/hooks/use-event-hub"
 
 type Props = {
   isCollapsed: boolean
@@ -120,6 +121,9 @@ export function ChatHistorySidebar({ isCollapsed, onToggle }: Props) {
       }, 200)
     }
   }, [currentConversationId, loadConversations])
+  // Use Event Hub to listen for WebSocket events
+  const { subscribe, unsubscribe } = useEventHub()
+
   useEffect(() => {
     console.log('[ChatHistorySidebar] Setting up event listeners...')
     
@@ -136,7 +140,7 @@ export function ChatHistorySidebar({ isCollapsed, onToggle }: Props) {
 
     const handleConversationCreated = (event: CustomEvent) => {
       const { conversation } = event.detail
-      console.log('[ChatHistorySidebar] Received new conversation event:', conversation)
+      console.log('[ChatHistorySidebar] Received new conversation event (frontend):', conversation)
       
       // Simply refresh the conversations list from the backend
       console.log('[ChatHistorySidebar] Refreshing conversations list after new conversation created')
@@ -145,16 +149,27 @@ export function ChatHistorySidebar({ isCollapsed, onToggle }: Props) {
       }, 100)
     }
 
+    // Listen for backend WebSocket conversation_created events
+    const handleBackendConversationCreated = (data: any) => {
+      console.log('[ChatHistorySidebar] Received conversation_created from WebSocket:', data)
+      // Refresh the conversations list from backend
+      setTimeout(() => {
+        loadConversations()
+      }, 100)
+    }
+
     window.addEventListener('conversationTitleUpdate', handleTitleUpdate as EventListener)
     window.addEventListener('conversationCreated', handleConversationCreated as EventListener)
+    subscribe('conversation_created', handleBackendConversationCreated)
     console.log('[ChatHistorySidebar] Event listeners set up successfully')
     
     return () => {
       console.log('[ChatHistorySidebar] Cleaning up event listeners')
       window.removeEventListener('conversationTitleUpdate', handleTitleUpdate as EventListener)
       window.removeEventListener('conversationCreated', handleConversationCreated as EventListener)
+      unsubscribe('conversation_created', handleBackendConversationCreated)
     }
-  }, [])
+  }, [subscribe, unsubscribe, loadConversations])
 
   const handleNewChat = useCallback(async () => {
     try {
