@@ -1635,7 +1635,7 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
               <span>Refining image: {refineTarget.imageMeta?.fileName || refineTarget.imageUrl}</span>
               <Button
                 variant="outline"
-                size="xs"
+                size="sm"
                 onClick={() => setRefineTarget(null)}
               >
                 Cancel

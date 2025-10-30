@@ -9,17 +9,12 @@ import { ChatHistorySidebar } from "./chat-history-sidebar"
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels"
 
 const initialDagNodes = [
-  { id: "User Input", group: "user" },
-  { id: "Query Parser", group: "processing" },
-  { id: "Intent Classifier", group: "processing" },
-  { id: "Response Synthesizer", group: "processing" },
-  { id: "Final Output", group: "output" },
+  { id: "User", group: "user" },
+  { id: "Host Agent", group: "host" },
 ]
 
 const initialDagLinks = [
-  { source: "User Input", target: "Query Parser" },
-  { source: "Query Parser", target: "Intent Classifier" },
-  { source: "Response Synthesizer", target: "Final Output" },
+  { source: "User", target: "Host Agent" },
 ]
 
 export function ChatLayout() {
@@ -66,23 +61,27 @@ export function ChatLayout() {
         setRegisteredAgents(transformedAgents)
         if (DEBUG) console.log("[ChatLayout] Updated sidebar with", transformedAgents.length, "agents from registry sync")
         
-        // Update DAG nodes - remove existing agent nodes and add new ones
+        // Update DAG nodes - keep User and Host Agent, add registered agents
         setDagNodes(prev => {
-          const nonAgentNodes = prev.filter(node => node.group !== "agent")
-          const newAgentNodes = transformedAgents.map((agent: any) => ({ id: agent.name, group: "agent" }))
-          return [...nonAgentNodes, ...newAgentNodes]
+          const coreNodes = prev.filter(node => node.group === "user" || node.group === "host")
+          const newAgentNodes = transformedAgents.map((agent: any) => ({ 
+            id: agent.name, 
+            group: "agent" 
+          }))
+          return [...coreNodes, ...newAgentNodes]
         })
         
-        // Update DAG links - remove existing agent links and add new ones
+        // Update DAG links - connect Host Agent to all registered agents
         setDagLinks(prev => {
-          const nonAgentLinks = prev.filter(link => 
-            !transformedAgents.some((agent: any) => agent.name === link.source || agent.name === link.target)
+          const coreLinks = prev.filter(link => 
+            (link.source === "User" && link.target === "Host Agent") ||
+            (link.source === "Host Agent" && link.target === "User")
           )
-          const newAgentLinks = transformedAgents.flatMap((agent: any) => [
-            { source: "Intent Classifier", target: agent.name },
-            { source: agent.name, target: "Response Synthesizer" }
-          ])
-          return [...nonAgentLinks, ...newAgentLinks]
+          const agentLinks = transformedAgents.map((agent: any) => ({
+            source: "Host Agent",
+            target: agent.name
+          }))
+          return [...coreLinks, ...agentLinks]
         })
       }
     }    // Handle other Event Hub events for logging/debugging
