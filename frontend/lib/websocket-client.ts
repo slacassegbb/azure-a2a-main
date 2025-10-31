@@ -110,7 +110,7 @@ export class WebSocketClient {
         // Build WebSocket URL with authentication token if available
         let wsUrl = this.config.url;
         if (typeof window !== 'undefined') {
-          const token = localStorage.getItem('auth_token');
+          const token = sessionStorage.getItem('auth_token');
           if (token) {
             const separator = wsUrl.includes('?') ? '&' : '?';
             wsUrl = `${wsUrl}${separator}token=${encodeURIComponent(token)}`;

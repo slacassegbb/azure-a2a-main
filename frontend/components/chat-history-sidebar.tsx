@@ -28,8 +28,8 @@ export function ChatHistorySidebar({ isCollapsed, onToggle }: Props) {
   // Check authentication status
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      const token = localStorage.getItem('auth_token')
-      const userInfo = localStorage.getItem('user_info')
+      const token = sessionStorage.getItem('auth_token')
+      const userInfo = sessionStorage.getItem('user_info')
       if (token && userInfo) {
         try {
           setCurrentUser(JSON.parse(userInfo))
@@ -42,8 +42,8 @@ export function ChatHistorySidebar({ isCollapsed, onToggle }: Props) {
 
   const handleLogout = () => {
     if (typeof window !== 'undefined') {
-      localStorage.removeItem('auth_token')
-      localStorage.removeItem('user_info')
+      sessionStorage.removeItem('auth_token')
+      sessionStorage.removeItem('user_info')
       setCurrentUser(null)
       // Reload to disconnect authenticated WebSocket connection
       window.location.reload()

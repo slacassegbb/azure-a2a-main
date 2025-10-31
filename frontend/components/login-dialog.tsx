@@ -132,9 +132,9 @@ export function LoginDialog({ onLogin }: LoginDialogProps) {
         } else {
           // Handle login success
           if (data.access_token) {
-            // Store token in localStorage
-            localStorage.setItem("auth_token", data.access_token)
-            localStorage.setItem("user_info", JSON.stringify(data.user_info))
+            // Store token in sessionStorage (clears on browser/tab close)
+            sessionStorage.setItem("auth_token", data.access_token)
+            sessionStorage.setItem("user_info", JSON.stringify(data.user_info))
 
             // Call onLogin callback if provided
             onLogin?.(email, password)

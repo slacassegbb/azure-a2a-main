@@ -874,7 +874,7 @@ class FoundryHostAgent2:
         # Use the correct Azure AI Foundry API endpoint format
         endpoint = os.environ["AZURE_AI_FOUNDRY_PROJECT_ENDPOINT"]
         
-        # The endpoint should be in format: https://resource.services.ai.azure.com/api/projects/project-name
+        # The endpoint should be in format: {base_url}/api/projects/{project-name}
         # We need to use the assistants API endpoint: {endpoint}/assistants
         if "/api/projects/" in endpoint:
             # Use the full project endpoint + assistants path
@@ -1143,7 +1143,7 @@ class FoundryHostAgent2:
             endpoint = os.environ["AZURE_AI_FOUNDRY_PROJECT_ENDPOINT"]
             model_name = os.environ["AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME"]
             
-            # Get base endpoint: https://foundrya2a.services.ai.azure.com
+            # Extract base endpoint from project endpoint
             base_endpoint = endpoint.split('/api/projects')[0] if '/api/projects' in endpoint else endpoint
             print(f"🤖 [Agent Mode] Azure endpoint: {base_endpoint}")
             print(f"🤖 [Agent Mode] Model deployment: {model_name}")
@@ -2479,8 +2479,12 @@ Answer with just JSON:
             from azure.identity import get_bearer_token_provider
             
             # Use the same endpoint and credentials as the main agent
-            azure_endpoint = os.getenv("AZURE_CONTENT_UNDERSTANDING_ENDPOINT", os.getenv("AZURE_AI_SERVICE_ENDPOINT", "")) or "https://agentaiservicesim.openai.azure.com/"  # Fallback retained for compatibility
+            azure_endpoint = os.getenv("AZURE_CONTENT_UNDERSTANDING_ENDPOINT") or os.getenv("AZURE_AI_SERVICE_ENDPOINT")
             model_name = os.environ.get("AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME")
+            
+            if not azure_endpoint:
+                print(f"❌ Missing Azure endpoint configuration")
+                return {"is_successful": True, "reason": "Missing endpoint config"}
             
             if not model_name:
                 print(f"❌ Missing model deployment name")

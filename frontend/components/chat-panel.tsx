@@ -4,12 +4,12 @@ import { useState, useEffect, useRef, useCallback } from "react"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
-import { Paperclip, Mic, MicOff, Send, Bot, User, Network, Paintbrush } from "lucide-react"
+import { Paperclip, Mic, MicOff, Send, Bot, User, Network, Paintbrush, Copy, ThumbsUp, ThumbsDown, Loader2 } from "lucide-react"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { D3Dag } from "./d3-dag"
-import { RunLogsModal } from "./run-logs-modal"
 import { useEventHub } from "@/hooks/use-event-hub"
 import { useVoiceRecording } from "@/hooks/use-voice-recording"
 import { InferenceSteps } from "./inference-steps"
@@ -86,6 +86,7 @@ function MaskEditorDialog({ open, imageUrl, onClose, onSave }: MaskEditorDialogP
   const isDrawingRef = useRef(false)
   const lastPointRef = useRef<{ x: number; y: number } | null>(null)
   const [maskDirty, setMaskDirty] = useState(false)
+  const [isSaving, setIsSaving] = useState(false)
 
   const resetCanvas = useCallback(() => {
     const overlay = overlayRef.current
@@ -245,11 +246,13 @@ function MaskEditorDialog({ open, imageUrl, onClose, onSave }: MaskEditorDialogP
     }
   }, [])
 
-  const exportMask = useCallback(() => {
+  const exportMask = useCallback(async () => {
     const overlay = overlayRef.current
-    if (!overlay || !imageLoaded) {
+    if (!overlay || !imageLoaded || isSaving) {
       return
     }
+
+    setIsSaving(true)
 
     const exportCanvas = document.createElement("canvas")
     exportCanvas.width = overlay.width
@@ -259,6 +262,7 @@ function MaskEditorDialog({ open, imageUrl, onClose, onSave }: MaskEditorDialogP
     const sourceCtx = overlay.getContext("2d")
 
     if (!exportCtx || !sourceCtx) {
+      setIsSaving(false)
       return
     }
 
@@ -286,12 +290,19 @@ function MaskEditorDialog({ open, imageUrl, onClose, onSave }: MaskEditorDialogP
 
     exportCanvas.toBlob(async (blob) => {
       if (!blob) {
+        setIsSaving(false)
         return
       }
-      await onSave(blob)
-      onClose()
+      try {
+        await onSave(blob)
+        onClose()
+      } catch (error) {
+        console.error('Error saving mask:', error)
+      } finally {
+        setIsSaving(false)
+      }
     }, "image/png", 1)
-  }, [onClose, onSave])
+  }, [imageLoaded, isSaving, onClose, onSave])
 
   return (
     <Dialog open={open} onOpenChange={(value) => !value && onClose()}>
@@ -327,8 +338,9 @@ function MaskEditorDialog({ open, imageUrl, onClose, onSave }: MaskEditorDialogP
                   style={{ display: imageLoaded ? "block" : "none" }}
                 />
                 {!imageLoaded && (
-                  <div className="absolute inset-0 flex items-center justify-center text-sm text-muted-foreground bg-background/70">
-                    Loading image…
+                  <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-sm text-muted-foreground bg-background/90 backdrop-blur-sm">
+                    <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                    <p>Loading image…</p>
                   </div>
                 )}
               </div>
@@ -382,10 +394,17 @@ function MaskEditorDialog({ open, imageUrl, onClose, onSave }: MaskEditorDialogP
               </div>
               <Button
                 onClick={exportMask}
-                disabled={!imageLoaded}
+                disabled={!imageLoaded || isSaving}
                 className="w-full"
               >
-                Save mask &amp; continue
+                {isSaving ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Saving mask...
+                  </>
+                ) : (
+                  'Save mask & continue'
+                )}
               </Button>
               <p className="text-xs text-muted-foreground">
                 Tip: Use paint to mark the area you want to transform. Switch to erase for quick adjustments.
@@ -421,6 +440,7 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
   
   const [messages, setMessages] = useState<Message[]>(initialMessages)
   const [input, setInput] = useState("")
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
   const [isInferencing, setIsInferencing] = useState(false)
   const [inferenceSteps, setInferenceSteps] = useState<{ agent: string; status: string; imageUrl?: string; imageName?: string }[]>([])
   const [activeNode, setActiveNode] = useState<string | null>(null)
@@ -433,6 +453,9 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
   const [maskEditorSource, setMaskEditorSource] = useState<{ uri: string; meta?: any } | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [isDragOver, setIsDragOver] = useState(false)
+  
+  // Feedback state for messages (thumbs up/down)
+  const [messageFeedback, setMessageFeedback] = useState<Record<string, 'up' | 'down' | null>>({})
   
   // Current user state for multi-user chat
   const [currentUser, setCurrentUser] = useState<any>(null)
@@ -862,8 +885,8 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
   // Check authentication status
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      const token = localStorage.getItem('auth_token')
-      const userInfo = localStorage.getItem('user_info')
+      const token = sessionStorage.getItem('auth_token')
+      const userInfo = sessionStorage.getItem('user_info')
       if (token && userInfo) {
         try {
           setCurrentUser(JSON.parse(userInfo))
@@ -980,8 +1003,13 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
       // Only add messages if they have content
       const messagesToAdd: Message[] = []
       
-      // Only add summary if there are actual steps
-      if (inferenceSteps.length > 0) {
+      // Only add inference summary once - when we get the final host agent response
+      // This prevents duplicate workflow displays (one at start, one at end)
+      const isHostAgent = data.message.agent === "foundry-host-agent" || 
+                          data.message.agent === "Host Agent" ||
+                          data.message.agent === "System"
+      
+      if (inferenceSteps.length > 0 && isHostAgent) {
         const summaryMessage: Message = {
           id: `summary_${data.inferenceId}`,
           role: "system",
@@ -1006,9 +1034,13 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
       if (messagesToAdd.length > 0) {
         setMessages((prev) => [...prev, ...messagesToAdd])
       }
-      setIsInferencing(false)
-      setInferenceSteps([])
-      setActiveNode(null)
+      
+      // Only clear inference steps when host agent responds (final response)
+      if (isHostAgent) {
+        setIsInferencing(false)
+        setInferenceSteps([])
+        setActiveNode(null)
+      }
 
       // Broadcast inference ended to all other clients
       sendMessage({
@@ -1364,6 +1396,11 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
     setUploadedFiles([])
     setRefineTarget(null)
     setMaskAttachment(null)
+    
+    // Reset textarea height
+    if (textareaRef.current) {
+      textareaRef.current.style.height = '48px'
+    }
   }
 
   return (
@@ -1372,7 +1409,6 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
         <div className="flex items-center">
           <h2 className="text-xl font-bold">A2A Multi-Agent Host Orchestrator</h2>
           <div className="ml-auto flex items-center gap-2">
-            <RunLogsModal />
             <Dialog>
               <DialogTrigger asChild>
                 <Button variant="outline" size="icon" className="bg-transparent">
@@ -1554,9 +1590,63 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
                         </div>
                       )}
                     </div>
-                    {message.role === "assistant" && message.agent && (
-                        <p className="text-xs text-muted-foreground mt-1">{message.agent}</p>
-                      )}
+                    {message.role === "assistant" && (
+                      <div className="flex items-center justify-between mt-2 w-full">
+                        <p className="text-xs text-muted-foreground">{message.agent || 'Assistant'}</p>
+                        <div className="flex items-center gap-1">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 w-7 p-0"
+                            onClick={() => {
+                              // Copy message content or image URI to clipboard
+                              if (message.attachments && message.attachments.length > 0) {
+                                // For images, copy the first image URI
+                                const imageAttachment = message.attachments.find(att => 
+                                  (att.mediaType || "").startsWith("image/")
+                                )
+                                if (imageAttachment) {
+                                  navigator.clipboard.writeText(imageAttachment.uri)
+                                }
+                              } else if (message.content) {
+                                navigator.clipboard.writeText(message.content)
+                              }
+                            }}
+                            title="Copy to clipboard"
+                          >
+                            <Copy size={14} />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className={`h-7 w-7 p-0 ${messageFeedback[message.id] === 'up' ? 'text-yellow-500 hover:text-yellow-600' : ''}`}
+                            onClick={() => {
+                              setMessageFeedback(prev => ({
+                                ...prev,
+                                [message.id]: prev[message.id] === 'up' ? null : 'up'
+                              }))
+                            }}
+                            title="Good response"
+                          >
+                            <ThumbsUp size={14} />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className={`h-7 w-7 p-0 ${messageFeedback[message.id] === 'down' ? 'text-yellow-500 hover:text-yellow-600' : ''}`}
+                            onClick={() => {
+                              setMessageFeedback(prev => ({
+                                ...prev,
+                                [message.id]: prev[message.id] === 'down' ? null : 'down'
+                              }))
+                            }}
+                            title="Bad response"
+                          >
+                            <ThumbsDown size={14} />
+                          </Button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                   {message.role === "user" && (() => {
                     const { bgColor, iconColor } = getAvatarStyles(message.userColor)
@@ -1683,13 +1773,27 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
           )}
           
           <div className="relative">
-            <Input
+            <Textarea
+              ref={textareaRef}
               value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleSend()}
+              onChange={(e) => {
+                setInput(e.target.value)
+                // Auto-resize textarea
+                const target = e.target as HTMLTextAreaElement
+                target.style.height = 'auto'
+                target.style.height = `${Math.min(target.scrollHeight, 128)}px` // max 128px (max-h-32)
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault()
+                  handleSend()
+                }
+              }}
               placeholder="Type your message..."
-              className="pr-24 h-12"
+              className="pr-24 min-h-12 max-h-32 resize-none overflow-y-auto"
               disabled={isInferencing}
+              rows={1}
+              style={{ height: '48px' }} // min-h-12 = 48px
             />
             <div className="absolute top-1/2 right-2 -translate-y-1/2 flex items-center gap-1">
               <input
