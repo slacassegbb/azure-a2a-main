@@ -45,6 +45,7 @@ export function ChatLayout() {
   // This state represents the Host Agent's knowledge of registered agents.
   // It starts empty and gets populated by the WebSocket agent registry sync.
   const [registeredAgents, setRegisteredAgents] = useState<any[]>([])
+  const [connectedUsers, setConnectedUsers] = useState<any[]>([])
   const [dagNodes, setDagNodes] = useState(() => [
     ...initialDagNodes,
   ])
@@ -57,6 +58,14 @@ export function ChatLayout() {
 
   // This useEffect hook represents the "Host Agent" listening to the Event Hub.
   useEffect(() => {
+    // Handle connected users list updates
+    const handleUserListUpdate = (eventData: any) => {
+      if (DEBUG) console.log("[ChatLayout] Received user list update")
+      if (eventData.data?.active_users) {
+        setConnectedUsers(eventData.data.active_users)
+      }
+    }
+
     // Handle registry sync events from WebSocket
     const handleAgentRegistrySync = (data: any) => {
       if (DEBUG) console.log("[ChatLayout] Received agent registry sync")
@@ -146,6 +155,7 @@ export function ChatLayout() {
     subscribe("task_updated", handleTaskUpdated)
     subscribe("file_uploaded", handleFileUploaded)
     subscribe("form_submitted", handleFormSubmitted)
+    subscribe("user_list_update", handleUserListUpdate)
 
     if (DEBUG) console.log("[ChatLayout] Subscribed to Event Hub events")
 
@@ -160,6 +170,7 @@ export function ChatLayout() {
       unsubscribe("task_updated", handleTaskUpdated)
       unsubscribe("file_uploaded", handleFileUploaded)
       unsubscribe("form_submitted", handleFormSubmitted)
+      unsubscribe("user_list_update", handleUserListUpdate)
       if (DEBUG) console.log("[ChatLayout] Unsubscribed from Event Hub events")
     }
   }, [subscribe, unsubscribe, emit])
@@ -193,6 +204,8 @@ export function ChatLayout() {
               agentMode={agentMode}
               enableInterAgentMemory={enableInterAgentMemory}
               workflow={workflow}
+              registeredAgents={registeredAgents}
+              connectedUsers={connectedUsers}
             />
           </div>
         </Panel>

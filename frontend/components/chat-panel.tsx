@@ -423,9 +423,11 @@ type ChatPanelProps = {
   agentMode: boolean
   enableInterAgentMemory: boolean
   workflow?: string
+  registeredAgents?: any[]
+  connectedUsers?: any[]
 }
 
-export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemory, workflow }: ChatPanelProps) {
+export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemory, workflow, registeredAgents = [], connectedUsers = [] }: ChatPanelProps) {
   const DEBUG = process.env.NEXT_PUBLIC_DEBUG_LOGS === 'true'
   // Use the shared Event Hub hook so we subscribe to the same client as the rest of the app
   const { subscribe, unsubscribe, emit, sendMessage, isConnected } = useEventHub()
@@ -459,6 +461,40 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
   
   // Current user state for multi-user chat
   const [currentUser, setCurrentUser] = useState<any>(null)
+  
+  // Mention autocomplete state
+  const [showMentionDropdown, setShowMentionDropdown] = useState(false)
+  const [mentionSearch, setMentionSearch] = useState("")
+  const [mentionCursorPosition, setMentionCursorPosition] = useState(0)
+  const [selectedMentionIndex, setSelectedMentionIndex] = useState(0)
+  const [mentionedUserNames, setMentionedUserNames] = useState<Set<string>>(new Set())
+
+  // Build mention suggestions (agents + users)
+  const mentionSuggestions = [
+    ...registeredAgents.map(agent => ({
+      type: 'agent' as const,
+      id: agent.name,
+      name: agent.name,
+      display: agent.name,
+      description: agent.description || '',
+      avatar: agent.avatar
+    })),
+    ...connectedUsers.map(user => ({
+      type: 'user' as const,
+      id: user.user_id,
+      name: user.name,
+      display: user.name,
+      description: user.role || '',
+      color: user.color
+    }))
+  ]
+
+  // Filter mentions based on search
+  const filteredMentions = mentionSearch
+    ? mentionSuggestions.filter(item =>
+        item.name.toLowerCase().includes(mentionSearch.toLowerCase())
+      )
+    : mentionSuggestions
 
   // Clear uploaded files when connection is lost (backend restart)
   useEffect(() => {
@@ -1215,6 +1251,40 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
     if (isInferencing) return
     if (!input.trim() && !refineTarget) return
 
+    // Check if message only mentions users (no agents) - if so, just broadcast to UI
+    // We track user mentions when they're selected from the dropdown
+    if (mentionedUserNames.size > 0) {
+      const userMessage: Message = {
+        id: `msg_${Date.now()}`,
+        role: "user",
+        content: input,
+        ...(currentUser && {
+          username: currentUser.name,
+          userColor: currentUser.color
+        })
+      }
+      
+      // Add message locally
+      setMessages((prev) => [...prev, userMessage])
+      
+      // Broadcast message to all other connected clients via WebSocket
+      sendMessage({
+        type: "shared_message",
+        message: userMessage
+      })
+      
+      // Clear input and reset UI
+      setInput("")
+      setUploadedFiles([])
+      setRefineTarget(null)
+      setMentionedUserNames(new Set()) // Clear tracked user mentions
+      if (textareaRef.current) {
+        textareaRef.current.style.height = '48px'
+      }
+      
+      return // Don't send to host orchestrator
+    }
+
     // If we're still using the default conversation ID, wait for or create a real conversation first
     let actualConversationId = conversationId
     if (conversationId === 'frontend-chat-context') {
@@ -1395,6 +1465,7 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
     setInput("")
     setUploadedFiles([])
     setRefineTarget(null)
+    setMentionedUserNames(new Set()) // Clear tracked user mentions
     setMaskAttachment(null)
     
     // Reset textarea height
@@ -1476,7 +1547,7 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
                       <p className="text-xs text-muted-foreground mb-1">{message.username}</p>
                     )}
                     <div
-                      className={`rounded-lg p-3 max-w-md ${message.role === "user" ? "bg-primary text-primary-foreground" : "bg-muted"
+                      className={`rounded-lg p-3 max-w-md ${message.role === "user" ? "bg-slate-700 text-white" : "bg-muted"
                         }`}
                     >
                       {message.attachments && message.attachments.length > 0 ? (
@@ -1777,24 +1848,138 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
               ref={textareaRef}
               value={input}
               onChange={(e) => {
-                setInput(e.target.value)
+                const newValue = e.target.value
+                setInput(newValue)
+                
                 // Auto-resize textarea
                 const target = e.target as HTMLTextAreaElement
                 target.style.height = 'auto'
                 target.style.height = `${Math.min(target.scrollHeight, 128)}px` // max 128px (max-h-32)
+                
+                // Detect @ mentions
+                const cursorPos = target.selectionStart
+                const textBeforeCursor = newValue.substring(0, cursorPos)
+                const lastAtIndex = textBeforeCursor.lastIndexOf('@')
+                
+                if (lastAtIndex !== -1) {
+                  const textAfterAt = textBeforeCursor.substring(lastAtIndex + 1)
+                  // Show dropdown if @ is followed by word characters or empty
+                  if (/^[\w\s]*$/.test(textAfterAt)) {
+                    setMentionSearch(textAfterAt)
+                    setMentionCursorPosition(lastAtIndex)
+                    setShowMentionDropdown(true)
+                    setSelectedMentionIndex(0)
+                  } else {
+                    setShowMentionDropdown(false)
+                  }
+                } else {
+                  setShowMentionDropdown(false)
+                }
               }}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
+                // Handle dropdown navigation
+                if (showMentionDropdown && filteredMentions.length > 0) {
+                  if (e.key === "ArrowDown") {
+                    e.preventDefault()
+                    setSelectedMentionIndex((prev) => 
+                      prev < filteredMentions.length - 1 ? prev + 1 : prev
+                    )
+                  } else if (e.key === "ArrowUp") {
+                    e.preventDefault()
+                    setSelectedMentionIndex((prev) => (prev > 0 ? prev - 1 : 0))
+                  } else if (e.key === "Tab" || (e.key === "Enter" && showMentionDropdown)) {
+                    e.preventDefault()
+                    const selected = filteredMentions[selectedMentionIndex]
+                    if (selected) {
+                      // Track if this is a user mention
+                      if (selected.type === 'user') {
+                        setMentionedUserNames(prev => new Set([...prev, selected.name]))
+                      }
+                      
+                      // Insert mention
+                      const beforeMention = input.substring(0, mentionCursorPosition)
+                      const afterCursor = input.substring(textareaRef.current?.selectionStart || input.length)
+                      const newText = `${beforeMention}@${selected.name} ${afterCursor}`
+                      setInput(newText)
+                      setShowMentionDropdown(false)
+                      // Set cursor after mention
+                      setTimeout(() => {
+                        if (textareaRef.current) {
+                          const newCursorPos = mentionCursorPosition + selected.name.length + 2
+                          textareaRef.current.selectionStart = newCursorPos
+                          textareaRef.current.selectionEnd = newCursorPos
+                          textareaRef.current.focus()
+                        }
+                      }, 0)
+                    }
+                    return
+                  } else if (e.key === "Escape") {
+                    e.preventDefault()
+                    setShowMentionDropdown(false)
+                    return
+                  }
+                }
+                
+                // Normal enter to send
+                if (e.key === "Enter" && !e.shiftKey && !showMentionDropdown) {
                   e.preventDefault()
                   handleSend()
                 }
               }}
-              placeholder="Type your message..."
+              placeholder="Type your message... (Use @ to mention users or agents)"
               className="pr-24 min-h-12 max-h-32 resize-none overflow-y-auto"
               disabled={isInferencing}
               rows={1}
               style={{ height: '48px' }} // min-h-12 = 48px
             />
+            
+            {/* Mention Autocomplete Dropdown */}
+            {showMentionDropdown && filteredMentions.length > 0 && (
+              <div className="absolute bottom-full left-0 right-0 mb-2 bg-[#1a1a1a] border border-gray-700 rounded-lg shadow-lg max-h-60 overflow-y-auto z-50">
+                {filteredMentions.map((item, index) => (
+                  <div
+                    key={item.id}
+                    className="flex items-center gap-3 p-3 cursor-pointer hover:bg-gray-800 transition-colors"
+                    onClick={() => {
+                      // Track if this is a user mention
+                      if (item.type === 'user') {
+                        setMentionedUserNames(prev => new Set([...prev, item.name]))
+                      }
+                      
+                      const beforeMention = input.substring(0, mentionCursorPosition)
+                      const afterCursor = input.substring(textareaRef.current?.selectionStart || input.length)
+                      const newText = `${beforeMention}@${item.name} ${afterCursor}`
+                      setInput(newText)
+                      setShowMentionDropdown(false)
+                      setTimeout(() => {
+                        textareaRef.current?.focus()
+                      }, 0)
+                    }}
+                  >
+                    <div className="flex items-center gap-2 flex-1 min-w-0">
+                      {item.type === 'agent' ? (
+                        <Bot size={18} className="flex-shrink-0 text-blue-500" />
+                      ) : (
+                        <div 
+                          className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0"
+                          style={{ backgroundColor: item.color + '33' }}
+                        >
+                          <User size={14} style={{ color: item.color }} />
+                        </div>
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <div className="font-medium text-sm truncate">{item.name}</div>
+                        <div className="text-xs text-muted-foreground truncate">{item.description}</div>
+                      </div>
+                      <Badge variant={item.type === 'agent' ? 'default' : 'secondary'} className="text-xs">
+                        {item.type}
+                      </Badge>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            
             <div className="absolute top-1/2 right-2 -translate-y-1/2 flex items-center gap-1">
               <input
                 ref={fileInputRef}
