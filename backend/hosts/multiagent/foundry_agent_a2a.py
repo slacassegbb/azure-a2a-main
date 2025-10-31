@@ -4798,6 +4798,28 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
                     else:
                         final_responses.append(str(responses))
 
+                # Include artifacts (images, files) from processed parts for UI display
+                # This ensures images show up in Standard Mode just like in Agent Mode
+                if hasattr(session_context, '_latest_processed_parts'):
+                    artifact_dicts = []
+                    for part in session_context._latest_processed_parts:
+                        # Check for wrapped Part objects with .root
+                        if hasattr(part, 'root'):
+                            if isinstance(part.root, DataPart) and isinstance(part.root.data, dict) and 'artifact-uri' in part.root.data:
+                                artifact_dicts.append(part.root.data)
+                        # Check for unwrapped DataPart objects (no .root)
+                        elif isinstance(part, DataPart):
+                            if isinstance(part.data, dict) and 'artifact-uri' in part.data:
+                                artifact_dicts.append(part.data)
+                    
+                    if artifact_dicts:
+                        print(f"📦 [Standard Mode] Including {len(artifact_dicts)} artifact(s) in response for UI display")
+                        final_responses.extend(artifact_dicts)
+                        for idx, artifact_data in enumerate(artifact_dicts):
+                            uri = artifact_data.get('artifact-uri', '')
+                            filename = artifact_data.get('file-name', 'unknown')
+                            print(f"  • Artifact {idx+1}: {filename} (URI: {uri[:80]}...)")
+
                 # If we have extracted content, prepend it and save to thread context
                 if has_extracted_content:
                     extracted_content_message = (
