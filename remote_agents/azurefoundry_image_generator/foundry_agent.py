@@ -225,21 +225,58 @@ class FoundryImageGeneratorAgent:
         
         project_client = self._get_project_client()
         
-        # Add dummy image generation function tool definition
+        # Add image generation function tool definition
         generate_image_tool = {
             "type": "function",
             "function": {
                 "name": "generate_image",
-                "description": "Create an image from the supplied prompt and style parameters, optionally refining a previous image.",
+                "description": """Create or edit an image from the supplied prompt and style parameters.
+                
+IMPORTANT - File Attachments:
+- When the user message includes file attachments (base images, masks, overlays), they are AUTOMATICALLY available to this tool
+- You do NOT need to specify image URLs or file paths in the parameters
+- The tool will automatically detect and use attachments based on their roles:
+  * 'base' role: The source image for editing
+  * 'mask' role: Transparency mask defining editable regions
+  * 'overlay' role: Image to composite onto the base
+- Simply call this tool with your creative prompt - the system handles file access
+
+For image editing with masks:
+- Just describe what changes to make in the prompt
+- The tool automatically applies changes only within the mask region
+- No need to ask for file URLs - they're already available
+
+For new image generation:
+- Call with just a creative prompt when no attachments are present""",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "prompt": {"type": "string", "description": "Primary creative prompt."},
-                        "style": {"type": "string", "description": "Optional style or art direction."},
-                        "size": {"type": "string", "description": "Desired output resolution (e.g. 1024x1024)."},
-                        "n": {"type": "integer", "minimum": 1, "maximum": 4, "description": "Number of images to generate."},
-                        "model": {"type": "string", "description": "OpenAI model name."},
-                        "input_fidelity": {"type": "string", "description": "Optional edit fidelity override (e.g. 'high')."},
+                        "prompt": {
+                            "type": "string", 
+                            "description": "Primary creative prompt describing the desired image or edits to make."
+                        },
+                        "style": {
+                            "type": "string", 
+                            "description": "Optional style or art direction (e.g. 'photorealistic', 'oil painting')."
+                        },
+                        "size": {
+                            "type": "string", 
+                            "description": "Desired output resolution (e.g. '1024x1024', '1792x1024')."
+                        },
+                        "n": {
+                            "type": "integer", 
+                            "minimum": 1, 
+                            "maximum": 1, 
+                            "description": "Number of images to generate. Always use 1 unless explicitly requested otherwise."
+                        },
+                        "model": {
+                            "type": "string", 
+                            "description": "OpenAI model name (typically 'gpt-image-1')."
+                        },
+                        "input_fidelity": {
+                            "type": "string", 
+                            "description": "Optional edit fidelity override (e.g. 'high', 'medium', 'low')."
+                        },
                     },
                     "required": ["prompt"],
                     "additionalProperties": False
@@ -296,15 +333,33 @@ Your mission is to generate images based on the prompts you receive. You work as
 2. **Trust the Input**: If you receive a prompt, assume it's complete and ready for image generation. The orchestrator has already coordinated with other agents to gather necessary information.
 3. Reference documents in `documents/` for brand, palette, or art direction when helpful, but prioritize information in the prompt.
 4. Keep prompts safe, avoiding disallowed or copyrighted content.
-5. **CRITICAL**: Call `generate_image` EXACTLY ONCE per user request. Do NOT generate an image and then immediately refine it unless explicitly asked to do so.
+5. **CRITICAL**: Call `generate_image` EXACTLY ONCE per user request. DO NOT generate an image and then immediately refine it unless explicitly asked to do so.
 6. **CRITICAL**: ALWAYS set `n=1` to generate exactly ONE image per request. NEVER generate multiple images (n > 1) unless explicitly asked.
-7. When refining an existing image, pass along any reference attachments that arrive in the conversation (for example FileParts with SAS URIs). If an explicit `image_url`/`mask_url` parameter is provided, use it; otherwise infer refinement mode from the available attachments.
-8. Return a summary of the generated image concept and tool output.
-9. **NO CLARIFYING QUESTIONS**: Do not ask the user or orchestrator for more information. Work with what you're given.
+
+### File Attachments (CRITICAL - READ CAREFULLY)
+7. **AUTOMATIC FILE ACCESS**: When file attachments (base images, masks, overlays) are included in the request, they are AUTOMATICALLY available to the `generate_image` tool. You do NOT need to:
+   - Ask for file URLs or paths
+   - Specify file parameters in the tool call
+   - Request access to the files
+   - Wait for the user to provide anything else
+   
+8. **JUST CALL THE TOOL**: Simply call `generate_image` with your creative prompt. The system automatically:
+   - Detects which files are attached (base, mask, overlay)
+   - Downloads them from their URIs
+   - Passes them to the appropriate image generation API
+   - Handles all file I/O behind the scenes
+
+9. **IMAGE EDITING WITH MASK**: If the request mentions editing/refining an image with a mask:
+   - Call `generate_image` with a prompt describing the desired changes
+   - The tool automatically uses the base image and mask that were attached
+   - No need to ask for anything - just describe what to change
+
+10. Return a summary of the generated image concept and tool output.
 
 ### Multi-turn Refinement
-- If the user says "refine the previous image" or provides a URL, call `generate_image` with that URL in `image_url` and describe the refinement in the prompt.
-- Only produce image edits when a valid URL is supplied or when you already have the prior artifact reference.
+- If the user says "refine the previous image", call `generate_image` with refinement instructions
+- If file attachments are present, they're automatically used
+- NEVER ask "Please provide the URLs" - files are already available to your tool
 
 ## Response Template
 ```
@@ -447,10 +502,6 @@ Always validate the prompt for safety before invoking the tool.
             content=content
         )
         logger.info(f"Created message in thread {thread_id}: {message.id}")
-
-
-
-
         return message
     
     async def run_conversation_stream(
@@ -465,7 +516,10 @@ Always validate the prompt for safety before invoking the tool.
 
         if attachments:
             self._pending_file_refs_by_thread[thread_id] = attachments
-            logger.debug("Stored %d attachment(s) for thread %s", len(attachments), thread_id)
+            logger.info(f"Stored {len(attachments)} attachment(s) for thread {thread_id} - will be automatically available to generate_image tool")
+            for idx, att in enumerate(attachments):
+                file_info = att.get("file", {})
+                logger.info(f"  Attachment[{idx}]: name={file_info.get('name')} role={file_info.get('role')} uri={file_info.get('uri', 'no-uri')[:80]}...")
 
         await self.ensure_thread_ready(thread_id)
         await self.send_message(thread_id, user_message)
@@ -762,19 +816,19 @@ Always validate the prompt for safety before invoking the tool.
                     pending_attachments = self._pending_file_refs_by_thread.get(thread_id) or []
                     if pending_attachments:
                         logger.info(
-                            "Thread %s received %d attachment(s) for tool call",
+                            "🎯 Thread %s: Automatically mapping %d attachment(s) to tool parameters",
                             thread_id,
                             len(pending_attachments),
                         )
                         for idx, attachment in enumerate(pending_attachments):
                             file_info = attachment.get("file") or {}
                             logger.info(
-                                "  Attachment[%d]: name=%s role=%s uri=%s bytes=%s",
+                                "  📎 Attachment[%d]: name=%s role=%s uri=%s bytes=%s",
                                 idx,
                                 file_info.get("name"),
                                 (file_info.get("role")
                                  or (file_info.get("metadata") or {}).get("role")),
-                                file_info.get("uri"),
+                                file_info.get("uri", "no-uri")[:80] + "...",
                                 "yes" if file_info.get("bytes") or file_info.get("bytes_base64") else "no",
                             )
                         logger.debug(
@@ -788,9 +842,8 @@ Always validate the prompt for safety before invoking the tool.
                         if base_uri:
                             payload["image_url"] = base_uri
                             logger.info(
-                                "Normalized image_url from base attachment for thread %s -> %s",
-                                thread_id,
-                                base_uri,
+                                "✅ Mapped 'base' role attachment → image_url: %s",
+                                base_uri[:80] + "...",
                             )
                         else:
                             requested_image_url = payload.get("image_url") or payload.get("input_image_url")
@@ -816,9 +869,8 @@ Always validate the prompt for safety before invoking the tool.
                         if mask_uri:
                             payload["mask_url"] = mask_uri
                             logger.info(
-                                "Normalized mask_url from mask attachment for thread %s -> %s",
-                                thread_id,
-                                mask_uri,
+                                "✅ Mapped 'mask' role attachment → mask_url: %s",
+                                mask_uri[:80] + "...",
                             )
                         else:
                             existing_mask = payload.get("mask_url")

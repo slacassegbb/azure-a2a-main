@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Textarea } from "@/components/ui/textarea"
 import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
-import { PanelRightClose, PanelRightOpen, ShieldCheck, ChevronDown, ChevronRight, Globe, Hash, Zap, FileText, ExternalLink, Settings, Clock, CheckCircle, XCircle, AlertCircle, Pause, Brain, Search, MessageSquare, Database, Shield, BarChart3, Gavel, Users, Bot, Trash2, User } from "lucide-react"
+import { PanelRightClose, PanelRightOpen, ShieldCheck, ChevronDown, ChevronRight, Globe, Hash, Zap, FileText, ExternalLink, Settings, Clock, CheckCircle, XCircle, AlertCircle, Pause, Brain, Search, MessageSquare, Database, Shield, BarChart3, Gavel, Users, Bot, Trash2, User, ListOrdered } from "lucide-react"
 import { SimulateAgentRegistration } from "./simulate-agent-registration"
 import { ConnectedUsers } from "./connected-users"
 import { cn } from "@/lib/utils"
@@ -79,6 +79,8 @@ type Props = {
   onAgentModeChange: (enabled: boolean) => void
   enableInterAgentMemory: boolean
   onInterAgentMemoryChange: (enabled: boolean) => void
+  workflow?: string
+  onWorkflowChange?: (workflow: string) => void
 }
 
 // Store persistent color assignments for agents
@@ -127,13 +129,21 @@ function hasHumanInteractionSkill(agent: Agent): boolean {
   return agent.skills?.some(skill => skill.id === 'human_interaction') ?? false
 }
 
-export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, agentMode, onAgentModeChange, enableInterAgentMemory, onInterAgentMemoryChange }: Props) {
+export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, agentMode, onAgentModeChange, enableInterAgentMemory, onInterAgentMemoryChange, workflow: propWorkflow, onWorkflowChange }: Props) {
   const [expandedAgents, setExpandedAgents] = useState<Set<string>>(new Set())
   const [isSystemPromptDialogOpen, setIsSystemPromptDialogOpen] = useState(false)
   const [currentInstruction, setCurrentInstruction] = useState("")
   const [editedInstruction, setEditedInstruction] = useState("")
   const [isLoading, setIsLoading] = useState(false)
   const [isClearingMemory, setIsClearingMemory] = useState(false)
+  
+  // Workflow state - use prop if provided, otherwise local state
+  const [isWorkflowDialogOpen, setIsWorkflowDialogOpen] = useState(false)
+  const [localWorkflow, setLocalWorkflow] = useState("")
+  const [editedWorkflow, setEditedWorkflow] = useState("")
+  
+  const workflow = propWorkflow !== undefined ? propWorkflow : localWorkflow
+  const setWorkflow = onWorkflowChange || setLocalWorkflow
   
   // Agent status tracking state
   const [agentStatuses, setAgentStatuses] = useState<Map<string, AgentStatus>>(new Map())
@@ -479,6 +489,9 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, agentMod
       return updatedStatuses
     })
   }, [registeredAgents])
+
+  // Note: Workflow persistence is now handled by parent ChatLayout component
+  // No need to load from localStorage here since parent manages it
 
   // Subscribe to WebSocket events
   useEffect(() => {
@@ -858,9 +871,78 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, agentMod
                   </div>
                   <p className="text-xs text-muted-foreground mt-2">
                     {agentMode 
-                      ? "Using specialized agent-to-agent communication mode" 
-                      : "Using standard multi-agent orchestration mode"}
+                      ? "Using sequential agent-to-agent orchestration mode" 
+                      : "Using parallel multi-agent orchestration mode"}
                   </p>
+                  
+                  {/* Workflow Button - Only show when Agent Mode is enabled */}
+                  {agentMode && (
+                    <div className="mt-3 pt-3 border-t">
+                      <Dialog open={isWorkflowDialogOpen} onOpenChange={setIsWorkflowDialogOpen}>
+                        <DialogTrigger asChild>
+                          <Button 
+                            variant="outline" 
+                            size="sm" 
+                            className="w-full"
+                            onClick={() => {
+                              setEditedWorkflow(workflow)
+                              setIsWorkflowDialogOpen(true)
+                            }}
+                          >
+                            <ListOrdered className="h-3 w-3 mr-2" />
+                            {workflow ? "Edit Workflow" : "Define Workflow"}
+                          </Button>
+                        </DialogTrigger>
+                        <DialogContent className="max-w-2xl">
+                          <DialogHeader>
+                            <DialogTitle>Agent Mode Workflow</DialogTitle>
+                            <DialogDescription>
+                              Define the workflow steps that will be appended to your goal. This helps guide the orchestration.
+                            </DialogDescription>
+                          </DialogHeader>
+                          <div className="space-y-4">
+                            <Textarea
+                              value={editedWorkflow}
+                              onChange={(e) => setEditedWorkflow(e.target.value)}
+                              placeholder="Example:&#10;1. Use the image generator agent to create an image&#10;2. Use the branding agent to get branding guidelines&#10;3. Use the image generator to refine the image based on branding&#10;4. Use the image analysis agent to review the result"
+                              className="min-h-[200px] font-mono text-sm"
+                            />
+                            {workflow && (
+                              <div className="text-xs text-muted-foreground">
+                                <p className="font-medium mb-1">Current workflow:</p>
+                                <pre className="whitespace-pre-wrap bg-muted p-2 rounded">{workflow}</pre>
+                              </div>
+                            )}
+                          </div>
+                          <DialogFooter>
+                            <Button
+                              variant="outline"
+                              onClick={() => {
+                                setEditedWorkflow("")
+                                setWorkflow("")
+                                setIsWorkflowDialogOpen(false)
+                              }}
+                            >
+                              Clear
+                            </Button>
+                            <Button
+                              onClick={() => {
+                                setWorkflow(editedWorkflow)
+                                setIsWorkflowDialogOpen(false)
+                              }}
+                            >
+                              Save Workflow
+                            </Button>
+                          </DialogFooter>
+                        </DialogContent>
+                      </Dialog>
+                      {workflow && (
+                        <p className="text-xs text-muted-foreground mt-2">
+                          ✓ Workflow defined ({workflow.split('\n').filter(l => l.trim()).length} steps)
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </Card>
               </div>
             )}

@@ -1059,7 +1059,6 @@ class FoundryHostAgent2:
                 2. Identify which agents are relevant based on their specialized capabilities.
                 3. Plan the collaboration strategy leveraging each agent's skills.
 
-
                 ### 🚨 HUMAN ESCALATION RULE
                 If the user says anything like "I want to talk to a human,"  
                 you **must** call:
@@ -1102,7 +1101,7 @@ class FoundryHostAgent2:
                 ---
 
                 ### 💬 SUMMARY
-                - Always show which agents you used and summarize their work.   
+                - Always show which agents you used and summarize their work.  
                 - Be friendly, helpful, and professional."""
 
     def list_remote_agents(self):
@@ -2600,8 +2599,30 @@ Answer with just JSON:
 
         text_chunks: List[str] = []
         for item in responses:
+            # Extract text from various response types
             if isinstance(item, str):
                 text = item.strip()
+                if text:
+                    text_chunks.append(text)
+            elif isinstance(item, TextPart):
+                text = (item.text or "").strip()
+                if text:
+                    text_chunks.append(text)
+            elif hasattr(item, 'root') and hasattr(item.root, 'text'):
+                # Part wrapper with TextPart inside
+                text = (item.root.text or "").strip()
+                if text:
+                    text_chunks.append(text)
+            elif isinstance(item, DataPart) and isinstance(item.data, dict):
+                # Try to extract meaningful text from DataPart
+                if 'text' in item.data:
+                    text = str(item.data['text']).strip()
+                    if text:
+                        text_chunks.append(text)
+            elif hasattr(item, 'root') and hasattr(item.root, 'data') and isinstance(item.root.data, dict):
+                # Part wrapper with DataPart inside
+                if 'text' in item.root.data:
+                    text = str(item.root.data['text']).strip()
                 if text:
                     text_chunks.append(text)
 
@@ -2619,6 +2640,8 @@ Answer with just JSON:
         if len(history) > self.last_host_turns:
             history = history[-self.last_host_turns :]
         session_context.host_turn_history = history
+        
+        print(f"📝 [Context] Updated host_turn_history with response from {agent_name} ({len(combined)} chars)")
         logger.debug(
             "[A2A] Cached host turn for agent %s (len=%d, history=%d)",
             agent_name,
@@ -3628,28 +3651,33 @@ Original request: {message}"""
         """Add relevant conversation context and memory insights to the message for better agent responses.
         
         Following Google A2A best practices: host manages context and includes it in agent messages.
-        Uses semantic search to find relevant context rather than chronological thread history.
         
-        NOTE: Context injection behavior:
-        - Both Standard Mode and Agent Mode: Controlled by enable_inter_agent_memory flag
-        - Default is ON (True) - agents receive context for better responses
-        - Can be disabled via UI toggle for isolated, deterministic execution
+        Context injection behavior based on mode and inter-agent memory toggle:
+        
+        AGENT MODE + MEMORY OFF (minimal context for focused workflows):
+          - Recent agent outputs: Only immediate previous agent (1 response)
+          - Vector search: Disabled
+          - Use case: Sequential workflows where agents only need the last step
+          
+        AGENT MODE + MEMORY ON (full context):
+          - Recent agent outputs: Last N agents (default: 1, configurable)
+          - Vector search: Enabled (searches all past interactions)
+          - Use case: Complex reasoning requiring broader context
+          
+        STANDARD MODE (always full context):
+          - Recent agent outputs: Last N agents (default: 1, configurable)
+          - Vector search: Enabled when memory ON, disabled when OFF
+          - Use case: User conversations with multi-turn context
         """
         enable_memory = getattr(session_context, 'enable_inter_agent_memory', True)
         is_agent_mode = hasattr(session_context, 'agent_mode') and session_context.agent_mode
-        
-        # Check if context injection should be skipped
-        if not enable_memory:
-            mode_label = "Agent Mode" if is_agent_mode else "Standard Mode"
-            print(f"🎯 [{mode_label}] Skipping context injection - inter-agent memory disabled")
-            return message
-        else:
-            mode_label = "Agent Mode" if is_agent_mode else "Standard Mode"
-            print(f"🎯 [{mode_label}] Including context - inter-agent memory enabled")
+        mode_label = "Agent Mode" if is_agent_mode else "Standard Mode"
         
         context_parts = []
         
-        # Primary approach: Use semantic memory search for relevant context
+        # Primary approach: Use semantic memory search for relevant context (only if enabled)
+        if enable_memory:
+            print(f"🎯 [{mode_label}] Inter-agent memory enabled - searching vector memory")
         try:
             print(f"🧠 Searching memory for semantically relevant context...")
             print(f"About to call _search_relevant_memory...")
@@ -3758,8 +3786,14 @@ Original request: {message}"""
         except Exception as e:
             print(f"❌ Error searching memory: {e}")
             context_parts.append("Note: Unable to retrieve relevant context from memory")
+        else:
+            print(f"🎯 [{mode_label}] Inter-agent memory disabled - skipping vector search")
         
-        # Include recent host-side turns if available and not sourced from the same agent
+        # Include recent host-side turns (previous agent outputs)
+        # Behavior depends on mode and inter-agent memory setting:
+        # - Agent Mode + Memory OFF: Only immediate previous agent (limit=1)
+        # - Agent Mode + Memory ON: Last few agents (limit=self.last_host_turns)
+        # - Standard Mode: Always use self.last_host_turns setting
         if self.include_last_host_turn:
             history: List[Dict[str, str]] = list(getattr(session_context, "host_turn_history", []))
 
@@ -3772,6 +3806,16 @@ Original request: {message}"""
                     }
                 ]
 
+            # Determine how many previous responses to include
+            if is_agent_mode and not enable_memory:
+                # Agent Mode with memory OFF: Only pass immediate previous agent
+                max_turns = 1
+                print(f"🎯 [Agent Mode] Memory disabled - passing only immediate previous agent output")
+            else:
+                # Standard mode or Agent Mode with memory ON: Use configured limit
+                max_turns = self.last_host_turns
+                print(f"🎯 [{mode_label}] Passing up to {max_turns} recent agent outputs")
+
             selected: List[Dict[str, str]] = []
             for entry in reversed(history):  # newest first
                 agent = entry.get("agent")
@@ -3781,7 +3825,7 @@ Original request: {message}"""
                 if target_agent_name and agent == target_agent_name:
                     continue
                 selected.append({"agent": agent or "host_agent", "text": text})
-                if len(selected) >= self.last_host_turns:
+                if len(selected) >= max_turns:
                     break
 
             if selected:
@@ -4128,9 +4172,13 @@ Original request: {message}"""
             print(f"🔍 DEBUG: Agent mode set to: {agent_mode}, Inter-agent memory: {enable_inter_agent_memory}")
             # Reset any cached parts from prior turns so we don't resend stale attachments
             if hasattr(session_context, "_latest_processed_parts"):
+                file_count_before = len(session_context._latest_processed_parts)
+                print(f"🔍 DEBUG: _latest_processed_parts has {file_count_before} parts before clearing check")
+                print(f"🔍 DEBUG: session_context.agent_mode = {session_context.agent_mode}")
                 # In agent mode, preserve files so they flow between agents
                 # In user mode, clear stale attachments from previous turns
                 if not session_context.agent_mode:
+                    print(f"⚠️ WARNING: Clearing {file_count_before} file parts because agent_mode is False")
                     session_context._latest_processed_parts = []
                 else:
                     # Keep files but log for debugging
@@ -4548,8 +4596,34 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
                     print(f"❌ [Agent Mode] Orchestration error: {e}")
                     import traceback
                     traceback.print_exc()
-                    final_responses = [f"Agent Mode orchestration encountered an error: {str(e)}"]
-                    return final_responses
+                    
+                    # Get error type and message
+                    error_type = type(e).__name__
+                    error_msg = str(e) if str(e) else error_type
+                    
+                    # If synthesis failed but we have agent outputs, return them directly
+                    if orchestration_outputs:
+                        print(f"⚠️ [Agent Mode] Synthesis failed ({error_msg}), but returning {len(orchestration_outputs)} agent outputs directly")
+                        final_responses = orchestration_outputs
+                        
+                        # Add artifacts if available
+                        if hasattr(session_context, '_latest_processed_parts'):
+                            artifact_dicts = []
+                            for part in session_context._latest_processed_parts:
+                                if hasattr(part, 'root') and isinstance(part.root, DataPart) and isinstance(part.root.data, dict) and 'artifact-uri' in part.root.data:
+                                    artifact_dicts.append(part.root.data)
+                                elif isinstance(part, DataPart) and isinstance(part.data, dict) and 'artifact-uri' in part.data:
+                                    artifact_dicts.append(part.data)
+                            
+                            if artifact_dicts:
+                                print(f"📦 [Agent Mode] Including {len(artifact_dicts)} artifact(s) in fallback response")
+                                final_responses.extend(artifact_dicts)
+                        
+                        return final_responses
+                    else:
+                        # No outputs to return, show error
+                        final_responses = [f"Agent Mode orchestration encountered an error: {error_msg}"]
+                        return final_responses
             
             # Continue with standard conversation flow using HTTP API
             print(f"🔍 DEBUG: =================== STARTING RUN CREATION ===================")
@@ -5883,49 +5957,14 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
                             resp = http_client.get(http_uri)
                             resp.raise_for_status()
                             file_bytes = resp.content
+                        print(f"✅ FILE DEBUG: Downloaded file from URI: {len(file_bytes)} bytes")
                     except Exception as download_err:
                         print(f"❌ FILE DEBUG: Failed to fetch remote file {http_uri}: {download_err}")
                         return f"Error: Could not load file data for {file_id}: {download_err}"
 
-                    metadata = {
-                        'artifact-id': str(uuid.uuid4()),
-                        'artifact-uri': http_uri,
-                        'storage-type': 'external',
-                        'file-name': file_id,
-                        'mime': getattr(part.root.file, 'mimeType', 'application/octet-stream'),
-                        'media-type': getattr(part.root.file, 'mimeType', 'application/octet-stream'),
-                        'description': 'external image attachment',
-                    }
-                    if file_role_attr:
-                        metadata['role'] = str(file_role_attr).lower()
-                        meta_inner = metadata.setdefault('metadata', {})
-                        meta_inner['role'] = str(file_role_attr).lower()
-
-                    data_part = DataPart(data=metadata)
-
-                    # also embed the bytes so the remote agent can access them without public URI
-                    bytes_file_part = FilePart(
-                        kind='file',
-                        file=FileWithBytes(
-                            name=file_id,
-                            mimeType=getattr(part.root.file, 'mimeType', 'application/octet-stream'),
-                            bytes=base64.b64encode(file_bytes).decode('utf-8'),
-                            role=str(file_role_attr).lower() if file_role_attr else None,
-                        ),
-                    )
-
-                    session_context = getattr(tool_context, "state", None)
-                    if session_context is not None:
-                        latest_parts = getattr(session_context, "_latest_processed_parts", None)
-                        if latest_parts is None:
-                            latest_parts = []
-                            setattr(session_context, "_latest_processed_parts", latest_parts)
-                        latest_parts.append(data_part)
-                        latest_parts.append(bytes_file_part)
-
-                    return [data_part, bytes_file_part]
-
-                print(f"❌ No file bytes loaded")
+                    # Continue processing - don't return early, let document processor handle it
+                else:
+                    print(f"❌ No file bytes loaded and no valid URI")
                 return f"Error: Could not load file data for {file_id}"
             
             # Enhanced security: Validate file before processing
@@ -5987,6 +6026,7 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
                             meta = artifact_response.data.get('metadata') or {}
                             meta['role'] = str(file_role_attr).lower()
                             artifact_response.data['metadata'] = meta
+                        
                         artifact_info.update({
                             'artifact_id': artifact_response.data.get('artifact-id'),
                             'artifact_uri': artifact_response.data.get('artifact-uri'),
@@ -6112,6 +6152,32 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
             
             if isinstance(artifact_response, DataPart):
                 print(f"save_artifact completed, returning response with data: {artifact_response.data}")
+                
+                # IMPORTANT: For non-mask files, also create and store a FilePart so remote agents can access the file
+                # Remote agents need FilePart objects with URIs, not just DataPart metadata
+                artifact_uri = artifact_response.data.get('artifact-uri')
+                if artifact_uri:
+                    file_part_for_remote = FilePart(
+                        kind='file',
+                        file=FileWithUri(
+                            name=file_id,
+                            mimeType=artifact_response.data.get('media-type', getattr(part.root.file, 'mimeType', 'application/octet-stream')),
+                            uri=artifact_uri,
+                            role=str(file_role_attr).lower() if file_role_attr else None,
+                        ),
+                    )
+                    
+                    # Store both the DataPart (for host) and FilePart (for remote agents)
+                    session_context = getattr(tool_context, "state", None)
+                    if session_context is not None:
+                        latest_parts = getattr(session_context, "_latest_processed_parts", None)
+                        if latest_parts is None:
+                            latest_parts = []
+                            setattr(session_context, "_latest_processed_parts", latest_parts)
+                        latest_parts.append(artifact_response)  # DataPart for host
+                        latest_parts.append(Part(root=file_part_for_remote))  # FilePart for remote agents
+                        print(f"✅ Stored both DataPart and FilePart for non-mask file {file_id} with role={file_role_attr}")
+                
                 return artifact_response
             
             if summary_text:

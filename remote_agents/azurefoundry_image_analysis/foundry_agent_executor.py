@@ -162,11 +162,13 @@ class FoundryImageAnalysisAgentExecutor(AgentExecutor):
                     tools_called = []
                     seen_tools = set()
 
+                    logger.info(f"🔄 [Image Analysis] Starting streaming for context {context_id}")
                     async for event in agent.run_conversation_stream(
                         thread_id,
                         user_message,
                         attachments=attachments,
                     ):
+                        logger.debug(f"📥 [Image Analysis] Received event: {event[:100] if isinstance(event, str) else type(event)}")
                         # Check if this is a tool call event from remote agent
                         if event.startswith("🛠️ Remote agent executing:"):
                             tool_description = event.replace("🛠️ Remote agent executing: ", "").strip()
@@ -209,6 +211,7 @@ class FoundryImageAnalysisAgentExecutor(AgentExecutor):
                                 )
 
                     # Emit the final response
+                    logger.info(f"🎯 [Image Analysis] Completing task for context {context_id} with {len(responses)} responses")
                     if responses:
                         artifacts = agent.pop_latest_artifacts()
                         if artifacts:
@@ -224,14 +227,18 @@ class FoundryImageAnalysisAgentExecutor(AgentExecutor):
                             None
                         )
                         if final_text_response is None:
-                            final_text_response = "Image generated successfully."
+                            final_text_response = "Image analysis completed successfully."
+                        logger.info(f"✅ [Image Analysis] Marking task as completed for context {context_id}")
                         await task_updater.complete(
                             message=new_agent_text_message(final_text_response, context_id=context_id)
                         )
+                        logger.info(f"✅ [Image Analysis] Task completion sent for context {context_id}")
                     else:
+                        logger.warning(f"⚠️ [Image Analysis] No responses collected, completing with default message for context {context_id}")
                         await task_updater.complete(
                             message=new_agent_text_message("No response generated", context_id=context_id)
                         )
+                        logger.info(f"✅ [Image Analysis] Task completion sent (no responses) for context {context_id}")
                     return
 
                 except RuntimeError as run_error:

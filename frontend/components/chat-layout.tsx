@@ -23,6 +23,24 @@ export function ChatLayout() {
   const [isRightSidebarCollapsed, setRightSidebarCollapsed] = useState(false)
   const [agentMode, setAgentMode] = useState(false)
   const [enableInterAgentMemory, setEnableInterAgentMemory] = useState(true)
+  const [workflow, setWorkflow] = useState(() => {
+    // Load workflow from localStorage on mount
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('agent-mode-workflow') || ""
+    }
+    return ""
+  })
+
+  // Sync workflow changes to localStorage
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      if (workflow) {
+        localStorage.setItem('agent-mode-workflow', workflow)
+      } else {
+        localStorage.removeItem('agent-mode-workflow')
+      }
+    }
+  }, [workflow])
 
   // This state represents the Host Agent's knowledge of registered agents.
   // It starts empty and gets populated by the WebSocket agent registry sync.
@@ -174,6 +192,7 @@ export function ChatLayout() {
               dagLinks={dagLinks} 
               agentMode={agentMode}
               enableInterAgentMemory={enableInterAgentMemory}
+              workflow={workflow}
             />
           </div>
         </Panel>
@@ -190,6 +209,8 @@ export function ChatLayout() {
             onAgentModeChange={setAgentMode}
             enableInterAgentMemory={enableInterAgentMemory}
             onInterAgentMemoryChange={setEnableInterAgentMemory}
+            workflow={workflow}
+            onWorkflowChange={setWorkflow}
           />
         </Panel>
       </PanelGroup>

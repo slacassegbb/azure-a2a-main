@@ -1,119 +1,136 @@
-# Company Branding Guide
+# 🏢 Corporate Brand Guidelines — Company
 
-This document defines the visual and tonal identity for all generated content — including marketing visuals, UI mockups, video thumbnails, and AI-generated imagery.  
-Agents should use this guide to ensure **consistent branding** across all content.
-
----
-
-## 🎨 Brand Colors
-
-| Name | Hex | Usage |
-|------|-----|--------|
-| **Primary Blue** | `#0078D4` | Main brand color; used for accents, logos, and key visuals. |
-| **Deep Navy** | `#002050` | Backgrounds, text overlays, and depth gradients. |
-| **Light Azure** | `#B3E0FF` | Highlights, reflections, and subtle gradients. |
-| **Silver Gray** | `#E5E5E5` | Neutral surfaces and soft lighting. |
-| **Accent Orange** | `#F7630C` | Secondary accent for callouts or energetic highlights. |
-
-**Notes:**
-- Favor **cool tones** (blue, gray) with **warm contrast** (orange highlights).
-- Maintain high contrast between text and background.
+This document defines the **visual identity, tone, and aesthetic parameters** for all Company imagery and generated content.  
+It serves as a **reference framework** for maintaining consistency, professionalism, and emotional coherence across corporate visuals.
 
 ---
 
-## 💡 Lighting & Mood
+## 🎯 Brand Identity Overview
+
+**Company:** Company  
+**Industry:** Enterprise AI and Automation  
+**Core Values:** Intelligence • Reliability • Human-Centric Design  
+**Personality Keywords:** professional, innovative, calm, trustworthy, sophisticated
+
+**Tone of Voice:**  
+> Confident, not boastful.  
+> Smart, but accessible.  
+> Modern, yet timeless.
+
+---
+
+## 🎨 Color Framework (Conceptual)
+
+The Company brand palette is built around **trustworthy neutrals** and **intelligent highlights**.  
+Avoid hard-coding color hex values — instead use these *conceptual descriptors* in prompts.
+
+| Category | Conceptual Colors | Usage Guidance |
+|-----------|------------------|----------------|
+| **Primary Base** | Cool gray, slate, soft white | Backgrounds, clean layouts, calm tone |
+| **Primary Accent** | Intelligent blue, deep navy | Subtle highlights, technology cues |
+| **Secondary Accent** | Warm amber, coral undertone | Energy, human warmth, small emphasis |
+| **Support Tones** | Mist silver, matte graphite | Depth, structure, framing |
+| **Natural Neutrals** | Off-white, beige, light taupe | Balance and softness |
+
+> _Rule:_ All images should evoke **clarity, balance, and intelligence** — not vibrancy for its own sake.
+
+---
+
+## 📸 Photography & Rendering Style
+
+**Overall Look:**  
+- Clean, photorealistic, professional.  
+- Neutral contrast, soft highlights.  
+- Modern corporate realism — authentic, not stock-photo cliché.  
+- Focus on people, technology, or collaboration in balanced compositions.
+
+**Lighting:**  
+- Natural window or diffused daylight.  
+- Subtle directional lighting that defines shape without harsh shadows.  
+- Avoid fluorescent or theatrical lighting.  
+- Use golden-hour tone for warmth when appropriate.
+
+**Depth & Focus:**  
+- Moderate depth of field for realism.  
+- Subtle background separation.  
+- Avoid excessive bokeh or artificial blur.
+
+**Composition:**  
+- Rule of thirds, centered calm compositions, or clean symmetry.  
+- Allow white space; avoid cluttered environments.  
+- Consistent horizon or visual anchor.
+
+---
+
+## 🧍 Human Representation
+
+**Persona:**  
+Professionals, creators, technologists — diverse, approachable, confident.  
+Avoid exaggerated emotions or staged gestures.
+
+**Styling:**  
+- Smart casual, minimal accessories.  
+- Neutral or muted color palette for clothing (gray, navy, white, soft brown).  
+- Natural posture and expression.
+
+**Diversity Principle:**  
+Reflect inclusion across gender, ethnicity, and ability.  
+Authenticity > tokenism.
+
+---
+
+## 🏢 Environment & Setting
+
+**Corporate Spaces:**  
+- Modern, clean offices with glass, wood, and metal accents.  
+- Subtle technology presence (screens, devices).  
+- Natural elements (plants, daylight).  
+- Balanced between human and digital worlds.
+
+**Technology Depiction:**  
+- Minimal, sleek, modern interfaces.  
+- Flat-surface devices, large displays, subtle reflections.  
+- Avoid flashy holograms or sci-fi effects.
+
+**Contextual Scenes:**  
+- Meetings, collaboration, creative work, analysis.  
+- Professional but warm atmosphere.
+
+---
+
+## 🧠 Conceptual Aesthetic DNA
 
 | Attribute | Description |
 |------------|--------------|
-| **Lighting** | Soft directional or ambient lighting with subtle reflections. Avoid harsh shadows. |
-| **Mood** | Confident, innovative, and professional. Calm rather than dramatic. |
-| **Environment** | Modern, clean, slightly futuristic tone (tech/enterprise feel). |
-| **Depth** | Moderate depth of field; slight blur for background focus separation. |
+| **Lighting Mood** | Natural daylight or warm neutral tones |
+| **Color Temperature** | Balanced; slight cool for technology, warm for human focus |
+| **Texture & Materials** | Real surfaces — wood, glass, brushed metal |
+| **Tone Balance** | 70% neutral, 20% cool, 10% warm |
+| **Emotion** | Calm, intelligent, confident |
 
-**Keywords:** _professional lighting, cinematic soft glow, volumetric light, minimalistic tech aesthetic_
-
----
-
-## 🧭 Visual Style
-
-- Clean and geometric layouts; minimal clutter.
-- Use subtle gradients and transparent overlays.
-- Depth and layering convey intelligence and structure.
-- When depicting AI or data, use **flow lines**, **neural connections**, or **abstract node networks** in brand colors.
-- Avoid cartoonish or over-saturated styles unless specifically requested.
+> Imagery should convey “**intelligent calm**” — the quiet confidence of expertise.
 
 ---
 
-## 🧍 Human & Object Representation
+## ✍️ Typography & Text in Imagery
 
-| Element | Style | Notes |
-|----------|--------|-------|
-| **People** | Realistic or hyperrealistic; diverse representation; confident but approachable. | Use neutral lighting; avoid exaggerated poses. |
-| **Technology** | Sleek, glowing edges, modern devices, holographic interfaces. | Keep consistent blue/cool color palette. |
-| **Scenes** | Office, innovation lab, digital workspace, futuristic enterprise environments. | Subtle motion blur for activity or focus. |
+| Typeface Category | Description | Use |
+|-------------------|-------------|-----|
+| Sans-Serif | Clean, geometric, professional | Headings, UI overlays |
+| Humanist Sans | Friendly, legible | Body text, captions |
+| Fallback | Arial / Roboto | Universal compatibility |
 
----
-
-## 🧠 Tone & Emotion
-
-- **Professional**, **trustworthy**, and **forward-looking**.
-- Evoke **innovation** and **collaboration** rather than competition.
-- Prefer “intelligent calm” over high-energy visuals.
-- Avoid heavy contrast, red tints, or overly dark palettes unless denoting cybersecurity or deep-tech themes.
+**Text Guidance:**  
+- Minimal overlay text — the image should communicate clarity visually.  
+- Use neutral text colors: white, graphite, navy.  
+- Maintain legibility and balance with background.
 
 ---
 
-## ✍️ Typography (for Text in Images)
+## 🧩 Prompt Framework for Image Generation
 
-| Typeface | Use |
-|-----------|-----|
-| **Primary:** Segoe UI / Inter | Headings and UI elements |
-| **Secondary:** Roboto / Open Sans | Body and captions |
+Use these templates to maintain consistency across AI-generated visuals.
 
-- Use **bold white text** over dark backgrounds or **dark navy text** over light backgrounds.
-- Keep all text easily legible and minimal.
+### Example Prompts
 
----
-
-## 📐 Composition Rules
-
-- Maintain **symmetry** and **centered balance** for calm, stable visuals.
-- Leave **ample negative space**.
-- Focus subjects using the **rule of thirds** when possible.
-- Use **depth layering** to emphasize hierarchy and importance.
-
----
-
-## 🪄 Image Prompts (Reference Examples)
-
-Agents can interpret these as baseline visual cues:
-
-“Professional AI agents collaborating in a clean digital workspace, soft ambient lighting, blue and silver tones, modern enterprise aesthetic.”
-“Network of intelligent agents represented as glowing blue nodes connected by light lines, depth of field, cinematic gradient background.”
-
-“Human and AI co-creation in a futuristic workspace, cool lighting, minimal design, balanced composition.”
-
-
----
-
-## 🚫 Avoid
-
-- Over-saturated colors or high-contrast neon themes.
-- Cartoon or comic styles unless specified.
-- Overly crowded compositions or complex patterns.
-- Red/green primary schemes (clash with brand palette).
-- Dark, moody cyberpunk unless explicitly requested for special themes.
-
----
-
-## ✅ Always Aim For
-
-- **Clarity**  
-- **Consistency**  
-- **Calm confidence**  
-- **Subtle sophistication**  
-- **Visual storytelling aligned with innovation and trust**
-
----
-
-_Last Updated: 2025-10-21_
+**Corporate Collaboration**

@@ -403,9 +403,10 @@ type ChatPanelProps = {
   dagLinks: any[]
   agentMode: boolean
   enableInterAgentMemory: boolean
+  workflow?: string
 }
 
-export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemory }: ChatPanelProps) {
+export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemory, workflow }: ChatPanelProps) {
   const DEBUG = process.env.NEXT_PUBLIC_DEBUG_LOGS === 'true'
   // Use the shared Event Hub hook so we subscribe to the same client as the rest of the app
   const { subscribe, unsubscribe, emit, sendMessage, isConnected } = useEventHub()
@@ -1262,12 +1263,18 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
 
     // Send message to A2A backend via HTTP API using correct A2A Message format
     try {
+      // Append workflow to the message if in Agent Mode and workflow is defined
+      let messageText = input
+      if (agentMode && workflow && workflow.trim()) {
+        messageText = `${input}\n\n### WORKFLOW (ALWAYS FOLLOW THESE STEPS)\n${workflow}`
+      }
+      
       // Build message parts including any uploaded files
       const parts: any[] = [
         {
           root: {
             kind: 'text',
-            text: input
+            text: messageText
           }
         }
       ]
