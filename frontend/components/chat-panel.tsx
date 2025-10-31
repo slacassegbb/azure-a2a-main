@@ -1261,20 +1261,14 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
       updateConversationTitle(actualConversationId, newTitle)
     }
 
-    // Send message to A2A backend via HTTP API using correct A2A Message format
-    try {
-      // Append workflow to the message if in Agent Mode and workflow is defined
-      let messageText = input
-      if (agentMode && workflow && workflow.trim()) {
-        messageText = `${input}\n\n### WORKFLOW (ALWAYS FOLLOW THESE STEPS)\n${workflow}`
-      }
-      
+      // Send message to A2A backend via HTTP API using correct A2A Message format
+      try {
       // Build message parts including any uploaded files
       const parts: any[] = [
         {
           root: {
             kind: 'text',
-            text: messageText
+            text: input
           }
         }
       ]
@@ -1347,7 +1341,8 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
             role: 'user',
             parts: parts,
             agentMode: agentMode,  // Include agent mode in message params
-            enableInterAgentMemory: enableInterAgentMemory  // Include inter-agent memory flag
+            enableInterAgentMemory: enableInterAgentMemory,  // Include inter-agent memory flag
+            workflow: agentMode && workflow ? workflow.trim() : undefined  // Include workflow for planner prompt injection
           }
         })
       })

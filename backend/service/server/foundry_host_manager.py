@@ -207,13 +207,13 @@ class FoundryHostManager(ApplicationManager):
             messageId=str(uuid.uuid4()),
         )
 
-    async def process_message(self, message: Message, agent_mode: bool = False, enable_inter_agent_memory: bool = False):
+    async def process_message(self, message: Message, agent_mode: bool = False, enable_inter_agent_memory: bool = False, workflow: str = None):
         await self.ensure_host_agent_initialized()
         message_id = get_message_id(message)
         if message_id:
             self._pending_message_ids.append(message_id)
         context_id = get_context_id(message) or str(uuid.uuid4())
-        print(f"[DEBUG] process_message: Agent Mode = {agent_mode}, Inter-Agent Memory = {enable_inter_agent_memory}")
+        print(f"[DEBUG] process_message: Agent Mode = {agent_mode}, Inter-Agent Memory = {enable_inter_agent_memory}, Workflow = {workflow[:50] if workflow else None}")
         conversation = self.get_conversation(context_id)
         if not conversation:
             conversation = Conversation(conversation_id=context_id, is_active=True)
@@ -444,8 +444,8 @@ class FoundryHostManager(ApplicationManager):
                     pass
         # Pass the entire message with all parts (including files) to the host agent
         user_text = message.parts[0].root.text if message.parts and message.parts[0].root.kind == 'text' else ""
-        print(f"[DEBUG] About to call run_conversation_with_parts with message parts: {len(message.parts)} parts, agent_mode: {agent_mode}, enable_inter_agent_memory: {enable_inter_agent_memory}")
-        responses = await self._host_agent.run_conversation_with_parts(message.parts, context_id, event_logger=event_logger, agent_mode=agent_mode, enable_inter_agent_memory=enable_inter_agent_memory)
+        print(f"[DEBUG] About to call run_conversation_with_parts with message parts: {len(message.parts)} parts, agent_mode: {agent_mode}, enable_inter_agent_memory: {enable_inter_agent_memory}, workflow: {workflow[:50] if workflow else None}")
+        responses = await self._host_agent.run_conversation_with_parts(message.parts, context_id, event_logger=event_logger, agent_mode=agent_mode, enable_inter_agent_memory=enable_inter_agent_memory, workflow=workflow)
         print(f"[DEBUG] FoundryHostAgent responses count: {len(responses) if responses else 'None'}")
         print(f"[DEBUG] FoundryHostAgent responses: {responses}")
         

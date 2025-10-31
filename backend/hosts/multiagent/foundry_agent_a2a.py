@@ -1189,13 +1189,15 @@ class FoundryHostAgent2:
         user_message: str,
         context_id: str,
         session_context: SessionContext,
-        event_logger=None
+        event_logger=None,
+        workflow: Optional[str] = None
     ) -> List[str]:
         """
         Agent Mode orchestration loop: iteratively plan and execute tasks until goal is complete.
         Returns list of response strings for final synthesis.
         """
         print(f"🎯 [Agent Mode] Starting orchestration loop for goal: {user_message[:100]}...")
+        print(f"📋 [Agent Mode] Workflow parameter received: {workflow[:100] if workflow else 'None'}")
         await self._emit_status_event("Initializing Agent Mode orchestration...", context_id)
         
         # Determine if this is a follow-up or new conversation
@@ -1258,6 +1260,32 @@ Guidelines:
 - **BUT** check if the task requires prerequisite skills from a different agent - if so, delegate to that agent FIRST
 - Each agent should work within their skill domain - use the "skills" field to match task requirements to agent capabilities
 - Tasks should arrive at agents with all necessary context already gathered by appropriate upstream agents
+"""
+        
+        # Inject workflow if provided
+        print(f"🔍 [Agent Mode] Checking workflow: workflow={workflow}, stripped={workflow.strip() if workflow else 'N/A'}")
+        if workflow and workflow.strip():
+            workflow_section = f"""
+
+### 🔥 MANDATORY WORKFLOW - FOLLOW ALL STEPS IN ORDER 🔥
+**CRITICAL**: The following workflow steps are MANDATORY and must ALL be completed before marking the goal as "completed".
+Do NOT skip steps. Do NOT mark goal as completed until ALL workflow steps are done.
+
+{workflow.strip()}
+
+**IMPORTANT**: 
+- Execute each step in sequence
+- Wait for each step to complete before moving to the next
+- Only mark goal_status="completed" after ALL workflow steps are finished
+- If a step fails, you may retry or adapt, but you must complete all steps
+"""
+            system_prompt += workflow_section
+            print(f"📋 [Agent Mode] ✅ Injected workflow into planner prompt ({len(workflow)} chars)")
+            print(f"📋 [Agent Mode] Workflow section preview:\n{workflow_section[:500]}...")
+        else:
+            print(f"📋 [Agent Mode] ❌ No workflow to inject (workflow is None or empty)")
+        
+        system_prompt += """
 
 ### 🚨 CRITICAL: WHEN TO STOP (LOOP DETECTION & USER INPUT)
 - ONLY mark goal as "completed" in these specific cases:
@@ -1308,6 +1336,10 @@ Analyze the plan and determine the next step. If you need information that isn't
             
             # Get next step from orchestrator
             try:
+                # Log system prompt for debugging (first 2000 chars)
+                print(f"🔍 [Agent Mode] System prompt being sent to Azure OpenAI (first 2000 chars):\n{system_prompt[:2000]}...")
+                print(f"🔍 [Agent Mode] System prompt contains 'MANDATORY WORKFLOW': {'MANDATORY WORKFLOW' in system_prompt}")
+                
                 next_step = await self._call_azure_openai_structured(
                     system_prompt=system_prompt,
                     user_prompt=user_prompt,
@@ -4122,7 +4154,7 @@ Original request: {message}"""
                 
         return cleaned_parts
 
-    async def run_conversation_with_parts(self, message_parts: List[Part], context_id: Optional[str] = None, event_logger=None, agent_mode: bool = False, enable_inter_agent_memory: bool = False) -> Any:
+    async def run_conversation_with_parts(self, message_parts: List[Part], context_id: Optional[str] = None, event_logger=None, agent_mode: bool = False, enable_inter_agent_memory: bool = False, workflow: Optional[str] = None) -> Any:
         """Run conversation with A2A message parts (including files)."""
         print(f"⭐ ENTRY: run_conversation_with_parts called with {len(message_parts) if message_parts else 0} parts")
         try:
@@ -4462,7 +4494,8 @@ Original request: {message}"""
                         user_message=enhanced_message,
                         context_id=context_id,
                         session_context=session_context,
-                        event_logger=event_logger
+                        event_logger=event_logger,
+                        workflow=workflow
                     )
                     
                     # Generate final synthesis using Azure AI Foundry agent
@@ -5987,7 +6020,7 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
                     # Continue processing - don't return early, let document processor handle it
                 else:
                     print(f"❌ No file bytes loaded and no valid URI")
-                return f"Error: Could not load file data for {file_id}"
+                    return f"Error: Could not load file data for {file_id}"
             
             # Enhanced security: Validate file before processing
             if len(file_bytes) > 50 * 1024 * 1024:  # 50MB limit
