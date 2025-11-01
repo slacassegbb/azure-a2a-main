@@ -12,13 +12,37 @@ You’ll find detailed guides to install, configure, and run the full system, al
 
 ## 🎥 Demonstration of Azure A2A Multi-Agent System
 
-| Claims Workflow *(Intro to Azure A2A + Multimodal + Memory)* | Content Creation Workflow *(Advanced Orchestration + Inter-Agent File Exchange + Human Collaboration)* | Customer Support Workflow *(MCP Remote Agents + Workflows + Human in the Loop)* |
-|-------------------------------------|--------------------------------------------------------|
-| [![Demo 1](https://img.youtube.com/vi/5t78x_9qUKM/hqdefault.jpg)](https://youtu.be/5t78x_9qUKM) | [![Demo 2](https://img.youtube.com/vi/ziz7n7jLd7E/hqdefault.jpg)](https://youtu.be/ziz7n7jLd7E) | [![Demo 3](https://img.youtube.com/vi/CenIL5zq79w/hqdefault.jpg)](https://youtu.be/CenIL5zq79w) |
+<table>
+  <tr>
+    <td align="center">
+      <a href="https://youtu.be/5t78x_9qUKM">
+        <img src="https://img.youtube.com/vi/5t78x_9qUKM/hqdefault.jpg" width="300px" />
+        <br />
+        <b>Claims Workflow</b><br/>
+        <sub>Intro to Azure A2A + Multimodal + Memory</sub>
+      </a>
+    </td>
+    <td align="center">
+      <a href="https://youtu.be/ziz7n7jLd7E">
+        <img src="https://img.youtube.com/vi/ziz7n7jLd7E/hqdefault.jpg" width="300px" />
+        <br />
+        <b>Content Creation Workflow</b><br/>
+        <sub>Advanced Orchestration + Inter-Agent File Exchange + Human Collaboration</sub>
+      </a>
+    </td>
+    <td align="center">
+      <a href="https://youtu.be/CenIL5zq79w">
+        <img src="https://img.youtube.com/vi/CenIL5zq79w/hqdefault.jpg" width="300px" />
+        <br />
+        <b>Customer Support Workflow</b><br/>
+        <sub>MCP Remote Agents + Workflows + Human in the Loop</sub>
+      </a>
+    </td>
+  </tr>
+</table>
 
-> _Click to watch the Azure A2A multi-agent system in action — with live agent orchestration, memory, and cross-cloud connected agents._
+> _Click any thumbnail to watch the Azure A2A multi-agent system in action — featuring dynamic orchestration, multimodal memory, and remote agents across environments._
 
----
 
 ## 📖 Architecture Whitepaper — *Scaling Agents for Enterprises*
 
