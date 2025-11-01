@@ -49,8 +49,8 @@ You'll find detailed guides to install, configure, and run the full system, alon
 
 A full companion paper is included with this repository, explaining the vision, architecture, protocols, and patterns behind this system.
 
-<a href="./Scaling_Agents.pdf">
-  <img src="./paper_thumbnail.png" alt="Scaling Agents Whitepaper" width="350"/>
+<a href="./Scaling_Agents_Enterprise.pdf">
+  <img src="./paper_thumbnail.png" alt="Scaling Agents for Enterprises Whitepaper" width="350"/>
 </a>
 
 > _Click the thumbnail above to open **Scaling_Agents.pdf** — “Scaling Agents for Enterprises: Guide to designing and scaling enterprise multi-agent systems using open standard agent protocols.”_
