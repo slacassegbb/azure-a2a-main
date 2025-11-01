@@ -12,27 +12,12 @@ You’ll find detailed guides to install, configure, and run the full system, al
 
 ## 🎥 Demonstration of Azure A2A Multi-Agent System
 
-<style>
-.thumbnail-box {
-  width: 280px;
-  height: 158px;
-  overflow: hidden;
-  border-radius: 6px;
-  display: inline-block;
-}
-.thumbnail-box img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-</style>
-
 <table>
   <tr>
     <td align="center" width="33%">
       <a href="https://youtu.be/5t78x_9qUKM">
-        <div class="thumbnail-box">
-          <img src="https://img.youtube.com/vi/5t78x_9qUKM/mqdefault.jpg" />
+        <div style="width:280px; height:158px; overflow:hidden; border-radius:6px;">
+          <img src="https://img.youtube.com/vi/5t78x_9qUKM/mqdefault.jpg" style="width:100%; height:100%; object-fit:cover;" />
         </div>
         <br/><br/>
         <b>Claims Workflow</b><br/>
@@ -42,8 +27,8 @@ You’ll find detailed guides to install, configure, and run the full system, al
 
     <td align="center" width="33%">
       <a href="https://youtu.be/ziz7n7jLd7E">
-        <div class="thumbnail-box">
-          <img src="https://img.youtube.com/vi/ziz7n7jLd7E/mqdefault.jpg" />
+        <div style="width:280px; height:158px; overflow:hidden; border-radius:6px;">
+          <img src="https://img.youtube.com/vi/ziz7n7jLd7E/mqdefault.jpg" style="width:100%; height:100%; object-fit:cover;" />
         </div>
         <br/><br/>
         <b>Content Creation Workflow</b><br/>
@@ -53,8 +38,8 @@ You’ll find detailed guides to install, configure, and run the full system, al
 
     <td align="center" width="33%">
       <a href="https://youtu.be/CenIL5zq79w">
-        <div class="thumbnail-box">
-          <img src="https://img.youtube.com/vi/CenIL5zq79w/mqdefault.jpg" />
+        <div style="width:280px; height:158px; overflow:hidden; border-radius:6px;">
+          <img src="https://img.youtube.com/vi/CenIL5zq79w/mqdefault.jpg" style="width:100%; height:100%; object-fit:cover;" />
         </div>
         <br/><br/>
         <b>Customer Support Workflow</b><br/>
