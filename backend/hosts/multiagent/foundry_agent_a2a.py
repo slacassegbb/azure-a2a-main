@@ -5,6 +5,7 @@ import re
 import json
 import uuid
 import os
+import sys
 import logging
 import time
 from datetime import datetime
@@ -43,6 +44,13 @@ import time
 
 ROOT_ENV_PATH = Path(__file__).resolve().parents[3] / ".env"
 load_dotenv(dotenv_path=ROOT_ENV_PATH, override=False)
+
+# Add backend directory to path for log_config import
+backend_dir = Path(__file__).resolve().parents[2]
+if str(backend_dir) not in sys.path:
+    sys.path.insert(0, str(backend_dir))
+
+from log_config import log_debug, log_info, log_success, log_warning, log_error, log_foundry_debug
 
 logger = logging.getLogger(__name__)
 
@@ -201,7 +209,7 @@ class FoundryHostAgent2:
         
         # Initialize Azure credential with better error handling and timeout
         try:
-            print("🔍 DEBUG: Initializing Azure authentication with timeout handling...")
+            log_foundry_debug("Initializing Azure authentication with timeout handling...")
             print("💡 TIP: If you see authentication errors, run 'python test_azure_auth.py' to diagnose")
             
             # Use ChainedTokenCredential with timeout and fallback options
@@ -215,14 +223,14 @@ class FoundryHostAgent2:
                 cli_credential,
                 DefaultAzureCredential(exclude_interactive_browser_credential=True)
             )
-            print("✅ DEBUG: Using ChainedTokenCredential (AzureCLI + DefaultAzure) with 5s timeout")
+            log_foundry_debug("✅ Using ChainedTokenCredential (AzureCLI + DefaultAzure) with 5s timeout")
                     
         except Exception as e:
-            print(f"⚠️ DEBUG: Credential initialization failed: {e}")
+            log_foundry_debug(f"⚠️ Credential initialization failed: {e}")
             print("💡 DEBUG: Falling back to DefaultAzureCredential only")
             from azure.identity import DefaultAzureCredential
             self.credential = DefaultAzureCredential(exclude_interactive_browser_credential=True)
-            print("✅ DEBUG: Using DefaultAzureCredential as fallback")
+            log_foundry_debug("✅ Using DefaultAzureCredential as fallback")
             
         self.agent: Optional[Dict[str, Any]] = None  # Changed from Agent to Dict
         self.task_callback = task_callback or self._default_task_callback
@@ -305,9 +313,9 @@ class FoundryHostAgent2:
         registry_path = backend_root / "data" / "agent_registry.json"
         registry_path.parent.mkdir(parents=True, exist_ok=True)
         if registry_path.exists():
-            print(f"📋 Found agent registry at: {registry_path}")
+            log_debug(f"📋 Found agent registry at: {registry_path}")
         else:
-            print(f"📋 Agent registry will be created at: {registry_path}")
+            log_debug(f"📋 Agent registry will be created at: {registry_path}")
         return registry_path
 
     def _load_agent_registry(self) -> List[Dict[str, Any]]:
@@ -317,7 +325,7 @@ class FoundryHostAgent2:
                 with open(self._agent_registry_path, 'r', encoding='utf-8') as f:
                     return json.load(f)
             else:
-                print(f"📋 Agent registry file not found at {self._agent_registry_path}, returning empty list")
+                log_debug(f"📋 Agent registry file not found at {self._agent_registry_path}, returning empty list")
                 return []
         except Exception as e:
             print(f"❌ Error loading agent registry: {e}")
@@ -331,7 +339,7 @@ class FoundryHostAgent2:
             
             with open(self._agent_registry_path, 'w', encoding='utf-8') as f:
                 json.dump(agents, f, indent=2, ensure_ascii=False)
-            print(f"📋 Saved agent registry with {len(agents)} agents to {self._agent_registry_path}")
+            log_debug(f"📋 Saved agent registry with {len(agents)} agents to {self._agent_registry_path}")
         except Exception as e:
             print(f"❌ Error saving agent registry: {e}")
 
@@ -397,11 +405,11 @@ class FoundryHostAgent2:
             if existing_index is not None:
                 # Update existing agent
                 registry[existing_index] = card_dict
-                print(f"📋 Updated existing agent in registry: {card.name} at {card.url}")
+                log_debug(f"📋 Updated existing agent in registry: {card.name} at {card.url}")
             else:
                 # Add new agent
                 registry.append(card_dict)
-                print(f"📋 Added new agent to registry: {card.name} at {card.url}")
+                log_debug(f"📋 Added new agent to registry: {card.name} at {card.url}")
             
             self._save_agent_registry(registry)
             
@@ -411,7 +419,7 @@ class FoundryHostAgent2:
     async def _create_agent_at_startup_task(self):
         """Background task to create the agent at startup with proper error handling."""
         try:
-            print("🚀 Creating Azure AI Foundry agent at startup...")
+            log_debug("🚀 Creating Azure AI Foundry agent at startup...")
             await self.create_agent()
             print("✅ Azure AI Foundry agent created successfully at startup!")
         except Exception as e:
@@ -463,7 +471,7 @@ class FoundryHostAgent2:
             print(f"ImportError details: {e}")
         except Exception as e:
             print(f"❌ Failed to initialize Azure Blob Storage: {e}")
-            print(f"Exception type: {type(e).__name__}")
+            log_error(f"Exception type: {type(e).__name__}")
             self._azure_blob_client = None
 
     async def _verify_blob_connection(self):
@@ -525,7 +533,7 @@ class FoundryHostAgent2:
 
     async def _get_auth_headers(self) -> Dict[str, str]:
         """Get authentication headers for Azure AI Foundry API calls with caching and timeout handling"""
-        print(f"🔍 DEBUG: Getting authentication token with timeout handling and caching")
+        log_foundry_debug(f"Getting authentication token with timeout handling and caching")
         
         # Check if we have a valid cached token
         if self._cached_token and self._token_expiry:
@@ -533,7 +541,7 @@ class FoundryHostAgent2:
             # Add 5 minute buffer before expiry
             buffer_time = datetime.datetime.now() + datetime.timedelta(minutes=5)
             if self._token_expiry > buffer_time:
-                print(f"✅ DEBUG: Using cached token (expires: {self._token_expiry})")
+                log_foundry_debug(f"✅ Using cached token (expires: {self._token_expiry})")
                 return {
                     "Authorization": f"Bearer {self._cached_token}",
                     "Content-Type": "application/json"
@@ -544,7 +552,7 @@ class FoundryHostAgent2:
         for attempt in range(max_retries):
             try:
                 # Use the correct authentication scope for Azure AI Foundry
-                print(f"🔍 DEBUG: Token attempt {attempt + 1}/{max_retries}...")
+                log_foundry_debug(f"Token attempt {attempt + 1}/{max_retries}...")
                 
                 # Wrap the token call in asyncio.wait_for to add our own timeout
                 import asyncio
@@ -569,25 +577,25 @@ class FoundryHostAgent2:
                     "Authorization": f"Bearer {token.token}",
                     "Content-Type": "application/json"
                 }
-                print(f"✅ DEBUG: Authentication headers obtained successfully (expires: {self._token_expiry})")
+                log_foundry_debug(f"✅ Authentication headers obtained successfully (expires: {self._token_expiry})")
                 return headers
                 
             except asyncio.TimeoutError:
                 error_name = "TimeoutError"
                 error_msg = "Authentication request timed out after 8 seconds"
-                print(f"⚠️ DEBUG: Auth attempt {attempt + 1} timed out after 8 seconds")
+                log_foundry_debug(f"⚠️ Auth attempt {attempt + 1} timed out after 8 seconds")
                 
             except Exception as e:
                 error_name = type(e).__name__
                 error_msg = str(e)
                 
                 if attempt < max_retries - 1:
-                    print(f"⚠️ DEBUG: Auth attempt {attempt + 1} failed ({error_name}), retrying in 3 seconds...")
-                    print(f"⚠️ DEBUG: Error details: {error_msg}")
+                    log_foundry_debug(f"⚠️ Auth attempt {attempt + 1} failed ({error_name}), retrying in 3 seconds...")
+                    log_foundry_debug(f"⚠️ Error details: {error_msg}")
                     await asyncio.sleep(3)  # Wait 3 seconds before retry
                     continue
                 else:
-                    print(f"❌ DEBUG: Failed to get authentication token after {max_retries} attempts: {error_name}: {e}")
+                    log_foundry_debug(f"❌ Failed to get authentication token after {max_retries} attempts: {error_name}: {e}")
                     
                     # Provide specific help based on error type
                     if "CredentialUnavailableError" in error_name and "Azure CLI" in error_msg:
@@ -610,14 +618,14 @@ class FoundryHostAgent2:
 
     def _clear_cached_token(self):
         """Clear cached authentication token to force refresh on next request"""
-        print(f"🔄 DEBUG: Clearing cached authentication token")
+        log_foundry_debug(f"🔄 Clearing cached authentication token")
         self._cached_token = None
         self._token_expiry = None
 
     async def refresh_azure_cli_session(self):
         """Helper method to refresh Azure CLI session when authentication fails"""
         try:
-            print(f"🔄 DEBUG: Attempting to refresh Azure CLI session...")
+            log_foundry_debug(f"🔄 Attempting to refresh Azure CLI session...")
             import subprocess
             import asyncio
             
@@ -631,18 +639,18 @@ class FoundryHostAgent2:
             stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=10.0)
             
             if process.returncode == 0:
-                print(f"✅ DEBUG: Azure CLI session refreshed successfully")
+                log_foundry_debug(f"✅ Azure CLI session refreshed successfully")
                 self._clear_cached_token()  # Clear cache to use fresh token
                 return True
             else:
-                print(f"❌ DEBUG: Azure CLI refresh failed: {stderr.decode()}")
+                log_foundry_debug(f"❌ Azure CLI refresh failed: {stderr.decode()}")
                 return False
                 
         except asyncio.TimeoutError:
-            print(f"❌ DEBUG: Azure CLI refresh timed out")
+            log_foundry_debug(f"❌ Azure CLI refresh timed out")
             return False
         except Exception as e:
-            print(f"❌ DEBUG: Error refreshing Azure CLI session: {e}")
+            log_foundry_debug(f"❌ Error refreshing Azure CLI session: {e}")
             return False
 
     def _get_client(self):
@@ -679,34 +687,34 @@ class FoundryHostAgent2:
                     messages = data.get("data", [])
                     return list(reversed(messages))
                 elif response.status_code == 401:
-                    print(f"🔄 DEBUG: Authentication failed (401), clearing cached token")
+                    log_foundry_debug(f"🔄 Authentication failed (401), clearing cached token")
                     self._clear_cached_token()
-                    print(f"❌ DEBUG: Failed to list messages: {response.status_code} - {response.text}")
+                    log_foundry_debug(f"❌ Failed to list messages: {response.status_code} - {response.text}")
                     return []
                 else:
-                    print(f"❌ DEBUG: Failed to list messages: {response.status_code} - {response.text}")
+                    log_foundry_debug(f"❌ Failed to list messages: {response.status_code} - {response.text}")
                     return []
         except Exception as e:
-            print(f"❌ DEBUG: Exception in _http_list_messages: {e}")
+            log_foundry_debug(f"❌ Exception in _http_list_messages: {e}")
             return []
 
     async def _http_create_run(self, thread_id: str, agent_id: str, session_context: Optional[SessionContext] = None) -> Dict[str, Any]:
         """Create a run via HTTP API"""
         try:
-            print(f"🔍 DEBUG: _http_create_run ENTRY - thread_id: {thread_id}, agent_id: {agent_id}")
+            log_foundry_debug(f"_http_create_run ENTRY - thread_id: {thread_id}, agent_id: {agent_id}")
             
-            print(f"🔍 DEBUG: Getting auth headers...")
+            log_foundry_debug(f"Getting auth headers...")
             headers = await self._get_auth_headers()
-            print(f"🔍 DEBUG: Auth headers obtained successfully")
+            log_foundry_debug(f"Auth headers obtained successfully")
             
             endpoint = os.environ["AZURE_AI_FOUNDRY_PROJECT_ENDPOINT"]
             api_url = f"{endpoint}/threads/{thread_id}/runs"
-            print(f"🔍 DEBUG: API URL: {api_url}")
+            log_foundry_debug(f"API URL: {api_url}")
             
             # Determine parallel_tool_calls and instructions based on agent mode
             agent_mode = session_context.agent_mode if session_context else False
             parallel_tool_calls = not agent_mode  # When agent mode is ON, parallel is OFF
-            print(f"🔍 DEBUG: Agent Mode: {agent_mode}, Parallel Tool Calls: {parallel_tool_calls}")
+            log_foundry_debug(f"Agent Mode: {agent_mode}, Parallel Tool Calls: {parallel_tool_calls}")
             
             # Get instructions based on agent mode
             instructions = self.root_instruction('foundry-host-agent', agent_mode)
@@ -716,9 +724,9 @@ class FoundryHostAgent2:
                 "parallel_tool_calls": parallel_tool_calls,
                 "instructions": instructions  # Override instructions based on agent mode
             }
-            print(f"🔍 DEBUG: Payload: {payload}")
+            log_foundry_debug(f"Payload: {payload}")
             
-            print(f"🔍 DEBUG: Creating HTTP client and making POST request...")
+            log_foundry_debug(f"Creating HTTP client and making POST request...")
             async with httpx.AsyncClient() as client:
                 response = await client.post(
                     api_url,
@@ -727,30 +735,30 @@ class FoundryHostAgent2:
                     params={"api-version": "2025-05-15-preview"},
                     timeout=30.0
                 )
-                print(f"🔍 DEBUG: POST request completed - status: {response.status_code}")
+                log_foundry_debug(f"POST request completed - status: {response.status_code}")
                 
                 if response.status_code == 200 or response.status_code == 201:
                     run_data = response.json()
-                    print(f"🔍 DEBUG: Run creation successful - returning data: {run_data}")
+                    log_foundry_debug(f"Run creation successful - returning data: {run_data}")
                     return run_data
                 else:
-                    print(f"❌ DEBUG: Failed to create run: {response.status_code} - {response.text}")
+                    log_foundry_debug(f"❌ Failed to create run: {response.status_code} - {response.text}")
                     raise Exception(f"Failed to create run: {response.status_code} - {response.text}")
         except Exception as e:
-            print(f"❌ DEBUG: Exception in _http_create_run: {e}")
+            log_foundry_debug(f"❌ Exception in _http_create_run: {e}")
             import traceback
-            print(f"❌ DEBUG: Traceback: {traceback.format_exc()}")
+            log_foundry_debug(f"❌ Traceback: {traceback.format_exc()}")
             raise
 
     async def _http_get_run(self, thread_id: str, run_id: str) -> Dict[str, Any]:
         """Get run status via HTTP API"""
         try:
-            print(f"🔍 DEBUG: _http_get_run ENTRY - thread_id: {thread_id}, run_id: {run_id}")
+            log_foundry_debug(f"_http_get_run ENTRY - thread_id: {thread_id}, run_id: {run_id}")
             
             headers = await self._get_auth_headers()
             endpoint = os.environ["AZURE_AI_FOUNDRY_PROJECT_ENDPOINT"]
             api_url = f"{endpoint}/threads/{thread_id}/runs/{run_id}"
-            print(f"🔍 DEBUG: GET request to: {api_url}")
+            log_foundry_debug(f"GET request to: {api_url}")
             
             async with httpx.AsyncClient() as client:
                 response = await client.get(
@@ -759,19 +767,19 @@ class FoundryHostAgent2:
                     params={"api-version": "2025-05-15-preview"},
                     timeout=30.0
                 )
-                print(f"🔍 DEBUG: GET response status: {response.status_code}")
+                log_foundry_debug(f"GET response status: {response.status_code}")
                 
                 if response.status_code == 200:
                     run_data = response.json()
-                    print(f"🔍 DEBUG: Run status retrieved - status: {run_data.get('status', 'unknown')}")
+                    log_foundry_debug(f"Run status retrieved - status: {run_data.get('status', 'unknown')}")
                     return run_data
                 else:
-                    print(f"❌ DEBUG: Failed to get run: {response.status_code} - {response.text}")
+                    log_foundry_debug(f"❌ Failed to get run: {response.status_code} - {response.text}")
                     raise Exception(f"Failed to get run: {response.status_code} - {response.text}")
         except Exception as e:
-            print(f"❌ DEBUG: Exception in _http_get_run: {e}")
+            log_foundry_debug(f"❌ Exception in _http_get_run: {e}")
             import traceback
-            print(f"❌ DEBUG: Traceback: {traceback.format_exc()}")
+            log_foundry_debug(f"❌ Traceback: {traceback.format_exc()}")
             raise
 
     async def _http_submit_tool_outputs(self, thread_id: str, run_id: str, tool_outputs: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -797,10 +805,10 @@ class FoundryHostAgent2:
                 if response.status_code == 200:
                     return response.json()
                 else:
-                    print(f"❌ DEBUG: Failed to submit tool outputs: {response.status_code} - {response.text}")
+                    log_foundry_debug(f"❌ Failed to submit tool outputs: {response.status_code} - {response.text}")
                     raise Exception(f"Failed to submit tool outputs: {response.status_code} - {response.text}")
         except Exception as e:
-            print(f"❌ DEBUG: Exception in _http_submit_tool_outputs: {e}")
+            log_foundry_debug(f"❌ Exception in _http_submit_tool_outputs: {e}")
             raise
 
     async def init_remote_agent_addresses(self, remote_agent_addresses: List[str]):
@@ -844,9 +852,9 @@ class FoundryHostAgent2:
             # Check if already registered to avoid duplicates
             if not any(a.name == card.name for a in self._host_manager._agents):
                 self._host_manager._agents.append(card)
-                print(f"[DEBUG] ✅ Added {card.name} to host manager agent list")
+                log_debug(f"✅ Added {card.name} to host manager agent list")
             else:
-                print(f"[DEBUG] ℹ️ Agent {card.name} already in host manager list")
+                log_debug(f"ℹ️ Agent {card.name} already in host manager list")
         
         # Emit agent registration event to WebSocket for UI visibility
         self._emit_agent_registration_event(card)
@@ -858,12 +866,12 @@ class FoundryHostAgent2:
 
     async def create_agent(self) -> Dict[str, Any]:
         if self.agent:
-            print(f"🔍 DEBUG: Agent already exists, reusing agent ID: {self.agent.get('id', 'unknown')}")
+            log_foundry_debug(f"Agent already exists, reusing agent ID: {self.agent.get('id', 'unknown')}")
             return self.agent
         
-        print(f"🔍 DEBUG: No existing agent found, creating new agent...")
-        print(f"🔍 DEBUG: AZURE_AI_FOUNDRY_PROJECT_ENDPOINT = {os.environ.get('AZURE_AI_FOUNDRY_PROJECT_ENDPOINT', 'NOT SET')}")
-        print(f"🔍 DEBUG: AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME = {os.environ.get('AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME', 'NOT SET')}")
+        log_foundry_debug(f"No existing agent found, creating new agent...")
+        log_foundry_debug(f"AZURE_AI_FOUNDRY_PROJECT_ENDPOINT = {os.environ.get('AZURE_AI_FOUNDRY_PROJECT_ENDPOINT', 'NOT SET')}")
+        log_foundry_debug(f"AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME = {os.environ.get('AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME', 'NOT SET')}")
         
         # Validate required environment variables
         if not os.environ.get("AZURE_AI_FOUNDRY_PROJECT_ENDPOINT"):
@@ -879,7 +887,7 @@ class FoundryHostAgent2:
         if "/api/projects/" in endpoint:
             # Use the full project endpoint + assistants path
             api_url = f"{endpoint}/assistants"
-            print(f"🔍 DEBUG: Using assistants API URL: {api_url}")
+            log_foundry_debug(f"Using assistants API URL: {api_url}")
         else:
             print(f"❌ ERROR: Invalid endpoint format. Expected format with /api/projects/")
             raise ValueError(f"Invalid endpoint format: {endpoint}")
@@ -892,7 +900,7 @@ class FoundryHostAgent2:
             instructions = self.root_instruction('foundry-host-agent')
             tools = self._get_tools()
             
-            print(f"🔍 DEBUG: Agent parameters:")
+            log_foundry_debug(f"Agent parameters:")
             print(f"  - model: {model_name}")
             print(f"  - name: foundry-host-agent")
             print(f"  - instructions length: {len(instructions)}")
@@ -916,27 +924,27 @@ class FoundryHostAgent2:
                     timeout=30.0
                 )
                 
-                print(f"🔍 DEBUG: API Response Status: {response.status_code}")
+                log_foundry_debug(f"API Response Status: {response.status_code}")
                 
                 if response.status_code == 200 or response.status_code == 201:
                     self.agent = response.json()
-                    print(f"✅ DEBUG: Agent created successfully! ID: {self.agent['id']}")
+                    log_foundry_debug(f"✅ Agent created successfully! ID: {self.agent['id']}")
                     logger.info(f"Created Foundry Host agent: {self.agent['id']}")
                     return self.agent
                 elif response.status_code == 401:
-                    print(f"🔄 DEBUG: Authentication failed (401), clearing cached token")
+                    log_foundry_debug(f"🔄 Authentication failed (401), clearing cached token")
                     self._clear_cached_token()
-                    print(f"❌ DEBUG: API request failed with status {response.status_code}")
-                    print(f"❌ DEBUG: Response text: {response.text}")
+                    log_foundry_debug(f"❌ API request failed with status {response.status_code}")
+                    log_foundry_debug(f"❌ Response text: {response.text}")
                     raise Exception(f"Failed to create agent (authentication failed): {response.status_code} - {response.text}")
                 else:
-                    print(f"❌ DEBUG: API request failed with status {response.status_code}")
-                    print(f"❌ DEBUG: Response text: {response.text}")
+                    log_foundry_debug(f"❌ API request failed with status {response.status_code}")
+                    log_foundry_debug(f"❌ Response text: {response.text}")
                     raise Exception(f"Failed to create agent: {response.status_code} - {response.text}")
             
         except Exception as e:
-            print(f"❌ DEBUG: Exception in create_agent(): {type(e).__name__}: {e}")
-            print(f"❌ DEBUG: Full traceback:")
+            log_foundry_debug(f"❌ Exception in create_agent(): {type(e).__name__}: {e}")
+            log_foundry_debug(f"❌ Full traceback:")
             import traceback
             traceback.print_exc()
             raise
@@ -1179,7 +1187,7 @@ class FoundryHostAgent2:
             return parsed
                     
         except Exception as e:
-            print(f"❌ [Agent Mode] Error calling Azure OpenAI: {e}")
+            log_error(f"[Agent Mode] Error calling Azure OpenAI: {e}")
             import traceback
             traceback.print_exc()
             raise
@@ -1196,8 +1204,8 @@ class FoundryHostAgent2:
         Agent Mode orchestration loop: iteratively plan and execute tasks until goal is complete.
         Returns list of response strings for final synthesis.
         """
-        print(f"🎯 [Agent Mode] Starting orchestration loop for goal: {user_message[:100]}...")
-        print(f"📋 [Agent Mode] Workflow parameter received: {workflow[:100] if workflow else 'None'}")
+        log_debug(f"🎯 [Agent Mode] Starting orchestration loop for goal: {user_message[:100]}...")
+        log_debug(f"📋 [Agent Mode] Workflow parameter received: {workflow[:100] if workflow else 'None'}")
         await self._emit_status_event("Initializing Agent Mode orchestration...", context_id)
         
         # Determine if this is a follow-up or new conversation
@@ -1222,7 +1230,7 @@ class FoundryHostAgent2:
         
         # Log initial plan
         print(f"\n{'='*80}")
-        print(f"📋 [Agent Mode] INITIAL PLAN")
+        log_debug(f"📋 [Agent Mode] INITIAL PLAN")
         print(f"{'='*80}")
         print(f"Goal: {plan.goal}")
         print(f"Status: {plan.goal_status}")
@@ -1280,10 +1288,10 @@ Do NOT skip steps. Do NOT mark goal as completed until ALL workflow steps are do
 - If a step fails, you may retry or adapt, but you must complete all steps
 """
             system_prompt += workflow_section
-            print(f"📋 [Agent Mode] ✅ Injected workflow into planner prompt ({len(workflow)} chars)")
-            print(f"📋 [Agent Mode] Workflow section preview:\n{workflow_section[:500]}...")
+            log_debug(f"📋 [Agent Mode] ✅ Injected workflow into planner prompt ({len(workflow)} chars)")
+            log_debug(f"📋 [Agent Mode] Workflow section preview:\n{workflow_section[:500]}...")
         else:
-            print(f"📋 [Agent Mode] ❌ No workflow to inject (workflow is None or empty)")
+            log_debug(f"📋 [Agent Mode] ❌ No workflow to inject (workflow is None or empty)")
         
         system_prompt += """
 
@@ -1357,7 +1365,7 @@ Analyze the plan and determine the next step. If you need information that isn't
                 
                 # Log plan state after orchestrator decision
                 print(f"\n{'='*80}")
-                print(f"📋 [Agent Mode] PLAN STATE (Iteration {iteration})")
+                log_debug(f"📋 [Agent Mode] PLAN STATE (Iteration {iteration})")
                 print(f"{'='*80}")
                 print(f"Goal: {plan.goal}")
                 print(f"Goal Status: {plan.goal_status}")
@@ -1379,7 +1387,7 @@ Analyze the plan and determine the next step. If you need information that isn't
                 print(f"{'='*80}\n")
                 
                 if next_step.goal_status == "completed":
-                    print(f"✅ [Agent Mode] Goal completed after {iteration} iterations!")
+                    log_info(f"✅ [Agent Mode] Goal completed after {iteration} iterations!")
                     await self._emit_status_event("Goal achieved! Generating final response...", context_id)
                     break
                 
@@ -1401,8 +1409,8 @@ Analyze the plan and determine the next step. If you need information that isn't
                     )
                     plan.tasks.append(task)
                     
-                    print(f"📋 [Agent Mode] New task: {task_desc}")
-                    print(f"🎯 [Agent Mode] Target agent: {recommended_agent or 'None specified'}")
+                    log_debug(f"📋 [Agent Mode] New task: {task_desc}")
+                    log_debug(f"🎯 [Agent Mode] Target agent: {recommended_agent or 'None specified'}")
                     await self._emit_status_event(f"Executing: {task_desc}", context_id)
                     
                     # Stream task creation event
@@ -1414,7 +1422,7 @@ Analyze the plan and determine the next step. If you need information that isn't
                     # Execute task via send_message
                     try:
                         if recommended_agent and recommended_agent in self.cards:
-                            print(f"🚀 [Agent Mode] Calling agent: {recommended_agent}")
+                            log_debug(f"🚀 [Agent Mode] Calling agent: {recommended_agent}")
                             
                             # For sequential tasks, keep only the MOST RECENT file of each role
                             # This prevents file accumulation that confuses agents
@@ -1467,29 +1475,29 @@ Analyze the plan and determine the next step. If you need information that isn't
                                     
                                     if task.state == "failed":
                                         task.error_message = response_obj.status.message or "Task failed"
-                                        print(f"❌ [Agent Mode] Task failed: {task.error_message}")
+                                        log_error(f"[Agent Mode] Task failed: {task.error_message}")
                                     else:
-                                        print(f"✅ [Agent Mode] Task completed with state: {task.state}")
+                                        log_info(f"✅ [Agent Mode] Task completed with state: {task.state}")
                                         all_task_outputs.append(str(response_obj.result))
                                 else:
                                     # Handle string response
                                     task.state = "completed"
                                     task.output = {"result": str(response_obj)}
                                     all_task_outputs.append(str(response_obj))
-                                    print(f"✅ [Agent Mode] Task completed successfully")
+                                    log_info(f"✅ [Agent Mode] Task completed successfully")
                             else:
                                 task.state = "failed"
                                 task.error_message = "No response from agent"
-                                print(f"❌ [Agent Mode] No response from agent")
+                                log_error(f"[Agent Mode] No response from agent")
                         else:
                             task.state = "failed"
                             task.error_message = f"Agent '{recommended_agent}' not found"
-                            print(f"❌ [Agent Mode] Agent not found: {recommended_agent}")
+                            log_error(f"[Agent Mode] Agent not found: {recommended_agent}")
                     
                     except Exception as e:
                         task.state = "failed"
                         task.error_message = str(e)
-                        print(f"❌ [Agent Mode] Task execution error: {e}")
+                        log_error(f"[Agent Mode] Task execution error: {e}")
                     
                     finally:
                         task.updated_at = datetime.utcnow()
@@ -1497,7 +1505,7 @@ Analyze the plan and determine the next step. If you need information that isn't
                         
                         # Log task completion details
                         print(f"\n{'~'*80}")
-                        print(f"✅ [Agent Mode] TASK COMPLETED")
+                        log_info(f"✅ [Agent Mode] TASK COMPLETED")
                         print(f"{'~'*80}")
                         print(f"Task ID: {task.task_id}")
                         print(f"Description: {task.task_description}")
@@ -1510,7 +1518,7 @@ Analyze the plan and determine the next step. If you need information that isn't
                         print(f"{'~'*80}\n")
                 
             except Exception as e:
-                print(f"❌ [Agent Mode] Orchestration error: {e}")
+                log_error(f"[Agent Mode] Orchestration error: {e}")
                 await self._emit_status_event(f"Error in orchestration: {str(e)}", context_id)
                 break
         
@@ -1618,7 +1626,7 @@ Analyze the plan and determine the next step. If you need information that isn't
                     # Use the _emit_status_event method for consistency
                     await self._emit_granular_agent_event(agent_name, status_text)
                 except Exception as e:
-                    print(f"[DEBUG] Error streaming remote agent activity: {e}")
+                    log_debug(f"Error streaming remote agent activity: {e}")
                     pass
             
             # Create background task (non-blocking)
@@ -1626,11 +1634,11 @@ Analyze the plan and determine the next step. If you need information that isn't
                 asyncio.create_task(stream_activity())
             except RuntimeError:
                 # Handle case where no event loop is running
-                print(f"[DEBUG] No event loop available for streaming agent activity from {agent_name}")
+                log_debug(f"No event loop available for streaming agent activity from {agent_name}")
                 pass
                 
         except Exception as e:
-            print(f"[DEBUG] Error in _stream_remote_agent_activity: {e}")
+            log_debug(f"Error in _stream_remote_agent_activity: {e}")
             # Don't let streaming errors break the callback
             pass
 
@@ -1651,14 +1659,14 @@ Analyze the plan and determine the next step. If you need information that isn't
                 
                 success = await streamer._send_event("tool_call", event_data, None)
                 if success:
-                    print(f"[DEBUG] Streamed tool call: {agent_name} - {tool_name}")
+                    log_debug(f"Streamed tool call: {agent_name} - {tool_name}")
                 else:
-                    print(f"[DEBUG] Failed to stream tool call: {agent_name}")
+                    log_debug(f"Failed to stream tool call: {agent_name}")
             else:
-                print(f"[DEBUG] WebSocket streamer not available for tool call")
+                log_debug(f"WebSocket streamer not available for tool call")
                 
         except Exception as e:
-            print(f"[DEBUG] Error emitting tool call event: {e}")
+            log_debug(f"Error emitting tool call event: {e}")
             pass
 
     async def _emit_tool_response_event(self, agent_name: str, tool_name: str, status: str, error_message: str = None):
@@ -1681,14 +1689,14 @@ Analyze the plan and determine the next step. If you need information that isn't
                 
                 success = await streamer._send_event("tool_response", event_data, None)
                 if success:
-                    print(f"[DEBUG] Streamed tool response: {agent_name} - {tool_name} - {status}")
+                    log_debug(f"Streamed tool response: {agent_name} - {tool_name} - {status}")
                 else:
-                    print(f"[DEBUG] Failed to stream tool response: {agent_name}")
+                    log_debug(f"Failed to stream tool response: {agent_name}")
             else:
-                print(f"[DEBUG] WebSocket streamer not available for tool response")
+                log_debug(f"WebSocket streamer not available for tool response")
                 
         except Exception as e:
-            print(f"[DEBUG] Error emitting tool response event: {e}")
+            log_debug(f"Error emitting tool response event: {e}")
             pass
 
     async def _emit_granular_agent_event(self, agent_name: str, status_text: str):
@@ -1708,14 +1716,14 @@ Analyze the plan and determine the next step. If you need information that isn't
                 # Use the remote_agent_activity event type for granular visibility
                 success = await streamer._send_event("remote_agent_activity", event_data, None)
                 if success:
-                    print(f"[DEBUG] Streamed remote agent activity: {agent_name} - {status_text}")
+                    log_debug(f"Streamed remote agent activity: {agent_name} - {status_text}")
                 else:
-                    print(f"[DEBUG] Failed to stream remote agent activity: {agent_name}")
+                    log_debug(f"Failed to stream remote agent activity: {agent_name}")
             else:
-                print(f"[DEBUG] WebSocket streamer not available for remote agent activity")
+                log_debug(f"WebSocket streamer not available for remote agent activity")
                 
         except Exception as e:
-            print(f"[DEBUG] Error emitting granular agent event: {e}")
+            log_debug(f"Error emitting granular agent event: {e}")
             # Don't let streaming errors break the main flow
             pass
 
@@ -1726,7 +1734,7 @@ Analyze the plan and determine the next step. If you need information that isn't
         Enhanced with granular WebSocket streaming for UI visibility.
         """
         agent_name = agent_card.name
-        print(f"[STREAMING] Task callback from {agent_name}: {type(event).__name__}")
+        log_debug(f"[STREAMING] Task callback from {agent_name}: {type(event).__name__}")
         # Keep session context task mapping in sync per agent
         try:
             context_id_cb = get_context_id(event, None)
@@ -1748,7 +1756,7 @@ Analyze the plan and determine the next step. If you need information that isn't
         # This prevents duplicates while maintaining granular visibility
         if hasattr(event, 'kind'):
             event_kind = getattr(event, 'kind', 'unknown')
-            print(f"[STREAMING] Event kind from {agent_name}: {event_kind}")
+            log_debug(f"[STREAMING] Event kind from {agent_name}: {event_kind}")
             
             # Only emit for initial task creation and final completion states
             if event_kind == 'task':
@@ -1769,17 +1777,17 @@ Analyze the plan and determine the next step. If you need information that isn't
                     else:
                         state_str = str(state_value)
                     
-                    print(f"[STREAMING] Status update from {agent_name}: {state_str}")
+                    log_debug(f"[STREAMING] Status update from {agent_name}: {state_str}")
                     
                     # Emit all meaningful task states for full UI visibility
                     # This includes all A2A protocol states: submitted, working, input-required, completed, canceled, failed, unknown
                     if state_str in ['completed', 'failed', 'canceled', 'submitted', 'input-required', 'unknown', 'working']:
-                        print(f"[STREAMING] Emitting task state for {agent_name}: {state_str}")
+                        log_debug(f"[STREAMING] Emitting task state for {agent_name}: {state_str}")
                         # Use the _emit_task_event for proper A2A-compliant streaming
                         self._emit_task_event(event, agent_card)
                     else:
                         # Log unrecognized states for debugging
-                        print(f"[STREAMING] Unrecognized task state from {agent_name}: {state_str}")
+                        log_debug(f"[STREAMING] Unrecognized task state from {agent_name}: {state_str}")
                         # Still emit it in case it's a valid state we don't know about
                         self._emit_task_event(event, agent_card)
             # Skip other intermediate events
@@ -1789,27 +1797,27 @@ Analyze the plan and determine the next step. If you need information that isn't
         
         if isinstance(event, Task):
             # Initial task creation - store per agent
-            print(f"[PARALLEL] Storing new task for {agent_name}")
+            log_debug(f"[PARALLEL] Storing new task for {agent_name}")
             self._agent_tasks[agent_name] = event
             return event
         
         elif hasattr(event, 'kind'):
             if event.kind == 'task':
                 # Initial task event - store per agent
-                print(f"[PARALLEL] Storing task event for {agent_name}")
+                log_debug(f"[PARALLEL] Storing task event for {agent_name}")
                 self._agent_tasks[agent_name] = event
                 return event
             
             elif event.kind == 'status-update' and current_task:
                 # Update existing task status for this agent
-                print(f"[PARALLEL] Updating task status for {agent_name}")
+                log_debug(f"[PARALLEL] Updating task status for {agent_name}")
                 if hasattr(event, 'status'):
                     current_task.status = event.status
                 return current_task
             
             elif event.kind == 'artifact-update' and current_task:
                 # Add artifact to existing task for this agent
-                print(f"[PARALLEL] Adding artifact for {agent_name}")
+                log_debug(f"[PARALLEL] Adding artifact for {agent_name}")
                 if hasattr(event, 'artifact'):
                     if not current_task.artifacts:
                         current_task.artifacts = []
@@ -1841,13 +1849,13 @@ Analyze the plan and determine the next step. If you need information that isn't
         
         # Store for this agent
         self._agent_tasks[agent_name] = fallback_task
-        print(f"[PARALLEL] Created fallback task for {agent_name}")
+        log_debug(f"[PARALLEL] Created fallback task for {agent_name}")
         return fallback_task
 
     def _emit_task_event(self, task: TaskCallbackArg, agent_card: AgentCard):
         """Emit event for task callback, with enhanced agent name context for UI status tracking."""
-        print(f"[DEBUG] Emitting task event for agent: {agent_card.name}")
-        print(f"[DEBUG] Agent capabilities: {agent_card.capabilities if hasattr(agent_card, 'capabilities') else 'None'}")
+        log_debug(f"Emitting task event for agent: {agent_card.name}")
+        log_debug(f"Agent capabilities: {agent_card.capabilities if hasattr(agent_card, 'capabilities') else 'None'}")
         
         content = None
         contextId = get_context_id(task, None)
@@ -1867,7 +1875,7 @@ Analyze the plan and determine the next step. If you need information that isn't
             else:
                 task_state = 'working'
             
-            print(f"[DEBUG] Status update extracted: {task_state} for {agent_card.name}")
+            log_debug(f"Status update extracted: {task_state} for {agent_card.name}")
             
             if hasattr(task, 'status') and task.status and task.status.message:
                 content = task.status.message
@@ -1946,10 +1954,10 @@ Analyze the plan and determine the next step. If you need information that isn't
             # Add to host manager events if available
             if hasattr(self, '_host_manager') and self._host_manager:
                 self._host_manager.add_event(event_obj)
-                print(f"[DEBUG] Added event to host manager for agent: {agent_card.name}")
+                log_debug(f"Added event to host manager for agent: {agent_card.name}")
             
             # Stream A2A-compliant task events to WebSocket with agent context
-            print(f"[DEBUG] Streaming A2A task event to WebSocket for agent: {agent_card.name}, state: {task_state}")
+            log_debug(f"Streaming A2A task event to WebSocket for agent: {agent_card.name}, state: {task_state}")
             try:
                 import asyncio
 
@@ -1959,7 +1967,7 @@ Analyze the plan and determine the next step. If you need information that isn't
 
                         streamer = await get_websocket_streamer()
                         if not streamer:
-                            print("[DEBUG] ⚠️ WebSocket streamer not available for task event")
+                            log_debug("⚠️ WebSocket streamer not available for task event")
                             return
 
                         event_data = {
@@ -1980,23 +1988,23 @@ Analyze the plan and determine the next step. If you need information that isn't
 
                         success = await streamer._send_event(event_type, event_data, contextId)
                         if success:
-                            print(f"[DEBUG] ✅ A2A task event streamed: {agent_card.name} -> {task_state}")
+                            log_debug(f"✅ A2A task event streamed: {agent_card.name} -> {task_state}")
                         else:
-                            print(f"[DEBUG] ❌ Failed to stream A2A task event: {agent_card.name} -> {task_state}")
+                            log_debug(f"❌ Failed to stream A2A task event: {agent_card.name} -> {task_state}")
                     except Exception as e:
-                        print(f"[DEBUG] ❌ Error streaming A2A task event: {e}")
+                        log_debug(f"❌ Error streaming A2A task event: {e}")
                         import traceback
                         traceback.print_exc()
 
                 asyncio.create_task(stream_task_event())
 
             except Exception as e:
-                print(f"[DEBUG] ❌ Error setting up A2A task event streaming: {e}")
+                log_debug(f"❌ Error setting up A2A task event streaming: {e}")
                 pass
 
     def _emit_agent_registration_event(self, agent_card: AgentCard):
         """Emit agent registration event to WebSocket for UI sidebar visibility."""
-        print(f"[DEBUG] Emitting agent registration event for: {agent_card.name}")
+        log_debug(f"Emitting agent registration event for: {agent_card.name}")
         try:
             import asyncio
             
@@ -2009,7 +2017,7 @@ Analyze the plan and determine the next step. If you need information that isn't
 
                     streamer = await get_websocket_streamer()
                     if not streamer:
-                        print(f"[DEBUG] ⚠️ WebSocket streamer not available for agent registration")
+                        log_debug(f"⚠️ WebSocket streamer not available for agent registration")
                         return
 
                     event_data = {
@@ -2022,11 +2030,11 @@ Analyze the plan and determine the next step. If you need information that isn't
 
                     success = await streamer._send_event("agent_registered", event_data, default_context_id)
                     if success:
-                        print(f"[DEBUG] ✅ Agent registration event streamed to WebSocket for {agent_card.name}")
+                        log_debug(f"✅ Agent registration event streamed to WebSocket for {agent_card.name}")
                     else:
-                        print(f"[DEBUG] ❌ Failed to stream agent registration event to WebSocket for {agent_card.name}")
+                        log_debug(f"❌ Failed to stream agent registration event to WebSocket for {agent_card.name}")
                 except Exception as e:
-                    print(f"[DEBUG] ❌ Error streaming agent registration event: {e}")
+                    log_debug(f"❌ Error streaming agent registration event: {e}")
                     import traceback
                     traceback.print_exc()
             
@@ -2034,12 +2042,12 @@ Analyze the plan and determine the next step. If you need information that isn't
             asyncio.create_task(stream_registration_event())
             
         except Exception as e:
-            print(f"[DEBUG] ❌ Error setting up agent registration event streaming: {e}")
+            log_debug(f"❌ Error setting up agent registration event streaming: {e}")
             pass
 
     def _display_task_status_update(self, status_text: str, event: TaskCallbackArg):
         """Display a task status update in the UI as a message."""
-        print(f"[DEBUG] _display_task_status_update called with: {status_text}")
+        log_debug(f"_display_task_status_update called with: {status_text}")
         try:
             # Create a message to display in the UI
             from a2a.types import Message, TextPart, Part
@@ -2047,7 +2055,7 @@ Analyze the plan and determine the next step. If you need information that isn't
             
             message_id = str(uuid.uuid4())
             context_id = getattr(event, 'contextId', getattr(self._current_task, 'contextId', str(uuid.uuid4())))
-            print(f"[DEBUG] Created message_id: {message_id}, context_id: {context_id}")
+            log_debug(f"Created message_id: {message_id}, context_id: {context_id}")
             
             # Create a message with the status update
             status_message = Message(
@@ -2059,7 +2067,7 @@ Analyze the plan and determine the next step. If you need information that isn't
             
             # Add to the conversation history through the host manager
             if self._host_manager:
-                print(f"[DEBUG] Host manager found, getting conversation for context_id: {context_id}")
+                log_debug(f"Host manager found, getting conversation for context_id: {context_id}")
                 # Try to find the conversation with the given context_id first
                 conversation = self._host_manager.get_conversation(context_id)
                 
@@ -2076,20 +2084,20 @@ Analyze the plan and determine the next step. If you need information that isn't
                             role="agent",  # Use agent role for status updates
                             parts=[Part(root=TextPart(text=f"[Status] {status_text}"))]
                         )
-                        print(f"[DEBUG] Using fallback conversation: {conversation.conversation_id}")
+                        log_debug(f"Using fallback conversation: {conversation.conversation_id}")
                 
                 if conversation:
                     conversation.messages.append(status_message)
-                    print(f"[DEBUG] ✅ Added status message to conversation: {status_text}")
+                    log_debug(f"✅ Added status message to conversation: {status_text}")
                 else:
-                    print(f"[DEBUG] ❌ No conversation found for context_id: {context_id}")
+                    log_debug(f"❌ No conversation found for context_id: {context_id}")
             else:
-                print(f"[DEBUG] ❌ No host manager reference available")
+                log_debug(f"❌ No host manager reference available")
             
             # Also add to local messages list
             if hasattr(self, '_messages'):
                 self._messages.append(status_message)
-                print(f"[DEBUG] Added to local messages list")
+                log_debug(f"Added to local messages list")
             
             # Also add to the conversation state that the UI reads from
             # This ensures the status messages appear in the conversation flow
@@ -2098,12 +2106,12 @@ Analyze the plan and determine the next step. If you need information that isn't
                 if not hasattr(session_context, 'messages'):
                     session_context.messages = []
                 session_context.messages.append(status_message)
-                print(f"[DEBUG] Added to session context messages")
+                log_debug(f"Added to session context messages")
             
-            print(f"[DEBUG] Status message created successfully: {status_text}")
+            log_debug(f"Status message created successfully: {status_text}")
             
         except Exception as e:
-            print(f"[DEBUG] ❌ Error displaying task status update: {e}")
+            log_debug(f"❌ Error displaying task status update: {e}")
             import traceback
             traceback.print_exc()
 
@@ -2159,7 +2167,7 @@ Analyze the plan and determine the next step. If you need information that isn't
                 return str(message.content)
             return ""
         except Exception as e:
-            print(f"⚠️ DEBUG: Error extracting message content: {e}")
+            log_foundry_debug(f"⚠️ Error extracting message content: {e}")
             return ""
 
     def get_session_context(self, context_id: str) -> SessionContext:
@@ -2173,23 +2181,23 @@ Analyze the plan and determine the next step. If you need information that isn't
     async def create_thread(self, context_id: str) -> Dict[str, Any]:
         if context_id in self.threads:
             # Return thread info instead of thread object
-            print(f"🔍 DEBUG: Thread already exists for context {context_id}, returning existing ID: {self.threads[context_id]}")
+            log_foundry_debug(f"Thread already exists for context {context_id}, returning existing ID: {self.threads[context_id]}")
             return {"id": self.threads[context_id]}
         
-        print(f"🔍 DEBUG: Creating new thread for context {context_id}")
+        log_foundry_debug(f"Creating new thread for context {context_id}")
         
         try:
-            print(f"🔍 DEBUG: Getting authentication headers...")
+            log_foundry_debug(f"Getting authentication headers...")
             # Get authentication headers
             headers = await self._get_auth_headers()
-            print(f"🔍 DEBUG: Auth headers obtained successfully")
+            log_foundry_debug(f"Auth headers obtained successfully")
             
             # Get the API URL for threads
             endpoint = os.environ["AZURE_AI_FOUNDRY_PROJECT_ENDPOINT"]
             api_url = f"{endpoint}/threads"
-            print(f"🔍 DEBUG: Thread creation API URL: {api_url}")
+            log_foundry_debug(f"Thread creation API URL: {api_url}")
             
-            print(f"🔍 DEBUG: Making POST request to create thread...")
+            log_foundry_debug(f"Making POST request to create thread...")
             # Create thread via HTTP API
             async with httpx.AsyncClient() as client:
                 response = await client.post(
@@ -2200,51 +2208,51 @@ Analyze the plan and determine the next step. If you need information that isn't
                     timeout=30.0
                 )
                 
-                print(f"🔍 DEBUG: Thread creation response status: {response.status_code}")
+                log_foundry_debug(f"Thread creation response status: {response.status_code}")
                 
                 if response.status_code == 200 or response.status_code == 201:
                     thread_data = response.json()
                     thread_id = thread_data["id"]
-                    print(f"✅ DEBUG: Thread created successfully! ID: {thread_id}")
+                    log_foundry_debug(f"✅ Thread created successfully! ID: {thread_id}")
                     
                     # Store the thread ID
                     self.threads[context_id] = thread_id
                     
                     return thread_data
                 else:
-                    print(f"❌ DEBUG: Thread creation failed with status {response.status_code}")
-                    print(f"❌ DEBUG: Response text: {response.text}")
+                    log_foundry_debug(f"❌ Thread creation failed with status {response.status_code}")
+                    log_foundry_debug(f"❌ Response text: {response.text}")
                     raise Exception(f"Failed to create thread: {response.status_code} - {response.text}")
                     
         except Exception as e:
-            print(f"❌ DEBUG: Exception in create_thread(): {type(e).__name__}: {e}")
+            log_foundry_debug(f"❌ Exception in create_thread(): {type(e).__name__}: {e}")
             import traceback
             traceback.print_exc()
             raise
 
     async def send_message_to_thread(self, thread_id: str, content: str, role: str = "user") -> Dict[str, Any]:
-        print(f"🔍 DEBUG: send_message_to_thread ENTRY - thread_id: {thread_id}, role: {role}")
-        print(f"🔍 DEBUG: Message content length: {len(content)} chars")
+        log_foundry_debug(f"send_message_to_thread ENTRY - thread_id: {thread_id}, role: {role}")
+        log_foundry_debug(f"Message content length: {len(content)} chars")
         
         try:
-            print(f"🔍 DEBUG: Getting auth headers...")
+            log_foundry_debug(f"Getting auth headers...")
             # Get authentication headers
             headers = await self._get_auth_headers()
-            print(f"🔍 DEBUG: Auth headers obtained successfully")
+            log_foundry_debug(f"Auth headers obtained successfully")
             
             # Get the API URL for messages
             endpoint = os.environ["AZURE_AI_FOUNDRY_PROJECT_ENDPOINT"]
             api_url = f"{endpoint}/threads/{thread_id}/messages"
-            print(f"🔍 DEBUG: Message API URL: {api_url}")
+            log_foundry_debug(f"Message API URL: {api_url}")
             
             # Prepare message payload
             payload = {
                 "role": role,
                 "content": content
             }
-            print(f"🔍 DEBUG: Message payload prepared")
+            log_foundry_debug(f"Message payload prepared")
             
-            print(f"🔍 DEBUG: Making POST request to send message...")
+            log_foundry_debug(f"Making POST request to send message...")
             # Send message via HTTP API
             async with httpx.AsyncClient() as client:
                 response = await client.post(
@@ -2255,25 +2263,25 @@ Analyze the plan and determine the next step. If you need information that isn't
                     timeout=30.0
                 )
                 
-                print(f"🔍 DEBUG: Message creation response status: {response.status_code}")
+                log_foundry_debug(f"Message creation response status: {response.status_code}")
                 
                 if response.status_code == 200 or response.status_code == 201:
                     message_data = response.json()
-                    print(f"✅ DEBUG: Message sent successfully! ID: {message_data.get('id', 'N/A')}")
+                    log_foundry_debug(f"✅ Message sent successfully! ID: {message_data.get('id', 'N/A')}")
                     return message_data
                 elif response.status_code == 401:
-                    print(f"🔄 DEBUG: Authentication failed (401), clearing cached token")
+                    log_foundry_debug(f"🔄 Authentication failed (401), clearing cached token")
                     self._clear_cached_token()
-                    print(f"❌ DEBUG: Message creation failed with status {response.status_code}")
-                    print(f"❌ DEBUG: Response text: {response.text}")
+                    log_foundry_debug(f"❌ Message creation failed with status {response.status_code}")
+                    log_foundry_debug(f"❌ Response text: {response.text}")
                     raise Exception(f"Failed to send message (authentication failed): {response.status_code} - {response.text}")
                 else:
-                    print(f"❌ DEBUG: Message creation failed with status {response.status_code}")
-                    print(f"❌ DEBUG: Response text: {response.text}")
+                    log_foundry_debug(f"❌ Message creation failed with status {response.status_code}")
+                    log_foundry_debug(f"❌ Response text: {response.text}")
                     raise Exception(f"Failed to send message: {response.status_code} - {response.text}")
                     
         except Exception as e:
-            print(f"❌ DEBUG: Exception in send_message_to_thread(): {type(e).__name__}: {e}")
+            log_foundry_debug(f"❌ Exception in send_message_to_thread(): {type(e).__name__}: {e}")
             import traceback
             traceback.print_exc()
             raise
@@ -2677,7 +2685,7 @@ Answer with just JSON:
             history = history[-self.last_host_turns :]
         session_context.host_turn_history = history
         
-        print(f"📝 [Context] Updated host_turn_history with response from {agent_name} ({len(combined)} chars)")
+        log_debug(f"📝 [Context] Updated host_turn_history with response from {agent_name} ({len(combined)} chars)")
         logger.debug(
             "[A2A] Cached host turn for agent %s (len=%d, history=%d)",
             agent_name,
@@ -2767,13 +2775,13 @@ Answer with just JSON:
                 session_parts = getattr(session_context, "_latest_processed_parts", []) or []
             
             # DEBUG: Log what we're about to send
-            print(f"🔍 [DEBUG] Before sending to {agent_name}:")
+            log_foundry_debug(f"Before sending to {agent_name}:")
             print(f"  • _latest_processed_parts exists: {hasattr(session_context, '_latest_processed_parts')}")
             print(f"  • session_parts count: {len(session_parts)}")
             print(f"  • agent_mode: {getattr(session_context, 'agent_mode', False)}")
 
             if session_parts:
-                print(f"📦 Prepared {len(session_parts)} parts for remote agent {agent_name} (context {contextId})")
+                log_debug(f"📦 Prepared {len(session_parts)} parts for remote agent {agent_name} (context {contextId})")
                 for idx, prepared_part in enumerate(session_parts):
                     part_root = getattr(prepared_part, "root", prepared_part)
                     kind = getattr(part_root, "kind", getattr(part_root, "type", type(part_root).__name__))
@@ -2828,7 +2836,7 @@ Answer with just JSON:
                 ),
             )
             
-            print(f"🚀 [PARALLEL] Calling agent: {agent_name} with context: {contextId}")
+            log_debug(f"🚀 [PARALLEL] Calling agent: {agent_name} with context: {contextId}")
             
             # Track start time for processing duration
             start_time = time.time()
@@ -2839,7 +2847,7 @@ Answer with just JSON:
                 def streaming_task_callback(event, agent_card):
                     """Enhanced callback for streaming execution that captures detailed agent activities"""
                     agent_name = agent_card.name
-                    print(f"[STREAMING] Detailed callback from {agent_name}: {type(event).__name__}")
+                    log_debug(f"[STREAMING] Detailed callback from {agent_name}: {type(event).__name__}")
                     
                     # Emit granular events based on the type of update
                     if hasattr(event, 'kind'):
@@ -2861,7 +2869,7 @@ Answer with just JSON:
                                             elif hasattr(part, 'root') and hasattr(part.root, 'data') and isinstance(part.root.data, dict):
                                                 artifact_uri = part.root.data.get('artifact-uri')
                                                 if artifact_uri:
-                                                    print(f"[DEBUG] Found image artifact in streaming event: {artifact_uri}")
+                                                    log_debug(f"Found image artifact in streaming event: {artifact_uri}")
                                                     # Emit file_uploaded event
                                                     async def emit_file_event(part_data=part.root.data, uri=artifact_uri):
                                                         try:
@@ -2878,9 +2886,9 @@ Answer with just JSON:
                                                                     "contextId": get_context_id(event)
                                                                 }
                                                                 await streamer.stream_file_uploaded(file_info, get_context_id(event))
-                                                                print(f"[DEBUG] File uploaded event sent for streaming artifact: {file_info['filename']}")
+                                                                log_debug(f"File uploaded event sent for streaming artifact: {file_info['filename']}")
                                                         except Exception as e:
-                                                            print(f"[DEBUG] Error emitting file_uploaded event: {e}")
+                                                            log_debug(f"Error emitting file_uploaded event: {e}")
                                                     asyncio.create_task(emit_file_event())
                                 elif hasattr(event.status, 'state'):
                                     state = event.status.state
@@ -2914,14 +2922,14 @@ Answer with just JSON:
                 print(f"❌ Full traceback: {traceback.format_exc()}")
                 raise
             
-            print(f"[STREAMING] Processing response from {agent_name}: {type(response)}")
+            log_debug(f"[STREAMING] Processing response from {agent_name}: {type(response)}")
             
             # Simplified response processing for streaming execution
             if isinstance(response, Task):
                 task = response
                 
                 # DEBUG: Log task response structure
-                print(f"🔍 [DEBUG] Received Task response from {agent_name}:")
+                log_foundry_debug(f"Received Task response from {agent_name}:")
                 print(f"  • Task ID: {task.id if hasattr(task, 'id') else 'N/A'}")
                 print(f"  • Task state: {task.status.state if hasattr(task, 'status') else 'N/A'}")
                 print(f"  • Has status.message: {hasattr(task, 'status') and hasattr(task.status, 'message') and task.status.message is not None}")
@@ -2948,7 +2956,7 @@ Answer with just JSON:
                     response_parts = []
                     
                     # DEBUG: Check what's in the task
-                    print(f"🔍 [DEBUG] Task completed - checking contents:")
+                    log_foundry_debug(f"Task completed - checking contents:")
                     print(f"  • task.status.message exists: {task.status.message is not None}")
                     if task.status.message:
                         print(f"  • task.status.message.parts count: {len(task.status.message.parts) if task.status.message.parts else 0}")
@@ -2971,7 +2979,7 @@ Answer with just JSON:
                     # DEBUG: Log what's now in _latest_processed_parts after conversion
                     if hasattr(session_context, "_latest_processed_parts"):
                         latest = session_context._latest_processed_parts
-                        print(f"🔍 [DEBUG] After convert_parts, _latest_processed_parts has {len(latest)} items:")
+                        log_foundry_debug(f"After convert_parts, _latest_processed_parts has {len(latest)} items:")
                         for idx, item in enumerate(latest):
                             if isinstance(item, (TextPart, DataPart, FilePart)):
                                 print(f"  • Item {idx}: {type(item).__name__}")
@@ -3050,7 +3058,7 @@ Answer with just JSON:
                         try:
                             retry_response = await client.send_message(retry_request, self.task_callback)
                         except Exception as e:
-                            print(f"[STREAMING] Retry after rate limit failed for {agent_name}: {e}")
+                            log_debug(f"[STREAMING] Retry after rate limit failed for {agent_name}: {e}")
                             break
 
                         if isinstance(retry_response, Task):
@@ -3127,12 +3135,12 @@ Answer with just JSON:
                 return result
                 
             elif isinstance(response, str):
-                print(f"[STREAMING] String response from {agent_name}: {response[:200]}...")
+                log_debug(f"[STREAMING] String response from {agent_name}: {response[:200]}...")
                 self._update_last_host_turn(session_context, agent_name, [response])
                 return [response]
                 
             else:
-                print(f"[STREAMING] Unknown response type from {agent_name}: {type(response)}")
+                log_debug(f"[STREAMING] Unknown response type from {agent_name}: {type(response)}")
                 return [str(response)]
             
             print(f"send_message called for agent: {agent_name}")
@@ -3140,7 +3148,7 @@ Answer with just JSON:
             print(f"Contextualized message: {contextualized_message}")
 
             if hasattr(session_context, "_latest_processed_parts") and session_context._latest_processed_parts:
-                print(f"📦 Prepared {len(session_context._latest_processed_parts)} parts for remote agent {agent_name} (context {contextId})")
+                log_debug(f"📦 Prepared {len(session_context._latest_processed_parts)} parts for remote agent {agent_name} (context {contextId})")
                 for idx, prepared_part in enumerate(session_context._latest_processed_parts):
                     part_root = getattr(prepared_part, "root", prepared_part)
                     kind = getattr(part_root, "kind", getattr(part_root, "type", "unknown"))
@@ -3166,28 +3174,28 @@ Answer with just JSON:
             try:
                 response = await client.send_message(request, self.task_callback)
                 print(f"✅ client.send_message RETURNED successfully!")
-                print(f"[DEBUG] Response type: {type(response)}")
-                print(f"[DEBUG] Response content preview: {str(response)[:500]}...")
+                log_debug(f"Response type: {type(response)}")
+                log_debug(f"Response content preview: {str(response)[:500]}...")
                 
                 # Add more detailed debugging for Task responses
                 if hasattr(response, 'status') and hasattr(response.status, 'message'):
-                    print(f"[DEBUG] Task response has status message with {len(response.status.message.parts) if response.status.message.parts else 0} parts")
+                    log_debug(f"Task response has status message with {len(response.status.message.parts) if response.status.message.parts else 0} parts")
                     if response.status.message.parts:
                         for i, part in enumerate(response.status.message.parts):
                             if hasattr(part.root, 'text'):
-                                print(f"[DEBUG] Task message part {i}: {part.root.text[:300]}...")
+                                log_debug(f"Task message part {i}: {part.root.text[:300]}...")
                             else:
-                                print(f"[DEBUG] Task message part {i}: {type(part.root)}")
+                                log_debug(f"Task message part {i}: {type(part.root)}")
                 
                 # Add debugging for Message responses
                 elif hasattr(response, 'parts'):
-                    print(f"[DEBUG] Message response has {len(response.parts) if response.parts else 0} parts")
+                    log_debug(f"Message response has {len(response.parts) if response.parts else 0} parts")
                     if response.parts:
                         for i, part in enumerate(response.parts):
                             if hasattr(part.root, 'text'):
-                                print(f"[DEBUG] Message part {i}: {part.root.text[:300]}...")
+                                log_debug(f"Message part {i}: {part.root.text[:300]}...")
                             else:
-                                print(f"[DEBUG] Message part {i}: {type(part.root)}")
+                                log_debug(f"Message part {i}: {type(part.root)}")
             except Exception as e:
                 print(f"❌ client.send_message FAILED with exception: {e}")
                 print(f"❌ Exception type: {type(e).__name__}")
@@ -3303,10 +3311,10 @@ Original request: {message}"""
                     # Task completed successfully (or evaluation passed)
                     response_parts = []
                     if task.status.message:
-                        print(f"[DEBUG] Task status message parts: {len(task.status.message.parts) if task.status.message.parts else 0}")
+                        log_debug(f"Task status message parts: {len(task.status.message.parts) if task.status.message.parts else 0}")
                         for i, part in enumerate(task.status.message.parts):
                             if hasattr(part.root, 'text'):
-                                print(f"[DEBUG] Status message part {i}: {part.root.text[:200]}...")
+                                log_debug(f"Status message part {i}: {part.root.text[:200]}...")
                         response_parts.extend(
                             await self.convert_parts(task.status.message.parts, tool_context)
                         )
@@ -3317,12 +3325,12 @@ Original request: {message}"""
                             "agent_name": agent_name,
                             "task_id": task.id
                         })
-                        print(f"[DEBUG] Task has {len(task.artifacts)} artifacts")
+                        log_debug(f"Task has {len(task.artifacts)} artifacts")
                         for i, artifact in enumerate(task.artifacts):
-                            print(f"[DEBUG] Artifact {i} parts: {len(artifact.parts) if artifact.parts else 0}")
+                            log_debug(f"Artifact {i} parts: {len(artifact.parts) if artifact.parts else 0}")
                             for j, part in enumerate(artifact.parts):
                                 if hasattr(part.root, 'text'):
-                                    print(f"[DEBUG] Artifact {i} part {j}: {part.root.text[:200]}...")
+                                    log_debug(f"Artifact {i} part {j}: {part.root.text[:200]}...")
                         response_parts.extend(
                             await self.convert_parts(artifact.parts, tool_context)
                         )
@@ -3330,7 +3338,7 @@ Original request: {message}"""
                     # NOTE: Individual agent responses are always suppressed by default
                     # Only the host agent should send responses to the main chat
                     if not suppress_streaming:
-                        print(f"[DEBUG] Streaming remote agent response to WebSocket for agent: {agent_name} (OVERRIDE - normally suppressed)")
+                        log_debug(f"Streaming remote agent response to WebSocket for agent: {agent_name} (OVERRIDE - normally suppressed)")
                         try:
                             from websocket_streamer import get_websocket_streamer
                             
@@ -3368,35 +3376,35 @@ Original request: {message}"""
                                     # Await the streaming to completion before continuing
                                     success = await streamer._send_event("message", event_data, contextId)
                                     if success:
-                                        print(f"[DEBUG] Remote agent response event streamed: {event_data}")
+                                        log_debug(f"Remote agent response event streamed: {event_data}")
                                     else:
-                                        print("[DEBUG] Failed to stream remote agent response event")
+                                        log_debug("Failed to stream remote agent response event")
                                 else:
-                                    print("[DEBUG] WebSocket streamer not available for remote agent response")
+                                    log_debug("WebSocket streamer not available for remote agent response")
                             except Exception as e:
-                                print(f"[DEBUG] Error streaming remote agent response to WebSocket: {e}")
+                                log_debug(f"Error streaming remote agent response to WebSocket: {e}")
                                 # Don't let WebSocket errors break the main flow
                                 pass
                             
                         except ImportError:
                             # WebSocket module not available, continue without streaming
-                            print("[DEBUG] WebSocket module not available for response")
+                            log_debug("WebSocket module not available for response")
                             pass
                         except Exception as e:
-                            print(f"[DEBUG] Error setting up remote agent response streaming: {e}")
+                            log_debug(f"Error setting up remote agent response streaming: {e}")
                             # Don't let WebSocket errors break the main flow
                             pass
                     else:
-                        print(f"[DEBUG] Individual agent response streaming suppressed for agent: {agent_name} (default behavior - only host agent responds to user)")
-                        print(f"[DEBUG] Context ID: {contextId}, Response parts count: {len(response_parts)}")
-                        print(f"[DEBUG] suppress_streaming = {suppress_streaming} (should be True for individual agents)")
+                        log_debug(f"Individual agent response streaming suppressed for agent: {agent_name} (default behavior - only host agent responds to user)")
+                        log_debug(f"Context ID: {contextId}, Response parts count: {len(response_parts)}")
+                        log_debug(f"suppress_streaming = {suppress_streaming} (should be True for individual agents)")
                     
-                    print(f"[DEBUG] Final response_parts count: {len(response_parts)}")
+                    log_debug(f"Final response_parts count: {len(response_parts)}")
                     for i, part in enumerate(response_parts):
                         if isinstance(part, str):
-                            print(f"[DEBUG] Response part {i}: {part[:200]}...")
+                            log_debug(f"Response part {i}: {part[:200]}...")
                         else:
-                            print(f"[DEBUG] Response part {i}: {type(part)} - {str(part)[:200]}...")
+                            log_debug(f"Response part {i}: {type(part)} - {str(part)[:200]}...")
                     
                     span.set_attribute("response.parts_count", len(response_parts))
                     
@@ -3524,7 +3532,7 @@ Original request: {message}"""
                 # NOTE: Individual agent message responses are always suppressed by default
                 # Only the host agent should send responses to the main chat
                 if not suppress_streaming:
-                    print(f"[DEBUG] Streaming remote agent direct message to WebSocket for agent: {agent_name} (OVERRIDE - normally suppressed)")
+                    log_debug(f"Streaming remote agent direct message to WebSocket for agent: {agent_name} (OVERRIDE - normally suppressed)")
                     try:
                         from websocket_streamer import get_websocket_streamer
                         
@@ -3562,28 +3570,28 @@ Original request: {message}"""
                                 # Await the streaming to completion before continuing
                                 success = await streamer._send_event("message", event_data, contextId)
                                 if success:
-                                    print(f"[DEBUG] Remote agent direct message event streamed: {event_data}")
+                                    log_debug(f"Remote agent direct message event streamed: {event_data}")
                                 else:
-                                    print("[DEBUG] Failed to stream remote agent direct message event")
+                                    log_debug("Failed to stream remote agent direct message event")
                             else:
-                                print("[DEBUG] WebSocket streamer not available for direct message")
+                                log_debug("WebSocket streamer not available for direct message")
                         except Exception as e:
-                            print(f"[DEBUG] Error streaming remote agent direct message to WebSocket: {e}")
+                            log_debug(f"Error streaming remote agent direct message to WebSocket: {e}")
                             # Don't let WebSocket errors break the main flow
                             pass
                         
                     except ImportError:
                         # WebSocket module not available, continue without streaming
-                        print("[DEBUG] WebSocket module not available for direct message")
+                        log_debug("WebSocket module not available for direct message")
                         pass
                     except Exception as e:
-                        print(f"[DEBUG] Error setting up direct message streaming: {e}")
+                        log_debug(f"Error setting up direct message streaming: {e}")
                         # Don't let WebSocket errors break the main flow
                         pass
                 else:
-                    print(f"[DEBUG] Individual agent direct message streaming suppressed for agent: {agent_name} (default behavior - only host agent responds to user)")
-                    print(f"[DEBUG] Context ID: {contextId}, Result count: {len(result)}")
-                    print(f"[DEBUG] suppress_streaming = {suppress_streaming} (should be True for individual agents)")
+                    log_debug(f"Individual agent direct message streaming suppressed for agent: {agent_name} (default behavior - only host agent responds to user)")
+                    log_debug(f"Context ID: {contextId}, Result count: {len(result)}")
+                    log_debug(f"suppress_streaming = {suppress_streaming} (should be True for individual agents)")
                 
                 # Store A2A interaction in memory
                 await self._store_a2a_interaction(
@@ -3655,7 +3663,7 @@ Original request: {message}"""
                     "agent_name": agent_name,
                     "response_length": len(response)
                 })
-                print(f"[DEBUG] String response received: {response[:200]}...")
+                log_debug(f"String response received: {response[:200]}...")
                 # Return string response directly without processing through convert_parts
                 # This preserves any formatting including sources
                 return [response]
@@ -3713,10 +3721,10 @@ Original request: {message}"""
         
         # Primary approach: Use semantic memory search for relevant context (only if enabled)
         if enable_memory:
-            print(f"🎯 [{mode_label}] Inter-agent memory enabled - searching vector memory")
+            log_debug(f"🎯 [{mode_label}] Inter-agent memory enabled - searching vector memory")
         try:
-            print(f"🧠 Searching memory for semantically relevant context...")
-            print(f"About to call _search_relevant_memory...")
+            log_debug(f"🧠 Searching memory for semantically relevant context...")
+            log_debug(f"About to call _search_relevant_memory...")
             memory_results = await self._search_relevant_memory(
                 query=message,
                 agent_name=None,  # Search across all interactions for maximum relevance
@@ -3817,13 +3825,13 @@ Original request: {message}"""
                         continue
             
             else:
-                print(f"🧠 No relevant memory context found")
+                log_debug(f"🧠 No relevant memory context found")
         
         except Exception as e:
             print(f"❌ Error searching memory: {e}")
             context_parts.append("Note: Unable to retrieve relevant context from memory")
         else:
-            print(f"🎯 [{mode_label}] Inter-agent memory disabled - skipping vector search")
+            log_debug(f"🎯 [{mode_label}] Inter-agent memory disabled - skipping vector search")
         
         # Include recent host-side turns (previous agent outputs)
         # Behavior depends on mode and inter-agent memory setting:
@@ -3846,11 +3854,11 @@ Original request: {message}"""
             if is_agent_mode and not enable_memory:
                 # Agent Mode with memory OFF: Only pass immediate previous agent
                 max_turns = 1
-                print(f"🎯 [Agent Mode] Memory disabled - passing only immediate previous agent output")
+                log_debug(f"🎯 [Agent Mode] Memory disabled - passing only immediate previous agent output")
             else:
                 # Standard mode or Agent Mode with memory ON: Use configured limit
                 max_turns = self.last_host_turns
-                print(f"🎯 [{mode_label}] Passing up to {max_turns} recent agent outputs")
+                log_debug(f"🎯 [{mode_label}] Passing up to {max_turns} recent agent outputs")
 
             selected: List[Dict[str, str]] = []
             for entry in reversed(history):  # newest first
@@ -3958,14 +3966,14 @@ Original request: {message}"""
             success = await a2a_memory_service.store_interaction(interaction_data)
             
             if success:
-                print(f"[A2A Memory] Stored A2A payloads for {agent_name}")
+                log_debug(f"[A2A Memory] Stored A2A payloads for {agent_name}")
                 span.add_event("memory_stored", {"agent_name": agent_name})
             else:
-                print(f"[A2A Memory] Failed to store A2A payloads for {agent_name}")
+                log_debug(f"[A2A Memory] Failed to store A2A payloads for {agent_name}")
                 span.add_event("memory_store_failed", {"agent_name": agent_name})
                 
         except Exception as e:
-            print(f"[A2A Memory] Error storing A2A payloads: {str(e)}")
+            log_debug(f"[A2A Memory] Error storing A2A payloads: {str(e)}")
             span.add_event("memory_store_error", {
                 "agent_name": agent_name,
                 "error": str(e)
@@ -3992,7 +4000,7 @@ Original request: {message}"""
             )
         except Exception as e:
             print(f"❌ User→Host interaction storage failed: {e}")
-            print(f"Exception type: {type(e).__name__}")
+            log_error(f"Exception type: {type(e).__name__}")
             import traceback
             print(f"Traceback: {traceback.format_exc()}")
 
@@ -4006,7 +4014,7 @@ Original request: {message}"""
         artifact_info: Dict[int, Dict[str, str]] = None
     ):
         """Store User→Host A2A protocol exchange"""
-        print(f"🚀 _store_user_host_interaction: STARTING")
+        log_debug(f"🚀 _store_user_host_interaction: STARTING")
         print(f"- user_message_text: {user_message_text[:100]}...")
         print(f"- host_response count: {len(host_response)}")
         print(f"- context_id: {context_id}")
@@ -4014,17 +4022,17 @@ Original request: {message}"""
         print(f"- user_message_parts length: {len(user_message_parts) if user_message_parts else 0}")
         
         try:
-            print(f"📝 Step 1: About to create A2A Message object...")
+            log_debug(f"📝 Step 1: About to create A2A Message object...")
             
             # Create real A2A Message object for outbound
-            print(f"📝 Step 1a: Creating outbound_message with uuid...")
+            log_debug(f"📝 Step 1a: Creating outbound_message with uuid...")
             message_id = str(uuid.uuid4())
-            print(f"📝 Step 1b: Generated messageId: {message_id}")
+            log_debug(f"📝 Step 1b: Generated messageId: {message_id}")
             
-            print(f"📝 Step 1c: About to create Message object...")
+            log_debug(f"📝 Step 1c: About to create Message object...")
             # Clean file bytes from parts before storing in memory
             cleaned_parts = self._clean_file_bytes_from_parts(user_message_parts, artifact_info)
-            print(f"📝 Step 1d: Cleaned {len(user_message_parts)} parts for memory storage")
+            log_debug(f"📝 Step 1d: Cleaned {len(user_message_parts)} parts for memory storage")
             
             outbound_message = Message(
                 messageId=message_id,
@@ -4036,17 +4044,17 @@ Original request: {message}"""
             print(f"✅ Step 1: Created outbound_message successfully")
             
             # Create real A2A MessageSendParams
-            print(f"📝 Step 2: About to create MessageSendParams...")
+            log_debug(f"📝 Step 2: About to create MessageSendParams...")
             request_id = str(uuid.uuid4())
-            print(f"📝 Step 2a: Generated request ID: {request_id}")
+            log_debug(f"📝 Step 2a: Generated request ID: {request_id}")
             
-            print(f"📝 Step 2b: About to create MessageSendConfiguration...")
+            log_debug(f"📝 Step 2b: About to create MessageSendConfiguration...")
             config = MessageSendConfiguration(
                 acceptedOutputModes=["text", "text/plain", "image/png"]
             )
             print(f"✅ Step 2c: Created MessageSendConfiguration")
             
-            print(f"📝 Step 2d: About to create MessageSendParams...")
+            log_debug(f"📝 Step 2d: About to create MessageSendParams...")
             outbound_request = MessageSendParams(
                 id=request_id,
                 message=outbound_message,
@@ -4055,15 +4063,15 @@ Original request: {message}"""
             print(f"✅ Step 2: Created MessageSendParams successfully")
             
             # Create real A2A Message object for inbound response
-            print(f"📝 Step 3: Creating inbound response parts...")
+            log_debug(f"📝 Step 3: Creating inbound response parts...")
             response_parts = []
             for i, response in enumerate(host_response):
                 # Skip artifact dicts - they're for UI display, not for memory storage
                 if isinstance(response, dict) and ('artifact-uri' in response or 'artifact-id' in response):
-                    print(f"📝 Step 3.{i+1}: Skipping artifact dict (not storing in memory)")
+                    log_debug(f"📝 Step 3.{i+1}: Skipping artifact dict (not storing in memory)")
                     continue
                     
-                print(f"📝 Step 3.{i+1}: Creating Part for response {i+1}")
+                log_debug(f"📝 Step 3.{i+1}: Creating Part for response {i+1}")
                 # Convert non-string responses to JSON string
                 if isinstance(response, str):
                     text = response
@@ -4074,7 +4082,7 @@ Original request: {message}"""
                 response_parts.append(part)
                 print(f"✅ Step 3.{i+1}: Created Part successfully")
             
-            print(f"📝 Step 4: Creating inbound Message...")
+            log_debug(f"📝 Step 4: Creating inbound Message...")
             inbound_message_id = str(uuid.uuid4())
             inbound_message = Message(
                 messageId=inbound_message_id,
@@ -4098,7 +4106,7 @@ Original request: {message}"""
                 return
             
             # Store the User→Host A2A interaction using real A2A objects
-            print(f"📝 Step 6: Storing User→Host interaction in memory...")
+            log_debug(f"📝 Step 6: Storing User→Host interaction in memory...")
             
             # Create interaction data structure like the working Host→Remote Agent code
             interaction_data = {
@@ -4115,16 +4123,16 @@ Original request: {message}"""
             
             if success:
                 print(f"✅ Step 6: User→Host interaction stored successfully")
-                print(f"🎉 User→Host A2A interaction now available for semantic search")
+                log_success(f"🎉 User→Host A2A interaction now available for semantic search")
             else:
                 print(f"❌ Step 6: Failed to store User→Host interaction")
                 print(f"⚠️ User→Host interaction storage failed")
                 
         except Exception as e:
             print(f"❌ EXCEPTION in _store_user_host_interaction: {e}")
-            print(f"Exception type: {type(e).__name__}")
+            log_error(f"Exception type: {type(e).__name__}")
             import traceback
-            print(f"Full traceback: {traceback.format_exc()}")
+            log_error(f"Full traceback: {traceback.format_exc()}")
             span.add_event("user_host_memory_store_error", {
                 "context_id": context_id,
                 "error": str(e)
@@ -4160,57 +4168,57 @@ Original request: {message}"""
 
     async def run_conversation_with_parts(self, message_parts: List[Part], context_id: Optional[str] = None, event_logger=None, agent_mode: bool = False, enable_inter_agent_memory: bool = False, workflow: Optional[str] = None) -> Any:
         """Run conversation with A2A message parts (including files)."""
-        print(f"⭐ ENTRY: run_conversation_with_parts called with {len(message_parts) if message_parts else 0} parts")
+        log_debug(f"ENTRY: run_conversation_with_parts called with {len(message_parts) if message_parts else 0} parts")
         try:
-            print(f"🔍 Step A: About to create tracer span...")
+            log_debug(f"Step: About to create tracer span...")
             scenario = "run_conversation_with_parts"
             with tracer.start_as_current_span(scenario) as span:
-                print(f"🔍 Step B: Created tracer span successfully")
+                log_debug(f"Step: Created tracer span successfully")
                 
-                print(f"🔍 Step C1: About to call span.set_attribute...")
+                log_debug(f"Step: About to call span.set_attribute...")
                 span.set_attribute("context_id", context_id or self.default_context_id)
-                print(f"🔍 Step C2: span.set_attribute completed")
-                print(f"🔍 Step D: Set span attribute")
-            print(f"run_conversation_with_parts called with {len(message_parts)} parts")
+                log_debug(f"Step: span.set_attribute completed")
+                log_debug(f"Step: Set span attribute")
+            log_debug(f"run_conversation_with_parts: {len(message_parts)} parts")
             
             if not context_id:
                 context_id = self.default_context_id
-            print(f"🔍 Step E: Set context_id to {context_id}")
+            log_debug(f"Step: Set context_id to {context_id}")
             
             # Extract text message for thread
-            print(f"🔍 Step F: About to extract text message...")
+            log_debug(f"Step: About to extract text message...")
             user_message = ""
             for part in message_parts:
                 if hasattr(part, 'root') and part.root.kind == 'text':
                     user_message = part.root.text
                     break
-            print(f"🔍 Step G: Extracted text message")
+            log_debug(f"Step: Extracted text message")
             
-            print(f"Extracted user message: {user_message}")
+            log_debug(f"Extracted user message: {user_message}")
             print(f"Processing {len(message_parts)} parts including files")
             
             # Ensure agent is created (may be lazy creation if startup creation failed)
-            print(f"🔍 Step H: About to ensure agent exists...")
-            print(f"🔍 DEBUG: Current agent state: {self.agent is not None}")
+            log_debug(f"Step: About to ensure agent exists...")
+            log_foundry_debug(f"Current agent state: {self.agent is not None}")
             if self.agent:
-                print(f"🔍 DEBUG: Agent exists with ID: {self.agent.get('id', 'unknown')}")
+                log_foundry_debug(f"Agent exists with ID: {self.agent.get('id', 'unknown')}")
             else:
                 print("⚠️ Agent not created at startup, creating now (lazy creation)...")
-                print(f"🔍 DEBUG: Calling create_agent()...")
+                log_foundry_debug(f"Calling create_agent()...")
                 await self.create_agent()
-                print(f"🔍 DEBUG: create_agent() completed")
-            print(f"🔍 Step I: Agent ready with ID: {self.agent.get('id', 'unknown') if self.agent else 'STILL_NULL'}")
+                log_foundry_debug(f"create_agent() completed")
+            log_debug(f"Step: Agent ready with ID: {self.agent.get('id', 'unknown') if self.agent else 'STILL_NULL'}")
             
             session_context = self.get_session_context(context_id)
             # Set agent mode in session context
             session_context.agent_mode = agent_mode
             session_context.enable_inter_agent_memory = enable_inter_agent_memory
-            print(f"🔍 DEBUG: Agent mode set to: {agent_mode}, Inter-agent memory: {enable_inter_agent_memory}")
+            log_foundry_debug(f"Agent mode set to: {agent_mode}, Inter-agent memory: {enable_inter_agent_memory}")
             # Reset any cached parts from prior turns so we don't resend stale attachments
             if hasattr(session_context, "_latest_processed_parts"):
                 file_count_before = len(session_context._latest_processed_parts)
-                print(f"🔍 DEBUG: _latest_processed_parts has {file_count_before} parts before clearing check")
-                print(f"🔍 DEBUG: session_context.agent_mode = {session_context.agent_mode}")
+                log_foundry_debug(f"_latest_processed_parts has {file_count_before} parts before clearing check")
+                log_foundry_debug(f"session_context.agent_mode = {session_context.agent_mode}")
                 # In agent mode, preserve files so they flow between agents
                 # In user mode, clear stale attachments from previous turns
                 if not session_context.agent_mode:
@@ -4240,64 +4248,64 @@ Original request: {message}"""
             # Create or get thread
             thread_created = False
             if context_id not in self.threads:
-                print(f"🔍 DEBUG: Creating new thread for context_id: {context_id}")
+                log_foundry_debug(f"Creating new thread for context_id: {context_id}")
                 thread = await self.create_thread(context_id)
                 self.threads[context_id] = thread["id"]  # Use dictionary access
                 thread_created = True
-                print(f"🔍 DEBUG: New thread created with ID: {thread['id']}")
+                log_foundry_debug(f"New thread created with ID: {thread['id']}")
             else:
-                print(f"🔍 DEBUG: Reusing existing thread for context_id: {context_id}, thread_id: {self.threads[context_id]}")
+                log_foundry_debug(f"Reusing existing thread for context_id: {context_id}, thread_id: {self.threads[context_id]}")
             thread_id = self.threads[context_id]
             
-            print(f"🔍 DEBUG: =================== THREAD READY, STARTING MESSAGE PROCESSING ===================")
-            print(f"🔍 DEBUG: Thread ID: {thread_id}")
-            print(f"🔍 DEBUG: About to process {len(message_parts)} message parts")
+            log_foundry_debug(f"=================== THREAD READY, STARTING MESSAGE PROCESSING ===================")
+            log_foundry_debug(f"Thread ID: {thread_id}")
+            log_foundry_debug(f"About to process {len(message_parts)} message parts")
             
             # Process all message parts (including files) BEFORE sending to thread
             # Use the SAME session_context so prepared parts are visible to send_message
             tool_context = DummyToolContext(session_context, self._azure_blob_client)
             processed_parts: List[Any] = []
-            print(f"🔍 DEBUG: processed_parts list initialized")
+            log_foundry_debug(f"processed_parts list initialized")
             
             # Count files to show appropriate status
-            print(f"🔍 DEBUG: Counting files in message parts...")
+            log_foundry_debug(f"Counting files in message parts...")
             file_count = 0
             for part in message_parts:
                 if hasattr(part, 'root') and hasattr(part.root, 'kind') and part.root.kind == 'file':
                     file_count += 1
-            print(f"🔍 DEBUG: Found {file_count} files in {len(message_parts)} parts")
+            log_foundry_debug(f"Found {file_count} files in {len(message_parts)} parts")
             
             if file_count > 0:
-                print(f"🔍 DEBUG: Emitting file processing status...")
+                log_foundry_debug(f"Emitting file processing status...")
                 try:
                     if file_count == 1:
                         await self._emit_status_event("processing uploaded file", context_id)
                     else:
                         await self._emit_status_event(f"processing {file_count} uploaded files", context_id)
-                    print(f"🔍 DEBUG: File processing status emitted successfully")
+                    log_foundry_debug(f"File processing status emitted successfully")
                 except Exception as e:
-                    print(f"❌ DEBUG: Exception emitting file processing status: {e}")
+                    log_foundry_debug(f"❌ Exception emitting file processing status: {e}")
                     # Don't let status emission failures stop the main flow
             
-            print(f"🔍 PART DEBUG: About to process {len(message_parts)} parts:")
+            log_foundry_debug(f"PART: About to process {len(message_parts)} parts:")
             for i, part in enumerate(message_parts):
-                print(f"🔍 PART DEBUG: Part {i}: {type(part)} - hasattr root: {hasattr(part, 'root')}")
+                log_foundry_debug(f"PART: Part {i}: {type(part)} - hasattr root: {hasattr(part, 'root')}")
                 if hasattr(part, 'root'):
-                    print(f"🔍 PART DEBUG: Part {i} root kind: {getattr(part.root, 'kind', 'no kind attr')}")
+                    log_foundry_debug(f"PART: Part {i} root kind: {getattr(part.root, 'kind', 'no kind attr')}")
                     if hasattr(part.root, 'kind') and part.root.kind == 'file':
-                        print(f"🔍 PART DEBUG: Part {i} is FILE - name: {getattr(part.root.file, 'name', 'no name')}, uri: {getattr(part.root.file, 'uri', 'no uri')}")
+                        log_foundry_debug(f"PART: Part {i} is FILE - name: {getattr(part.root.file, 'name', 'no name')}, uri: {getattr(part.root.file, 'uri', 'no uri')}")
                 
-                print(f"🔍 PART DEBUG: About to call convert_part for part {i}")
+                log_foundry_debug(f"PART: About to call convert_part for part {i}")
                 try:
                     processed_result = await self.convert_part(part, tool_context, context_id)
                     if isinstance(processed_result, list):
-                        print(f"🔍 PART DEBUG: convert_part result for part {i}: list of {len(processed_result)} items")
+                        log_foundry_debug(f"PART: convert_part result for part {i}: list of {len(processed_result)} items")
                         processed_parts.extend(processed_result)
                     else:
                         if isinstance(processed_result, DataPart) and hasattr(processed_result, "data"):
-                            print(f"🔍 PART DEBUG: convert_part result for part {i}: DataPart -> {processed_result.data}")
+                            log_foundry_debug(f"PART: convert_part result for part {i}: DataPart -> {processed_result.data}")
                         else:
-                            print(f"🔍 PART DEBUG: convert_part result for part {i}: {type(processed_result)} - {str(processed_result)[:120]}...")
+                            log_foundry_debug(f"PART: convert_part result for part {i}: {type(processed_result)} - {str(processed_result)[:120]}...")
                         processed_parts.append(processed_result)
                 except Exception as e:
                     print(f"❌ CRITICAL ERROR in convert_part for part {i}: {e}")
@@ -4305,7 +4313,7 @@ Original request: {message}"""
                     print(f"❌ CONVERT_PART TRACEBACK: {traceback.format_exc()}")
                     raise
             
-            print(f"Processed {len(processed_parts)} parts")
+            log_debug(f"Processed {len(processed_parts)} parts")
 
             # Convert processed results into A2A Part wrappers for delegation
             prepared_parts_for_agents: List[Part] = []
@@ -4371,7 +4379,7 @@ Original request: {message}"""
                 prepared_parts_for_agents.extend(_wrap_for_agent(processed))
 
             session_context._latest_processed_parts = prepared_parts_for_agents
-            print(f"📦 Prepared {len(prepared_parts_for_agents)} parts to attach for remote agents")
+            log_debug(f"📦 Prepared {len(prepared_parts_for_agents)} parts to attach for remote agents")
             
             # If files were processed, include information about them in the message
             file_info = []
@@ -4479,17 +4487,17 @@ Original request: {message}"""
                 else:
                     enhanced_message = guidance_block
             
-            print(f"Enhanced message: {enhanced_message}")
+            log_debug(f"Enhanced message: {enhanced_message}")
             
             # Send enhanced message to thread
-            print(f"🔍 About to send message to thread...")
+            log_debug(f"About to send message to thread...")
             await self._emit_status_event("sending message to AI thread", context_id)
             await self.send_message_to_thread(thread_id, enhanced_message)
             print(f"🔍 Message sent to thread successfully")
             
             # Check if we're in Agent Mode
             if session_context.agent_mode:
-                print(f"🎯 [Agent Mode] Agent Mode ENABLED - using orchestration loop")
+                log_debug(f"🎯 [Agent Mode] Agent Mode ENABLED - using orchestration loop")
                 await self._emit_status_event("Agent Mode: Starting task orchestration...", context_id)
                 
                 # Use agent mode orchestration loop
@@ -4519,9 +4527,9 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
                     await self.send_message_to_thread(thread_id, synthesis_prompt, "user")
                     
                     # Create run for synthesis
-                    print(f"🔍 DEBUG: Creating synthesis run...")
+                    log_foundry_debug(f"Creating synthesis run...")
                     run = await self._http_create_run(thread_id, self.agent['id'], session_context)
-                    print(f"🔍 DEBUG: Synthesis run created: {run['id']}")
+                    log_foundry_debug(f"Synthesis run created: {run['id']}")
                     
                     # Poll for completion
                     max_iterations = 30
@@ -4535,7 +4543,7 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
                         
                         await asyncio.sleep(2)
                         run = await self._http_get_run(thread_id, run['id'])
-                        print(f"🔍 DEBUG: Synthesis run status: {run['status']}")
+                        log_foundry_debug(f"Synthesis run status: {run['status']}")
                     
                     # If requires_action, submit empty outputs to force completion
                     if run['status'] == 'requires_action':
@@ -4555,7 +4563,7 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
                                     poll_iteration += 1
                                     await asyncio.sleep(2)
                                     run = await self._http_get_run(thread_id, run['id'])
-                                    print(f"🔍 DEBUG: Synthesis run status after tool skip: {run['status']}")
+                                    log_foundry_debug(f"Synthesis run status after tool skip: {run['status']}")
                         except Exception as e:
                             print(f"⚠️ [Agent Mode] Error skipping synthesis tools: {e}")
                     
@@ -4563,43 +4571,43 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
                     if run['status'] == 'completed':
                         messages = await self._http_list_messages(thread_id, limit=1)
                         if messages:
-                            print(f"🔍 DEBUG: Retrieved {len(messages)} message(s) from synthesis thread")
-                            print(f"🔍 DEBUG: Message structure: {type(messages[0])}")
-                            print(f"🔍 DEBUG: Message keys: {messages[0].keys() if isinstance(messages[0], dict) else 'N/A'}")
+                            log_foundry_debug(f"Retrieved {len(messages)} message(s) from synthesis thread")
+                            log_foundry_debug(f"Message structure: {type(messages[0])}")
+                            log_foundry_debug(f"Message keys: {messages[0].keys() if isinstance(messages[0], dict) else 'N/A'}")
                             if isinstance(messages[0], dict) and 'content' in messages[0]:
-                                print(f"🔍 DEBUG: Content structure: {messages[0]['content'][:500] if isinstance(messages[0]['content'], str) else messages[0]['content']}")
+                                log_foundry_debug(f"Content structure: {messages[0]['content'][:500] if isinstance(messages[0]['content'], str) else messages[0]['content']}")
                             
                             final_response = self._extract_message_content(messages[0])
-                            print(f"✅ [Agent Mode] Final synthesis extracted: {final_response[:200] if final_response else '(EMPTY!)'}...")
+                            log_info(f"✅ [Agent Mode] Final synthesis extracted: {final_response[:200] if final_response else '(EMPTY!)'}...")
                             
                             # Include accumulated artifacts from orchestration (e.g., generated images)
                             # This ensures the UI can display images with "Refine this image" buttons
                             final_responses = [final_response]
-                            print(f"🔍 [DEBUG] Checking for artifacts to include in final response...")
-                            print(f"🔍 [DEBUG] session_context has _latest_processed_parts: {hasattr(session_context, '_latest_processed_parts')}")
+                            log_foundry_debug(f"Checking for artifacts to include in final response...")
+                            log_foundry_debug(f"session_context has _latest_processed_parts: {hasattr(session_context, '_latest_processed_parts')}")
                             if hasattr(session_context, '_latest_processed_parts'):
-                                print(f"🔍 [DEBUG] _latest_processed_parts length: {len(session_context._latest_processed_parts)}")
+                                log_foundry_debug(f"_latest_processed_parts length: {len(session_context._latest_processed_parts)}")
                                 artifact_dicts = []
                                 for idx, part in enumerate(session_context._latest_processed_parts):
-                                    print(f"🔍 [DEBUG] Part {idx}: type={type(part)}")
+                                    log_foundry_debug(f"Part {idx}: type={type(part)}")
                                     
                                     # Check for wrapped Part objects with .root
                                     if hasattr(part, 'root'):
-                                        print(f"🔍 [DEBUG] Part {idx} has .root, root type: {type(part.root)}")
+                                        log_foundry_debug(f"Part {idx} has .root, root type: {type(part.root)}")
                                         if isinstance(part.root, DataPart) and isinstance(part.root.data, dict) and 'artifact-uri' in part.root.data:
-                                            print(f"🔍 [DEBUG] Part {idx} wrapped DataPart with artifact-uri ✓")
+                                            log_foundry_debug(f"Part {idx} wrapped DataPart with artifact-uri ✓")
                                             artifact_dicts.append(part.root.data)
                                     
                                     # Check for unwrapped DataPart objects (no .root)
                                     elif isinstance(part, DataPart):
-                                        print(f"🔍 [DEBUG] Part {idx} is unwrapped DataPart, data type: {type(part.data)}")
+                                        log_foundry_debug(f"Part {idx} is unwrapped DataPart, data type: {type(part.data)}")
                                         if isinstance(part.data, dict) and 'artifact-uri' in part.data:
-                                            print(f"🔍 [DEBUG] Part {idx} unwrapped DataPart with artifact-uri ✓")
+                                            log_foundry_debug(f"Part {idx} unwrapped DataPart with artifact-uri ✓")
                                             artifact_dicts.append(part.data)
                                 
-                                print(f"🔍 [DEBUG] Found {len(artifact_dicts)} artifact dicts")
+                                log_foundry_debug(f"Found {len(artifact_dicts)} artifact dicts")
                                 if artifact_dicts:
-                                    print(f"📦 [Agent Mode] Including {len(artifact_dicts)} artifact(s) in final response for UI display")
+                                    log_debug(f"📦 [Agent Mode] Including {len(artifact_dicts)} artifact(s) in final response for UI display")
                                     final_responses.extend(artifact_dicts)
                                     for idx, artifact_data in enumerate(artifact_dicts):
                                         uri = artifact_data.get('artifact-uri', '')
@@ -4617,7 +4625,7 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
                         final_responses = ["Task orchestration completed but synthesis failed."]
                     
                     # Store the interaction and return
-                    print("About to store User→Host interaction for context_id: {context_id}")
+                    log_debug("About to store User→Host interaction for context_id: {context_id}")
                     await self._store_user_host_interaction_safe(
                         user_message_parts=message_parts,
                         user_message_text=enhanced_message,
@@ -4626,11 +4634,11 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
                         span=span
                     )
                     
-                    print(f"🎯 [Agent Mode] Orchestration complete, returning {len(final_responses)} responses")
+                    log_debug(f"🎯 [Agent Mode] Orchestration complete, returning {len(final_responses)} responses")
                     return final_responses
                     
                 except Exception as e:
-                    print(f"❌ [Agent Mode] Orchestration error: {e}")
+                    log_error(f"[Agent Mode] Orchestration error: {e}")
                     import traceback
                     traceback.print_exc()
                     
@@ -4653,7 +4661,7 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
                                     artifact_dicts.append(part.data)
                             
                             if artifact_dicts:
-                                print(f"📦 [Agent Mode] Including {len(artifact_dicts)} artifact(s) in fallback response")
+                                log_debug(f"📦 [Agent Mode] Including {len(artifact_dicts)} artifact(s) in fallback response")
                                 final_responses.extend(artifact_dicts)
                         
                         return final_responses
@@ -4663,14 +4671,14 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
                         return final_responses
             
             # Continue with standard conversation flow using HTTP API
-            print(f"🔍 DEBUG: =================== STARTING RUN CREATION ===================")
-            print(f"🔍 DEBUG: About to create run with agent_id: {self.agent['id']} (FIRST PATH)")
+            log_foundry_debug(f"=================== STARTING RUN CREATION ===================")
+            log_foundry_debug(f"About to create run with agent_id: {self.agent['id']} (FIRST PATH)")
             await self._emit_status_event("creating AI agent run", context_id)
             
-            print(f"🔍 DEBUG: Calling _http_create_run...")
+            log_foundry_debug(f"Calling _http_create_run...")
             run = await self._http_create_run(thread_id, self.agent['id'], session_context)
-            print(f"🔍 DEBUG: Run created successfully with ID: {run['id']}, status: {run['status']} (FIRST PATH)")
-            print(f"🔍 DEBUG: =================== RUN CREATED SUCCESSFULLY ===================")
+            log_foundry_debug(f"Run created successfully with ID: {run['id']}, status: {run['status']} (FIRST PATH)")
+            log_foundry_debug(f"=================== RUN CREATED SUCCESSFULLY ===================")
             await self._emit_status_event(f"AI run started - status: {run['status']}", context_id)
             
             # Poll until completion, handle tool calls
@@ -4679,10 +4687,10 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
             last_tool_output = None
             tool_calls_count = 0
             
-            print(f"🔍 DEBUG: Starting polling loop for run {run['id']} (FIRST PATH)")
+            log_foundry_debug(f"Starting polling loop for run {run['id']} (FIRST PATH)")
             while run["status"] in ["queued", "in_progress", "requires_action"] and iterations < max_iterations:
                 iterations += 1
-                print(f"🔍 DEBUG: Polling iteration {iterations}, current status: {run['status']} (FIRST PATH)")
+                log_foundry_debug(f"Polling iteration {iterations}, current status: {run['status']} (FIRST PATH)")
                 
                 # Emit status for different run states
                 if run["status"] == "queued":
@@ -4693,17 +4701,17 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
                     await self._emit_status_event("AI requires tools - executing actions", context_id)
                 
                 import asyncio; await asyncio.sleep(1)
-                print(f"🔍 DEBUG: About to get run status for iteration {iterations} (FIRST PATH)")
+                log_foundry_debug(f"About to get run status for iteration {iterations} (FIRST PATH)")
                 run = await self._http_get_run(thread_id, run["id"])
-                print(f"🔍 DEBUG: Got run status: {run['status']} (iteration {iterations}) (FIRST PATH)")
+                log_foundry_debug(f"Got run status: {run['status']} (iteration {iterations}) (FIRST PATH)")
                 
                 if run["status"] == "failed":
-                    print(f"🔍 DEBUG: Run failed, breaking from loop (FIRST PATH)")
+                    log_foundry_debug(f"Run failed, breaking from loop (FIRST PATH)")
                     await self._emit_status_event("AI run failed", context_id)
                     break
                     
                 if run["status"] == "requires_action":
-                    print(f"🔍 DEBUG: Run requires action, handling tool calls (FIRST PATH)")
+                    log_foundry_debug(f"Run requires action, handling tool calls (FIRST PATH)")
                     tool_calls_count += 1
                     await self._emit_status_event(f"executing tools (attempt {tool_calls_count})", context_id)
                     
@@ -4716,11 +4724,11 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
                     if current_run.get('required_action') and current_run['required_action'].get('submit_tool_outputs'):
                         batch_tool_calls = current_run['required_action']['submit_tool_outputs']['tool_calls']
                         all_tool_calls.extend(batch_tool_calls)
-                        print(f"🔥 OPTIMIZED: Processing {len(batch_tool_calls)} tool calls in batch")
+                        log_debug(f"🔥 OPTIMIZED: Processing {len(batch_tool_calls)} tool calls in batch")
                     
                     # Now execute all tool calls in parallel fashion
                     if all_tool_calls:
-                        print(f"🔥 OPTIMIZED: Executing {len(all_tool_calls)} tool calls in parallel")
+                        log_debug(f"🔥 OPTIMIZED: Executing {len(all_tool_calls)} tool calls in parallel")
                         
                         # Ensure the run has the tool calls properly set up
                         if not run.get('required_action'):
@@ -4738,54 +4746,54 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
                     # Get the latest run status after all tool executions
                     run = await self._http_get_run(thread_id, run["id"])
             
-            print(f"🔍 DEBUG: Polling loop completed. Final status: {run['status']}, iterations: {iterations} (FIRST PATH)")
+            log_foundry_debug(f"Polling loop completed. Final status: {run['status']}, iterations: {iterations} (FIRST PATH)")
             await self._emit_status_event("AI processing completed, generating response", context_id)
             
             # Get response messages
-            print(f"🔍 DEBUG: About to retrieve messages from thread (FIRST PATH)")
+            log_foundry_debug(f"About to retrieve messages from thread (FIRST PATH)")
             await self._emit_status_event("retrieving AI response", context_id)
             messages = await self._http_list_messages(thread_id)
-            print(f"🔍 DEBUG: Retrieved {len(messages)} messages from thread (FIRST PATH)")
+            log_foundry_debug(f"Retrieved {len(messages)} messages from thread (FIRST PATH)")
             
             responses = []
             assistant_messages_found = 0
             
             for i, msg in enumerate(messages):
-                print(f"🔍 DEBUG: Message {i}: role={msg.get('role')}, has_content={bool(msg.get('content'))} (FIRST PATH)")
+                log_foundry_debug(f"Message {i}: role={msg.get('role')}, has_content={bool(msg.get('content'))} (FIRST PATH)")
                 if msg.get("content"):
-                    print(f"🔍 DEBUG: Message {i} content count: {len(msg['content'])} (FIRST PATH)")
+                    log_foundry_debug(f"Message {i} content count: {len(msg['content'])} (FIRST PATH)")
                     for j, content in enumerate(msg['content']):
-                        print(f"🔍 DEBUG: Content {j}: type={content.get('type')}, has_text={bool(content.get('text'))} (FIRST PATH)")
+                        log_foundry_debug(f"Content {j}: type={content.get('type')}, has_text={bool(content.get('text'))} (FIRST PATH)")
                         if content.get("text"):
-                            print(f"🔍 DEBUG: Text object: {content.get('text')} (FIRST PATH)")
+                            log_foundry_debug(f"Text object: {content.get('text')} (FIRST PATH)")
                 else:
-                    print(f"🔍 DEBUG: Message {i} has no content! (FIRST PATH)")
+                    log_foundry_debug(f"Message {i} has no content! (FIRST PATH)")
                 
                 if msg.get("role") == "assistant" and msg.get("content"):
                     assistant_messages_found += 1
-                    print(f"🔍 DEBUG: Processing assistant message {assistant_messages_found} (FIRST PATH)")
+                    log_foundry_debug(f"Processing assistant message {assistant_messages_found} (FIRST PATH)")
                     current_responses = []
                     for content in msg["content"]:
                         if content.get("type") == "text" and content.get("text", {}).get("value"):
                             text_value = content["text"]["value"]
-                            print(f"🔍 DEBUG: Found text value: {text_value[:100]}... (FIRST PATH)")
+                            log_foundry_debug(f"Found text value: {text_value[:100]}... (FIRST PATH)")
                             if not text_value or "couldn't retrieve" in text_value.lower() or "no response" in text_value.lower():
-                                print(f"🔍 DEBUG: Skipping invalid text value (FIRST PATH)")
+                                log_foundry_debug(f"Skipping invalid text value (FIRST PATH)")
                                 continue
                             current_responses.append(text_value)
-                            print(f"🔍 DEBUG: Added response to current list (FIRST PATH)")
+                            log_foundry_debug(f"Added response to current list (FIRST PATH)")
                     if current_responses:
-                        print(f"🔍 DEBUG: Found responses in message {i}, updating latest responses (FIRST PATH)")
+                        log_foundry_debug(f"Found responses in message {i}, updating latest responses (FIRST PATH)")
                         responses = current_responses  # Keep updating to get the most recent responses
                 else:
                     if msg.get("role") != "assistant":
-                        print(f"🔍 DEBUG: Skipping message {i} - not assistant role: {msg.get('role')} (FIRST PATH)")
+                        log_foundry_debug(f"Skipping message {i} - not assistant role: {msg.get('role')} (FIRST PATH)")
                     else:
-                        print(f"🔍 DEBUG: Skipping message {i} - assistant but no content (FIRST PATH)")
+                        log_foundry_debug(f"Skipping message {i} - assistant but no content (FIRST PATH)")
             
             # If no valid assistant message found, surface tool output as fallback
             if not responses and last_tool_output:
-                print(f"🔍 DEBUG: No assistant responses found, using tool output as fallback (FIRST PATH)")
+                log_foundry_debug(f"No assistant responses found, using tool output as fallback (FIRST PATH)")
 
                 def _flatten_tool_output(output):
                     if isinstance(output, list):
@@ -4804,9 +4812,9 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
                 payload_to_flatten = last_tool_output.get("response") if isinstance(last_tool_output, dict) and "response" in last_tool_output else last_tool_output
                 responses = _flatten_tool_output(payload_to_flatten)
             
-            print(f"🔍 DEBUG: After message processing - responses count: {len(responses) if responses else 0} (FIRST PATH)")
+            log_foundry_debug(f"After message processing - responses count: {len(responses) if responses else 0} (FIRST PATH)")
             if responses:
-                print(f"🔍 DEBUG: First response: {responses[0][:100]}... (FIRST PATH)")
+                log_foundry_debug(f"First response: {responses[0][:100]}... (FIRST PATH)")
                 
                 # Check if files were processed and have extracted content
                 has_extracted_content = False
@@ -4850,7 +4858,7 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
                                 artifact_dicts.append(part.data)
                     
                     if artifact_dicts:
-                        print(f"📦 [Standard Mode] Including {len(artifact_dicts)} artifact(s) in response for UI display")
+                        log_debug(f"📦 [Standard Mode] Including {len(artifact_dicts)} artifact(s) in response for UI display")
                         final_responses.extend(artifact_dicts)
                         for idx, artifact_data in enumerate(artifact_dicts):
                             uri = artifact_data.get('artifact-uri', '')
@@ -4863,7 +4871,7 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
                         "The file has been processed. Here is the extracted content:\n\n" + 
                         "\n\n---\n\n".join(extracted_contents)
                     )
-                    print(f"📝 Sending extracted content to thread for future context...")
+                    log_debug(f"📝 Sending extracted content to thread for future context...")
                     await self.send_message_to_thread(thread_id, extracted_content_message, role="assistant")
                     final_responses.insert(0, extracted_content_message)
 
@@ -4877,13 +4885,13 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
                         f"File processing completed. {len([p for p in processed_parts if isinstance(p, DataPart)])} file(s) uploaded and stored as artifacts."
                     )
                 
-                print(f"🔍 DEBUG: final_responses set to: {final_responses} (FIRST PATH)")
-                print(f"🔍 DEBUG: final_responses count: {len(final_responses)} (FIRST PATH)")
+                log_foundry_debug(f"final_responses set to: {final_responses} (FIRST PATH)")
+                log_foundry_debug(f"final_responses count: {len(final_responses)} (FIRST PATH)")
                 
                 # Note: Conversation history is now managed by OpenAI threads - no need to store separately
                 
                 # Store User→Host A2A interaction (fire-and-forget)
-                print(f"About to store User→Host interaction for context_id: {context_id}")
+                log_debug(f"About to store User→Host interaction for context_id: {context_id}")
                 
                 # Extract artifact info from processed parts for memory storage
                 artifact_info = {}
@@ -4905,11 +4913,11 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
                     artifact_info=artifact_info  # Pass artifact info for URI replacement
                 ))
                 
-                print(f"🔍 DEBUG: About to return final_responses: {final_responses} (FIRST PATH)")
+                log_foundry_debug(f"About to return final_responses: {final_responses} (FIRST PATH)")
                 
                 # FIXED: Don't stream here if host manager is handling it to prevent duplicates
                 # The host manager will stream the response, so we skip streaming here
-                print(f"[DEBUG] Skipping foundry agent direct streaming - host manager will handle response streaming")
+                log_debug(f"Skipping foundry agent direct streaming - host manager will handle response streaming")
                 # Stream the host agent's final aggregated response to WebSocket
                 # NOTE: Disabled to prevent duplicate messages - host manager handles streaming
                 if False and context_id not in self._host_responses_sent:
@@ -4947,26 +4955,26 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
                                 # Stream the final aggregated response
                                 success = await streamer._send_event("message", event_data, context_id)
                                 if success:
-                                    print(f"[DEBUG] Host agent final response event streamed: {event_data}")
+                                    log_debug(f"Host agent final response event streamed: {event_data}")
                                 else:
-                                    print("[DEBUG] Failed to stream host agent final response event")
+                                    log_debug("Failed to stream host agent final response event")
                             else:
-                                print("[DEBUG] WebSocket streamer not available for host agent final response")
+                                log_debug("WebSocket streamer not available for host agent final response")
                         except Exception as e:
-                            print(f"[DEBUG] Error streaming host agent final response to WebSocket: {e}")
+                            log_debug(f"Error streaming host agent final response to WebSocket: {e}")
                             # Don't let WebSocket errors break the main flow
                             pass
                         
                     except ImportError:
                         # WebSocket module not available, continue without streaming
-                        print("[DEBUG] WebSocket module not available for host agent response")
+                        log_debug("WebSocket module not available for host agent response")
                         pass
                     except Exception as e:
-                        print(f"[DEBUG] Error setting up host agent response streaming: {e}")
+                        log_debug(f"Error setting up host agent response streaming: {e}")
                         # Don't let WebSocket errors break the main flow
                         pass
                 else:
-                    print(f"[DEBUG] Host agent response already sent for context {context_id}, skipping duplicate")
+                    log_debug(f"Host agent response already sent for context {context_id}, skipping duplicate")
                 
                 return final_responses
         
@@ -5033,7 +5041,7 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
             
             # Send contextualized message to thread
             await self.send_message_to_thread(thread_id, contextualized_message)
-            print(f"🔍 DEBUG: Message sent to thread successfully, moving to next step...")
+            log_foundry_debug(f"Message sent to thread successfully, moving to next step...")
             
             # Debug: Check agent tools before running
             print(f"========= AGENT TOOLS DEBUG ==========")
@@ -5044,9 +5052,9 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
             print(f"==========================================")
             
             # Run the agent using HTTP API
-            print(f"🔍 DEBUG: About to create run with agent_id: {self.agent['id']}")
+            log_foundry_debug(f"About to create run with agent_id: {self.agent['id']}")
             run = await self._http_create_run(thread_id, self.agent['id'], session_context)
-            print(f"🔍 DEBUG: Run created successfully with ID: {run['id']}, status: {run['status']}")
+            log_foundry_debug(f"Run created successfully with ID: {run['id']}, status: {run['status']}")
             
             # Track run initiation
             span.set_attribute("run.id", run["id"])
@@ -5063,22 +5071,22 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
             last_tool_output = None
             tool_calls_count = 0
             
-            print(f"🔍 DEBUG: Starting polling loop for run {run['id']}")
+            log_foundry_debug(f"Starting polling loop for run {run['id']}")
             while run["status"] in ["queued", "in_progress", "requires_action"] and iterations < max_iterations:
                 iterations += 1
-                print(f"🔍 DEBUG: Polling iteration {iterations}, current status: {run['status']}")
+                log_foundry_debug(f"Polling iteration {iterations}, current status: {run['status']}")
                 
                 import asyncio; await asyncio.sleep(1)
                 
-                print(f"🔍 DEBUG: About to get run status for iteration {iterations}")
+                log_foundry_debug(f"About to get run status for iteration {iterations}")
                 run = await self._http_get_run(thread_id, run["id"])
-                print(f"🔍 DEBUG: Got run status: {run['status']} (iteration {iterations})")
+                log_foundry_debug(f"Got run status: {run['status']} (iteration {iterations})")
                 
                 # Debug: Check if run has required_action
                 if run.get('required_action'):
-                    print(f"🔍 DEBUG: Run has required_action: {run['required_action']}")
+                    log_foundry_debug(f"Run has required_action: {run['required_action']}")
                 else:
-                    print(f"🔍 DEBUG: Run has NO required_action - agent should be responding directly")
+                    log_foundry_debug(f"Run has NO required_action - agent should be responding directly")
                 
                 # Track status changes
                 span.add_event("run_status_change", {
@@ -5118,11 +5126,11 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
                     if current_run.get('required_action') and current_run['required_action'].get('submit_tool_outputs'):
                         batch_tool_calls = current_run['required_action']['submit_tool_outputs']['tool_calls']
                         all_tool_calls.extend(batch_tool_calls)
-                        print(f"🔥 OPTIMIZED: Processing {len(batch_tool_calls)} tool calls in batch")
+                        log_debug(f"🔥 OPTIMIZED: Processing {len(batch_tool_calls)} tool calls in batch")
                     
                     # Now execute all tool calls in parallel fashion
                     if all_tool_calls:
-                        print(f"🔥 OPTIMIZED: Executing {len(all_tool_calls)} tool calls in parallel")
+                        log_debug(f"🔥 OPTIMIZED: Executing {len(all_tool_calls)} tool calls in parallel")
                         
                         # Ensure the run has the tool calls properly set up
                         if not run.get('required_action'):
@@ -5139,7 +5147,7 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
                     # Get the latest run status after all tool executions
                     run = await self._http_get_run(thread_id, run["id"])
             
-            print(f"🔍 DEBUG: Polling loop completed. Final status: {run['status']}, iterations: {iterations}")
+            log_foundry_debug(f"Polling loop completed. Final status: {run['status']}, iterations: {iterations}")
             
             # Track final run state
             span.set_attribute("run.final_status", run["status"])
@@ -5252,7 +5260,7 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
                 
                 # FIXED: Don't stream here if host manager is handling it to prevent duplicates
                 # The host manager will stream the response, so we skip streaming here
-                print(f"[DEBUG] Skipping foundry agent direct streaming (run_conversation) - host manager will handle response streaming")
+                log_debug(f"Skipping foundry agent direct streaming (run_conversation) - host manager will handle response streaming")
                 # Stream the host agent's final response to WebSocket (for the other conversation path)
                 # NOTE: Disabled to prevent duplicate messages - host manager handles streaming
                 if False and context_id not in self._host_responses_sent:
@@ -5290,26 +5298,26 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
                                 # Stream the final response
                                 success = await streamer._send_event("message", event_data, context_id)
                                 if success:
-                                    print(f"[DEBUG] Host agent final response event streamed (run_conversation): {event_data}")
+                                    log_debug(f"Host agent final response event streamed (run_conversation): {event_data}")
                                 else:
-                                    print("[DEBUG] Failed to stream host agent final response event (run_conversation)")
+                                    log_debug("Failed to stream host agent final response event (run_conversation)")
                             else:
-                                print("[DEBUG] WebSocket streamer not available for host agent final response (run_conversation)")
+                                log_debug("WebSocket streamer not available for host agent final response (run_conversation)")
                         except Exception as e:
-                            print(f"[DEBUG] Error streaming host agent final response to WebSocket (run_conversation): {e}")
+                            log_debug(f"Error streaming host agent final response to WebSocket (run_conversation): {e}")
                             # Don't let WebSocket errors break the main flow
                             pass
                         
                     except ImportError:
                         # WebSocket module not available, continue without streaming
-                        print("[DEBUG] WebSocket module not available for host agent response (run_conversation)")
+                        log_debug("WebSocket module not available for host agent response (run_conversation)")
                         pass
                     except Exception as e:
-                        print(f"[DEBUG] Error setting up host agent response streaming (run_conversation): {e}")
+                        log_debug(f"Error setting up host agent response streaming (run_conversation): {e}")
                         # Don't let WebSocket errors break the main flow
                         pass
                 else:
-                    print(f"[DEBUG] Host agent response already sent for context {context_id}, skipping duplicate (run_conversation)")
+                    log_debug(f"Host agent response already sent for context {context_id}, skipping duplicate (run_conversation)")
                 
                 return final_responses
 
@@ -5319,16 +5327,16 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
             print(f"_handle_tool_calls called for thread_id: {thread_id}, context_id: {context_id}")
             
             if not run.get('required_action'):
-                print("[DEBUG] No required_action in run.")
+                log_debug("No required_action in run.")
                 return None
                 
             required_action = run.get('required_action')
             if not required_action.get('submit_tool_outputs'):
-                print("[DEBUG] No submit_tool_outputs in required_action.")
+                log_debug("No submit_tool_outputs in required_action.")
                 return None
                 
             tool_calls = required_action['submit_tool_outputs']['tool_calls']
-            print(f"🔥 OPTIMIZED: Processing {len(tool_calls)} tool calls")
+            log_debug(f"🔥 OPTIMIZED: Processing {len(tool_calls)} tool calls")
             
             # Add status message for tool calls starting
             self._add_status_message_to_conversation(f"🛠️ Executing {len(tool_calls)} tool call(s)", context_id)
@@ -5360,7 +5368,7 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
             
             # NEW: Execute send_message calls in parallel
             if send_message_tool_calls:
-                print(f"🚀 Executing {len(send_message_tool_calls)} send_message calls in parallel")
+                log_debug(f"🚀 Executing {len(send_message_tool_calls)} send_message calls in parallel")
                 span.add_event("parallel_agent_calls_started", {
                     "agent_calls_count": len(send_message_tool_calls),
                     "run_id": run["id"]
@@ -5607,7 +5615,7 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
             })
             
             # Submit tool outputs via HTTP API
-            print(f"🔥 OPTIMIZED: Submitting {len(tool_outputs)} tool outputs in one batch")
+            log_debug(f"🔥 OPTIMIZED: Submitting {len(tool_outputs)} tool outputs in one batch")
             await self._http_submit_tool_outputs(thread_id, run["id"], tool_outputs)
             
             if successful_tool_outputs:
@@ -5625,7 +5633,7 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
 
     async def convert_parts(self, parts: List[Part], tool_context: Any, context_id: str = None):
         rval = []
-        print(f"convert_parts: processing {len(parts)} parts")
+        log_debug(f"convert_parts: processing {len(parts)} parts")
         session_context = getattr(tool_context, "state", None)
         
         # In agent mode, preserve existing parts; otherwise start fresh
@@ -5813,7 +5821,7 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
                 elif "artifact-uri" in item or "artifact-id" in item:
                     # This is artifact metadata from an agent - wrap in DataPart
                     artifact_uri = item.get("artifact-uri", "")
-                    print(f"📦 [DEBUG] Wrapping artifact dict in DataPart:")
+                    log_debug(f"📦 [DEBUG] Wrapping artifact dict in DataPart:")
                     print(f"   artifact-uri (first 150 chars): {artifact_uri[:150]}")
                     print(f"   Has SAS token (?): {'?' in artifact_uri}")
                     artifact_data_part = DataPart(data=item)
@@ -5873,7 +5881,7 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
         _apply_assigned_roles(latest_parts)
 
         # DEBUG: Log what we're returning
-        print(f"🔍 [DEBUG] convert_parts returning {len(flattened_parts)} parts:")
+        log_foundry_debug(f"convert_parts returning {len(flattened_parts)} parts:")
         for idx, part in enumerate(flattened_parts):
             if isinstance(part, (TextPart, DataPart, FilePart)):
                 print(f"  • Part {idx}: {type(part).__name__} (kind={getattr(part, 'kind', 'N/A')})")
@@ -5891,20 +5899,20 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
         if hasattr(part, 'root') and part.root.kind == 'file':
             file_name = getattr(part.root.file, 'name', 'unknown')
             mime_type = getattr(part.root.file, 'mimeType', 'unknown')
-            print(f"convert_part: FilePart - name: {file_name}, mimeType: {mime_type}")
+            log_debug(f"convert_part: FilePart - name: {file_name}, mimeType: {mime_type}")
             
             # Emit status event for file processing
             if context_id:
                 await self._emit_status_event(f"processing file: {file_name}", context_id)
         else:
-            print(f"convert_part: {type(part)} - kind: {getattr(part.root, 'kind', 'unknown') if hasattr(part, 'root') else 'no root'}")
+            log_debug(f"convert_part: {type(part)} - kind: {getattr(part.root, 'kind', 'unknown') if hasattr(part, 'root') else 'no root'}")
         
         # Handle dicts coming from streaming conversions or patched remote agents
         if isinstance(part, dict):
             # Simple heuristic: if it looks like {'kind': 'text', 'text': '...'}
             if part.get('kind') == 'text' and 'text' in part:
                 text_content = part['text']
-                print(f"[DEBUG] convert_part: dict text content: {text_content[:200]}...")
+                log_debug(f"convert_part: dict text content: {text_content[:200]}...")
                 return text_content
             if part.get('kind') == 'data' and 'data' in part:
                 return part['data']
@@ -5914,7 +5922,7 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
         # Fallback to standard A2A Part handling
         if hasattr(part, 'root') and part.root.kind == 'text':
             text_content = part.root.text or ""
-            print(f"[DEBUG] convert_part: text part content: {text_content[:200]}...")
+            log_debug(f"convert_part: text part content: {text_content[:200]}...")
 
             refine_matches = list(re.finditer(r"\[refine-image\]\s+(https?://\S+)", text_content, flags=re.IGNORECASE))
             mask_matches = list(re.finditer(r"\[refine-mask\]\s+(https?://\S+)", text_content, flags=re.IGNORECASE))
@@ -5937,7 +5945,7 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
                         latest_parts = []
                         setattr(session_context, "_latest_processed_parts", latest_parts)
                     latest_parts.append(DataPart(data=refine_data))
-                    print(f"[DEBUG] convert_part: captured refine request with image_url={image_url}")
+                    log_debug(f"convert_part: captured refine request with image_url={image_url}")
 
                 return cleaned_text or "Refine the previous image."
 
@@ -6103,7 +6111,7 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
                 except Exception as e:
                     print(f"Exception in save_artifact process: {e}")
                     import traceback
-                    print(f"Full traceback: {traceback.format_exc()}")
+                    log_error(f"Full traceback: {traceback.format_exc()}")
                     artifact_response = DataPart(data={'error': f'Failed to process file: {str(e)}'})
             else:
                 print(f"ERROR: tool_context has no save_artifact method")
@@ -6266,9 +6274,9 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
                 print(f"🔍 Retrieving agent card from: {agent_address}")
                 await self.retrieve_card(agent_address)
             
-            print(f"✅ Successfully registered remote agent from: {agent_address}")
+            log_success(f"Successfully registered remote agent from: {agent_address}")
             print(f"📊 Total registered agents: {len(self.remote_agent_connections)}")
-            print(f"📋 Agent names: {list(self.remote_agent_connections.keys())}")
+            log_debug(f"📋 Agent names: {list(self.remote_agent_connections.keys())}")
             
             # Agent will appear in UI sidebar within 15 seconds via periodic sync
             
@@ -6311,9 +6319,9 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
             self.agents = json.dumps(self.list_remote_agents(), indent=2)
             print(f"✅ Updated agents list for prompts")
             
-            print(f"✅ Successfully unregistered agent: {agent_name}")
+            log_success(f"Successfully unregistered agent: {agent_name}")
             print(f"📊 Total registered agents: {len(self.remote_agent_connections)}")
-            print(f"📋 Agent names: {list(self.remote_agent_connections.keys())}")
+            log_debug(f"📋 Agent names: {list(self.remote_agent_connections.keys())}")
             
             return True
             
@@ -6436,7 +6444,7 @@ class DummyToolContext:
                     file_info = file_part['file']
                     file_bytes = file_info['data']
                     mime_type = file_info.get('mimeType', 'application/octet-stream')
-                    print(f"Extracted {len(file_bytes)} bytes from A2A file part")
+                    log_debug(f"Extracted {len(file_bytes)} bytes from A2A file part")
                     file_role = file_info.get('role')
                 else:
                     print(f"Could not extract file bytes from A2A file part: {file_part.keys()}")
@@ -6445,12 +6453,12 @@ class DummyToolContext:
                 # Handle Google ADK format (fallback)
                 file_bytes = file_part.inline_data.data
                 mime_type = getattr(file_part.inline_data, 'mime_type', 'application/octet-stream')
-                print(f"Extracted {len(file_bytes)} bytes from inline_data")
+                log_debug(f"Extracted {len(file_bytes)} bytes from inline_data")
                 file_role = getattr(file_part.inline_data, 'role', None)
             elif hasattr(file_part, 'data'):
                 file_bytes = file_part.data
                 mime_type = 'application/octet-stream'
-                print(f"Extracted {len(file_bytes)} bytes from data attribute")
+                log_debug(f"Extracted {len(file_bytes)} bytes from data attribute")
                 file_role = getattr(file_part, 'role', None)
             else:
                 print(f"Could not extract file bytes from artifact: {type(file_part)}")
@@ -6597,7 +6605,7 @@ class DummyToolContext:
         except Exception as e:
             print(f"Error saving A2A artifact: {e}")
             import traceback
-            print(f"Full traceback: {traceback.format_exc()}")
+            log_error(f"Full traceback: {traceback.format_exc()}")
             return DataPart(data={
                 'error': f'Failed to save artifact: {str(e)}',
                 'file-name': file_id,
@@ -6620,7 +6628,7 @@ class DummyToolContext:
         print(f"   - Size exceeds threshold: {file_size_bytes > size_threshold}")
  
         decision = has_azure_config and (force_azure or file_size_bytes > size_threshold)
-        print(f"🎯 Azure Blob decision: {'YES' if decision else 'NO'}")
+        log_debug(f"🎯 Azure Blob decision: {'YES' if decision else 'NO'}")
  
         return decision
     

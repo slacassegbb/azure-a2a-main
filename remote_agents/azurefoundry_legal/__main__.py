@@ -27,8 +27,14 @@ from a2a.types import AgentCapabilities, AgentCard, AgentSkill
 
 load_dotenv()
 
+# Configure logging - hide verbose Azure SDK logs
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Silence verbose Azure SDK HTTP logging
+logging.getLogger("azure.core.pipeline.policies.http_logging_policy").setLevel(logging.WARNING)
+logging.getLogger("azure.identity").setLevel(logging.WARNING)
+logging.getLogger("azure").setLevel(logging.WARNING)
 
 
 def _normalize_env_value(raw_value: str | None) -> str:
@@ -806,8 +812,8 @@ async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_p
             request_text = agent_executor_instance._waiting_for_input[context_id]
             
             # DEBUG: Log the full request text to see what we're getting
-            print(f"[DEBUG] Full request text length: {len(request_text)}")
-            print(f"[DEBUG] Request text preview: {request_text[:500]}...")
+            logger.debug(f"Full request text length: {len(request_text)}")
+            logger.debug(f"Request text preview: {request_text[:500]}...")
             
             # Extract conversation history from the memory results
             conversation_text = ""
@@ -820,13 +826,13 @@ async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_p
                 memory_pattern = r'\s+(\d+)\.\s+From\s+([^:]+):\s+(.+)'
                 matches = re.findall(memory_pattern, request_text)
                 
-                print(f"[DEBUG] Found {len(matches)} memory matches")
+                logger.debug(f"Found {len(matches)} memory matches")
                 
                 for i, match in enumerate(matches):
                     try:
                         _, agent_name, content = match
-                        print(f"[DEBUG] Processing memory match {i+1}: agent={agent_name}, content_length={len(content)}")
-                        print(f"[DEBUG] Content preview: {content[:200]}...")
+                        logger.debug(f"Processing memory match {i+1}: agent={agent_name}, content_length={len(content)}")
+                        logger.debug(f"Content preview: {content[:200]}...")
                         
                         # The content might be a JSON string or just text
                         if content.startswith('{'):
@@ -851,12 +857,12 @@ async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_p
                                         content = content[:end_pos]
                                 
                                 data = ast.literal_eval(content)
-                                print(f"[DEBUG] Parsed JSON keys: {list(data.keys())}")
+                                logger.debug(f"Parsed JSON keys: {list(data.keys())}")
                                 
                                 # Look for conversation history in the JSON
                                 if 'inbound_payload' in data:
                                     inbound = data['inbound_payload']
-                                    print(f"[DEBUG] Found inbound_payload, type: {type(inbound)}, length: {len(str(inbound))}")
+                                    logger.debug(f"Found inbound_payload, type: {type(inbound)}, length: {len(str(inbound))}")
                                     
                                     if isinstance(inbound, str):
                                         try:
@@ -878,21 +884,21 @@ async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_p
                                                     inbound = inbound[:end_pos]
                                             
                                             inbound_data = json.loads(inbound)
-                                            print(f"[DEBUG] Parsed inbound_data keys: {list(inbound_data.keys())}")
+                                            logger.debug(f"Parsed inbound_data keys: {list(inbound_data.keys())}")
                                             
                                             if 'history' in inbound_data and inbound_data['history']:
-                                                print(f"[DEBUG] Found history with {len(inbound_data['history'])} messages")
+                                                logger.debug(f"Found history with {len(inbound_data['history'])} messages")
                                                 for j, msg in enumerate(inbound_data['history']):
-                                                    print(f"[DEBUG] History message {j}: {msg}")
+                                                    logger.debug(f"History message {j}: {msg}")
                                                     if 'parts' in msg and msg['parts']:
                                                         for part in msg['parts']:
                                                             if 'root' in part and 'text' in part['root']:
                                                                 text = part['root']['text']
                                                                 if text.strip():
                                                                     conversation_text += f"{text}\n"
-                                                                    print(f"[DEBUG] Added conversation text: {text[:100]}...")
+                                                                    logger.debug(f"Added conversation text: {text[:100]}...")
                                             else:
-                                                print(f"[DEBUG] No history found in inbound_data")
+                                                logger.debug(f"No history found in inbound_data")
                                                 
                                             # Also try to extract from the raw inbound_payload string if history is empty
                                             if not conversation_text and isinstance(inbound, str):
@@ -901,17 +907,17 @@ async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_p
                                                 text_pattern = r'"text":\s*"([^"]*)"'
                                                 text_matches = re.findall(text_pattern, inbound)
                                                 if text_matches:
-                                                    print(f"[DEBUG] Found {len(text_matches)} text matches in raw payload")
+                                                    logger.debug(f"Found {len(text_matches)} text matches in raw payload")
                                                     for text_match in text_matches:
                                                         if text_match.strip() and len(text_match.strip()) > 10:  # Only meaningful content
                                                             conversation_text += f"{text_match.strip()}\n"
-                                                            print(f"[DEBUG] Added raw text: {text_match.strip()[:100]}...")
+                                                            logger.debug(f"Added raw text: {text_match.strip()[:100]}...")
                                         except Exception as e:
-                                            print(f"[DEBUG] Error parsing inbound_payload: {e}")
+                                            logger.debug(f"Error parsing inbound_payload: {e}")
                                             # If parsing fails, just show the raw inbound_payload
                                             conversation_text += f"Raw payload: {inbound[:200]}...\n"
                             except Exception as e:
-                                print(f"[DEBUG] Error parsing JSON: {e}")
+                                logger.debug(f"Error parsing JSON: {e}")
                                 # If not valid JSON, just use the content as text
                                 conversation_text += f"Raw content: {content[:200]}...\n"
                         else:
@@ -924,17 +930,17 @@ async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_p
                             text_pattern = r'"text":\s*"([^"]*)"'
                             text_matches = re.findall(text_pattern, content)
                             if text_matches:
-                                print(f"[DEBUG] Found {len(text_matches)} text matches in raw content")
+                                logger.debug(f"Found {len(text_matches)} text matches in raw content")
                                 for text_match in text_matches:
                                     if text_match.strip() and len(text_match.strip()) > 10:  # Only meaningful content
                                         conversation_text += f"{text_match.strip()}\n"
-                                        print(f"[DEBUG] Added raw content text: {text_match.strip()[:100]}...")
+                                        logger.debug(f"Added raw content text: {text_match.strip()[:100]}...")
                     except Exception as e:
-                        print(f"[DEBUG] Error processing memory match: {e}")
+                        logger.debug(f"Error processing memory match: {e}")
                         continue
             
-            print(f"[DEBUG] Final conversation text length: {len(conversation_text)}")
-            print(f"[DEBUG] Conversation text: {conversation_text}")
+            logger.debug(f"Final conversation text length: {len(conversation_text)}")
+            logger.debug(f"Conversation text: {conversation_text}")
             
             # Add static conversation data for human intervention scenarios
             static_conversation = """Assistant: Hello! How can I help you today?

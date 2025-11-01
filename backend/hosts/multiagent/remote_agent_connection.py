@@ -1,4 +1,6 @@
 from typing import Callable
+import sys
+from pathlib import Path
 import httpx
 from a2a.client import A2AClient
 from a2a.client.errors import A2AClientHTTPError
@@ -14,6 +16,13 @@ from a2a.types import (
     JSONRPCErrorResponse,
 )
 from uuid import uuid4
+
+# Add backend directory to path for log_config import
+backend_dir = Path(__file__).resolve().parents[2]
+if str(backend_dir) not in sys.path:
+    sys.path.insert(0, str(backend_dir))
+
+from log_config import log_debug
 
 TaskCallbackArg = Task | TaskStatusUpdateEvent | TaskArtifactUpdateEvent
 TaskUpdateCallback = Callable[[TaskCallbackArg, AgentCard], Task]
@@ -48,11 +57,11 @@ class RemoteAgentConnections:
                     SendStreamingMessageRequest(id=str(uuid4()), params=request)
                 ):
                     if not response.root.result:
-                        print("[DEBUG] RemoteAgentConnections.send_message (streaming): response.root.result is None or error:", response.root)
+                        log_debug(f"RemoteAgentConnections.send_message (streaming): response.root.result is None or error:: {response.root}")
                         return response.root.error
                     # In the case a message is returned, that is the end of the interaction.
                     event = response.root.result
-                    print("[DEBUG] RemoteAgentConnections.send_message (streaming): event:", event)
+                    log_debug(f"RemoteAgentConnections.send_message (streaming): event:: {event}")
                     if isinstance(event, Message):
                         return event
 
@@ -61,12 +70,12 @@ class RemoteAgentConnections:
                         task = callback(event, self.card)
                     if hasattr(event, 'final') and event.final:
                         break
-                print("[DEBUG] RemoteAgentConnections.send_message (streaming): final task:", task)
+                log_debug(f"RemoteAgentConnections.send_message (streaming): final task:: {task}")
                 return task
             except A2AClientHTTPError as exc:
                 error_text = str(exc)
                 if exc.status_code == 400 and 'Invalid SSE response' in error_text:
-                    print(f"[DEBUG] Streaming not supported for {self.card.name}; falling back to non-streaming. Error: {error_text}")
+                    log_debug(f"Streaming not supported for {self.card.name}; falling back to non-streaming. Error: {error_text}")
                     if capabilities and hasattr(capabilities, 'streaming'):
                         try:
                             capabilities.streaming = False
@@ -80,7 +89,7 @@ class RemoteAgentConnections:
         response = await self.agent_client.send_message(
             SendMessageRequest(id=str(uuid4()), params=request)
         )
-        print("[DEBUG] RemoteAgentConnections.send_message (non-streaming): response.root:", response.root)
+        log_debug(f"RemoteAgentConnections.send_message (non-streaming): response.root:: {response.root}")
         if isinstance(response.root, JSONRPCErrorResponse):
             return response.root.error
         if isinstance(response.root.result, Message):

@@ -9,13 +9,22 @@ import asyncio
 import json
 import logging
 import os
+import sys
 import time
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Callable, Set
 import httpx
 
 from state.state import StateMessage, StateConversation, StateTask, StateEvent
 from a2a.types import Message
+
+# Add backend directory to path for log_config import
+backend_dir = Path(__file__).resolve().parents[2]
+if str(backend_dir) not in sys.path:
+    sys.path.insert(0, str(backend_dir))
+
+from log_config import log_debug
 
 logger = logging.getLogger(__name__)
 
@@ -121,7 +130,7 @@ class WebSocketStreamer:
                     if response.status_code == 200:
                         self.is_initialized = True
                         logger.info("✅ WebSocket streamer initialized successfully")
-                        print(f"[DEBUG] WebSocket streamer connected to {self.websocket_url}")
+                        log_debug(f"WebSocket streamer connected to {self.websocket_url}")
                         return True
                     else:
                         logger.warning(f"WebSocket server health check failed: {response.status_code}")
@@ -141,7 +150,7 @@ class WebSocketStreamer:
             logger.error(f"❌ Failed to connect to WebSocket server at {self.websocket_url}")
             # Still mark as initialized but warn it might not work
             self.is_initialized = True  # Allow it to try sending events anyway
-            print(f"[DEBUG] WebSocket streamer initialized but connection uncertain")
+            log_debug("WebSocket streamer initialized but connection uncertain")
             return True
                 
         except Exception as e:
@@ -172,7 +181,7 @@ class WebSocketStreamer:
         """
         if not self.is_initialized or not self.http_client:
             logger.error(f"WebSocket streamer not initialized, cannot send {event_type} event")
-            print(f"[DEBUG] WebSocket streamer not available for {event_type}")
+            log_debug(f"WebSocket streamer not available for {event_type}")
             return False
         
         try:
@@ -183,7 +192,7 @@ class WebSocketStreamer:
                 **data
             }
             
-            print(f"[DEBUG] Sending WebSocket event {event_type}: {event_payload}")
+            log_debug(f"Sending WebSocket event {event_type}: {event_payload}")
             
             # Send via HTTP POST to WebSocket server
             response = await self.http_client.post(
@@ -195,17 +204,17 @@ class WebSocketStreamer:
             if response.status_code == 200:
                 result = response.json()
                 client_count = result.get('clientCount', 0)
-                print(f"[DEBUG] ✅ Event {event_type} sent successfully to {client_count} WebSocket clients")
+                log_debug(f"✅ Event {event_type} sent successfully to {client_count} WebSocket clients")
                 logger.info(f"✅ Event {event_type} sent successfully to {client_count} WebSocket clients")
                 return True
             else:
                 logger.error(f"❌ Failed to send {event_type} event: HTTP {response.status_code}")
-                print(f"[DEBUG] ❌ Failed to send {event_type} event: HTTP {response.status_code}")
+                log_debug(f"❌ Failed to send {event_type} event: HTTP {response.status_code}")
                 return False
                 
         except Exception as e:
             logger.error(f"❌ Error sending {event_type} event: {e}")
-            print(f"[DEBUG] ❌ Error sending {event_type} event: {e}")
+            log_debug(f"❌ Error sending {event_type} event: {e}")
             return False
 
     # === Message Events ===

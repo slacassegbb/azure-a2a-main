@@ -18,9 +18,17 @@ from azure.search.documents.indexes.models import (
 import time
 from azure.core.exceptions import ResourceNotFoundError
 import openai
+import sys
 
 ROOT_ENV_PATH = Path(__file__).resolve().parents[3] / ".env"
 load_dotenv(dotenv_path=ROOT_ENV_PATH, override=False)
+
+# Add backend directory to path for log_config import
+backend_dir = Path(__file__).resolve().parents[2]
+if str(backend_dir) not in sys.path:
+    sys.path.insert(0, str(backend_dir))
+
+from log_config import log_memory_debug, log_info, log_success, log_warning, log_error
 
 # Azure Cognitive Search configuration
 service_endpoint = os.getenv("AZURE_SEARCH_SERVICE_ENDPOINT")
@@ -93,13 +101,13 @@ class A2AMemoryService:
 
     def _ensure_index_exists(self) -> bool:
         """Ensure the A2A interactions index exists"""
-        print(f"[A2AMemoryService] Ensuring index {self.index_name} exists")
+        log_memory_debug(f"Ensuring index {self.index_name} exists")
         
         # Check if index already exists
         try:
             existing_index = self.index_client.get_index(self.index_name)
             if self._is_index_compatible(existing_index):
-                print(f"[A2AMemoryService] Index {self.index_name} already exists")
+                log_memory_debug(f"Index {self.index_name} already exists")
                 self.search_client = SearchClient(
                     endpoint=service_endpoint,
                     index_name=self.index_name,
@@ -107,12 +115,12 @@ class A2AMemoryService:
                 )
                 return True
             else:
-                print(f"[A2AMemoryService] Existing index configuration does not match expected settings. Recreating index {self.index_name}.")
+                log_memory_debug(f"Existing index configuration does not match expected settings. Recreating index {self.index_name}.")
                 self.index_client.delete_index(self.index_name)
         except ResourceNotFoundError:
-            print(f"[A2AMemoryService] Index {self.index_name} does not exist, creating new index")
+            log_memory_debug(f"Index {self.index_name} does not exist, creating new index")
         except Exception as e:
-            print(f"[A2AMemoryService] Unexpected error checking index existence: {str(e)}")
+            log_memory_debug(f"Unexpected error checking index existence: {str(e)}")
             return False
 
         # Create the index
@@ -170,9 +178,9 @@ class A2AMemoryService:
         )
         
         try:
-            print(f"[A2AMemoryService] Creating index {self.index_name}")
+            log_memory_debug(f"Creating index {self.index_name}")
             self.index_client.create_index(index)
-            print(f"[A2AMemoryService] Successfully created index {self.index_name}")
+            log_memory_debug(f"Successfully created index {self.index_name}")
             
             # Wait for index to be ready
             if self._wait_for_index(self.index_name):
@@ -185,7 +193,7 @@ class A2AMemoryService:
             return False
             
         except Exception as e:
-            print(f"[A2AMemoryService] Error creating index: {str(e)}")
+            log_memory_debug(f"Error creating index: {str(e)}")
             return False
 
     def _is_index_compatible(self, index: SearchIndex) -> bool:
@@ -196,20 +204,20 @@ class A2AMemoryService:
                     current_dim = getattr(field, "vector_search_dimensions", None)
                     current_profile = getattr(field, "vector_search_profile_name", None)
                     if current_dim != vector_dimension:
-                        print(
-                            f"[A2AMemoryService] Existing vector dimension {current_dim} != expected {vector_dimension}"
+                        log_memory_debug(
+                            f"Existing vector dimension {current_dim} != expected {vector_dimension}"
                         )
                         return False
                     if current_profile != vector_profile_name:
-                        print(
-                            f"[A2AMemoryService] Existing vector profile {current_profile} != expected {vector_profile_name}"
+                        log_memory_debug(
+                            f"Existing vector profile {current_profile} != expected {vector_profile_name}"
                         )
                         return False
                     return True
-            print("[A2AMemoryService] interaction_vector field missing in index definition.")
+            log_memory_debug("interaction_vector field missing in index definition.")
             return False
         except Exception as e:
-            print(f"[A2AMemoryService] Failed to validate existing index: {e}")
+            log_memory_debug(f"Failed to validate existing index: {e}")
             return False
 
     def _wait_for_index(self, index_name: str, max_retries: int = 5, delay: int = 5) -> bool:
@@ -226,58 +234,58 @@ class A2AMemoryService:
                 )
                 search_client.search(search_text="*", top=1)
                 
-                print(f"[A2AMemoryService] Index {index_name} is ready")
+                log_memory_debug(f"Index {index_name} is ready")
                 return True
             except Exception as e:
                 if i < max_retries - 1:
-                    print(f"[A2AMemoryService] Waiting for index (attempt {i+1}/{max_retries})")
+                    log_memory_debug(f"Waiting for index (attempt {i+1}/{max_retries})")
                     time.sleep(delay)
                 continue
         
-        print(f"[A2AMemoryService] Index failed to become ready after {max_retries} attempts")
+        log_memory_debug(f"Index failed to become ready after {max_retries} attempts")
         return False
 
     async def _create_embedding(self, text: str) -> List[float]:
         """Create embedding for text using Azure OpenAI"""
-        print(f"[A2AMemoryService] _create_embedding called with text length: {len(text)}")
+        log_memory_debug(f"_create_embedding called with text length: {len(text)}")
         try:
-            print(f"[A2AMemoryService] Calling Azure OpenAI embeddings API...")
+            log_memory_debug("Calling Azure OpenAI embeddings API...")
             response = self.openai_client.embeddings.create(
                 model=azure_openai_deployment,
                 input=text
             )
-            print(f"[A2AMemoryService] Azure OpenAI embeddings API returned successfully")
+            log_memory_debug("Azure OpenAI embeddings API returned successfully")
             embedding = response.data[0].embedding
-            print(f"[A2AMemoryService] Extracted embedding with {len(embedding)} dimensions")
+            log_memory_debug(f"Extracted embedding with {len(embedding)} dimensions")
             return embedding
         except Exception as e:
-            print(f"[A2AMemoryService] Error creating embedding: {str(e)}")
-            print(f"[A2AMemoryService] Exception type: {type(e).__name__}")
+            log_memory_debug(f"Error creating embedding: {str(e)}")
+            log_memory_debug(f"Exception type: {type(e).__name__}")
             import traceback
-            print(f"[A2AMemoryService] Traceback: {traceback.format_exc()}")
+            log_memory_debug(f"Traceback: {traceback.format_exc()}")
             return []
 
     async def store_interaction(self, interaction_data: Dict[str, Any]) -> bool:
         """Store A2A protocol payloads in the search index"""
         if not self._enabled:
-            print("[A2AMemoryService] Memory service disabled - skipping store_interaction")
+            log_memory_debug("Memory service disabled - skipping store_interaction")
             return True  # Return success to avoid breaking the flow
             
-        print(f"[A2AMemoryService] store_interaction called")
-        print(f"[A2AMemoryService] Agent name: {interaction_data.get('agent_name', 'unknown')}")
+        log_memory_debug("store_interaction called")
+        log_memory_debug(f"Agent name: {interaction_data.get('agent_name', 'unknown')}")
         
         if not self.search_client:
-            print("[A2AMemoryService] Search client not initialized")
+            log_memory_debug("Search client not initialized")
             return False
 
         try:
-            print(f"[A2AMemoryService] Creating searchable text...")
+            log_memory_debug("Creating searchable text...")
             # Create searchable text for embedding from A2A payloads
             outbound_str = str(interaction_data.get('outbound_payload', ''))
             inbound_str = str(interaction_data.get('inbound_payload', ''))
             
-            print(f"[A2AMemoryService] Outbound payload length: {len(outbound_str)}")
-            print(f"[A2AMemoryService] Inbound payload length: {len(inbound_str)}")
+            log_memory_debug(f"Outbound payload length: {len(outbound_str)}")
+            log_memory_debug(f"Inbound payload length: {len(inbound_str)}")
             
             searchable_text = f"""
             Outbound A2A payload: {outbound_str}
@@ -285,23 +293,23 @@ class A2AMemoryService:
             Agent: {interaction_data.get('agent_name', '')}
             """
             
-            print(f"[A2AMemoryService] Searchable text length: {len(searchable_text)}")
-            print(f"[A2AMemoryService] About to create embedding...")
+            log_memory_debug(f"Searchable text length: {len(searchable_text)}")
+            log_memory_debug("About to create embedding...")
 
             # Create embedding
             embedding = await self._create_embedding(searchable_text.strip())
-            print(f"[A2AMemoryService] Embedding created, length: {len(embedding)}")
+            log_memory_debug(f"Embedding created, length: {len(embedding)}")
             if not embedding:
-                print("[A2AMemoryService] Failed to create embedding")
+                log_memory_debug("Failed to create embedding")
                 return False
             if len(embedding) != vector_dimension:
-                print(
-                    f"[A2AMemoryService] Embedding dimension {len(embedding)} does not match configured vector dimension {vector_dimension}."
+                log_memory_debug(
+                    f"Embedding dimension {len(embedding)} does not match configured vector dimension {vector_dimension}."
                 )
-                print("[A2AMemoryService] To resolve, set AZURE_SEARCH_VECTOR_DIMENSION to the embedding size and restart the service.")
+                log_memory_debug("To resolve, set AZURE_SEARCH_VECTOR_DIMENSION to the embedding size and restart the service.")
                 return False
 
-            print(f"[A2AMemoryService] Preparing document for indexing...")
+            log_memory_debug("Preparing document for indexing...")
             # Prepare document for indexing
             document = {
                 "id": interaction_data.get('interaction_id', str(uuid.uuid4())),
@@ -315,16 +323,16 @@ class A2AMemoryService:
                 "interaction_vector": embedding
             }
             
-            print(f"[A2AMemoryService] Document prepared with ID: {document['id']}")
-            print(f"[A2AMemoryService] About to upload to search index...")
+            log_memory_debug(f"Document prepared with ID: {document['id']}")
+            log_memory_debug("About to upload to search index...")
 
             # Upload to search index
             self.search_client.upload_documents([document])
-            print(f"[A2AMemoryService] Successfully stored A2A payloads {document['id']}")
+            log_success(f"Successfully stored A2A payloads {document['id']}")
             return True
 
         except Exception as e:
-            print(f"[A2AMemoryService] Error storing A2A payloads: {str(e)}")
+            log_memory_debug(f"Error storing A2A payloads: {str(e)}")
             return False
 
     async def search_similar_interactions(
@@ -335,23 +343,22 @@ class A2AMemoryService:
     ) -> List[Dict[str, Any]]:
         """Search for similar interactions using semantic search"""
         if not self._enabled:
-            print("[A2AMemoryService] Memory service disabled - returning empty results")
+            log_memory_debug("Memory service disabled - returning empty results")
             return []
             
         if not self.search_client:
-            print("[A2AMemoryService] Search client not initialized")
-            return []
+            log_memory_debug("Search client not initialized")
             return []
 
         try:
             # Create embedding for query
             query_embedding = await self._create_embedding(query)
             if not query_embedding:
-                print("[A2AMemoryService] Failed to create query embedding")
+                log_memory_debug("Failed to create query embedding")
                 return []
             if len(query_embedding) != vector_dimension:
-                print(
-                    f"[A2AMemoryService] Query embedding dimension {len(query_embedding)} does not match configured vector dimension {vector_dimension}."
+                log_memory_debug(
+                    f"Query embedding dimension {len(query_embedding)} does not match configured vector dimension {vector_dimension}."
                 )
                 return []
 
@@ -390,7 +397,7 @@ class A2AMemoryService:
             return [dict(result) for result in results]
 
         except Exception as e:
-            print(f"[A2AMemoryService] Error searching interactions: {str(e)}")
+            log_memory_debug(f"Error searching interactions: {str(e)}")
             return []
 
     def get_agent_interactions(self, agent_name: str, limit: int = 10) -> List[Dict[str, Any]]:
@@ -410,19 +417,19 @@ class A2AMemoryService:
             return [dict(result) for result in results]
 
         except Exception as e:
-            print(f"[A2AMemoryService] Error getting agent interactions: {str(e)}")
+            log_memory_debug(f"Error getting agent interactions: {str(e)}")
             return []
 
     def clear_all_interactions(self) -> bool:
         """Clear all interactions from the search index"""
         if not self._enabled:
-            print("[A2AMemoryService] Memory service disabled - skipping clear_all_interactions")
+            log_memory_debug("Memory service disabled - skipping clear_all_interactions")
             return True  # Return success to avoid breaking the flow
             
-        print(f"[A2AMemoryService] Clearing all interactions from index {self.index_name}")
+        log_memory_debug(f"Clearing all interactions from index {self.index_name}")
         
         if not self.search_client:
-            print("[A2AMemoryService] Search client not initialized")
+            log_memory_debug("Search client not initialized")
             return False
         
         try:
@@ -435,25 +442,25 @@ class A2AMemoryService:
                 doc_ids.append(result["id"])
             
             if not doc_ids:
-                print(f"[A2AMemoryService] No documents found to delete")
+                log_memory_debug("No documents found to delete")
                 return True
             
             # Delete all documents
-            print(f"[A2AMemoryService] Deleting {len(doc_ids)} documents from index")
+            log_memory_debug(f"Deleting {len(doc_ids)} documents from index")
             delete_actions = [{"@search.action": "delete", "id": doc_id} for doc_id in doc_ids]
             
             upload_result = self.search_client.upload_documents(documents=delete_actions)
             
             # Check results
             success_count = sum(1 for result in upload_result if result.succeeded)
-            print(f"[A2AMemoryService] Successfully deleted {success_count}/{len(doc_ids)} documents")
+            log_success(f"Successfully deleted {success_count}/{len(doc_ids)} documents")
             
             return success_count == len(doc_ids)
             
         except Exception as e:
-            print(f"[A2AMemoryService] Error clearing interactions: {str(e)}")
+            log_memory_debug(f"Error clearing interactions: {str(e)}")
             import traceback
-            print(f"[A2AMemoryService] Traceback: {traceback.format_exc()}")
+            log_memory_debug(f"Traceback: {traceback.format_exc()}")
             return False
 
 # Create singleton instance

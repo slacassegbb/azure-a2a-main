@@ -10,11 +10,20 @@ import logging
 import threading
 import time
 import requests
+import sys
+from pathlib import Path
 from typing import Dict, Any, Set, List, Optional
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query
 from fastapi.responses import JSONResponse
 import uvicorn
 from urllib.parse import parse_qs
+
+# Add backend directory to path for log_config import
+backend_dir = Path(__file__).resolve().parent.parent
+if str(backend_dir) not in sys.path:
+    sys.path.insert(0, str(backend_dir))
+
+from log_config import log_websocket_debug, log_info, log_error, log_warning
 
 logger = logging.getLogger(__name__)
 
@@ -100,16 +109,16 @@ class WebSocketManager:
                         continue
                     
             except Exception as e:
-                print(f"[WEBSOCKET DEBUG] Error getting agents from backend (attempt {attempt + 1}): {e}")
+                log_websocket_debug(f"Error getting agents from backend (attempt {attempt + 1}): {e}")
                 if attempt < max_retries:
-                    print(f"[WEBSOCKET DEBUG] Retrying in {retry_delay} seconds...")
+                    log_websocket_debug(f"Retrying in {retry_delay} seconds...")
                     time.sleep(retry_delay)
                     continue
                 else:
                     logger.warning(f"Could not get agent registry from backend after {max_retries + 1} attempts: {e}")
         
         # Fallback to empty list if backend not available after all retries
-        print("[WEBSOCKET DEBUG] Returning empty agent list after all retry attempts failed")
+        log_websocket_debug("Returning empty agent list after all retry attempts failed")
         return []
     
     async def connect(self, websocket: WebSocket, token: Optional[str] = None):
@@ -542,15 +551,15 @@ class WebSocketServerThread:
     
     def start(self):
         """Start the WebSocket server in a background thread."""
-        print(f"[WEBSOCKET DEBUG] start() method called! running={self.running}")
+        log_websocket_debug(f"start() method called! running={self.running}")
         
         if self.running:
             logger.warning("WebSocket server is already running")
-            print("[WEBSOCKET DEBUG] Already running, returning early")
+            log_websocket_debug("Already running, returning early")
             return
         
         logger.info(f"Starting WebSocket server on {self.host}:{self.port}")
-        print(f"[WEBSOCKET DEBUG] Starting WebSocket server on {self.host}:{self.port}")
+        log_websocket_debug(f"Starting WebSocket server on {self.host}:{self.port}")
         
         self.running = True
         self.server_thread = threading.Thread(target=self._run_server, daemon=True)
@@ -571,107 +580,107 @@ class WebSocketServerThread:
                 sock.close()
                 
                 if result == 0:
-                    print(f"[WEBSOCKET DEBUG] Server is listening on {self.host}:{self.port}")
+                    log_websocket_debug(f"Server is listening on {self.host}:{self.port}")
                     break
                 else:
-                    print(f"[WEBSOCKET DEBUG] Waiting for server to start listening... ({wait_time}s)")
+                    log_websocket_debug(f"Waiting for server to start listening... ({wait_time}s)")
                     time.sleep(0.5)
                     wait_time += 0.5
             except Exception as e:
-                print(f"[WEBSOCKET DEBUG] Error checking if server is ready: {e}")
+                log_websocket_debug(f"Error checking if server is ready: {e}")
                 time.sleep(0.5)
                 wait_time += 0.5
         
         if wait_time >= max_wait:
             logger.error("WebSocket server failed to start listening within timeout")
-            print("[WEBSOCKET DEBUG] Server failed to start listening within timeout")
+            log_websocket_debug("Server failed to start listening within timeout")
         
         # Start periodic agent registry sync
         try:
             logger.info(f"Starting WebSocket server periodic sync (every {self.sync_interval}s)")
-            print(f"[WEBSOCKET DEBUG] About to call _schedule_agent_sync()")
+            log_websocket_debug("About to call _schedule_agent_sync()")
             self._schedule_agent_sync()
-            print(f"[WEBSOCKET DEBUG] _schedule_agent_sync() completed successfully")
+            log_websocket_debug("_schedule_agent_sync() completed successfully")
             logger.info("WebSocket periodic sync scheduled successfully")
         except Exception as e:
             logger.error(f"Failed to start periodic sync: {e}")
-            print(f"[WEBSOCKET DEBUG] Failed to start periodic sync: {e}")
+            log_websocket_debug(f"Failed to start periodic sync: {e}")
             import traceback
             logger.error(f"Sync startup traceback: {traceback.format_exc()}")
-            print(f"[WEBSOCKET DEBUG] Traceback: {traceback.format_exc()}")
+            log_websocket_debug(f"Traceback: {traceback.format_exc()}")
         
         # Wait a moment for server to start
         time.sleep(1)
         logger.info(f"WebSocket server started on ws://{self.host}:{self.port}")
-        print(f"[WEBSOCKET DEBUG] WebSocket server startup complete")
+        log_websocket_debug("WebSocket server startup complete")
     
     def _schedule_agent_sync(self):
         """Schedule periodic agent registry sync."""
-        print(f"[WEBSOCKET DEBUG] _schedule_agent_sync() called, running={self.running}")
+        log_websocket_debug(f"_schedule_agent_sync() called, running={self.running}")
         
         if not self.running:
-            print("[WEBSOCKET DEBUG] Not running, returning early from _schedule_agent_sync")
+            log_websocket_debug("Not running, returning early from _schedule_agent_sync")
             return
         
         # Check if sync is already in progress
         if self.sync_in_progress:
-            print("[WEBSOCKET DEBUG] Sync already in progress, skipping this cycle")
+            log_websocket_debug("Sync already in progress, skipping this cycle")
             # Still schedule the next sync
-            print(f"[WEBSOCKET DEBUG] Creating timer for next sync in {self.sync_interval} seconds")
+            log_websocket_debug(f"Creating timer for next sync in {self.sync_interval} seconds")
             self.sync_timer = threading.Timer(self.sync_interval, self._schedule_agent_sync)
             self.sync_timer.daemon = True
             self.sync_timer.start()
-            print(f"[WEBSOCKET DEBUG] Timer started successfully")
+            log_websocket_debug("Timer started successfully")
             return
             
         logger.info(f"Scheduling agent sync (every {self.sync_interval} seconds)")
-        print(f"[WEBSOCKET DEBUG] About to start sync thread")
+        log_websocket_debug("About to start sync thread")
         
         # Run sync in background thread
         threading.Thread(target=self._run_sync, daemon=True).start()
-        print(f"[WEBSOCKET DEBUG] Sync thread started")
+        log_websocket_debug("Sync thread started")
         
         # Schedule next sync
-        print(f"[WEBSOCKET DEBUG] Creating timer for next sync in {self.sync_interval} seconds")
+        log_websocket_debug(f"Creating timer for next sync in {self.sync_interval} seconds")
         self.sync_timer = threading.Timer(self.sync_interval, self._schedule_agent_sync)
         self.sync_timer.daemon = True
         self.sync_timer.start()
-        print(f"[WEBSOCKET DEBUG] Timer started successfully")
+        log_websocket_debug("Timer started successfully")
     
     def _run_sync(self):
         """Run agent registry sync in a separate thread."""
         # Use lock to prevent concurrent syncs
         if not self.sync_lock.acquire(blocking=False):
-            print("[WEBSOCKET DEBUG] Could not acquire sync lock, another sync is running")
+            log_websocket_debug("Could not acquire sync lock, another sync is running")
             return
             
         try:
             self.sync_in_progress = True
-            print("[WEBSOCKET DEBUG] _run_sync() starting...")
+            log_websocket_debug("_run_sync() starting...")
             logger.info("WebSocket sync thread starting...")
             # Create a new event loop for this thread
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-            print("[WEBSOCKET DEBUG] Event loop created, calling _sync_agent_registry()")
+            log_websocket_debug("Event loop created, calling _sync_agent_registry()")
             loop.run_until_complete(self._sync_agent_registry())
             loop.close()
-            print("[WEBSOCKET DEBUG] _run_sync() completed successfully")
+            log_websocket_debug("_run_sync() completed successfully")
             logger.info("WebSocket sync thread completed")
         except Exception as e:
-            print(f"[WEBSOCKET DEBUG] _run_sync() failed: {e}")
+            log_websocket_debug(f"_run_sync() failed: {e}")
             logger.error(f"Failed to run agent sync: {e}")
             import traceback
             logger.error(f"Sync traceback: {traceback.format_exc()}")
-            print(f"[WEBSOCKET DEBUG] Traceback: {traceback.format_exc()}")
+            log_websocket_debug(f"Traceback: {traceback.format_exc()}")
         finally:
             self.sync_in_progress = False
             self.sync_lock.release()
-            print("[WEBSOCKET DEBUG] Sync lock released")
+            log_websocket_debug("Sync lock released")
     
     def trigger_immediate_sync(self):
         """Trigger an immediate agent registry sync (non-blocking)."""
         if self.sync_in_progress:
-            print("[WEBSOCKET DEBUG] Sync already in progress, skipping immediate sync")
+            log_websocket_debug("Sync already in progress, skipping immediate sync")
             logger.info("Sync already in progress, skipping immediate sync")
             return
         threading.Thread(target=self._run_sync, daemon=True).start()
@@ -681,7 +690,7 @@ class WebSocketServerThread:
         """Sync agent registry to all connected clients."""
         try:
             agents = websocket_manager.get_agent_registry()
-            print(f"[WEBSOCKET DEBUG] Retrieved {len(agents)} agents from registry")
+            log_websocket_debug(f"Retrieved {len(agents)} agents from registry")
             
             if agents:
                 # Log agent statuses for debugging
@@ -699,12 +708,12 @@ class WebSocketServerThread:
                 client_count = await websocket_manager.broadcast_event(registry_event)
                 if client_count > 0:
                     logger.info(f"Synced agent registry ({len(agents)} agents) to {client_count} clients")
-                    print(f"[WEBSOCKET DEBUG] Sent registry sync to {client_count} clients")
+                    log_websocket_debug(f"Sent registry sync to {client_count} clients")
         except Exception as e:
             logger.error(f"Failed to sync agent registry: {e}")
-            print(f"[WEBSOCKET DEBUG] Sync failed: {e}")
+            log_websocket_debug(f"Sync failed: {e}")
             import traceback
-            print(f"[WEBSOCKET DEBUG] Traceback: {traceback.format_exc()}")
+            log_websocket_debug(f"Traceback: {traceback.format_exc()}")
     
     def _run_server(self):
         """Run the WebSocket server."""

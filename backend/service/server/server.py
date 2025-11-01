@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import os
+import sys
 import threading
 import time
 import uuid
@@ -15,6 +16,13 @@ from a2a.types import FilePart, FileWithUri, Message, Part, TextPart, DataPart
 from fastapi import APIRouter, FastAPI, Request, Response
 from service.websocket_streamer import get_websocket_streamer
 from service.websocket_server import get_websocket_server
+
+# Add backend directory to path for log_config import
+backend_dir = Path(__file__).resolve().parents[2]
+if str(backend_dir) not in sys.path:
+    sys.path.insert(0, str(backend_dir))
+
+from log_config import log_debug
 
 from service.types import (
     CreateConversationResponse,
@@ -67,6 +75,30 @@ def get_message_id(obj: Any, default: str = None) -> str:
         return getattr(obj, 'messageId', getattr(obj, 'message_id', default or str(uuid.uuid4())))
     except Exception:
         return default or str(uuid.uuid4())
+
+
+def serialize_capabilities(capabilities) -> dict:
+    """
+    Serialize agent capabilities object to a dictionary for JSON serialization.
+    Handles both dict and object types.
+    """
+    if isinstance(capabilities, dict):
+        return capabilities
+    
+    if not capabilities:
+        return {
+            'streaming': False,
+            'pushNotifications': False,
+            'stateTransitionHistory': False,
+            'extensions': []
+        }
+    
+    return {
+        'streaming': getattr(capabilities, 'streaming', False),
+        'pushNotifications': getattr(capabilities, 'pushNotifications', False),
+        'stateTransitionHistory': getattr(capabilities, 'stateTransitionHistory', False),
+        'extensions': getattr(capabilities, 'extensions', [])
+    }
 
 
 from .foundry_host_manager import FoundryHostManager
@@ -235,15 +267,15 @@ class ConversationServer:
         agent_mode = message_data.get('params', {}).get('agentMode', False)
         enable_inter_agent_memory = message_data.get('params', {}).get('enableInterAgentMemory', False)
         workflow = message_data.get('params', {}).get('workflow')
-        print(f"[DEBUG] _send_message: Agent Mode = {agent_mode}, Inter-Agent Memory = {enable_inter_agent_memory}, Workflow = {workflow[:50] if workflow else None}")
+        log_debug(f"_send_message: Agent Mode = {agent_mode}, Inter-Agent Memory = {enable_inter_agent_memory}, Workflow = {workflow[:50] if workflow else None}")
         
         # Transform the message data to handle frontend format
         transformed_params = self._transform_message_data(message_data['params'])
         message = Message(**transformed_params)
-        print(f"[CRITICAL DEBUG] Message created with {len(message.parts)} parts: {[type(p).__name__ for p in message.parts]}")
+        log_debug(f"Message created with {len(message.parts)} parts: {[type(p).__name__ for p in message.parts]}")
         message = self.manager.sanitize_message(message)
         
-        print(f"[DEBUG] _send_message: Processing message asynchronously for contextId: {get_context_id(message)}")
+        log_debug(f"_send_message: Processing message asynchronously for contextId: {get_context_id(message)}")
         
         # Process message asynchronously (original pattern)
         if isinstance(self.manager, ADKHostManager):
@@ -257,7 +289,7 @@ class ConversationServer:
             )
         t.start()
         
-        print(f"[DEBUG] _send_message: Started background processing thread")
+        log_debug("_send_message: Started background processing thread")
         
         # Return immediately with message metadata (frontend expects this)
         return SendMessageResponse(
@@ -342,12 +374,12 @@ class ConversationServer:
             agent_address = message_data.get('agent_address') or message_data.get('url')
             agent_card_data = message_data.get('agent_card')
             
-            print(f"[DEBUG] 🤝 Self-registration request received:")
-            print(f"[DEBUG]   - Agent address: {agent_address}")
-            print(f"[DEBUG]   - Has agent card: {agent_card_data is not None}")
+            log_debug(f"🤝 Self-registration request received:")
+            log_debug(f"  - Agent address: {agent_address}")
+            log_debug(f"  - Has agent card: {agent_card_data is not None}")
             
             if not agent_address:
-                print(f"[DEBUG] ❌ No agent address provided in self-registration request")
+                log_debug("❌ No agent address provided in self-registration request")
                 return {"success": False, "error": "agent_address required"}
             
             # Handle self-registration based on manager type
@@ -362,21 +394,21 @@ class ConversationServer:
                 success = await self.manager.handle_self_registration(agent_address, agent_card)
                 
                 if success:
-                    print(f"[DEBUG] ✅ Self-registration successful for: {agent_address}")
+                    log_debug(f"✅ Self-registration successful for: {agent_address}")
                     
                     # Trigger immediate WebSocket sync to update UI in real-time
                     try:
                         websocket_server = get_websocket_server()
                         if websocket_server:
                             websocket_server.trigger_immediate_sync()
-                            print(f"[DEBUG] 🔔 Triggered immediate agent registry sync for UI update")
+                            log_debug("🔔 Triggered immediate agent registry sync for UI update")
                         else:
-                            print(f"[DEBUG] ⚠️ WebSocket server not available for immediate sync")
+                            log_debug("⚠️ WebSocket server not available for immediate sync")
                     except Exception as sync_error:
-                        print(f"[DEBUG] ⚠️ Failed to trigger immediate sync: {sync_error}")
+                        log_debug(f"⚠️ Failed to trigger immediate sync: {sync_error}")
                     
                     # Stream agent self-registration over WebSocket
-                    print(f"[DEBUG] 🌊 Attempting to stream agent self-registration to WebSocket...")
+                    log_debug("🌊 Attempting to stream agent self-registration to WebSocket...")
                     try:
                         streamer = await get_websocket_streamer()
                         if streamer:
@@ -390,25 +422,25 @@ class ConversationServer:
                                 "endpoint": agent_address,
                                 "metadata": agent_card_data if agent_card_data else {}
                             }
-                            print(f"[DEBUG] 🌊 Agent info for WebSocket streaming: {agent_info}")
+                            log_debug(f"🌊 Agent info for WebSocket streaming: {agent_info}")
                             stream_success = await streamer.stream_agent_self_registered(agent_info)
                             if stream_success:
-                                print(f"[DEBUG] ✅ Agent self-registration event streamed over WebSocket successfully")
+                                log_debug("✅ Agent self-registration event streamed over WebSocket successfully")
                             else:
-                                print(f"[DEBUG] ⚠️ WebSocket streaming not available - agent registration will proceed without streaming")
+                                log_debug("⚠️ WebSocket streaming not available - agent registration will proceed without streaming")
                         else:
-                            print(f"[DEBUG] ⚠️ WebSocket streamer not configured - agent registration will proceed without streaming")
+                            log_debug("⚠️ WebSocket streamer not configured - agent registration will proceed without streaming")
                     except Exception as e:
-                        print(f"[DEBUG] ⚠️ WebSocket streaming error (non-blocking): {e}")
+                        log_debug(f"⚠️ WebSocket streaming error (non-blocking): {e}")
                         # Streaming errors should not block agent registration
                     
                     return {"success": True, "message": f"Agent {agent_address} registered successfully"}
                 else:
-                    print(f"[DEBUG] ❌ Self-registration failed for: {agent_address}")
+                    log_debug(f"❌ Self-registration failed for: {agent_address}")
                     return {"success": False, "error": "Registration failed"}
             else:
                 # Fallback to regular registration for other manager types
-                print(f"[DEBUG] ℹ️ Using fallback registration for manager type: {type(self.manager).__name__}")
+                log_debug(f"ℹ️ Using fallback registration for manager type: {type(self.manager).__name__}")
                 self.manager.register_agent(agent_address)
                 
                 # Stream agent registration over WebSocket
@@ -553,7 +585,7 @@ class ConversationServer:
         if agent_url in self._health_cache:
             status, timestamp = self._health_cache[agent_url]
             if current_time - timestamp < 30.0:  # Increased from 10 to 30 seconds to reduce flapping
-                print(f"[DEBUG] Using cached health status for {agent_url}: {'✓' if status else '✗'}")
+                log_debug(f"Using cached health status for {agent_url}: {'✓' if status else '✗'}")
                 return status
         
         try:
@@ -569,17 +601,17 @@ class ConversationServer:
             
             # Health check with longer timeout for more reliable agent detection
             timeout_value = 8.0  # Increased from 3.0 to 8.0 seconds for more reliable detection
-            print(f"[DEBUG] Health check timeout set to: {timeout_value}s for {health_url}")
+            log_debug(f"Health check timeout set to: {timeout_value}s for {health_url}")
             async with httpx.AsyncClient(timeout=timeout_value) as client:  # More generous timeout for network latency
                 response = await client.get(health_url)
                 is_healthy = response.status_code == 200
-                print(f"[DEBUG] Health check {health_url}: {'✓ ONLINE' if is_healthy else '✗ OFFLINE'} (status: {response.status_code})")
+                log_debug(f"Health check {health_url}: {'✓ ONLINE' if is_healthy else '✗ OFFLINE'} (status: {response.status_code})")
                 self._health_cache[agent_url] = (is_healthy, current_time)
                 return is_healthy
         except Exception as e:
             error_msg = str(e)
-            print(f"[DEBUG] Health check failed for {agent_url}: {error_msg}")
-            print(f"[DEBUG] Exception type: {type(e).__name__}")
+            log_debug(f"Health check failed for {agent_url}: {error_msg}")
+            log_debug(f"Exception type: {type(e).__name__}")
             # Cache failure result
             self._health_cache[agent_url] = (False, current_time)
             return False
@@ -587,7 +619,7 @@ class ConversationServer:
     async def _get_agents(self):
         """Get current agent registry in a simple format for WebSocket sync."""
         try:
-            print("[DEBUG] Starting agent registry sync with health checks...")
+            log_debug("Starting agent registry sync with health checks...")
             agents = self.manager.agents
             
             # First, collect all agent URLs for concurrent health checks
@@ -650,7 +682,7 @@ class ConversationServer:
                     }
                     agent_list.append(agent_data)
             
-            print(f"[DEBUG] Completed agent registry sync: {len(agent_list)} agents processed")
+            log_debug(f"Completed agent registry sync: {len(agent_list)} agents processed")
             return {
                 "success": True,
                 "agents": agent_list,

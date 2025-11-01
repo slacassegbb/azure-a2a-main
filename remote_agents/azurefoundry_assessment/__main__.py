@@ -23,8 +23,14 @@ from a2a.types import AgentCard, AgentSkill
 
 load_dotenv()
 
+# Configure logging - hide verbose Azure SDK logs
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Silence verbose Azure SDK HTTP logging
+logging.getLogger("azure.core.pipeline.policies.http_logging_policy").setLevel(logging.WARNING)
+logging.getLogger("azure.identity").setLevel(logging.WARNING)
+logging.getLogger("azure").setLevel(logging.WARNING)
 
 
 def _normalize_env_value(raw_value: str | None) -> str:
@@ -280,7 +286,7 @@ async def get_foundry_response(
                         response_count += 1
             else:
                 # handle other types if needed
-                print(f"[DEBUG] get_foundry_response: Unexpected response type: {type(response)}")
+                logger.debug(f"get_foundry_response: Unexpected response type: {type(response)}")
                 yield gr.ChatMessage(
                     role="assistant",
                     content=f"An error occurred while processing your request: {str(response)}. Please check the server logs for details.",

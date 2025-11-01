@@ -385,8 +385,8 @@ Remember: Your goal is to resolve customer issues efficiently by providing accur
                     return
 
             if run.status == "failed":
-                print(f"[DEBUG] Full run object on failure: {run}")
-                print(f"[DEBUG] run.last_error: {run.last_error}")
+                logger.debug(f"Full run object on failure: {run}")
+                logger.debug(f"run.last_error: {run.last_error}")
                 yield f"Error: {run.last_error}"
                 return
 
@@ -420,22 +420,22 @@ Remember: Your goal is to resolve customer issues efficiently by providing accur
 
         # After run is complete, yield the assistant's response(s) with citation formatting
         messages = list(client.messages.list(thread_id=thread_id, order=ListSortOrder.ASCENDING))
-        print(f"[DEBUG] Found {len(messages)} messages in thread")
+        logger.debug(f"Found {len(messages)} messages in thread")
         for msg in reversed(messages):
-            print(f"[DEBUG] Processing message: role={msg.role}, content_count={len(msg.content) if msg.content else 0}")
+            logger.debug(f"Processing message: role={msg.role}, content_count={len(msg.content) if msg.content else 0}")
             if msg.role == "assistant" and msg.content:
                 for content_item in msg.content:
-                    print(f"[DEBUG] Processing content item: type={type(content_item)}")
+                    logger.debug(f"Processing content item: type={type(content_item)}")
                     if hasattr(content_item, 'text'):
                         text_content = content_item.text.value
-                        print(f"[DEBUG] Original text content: {text_content[:200]}...")
+                        logger.debug(f"Original text content: {text_content[:200]}...")
                         citations = []
                         # Extract citations as before
                         if hasattr(content_item.text, 'annotations') and content_item.text.annotations:
-                            print(f"[DEBUG] Found {len(content_item.text.annotations)} annotations")
+                            logger.debug(f"Found {len(content_item.text.annotations)} annotations")
                             main_text = content_item.text.value if hasattr(content_item.text, 'value') else str(content_item.text)
                             for i, annotation in enumerate(content_item.text.annotations):
-                                print(f"[DEBUG] Processing annotation {i}: {type(annotation)}")
+                                logger.debug(f"Processing annotation {i}: {type(annotation)}")
                                 # File citations
                                 if hasattr(annotation, 'file_citation') and annotation.file_citation:
                                     file_citation = annotation.file_citation
@@ -452,7 +452,7 @@ Remember: Your goal is to resolve customer issues efficiently by providing accur
                                         'context': citation_context,
                                         'annotation_text': annotation_text
                                     })
-                                    print(f"[DEBUG] Added file citation: {citation_text}")
+                                    logger.debug(f"Added file citation: {citation_text}")
                                 # File path citations
                                 elif hasattr(annotation, 'file_path') and annotation.file_path:
                                     file_path = annotation.file_path
@@ -471,7 +471,7 @@ Remember: Your goal is to resolve customer issues efficiently by providing accur
                                         'text': citation_text,
                                         'file_id': file_id
                                     })
-                                    print(f"[DEBUG] Added file_path citation: {citation_text}")
+                                    logger.debug(f"Added file_path citation: {citation_text}")
                                 # URL citations
                                 elif hasattr(annotation, 'url_citation') and annotation.url_citation:
                                     url_citation = annotation.url_citation
@@ -482,22 +482,22 @@ Remember: Your goal is to resolve customer issues efficiently by providing accur
                                         'text': title,
                                         'url': url
                                     })
-                                    print(f"[DEBUG] Added URL citation: {title} -> {url}")
+                                    logger.debug(f"Added URL citation: {title} -> {url}")
                         else:
-                            print(f"[DEBUG] No annotations found in content item")
+                            logger.debug(f"No annotations found in content item")
                         
-                        print(f"[DEBUG] Total citations found: {len(citations)}")
+                        logger.debug(f"Total citations found: {len(citations)}")
                         if citations:
-                            print(f"[DEBUG] Citations: {citations}")
+                            logger.debug(f"Citations: {citations}")
                         else:
-                            print(f"[DEBUG] No citations found - this is why sources are missing!")
+                            logger.debug(f"No citations found - this is why sources are missing!")
                         formatted_response = self._format_response_with_citations(text_content, citations)
-                        print(f"[DEBUG] Formatted response: {formatted_response[:200]}...")
-                        print(f"[DEBUG] Full formatted response length: {len(formatted_response)}")
-                        print(f"[DEBUG] Sources section in response: {'📚 Sources:' in formatted_response}")
+                        logger.debug(f"Formatted response: {formatted_response[:200]}...")
+                        logger.debug(f"Full formatted response length: {len(formatted_response)}")
+                        logger.debug(f"Sources section in response: {'📚 Sources:' in formatted_response}")
                         if '📚 Sources:' in formatted_response:
                             sources_start = formatted_response.find('📚 Sources:')
-                            print(f"[DEBUG] Sources section: {formatted_response[sources_start:sources_start+200]}...")
+                            logger.debug(f"Sources section: {formatted_response[sources_start:sources_start+200]}...")
                         yield formatted_response
                 break
     

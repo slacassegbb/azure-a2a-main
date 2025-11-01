@@ -12,6 +12,8 @@ BACKEND_ROOT = Path(__file__).resolve().parents[2]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
+from log_config import log_debug, log_info, log_success, log_error
+
 from a2a.types import AgentCard, Message, Task, TextPart, DataPart, TaskStatus, TaskState, FilePart, FileWithUri, FileWithBytes
 from hosts.multiagent.foundry_agent_a2a import FoundryHostAgent2
 from service.server.application_manager import ApplicationManager
@@ -57,7 +59,7 @@ def get_message_id(obj: Any, default: str = None) -> str:
 
 class FoundryHostManager(ApplicationManager):
     def __init__(self, http_client: httpx.AsyncClient, *args, **kwargs):
-        print("[DEBUG] FoundryHostManager __init__ called")
+        log_debug("FoundryHostManager __init__ called")
         self._conversations: List[Conversation] = []
         self._messages: List[Message] = []
         self._tasks: List[Task] = []
@@ -81,31 +83,31 @@ class FoundryHostManager(ApplicationManager):
         self._next_id: Dict[str, str] = {}
         
         # Initialize the agent immediately at startup instead of lazy loading
-        print("[DEBUG] Initializing Foundry agent at startup...")
+        log_debug("Initializing Foundry agent at startup...")
         try:
             # Create agent immediately at startup - no lazy loading
             self._host_agent = FoundryHostAgent2([], self._http_client, create_agent_at_startup=True)
             # Set the host manager reference for UI integration
             self._host_agent.set_host_manager(self)
             self._host_agent_initialized = True
-            print("[DEBUG] Foundry agent initialized successfully at startup!")
+            log_debug("Foundry agent initialized successfully at startup!")
         except Exception as e:
-            print(f"[DEBUG] Failed to initialize Foundry agent at startup: {e}")
+            log_debug(f"Failed to initialize Foundry agent at startup: {e}")
             # Don't raise to prevent backend from crashing
             self._host_agent_initialized = False
 
     def _ensure_host_agent_initialized(self):
         """Ensure agent is initialized - should already be done at startup."""
         if not self._host_agent_initialized:
-            print("[DEBUG] Agent not initialized at startup, creating now...")
+            log_debug("Agent not initialized at startup, creating now...")
             try:
                 self._host_agent = FoundryHostAgent2([], self._http_client, create_agent_at_startup=True)
                 # Set the host manager reference for UI integration
                 self._host_agent.set_host_manager(self)
                 self._host_agent_initialized = True
-                print("[DEBUG] Foundry agent initialized successfully (fallback)")
+                log_debug("Foundry agent initialized successfully (fallback)")
             except Exception as e:
-                print(f"[DEBUG] Failed to initialize Foundry agent: {e}")
+                log_debug(f"Failed to initialize Foundry agent: {e}")
                 raise
 
     async def ensure_host_agent_initialized(self):
@@ -120,22 +122,22 @@ class FoundryHostManager(ApplicationManager):
         return c
 
     def foundry_content_to_message(self, resp, context_id, task_id=None):
-        print(f"[DEBUG] foundry_content_to_message called with resp type: {type(resp)}")
-        print(f"[DEBUG] Response content: {resp}")
+        log_debug(f"foundry_content_to_message called with resp type: {type(resp)}")
+        log_debug(f"Response content: {resp}")
         
         parts = []
         # Handle list of dicts (artifact wrapper)
         if isinstance(resp, list) and resp and isinstance(resp[0], dict) and 'kind' in resp[0]:
-            print(f"[DEBUG] Processing as list of dicts with kind")
+            log_debug(f"Processing as list of dicts with kind")
             items = resp
         # Handle single dict with 'kind'
         elif isinstance(resp, dict) and 'kind' in resp:
-            print(f"[DEBUG] Processing as single dict with kind")
+            log_debug(f"Processing as single dict with kind")
             items = [resp]
         # Handle single dict with artifact metadata (from DataPart)
         elif isinstance(resp, dict) and ('artifact-uri' in resp or 'artifact-id' in resp):
-            print(f"[DEBUG] Processing as artifact dict - wrapping in DataPart")
-            print(f"[DEBUG] Artifact URI: {resp.get('artifact-uri', '')[:150]}")
+            log_debug(f"Processing as artifact dict - wrapping in DataPart")
+            log_debug(f"Artifact URI: {resp.get('artifact-uri', '')[:150]}")
             from a2a.types import DataPart
             parts.append(DataPart(data=resp))
             return Message(
@@ -147,25 +149,25 @@ class FoundryHostManager(ApplicationManager):
             )
         # Handle Message object
         elif hasattr(resp, 'parts'):
-            print(f"[DEBUG] Processing as Message object with {len(resp.parts) if resp.parts else 0} parts")
+            log_debug(f"Processing as Message object with {len(resp.parts) if resp.parts else 0} parts")
             for part in resp.parts:
                 root = getattr(part, 'root', part)
                 kind = getattr(root, 'kind', None)
                 if kind == 'text':
                     text_content = getattr(root, 'text', str(root))
-                    print(f"[DEBUG] Text part: {text_content[:200]}...")
+                    log_debug(f"Text part: {text_content[:200]}...")
                     parts.append(TextPart(text=text_content))
                 elif kind == 'data':
                     from a2a.types import DataPart
                     data_content = getattr(root, 'data', {})
-                    print(f"[DEBUG] Data part: {data_content}")
+                    log_debug(f"Data part: {data_content}")
                     parts.append(DataPart(data=data_content))
                 elif kind == 'file':
                     from a2a.types import FilePart
-                    print(f"[DEBUG] File part: {getattr(root, 'file', None)}")
+                    log_debug(f"File part: {getattr(root, 'file', None)}")
                     parts.append(FilePart(file=getattr(root, 'file', None)))
                 else:
-                    print(f"[DEBUG] Unknown part kind: {kind}, content: {str(root)[:200]}...")
+                    log_debug(f"Unknown part kind: {kind}, content: {str(root)[:200]}...")
                     parts.append(TextPart(text=str(root)))
             return Message(
                 role=getattr(resp, 'role', 'agent'),
@@ -176,7 +178,7 @@ class FoundryHostManager(ApplicationManager):
             )
         else:
             # Fallback: treat as plain text
-            print(f"[DEBUG] Processing as plain text: {str(resp)[:200]}...")
+            log_debug(f"Processing as plain text: {str(resp)[:200]}...")
             return Message(
                 role='agent',
                 parts=[TextPart(text=str(resp))],
@@ -185,19 +187,19 @@ class FoundryHostManager(ApplicationManager):
                 messageId=str(uuid.uuid4()),
             )
         # If we got here, items is a list of dicts with 'kind'
-        print(f"[DEBUG] Processing {len(items)} items with kind")
+        log_debug(f"Processing {len(items)} items with kind")
         for i, item in enumerate(items):
-            print(f"[DEBUG] Item {i}: {item}")
+            log_debug(f"Item {i}: {item}")
             if item['kind'] == 'text':
-                print(f"[DEBUG] Text item: {item['text'][:200]}...")
+                log_debug(f"Text item: {item['text'][:200]}...")
                 parts.append(TextPart(text=item['text']))
             elif item['kind'] == 'data':
                 from a2a.types import DataPart
-                print(f"[DEBUG] Data item: {item['data']}")
+                log_debug(f"Data item: {item['data']}")
                 parts.append(DataPart(data=item['data']))
             elif item['kind'] == 'file':
                 from a2a.types import FilePart
-                print(f"[DEBUG] File item: {item['file']}")
+                log_debug(f"File item: {item['file']}")
                 parts.append(FilePart(file=item['file']))
         return Message(
             role='agent',
@@ -213,14 +215,14 @@ class FoundryHostManager(ApplicationManager):
         if message_id:
             self._pending_message_ids.append(message_id)
         context_id = get_context_id(message) or str(uuid.uuid4())
-        print(f"[DEBUG] process_message: Agent Mode = {agent_mode}, Inter-Agent Memory = {enable_inter_agent_memory}, Workflow = {workflow[:50] if workflow else None}")
+        log_debug(f"process_message: Agent Mode = {agent_mode}, Inter-Agent Memory = {enable_inter_agent_memory}, Workflow = {workflow[:50] if workflow else None}")
         conversation = self.get_conversation(context_id)
         if not conversation:
             conversation = Conversation(conversation_id=context_id, is_active=True)
             self._conversations.append(conversation)
             
             # Stream conversation creation to WebSocket
-            print("[DEBUG] Streaming conversation creation to WebSocket...")
+            log_debug("Streaming conversation creation to WebSocket...")
             try:
                 from service.websocket_streamer import get_websocket_streamer
                 
@@ -236,29 +238,29 @@ class FoundryHostManager(ApplicationManager):
                     
                     success = await streamer._send_event("conversation_created", event_data, context_id)
                     if success:
-                        print(f"[DEBUG] Conversation creation streamed: {event_data}")
+                        log_debug(f"Conversation creation streamed: {event_data}")
                     else:
-                        print("[DEBUG] Failed to stream conversation creation")
+                        log_debug("Failed to stream conversation creation")
                 else:
-                    print("[DEBUG] WebSocket streamer not available for conversation creation")
+                    log_debug("WebSocket streamer not available for conversation creation")
                 
             except Exception as e:
-                print(f"[DEBUG] Error streaming conversation creation: {e}")
+                log_debug(f"Error streaming conversation creation: {e}")
                 import traceback
                 traceback.print_exc()
         
-        print("[DEBUG] About to append message to conversation...")
+        log_debug("About to append message to conversation...")
         self._messages.append(message)
         if conversation:
             conversation.messages.append(message)
-        print("[DEBUG] About to add event...")
+        log_debug("About to add event...")
         self.add_event(Event(
             id=str(uuid.uuid4()),
             actor='user',
             content=message,
             timestamp=__import__('datetime').datetime.utcnow().timestamp(),
         ))
-        print("[DEBUG] About to create task...")
+        log_debug("About to create task...")
         # Create a Task for this request (ADK parity)
         task_id = str(uuid.uuid4())
         task_description = message.parts[0].root.text if message.parts else "Agent task"
@@ -272,7 +274,7 @@ class FoundryHostManager(ApplicationManager):
         self.add_task(task)
         
         # Stream task creation to WebSocket
-        print("[DEBUG] Streaming task creation to WebSocket...")
+        log_debug("Streaming task creation to WebSocket...")
         try:
             from service.websocket_streamer import get_websocket_streamer
             
@@ -289,18 +291,18 @@ class FoundryHostManager(ApplicationManager):
                 
                 success = await streamer._send_event("task_created", event_data, context_id)
                 if success:
-                    print(f"[DEBUG] Task creation streamed to WebSocket: {event_data}")
+                    log_debug(f"Task creation streamed to WebSocket: {event_data}")
                 else:
-                    print("[DEBUG] Failed to stream task creation to WebSocket")
+                    log_debug("Failed to stream task creation to WebSocket")
             else:
-                print("[DEBUG] WebSocket streamer not available for task creation")
+                log_debug("WebSocket streamer not available for task creation")
             
         except Exception as e:
-            print(f"[DEBUG] Error streaming task creation to WebSocket: {e}")
+            log_debug(f"Error streaming task creation to WebSocket: {e}")
             import traceback
             traceback.print_exc()
         
-        print("[DEBUG] Task creation complete, setting up event logger...")
+        log_debug("Task creation complete, setting up event logger...")
         # Route to FoundryHostAgent
         tool_call_events = []
         def event_logger(event_dict):
@@ -317,7 +319,7 @@ class FoundryHostManager(ApplicationManager):
                 if event_dict['name'] == 'send_message' and isinstance(event_dict['args'], dict):
                     if 'agent_name' in event_dict['args']:
                         agent_name = event_dict['args']['agent_name']
-                        print(f"[DEBUG] Extracted agent name from tool call: {agent_name}")
+                        log_debug(f"Extracted agent name from tool call: {agent_name}")
             elif 'output' in event_dict:
                 text = f"TOOL RESULT: {event_dict['name']} {event_dict['output']}"
             else:
@@ -340,7 +342,7 @@ class FoundryHostManager(ApplicationManager):
             
             # Stream tool call events to WebSocket immediately for real-time frontend updates
             if 'args' in event_dict:
-                print(f"[DEBUG] Streaming tool call event to WebSocket for agent: {agent_name}")
+                log_debug(f"Streaming tool call event to WebSocket for agent: {agent_name}")
                 try:
                     from service.websocket_streamer import get_websocket_streamer
                     import asyncio
@@ -362,13 +364,13 @@ class FoundryHostManager(ApplicationManager):
                                 
                                 success = await streamer._send_event("tool_call", event_data, context_id)
                                 if success:
-                                    print(f"[DEBUG] Tool call event streamed: {event_data}")
+                                    log_debug(f"Tool call event streamed: {event_data}")
                                 else:
-                                    print("[DEBUG] Failed to stream tool call event")
+                                    log_debug("Failed to stream tool call event")
                             else:
-                                print("[DEBUG] WebSocket streamer not available for tool call")
+                                log_debug("WebSocket streamer not available for tool call")
                         except Exception as e:
-                            print(f"[DEBUG] Error streaming tool call to WebSocket: {e}")
+                            log_debug(f"Error streaming tool call to WebSocket: {e}")
                             # Don't let WebSocket errors break the main flow
                             pass
                     
@@ -377,15 +379,15 @@ class FoundryHostManager(ApplicationManager):
                     
                 except ImportError:
                     # WebSocket module not available, continue without streaming
-                    print("[DEBUG] WebSocket module not available for tool call")
+                    log_debug("WebSocket module not available for tool call")
                     pass
                 except Exception as e:
-                    print(f"[DEBUG] Error setting up tool call streaming: {e}")
+                    log_debug(f"Error setting up tool call streaming: {e}")
                     # Don't let WebSocket errors break the main flow
                     pass
             # Stream tool response events to WebSocket for granular visibility
             elif 'output' in event_dict:
-                print(f"[DEBUG] Streaming tool response event to WebSocket for agent: {agent_name}")
+                log_debug(f"Streaming tool response event to WebSocket for agent: {agent_name}")
                 try:
                     from service.websocket_streamer import get_websocket_streamer
                     import asyncio
@@ -421,13 +423,13 @@ class FoundryHostManager(ApplicationManager):
                                 
                                 success = await streamer._send_event("tool_response", event_data, context_id)
                                 if success:
-                                    print(f"[DEBUG] Tool response event streamed: {event_data}")
+                                    log_debug(f"Tool response event streamed: {event_data}")
                                 else:
-                                    print("[DEBUG] Failed to stream tool response event")
+                                    log_debug("Failed to stream tool response event")
                             else:
-                                print("[DEBUG] WebSocket streamer not available for tool response")
+                                log_debug("WebSocket streamer not available for tool response")
                         except Exception as e:
-                            print(f"[DEBUG] Error streaming tool response to WebSocket: {e}")
+                            log_debug(f"Error streaming tool response to WebSocket: {e}")
                             # Don't let WebSocket errors break the main flow
                             pass
                     
@@ -436,21 +438,21 @@ class FoundryHostManager(ApplicationManager):
                     
                 except ImportError:
                     # WebSocket module not available, continue without streaming
-                    print("[DEBUG] WebSocket module not available for tool response")
+                    log_debug("WebSocket module not available for tool response")
                     pass
                 except Exception as e:
-                    print(f"[DEBUG] Error setting up tool response streaming: {e}")
+                    log_debug(f"Error setting up tool response streaming: {e}")
                     # Don't let WebSocket errors break the main flow
                     pass
         # Pass the entire message with all parts (including files) to the host agent
         user_text = message.parts[0].root.text if message.parts and message.parts[0].root.kind == 'text' else ""
-        print(f"[DEBUG] About to call run_conversation_with_parts with message parts: {len(message.parts)} parts, agent_mode: {agent_mode}, enable_inter_agent_memory: {enable_inter_agent_memory}, workflow: {workflow[:50] if workflow else None}")
+        log_debug(f"About to call run_conversation_with_parts with message parts: {len(message.parts)} parts, agent_mode: {agent_mode}, enable_inter_agent_memory: {enable_inter_agent_memory}, workflow: {workflow[:50] if workflow else None}")
         responses = await self._host_agent.run_conversation_with_parts(message.parts, context_id, event_logger=event_logger, agent_mode=agent_mode, enable_inter_agent_memory=enable_inter_agent_memory, workflow=workflow)
-        print(f"[DEBUG] FoundryHostAgent responses count: {len(responses) if responses else 'None'}")
-        print(f"[DEBUG] FoundryHostAgent responses: {responses}")
+        log_debug(f"FoundryHostAgent responses count: {len(responses) if responses else 'None'}")
+        log_debug(f"FoundryHostAgent responses: {responses}")
         
         if not responses:
-            print("[DEBUG] WARNING: No responses from FoundryHostAgent - this will cause no messages to be sent to frontend!")
+            log_debug("WARNING: No responses from FoundryHostAgent - this will cause no messages to be sent to frontend!")
             # Remove from pending since we're not going to get a response
             if message_id in self._pending_message_ids:
                 self._pending_message_ids.remove(message_id)
@@ -467,11 +469,11 @@ class FoundryHostManager(ApplicationManager):
                 m = re.search(r"'agent_name': '([^']+)'", tool_event.content.parts[0].root.text)
                 if m:
                     agent_names_from_tools.append(m.group(1))
-                    print(f"[DEBUG] Found agent name in tool call: {m.group(1)}")
+                    log_debug(f"Found agent name in tool call: {m.group(1)}")
         
-        print(f"[DEBUG] Agent names from tool calls (for debug only): {agent_names_from_tools}")
-        print(f"[DEBUG] Number of responses: {len(responses)}")
-        print(f"[DEBUG] All foundry responses will be attributed to foundry-host-agent")
+        log_debug(f"Agent names from tool calls (for debug only): {agent_names_from_tools}")
+        log_debug(f"Number of responses: {len(responses)}")
+        log_debug(f"All foundry responses will be attributed to foundry-host-agent")
         
         completed_agents: set[str] = set()
 
@@ -481,7 +483,7 @@ class FoundryHostManager(ApplicationManager):
 
                 streamer = await get_websocket_streamer()
                 if not streamer:
-                    print("[DEBUG] WebSocket streamer not available for task status")
+                    log_debug("WebSocket streamer not available for task status")
                     return
 
                 status_str = target_state.name if hasattr(target_state, 'name') else str(target_state)
@@ -496,22 +498,22 @@ class FoundryHostManager(ApplicationManager):
 
                 success = await streamer._send_event("task_updated", event_data, context_id)
                 if success:
-                    print(f"[DEBUG] Task status update streamed: {event_data}")
+                    log_debug(f"Task status update streamed: {event_data}")
                 else:
-                    print("[DEBUG] Failed to stream task status update")
+                    log_debug("Failed to stream task status update")
             except Exception as e:
-                print(f"[DEBUG] SPECIFIC ERROR in task status streaming: {e}")
+                log_debug(f"SPECIFIC ERROR in task status streaming: {e}")
                 import traceback
                 traceback.print_exc()
 
         for resp_index, resp in enumerate(responses):
-            print(f"[DEBUG] Response {resp_index}: type={type(resp)}, is_dict={isinstance(resp, dict)}")
+            log_debug(f"Response {resp_index}: type={type(resp)}, is_dict={isinstance(resp, dict)}")
             if isinstance(resp, dict):
-                print(f"[DEBUG] Response {resp_index} dict keys: {list(resp.keys())}")
-                print(f"[DEBUG] Response {resp_index} has artifact-uri: {'artifact-uri' in resp}")
+                log_debug(f"Response {resp_index} dict keys: {list(resp.keys())}")
+                log_debug(f"Response {resp_index} has artifact-uri: {'artifact-uri' in resp}")
             print("[DEBUG] Response parts:", getattr(resp, 'parts', None))
             msg = self.foundry_content_to_message(resp, context_id, task_id)
-            print(f"[DEBUG] Message created with {len(msg.parts) if hasattr(msg, 'parts') else 0} parts")
+            log_debug(f"Message created with {len(msg.parts) if hasattr(msg, 'parts') else 0} parts")
             if conversation:
                 conversation.messages.append(msg)
             if not hasattr(task, 'history') or task.history is None:
@@ -527,8 +529,8 @@ class FoundryHostManager(ApplicationManager):
                 if resp_index < len(agent_names_from_tools)
                 else actor_name
             )
-            print(f"[DEBUG] Using correct foundry host agent name for response {resp_index}: {actor_name}")
-            print(f"[DEBUG] Prevented incorrect attribution to individual agents: {agent_names_from_tools}")
+            log_debug(f"Using correct foundry host agent name for response {resp_index}: {actor_name}")
+            log_debug(f"Prevented incorrect attribution to individual agents: {agent_names_from_tools}")
             
             self.add_event(Event(
                 id=str(uuid.uuid4()),
@@ -538,7 +540,7 @@ class FoundryHostManager(ApplicationManager):
             ))
             
             # Stream message to WebSocket for frontend in expected format
-            print("[DEBUG] Streaming message to WebSocket...")
+            log_debug("Streaming message to WebSocket...")
             try:
                 from service.websocket_streamer import get_websocket_streamer
                 
@@ -556,9 +558,9 @@ class FoundryHostManager(ApplicationManager):
                         "timestamp": __import__('datetime').datetime.utcnow().isoformat(),
                     }
 
-                    print(f"[DEBUG] WebSocket streaming - resp type: {type(resp)}, msg has parts: {hasattr(msg, 'parts')}")
+                    log_debug(f"WebSocket streaming - resp type: {type(resp)}, msg has parts: {hasattr(msg, 'parts')}")
                     if hasattr(msg, "parts"):
-                        print(f"[DEBUG] Processing message with {len(msg.parts)} parts")
+                        log_debug(f"Processing message with {len(msg.parts)} parts")
                     
                     if isinstance(resp, str):
                         event_data["content"].append({
@@ -570,15 +572,15 @@ class FoundryHostManager(ApplicationManager):
                         text_parts = []
                         image_parts = []
                         for part in msg.parts:
-                            print(f"[DEBUG] Processing part: {type(part)}, has root: {hasattr(part, 'root')}")
+                            log_debug(f"Processing part: {type(part)}, has root: {hasattr(part, 'root')}")
                             root = part.root
                             if isinstance(root, TextPart):
                                 text_parts.append(root.text)
                             elif isinstance(root, DataPart) and isinstance(root.data, dict):
                                 artifact_uri = root.data.get("artifact-uri")
-                                print(f"[DEBUG] Found DataPart with dict, has artifact-uri: {bool(artifact_uri)}")
+                                log_debug(f"Found DataPart with dict, has artifact-uri: {bool(artifact_uri)}")
                                 if artifact_uri:
-                                    print(f"[DEBUG] Adding image to content: {root.data.get('file-name')}")
+                                    log_debug(f"Adding image to content: {root.data.get('file-name')}")
                                     image_parts.append({
                                         "type": "image",
                                         "uri": artifact_uri,
@@ -619,7 +621,7 @@ class FoundryHostManager(ApplicationManager):
                     success = await streamer._send_event("message", event_data, context_id)
                     for content_item in event_data["content"]:
                         if content_item.get("type") == "image":
-                            print(f"[DEBUG] Found file content with uri: {content_item.get('uri')}")
+                            log_debug(f"Found file content with uri: {content_item.get('uri')}")
                         if content_item.get("type") == "image" and content_item.get("uri"):
                             file_uri = content_item.get("uri")
                             # Emit file_uploaded event so it appears in File History
@@ -634,7 +636,7 @@ class FoundryHostManager(ApplicationManager):
                                 "contextId": context_id
                             }
                             await streamer.stream_file_uploaded(file_info, context_id)
-                            print(f"[DEBUG] File uploaded event sent for agent artifact: {file_info['filename']}")
+                            log_debug(f"File uploaded event sent for agent artifact: {file_info['filename']}")
                             
                             await streamer._send_event(
                                 "remote_agent_activity",
@@ -646,14 +648,14 @@ class FoundryHostManager(ApplicationManager):
                                 context_id,
                             )
                     if success:
-                        print(f"[DEBUG] Message streamed to WebSocket: {event_data}")
+                        log_debug(f"Message streamed to WebSocket: {event_data}")
                     else:
-                        print("[DEBUG] Failed to stream message to WebSocket")
+                        log_debug("Failed to stream message to WebSocket")
                 else:
-                    print("[DEBUG] WebSocket streamer not available")
+                    log_debug("WebSocket streamer not available")
                 
             except Exception as e:
-                print(f"[DEBUG] Error streaming to WebSocket: {e}")
+                log_debug(f"Error streaming to WebSocket: {e}")
                 import traceback
                 traceback.print_exc()
             
@@ -672,12 +674,12 @@ class FoundryHostManager(ApplicationManager):
             self.update_task(task)
             
             # Stream task status update to WebSocket
-            print(f"[DEBUG] Streaming task status update to WebSocket: {state}")
+            log_debug(f"Streaming task status update to WebSocket: {state}")
             try:
                 asyncio.create_task(stream_task_status_update(status_agent_name, state))
                 completed_agents.add(status_agent_name)
             except Exception as e:
-                print(f"[DEBUG] Error scheduling task status update: {e}")
+                log_debug(f"Error scheduling task status update: {e}")
             
             if task.status.message and (not conversation.messages or conversation.messages[-1] != task.status.message):
                 conversation.messages.append(task.status.message)
@@ -702,11 +704,11 @@ class FoundryHostManager(ApplicationManager):
             if agent_name not in completed_agents
         ]
         for leftover_agent in remaining_agents:
-            print(f"[DEBUG] Emitting completion status for agent without direct response: {leftover_agent}")
+            log_debug(f"Emitting completion status for agent without direct response: {leftover_agent}")
             try:
                 asyncio.create_task(stream_task_status_update(leftover_agent, TaskState.completed))
             except Exception as e:
-                print(f"[DEBUG] Error scheduling fallback status update for {leftover_agent}: {e}")
+                log_debug(f"Error scheduling fallback status update for {leftover_agent}: {e}")
 
         return responses
 
@@ -780,7 +782,7 @@ class FoundryHostManager(ApplicationManager):
             bool: True if registration successful, False otherwise
         """
         try:
-            print(f"[DEBUG] 🤝 Host manager handling self-registration from: {agent_address}")
+            log_debug(f"🤝 Host manager handling self-registration from: {agent_address}")
             
             # Ensure agent is initialized before registration
             await self.ensure_host_agent_initialized()
@@ -798,7 +800,7 @@ class FoundryHostManager(ApplicationManager):
                 # Check if already registered to avoid duplicates
                 if not any(a.url == agent_address for a in self._agents):
                     self._agents.append(agent_card)
-                    print(f"[DEBUG] ✅ Added {agent_card.name} to UI agent list")
+                    log_debug(f"✅ Added {agent_card.name} to UI agent list")
                     
                     # Trigger immediate WebSocket sync to update UI in real-time
                     # Note: The actual broadcast happens in server.py after this method returns
@@ -808,19 +810,19 @@ class FoundryHostManager(ApplicationManager):
                         websocket_server = get_websocket_server()
                         if websocket_server:
                             websocket_server.trigger_immediate_sync()
-                            print(f"[DEBUG] 🔔 Triggered immediate agent registry sync for {agent_card.name}")
+                            log_debug(f"🔔 Triggered immediate agent registry sync for {agent_card.name}")
                         else:
-                            print(f"[DEBUG] ⚠️ WebSocket server not available for immediate sync")
+                            log_debug(f"⚠️ WebSocket server not available for immediate sync")
                     except Exception as sync_error:
-                        print(f"[DEBUG] ⚠️ Failed to trigger immediate sync: {sync_error}")
+                        log_debug(f"⚠️ Failed to trigger immediate sync: {sync_error}")
                         
                 else:
-                    print(f"[DEBUG] ℹ️ Agent {agent_address} already in UI list")
+                    log_debug(f"ℹ️ Agent {agent_address} already in UI list")
                 
             return success
             
         except Exception as e:
-            print(f"[DEBUG] ❌ Host manager registration error: {e}")
+            log_debug(f"❌ Host manager registration error: {e}")
             return False
 
     async def unregister_agent(self, agent_name: str) -> bool:
@@ -835,7 +837,7 @@ class FoundryHostManager(ApplicationManager):
             bool: True if unregistration successful, False otherwise
         """
         try:
-            print(f"[DEBUG] 🗑️ Host manager handling unregistration for: {agent_name}")
+            log_debug(f"🗑️ Host manager handling unregistration for: {agent_name}")
             
             # Ensure agent is initialized
             await self.ensure_host_agent_initialized()
@@ -846,7 +848,7 @@ class FoundryHostManager(ApplicationManager):
             if success:
                 # Also remove from our local agent list for UI consistency
                 self._agents = [a for a in self._agents if a.name != agent_name]
-                print(f"[DEBUG] ✅ Removed {agent_name} from UI agent list")
+                log_debug(f"✅ Removed {agent_name} from UI agent list")
                 
                 # Trigger immediate WebSocket sync to update UI
                 try:
@@ -854,20 +856,20 @@ class FoundryHostManager(ApplicationManager):
                     websocket_server = get_websocket_server()
                     if websocket_server:
                         websocket_server.trigger_immediate_sync()
-                        print(f"[DEBUG] 🔔 Triggered immediate agent registry sync after removing {agent_name}")
+                        log_debug(f"🔔 Triggered immediate agent registry sync after removing {agent_name}")
                     else:
-                        print(f"[DEBUG] ⚠️ WebSocket server not available for immediate sync")
+                        log_debug(f"⚠️ WebSocket server not available for immediate sync")
                 except Exception as sync_error:
-                    print(f"[DEBUG] ⚠️ Failed to trigger immediate sync: {sync_error}")
+                    log_debug(f"⚠️ Failed to trigger immediate sync: {sync_error}")
             else:
-                print(f"[DEBUG] ❌ Agent {agent_name} not found or unregistration failed")
+                log_debug(f"❌ Agent {agent_name} not found or unregistration failed")
                 
             return success
             
         except Exception as e:
-            print(f"[DEBUG] ❌ Host manager unregistration error: {e}")
+            log_debug(f"❌ Host manager unregistration error: {e}")
             import traceback
-            print(f"[DEBUG] ❌ Unregistration traceback: {traceback.format_exc()}")
+            log_debug(f"❌ Unregistration traceback: {traceback.format_exc()}")
             return False
 
     @property

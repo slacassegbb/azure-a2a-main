@@ -28,7 +28,6 @@ if str(BASE_DIR) not in sys.path:
 
 from dotenv import load_dotenv
 
-
 ROOT_ENV_PATH = Path(__file__).resolve().parents[1] / ".env"
 load_dotenv(dotenv_path=ROOT_ENV_PATH, override=False)
 
@@ -51,9 +50,12 @@ os.environ.setdefault("WEBSOCKET_SERVER_URL", "http://localhost:8080")
 
 # When running in Azure Container Apps, this will automatically use managed identity
 
-print("[DEBUG] Environment loaded, A2A_HOST:", os.environ.get("A2A_HOST"))
-print("[DEBUG] WebSocket URL:", os.environ.get("WEBSOCKET_SERVER_URL"))
-print("[DEBUG] Azure Tenant ID:", os.environ.get("AZURE_TENANT_ID"))
+# Import logging config
+from log_config import log_debug
+
+log_debug(f"Environment loaded, A2A_HOST: {os.environ.get('A2A_HOST')}")
+log_debug(f"WebSocket URL: {os.environ.get('WEBSOCKET_SERVER_URL')}")
+log_debug(f"Azure Tenant ID: {os.environ.get('AZURE_TENANT_ID')}")
 
 import httpx
 import uvicorn
@@ -403,7 +405,6 @@ async def lifespan(app: FastAPI):
         # Give the WebSocket server a moment to start listening
         import asyncio
         await asyncio.sleep(2)
-        print("[DEBUG] WebSocket server ready")
         
     except Exception as e:
         print(f"[ERROR] Failed to start WebSocket server: {e}")
@@ -618,23 +619,25 @@ def main():
     async def check_agent_health(agent_url: str):
         """Check health status of an agent."""
         try:
+            from log_config import log_debug
             import httpx
             # Clean up the URL to avoid double slashes
             base_url = f"http://{agent_url}" if not agent_url.startswith('http') else agent_url
             # Remove trailing slash and add /health
             health_url = base_url.rstrip('/') + '/health'
-            print(f"[DEBUG] Health check: agent_url='{agent_url}' -> health_url='{health_url}'")
+            log_debug(f"Health check: agent_url='{agent_url}' -> health_url='{health_url}'")
             
             async with httpx.AsyncClient(timeout=5.0) as client:
                 response = await client.get(health_url)
-                print(f"[DEBUG] Health response: {response.status_code}")
+                log_debug(f"Health response: {response.status_code}")
                 return {
                     "success": True,
                     "online": response.status_code == 200,
                     "status_code": response.status_code
                 }
         except Exception as e:
-            print(f"[DEBUG] Health check error: {e}")
+            from log_config import log_debug
+            log_debug(f"Health check error: {e}")
             return {
                 "success": True,
                 "online": False,
@@ -856,6 +859,7 @@ def main():
             import time
             import json
             
+            from log_config import log_debug
             # Parse the JSON body
             body = await request.json()
             agent_id = body.get("agentId")
@@ -863,9 +867,9 @@ def main():
             args = body.get("args", [])
             working_directory = body.get("workingDirectory")
             
-            print(f"[DEBUG] Starting agent {agent_id}")
-            print(f"[DEBUG] Command: {command} {' '.join(args)}")
-            print(f"[DEBUG] Working directory: {working_directory}")
+            log_debug(f"Starting agent {agent_id}")
+            log_debug(f"Command: {command} {' '.join(args)}")
+            log_debug(f"Working directory: {working_directory}")
             
             # Security check - only allow specific agents and paths
             allowed_agents = ["classification-triage"]
@@ -886,7 +890,7 @@ def main():
             
             # Build the full command
             full_command = [command] + args
-            print(f"[DEBUG] Full command: {full_command}")
+            log_debug(f"Full command: {full_command}")
             
             # For Windows, create a batch file that runs the command and keeps the window open
             if os.name == 'nt':
@@ -914,8 +918,8 @@ pause
                     batch_file.write(batch_content)
                     batch_path = batch_file.name
                 
-                print(f"[DEBUG] Created batch file: {batch_path}")
-                print(f"[DEBUG] Batch content: {batch_content}")
+                log_debug(f"Created batch file: {batch_path}")
+                log_debug(f"Batch content: {batch_content}")
                 
                 # Create PowerShell script file that inherits current environment
                 ps_content = f"""Write-Host "================================================"
@@ -938,8 +942,8 @@ Read-Host "Press Enter to close this window"
                     ps_file.write(ps_content)
                     ps_path = ps_file.name
                 
-                print(f"[DEBUG] Created PowerShell script: {ps_path}")
-                print(f"[DEBUG] PowerShell content: {ps_content}")
+                log_debug(f"Created PowerShell script: {ps_path}")
+                log_debug(f"PowerShell content: {ps_content}")
                 
                 # Start the PowerShell script in a new window
                 # Inherit current environment to preserve Azure authentication
@@ -1055,8 +1059,9 @@ Read-Host "Press Enter to close this window"
                     expiry=datetime.now(UTC) + timedelta(hours=24),
                     version="2023-11-03"
                 )
+                from log_config import log_debug
                 blob_url = f"{blob_client.url}?{sas_token}"
-                print(f"[DEBUG] File uploaded to Azure Blob: {blob_url[:100]}...")
+                log_debug(f"File uploaded to Azure Blob: {blob_url[:100]}...")
                 return blob_url
             else:
                 print(f"[WARN] Could not generate SAS token, returning blob URL without SAS")
@@ -1086,11 +1091,12 @@ Read-Host "Press Enter to close this window"
             # Read file content
             content = await file.read()
             
+            from log_config import log_debug
             # Save file locally (as backup)
             with open(file_path, "wb") as buffer:
                 buffer.write(content)
             
-            print(f"[DEBUG] File uploaded: {file.filename} -> {filename} ({len(content)} bytes)")
+            log_debug(f"File uploaded: {file.filename} -> {filename} ({len(content)} bytes)")
             
             # Upload to Azure Blob and get public SAS URL
             blob_url = upload_to_azure_blob(
@@ -1132,12 +1138,13 @@ Read-Host "Press Enter to close this window"
             filename = f"voice_{file_id}.wav"
             file_path = voice_dir / filename
 
+            from log_config import log_debug
             # Save file
             with open(file_path, "wb") as buffer:
                 content = await file.read()
                 buffer.write(content)
             
-            print(f"[DEBUG] Voice file uploaded: {file.filename} -> {filename} ({len(content)} bytes)")
+            log_debug(f"Voice file uploaded: {file.filename} -> {filename} ({len(content)} bytes)")
             
             # Import the document processor to handle audio transcription
             try:
@@ -1151,7 +1158,7 @@ Read-Host "Press Enter to close this window"
                 from hosts.multiagent.a2a_document_processor import process_audio
 
                 # Process audio file to get transcription
-                print(f"[DEBUG] Processing audio file for transcription: {file_path}")
+                log_debug(f"Processing audio file for transcription: {file_path}")
 
                 # Change to the multiagent directory so relative paths work
                 original_cwd = os.getcwd()
@@ -1165,7 +1172,7 @@ Read-Host "Press Enter to close this window"
                     os.chdir(original_cwd)
                 
                 if transcript and transcript.strip():
-                    print(f"[DEBUG] Audio transcription successful. Length: {len(transcript)} characters")
+                    log_debug(f"Audio transcription successful. Length: {len(transcript)} characters")
                     return {
                         "success": True,
                         "filename": file.filename or filename,
