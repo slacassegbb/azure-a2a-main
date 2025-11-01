@@ -11,7 +11,7 @@ An Azure AI Foundry–powered creative assistant that turns natural‑language p
 - 📎 **File Attachments** – Consumes A2A `FilePart` URIs (base image/mask) and normalizes them for edits.
 - 🗂️ **Style Grounding via File Search** – Builds a shared vector store of brand/style documents for guided prompts.
 - 🔗 **A2A Integration** – Streams progress/results, returns tool outputs, and self‑registers with the host agent.
-- 🌐 **Dual Modes** – A2A API server (default `9010`) and optional Gradio UI (default `9102`).
+- 🌐 **Dual Modes** – A2A API server (default `9066`) and optional Gradio UI (default `9166`).
 
 ## Project Structure
 ```
@@ -36,7 +36,7 @@ export A2A_HOST=http://localhost:12000
 
 # Optional: override bind/advertised endpoint
 export A2A_ENDPOINT=localhost    # hostname used in public URL
-export A2A_PORT=9010             # A2A server port (defaults to 9010)
+export A2A_PORT=9066             # A2A server port (defaults to 9066)
 ```
 
 ### 2) Install Dependencies
@@ -55,7 +55,7 @@ uv sync
   ```bash
   uv run . --ui
   ```
-  UI: `http://localhost:9102` (default)  |  A2A API: `http://localhost:9010/`
+  UI: `http://localhost:9166` (default)  |  A2A API: `http://localhost:9066/`
 
 - **Custom ports**
   ```bash
@@ -80,13 +80,13 @@ export AZURE_BLOB_CONTAINER=a2a-files
 
 ## Troubleshooting
 - Ensure `AZURE_AI_FOUNDRY_PROJECT_ENDPOINT` and `AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME` are set.
-- If the UI doesn’t load, verify port `9102` or set `--ui-port`.
-- If the A2A server fails to bind, verify port `9010` or set `A2A_PORT`/`--port`.
+- If the UI doesn't load, verify port `9166` or set `--ui-port`.
+- If the A2A server fails to bind, verify port `9066` or set `A2A_PORT`/`--port`.
 - If self‑registration fails, confirm the host URL in `A2A_HOST` and that the host is reachable.
 
 ## Default Ports & Environment Overrides
-- A2A Server: `A2A_ENDPOINT:A2A_PORT` (defaults to `localhost:9010`, override via env or `--port`)
-- Gradio UI: `9102` (override with `--ui-port`)
+- A2A Server: `A2A_ENDPOINT:A2A_PORT` (defaults to `localhost:9066`, override via env or `--port`)
+- Gradio UI: `9166` (override with `--ui-port`)
 - Host Agent URL: `A2A_HOST` (defaults to `http://localhost:12000`, accepts empty string to disable)
 
 Happy generating! 🖼️
