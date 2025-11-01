@@ -11,7 +11,7 @@ An Azure AI Foundry–powered creative assistant that turns natural‑language p
 - 📎 **File Attachments** – Consumes A2A `FilePart` URIs (base image/mask) and normalizes them for edits.
 - 🗂️ **Style Grounding via File Search** – Builds a shared vector store of brand/style documents for guided prompts.
 - 🔗 **A2A Integration** – Streams progress/results, returns tool outputs, and self‑registers with the host agent.
-- 🌐 **Dual Modes** – A2A API server (default `9066`) and optional Gradio UI (default `9166`).
+- 🌐 **Dual Modes** – A2A API server (default `9010`) and optional Gradio UI (default `9166`).
 
 ## Project Structure
 ```

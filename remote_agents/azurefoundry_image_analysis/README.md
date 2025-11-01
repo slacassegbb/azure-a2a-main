@@ -12,7 +12,7 @@ An Azure AI Foundry–powered vision assistant that analyzes images to identify 
 - 📎 **File Ingestion** – Accepts images via base64 encoding or URLs through A2A `FilePart` messages.
 - 🗂️ **Reference Documents** – Can leverage documents for assessment guidelines and standards.
 - 🔗 **A2A Integration** – Streams analysis results, returns structured insights, and self‑registers with the host agent.
-- 🌐 **Dual Modes** – A2A API server (default `9010`) and optional Gradio UI (default `9110`).
+- 🌐 **Dual Modes** – A2A API server (default `9066`) and optional Gradio UI (default `9110`).
 
 ## Project Structure
 ```
