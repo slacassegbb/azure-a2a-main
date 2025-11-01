@@ -6,7 +6,7 @@ It demonstrates how to design, host, and scale a distributed network of intellig
 
 This repository contains the complete documentation and setup instructions including the **Host Orchestrator (backend)**, **Frontend UI (frontend)**, and a collection of **specialized remote agents (remote_agents)**. Each remote agent runs independently and can connect to the Host Orchestrator through open protocols like **A2A (Agent-to-Agent)** and **MCP (Model Context Protocol)**. 
 
-You’ll find detailed guides to install, configure, and run the full system, along with sample agents that showcase realistic enterprise workflows including the **Claims, Fraud, Legal, Branding, Classification, Deep Search, Assessment & Estimation, Customer Support (MCP), Image Generation, and Sentiment Analysis (Google ADK)** agents.
+You'll find detailed guides to install, configure, and run the full system, along with sample agents that showcase realistic enterprise workflows including the **Claims, Fraud, Legal, Branding, Classification, Deep Search, Assessment & Estimation, Customer Support (MCP), Image Analysis, Image Generation, and Sentiment Analysis (Google ADK)** agents.
 
 ---
 
@@ -213,6 +213,13 @@ The AI Foundry Deep Search Knowledge Agent is an Azure-based A2A-compatible agen
 **Directory:** `remote_agents\azurefoundry_fraud` · **A2A_PORT=9004`
 
 The AI Foundry Fraud Intelligence Agent is an Azure-based A2A-compatible agent grounded in synthetic fraud investigation data for realistic multi-line insurance analysis. It detects red flags, evaluates claim patterns, and recommends SIU escalation across auto, property, travel, and health domains. The agent operates as both an API service and interactive Gradio UI, integrating with a Host Orchestrator for coordinated fraud detection and compliance workflows.
+
+---
+
+### ⬛ Azure AI Foundry (A2A) — **Image Analysis Agent** *(Experimental)*
+**Directory:** `remote_agents\azurefoundry_image_analysis` · **A2A_PORT=9011`
+
+The AI Foundry Image Analysis Agent is an Azure-based A2A-compatible vision agent that **analyzes and interprets visual content**. It performs **detailed image understanding, object detection, scene analysis, and visual quality assessment** to provide actionable insights. The agent operates as an API service, integrating with a Host Orchestrator for coordinated visual analysis and content validation workflows.
 
 ---
 
