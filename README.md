@@ -16,7 +16,7 @@ You’ll find detailed guides to install, configure, and run the full system, al
   <tr>
     <td align="center" width="33%">
       <a href="https://youtu.be/5t78x_9qUKM">
-        <img src="https://img.youtube.com/vi/5t78x_9qUKM/mqdefault.jpg" width="240" height="145" style="object-fit: cover; border-radius: 4px;" />
+        <img src="https://img.youtube.com/vi/5t78x_9qUKM/mqdefault.jpg" width="255" height="165" style="object-fit: cover; border-radius: 4px;" />
         <br/><br/>
         <b>Claims Workflow</b><br/>
         <sub>Intro to Azure A2A + Multimodal + Memory</sub>
