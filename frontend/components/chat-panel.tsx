@@ -440,7 +440,7 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
   const router = useRouter()
   const conversationId = searchParams.get('conversationId') || 'frontend-chat-context'
   
-  const [messages, setMessages] = useState<Message[]>(initialMessages)
+  const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState("")
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const [isInferencing, setIsInferencing] = useState(false)
@@ -564,6 +564,16 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
     if (DEBUG) console.log('[ChatPanel] Conversation ID changed to:', conversationId)
     if (DEBUG) console.log('[ChatPanel] URL search params:', searchParams.toString())
       
+      // Don't load messages if user is not authenticated
+      if (typeof window !== 'undefined') {
+        const token = sessionStorage.getItem('auth_token')
+        if (!token) {
+          if (DEBUG) console.log('[ChatPanel] User not authenticated, skipping message load')
+          setMessages([])
+          return
+        }
+      }
+      
       if (conversationId && conversationId !== 'frontend-chat-context') {
         try {
           if (DEBUG) console.log("[ChatPanel] Loading conversation:", conversationId)
@@ -591,22 +601,42 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
             if (convertedMessages.length > 0) {
               setMessages(convertedMessages)
             } else {
-              // If no messages found, show initial message
-              if (DEBUG) console.log("[ChatPanel] No messages found, showing initial messages")
-              setMessages(initialMessages)
+              // If no messages found, show initial message only if authenticated
+              if (DEBUG) console.log("[ChatPanel] No messages found")
+              const token = sessionStorage.getItem('auth_token')
+              if (token) {
+                setMessages(initialMessages)
+              } else {
+                setMessages([])
+              }
             }
           } else {
             if (DEBUG) console.log("[ChatPanel] No conversation found or no messages")
-            setMessages(initialMessages)
+            const token = sessionStorage.getItem('auth_token')
+            if (token) {
+              setMessages(initialMessages)
+            } else {
+              setMessages([])
+            }
           }
         } catch (error) {
           console.error("[ChatPanel] Failed to load conversation messages:", error)
-          setMessages(initialMessages)
+          const token = sessionStorage.getItem('auth_token')
+          if (token) {
+            setMessages(initialMessages)
+          } else {
+            setMessages([])
+          }
         }
       } else {
-        // New conversation or default - reset to initial messages
-        if (DEBUG) console.log("[ChatPanel] Using initial messages for new/default conversation")
-        setMessages(initialMessages)
+        // New conversation or default - show initial messages only if authenticated
+        if (DEBUG) console.log("[ChatPanel] Using default conversation")
+        const token = sessionStorage.getItem('auth_token')
+        if (token) {
+          setMessages(initialMessages)
+        } else {
+          setMessages([])
+        }
       }
       
       // Reset other state
@@ -742,6 +772,14 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
     const handleMessage = (data: any) => {
       console.log("[ChatPanel] Message received:", data)
       console.log("[ChatPanel] Current messages count:", messages.length)
+      
+      // Only process messages if user is authenticated
+      const token = sessionStorage.getItem('auth_token')
+      if (!token) {
+        console.log("[ChatPanel] Ignoring message - user not authenticated")
+        return
+      }
+      
       // A2A MessageEventData has: messageId, conversationId, role, content[], direction
       if (data.messageId && data.content && data.content.length > 0) {
         // Only process assistant messages to avoid duplicating user messages
@@ -800,6 +838,12 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
               }
               console.log("[ChatPanel] Adding attachment message:", attachmentMessage)
               setMessages(prev => [...prev, attachmentMessage])
+              
+              // Broadcast attachment message to other users so they can see images
+              sendMessage({
+                type: "shared_message",
+                message: attachmentMessage
+              })
             } else {
               console.log("[ChatPanel] Attachment message already processed, skipping:", attachmentId)
             }
@@ -829,13 +873,23 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
     // Handle shared user messages from other clients
     const handleSharedMessage = (data: any) => {
       console.log("[ChatPanel] Shared message received:", data)
+      
+      // Only process shared messages if user is authenticated
+      const token = sessionStorage.getItem('auth_token')
+      if (!token) {
+        console.log("[ChatPanel] Ignoring shared message - user not authenticated")
+        return
+      }
+      
       if (data.message) {
         const newMessage: Message = {
           id: data.message.id,
           role: data.message.role,
           content: data.message.content,
           username: data.message.username,
-          userColor: data.message.userColor
+          userColor: data.message.userColor,
+          agent: data.message.agent,
+          attachments: data.message.attachments // Include attachments (images, files)
         }
         
         // Add the message to our local state if we don't already have it
@@ -918,20 +972,35 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
     }
   }, [subscribe, unsubscribe, emit])
 
-  // Check authentication status
+  // Check authentication status and show welcome message only when logged in
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const token = sessionStorage.getItem('auth_token')
       const userInfo = sessionStorage.getItem('user_info')
       if (token && userInfo) {
         try {
-          setCurrentUser(JSON.parse(userInfo))
+          const user = JSON.parse(userInfo)
+          setCurrentUser(user)
+          // User is authenticated - show welcome message if no conversation loaded
+          setMessages((prevMessages) => {
+            if (prevMessages.length === 0 && conversationId === 'frontend-chat-context') {
+              return initialMessages
+            }
+            return prevMessages
+          })
         } catch (e) {
           console.error('Failed to parse user info:', e)
+          // Not authenticated - clear everything
+          setCurrentUser(null)
+          setMessages([])
         }
+      } else {
+        // Not authenticated - clear everything
+        setCurrentUser(null)
+        setMessages([])
       }
     }
-  }, [])
+  }, [conversationId])
 
   // Handle inference step events (tool calls, remote agent activities)
     const handleInferenceStep = (data: any) => {
@@ -1023,6 +1092,13 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
     const handleFinalResponse = (data: { inferenceId: string; message: Omit<Message, "id"> }) => {
       console.log("[ChatPanel] Final response received:", data)
       
+      // Only process responses if user is authenticated
+      const token = sessionStorage.getItem('auth_token')
+      if (!token) {
+        console.log("[ChatPanel] Ignoring final response - user not authenticated")
+        return
+      }
+      
       const contentKey = data.message.content ?? ""
       const agentKey = data.message.agent ?? "assistant"
       const responseId = `response_${data.inferenceId}_${agentKey}_${contentKey}`
@@ -1069,6 +1145,16 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
       // Add messages only if we have any
       if (messagesToAdd.length > 0) {
         setMessages((prev) => [...prev, ...messagesToAdd])
+        
+        // Broadcast messages to other users (but not inference summaries)
+        messagesToAdd.forEach(msg => {
+          if (msg.type !== 'inference_summary' && msg.role === 'assistant') {
+            sendMessage({
+              type: "shared_message",
+              message: msg
+            })
+          }
+        })
       }
       
       // Only clear inference steps when host agent responds (final response)
