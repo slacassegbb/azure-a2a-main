@@ -7,7 +7,7 @@ An Azure AI Foundry agent built to keep every asset on-brand. The agent reads th
 - 🗣️ **Voice & Messaging Support** – Generates copy, slogans, CTA variants, and channel adaptations that maintain the confident, forward-looking tone.
 - 🖼️ **Visual Direction & Prompts** – Produces art direction notes and positive/negative prompts for generative tools aligned to brand colors and mood.
 - ✅ **Compliance Reviews** – Audits supplied copy or concepts, flags off-brand elements, and provides corrective next steps.
-- 🌐 **Dual Operation Modes** – Run as an A2A server on port `9033` or launch the optional Gradio UI on port `9133` for interactive reviews.
+- 🌐 **Dual Operation Modes** – Run as an A2A server on port `9033` or launch the optional Gradio UI on port `9120` for interactive reviews.
 - 🤝 **Self-Registration** – Supports auto-registration with the host agent configured via `A2A_HOST` (defaults to `http://localhost:12000`).
 
 ## Project Structure
@@ -63,7 +63,7 @@ A2A_HOST=http://localhost:12000
   ```bash
   uv run . --ui
   ```
-  UI: `http://localhost:9133`
+  UI: `http://localhost:9120`
 
 - **Custom ports**:
   ```bash
@@ -88,7 +88,7 @@ Start the host agent (`demo/ui`) and run `python utils/self_registration.py` hel
 
 ## Defaults & Overrides
 - A2A Server: `A2A_ENDPOINT:A2A_PORT` (defaults to `localhost:9033`, override via env or `--port`)
-- Gradio UI: `9133` (override with `--ui-port`)
+- Gradio UI: `9120` (override with `--ui-port`)
 - Host Agent URL: `A2A_HOST` (defaults to `http://localhost:12000`, accepts empty string to disable)
 
 Consistent branding builds trust—ship confidently. ✨
