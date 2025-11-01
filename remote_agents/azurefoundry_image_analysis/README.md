@@ -12,7 +12,7 @@ An Azure AI Foundry–powered vision assistant that analyzes images to identify 
 - 📎 **File Ingestion** – Accepts images via base64 encoding or URLs through A2A `FilePart` messages.
 - 🗂️ **Reference Documents** – Can leverage documents for assessment guidelines and standards.
 - 🔗 **A2A Integration** – Streams analysis results, returns structured insights, and self‑registers with the host agent.
-- 🌐 **Dual Modes** – A2A API server (default `9034`) and optional Gradio UI (default `9134`).
+- 🌐 **Dual Modes** – A2A API server (default `9010`) and optional Gradio UI (default `9110`).
 
 ## Project Structure
 ```
@@ -37,7 +37,7 @@ export A2A_HOST=http://localhost:12000
 
 # Optional: override bind/advertised endpoint
 export A2A_ENDPOINT=localhost    # hostname used in public URL
-export A2A_PORT=9034             # A2A server port (defaults to 9034)
+export A2A_PORT=9010             # A2A server port (defaults to 9010)
 ```
 
 **Important**: Your `AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME` must be a vision-capable model like:
@@ -61,7 +61,7 @@ uv sync
   ```bash
   uv run . --ui
   ```
-  UI: `http://localhost:9134` (default)  |  A2A API: `http://localhost:9034/`
+  UI: `http://localhost:9110` (default)  |  A2A API: `http://localhost:9010/`
 
 - **Custom ports**
   ```bash
@@ -91,16 +91,16 @@ Images are automatically processed and analyzed using Azure OpenAI GPT-4o vision
 - Ensure all required environment variables are set:
   - `AZURE_AI_FOUNDRY_PROJECT_ENDPOINT`
   - `AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME` (must be a vision-capable model like `gpt-4o`)
-- If the UI doesn't load, verify port `9134` or set `--ui-port`.
-- If the A2A server fails to bind, verify port `9034` or set `A2A_PORT`/`--port`.
+- If the UI doesn't load, verify port `9110` or set `--ui-port`.
+- If the A2A server fails to bind, verify port `9010` or set `A2A_PORT`/`--port`.
 - If self‑registration fails, confirm the host URL in `A2A_HOST` and that the host is reachable.
 - If image analysis fails, check that your model deployment supports vision:
   - In Azure AI Foundry, verify your model is `gpt-4o`, `gpt-4-turbo`, or `gpt-4-vision-preview`
   - Images must be attached to messages via the A2A protocol (as FilePart with URI or base64)
 
 ## Default Ports & Environment Overrides
-- A2A Server: `A2A_ENDPOINT:A2A_PORT` (defaults to `localhost:9034`, override via env or `--port`)
-- Gradio UI: `9134` (override with `--ui-port`)
+- A2A Server: `A2A_ENDPOINT:A2A_PORT` (defaults to `localhost:9010`, override via env or `--port`)
+- Gradio UI: `9110` (override with `--ui-port`)
 - Host Agent URL: `A2A_HOST` (defaults to `http://localhost:12000`, accepts empty string to disable)
 
 Happy analyzing! 🔍
