@@ -16,7 +16,7 @@ You’ll find detailed guides to install, configure, and run the full system, al
   <tr>
     <td align="center" width="33%">
       <a href="https://youtu.be/5t78x_9qUKM">
-        <img src="https://img.youtube.com/vi/5t78x_9qUKM/mqdefault.jpg" width="300" />
+        <img src="https://img.youtube.com/vi/5t78x_9qUKM/mqdefault.jpg" width="300" height="170" style="object-fit: cover; border-radius: 4px;" />
         <br/><br/>
         <b>Claims Workflow</b><br/>
         <sub>Intro to Azure A2A + Multimodal + Memory</sub>
@@ -24,7 +24,7 @@ You’ll find detailed guides to install, configure, and run the full system, al
     </td>
     <td align="center" width="33%">
       <a href="https://youtu.be/ziz7n7jLd7E">
-        <img src="https://img.youtube.com/vi/ziz7n7jLd7E/mqdefault.jpg" width="300" />
+        <img src="https://img.youtube.com/vi/ziz7n7jLd7E/mqdefault.jpg" width="300" height="170" style="object-fit: cover; border-radius: 4px;" />
         <br/><br/>
         <b>Content Creation Workflow</b><br/>
         <sub>Advanced Orchestration + Inter-Agent File Exchange + Human Collaboration</sub>
@@ -32,7 +32,7 @@ You’ll find detailed guides to install, configure, and run the full system, al
     </td>
     <td align="center" width="33%">
       <a href="https://youtu.be/CenIL5zq79w">
-        <img src="https://img.youtube.com/vi/CenIL5zq79w/mqdefault.jpg" width="300" />
+        <img src="https://img.youtube.com/vi/CenIL5zq79w/mqdefault.jpg" width="300" height="170" style="object-fit: cover; border-radius: 4px;" />
         <br/><br/>
         <b>Customer Support Workflow</b><br/>
         <sub>MCP Remote Agents + Workflows + Human in the Loop</sub>
