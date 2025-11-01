@@ -217,14 +217,14 @@ The AI Foundry Fraud Intelligence Agent is an Azure-based A2A-compatible agent g
 ---
 
 ### ⬛ Azure AI Foundry (A2A) — **Image Analysis Agent** *(Experimental)*
-**Directory:** `remote_agents\azurefoundry_image_analysis` · **A2A_PORT=9011`
+**Directory:** `remote_agents\azurefoundry_image_analysis` · **A2A_PORT=9010`
 
 The AI Foundry Image Analysis Agent is an Azure-based A2A-compatible vision agent that **analyzes and interprets visual content**. It performs **detailed image understanding, object detection, scene analysis, and visual quality assessment** to provide actionable insights. The agent operates as an API service, integrating with a Host Orchestrator for coordinated visual analysis and content validation workflows.
 
 ---
 
 ### ⬛ Azure AI Foundry (A2A) — **Image Generation Agent** *(Experimental)*
-**Directory:** `remote_agents\azurefoundry_image_generator` · **A2A_PORT=9010`
+**Directory:** `remote_agents\azurefoundry_image_generator` · **A2A_PORT=9066`
 
 The AI Foundry Image Generator Agent is an Azure-based A2A-compatible creative agent that **transforms text prompts into high-quality images** and performs **advanced image editing**. It supports **in-painting, masking, and prompt-based modifications** to refine or extend existing visuals. The agent operates as an API service, integrating with a Host Orchestrator for coordinated visual creation and editing workflows.
 
