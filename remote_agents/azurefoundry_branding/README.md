@@ -7,7 +7,7 @@ An Azure AI Foundry agent built to keep every asset on-brand. The agent reads th
 - 🗣️ **Voice & Messaging Support** – Generates copy, slogans, CTA variants, and channel adaptations that maintain the confident, forward-looking tone.
 - 🖼️ **Visual Direction & Prompts** – Produces art direction notes and positive/negative prompts for generative tools aligned to brand colors and mood.
 - ✅ **Compliance Reviews** – Audits supplied copy or concepts, flags off-brand elements, and provides corrective next steps.
-- 🌐 **Dual Operation Modes** – Run as an A2A server on port `9020` or launch the optional Gradio UI on port `9120` for interactive reviews.
+- 🌐 **Dual Operation Modes** – Run as an A2A server on port `9033` or launch the optional Gradio UI on port `9133` for interactive reviews.
 - 🤝 **Self-Registration** – Supports auto-registration with the host agent configured via `A2A_HOST` (defaults to `http://localhost:12000`).
 
 ## Project Structure
@@ -46,14 +46,14 @@ AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME=your-model
 A2A_ENDPOINT=localhost
 
 # Port for the agent's A2A API
-A2A_PORT=9020
+A2A_PORT=9033
 
 # Host agent URL for self-registration (empty string disables)
 A2A_HOST=http://localhost:12000
 ```
 
 ### 4. Run the Agent
-- **A2A server** (defaults to `A2A_ENDPOINT:A2A_PORT`, e.g. `http://localhost:9020`):
+- **A2A server** (defaults to `A2A_ENDPOINT:A2A_PORT`, e.g. `http://localhost:9033`):
   ```bash
   uv run .
   ```
@@ -63,7 +63,7 @@ A2A_HOST=http://localhost:12000
   ```bash
   uv run . --ui
   ```
-  UI: `http://localhost:9120`
+  UI: `http://localhost:9133`
 
 - **Custom ports**:
   ```bash
@@ -87,8 +87,8 @@ Start the host agent (`demo/ui`) and run `python utils/self_registration.py` hel
 - Use the Gradio console output to view streaming tool-call diagnostics when debugging.
 
 ## Defaults & Overrides
-- A2A Server: `A2A_ENDPOINT:A2A_PORT` (defaults to `localhost:9020`, override via env or `--port`)
-- Gradio UI: `9120` (override with `--ui-port`)
+- A2A Server: `A2A_ENDPOINT:A2A_PORT` (defaults to `localhost:9033`, override via env or `--port`)
+- Gradio UI: `9133` (override with `--ui-port`)
 - Host Agent URL: `A2A_HOST` (defaults to `http://localhost:12000`, accepts empty string to disable)
 
 Consistent branding builds trust—ship confidently. ✨
