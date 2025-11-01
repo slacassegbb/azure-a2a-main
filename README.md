@@ -12,9 +12,9 @@ You’ll find detailed guides to install, configure, and run the full system, al
 
 ## 🎥 Demonstration of Azure A2A Multi-Agent System
 
-| Claims Workflow *(Intro to Azure A2A + Multimodal + Memory)* | Customer Support Workflow *(MCP Remote Agents + Workflows + Human in the Loop)* |
+| Claims Workflow *(Intro to Azure A2A + Multimodal + Memory)* | Content Creation Workflow *(Advanced Orchestration + Inter-Agent File Exchange + Human Collaboration)* | Customer Support Workflow *(MCP Remote Agents + Workflows + Human in the Loop)* |
 |-------------------------------------|--------------------------------------------------------|
-| [![Demo 1](https://img.youtube.com/vi/5t78x_9qUKM/hqdefault.jpg)](https://youtu.be/5t78x_9qUKM) | [![Demo 2](https://img.youtube.com/vi/CenIL5zq79w/hqdefault.jpg)](https://youtu.be/CenIL5zq79w) |
+| [![Demo 1](https://img.youtube.com/vi/5t78x_9qUKM/hqdefault.jpg)](https://youtu.be/5t78x_9qUKM) | [![Demo 2](https://img.youtube.com/vi/ziz7n7jLd7E/hqdefault.jpg)](https://youtu.be/ziz7n7jLd7E) | [![Demo 3](https://img.youtube.com/vi/CenIL5zq79w/hqdefault.jpg)](https://youtu.be/CenIL5zq79w) |
 
 > _Click to watch the Azure A2A multi-agent system in action — with live agent orchestration, memory, and cross-cloud connected agents._
 
