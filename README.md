@@ -16,7 +16,9 @@ You'll find detailed guides to install, configure, and run the full system, alon
   <tr>
     <td align="center" width="33%">
       <a href="https://youtu.be/5t78x_9qUKM">
-        <img src="https://img.youtube.com/vi/5t78x_9qUKM/maxresdefault.jpg" width="320" height="180" style="display: block; margin: 0 auto; object-fit: cover; border-radius: 4px;" alt="Claims Workflow Demo" />
+        <div style="width: 320px; height: 180px; overflow: hidden; margin: 0 auto; border-radius: 4px;">
+          <img src="https://img.youtube.com/vi/5t78x_9qUKM/maxresdefault.jpg" style="width: 100%; height: 100%; object-fit: cover; transform: scale(1.4);" alt="Claims Workflow Demo" />
+        </div>
         <br/><br/>
         <b>Claims Workflow</b><br/>
         <sub>Intro to Azure A2A + Multimodal + Memory</sub>
