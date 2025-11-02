@@ -6,7 +6,7 @@ It demonstrates how to design, host, and scale a distributed network of intellig
 
 This repository contains the complete documentation and setup instructions including the **Host Orchestrator (backend)**, **Frontend UI (frontend)**, and a collection of **specialized remote agents (remote_agents)**. Each remote agent runs independently and can connect to the Host Orchestrator through open protocols like **A2A (Agent-to-Agent)** and **MCP (Model Context Protocol)**. 
 
-You'll find detailed guides to install, configure, and run the full system, along with sample agents that showcase realistic enterprise workflows including the **Claims, Fraud, Legal, Branding, Classification, Deep Search, Assessment & Estimation, Customer Support (MCP), Image Analysis, Image Generation, and Sentiment Analysis (Google ADK)** agents.
+You'll find detailed guides to install, configure, and run the full system, along with a **ready-to-use Agent Template** for building custom agents, plus sample agents that showcase realistic enterprise workflows including the **Claims, Fraud, Legal, Branding, Classification, Deep Search, Assessment & Estimation, Customer Support (MCP), Image Analysis, Image Generation, and Sentiment Analysis (Google ADK)** agents.
 
 ---
 
@@ -176,6 +176,15 @@ A set of sample specialized A2A remote agents is provided in the `remote_agents`
 
 ---
 
+### 🎨 Azure AI Foundry (A2A) — **Template Agent** ⭐
+**Directory:** `remote_agents\azurefoundry_template` · **A2A_PORT=9020** (customizable)
+
+**A ready-to-use template for building your own custom A2A agents.** The Template Agent provides all the boilerplate code needed to create specialized remote agents that integrate seamlessly with the Azure A2A multi-agent system. Simply customize the agent's personality, skills, and domain knowledge by editing 3 key sections. Includes full A2A protocol support, file search integration for document grounding, optional Bing search, Gradio UI for testing, and production-ready logging. Perfect starting point for creating domain-specific agents in minutes.
+
+📖 **[View Template Agent Documentation →](./remote_agents/azurefoundry_template/README.md)**
+
+---
+
 ### 🟦 Azure AI Foundry (A2A) — **Assessment & Estimation Agent**
 **Directory:** `remote_agents\azurefoundry_assessment` · **A2A_PORT=9002**
 
@@ -253,7 +262,11 @@ The Sentiment Analysis Agent is a Google ADK A2A-compatible agent grounded in sy
 
 ---
 
-You can use them as-is to test your scenarios or treat them as templates for building your own agents. Each agent can be easily customized, and the `documents` folder lets you add your own data for grounding and testing.
+### 🚀 Building Your Own Agents
+
+Want to create a custom agent? Start with the **Template Agent** (listed first above) — it provides a clean, documented foundation with step-by-step instructions for building domain-specific agents in minutes.
+
+You can also use the sample agents as-is to test your scenarios, or customize them for your specific needs. Each agent can be easily modified, and the `documents` folder lets you add your own data for grounding and testing.
 
 **Important:** Before running any remote agent, make sure to create your own `.env` file in each remote agent directory—use the included `.env.example` as your starting point.
 
