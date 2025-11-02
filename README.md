@@ -16,7 +16,7 @@ You'll find detailed guides to install, configure, and run the full system, alon
   <tr>
     <td align="center" width="33%">
       <a href="https://youtu.be/5t78x_9qUKM">
-        <img src="https://img.youtube.com/vi/5t78x_9qUKM/mqdefault.jpg" width="280" height="158" style="object-fit: cover; border-radius: 4px;" />
+        <img src="https://img.youtube.com/vi/5t78x_9qUKM/hqdefault.jpg" width="320" height="180" style="display: block; margin: 0 auto; object-fit: cover; border-radius: 4px;" alt="Claims Workflow Demo" />
         <br/><br/>
         <b>Claims Workflow</b><br/>
         <sub>Intro to Azure A2A + Multimodal + Memory</sub>
@@ -24,7 +24,7 @@ You'll find detailed guides to install, configure, and run the full system, alon
     </td>
     <td align="center" width="33%">
       <a href="https://youtu.be/ziz7n7jLd7E">
-        <img src="https://img.youtube.com/vi/ziz7n7jLd7E/mqdefault.jpg" width="280" height="158" style="object-fit: cover; border-radius: 4px;" />
+        <img src="https://img.youtube.com/vi/ziz7n7jLd7E/hqdefault.jpg" width="320" height="180" style="display: block; margin: 0 auto; object-fit: cover; border-radius: 4px;" alt="Content Creation Workflow Demo" />
         <br/><br/>
         <b>Content Creation Workflow</b><br/>
         <sub>Advanced Orchestration + Inter-Agent File Exchange + Human Collaboration</sub>
@@ -32,7 +32,7 @@ You'll find detailed guides to install, configure, and run the full system, alon
     </td>
     <td align="center" width="33%">
       <a href="https://youtu.be/CenIL5zq79w">
-        <img src="https://img.youtube.com/vi/CenIL5zq79w/mqdefault.jpg" width="280" height="158" style="object-fit: cover; border-radius: 4px;" />
+        <img src="https://img.youtube.com/vi/CenIL5zq79w/hqdefault.jpg" width="320" height="180" style="display: block; margin: 0 auto; object-fit: cover; border-radius: 4px;" alt="Customer Support Workflow Demo" />
         <br/><br/>
         <b>Customer Support Workflow</b><br/>
         <sub>MCP Remote Agents + Workflows + Human in the Loop</sub>
