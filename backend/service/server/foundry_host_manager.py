@@ -797,27 +797,31 @@ class FoundryHostManager(ApplicationManager):
                     if not agent_card.url:
                         agent_card.url = agent_address
                 
-                # Check if already registered to avoid duplicates
-                if not any(a.url == agent_address for a in self._agents):
+                # Find existing agent by URL
+                existing_index = next((i for i, a in enumerate(self._agents) if a.url == agent_address), None)
+                
+                if existing_index is not None:
+                    # Update existing agent card
+                    old_name = self._agents[existing_index].name
+                    self._agents[existing_index] = agent_card
+                    log_debug(f"🔄 Updated {agent_card.name} in UI agent list (was: {old_name})")
+                else:
+                    # Add new agent
                     self._agents.append(agent_card)
                     log_debug(f"✅ Added {agent_card.name} to UI agent list")
-                    
-                    # Trigger immediate WebSocket sync to update UI in real-time
-                    # Note: The actual broadcast happens in server.py after this method returns
-                    # This is just a backup in case it's not triggered there
-                    try:
-                        from service.websocket_server import get_websocket_server
-                        websocket_server = get_websocket_server()
-                        if websocket_server:
-                            websocket_server.trigger_immediate_sync()
-                            log_debug(f"🔔 Triggered immediate agent registry sync for {agent_card.name}")
-                        else:
-                            log_debug(f"⚠️ WebSocket server not available for immediate sync")
-                    except Exception as sync_error:
-                        log_debug(f"⚠️ Failed to trigger immediate sync: {sync_error}")
-                        
-                else:
-                    log_debug(f"ℹ️ Agent {agent_address} already in UI list")
+                
+                # Trigger immediate WebSocket sync to update UI in real-time
+                # This happens for both new and updated agents
+                try:
+                    from service.websocket_server import get_websocket_server
+                    websocket_server = get_websocket_server()
+                    if websocket_server:
+                        websocket_server.trigger_immediate_sync()
+                        log_debug(f"🔔 Triggered immediate agent registry sync for {agent_card.name}")
+                    else:
+                        log_debug(f"⚠️ WebSocket server not available for immediate sync")
+                except Exception as sync_error:
+                    log_debug(f"⚠️ Failed to trigger immediate sync: {sync_error}")
                 
             return success
             

@@ -847,14 +847,19 @@ class FoundryHostAgent2:
             agent_info.append(json.dumps(ra))
         self.agents = '\n'.join(agent_info)
         
-        # Add agent to host manager's agent list for UI visibility
+        # Add or update agent in host manager's agent list for UI visibility
         if hasattr(self, '_host_manager') and self._host_manager:
-            # Check if already registered to avoid duplicates
-            if not any(a.name == card.name for a in self._host_manager._agents):
+            # Find existing agent by name
+            existing_index = next((i for i, a in enumerate(self._host_manager._agents) if a.name == card.name), None)
+            
+            if existing_index is not None:
+                # Update existing agent card
+                self._host_manager._agents[existing_index] = card
+                log_debug(f"🔄 Updated {card.name} in host manager agent list")
+            else:
+                # Add new agent
                 self._host_manager._agents.append(card)
                 log_debug(f"✅ Added {card.name} to host manager agent list")
-            else:
-                log_debug(f"ℹ️ Agent {card.name} already in host manager list")
         
         # Emit agent registration event to WebSocket for UI visibility
         self._emit_agent_registration_event(card)
