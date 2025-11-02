@@ -21,7 +21,7 @@ You'll find detailed guides to install, configure, and run the full system, alon
         </div>
         <br/><br/>
         <b>Claims Workflow</b><br/>
-        <sub>Introduction to Azure A2A + Multimodal + Memory</sub>
+        <sub>Intro to Azure A2A + Multimodal + Memory</sub>
       </a>
     </td>
     <td align="center" width="33%">
