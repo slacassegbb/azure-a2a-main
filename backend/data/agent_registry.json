@@ -478,8 +478,8 @@
     ]
   },
   {
-    "name": "AI Foundry Branding & Content Agent",
-    "description": "An intelligent branding partner powered by Azure AI Foundry. Delivers on-brand messaging, visual direction, and creative prompts grounded in the Company Branding Guide.",
+    "name": "AI Foundry Assessment & Estimation Agent",
+    "description": "An intelligent assessment specialist powered by Azure AI Foundry. Performs multi-line damage evaluations, cost estimations, and structured reporting for auto, property, travel, and health scenarios.",
     "version": "1.0.0",
     "url": "http://localhost:9002/",
     "defaultInputModes": [
@@ -493,88 +493,87 @@
     },
     "skills": [
       {
-        "id": "brand_strategy_alignment",
-        "name": "Brand Strategy Alignment",
-        "description": "Map campaign goals, audiences, and messaging pillars to the Company Branding Guide, ensuring voice, tone, and terminology remain on-brand.",
+        "id": "auto_damage_assessment",
+        "name": "Auto Damage Assessment",
+        "description": "Analyze collision/comprehensive losses, estimate labor/materials, and recommend severity using auto_estimation.md tables.",
         "examples": [
-          "Outline messaging pillars for a product-launch email aligned to the brand voice",
-          "Review draft tagline options and recommend the on-brand choice with rationale",
-          "Summarize how a campaign concept supports our innovation + trust positioning",
-          "Identify missing brand attributes in a draft hero statement and propose fixes"
+          "Front bumper and headlight replacement – provide estimated cost and labor hours",
+          "Hail damage across hood and roof – severity and paint estimate",
+          "Flooded SUV interior – determine total loss threshold",
+          "Rear-end collision with airbags deployed – labor/material cost breakdown"
         ],
         "tags": [
-          "branding",
-          "strategy",
-          "messaging",
-          "tone"
+          "auto",
+          "damage",
+          "estimation",
+          "labor-hours"
         ]
       },
       {
-        "id": "visual_identity_direction",
-        "name": "Visual Identity Direction",
-        "description": "Provide art direction, mood, and composition notes anchored in brand colors, lighting, and imagery guidelines from `company_branding.md`.",
+        "id": "property_damage_estimation",
+        "name": "Property Damage Estimation",
+        "description": "Assess dwelling and contents losses, apply depreciation, and flag mitigation steps per property_estimation.md.",
         "examples": [
-          "Translate the brand palette into a prompt for a hero illustration",
-          "Advise on lighting and depth for a LinkedIn carousel background",
-          "Recommend iconography and layout for a landing page hero graphic",
-          "Evaluate a storyboard concept for adherence to brand mood and colors"
+          "Basement flood affecting drywall and flooring – provide estimated repair cost",
+          "Kitchen fire damaging cabinets and appliances – breakdown labor vs materials",
+          "Windstorm removing 30% of roof shingles – estimate replacement cost",
+          "Contents smoke damage – calculate ACV vs replacement cost"
         ],
         "tags": [
-          "visual",
-          "design",
-          "palette",
-          "composition"
+          "property",
+          "dwelling",
+          "contents",
+          "depreciation"
         ]
       },
       {
-        "id": "brand_voice_copywriting",
-        "name": "Brand Voice Copywriting",
-        "description": "Draft or refine copy so it reflects the confident, professional, forward-looking voice defined in the branding guide.",
+        "id": "travel_loss_estimation",
+        "name": "Travel Loss Estimation",
+        "description": "Estimate trip interruption, baggage loss, and medical evacuation costs using travel_estimation.md benchmarks.",
         "examples": [
-          "Rewrite social captions to emphasize calm confidence and innovation",
-          "Transform a technical paragraph into on-brand website copy",
-          "Craft CTA variations that stay within voice and typography rules",
-          "Edit onboarding email copy to remove off-brand phrasing"
+          "Trip cancellation due to illness – estimate reimbursable costs",
+          "Lost baggage including laptop and clothing – provide replacement value",
+          "Medical emergency abroad – estimate ER, hospital, and evacuation costs",
+          "Cruise interruption – calculate prorated trip value"
         ],
         "tags": [
-          "copywriting",
-          "voice",
-          "tone",
-          "editing"
+          "travel",
+          "trip",
+          "baggage",
+          "medical"
         ]
       },
       {
-        "id": "generative_prompt_engineering",
-        "name": "Generative Prompt Engineering",
-        "description": "Create positive and negative prompts for image/video generation that encode brand palette, lighting, typography, and prohibited elements.",
+        "id": "health_cost_estimation",
+        "name": "Health Cost Estimation",
+        "description": "Estimate medical service costs, bundled treatments, and specialist visits using health_estimation.md guidance.",
         "examples": [
-          "Draft a stable diffusion prompt for a brand-aligned product hero image",
-          "Provide Midjourney prompt + negatives for a futuristic workspace scene",
-          "Generate prompt variants for thumbnails following brand composition rules",
-          "Audit an existing AI prompt and adjust it to match company branding"
+          "Appendectomy with 3-day stay – estimate total cost range",
+          "MRI plus specialist consult – provide bundled estimate",
+          "ER visit for stitches and X-ray – calculate typical charges",
+          "Specialty drug therapy – monthly cost range"
         ],
         "tags": [
-          "prompt",
-          "imaging",
-          "ai-art",
-          "guidelines"
+          "health",
+          "medical",
+          "cost-estimation"
         ]
       },
       {
-        "id": "brand_review_feedback",
-        "name": "Brand Review & QA",
-        "description": "Evaluate supplied copy, prompts, or visuals and document brand compliance gaps with actionable corrections.",
+        "id": "estimation_quality_assurance",
+        "name": "Estimation Quality & QA",
+        "description": "Apply universal estimation workflow, depreciation rules, and QA checklists from universal_estimation.md and procedures_faq.md.",
         "examples": [
-          "Assess a video script for voice consistency and suggest edits",
-          "Flag off-brand colors in a design mock and propose replacements",
-          "Provide a brand compliance checklist for a cross-channel campaign",
-          "Summarize risks before publishing content created by external partners"
+          "Provide step-by-step assessment workflow for new assignment",
+          "Apply depreciation to electronics and furniture for contents loss",
+          "Explain severity categorization based on cost thresholds",
+          "List QA checklist items before submitting estimate report"
         ],
         "tags": [
-          "review",
+          "workflow",
           "qa",
-          "compliance",
-          "feedback"
+          "depreciation",
+          "reporting"
         ]
       }
     ]
@@ -907,6 +906,108 @@
           "vision",
           "analysis",
           "ai"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "AI Foundry Branding & Content Agent",
+    "description": "An intelligent branding partner powered by Azure AI Foundry. Delivers on-brand messaging, visual direction, and creative prompts grounded in the Company Branding Guide.",
+    "version": "1.0.0",
+    "url": "http://localhost:9020/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "brand_strategy_alignment",
+        "name": "Brand Strategy Alignment",
+        "description": "Map campaign goals, audiences, and messaging pillars to the Company Branding Guide, ensuring voice, tone, and terminology remain on-brand.",
+        "examples": [
+          "Outline messaging pillars for a product-launch email aligned to the brand voice",
+          "Review draft tagline options and recommend the on-brand choice with rationale",
+          "Summarize how a campaign concept supports our innovation + trust positioning",
+          "Identify missing brand attributes in a draft hero statement and propose fixes"
+        ],
+        "tags": [
+          "branding",
+          "strategy",
+          "messaging",
+          "tone"
+        ]
+      },
+      {
+        "id": "visual_identity_direction",
+        "name": "Visual Identity Direction",
+        "description": "Provide art direction, mood, and composition notes anchored in brand colors, lighting, and imagery guidelines from `company_branding.md`.",
+        "examples": [
+          "Translate the brand palette into a prompt for a hero illustration",
+          "Advise on lighting and depth for a LinkedIn carousel background",
+          "Recommend iconography and layout for a landing page hero graphic",
+          "Evaluate a storyboard concept for adherence to brand mood and colors"
+        ],
+        "tags": [
+          "visual",
+          "design",
+          "palette",
+          "composition"
+        ]
+      },
+      {
+        "id": "brand_voice_copywriting",
+        "name": "Brand Voice Copywriting",
+        "description": "Draft or refine copy so it reflects the confident, professional, forward-looking voice defined in the branding guide.",
+        "examples": [
+          "Rewrite social captions to emphasize calm confidence and innovation",
+          "Transform a technical paragraph into on-brand website copy",
+          "Craft CTA variations that stay within voice and typography rules",
+          "Edit onboarding email copy to remove off-brand phrasing"
+        ],
+        "tags": [
+          "copywriting",
+          "voice",
+          "tone",
+          "editing"
+        ]
+      },
+      {
+        "id": "generative_prompt_engineering",
+        "name": "Generative Prompt Engineering",
+        "description": "Create positive and negative prompts for image/video generation that encode brand palette, lighting, typography, and prohibited elements.",
+        "examples": [
+          "Draft a stable diffusion prompt for a brand-aligned product hero image",
+          "Provide Midjourney prompt + negatives for a futuristic workspace scene",
+          "Generate prompt variants for thumbnails following brand composition rules",
+          "Audit an existing AI prompt and adjust it to match company branding"
+        ],
+        "tags": [
+          "prompt",
+          "imaging",
+          "ai-art",
+          "guidelines"
+        ]
+      },
+      {
+        "id": "brand_review_feedback",
+        "name": "Brand Review & QA",
+        "description": "Evaluate supplied copy, prompts, or visuals and document brand compliance gaps with actionable corrections.",
+        "examples": [
+          "Assess a video script for voice consistency and suggest edits",
+          "Flag off-brand colors in a design mock and propose replacements",
+          "Provide a brand compliance checklist for a cross-channel campaign",
+          "Summarize risks before publishing content created by external partners"
+        ],
+        "tags": [
+          "review",
+          "qa",
+          "compliance",
+          "feedback"
         ]
       }
     ]

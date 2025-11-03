@@ -4,9 +4,11 @@ This repository is an **experimental (and evolving)** implementation of an **Azu
 
 It demonstrates how to design, host, and scale a distributed network of intelligent agents using open protocols (**A2A**, **MCP**), **Azure AI Foundry**, and Azure-native services for **memory** and **observability**. The goal is to create an interoperable, production-grade framework that allows agents to communicate, collaborate, and reason together across environments and organizations.
 
-This repository contains the complete documentation and setup instructions including the **Host Orchestrator (backend)**, **Frontend UI (frontend)**, and a collection of **specialized remote agents (remote_agents)**. Each remote agent runs independently and can connect to the Host Orchestrator through open protocols like **A2A (Agent-to-Agent)** and **MCP (Model Context Protocol)**. 
+This repository contains the complete documentation and setup instructions including the **Host Orchestrator (backend)**, **Frontend UI (frontend)**, and a collection of **specialized remote agents (remote_agents)**. Each remote agent runs independently and can connect to the Host Orchestrator through open protocols like **A2A (Agent-to-Agent)**. 
 
-You'll find detailed guides to install, configure, and run the full system, along with a **ready-to-use Agent Template** for building custom agents, plus sample agents that showcase realistic enterprise workflows including the **Claims, Fraud, Legal, Branding, Classification, Deep Search, Assessment & Estimation, Customer Support (MCP), Image Analysis, Image Generation, and Sentiment Analysis (Google ADK)** agents.
+You'll find detailed guides to install, configure, and run the full system, along with a **ready-to-use Agent Template** for building custom agents, plus sample agents that showcase realistic enterprise workflows including the **Claims, Fraud, Legal, Branding, Classification, Deep Search, Assessment & Estimation, Customer Support (MCP), Image Analysis, Image Generation, and Sentiment Analysis (Google ADK)** agents. Including an agent template for you to build your own remote agents quickly. 
+
+Special thank you to Sergey Chernykh, Ryan Morgan and Owen Van Valkenburg for their peer review and contribution. 
 
 ---
 
