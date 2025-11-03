@@ -252,11 +252,6 @@ export function AgentCatalog() {
       // Set loading state for this specific agent
       setRegisteringAgent(agent.name)
       
-      // Start 7-second timer to clear loading state
-      setTimeout(() => {
-        setRegisteringAgent(null)
-      }, 7000)
-      
       toast({
         title: "Registering Agent...",
         description: `Registering ${agent.name} to the platform`,
@@ -298,6 +293,9 @@ export function AgentCatalog() {
         description: "Failed to register agent",
         variant: "destructive"
       })
+    } finally {
+      // Clear loading state after registration completes (success or failure)
+      setRegisteringAgent(null)
     }
   }
 
