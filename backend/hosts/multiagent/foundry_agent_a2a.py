@@ -5889,7 +5889,6 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
 
         def _infer_role(explicit_role: Optional[str], name_hint: Optional[str]) -> Optional[str]:
             if explicit_role:
-                print(f"🔍 _infer_role: explicit_role={explicit_role}, returning it")
                 return str(explicit_role).lower()
 
             if not name_hint:
@@ -5901,7 +5900,6 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
             # This ensures generated masks/overlays/bases are ALL kept for display, not deduplicated
             # The receiving agent will use the FIRST file as base (fallback behavior)
             if "generated_" in name_lower or "edit_" in name_lower:
-                print(f"🔍 _infer_role: file='{name_hint}' → detected generated/edited → returning None")
                 return None  # No role = kept as separate artifact, agent uses first as base
 
             # Only assign roles to USER-UPLOADED files (for editing workflows)
@@ -5990,20 +5988,15 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
         pending_file_parts: List[FilePart] = []
         refine_payload = None
 
-        print(f"🔍 [convert_parts] Processing {len(rval)} items in rval")
         for item in rval:
-            print(f"🔍 [convert_parts] Item type: {type(item)}, is DataPart: {isinstance(item, DataPart)}")
             if isinstance(item, DataPart):
                 if hasattr(item, "data") and isinstance(item.data, dict):
                     artifact_uri = item.data.get("artifact-uri")
                     existing_role = item.data.get("role") or (item.data.get("metadata") or {}).get("role")
                     name_hint = item.data.get("file-name") or item.data.get("name") or item.data.get("artifact-id")
-                    print(f"🔍 Processing DataPart: file='{name_hint}', existing_role={existing_role}")
                     role_value = _infer_role(existing_role, name_hint)
-                    print(f"🔍 _infer_role returned: {role_value}")
 
                     if role_value and str(role_value).lower() != (existing_role or "").lower():
-                        print(f"🔍 Setting role on item.data: {role_value}")
                         item.data["role"] = role_value
                         metadata_block = item.data.get("metadata") or {}
                         metadata_block["role"] = role_value
@@ -6017,11 +6010,9 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
                     }
                     existing_meta = (item.data.get("metadata") or {}).copy()
                     if role_value:
-                        print(f"🔍 Adding role to metadata dict: {role_value}")
                         metadata["role"] = role_value
                         existing_meta["role"] = role_value
                     elif existing_role:
-                        print(f"🔍 Preserving existing_role in metadata dict: {existing_role}")
                         metadata["role"] = existing_role
                         existing_meta["role"] = existing_role
                     metadata["metadata"] = existing_meta
