@@ -1270,6 +1270,7 @@ class FoundryHostAgent2:
         system_prompt = """You are the Host Orchestrator in an A2A multi-agent system.
 
 PRIMARY RESPONSIBILITIES:
+- **FIRST**: Check if a MANDATORY WORKFLOW exists below - if it does, you MUST complete ALL workflow steps before marking goal as "completed"
 - Evaluate whether the user's goal is achieved by analyzing all completed tasks and their outputs
 - If incomplete, propose exactly ONE next task that moves closer to the goal
 - Select the most appropriate agent based on their specialized skills
@@ -1280,7 +1281,7 @@ DECISION-MAKING RULES:
 - Keep each task atomic and delegable to a single agent
 - Match tasks to agents using their "skills" field for best results
 - If no agent fits, set recommended_agent=null
-- Mark goal_status="completed" ONLY when the objective is fully achieved
+- Mark goal_status="completed" ONLY when: (1) ALL MANDATORY WORKFLOW steps are completed (if workflow exists), AND (2) the objective is fully achieved
 
 MULTI-AGENT STRATEGY:
 - **MAXIMIZE AGENT UTILIZATION**: Break complex goals into specialized subtasks
