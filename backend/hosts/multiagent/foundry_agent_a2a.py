@@ -1,3 +1,23 @@
+"""
+Foundry Host Agent - Multi-Agent Orchestration with Azure AI Foundry
+
+This module implements the core host agent that coordinates multiple specialized remote agents
+using the Agent-to-Agent (A2A) protocol. It provides:
+- Multi-agent workflow orchestration with dynamic task decomposition
+- Integration with Azure AI Foundry for LLM-powered coordination
+- Real-time WebSocket streaming for UI updates
+- Memory service for cross-conversation context
+- File handling with Azure Blob Storage support
+- Comprehensive error handling and retry logic
+
+The host agent acts as an intelligent orchestrator that:
+1. Receives user requests
+2. Analyzes which specialized agents can help
+3. Coordinates parallel or sequential agent execution
+4. Synthesizes responses from multiple agents
+5. Maintains conversation context across interactions
+"""
+
 import asyncio
 import ast
 import base64
@@ -15,11 +35,14 @@ import httpx
 from dotenv import load_dotenv
 from openai import AsyncAzureOpenAI
 
-# --- OpenTelemetry and Azure Monitor imports ---
+# OpenTelemetry for distributed tracing and monitoring
 from opentelemetry import trace
 from azure.monitor.opentelemetry import configure_azure_monitor
 
+# Azure authentication - supports multiple credential types for flexibility
 from azure.identity import DefaultAzureCredential, ChainedTokenCredential, AzureCliCredential, ManagedIdentityCredential, EnvironmentCredential, ClientSecretCredential
+
+# A2A Protocol SDK for agent-to-agent communication
 from a2a.client import A2ACardResolver
 from a2a.types import (
     AgentCard,
@@ -36,16 +59,19 @@ from a2a.types import (
     TaskState,
     TextPart,
 )
+
+# Internal modules for agent coordination and data processing
 from .remote_agent_connection import RemoteAgentConnections, TaskUpdateCallback, TaskCallbackArg
 from .a2a_memory_service import a2a_memory_service
 from .a2a_document_processor import a2a_document_processor
 from pydantic import BaseModel, Field
 import time
 
+# Load environment configuration from project root
 ROOT_ENV_PATH = Path(__file__).resolve().parents[3] / ".env"
 load_dotenv(dotenv_path=ROOT_ENV_PATH, override=False)
 
-# Add backend directory to path for log_config import
+# Ensure logging utilities are accessible
 backend_dir = Path(__file__).resolve().parents[2]
 if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
@@ -54,7 +80,7 @@ from log_config import log_debug, log_info, log_success, log_warning, log_error,
 
 logger = logging.getLogger(__name__)
 
-# --- Configure Azure Monitor tracing ---
+# Configure distributed tracing with Azure Application Insights
 application_insights_connection_string = os.environ.get("APPLICATIONINSIGHTS_CONNECTION_STRING")
 if application_insights_connection_string:
     configure_azure_monitor(connection_string=application_insights_connection_string)
@@ -62,61 +88,51 @@ tracer = trace.get_tracer(__name__)
 
 def get_context_id(obj: Any, default: str = None) -> str:
     """
-    Helper function to get contextId from an object, trying both contextId and context_id fields.
-    A2A protocol officially uses contextId (camelCase), but this provides fallback compatibility.
+    Extract contextId from an object with fallback support for both camelCase and snake_case naming conventions.
+    Returns a new UUID if no context ID is found.
     """
     try:
-        # Try contextId first (official A2A protocol field name)
         if hasattr(obj, 'contextId') and obj.contextId is not None:
             return obj.contextId
-        # Fallback to context_id for compatibility
         if hasattr(obj, 'context_id') and obj.context_id is not None:
             return obj.context_id
-        # Use getattr as final fallback
         return getattr(obj, 'contextId', getattr(obj, 'context_id', default or str(uuid.uuid4())))
     except Exception:
         return default or str(uuid.uuid4())
 
 def get_message_id(obj: Any, default: str = None) -> str:
     """
-    Helper function to get messageId from an object, trying both messageId and message_id fields.
-    A2A protocol officially uses messageId (camelCase), but this provides fallback compatibility.
+    Extract messageId from an object with fallback support for both camelCase and snake_case naming conventions.
+    Returns a new UUID if no message ID is found.
     """
     try:
-        # Try messageId first (official A2A protocol field name)
         if hasattr(obj, 'messageId') and obj.messageId is not None:
             return obj.messageId
-        # Fallback to message_id for compatibility
         if hasattr(obj, 'message_id') and obj.message_id is not None:
             return obj.message_id
-        # Use getattr as final fallback
         return getattr(obj, 'messageId', getattr(obj, 'message_id', default or str(uuid.uuid4())))
     except Exception:
         return default or str(uuid.uuid4())
 
 def get_task_id(obj: Any, default: str = None) -> str:
     """
-    Helper function to get taskId from an object, trying both taskId and task_id fields.
-    A2A protocol officially uses taskId (camelCase), but this provides fallback compatibility.
+    Extract taskId from an object with fallback support for multiple naming conventions (taskId, task_id, or id).
+    Returns a new UUID if no task ID is found.
     """
     try:
-        # Try taskId first (official A2A protocol field name)
         if hasattr(obj, 'taskId') and obj.taskId is not None:
             return obj.taskId
-        # Fallback to task_id for compatibility
         if hasattr(obj, 'task_id') and obj.task_id is not None:
             return obj.task_id
-        # Try id field as alternative (Task objects use .id)
         if hasattr(obj, 'id') and obj.id is not None:
             return obj.id
-        # Use getattr as final fallback
         return getattr(obj, 'taskId', getattr(obj, 'task_id', getattr(obj, 'id', default or str(uuid.uuid4()))))
     except Exception:
         return default or str(uuid.uuid4())
 
 
 def _normalize_env_bool(raw_value: str | None, default: bool = False) -> bool:
-    """Normalize boolean environment flags that may include quotes or mixed casing."""
+    """Parse boolean environment variable with support for common true/false representations."""
     if raw_value is None:
         return default
     normalized = raw_value.strip().strip('"').strip("'").lower()
@@ -128,7 +144,7 @@ def _normalize_env_bool(raw_value: str | None, default: bool = False) -> bool:
 
 
 def _normalize_env_int(raw_value: str | None, default: int) -> int:
-    """Normalize integer environment variables that may include quotes."""
+    """Parse integer environment variable with support for quoted values."""
     if raw_value is None:
         return default
     try:
@@ -137,36 +153,33 @@ def _normalize_env_int(raw_value: str | None, default: int) -> int:
         return default
 
 class SessionContext(BaseModel):
-    """A2A protocol state management - threads handle conversation history.
-    A2A protocol handles contextId, taskId, messageId for remote agent communication."""
+    """
+    Session state management for A2A protocol conversations.
+    Tracks conversation context, task states, and agent coordination across multi-agent workflows.
+    """
     contextId: str = Field(default_factory=lambda: str(uuid.uuid4()))
     task_id: Optional[str] = None
     message_id: Optional[str] = None
     task_state: Optional[str] = None
     session_active: bool = True
-    retry_count: int = 0  # Add retry_count as a proper field
-    agent_mode: bool = False  # Agent mode flag for specialized prompts and behavior
-    enable_inter_agent_memory: bool = True  # Allow agents to access conversation context (default ON)
-    # Maintain per-agent task IDs to avoid sending a taskId created by a different agent.
+    retry_count: int = 0
+    agent_mode: bool = False
+    enable_inter_agent_memory: bool = True
     agent_task_ids: dict[str, str] = Field(default_factory=dict)
-    # Track per-agent task states so we avoid reusing terminal tasks
     agent_task_states: dict[str, str] = Field(default_factory=dict)
-    # Per-agent cooldown (epoch seconds) after rate limiting
     agent_cooldowns: dict[str, float] = Field(default_factory=dict)
-    # Most recent host-side turn (for cross-agent continuity)
     last_host_turn_text: Optional[str] = Field(default=None)
     last_host_turn_agent: Optional[str] = Field(default=None)
-    # Rolling list of host turns (newer entries at the end)
     host_turn_history: List[Dict[str, str]] = Field(default_factory=list)
 
 
-# --- Agent Mode Orchestration Models ---
+# Agent Mode Orchestration Models
 TaskStateEnum = Literal["pending", "running", "completed", "failed", "cancelled"]
 GoalStatus = Literal["incomplete", "completed"]
 
 
 class AgentModeTask(BaseModel):
-    """Represents a single remote-agent task within an agent mode plan."""
+    """Individual task within a multi-agent workflow plan."""
     task_id: str = Field(..., description="Unique A2A task identifier.")
     task_description: str = Field(..., description="Single remote-agent instruction.")
     recommended_agent: Optional[str] = Field(None, description="Agent name to execute this task.")
@@ -178,7 +191,7 @@ class AgentModeTask(BaseModel):
 
 
 class AgentModePlan(BaseModel):
-    """Overall plan anchored to a user goal, mutated by the host orchestrator."""
+    """Multi-agent workflow plan with task decomposition and state tracking."""
     goal: str = Field(..., description="User query or objective.")
     goal_status: GoalStatus = Field("incomplete", description="Completion state of the goal.")
     tasks: List[AgentModeTask] = Field(default_factory=list, description="List of all tasks in the plan.")
@@ -187,7 +200,7 @@ class AgentModePlan(BaseModel):
 
 
 class NextStep(BaseModel):
-    """Structured delta returned by the Host Orchestrator LLM."""
+    """Orchestrator decision for the next action in a multi-agent workflow."""
     goal_status: GoalStatus = Field(..., description="Whether the goal is completed or not.")
     next_task: Optional[Dict[str, Optional[str]]] = Field(
         None,
@@ -202,23 +215,29 @@ class FoundryHostAgent2:
         remote_agent_addresses: List[str],
         http_client: httpx.AsyncClient,
         task_callback: Optional[TaskUpdateCallback] = None,
-        enable_task_evaluation: bool = False,  # Keep enabled while fixing evaluation logic
-        create_agent_at_startup: bool = True,  # New parameter to control startup behavior
+        enable_task_evaluation: bool = False,
+        create_agent_at_startup: bool = True,
     ):
+        """
+        Initialize the Foundry Host Agent with Azure AI Foundry backend and multi-agent coordination.
+        
+        Args:
+            remote_agent_addresses: List of remote agent URLs to connect to
+            http_client: Shared HTTP client for agent communication
+            task_callback: Optional callback for task status updates
+            enable_task_evaluation: Whether to evaluate task completion quality
+            create_agent_at_startup: Whether to create the Azure AI agent immediately
+        """
         self.endpoint = os.environ["AZURE_AI_FOUNDRY_PROJECT_ENDPOINT"]
         
-        # Initialize Azure credential with better error handling and timeout
         try:
             log_foundry_debug("Initializing Azure authentication with timeout handling...")
             print("💡 TIP: If you see authentication errors, run 'python test_azure_auth.py' to diagnose")
             
-            # Use ChainedTokenCredential with timeout and fallback options
             from azure.identity import AzureCliCredential, DefaultAzureCredential, ChainedTokenCredential
             
-            # Create Azure CLI credential with custom timeout (reduced from default 10s to 5s)
             cli_credential = AzureCliCredential(process_timeout=5)
             
-            # Create a chained credential that tries CLI first, then falls back to DefaultAzureCredential
             self.credential = ChainedTokenCredential(
                 cli_credential,
                 DefaultAzureCredential(exclude_interactive_browser_credential=True)
@@ -232,33 +251,32 @@ class FoundryHostAgent2:
             self.credential = DefaultAzureCredential(exclude_interactive_browser_credential=True)
             log_foundry_debug("✅ Using DefaultAzureCredential as fallback")
             
-        self.agent: Optional[Dict[str, Any]] = None  # Changed from Agent to Dict
+        self.agent: Optional[Dict[str, Any]] = None
         self.task_callback = task_callback or self._default_task_callback
         self.httpx_client = http_client
         self.remote_agent_connections: Dict[str, RemoteAgentConnections] = {}
         self.cards: Dict[str, AgentCard] = {}
         self.agents: str = ''
         self.session_contexts: Dict[str, SessionContext] = {}
-        self.threads: Dict[str, str] = {}  # contextId -> thread_id
-        # Default context for persistent conversations (like ADK behavior)
+        self.threads: Dict[str, str] = {}
         self.default_contextId = str(uuid.uuid4())
-        # Track tasks per agent to support parallel execution
-        self._agent_tasks: Dict[str, Optional[Task]] = {}  # agent_name -> current_task
+        self._agent_tasks: Dict[str, Optional[Task]] = {}
         
-        # Task evaluation settings
         self.enable_task_evaluation = enable_task_evaluation
-        
-        # Agent Mode: Track original goals for follow-up messages
-        self._active_conversations: Dict[str, str] = {}  # contextId -> original_goal
+        self._active_conversations: Dict[str, str] = {}
         self.max_retries = 2
-
-        # Host conversation hand-off controls
+        # Configure context-sharing between agents for improved continuity
+        # When enabled, agents receive information about previous agent responses
         include_flag = os.environ.get("A2A_INCLUDE_LAST_HOST_TURN", "true").strip().lower()
         self.include_last_host_turn = include_flag not in {"false", "0", "no"}
+        
+        # Limit context size to prevent token overflow while maintaining useful history
         self.last_host_turn_max_chars = _normalize_env_int(
             os.environ.get("A2A_LAST_HOST_TURN_MAX_CHARS"),
-            1500,
+            1500,  # Default: ~500 tokens of context
         )
+        
+        # Number of recent agent interactions to include in context (1-5 turns)
         self.last_host_turns = max(
             1,
             min(
@@ -266,44 +284,28 @@ class FoundryHostAgent2:
                 _normalize_env_int(os.environ.get("A2A_LAST_HOST_TURNS"), 1),
             ),
         )
+        
+        # Maximum characters for memory search summaries
         self.memory_summary_max_chars = max(
             200,
             _normalize_env_int(os.environ.get("A2A_MEMORY_SUMMARY_MAX_CHARS"), 2000),
         )
 
-        # Initialize Azure Blob Storage client if configured
         self._azure_blob_client = None
         self._init_azure_blob_client()
-
-        # Clear memory index for fresh testing
         self._clear_memory_on_startup()
-
-        # Initialize messages list for status updates
         self._messages = []
-        
-        # Track host agent responses to prevent duplicates
-        self._host_responses_sent = set()  # Track contextIds where host response was already sent
-        
-        # Reference to host manager for UI integration
+        self._host_responses_sent = set()
         self._host_manager = None
-
-        # Custom root instruction override for dynamic system prompt editing
         self.custom_root_instruction = None
-        
-        # Token caching to avoid repeated auth calls
         self._cached_token = None
         self._token_expiry = None
-
-        # Store the create_agent_at_startup flag
         self._create_agent_at_startup = create_agent_at_startup
-
-        # Initialize agent registry path inside the backend/data directory
         self._agent_registry_path = self._find_agent_registry_path()
 
         loop = asyncio.get_running_loop()
         loop.create_task(self.init_remote_agent_addresses(remote_agent_addresses))
         
-        # Create agent at startup if requested (default behavior)
         if self._create_agent_at_startup:
             loop.create_task(self._create_agent_at_startup_task())
 
@@ -344,7 +346,7 @@ class FoundryHostAgent2:
             print(f"❌ Error saving agent registry: {e}")
 
     def _agent_card_to_dict(self, card: AgentCard) -> Dict[str, Any]:
-        """Convert AgentCard to dictionary format matching registry structure."""
+        """Convert AgentCard object to dictionary for JSON serialization in the agent registry."""
         try:
             card_dict = {
                 "name": card.name,
@@ -355,14 +357,12 @@ class FoundryHostAgent2:
                 "defaultOutputModes": getattr(card, 'defaultOutputModes', ["text"]),
             }
             
-            # Add capabilities if present
             if hasattr(card, 'capabilities') and card.capabilities:
                 capabilities_dict = {}
                 if hasattr(card.capabilities, 'streaming'):
                     capabilities_dict["streaming"] = card.capabilities.streaming
                 card_dict["capabilities"] = capabilities_dict
             
-            # Add skills if present
             if hasattr(card, 'skills') and card.skills:
                 skills_list = []
                 for skill in card.skills:
@@ -379,7 +379,6 @@ class FoundryHostAgent2:
             return card_dict
         except Exception as e:
             print(f"❌ Error converting agent card to dict: {e}")
-            # Return minimal structure
             return {
                 "name": getattr(card, 'name', 'Unknown'),
                 "description": getattr(card, 'description', ''),
@@ -390,12 +389,11 @@ class FoundryHostAgent2:
             }
 
     def _update_agent_registry(self, card: AgentCard):
-        """Update agent registry with new or updated agent card."""
+        """Persist agent card to registry file, updating existing entries or adding new ones."""
         try:
             registry = self._load_agent_registry()
             card_dict = self._agent_card_to_dict(card)
             
-            # Find existing agent by URL (unique identifier)
             existing_index = None
             for i, existing_agent in enumerate(registry):
                 if existing_agent.get("url") == card.url:
@@ -403,11 +401,9 @@ class FoundryHostAgent2:
                     break
             
             if existing_index is not None:
-                # Update existing agent
                 registry[existing_index] = card_dict
                 log_debug(f"📋 Updated existing agent in registry: {card.name} at {card.url}")
             else:
-                # Add new agent
                 registry.append(card_dict)
                 log_debug(f"📋 Added new agent to registry: {card.name} at {card.url}")
             
@@ -532,10 +528,21 @@ class FoundryHostAgent2:
             print(f"Continuing with startup...")
 
     async def _get_auth_headers(self) -> Dict[str, str]:
-        """Get authentication headers for Azure AI Foundry API calls with caching and timeout handling"""
+        """
+        Obtain Azure authentication headers with token caching for performance.
+        
+        Implements:
+        - Token caching with 5-minute expiry buffer to avoid auth failures
+        - Automatic retry logic (3 attempts) with exponential backoff
+        - Timeout protection (8 seconds) to prevent hanging
+        - Helpful error messages for common authentication issues
+        
+        Returns:
+            Dict containing Authorization and Content-Type headers
+        """
         log_foundry_debug(f"Getting authentication token with timeout handling and caching")
         
-        # Check if we have a valid cached token
+        # Return cached token if still valid (with 5-minute safety buffer)
         if self._cached_token and self._token_expiry:
             import datetime
             # Add 5 minute buffer before expiry
@@ -547,25 +554,23 @@ class FoundryHostAgent2:
                     "Content-Type": "application/json"
                 }
         
-        # Try to get token with retries and better timeout handling
+        # Token acquisition with retry logic for reliability
         max_retries = 3
         for attempt in range(max_retries):
             try:
-                # Use the correct authentication scope for Azure AI Foundry
                 log_foundry_debug(f"Token attempt {attempt + 1}/{max_retries}...")
                 
-                # Wrap the token call in asyncio.wait_for to add our own timeout
+                # Execute synchronous token acquisition in thread pool to avoid blocking async event loop
                 import asyncio
                 
                 async def get_token_async():
-                    # Run the synchronous get_token in a thread pool to avoid blocking
                     loop = asyncio.get_event_loop()
                     return await loop.run_in_executor(
                         None, 
                         lambda: self.credential.get_token("https://ai.azure.com/.default")
                     )
                 
-                # Apply a 8-second timeout (less than the 10s default)
+                # 8-second timeout prevents indefinite hanging on slow networks
                 token = await asyncio.wait_for(get_token_async(), timeout=8.0)
                 
                 # Cache the token
@@ -822,7 +827,10 @@ class FoundryHostAgent2:
         self.register_agent_card(card)
 
     def register_agent_card(self, card: AgentCard):
-        # Respect the remote agent's advertised streaming capability so non-streaming agents continue to work
+        """
+        Register a remote agent by its card, establishing connection and updating UI state.
+        Handles both new registrations and updates to existing agents.
+        """
         if hasattr(card, 'capabilities') and card.capabilities:
             streaming_flag = getattr(card.capabilities, 'streaming', None)
             if streaming_flag is True:
@@ -836,7 +844,6 @@ class FoundryHostAgent2:
                 except Exception:
                     pass
         
-        # Update agent registry with new or updated agent card
         self._update_agent_registry(card)
         
         remote_connection = RemoteAgentConnections(self.httpx_client, card, self.task_callback)
@@ -847,26 +854,19 @@ class FoundryHostAgent2:
             agent_info.append(json.dumps(ra))
         self.agents = '\n'.join(agent_info)
         
-        # Add or update agent in host manager's agent list for UI visibility
         if hasattr(self, '_host_manager') and self._host_manager:
-            # Find existing agent by name
             existing_index = next((i for i, a in enumerate(self._host_manager._agents) if a.name == card.name), None)
             
             if existing_index is not None:
-                # Update existing agent card
                 self._host_manager._agents[existing_index] = card
                 log_debug(f"🔄 Updated {card.name} in host manager agent list")
             else:
-                # Add new agent
                 self._host_manager._agents.append(card)
                 log_debug(f"✅ Added {card.name} to host manager agent list")
         
-        # Emit agent registration event to WebSocket for UI visibility
         self._emit_agent_registration_event(card)
         
-        # Update agent instructions if agent already exists
         if self.agent:
-            # Update the agent's instructions with the new agent list
             asyncio.create_task(self._update_agent_instructions())
 
     async def create_agent(self) -> Dict[str, Any]:
@@ -998,8 +998,8 @@ class FoundryHostAgent2:
             pass
 
     def _get_tools(self) -> List[Dict[str, Any]]:
-        # Always provide tools - they work dynamically regardless of agent registration timing
-        tools = [
+        """Define Azure AI Foundry function tools for agent coordination."""
+        return [
             {
                 "type": "function",
                 "function": {
@@ -1024,18 +1024,18 @@ class FoundryHostAgent2:
                 },
             },
         ]
-        return tools
 
     def root_instruction(self, current_agent: str, agent_mode: bool = False) -> str:
-        # Check if we have a custom instruction override
+        """
+        Generate system prompt for the host agent based on operational mode.
+        Supports custom instruction overrides and agent-mode vs standard orchestration prompts.
+        """
         if self.custom_root_instruction:
-            # Safely substitute known placeholders without breaking JSON braces or other content
             instruction = self.custom_root_instruction
             instruction = instruction.replace('{agents}', self.agents)
             instruction = instruction.replace('{current_agent}', current_agent)
             return instruction
 
-        # Use agent mode prompt if enabled
         if agent_mode:
             return f"""You are a specialized **Agent Coordinator** operating in agent-to-agent communication mode.
                 
@@ -1147,7 +1147,10 @@ class FoundryHostAgent2:
         response_model: type[BaseModel],
         context_id: str
     ) -> BaseModel:
-        """Call Azure OpenAI with structured output using OpenAI SDK."""
+        """
+        Make a structured output request to Azure OpenAI for agent-mode planning.
+        Uses Pydantic models to enforce response schema validation.
+        """
         try:
             print(f"🤖 [Agent Mode] Calling Azure OpenAI for structured output...")
             await self._emit_status_event("Planning next task with AI...", context_id)
@@ -1206,31 +1209,51 @@ class FoundryHostAgent2:
         workflow: Optional[str] = None
     ) -> List[str]:
         """
-        Agent Mode orchestration loop: iteratively plan and execute tasks until goal is complete.
-        Returns list of response strings for final synthesis.
+        Execute agent-mode orchestration: AI-driven task decomposition and multi-agent coordination.
+        
+        This is the core intelligence loop that:
+        1. Uses Azure OpenAI to analyze the user's goal and available agents
+        2. Breaks down complex requests into discrete, delegable tasks
+        3. Selects the best agent for each task based on skills and capabilities
+        4. Executes tasks sequentially or in parallel as appropriate
+        5. Synthesizes results from multiple agents into coherent responses
+        6. Adapts to failures, rate limits, and user feedback dynamically
+        
+        The loop continues until the goal is marked "completed" by the orchestrator LLM
+        or the maximum iteration limit is reached (safety mechanism).
+        
+        Args:
+            user_message: The user's original request or follow-up message
+            context_id: Conversation identifier for state management
+            session_context: Session state with agent task tracking
+            event_logger: Optional callback for logging orchestration events
+            workflow: Optional predefined workflow steps to enforce
+            
+        Returns:
+            List of response strings from executed tasks for final synthesis
         """
         log_debug(f"🎯 [Agent Mode] Starting orchestration loop for goal: {user_message[:100]}...")
         log_debug(f"📋 [Agent Mode] Workflow parameter received: {workflow[:100] if workflow else 'None'}")
         await self._emit_status_event("Initializing Agent Mode orchestration...", context_id)
         
-        # Determine if this is a follow-up or new conversation
+        # Handle conversation continuity - distinguish new goals from follow-up clarifications
         if context_id in self._active_conversations:
-            # Follow-up message - append to original goal
+            # User is providing additional information for an existing goal
             original_goal = self._active_conversations[context_id]
             goal_text = f"{original_goal}\n\n[Additional Information Provided]: {user_message}"
             print(f"🔄 [Agent Mode] Follow-up detected - appending to original goal")
         else:
-            # New conversation - track it
+            # Fresh conversation - establish new goal
             goal_text = user_message
             self._active_conversations[context_id] = user_message
             print(f"🆕 [Agent Mode] New conversation started")
         
-        # Initialize plan
+        # Initialize execution plan with empty task list
         plan = AgentModePlan(goal=goal_text, goal_status="incomplete")
         iteration = 0
-        max_iterations = 20  # Safety limit
+        max_iterations = 20  # Safety limit to prevent infinite loops
         
-        # Collect all responses for final synthesis
+        # Accumulate outputs from all completed tasks
         all_task_outputs = []
         
         # Log initial plan
@@ -1242,23 +1265,32 @@ class FoundryHostAgent2:
         print(f"Tasks: {len(plan.tasks)} (empty initially)")
         print(f"{'='*80}\n")
         
-        # System prompt for orchestrator
+        # System prompt that guides the orchestrator's decision-making
+        # This is the "brain" that decides which agents to use and when
         system_prompt = """You are the Host Orchestrator in an A2A multi-agent system.
 
-Responsibilities:
-- Evaluate whether the user's goal is achieved based on the full plan (all tasks, states, and outputs).
-- If the goal is incomplete, propose exactly ONE next remote-agent task that advances the goal.
+PRIMARY RESPONSIBILITIES:
+- Evaluate whether the user's goal is achieved by analyzing all completed tasks and their outputs
+- If incomplete, propose exactly ONE next task that moves closer to the goal
+- Select the most appropriate agent based on their specialized skills
 
-Guidelines:
-- Always reason over the entire plan; do not ignore earlier tasks or outputs.
-- Never alter or repeat completed tasks unless retrying is justified.
-- Keep each next task atomic and delegable to a single agent.
-- If no agent fits, set recommended_agent=null.
-- If the goal is achieved, return goal_status="completed" and next_task=null.
-- Consider failed tasks in your planning - you can retry with modifications or try alternative approaches.
-- **MAXIMIZE AGENT UTILIZATION**: Always try to use as many relevant agents as possible to complete the goal and their specialized skills. Break down complex goals into multiple tasks that can leverage different agents' specialized capabilities. Don't solve everything with one agent when multiple agents can contribute their expertise.
-- **USE SKILLS FOR SELECTION**: Each agent has a "skills" field listing their specific capabilities. Use these skills to make informed decisions about which agent is best suited for each task.
-- You may also use the same agent multiple times if it is relevant to the goal.
+DECISION-MAKING RULES:
+- Analyze the ENTIRE plan history - don't ignore previous tasks or outputs
+- Never repeat completed tasks unless explicitly retrying a failure
+- Keep each task atomic and delegable to a single agent
+- Match tasks to agents using their "skills" field for best results
+- If no agent fits, set recommended_agent=null
+- Mark goal_status="completed" ONLY when the objective is fully achieved
+
+MULTI-AGENT STRATEGY:
+- **MAXIMIZE AGENT UTILIZATION**: Break complex goals into specialized subtasks
+- Use multiple agents when their combined expertise adds value
+- Don't force one agent to handle everything when others can help
+- The same agent can be used multiple times for related subtasks
+
+FAILURE HANDLING:
+- Consider failed tasks in planning
+- You can retry with modifications or try alternative agents/approaches
 
 ### 🔄 TASK DECOMPOSITION PRINCIPLES
 - **Read ALL Agent Skills First**: Before creating any task, carefully read through the skill descriptions of ALL available agents to understand what each can provide.
@@ -1298,7 +1330,21 @@ Do NOT skip steps. Do NOT mark goal as completed until ALL workflow steps are do
         else:
             log_debug(f"📋 [Agent Mode] ❌ No workflow to inject (workflow is None or empty)")
         
-        system_prompt += """
+        # Add workflow-specific completion logic if workflow is present
+        if workflow and workflow.strip():
+            system_prompt += """
+
+### 🚨 CRITICAL: WHEN TO STOP (WORKFLOW MODE)
+- A WORKFLOW IS ACTIVE - You MUST complete ALL workflow steps before marking goal as "completed"
+- Compare completed tasks against the workflow steps above
+- If ANY workflow step is missing or incomplete, goal_status MUST be "incomplete"
+- ONLY mark goal_status="completed" when:
+  1. EVERY workflow step has a corresponding completed task, AND
+  2. All completed tasks succeeded, OR
+  3. Agents explicitly asked for user input and are waiting for a response
+- Do NOT assume "one task is enough" - check the workflow step count and verify all are done!"""
+        else:
+            system_prompt += """
 
 ### 🚨 CRITICAL: WHEN TO STOP (LOOP DETECTION & USER INPUT)
 - ONLY mark goal as "completed" in these specific cases:
@@ -1424,34 +1470,47 @@ Analyze the plan and determine the next step. If you need information that isn't
                         status_text=f"Task created: {task_desc}"
                     )
                     
-                    # Execute task via send_message
+                    # Execute the task by delegating to the selected remote agent
                     try:
                         if recommended_agent and recommended_agent in self.cards:
                             log_debug(f"🚀 [Agent Mode] Calling agent: {recommended_agent}")
                             
-                            # For sequential tasks, keep only the MOST RECENT file of each role
-                            # This prevents file accumulation that confuses agents
+                            # File deduplication for image editing workflows ONLY
+                            # For editing workflows (base/mask/overlay), keep only the latest version of each role
+                            # For generation workflows, keep ALL artifacts (they're different results, not iterations)
                             if hasattr(session_context, '_latest_processed_parts') and len(session_context._latest_processed_parts) > 1:
                                 from collections import defaultdict
                                 old_count = len(session_context._latest_processed_parts)
-                                role_to_latest = defaultdict(lambda: None)
                                 
-                                # Keep only the most recent file for each role
+                                # Separate artifacts with editing roles (base/mask/overlay) from generated outputs
+                                editing_roles = defaultdict(lambda: None)  # For base/mask/overlay - keep latest only
+                                generated_artifacts = []  # For generated images/files - keep ALL
+                                
                                 for part in reversed(session_context._latest_processed_parts):  # reversed = most recent first
+                                    role = None
                                     if isinstance(part, DataPart) and isinstance(part.data, dict):
                                         role = part.data.get('role')
-                                        if role and role not in role_to_latest:
-                                            role_to_latest[role] = part
                                     elif hasattr(part, 'root') and isinstance(part.root, DataPart) and isinstance(part.root.data, dict):
                                         role = part.root.data.get('role')
-                                        if role and role not in role_to_latest:
-                                            role_to_latest[role] = part
+                                    
+                                    # Deduplicate ONLY editing roles (base, mask, overlay)
+                                    # These are meant for iterative editing workflows
+                                    if role in ['base', 'mask', 'overlay']:
+                                        if role not in editing_roles:
+                                            editing_roles[role] = part
+                                    else:
+                                        # Keep ALL generated artifacts (no role or other roles)
+                                        # These are different outputs, not iterations of the same file
+                                        generated_artifacts.append(part)
                                 
-                                # Replace accumulated files with only the most recent per role
-                                if role_to_latest:
-                                    latest_files = list(role_to_latest.values())
-                                    session_context._latest_processed_parts = latest_files
-                                    print(f"📎 [Agent Mode] Deduplicated files: {old_count} files → {len(latest_files)} files (kept most recent per role)")
+                                # Combine: editing roles (deduplicated) + ALL generated artifacts  
+                                # Keep generated_artifacts in newest-first order (from reversed iteration)
+                                # This ensures the LATEST generated image is FIRST, so it's used as base for next edit
+                                deduplicated_parts = list(editing_roles.values()) + generated_artifacts
+                                session_context._latest_processed_parts = deduplicated_parts
+                                print(f"📎 [Agent Mode] File management: {old_count} files → {len(deduplicated_parts)} files")
+                                print(f"   • Editing roles (deduplicated): {len(editing_roles)} (base/mask/overlay)")
+                                print(f"   • Generated artifacts (all kept, newest first): {len(generated_artifacts)}")
                             
                             # Create dummy tool context for send_message
                             dummy_context = DummyToolContext(session_context, self._azure_blob_client)
@@ -1464,11 +1523,12 @@ Analyze the plan and determine the next step. If you need information that isn't
                                 suppress_streaming=False  # Show in UI
                             )
                             
-                            # Extract A2A task state and output
+                            # Parse and record task execution results
+                            # Extract state information from A2A Task protocol response
                             if responses and len(responses) > 0:
                                 response_obj = responses[0] if isinstance(responses, list) else responses
                                 
-                                # Check if we got a Task object with A2A state
+                                # A2A Task response includes detailed state and artifacts
                                 if isinstance(response_obj, Task):
                                     task.state = response_obj.status.state
                                     task.output = {
@@ -1483,14 +1543,49 @@ Analyze the plan and determine the next step. If you need information that isn't
                                         log_error(f"[Agent Mode] Task failed: {task.error_message}")
                                     else:
                                         log_info(f"✅ [Agent Mode] Task completed with state: {task.state}")
-                                        all_task_outputs.append(str(response_obj.result))
+                                        # Collect text result
+                                        output_text = str(response_obj.result) if response_obj.result else ""
+                                        
+                                        # Also collect any artifacts (files, images, etc.) from this task
+                                        if response_obj.artifacts:
+                                            artifact_descriptions = []
+                                            for artifact in response_obj.artifacts:
+                                                if hasattr(artifact, 'parts'):
+                                                    for part in artifact.parts:
+                                                        # Add artifact parts to session context for next task
+                                                        if not hasattr(session_context, '_latest_processed_parts'):
+                                                            session_context._latest_processed_parts = []
+                                                        session_context._latest_processed_parts.append(part)
+                                                        print(f"📎 [Agent Mode] Added artifact to context: {getattr(part.root.file, 'name', 'unknown') if hasattr(part, 'root') and hasattr(part.root, 'file') else 'artifact'}")
+                                                        
+                                                        if hasattr(part, 'root'):
+                                                            # File parts (images, documents, etc.)
+                                                            if hasattr(part.root, 'file'):
+                                                                file_info = part.root.file
+                                                                file_name = getattr(file_info, 'name', 'unknown')
+                                                                file_url = getattr(file_info, 'uri', None)
+                                                                artifact_descriptions.append(f"[File: {file_name}]")
+                                                                if file_url:
+                                                                    artifact_descriptions.append(f"URI: {file_url}")
+                                                            # Text parts in artifacts
+                                                            elif hasattr(part.root, 'text'):
+                                                                artifact_descriptions.append(part.root.text)
+                                            
+                                            if artifact_descriptions:
+                                                artifacts_summary = "\n".join(artifact_descriptions)
+                                                all_task_outputs.append(f"{output_text}\n\nArtifacts:\n{artifacts_summary}")
+                                            else:
+                                                all_task_outputs.append(output_text)
+                                        else:
+                                            all_task_outputs.append(output_text)
                                 else:
-                                    # Handle string response
+                                    # Simple string response (legacy format)
                                     task.state = "completed"
                                     task.output = {"result": str(response_obj)}
                                     all_task_outputs.append(str(response_obj))
                                     log_info(f"✅ [Agent Mode] Task completed successfully")
                             else:
+                                # No response indicates communication failure
                                 task.state = "failed"
                                 task.error_message = "No response from agent"
                                 log_error(f"[Agent Mode] No response from agent")
@@ -2703,8 +2798,29 @@ Answer with just JSON:
         agent_name: str,
         message: str,
         tool_context: Any,
-        suppress_streaming: bool = True,  # Default to True - only host agent should respond to user
+        suppress_streaming: bool = True,
     ):
+        """
+        Send a message to a remote agent and handle the A2A protocol response.
+        
+        This is the core method for agent-to-agent communication. It:
+        - Adds conversation context from previous agent interactions
+        - Searches semantic memory for relevant past conversations
+        - Handles A2A Task protocol responses (completed, failed, input_required, etc.)
+        - Implements retry logic for rate limits and transient failures
+        - Converts agent responses into formats usable by other agents
+        - Stores all interactions in memory for future retrieval
+        
+        Args:
+            agent_name: Name of the target remote agent
+            message: The message/task to send to the agent
+            tool_context: Context object with session state and artifact storage
+            suppress_streaming: If True, don't stream to main chat (used for sub-agent calls)
+                               If False, stream to UI (used for direct user-facing responses)
+        
+        Returns:
+            List of response parts (text, files, data) from the remote agent
+        """
         """Sends a task using the A2A protocol with parallel execution support.
         
         This version is optimized for parallel agent execution by:
@@ -3697,6 +3813,31 @@ Original request: {message}"""
         thread_id: str = None,
         target_agent_name: Optional[str] = None,
     ) -> str:
+        """
+        Enhance agent messages with relevant context for better continuity and accuracy.
+        
+        Context enrichment strategies:
+        1. **Last Turn Context**: Include recent responses from other agents so the current
+           agent knows what has already been discussed/done (configurable via env vars)
+        
+        2. **Memory Search**: Query semantic memory service to find similar past conversations
+           that might provide useful precedents or patterns (only if enabled for this session)
+        
+        3. **Cross-Agent Handoff**: When agent B is called after agent A, include agent A's
+           response so agent B can build on it rather than starting from scratch
+        
+        The context is carefully sized to stay within token limits while maximizing
+        the useful information provided to the agent.
+        
+        Args:
+            message: The original message to send to the agent
+            session_context: Current session state with conversation history
+            thread_id: Optional thread ID for Azure AI Foundry conversation
+            target_agent_name: Name of the agent receiving this message
+            
+        Returns:
+            Enhanced message with relevant context prepended
+        """
         """Add relevant conversation context and memory insights to the message for better agent responses.
         
         Following Google A2A best practices: host manages context and includes it in agent messages.
@@ -3951,6 +4092,30 @@ Original request: {message}"""
         processing_time: float,
         span: Any
     ):
+        """
+        Persist agent-to-agent interactions to memory service for future semantic search.
+        
+        Why we store interactions:
+        - Enable "has this been asked before?" queries
+        - Learn from past agent responses and patterns
+        - Provide context for multi-turn conversations
+        - Track agent performance and reliability
+        - Support debugging and troubleshooting
+        
+        The memory service uses Azure Cognitive Search with vector embeddings to enable
+        semantic similarity search. This means agents can find relevant past conversations
+        even when the wording is different.
+        
+        Example: If a user asks "What's our refund policy?" and later asks "Can I get my
+        money back?", the agent can retrieve the previous policy explanation.
+        
+        Args:
+            outbound_request: The original A2A message sent to the remote agent
+            inbound_response: The response received from the remote agent
+            agent_name: Name of the agent that processed the request
+            processing_time: How long the agent took to respond (for performance tracking)
+            span: OpenTelemetry span for distributed tracing
+        """
         """Store complete A2A protocol payloads"""
         try:
             # Prepare interaction data with complete A2A payloads
@@ -4172,6 +4337,36 @@ Original request: {message}"""
         return cleaned_parts
 
     async def run_conversation_with_parts(self, message_parts: List[Part], context_id: Optional[str] = None, event_logger=None, agent_mode: bool = False, enable_inter_agent_memory: bool = False, workflow: Optional[str] = None) -> Any:
+        """
+        Process a user message that may include files, images, or multimodal content.
+        
+        This is the main entry point for complex user interactions involving:
+        - File uploads (PDFs, images, documents)
+        - Image editing requests (with base/mask images)
+        - Multi-step workflows with file handoffs between agents
+        
+        Processing pipeline:
+        1. **File Processing**: Extract text from documents, analyze images, handle masks
+        2. **Artifact Storage**: Save files to Azure Blob or local storage with unique IDs
+        3. **Context Preparation**: Package files for agent consumption (URIs + metadata)
+        4. **Mode Selection**: Route to agent-mode orchestration or standard conversation
+        5. **Response Synthesis**: Combine results from multiple agents if needed
+        
+        Agent Mode vs Standard Mode:
+        - **Agent Mode**: AI orchestrator breaks down request into specialized tasks
+        - **Standard Mode**: Single LLM call with tool use for agent delegation
+        
+        Args:
+            message_parts: List of A2A Part objects (text, files, data)
+            context_id: Conversation identifier for state management
+            event_logger: Optional callback for logging conversation events
+            agent_mode: If True, use multi-agent orchestration loop
+            enable_inter_agent_memory: If True, agents can access conversation context
+            workflow: Optional predefined workflow steps to execute
+            
+        Returns:
+            List of response strings from the host agent
+        """
         """Run conversation with A2A message parts (including files)."""
         log_debug(f"ENTRY: run_conversation_with_parts called with {len(message_parts) if message_parts else 0} parts")
         try:
@@ -5327,6 +5522,35 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
                 return final_responses
 
     async def _handle_tool_calls(self, run: Dict[str, Any], thread_id: str, context_id: str, session_context: SessionContext, event_logger=None):
+        """
+        Execute function tools requested by the host agent during conversation processing.
+        
+        The host agent can call two main tools:
+        1. **list_remote_agents**: Get list of available specialized agents
+        2. **send_message**: Delegate tasks to specific remote agents
+        
+        Key optimization: PARALLEL EXECUTION
+        - When multiple agents are needed, we call them simultaneously rather than sequentially
+        - This dramatically reduces latency for multi-agent workflows
+        - Example: Analyzing an image AND searching a knowledge base can happen at once
+        
+        The function handles:
+        - Parsing tool call arguments from Azure AI Foundry JSON format
+        - Executing send_message calls in parallel using asyncio.gather
+        - Processing list_remote_agents calls sequentially (fast operation)
+        - Converting responses back to Azure AI Foundry expected format
+        - Error handling for individual tool failures (doesn't fail entire batch)
+        
+        Args:
+            run: Azure AI Foundry run object with required_action containing tool_calls
+            thread_id: Azure AI Foundry thread identifier
+            context_id: Conversation context for state management
+            session_context: Session state with agent tracking
+            event_logger: Optional callback for logging tool execution
+            
+        Returns:
+            Last tool output for fallback response if host agent doesn't generate text
+        """
         with tracer.start_as_current_span("handle_tool_calls") as span:
             span.set_attribute("context_id", context_id)
             print(f"_handle_tool_calls called for thread_id: {thread_id}, context_id: {context_id}")
@@ -5665,6 +5889,7 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
 
         def _infer_role(explicit_role: Optional[str], name_hint: Optional[str]) -> Optional[str]:
             if explicit_role:
+                print(f"🔍 _infer_role: explicit_role={explicit_role}, returning it")
                 return str(explicit_role).lower()
 
             if not name_hint:
@@ -5672,6 +5897,14 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
 
             name_lower = str(name_hint).lower()
 
+            # Check for generated/edited outputs FIRST (before role keywords)
+            # This ensures generated masks/overlays/bases are ALL kept for display, not deduplicated
+            # The receiving agent will use the FIRST file as base (fallback behavior)
+            if "generated_" in name_lower or "edit_" in name_lower:
+                print(f"🔍 _infer_role: file='{name_hint}' → detected generated/edited → returning None")
+                return None  # No role = kept as separate artifact, agent uses first as base
+
+            # Only assign roles to USER-UPLOADED files (for editing workflows)
             if "mask" in name_lower or name_lower.endswith("-mask.png") or name_lower.endswith("_mask.png"):
                 return "mask"
 
@@ -5680,11 +5913,6 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
                 or name_lower.endswith("_base.png")
                 or "_base" in name_lower
             ):
-                return "base"
-
-            # Recognize generated/edited images from image generator agents as base images
-            # This enables proper file exchange between agents (e.g., generator -> vision -> generator)
-            if "generated_" in name_lower or "edit_" in name_lower:
                 return "base"
 
             image_exts = (
@@ -5762,15 +5990,20 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
         pending_file_parts: List[FilePart] = []
         refine_payload = None
 
+        print(f"🔍 [convert_parts] Processing {len(rval)} items in rval")
         for item in rval:
+            print(f"🔍 [convert_parts] Item type: {type(item)}, is DataPart: {isinstance(item, DataPart)}")
             if isinstance(item, DataPart):
                 if hasattr(item, "data") and isinstance(item.data, dict):
                     artifact_uri = item.data.get("artifact-uri")
                     existing_role = item.data.get("role") or (item.data.get("metadata") or {}).get("role")
                     name_hint = item.data.get("file-name") or item.data.get("name") or item.data.get("artifact-id")
+                    print(f"🔍 Processing DataPart: file='{name_hint}', existing_role={existing_role}")
                     role_value = _infer_role(existing_role, name_hint)
+                    print(f"🔍 _infer_role returned: {role_value}")
 
                     if role_value and str(role_value).lower() != (existing_role or "").lower():
+                        print(f"🔍 Setting role on item.data: {role_value}")
                         item.data["role"] = role_value
                         metadata_block = item.data.get("metadata") or {}
                         metadata_block["role"] = role_value
@@ -5784,9 +6017,11 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
                     }
                     existing_meta = (item.data.get("metadata") or {}).copy()
                     if role_value:
+                        print(f"🔍 Adding role to metadata dict: {role_value}")
                         metadata["role"] = role_value
                         existing_meta["role"] = role_value
                     elif existing_role:
+                        print(f"🔍 Preserving existing_role in metadata dict: {existing_role}")
                         metadata["role"] = existing_role
                         existing_meta["role"] = existing_role
                     metadata["metadata"] = existing_meta
@@ -5869,6 +6104,18 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
         for uri_value, parts_list in uri_to_parts.items():
             if assigned_roles.get(uri_value):
                 continue
+            
+            # Check if this is a generated/edited artifact - don't assign default overlay role
+            # Extract filename from URI to check
+            file_name_from_uri = uri_value.split('/')[-1].split('?')[0].lower() if uri_value else ""
+            is_generated_artifact = "generated_" in file_name_from_uri or "edit_" in file_name_from_uri
+            
+            if is_generated_artifact:
+                print(f"🔍 Skipping default 'overlay' role for generated artifact: {file_name_from_uri}")
+                # Don't assign any role - keep generated artifacts separate for display
+                continue
+            
+            # For other files (user uploads, logos, etc.), assign overlay as default
             for part in parts_list:
                 _apply_role_to_part(part, "overlay")
             assigned_roles[uri_value] = "overlay"
@@ -5900,6 +6147,44 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
         return flattened_parts
 
     async def convert_part(self, part: Part, tool_context: Any, context_id: str = None):
+        """
+        Convert A2A Part objects into formats suitable for processing and agent delegation.
+        
+        Part types and their handling:
+        
+        1. **TextPart**: Simple text content, passed through unchanged
+        
+        2. **FilePart**: Uploaded files requiring processing
+           - Extract text from PDFs, Word docs, etc. using document processor
+           - Store in Azure Blob Storage or local filesystem
+           - Generate artifact URIs for agent access
+           - Handle special cases like image masks for editing
+        
+        3. **DataPart**: Structured data or metadata
+           - JSON objects with agent-specific information
+           - Configuration parameters
+           - File metadata and references
+        
+        File processing workflow:
+        - Validate file size (50MB limit for security)
+        - Determine storage strategy (blob vs local based on size)
+        - Extract text content using Azure AI Document Intelligence
+        - Create artifact with unique ID and accessible URI
+        - Return metadata for agent consumption
+        
+        Special handling for image editing:
+        - Base images: Source image to be edited
+        - Mask images: Transparency mask defining edit regions
+        - Overlay images: Images to composite onto base
+        
+        Args:
+            part: A2A Part object to convert
+            tool_context: Context with artifact storage and session state
+            context_id: Optional conversation context for status updates
+            
+        Returns:
+            Converted part(s) ready for agent consumption or host processing
+        """
         # Don't print the entire part (contains large base64 data)
         if hasattr(part, 'root') and part.root.kind == 'file':
             file_name = getattr(part.root.file, 'name', 'unknown')
@@ -6409,25 +6694,77 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
 
 # Update DummyToolContext to use SessionContext
 class DummyToolContext:
+    """
+    Tool context for artifact management during conversation processing.
+    
+    This class provides storage and retrieval for files and data artifacts that flow
+    through multi-agent conversations. It implements a hybrid storage strategy:
+    
+    **Small files (<1MB)**: Stored locally for fast access
+    **Large files (>1MB)**: Stored in Azure Blob Storage with SAS token URIs
+    
+    Artifacts are assigned unique IDs and made accessible to remote agents via:
+    - HTTP URIs for local files (served by backend API)
+    - Azure Blob SAS URIs with time-limited read access (24 hours)
+    
+    The context also tracks processing actions:
+    - skip_summarization: Flag to bypass response summarization
+    - escalate: Flag to indicate human intervention needed
+    """
     def __init__(self, session_context: SessionContext, azure_blob_client=None):
         self.state = session_context
-        self._artifacts = {}  # A2A compliant artifact storage with metadata
-        self._azure_blob_client = azure_blob_client  # Pass Azure client from host agent
+        self._artifacts = {}  # Maps artifact_id -> {artifact, file_bytes, uri, etc.}
+        self._azure_blob_client = azure_blob_client
         
-        # Create local storage directory for uploaded files
+        # Local filesystem storage for smaller artifacts
         self.storage_dir = os.path.join(os.getcwd(), "host_agent_files")
         os.makedirs(self.storage_dir, exist_ok=True)
         
-        # A2A Artifact service base URL (for URI references)
-        self.artifact_base_url = f"http://localhost:8000/artifacts"  # Configurable for production
+        # Base URL for artifact retrieval (configurable per deployment)
+        self.artifact_base_url = f"http://localhost:8000/artifacts"
         
+        # Action flags for conversation flow control
         class Actions:
-            skip_summarization = False
-            escalate = False
+            skip_summarization = False  # Skip host response if agent already provided full answer
+            escalate = False  # Escalate to human if agent cannot complete task
         self.actions = Actions()
     
     async def save_artifact(self, file_id: str, file_part):
-        """Save artifact following A2A protocol best practices with Azure Blob Storage support."""
+        """
+        Save a file artifact with intelligent storage selection and A2A protocol compliance.
+        
+        Storage Strategy (hybrid approach for optimal performance and cost):
+        
+        **Azure Blob Storage** (for files >1MB or when FORCE_AZURE_BLOB=true):
+        - Scalable: Handle files up to 50MB
+        - Accessible: Generate SAS tokens for secure agent access
+        - Durable: Enterprise-grade reliability and backup
+        - Cost-effective: Pay only for storage used
+        
+        **Local Filesystem** (for files <1MB):
+        - Fast: No network latency for small files
+        - Simple: Direct filesystem access
+        - Development-friendly: Easy debugging
+        
+        Security Measures:
+        - 50MB file size limit to prevent DoS attacks
+        - SAS tokens with 24-hour expiry for time-limited access
+        - Virus scanning hooks (pending field can be extended)
+        - Unique artifact IDs prevent path traversal attacks
+        
+        A2A Protocol Compliance:
+        - Returns DataPart with artifact-id and artifact-uri
+        - Supports FileWithUri for agent-to-agent file passing
+        - Maintains metadata (upload time, size, content type)
+        - Preserves file roles (base, mask, overlay) for image editing
+        
+        Args:
+            file_id: Original filename from user upload
+            file_part: A2A file part or dict with file data
+            
+        Returns:
+            DataPart with artifact-id, artifact-uri, and storage metadata
+        """
         import uuid
         import os
         from datetime import datetime, timedelta

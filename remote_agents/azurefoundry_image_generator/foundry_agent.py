@@ -1361,14 +1361,15 @@ Always validate the prompt for safety before invoking the tool.
                         "provider-image-call-id": entry.get("image_call_id"),
                         "provider": "openai",
                         "model": model_to_use,
-                        "role": "base",  # Explicitly mark generated images as base for agent-to-agent file exchange
-                        "metadata": {"role": "base"},  # Include in metadata for a2a protocol
+                        # Don't assign role - generated images are distinct artifacts, not editing inputs
+                        # They should all be displayed, not deduplicated
                     }
                     artifact_record["local-path"] = str(saved_path)
                     if entry.get("file_size_bytes") is not None:
                         artifact_record["file-size"] = entry["file_size_bytes"]
                     if entry.get("source_url"):
                         artifact_record["source-url"] = entry["source_url"]
+                    logger.info(f"🖼️ [EDIT] Created artifact_record: file={artifact_record.get('file-name')}, has_role={'role' in artifact_record}, keys={list(artifact_record.keys())}")
                     generated_artifacts.append(artifact_record)
 
             images.append(entry)
@@ -1811,14 +1812,15 @@ Always validate the prompt for safety before invoking the tool.
                         "provider-image-call-id": entry.get("image_call_id"),
                         "provider": "openai",
                         "model": model,
-                        "role": "base",  # Explicitly mark edited images as base for agent-to-agent file exchange
-                        "metadata": {"role": "base"},  # Include in metadata for a2a protocol
+                        # Don't assign role - edited images are distinct artifacts, not editing inputs
+                        # They should all be displayed, not deduplicated
                     }
                     artifact_record["local-path"] = str(saved_path)
                     if entry.get("file_size_bytes") is not None:
                         artifact_record["file-size"] = entry["file_size_bytes"]
                     if entry.get("source_url"):
                         artifact_record["source-url"] = entry["source_url"]
+                    logger.info(f"🖼️ [GEN] Created artifact_record: file={artifact_record.get('file-name')}, has_role={'role' in artifact_record}, keys={list(artifact_record.keys())}")
                     generated_artifacts.append(artifact_record)
 
             images.append(entry)
