@@ -773,13 +773,6 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
       console.log("[ChatPanel] Message received:", data)
       console.log("[ChatPanel] Current messages count:", messages.length)
       
-      // Only process messages if user is authenticated
-      const token = sessionStorage.getItem('auth_token')
-      if (!token) {
-        console.log("[ChatPanel] Ignoring message - user not authenticated")
-        return
-      }
-      
       // A2A MessageEventData has: messageId, conversationId, role, content[], direction
       if (data.messageId && data.content && data.content.length > 0) {
         // Only process assistant messages to avoid duplicating user messages
@@ -873,13 +866,6 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
     // Handle shared user messages from other clients
     const handleSharedMessage = (data: any) => {
       console.log("[ChatPanel] Shared message received:", data)
-      
-      // Only process shared messages if user is authenticated
-      const token = sessionStorage.getItem('auth_token')
-      if (!token) {
-        console.log("[ChatPanel] Ignoring shared message - user not authenticated")
-        return
-      }
       
       if (data.message) {
         const newMessage: Message = {
@@ -1091,13 +1077,6 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
 
     const handleFinalResponse = (data: { inferenceId: string; message: Omit<Message, "id"> }) => {
       console.log("[ChatPanel] Final response received:", data)
-      
-      // Only process responses if user is authenticated
-      const token = sessionStorage.getItem('auth_token')
-      if (!token) {
-        console.log("[ChatPanel] Ignoring final response - user not authenticated")
-        return
-      }
       
       const contentKey = data.message.content ?? ""
       const agentKey = data.message.agent ?? "assistant"
