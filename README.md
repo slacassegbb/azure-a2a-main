@@ -8,7 +8,7 @@ This repository contains the complete documentation and setup instructions inclu
 
 You'll find detailed guides to install, configure, and run the full system, along with a **ready-to-use Agent Template** for building custom agents, plus sample agents that showcase realistic enterprise workflows including the **Claims, Fraud, Legal, Branding, Classification, Deep Search, Assessment & Estimation, Customer Support (MCP), Image Analysis, Image Generation, and Sentiment Analysis (Google ADK)** agents. Including an agent template for you to build your own remote agents quickly. 
 
-Special thank you to Sergey Chernykh, Ryan Morgan and Owen Van Valkenburg for their peer review and contribution. 
+Special thank you to Sergey Chernykh, Ryan Morgan, David Barkol and Owen Van Valkenburg for their peer review and contribution. 
 
 ---
 
