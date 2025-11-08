@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useRef, useCallback } from "react"
+import { useState, useEffect, useRef, useCallback, useMemo } from "react"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge"
 import { Paperclip, Mic, MicOff, Send, Bot, User, Network, Paintbrush, Copy, ThumbsUp, ThumbsDown, Loader2 } from "lucide-react"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
-import { D3Dag } from "./d3-dag"
+import { AgentNetworkDag } from "./agent-network-dag"
 import { useEventHub } from "@/hooks/use-event-hub"
 import { useVoiceRecording } from "@/hooks/use-voice-recording"
 import { InferenceSteps } from "./inference-steps"
@@ -1591,11 +1591,18 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
                   <Network size={20} />
                 </Button>
               </DialogTrigger>
-              <DialogContent className="max-w-2xl">
+              <DialogContent className="max-w-4xl max-h-[85vh]">
                 <DialogHeader>
                   <DialogTitle>Agent Network DAG</DialogTitle>
                 </DialogHeader>
-                <D3Dag nodes={dagNodes} links={dagLinks} activeNodeId={activeNode} />
+                <div className="h-[600px] w-full">
+                  <AgentNetworkDag 
+                    nodes={dagNodes} 
+                    links={dagLinks} 
+                    activeNodeId={activeNode}
+                    key="agent-network-dag-stable"
+                  />
+                </div>
               </DialogContent>
             </Dialog>
           </div>
