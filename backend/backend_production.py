@@ -1009,15 +1009,27 @@ Read-Host "Press Enter to close this window"
         """Upload file to Azure Blob Storage and return public SAS URL."""
         try:
             from azure.storage.blob import BlobServiceClient, generate_blob_sas, BlobSasPermissions, ContentSettings
+            from azure.identity import DefaultAzureCredential
             
             # Get Azure connection details
             connection_string = os.getenv('AZURE_STORAGE_CONNECTION_STRING')
-            if not connection_string:
-                print(f"[WARN] AZURE_STORAGE_CONNECTION_STRING not set, returning local path")
+            storage_account_name = os.getenv('AZURE_STORAGE_ACCOUNT_NAME')
+            
+            # Initialize blob client with managed identity or connection string
+            if storage_account_name and not connection_string:
+                # Use managed identity authentication
+                account_url = f"https://{storage_account_name}.blob.core.windows.net"
+                credential = DefaultAzureCredential()
+                blob_service_client = BlobServiceClient(account_url, credential=credential)
+                print(f"✅ Using managed identity for blob storage: {account_url}")
+            elif connection_string:
+                # Use connection string authentication (legacy)
+                blob_service_client = BlobServiceClient.from_connection_string(connection_string)
+                print(f"✅ Using connection string for blob storage")
+            else:
+                print(f"[WARN] No Azure Storage configuration found, returning local path")
                 return f"/uploads/{file_id}"
             
-            # Initialize blob client
-            blob_service_client = BlobServiceClient.from_connection_string(connection_string)
             container_name = os.getenv('AZURE_BLOB_CONTAINER', 'a2a-files')
             
             # Generate blob name
@@ -1042,33 +1054,37 @@ Read-Host "Press Enter to close this window"
                 overwrite=True
             )
             
-            # Generate SAS token with 24-hour expiry
-            account_key = None
-            for part in connection_string.split(';'):
-                if part.startswith('AccountKey='):
-                    account_key = part.split('=', 1)[1]
-                    break
+            # Generate SAS token if using connection string (has account key)
+            if connection_string:
+                account_key = None
+                for part in connection_string.split(';'):
+                    if part.startswith('AccountKey='):
+                        account_key = part.split('=', 1)[1]
+                        break
+                
+                if account_key:
+                    sas_token = generate_blob_sas(
+                        account_name=blob_client.account_name,
+                        container_name=container_name,
+                        blob_name=blob_name,
+                        account_key=account_key,
+                        permission=BlobSasPermissions(read=True),
+                        expiry=datetime.now(UTC) + timedelta(hours=24),
+                        version="2023-11-03"
+                    )
+                    from log_config import log_debug
+                    blob_url = f"{blob_client.url}?{sas_token}"
+                    log_debug(f"File uploaded to Azure Blob: {blob_url[:100]}...")
+                    return blob_url
             
-            if account_key:
-                sas_token = generate_blob_sas(
-                    account_name=blob_client.account_name,
-                    container_name=container_name,
-                    blob_name=blob_name,
-                    account_key=account_key,
-                    permission=BlobSasPermissions(read=True),
-                    expiry=datetime.now(UTC) + timedelta(hours=24),
-                    version="2023-11-03"
-                )
-                from log_config import log_debug
-                blob_url = f"{blob_client.url}?{sas_token}"
-                log_debug(f"File uploaded to Azure Blob: {blob_url[:100]}...")
-                return blob_url
-            else:
-                print(f"[WARN] Could not generate SAS token, returning blob URL without SAS")
-                return blob_client.url
+            # For managed identity, return blob URL directly (container must be public or use user delegation SAS)
+            print(f"[INFO] File uploaded to Azure Blob (managed identity): {blob_client.url}")
+            return blob_client.url
                 
         except Exception as e:
             print(f"[ERROR] Azure Blob upload failed: {e}, falling back to local storage")
+            import traceback
+            traceback.print_exc()
             return f"/uploads/{file_id}"
 
     # Add file upload endpoint

@@ -8,6 +8,13 @@
 .env.development
 .env.production
 
+# IMPORTANT: Never commit .env.example with real credentials
+# Keep .env.example as a template with placeholder values only
+
+# macOS
+.DS_Store
+**/.DS_Store
+
 # Logs
 *.log
 
@@ -21,11 +28,28 @@ env/
 venv/
 .venv/
 
+# Azure & Authentication
+# Azure CLI credentials (if stored locally)
+.azure/
+# Azure credentials cache
+*.cache
+# Terraform state files (if using Infrastructure as Code)
+*.tfstate
+*.tfstate.*
+.terraform/
+
+# Database & Session files
+backend/data/users.json
+backend/data/sessions.json
+backend/data/agent_registry.json
+# Keep these files but consider adding them if they contain sensitive data
+
 # Generated media and uploads
 backend/images/
 backend/markdown/
 backend/pdf/
 backend/uploads/
+backend/voice_recordings/
 remote_agents/azurefoundry_image_generator/static/outputs/
 
 # Service logs
