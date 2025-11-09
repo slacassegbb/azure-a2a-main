@@ -3,6 +3,9 @@
 .env.local
 .env.development
 .env.production
+.env.development.local
+.env.test.local
+.env.production.local
 
 # Logs
 *.log
@@ -11,17 +14,27 @@
 __pycache__/
 **/__pycache__/
 *.py[cod]
+*.pyo
+*.pyd
+.Python
 
 # Virtual environments
 env/
 venv/
 .venv/
+ENV/
+
+# Node modules (if any Node.js tools are used)
+node_modules/
+.pnp/
+.pnp.js
 
 # Generated media and uploads
 backend/images/
 backend/markdown/
 backend/pdf/
 backend/uploads/
+backend/voice_recordings/
 remote_agents/azurefoundry_image_generator/static/outputs/
 
 # Service logs
@@ -30,3 +43,17 @@ remote_agents/azurefoundry_image_generator/azure_servicenow_agent.log
 
 # Media files
 *.mp4
+*.wav
+*.mp3
+
+# OS files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# IDE files
+.vscode/
+.idea/
+*.sublime-*

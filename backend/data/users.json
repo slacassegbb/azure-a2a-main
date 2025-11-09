@@ -110,6 +110,20 @@
       "color": "#3B82F6",
       "created_at": "2025-09-25T20:02:17.660908Z",
       "last_login": "2025-09-25T21:10:22.285967Z"
+    },
+    {
+      "user_id": "user_8",
+      "email": "owenv@microsoft.com",
+      "password_hash": "9c9ff3572cefb11bbec2e9e7e4ca8e99ebe77b6b3712dc91f332251c7044aaab",
+      "name": "Owen Van Valkenburg",
+      "role": "GBB",
+      "description": "AI",
+      "skills": [
+        "Everything"
+      ],
+      "color": "#3B82F6",
+      "created_at": "2025-11-04T02:38:08.464410Z",
+      "last_login": "2025-11-04T02:38:15.269337Z"
     }
   ]
 }

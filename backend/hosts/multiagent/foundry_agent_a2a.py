@@ -907,14 +907,14 @@ class FoundryHostAgent2:
             
             log_foundry_debug(f"Agent parameters:")
             print(f"  - model: {model_name}")
-            print(f"  - name: foundry-host-agent")
+            print(f"  - name: Contoso Concierge")
             print(f"  - instructions length: {len(instructions)}")
             print(f"  - tools count: {len(tools)}")
             
             # Prepare the request payload
             payload = {
                 "model": model_name,
-                "name": "foundry-host-agent",
+                "name": "Contoso Concierge",
                 "instructions": instructions,
                 "tools": tools
             }
@@ -1076,7 +1076,7 @@ class FoundryHostAgent2:
                 If the user says anything like "I want to talk to a human,"  
                 you **must** call:
                 send_message(
-                agent_name="ServiceNow, Web & Knowledge Agent",
+                agent_name="Name of Agent with Human Escalation Capability",
                 message="User explicitly requested to speak with a human representative. Please assist with this request."
                 )
 
@@ -1115,7 +1115,134 @@ class FoundryHostAgent2:
 
                 ### 💬 SUMMARY
                 - Always show which agents you used and summarize their work.  
-                - Be friendly, helpful, and professional."""
+                - Be friendly, helpful, and professional.
+                
+                ## Follow the below workflow ##
+                # **Contoso Internet Support - Host Agent Workflow**
+
+---
+
+## **YOUR ROLE**
+You orchestrate 6 specialist agents to resolve customer internet issues. **You must use ALL agents in sequence** for every internet support request, then escalate to human when user requests faster service.
+
+---
+
+## **MANDATORY WORKFLOW - USE ALL AGENTS**
+
+### **STAGE 1: AUTHENTICATION** (Agent 1)
+1. Customer reports internet issue
+2. **Call Authentication Agent** → Collect identity verification
+3. **Wait for:** customer_id, address, postal_code, region
+4. If authentication fails → End conversation
+
+---
+
+### **STAGE 2: OUTAGE DETECTION** (Agent 2)
+5. **Call Outage Check Agent** with customer_id, address, postal_code, region
+6. **Wait for:** outage_status (none/local/regional)
+7. Inform customer of any detected outages
+
+---
+
+### **STAGE 3: MODEM DIAGNOSTICS** (Agent 3)
+8. **Request modem LED video/photo from customer** (always required)
+9. **Call Modem Check Agent** with customer_id and video
+10. **Wait for:** led_status, backend_status, signal_strength, issues_detected, recommendations
+
+---
+
+### **STAGE 4: INTERNET PLAN CHECK** (Agent 4)
+11. **Call Internet Plan Agent** with customer_id
+12. **Wait for:** plan_status, data_status, billing_status, access_should_be_active
+13. **Critical checks:**
+    - Last 3 bills payment status
+    - Data limit exceeded detection
+    - Service suspension verification
+
+---
+
+### **STAGE 5: NETWORK PERFORMANCE** (Agent 5)
+14. **Call Network Performance Agent** with customer_id
+15. **Wait for:** network_status (excellent/good/poor/critical), ping_results, device_list
+16. **If network status is not CRITICAL:**
+    - Call Network Performance Agent again with action="perform_network_reset"
+    - Wait for: reset_success, new_network_status
+
+---
+
+### **STAGE 6: FINAL DECISION & DISPATCH** (Agent 6)
+
+17. **Synthesize all diagnostic results** from all 5 agents
+
+**Choose ONE outcome:**
+
+#### **A. SCHEDULE TECHNICIAN** 🔧
+**If ANY of:**
+- Local outage + persistent equipment issues after reset
+- Modem completely offline (100% packet loss)
+- Packet loss >40% after reset
+- Physical infrastructure issues suspected
+- Data limit exceeded causing throttling
+- Service suspended for billing issues
+
+**Action:**
+- **Call Technical Dispatch Agent** with customer_id, full diagnostic summary from ALL agents
+- Agent schedules appointment with available technician
+- Relay appointment details to customer
+
+---
+
+#### **B. ISSUE RESOLVED** ✅
+**If:** Network excellent after reset AND modem solid white AND billing current
+- Confirm with customer they can access internet
+- Summarize findings from all agent checks
+
+---
+
+### **STAGE 7: HUMAN ESCALATION TRIGGER** 🆘
+
+**WHEN USER SAYS:** "Can I get service more quickly?" or "Can I talk to a human?" or similar request for faster service
+
+**Action:**
+- **Call Technical Dispatch Agent** with escalation request
+- Pass: customer_id, full_diagnostic_summary (from ALL 6 agents), reason="User requested faster service"
+- Technical Dispatch Agent outputs: "HUMAN_ESCALATION_REQUIRED" + comprehensive summary
+- Inform customer: "I'm connecting you with a specialized technical support agent who can expedite your service. They'll have all the diagnostic information from our complete system check. Please hold while I transfer you..."
+- Human agent takes over with full diagnostic context from all 6 agents
+- **END**
+
+---
+
+## **KEY RULES**
+- **ALWAYS use ALL 6 agents in order** - no skipping steps
+- Always get customer_id from Authentication Agent first
+- Always request modem LED video (even during outages)
+- Always check Internet Plan for billing/data issues
+- Always run Network Performance diagnostics
+- Always run the modem, internet, and network together, no need to run one than ask the customer
+- Always call Technical Dispatch as the final agent
+- Escalate to human ONLY when user explicitly requests faster service or human agent
+- Pass complete diagnostic history from ALL agents to Technical Dispatch
+- Track state between all stages
+
+---
+
+## **WORKFLOW PARAMETER**
+
+```
+MANDATORY WORKFLOW:
+Step 1: Call Authentication Agent - verify customer identity
+Step 2: Call Outage Check Agent - check for outages at customer address
+Step 3: Request modem LED video from customer
+Step 4: Call Modem Check Agent - analyze modem LED status and backend configuration
+Step 5: Call Internet Plan Agent - verify plan status, billing, and data usage
+Step 6: Call Network Performance Agent - run network diagnostics and perform network reset if applicable
+Step 7: Call Technical Dispatch Agent - determine final resolution (technician appointment or issue resolved)
+Step 8: IF user says "Can I get service more quickly?" or requests human agent, call Technical Dispatch Agent again with escalation request
+
+All steps must be completed in sequence. Do not skip any agent. (Step 4 to 6 should run in parallel)
+```
+                """
 
     def list_remote_agents(self):
         agents = []
@@ -5148,7 +5275,7 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
                                         }
                                     ],
                                     "direction": "incoming",
-                                    "agentName": "foundry-host-agent",  # Host agent name
+                                    "agentName": "Contoso Concierge",  # Host agent name
                                     "timestamp": __import__('datetime').datetime.utcnow().isoformat(),
                                     "source": "run_conversation_with_parts"  # Track which method sent this
                                 }
@@ -5491,7 +5618,7 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
                                         }
                                     ],
                                     "direction": "incoming",
-                                    "agentName": "foundry-host-agent",  # Host agent name
+                                    "agentName": "Contoso Concierge",  # Host agent name
                                     "timestamp": __import__('datetime').datetime.utcnow().isoformat(),
                                     "source": "run_conversation"  # Track which method sent this
                                 }
@@ -5630,7 +5757,7 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
                     if event_logger:
                         event_logger({
                             "id": str(uuid.uuid4()),
-                            "actor": "foundry-host-agent",
+                            "actor": "Contoso Concierge",
                             "args": arguments,
                             "name": function_name,
                             "type": "tool_call"
@@ -5678,7 +5805,7 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
                         if event_logger:
                             event_logger({
                                 "id": str(uuid.uuid4()),
-                                "actor": "foundry-host-agent",
+                                "actor": "Contoso Concierge",
                                 "name": "send_message",
                                 "type": "tool_result",
                                 "output": output
@@ -5751,13 +5878,13 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
                 })
                 
                 # Stream tool call to WebSocket for thinking box visibility
-                await self._emit_tool_call_event("foundry-host-agent", function_name, arguments)
+                await self._emit_tool_call_event("Contoso Concierge", function_name, arguments)
                 
                 # Log tool call event and add span event
                 if event_logger:
                     event_logger({
                         "id": str(uuid.uuid4()),
-                        "actor": "foundry-host-agent",
+                        "actor": "Contoso Concierge",
                         "args": arguments,
                         "name": function_name,
                         "type": "tool_call"
@@ -5771,7 +5898,7 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
                         "agent_names": [agent.get("name", "unknown") for agent in output] if output else []
                     })
                     # Stream tool success to WebSocket
-                    await self._emit_tool_response_event("foundry-host-agent", function_name, "success")
+                    await self._emit_tool_response_event("Contoso Concierge", function_name, "success")
                 else:
                     output = {"error": f"Unknown function: {function_name}"}
                     self._add_status_message_to_conversation(f"❌ Unknown tool: {function_name}", context_id)
@@ -5780,13 +5907,13 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
                         "available_functions": ["list_remote_agents", "send_message"]
                     })
                     # Stream tool failure to WebSocket
-                    await self._emit_tool_response_event("foundry-host-agent", function_name, "failed", f"Unknown function: {function_name}")
+                    await self._emit_tool_response_event("Contoso Concierge", function_name, "failed", f"Unknown function: {function_name}")
                 
                 # Log tool result event
                 if event_logger:
                     event_logger({
                         "id": str(uuid.uuid4()),
-                        "actor": "foundry-host-agent",
+                        "actor": "Contoso Concierge",
                         "name": function_name,
                         "type": "tool_result",
                         "output": output
@@ -6628,12 +6755,12 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
     def _add_status_message_to_conversation(self, status_text: str, contextId: str):
         """Add a status message directly to the conversation for immediate UI display."""
         # Use WebSocket streaming for real-time status updates
-        asyncio.create_task(self._emit_granular_agent_event("foundry-host-agent", status_text))
+        asyncio.create_task(self._emit_granular_agent_event("Contoso Concierge", status_text))
 
     async def _emit_status_event(self, status_text: str, context_id: str):
         """Emit status event to WebSocket for real-time frontend updates."""
         # Use WebSocket streaming for real-time status updates
-        await self._emit_granular_agent_event("foundry-host-agent", status_text)
+        await self._emit_granular_agent_event("Contoso Concierge", status_text)
 
     @staticmethod
     def _normalize_function_response_text(raw_response: Any) -> Any:

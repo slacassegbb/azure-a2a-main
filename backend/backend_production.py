@@ -809,6 +809,15 @@ def main():
             "users": auth_service.get_all_users()
         }
 
+    @app.get("/api/azure-token")
+    async def get_azure_token():
+        """Return Azure AI Foundry API key for Voice Live API."""
+        # Using API key for Azure AI Foundry Voice Live API
+        api_key = os.getenv("VOICE_LIVE_API_KEY")
+        if not api_key:
+            raise HTTPException(status_code=500, detail="VOICE_LIVE_API_KEY environment variable not set")
+        return {"token": api_key}
+
     @app.post("/clear-memory")
     async def clear_memory():
         """Clear all stored interactions from the Azure vector memory index."""

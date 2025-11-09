@@ -1011,5 +1011,217 @@
         ]
       }
     ]
+  },
+  {
+    "name": "Contoso Authentication Agent",
+    "description": "Authenticates Contoso customers by verifying their first name, last name, postal code, and date of birth. This agent ensures secure identity verification before proceeding with support requests.",
+    "version": "1.0.0",
+    "url": "http://localhost:8101/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "customer_authentication",
+        "name": "Customer Authentication",
+        "description": "Verify customer identity by collecting and validating first name, last name, postal code, and date of birth against the customer database.",
+        "examples": [
+          "I need help with my internet",
+          "Verify my account",
+          "My name is Sarah Johnson",
+          "Authenticate customer"
+        ],
+        "tags": [
+          "authentication",
+          "verification",
+          "identity",
+          "customer"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Contoso Internet Plan Agent",
+    "description": "Manages internet plan verification, data usage monitoring, and billing status checks. Reviews customer plans (unlimited or capped), calculates data overages and charges, checks payment history for last 3 bills, and determines if customer should have active internet access. Alerts when data limits are exceeded or bills are unpaid.",
+    "version": "1.0.0",
+    "url": "http://localhost:8104/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "plan_checking",
+        "name": "Internet Plan & Billing Check",
+        "description": "Review customer internet plans, data usage limits, billing status, and payment history. Identifies customers who exceeded data caps or have unpaid bills that may affect service access.",
+        "examples": [
+          "Check my internet plan details",
+          "How much data have I used?",
+          "Have I exceeded my data limit?",
+          "Check if my bills are paid",
+          "Verify customer plan and billing status"
+        ],
+        "tags": [
+          "plan",
+          "billing",
+          "data-usage",
+          "payment",
+          "subscription"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Contoso Modem Check Agent",
+    "description": "Performs comprehensive modem diagnostics including LED status analysis and backend configuration checks. Analyzes modem LED indicators (solid white, blinking white, yellow, red, no light) to determine modem state, checks backend systems for signal strength, firmware version, and configuration errors. Identifies discrepancies between visual and backend status.",
+    "version": "1.0.0",
+    "url": "http://localhost:8103/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "modem_diagnostics",
+        "name": "Modem Diagnostics",
+        "description": "Analyze modem LED status indicators and perform backend configuration checks. Can accept modem video/image for LED analysis, check signal strength, firmware status, and identify connectivity issues.",
+        "examples": [
+          "Check modem status for customer",
+          "Analyze modem LED lights",
+          "My modem light is yellow",
+          "Check backend modem configuration",
+          "Modem showing red light"
+        ],
+        "tags": [
+          "modem",
+          "diagnostics",
+          "led",
+          "hardware",
+          "configuration"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Contoso Outage Check Agent",
+    "description": "Checks for internet service outages affecting Contoso customers. Performs local address-specific outage checks first, then regional outage checks. Provides detailed outage information including cause, estimated resolution time, and affected services.",
+    "version": "1.0.0",
+    "url": "http://localhost:8102/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "outage_checking",
+        "name": "Outage Checking",
+        "description": "Check for local and regional internet outages. First checks for local outages at customer address, then checks regional outages if no local outage found.",
+        "examples": [
+          "Check for outages at my address",
+          "Is there an outage in my area?",
+          "Are other customers experiencing issues?",
+          "Check local and regional outages for customer CUST001"
+        ],
+        "tags": [
+          "outage",
+          "connectivity",
+          "internet",
+          "network"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Contoso Network Performance Agent",
+    "description": "Performs comprehensive network diagnostics for Contoso internet customers. Capabilities: ping tests to modem/pods/devices, device discovery with IP addresses, latency and packet loss analysis, proactive network reset recommendations. Can trigger network resets when performance issues detected or as preventive measure before declaring all clear. Identifies critical issues requiring technician dispatch.",
+    "version": "1.0.0",
+    "url": "http://localhost:8105/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "network_diagnostics",
+        "name": "Network Performance Diagnostics",
+        "description": "Perform comprehensive network diagnostics including ping tests to modem/pods/devices, device discovery with IP addresses, latency and packet loss analysis. Can trigger network resets when performance issues detected or as preventive measure. Identifies critical issues requiring technician dispatch.",
+        "examples": [
+          "Run network diagnostics",
+          "Check network performance for customer",
+          "Test latency and packet loss",
+          "Discover devices on network",
+          "Should we reset the network?"
+        ],
+        "tags": [
+          "network",
+          "diagnostics",
+          "performance",
+          "ping",
+          "latency"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Contoso Technical Dispatch Agent",
+    "description": "Final decision agent for Contoso customer support workflow. Capabilities: (1) Schedule technician appointments for in-home visits when hardware/infrastructure issues require physical intervention. (2) Escalate complex cases to human experts via human-in-the-loop for edge cases where all diagnostics pass but customer still experiences issues, billing/account problems, or specialized technical scenarios. Integrates complete diagnostic history from all previous agents (authentication, outage, modem, plan, network) to make informed dispatch decisions.",
+    "version": "1.0.0",
+    "url": "http://localhost:8106/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "dispatch_scheduling",
+        "name": "Technician Dispatch Scheduling",
+        "description": "Schedule technician appointments for in-home visits when hardware/infrastructure issues require physical intervention. Also escalate complex cases to human experts via human-in-the-loop for edge cases, billing/account problems, or specialized technical scenarios.",
+        "examples": [
+          "Schedule a technician visit",
+          "I need a tech to come to my house",
+          "Escalate to human expert",
+          "This issue needs specialist attention",
+          "Schedule appointment for equipment replacement"
+        ],
+        "tags": [
+          "dispatch",
+          "technician",
+          "scheduling",
+          "escalation",
+          "human-in-loop"
+        ]
+      }
+    ]
   }
 ]
