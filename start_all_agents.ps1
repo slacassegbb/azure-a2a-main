@@ -1,15 +1,15 @@
-# Start All Rogers Agents
-# This script starts all Rogers agents in separate PowerShell windows
+# Start All contoso Agents
+# This script starts all contoso agents in separate PowerShell windows
 
-Write-Host "Starting all Rogers agents..." -ForegroundColor Green
+Write-Host "Starting all contoso agents..." -ForegroundColor Green
 
 $agents = @(
-    @{Dir="rogers_agents\authentication_agent"; Args=""},
-    @{Dir="rogers_agents\outage_check_agent"; Args=""},
-    @{Dir="rogers_agents\modem_check_agent"; Args=""},
-    @{Dir="rogers_agents\internet_plan_agent"; Args=""},
-    @{Dir="rogers_agents\network_performance_agent"; Args=""},
-    @{Dir="rogers_agents\technical_dispatch_agent"; Args="--enable-ui"}
+    @{Dir="contoso_agents\authentication_agent"; Args=""},
+    @{Dir="contoso_agents\outage_check_agent"; Args=""},
+    @{Dir="contoso_agents\modem_check_agent"; Args=""},
+    @{Dir="contoso_agents\internet_plan_agent"; Args=""},
+    @{Dir="contoso_agents\network_performance_agent"; Args=""},
+    @{Dir="contoso_agents\technical_dispatch_agent"; Args="--enable-ui"}
 )
 
 foreach ($agent in $agents) {
