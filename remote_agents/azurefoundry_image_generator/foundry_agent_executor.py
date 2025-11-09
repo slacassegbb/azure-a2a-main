@@ -199,8 +199,8 @@ class FoundryImageGeneratorAgentExecutor(AgentExecutor):
                             )
                             return
 
-                        # Otherwise, treat as a regular response
-                        else:
+                        # Otherwise, treat as a regular response (only if it's a string)
+                        elif isinstance(event, str):
                             responses.append(event)
 
                     # Emit the final response
@@ -208,7 +208,20 @@ class FoundryImageGeneratorAgentExecutor(AgentExecutor):
                         artifacts = agent.pop_latest_artifacts()
                         artifact_parts = []
                         if artifacts:
-                            artifact_parts = [Part(root=DataPart(data=artifact)) for artifact in artifacts]
+                            # Convert artifacts to appropriate Part types
+                            for artifact in artifacts:
+                                if isinstance(artifact, dict) and artifact.get("artifact-uri"):
+                                    # For artifacts with URIs (like images), create FilePart with FileWithUri
+                                    file_with_uri = FileWithUri(
+                                        name=artifact.get("file-name", "artifact"),
+                                        uri=artifact["artifact-uri"],
+                                        mimeType=artifact.get("mime", "image/png")
+                                    )
+                                    artifact_parts.append(Part(root=FilePart(file=file_with_uri)))
+                                else:
+                                    # For other artifacts, use DataPart
+                                    artifact_parts.append(Part(root=DataPart(data=artifact)))
+                            
                             artifact_message = new_agent_parts_message(parts=artifact_parts, context_id=context_id)
                             responses.append(artifact_message)
                             await task_updater.update_status(
@@ -227,8 +240,15 @@ class FoundryImageGeneratorAgentExecutor(AgentExecutor):
                         response_preview = final_text_response[:500] + "..." if len(final_text_response) > 500 else final_text_response
                         logger.info(f"📤 Agent response ({len(final_text_response)} chars, {len(artifact_parts)} artifacts): {response_preview}")
                         
+                        # Emit the text response as a status update FIRST so it shows in the DAG
+                        # (Similar to how branding agent sends text directly)
+                        await task_updater.update_status(
+                            TaskState.working,
+                            message=new_agent_text_message(final_text_response, context_id=context_id)
+                        )
+                        
                         # This ensures downstream agents receive file metadata for agent-to-agent file exchange
-                        final_parts = [Part(root=TextPart(text=final_text_response, kind='text'))]
+                        final_parts = [Part(root=TextPart(text=final_text_response))]
                         if artifact_parts:
                             final_parts.extend(artifact_parts)
                         
