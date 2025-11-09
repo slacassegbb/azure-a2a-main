@@ -148,6 +148,9 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, agentMod
   // Agent status tracking state
   const [agentStatuses, setAgentStatuses] = useState<Map<string, AgentStatus>>(new Map())
   
+  // Store status clear timeouts to prevent race conditions
+  const statusClearTimeoutsRef = useState<Map<string, NodeJS.Timeout>>(new Map())[0]
+  
   // Use existing EventHub context instead of creating new WebSocket client
   const { subscribe, unsubscribe, isConnected } = useEventHub()
 
@@ -200,9 +203,16 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, agentMod
         
         console.log('[AgentNetwork] Updated status for', targetAgent, ':', updatedStatus)
         
+        // Clear any existing timeout for this agent to prevent race conditions
+        const existingTimeout = statusClearTimeoutsRef.get(targetAgent)
+        if (existingTimeout) {
+          clearTimeout(existingTimeout)
+          statusClearTimeoutsRef.delete(targetAgent)
+        }
+        
         // Clear the task after showing completion or failure
         if (mappedState === "completed" || mappedState === "failed") {
-          setTimeout(() => {
+          const timeoutId = setTimeout(() => {
             setAgentStatuses(prev => {
               const newStatuses = new Map(prev)
               const currentStatus = newStatuses.get(targetAgent)
@@ -213,10 +223,14 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, agentMod
                   currentTask: undefined, // Clear the task
                   lastSeen: new Date().toISOString()
                 })
+                console.log('[AgentNetwork] Cleared completed/failed task for', targetAgent)
               }
               return newStatuses
             })
-          }, 3000) // Show "Completed/Failed" for 3 seconds then return to "Online"
+            statusClearTimeoutsRef.delete(targetAgent)
+          }, 5000) // Show "Completed/Failed" for 5 seconds then return to "Online"
+          
+          statusClearTimeoutsRef.set(targetAgent, timeoutId)
         }
         
         return newStatuses
@@ -304,9 +318,16 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, agentMod
         return newStatuses
       })
       
+      // Clear any existing timeout for this agent to prevent race conditions
+      const existingTimeout = statusClearTimeoutsRef.get(agent)
+      if (existingTimeout) {
+        clearTimeout(existingTimeout)
+        statusClearTimeoutsRef.delete(agent)
+      }
+      
       // Clear the task after showing completion or failure (only once per completion/failure)
       if (shouldClearTask) {
-        setTimeout(() => {
+        const timeoutId = setTimeout(() => {
           setAgentStatuses(prev => {
             const newStatuses = new Map(prev)
             const currentStatus = newStatuses.get(agent)
@@ -321,7 +342,10 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, agentMod
             }
             return newStatuses
           })
-        }, 3000) // Show "Completed/Failed" for 3 seconds then return to "Online"
+          statusClearTimeoutsRef.delete(agent)
+        }, 5000) // Show "Completed/Failed" for 5 seconds then return to "Online"
+        
+        statusClearTimeoutsRef.set(agent, timeoutId)
       }
     } else {
       console.warn('[AgentNetwork] Missing agent or status in status_update:', { agent, status, inferenceId })
