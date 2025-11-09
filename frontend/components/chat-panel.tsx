@@ -6,12 +6,14 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
-import { Paperclip, Mic, MicOff, Send, Bot, User, Network, Paintbrush, Copy, ThumbsUp, ThumbsDown, Loader2 } from "lucide-react"
+import { Paperclip, Mic, MicOff, Send, Bot, User, Network, Paintbrush, Copy, ThumbsUp, ThumbsDown, Loader2, Phone, PhoneOff } from "lucide-react"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { AgentNetworkDag } from "./agent-network-dag"
 import { useEventHub } from "@/hooks/use-event-hub"
 import { useVoiceRecording } from "@/hooks/use-voice-recording"
+import { useVoiceLive } from "@/hooks/use-voice-live"
+import { getScenarioById } from "@/lib/voice-scenarios"
 import { InferenceSteps } from "./inference-steps"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
@@ -446,13 +448,68 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
   // Use the shared Event Hub hook so we subscribe to the same client as the rest of the app
   const { subscribe, unsubscribe, emit, sendMessage, isConnected } = useEventHub()
   
-  // Voice recording hook
-  const voiceRecording = useVoiceRecording()
-  
-  // Get conversation ID from URL parameters
+  // Get conversation ID from URL parameters (needed for hooks)
   const searchParams = useSearchParams()
   const router = useRouter()
   const conversationId = searchParams.get('conversationId') || 'frontend-chat-context'
+  
+  // Voice recording hook
+  const voiceRecording = useVoiceRecording()
+  
+  // Track Voice Live call IDs for response injection
+  const voiceLiveCallMapRef = useRef<Map<string, string>>(new Map()) // messageId -> call_id
+  
+  // Voice Live hook for realtime voice conversations
+  const voiceLive = useVoiceLive({
+    foundryProjectUrl: process.env.NEXT_PUBLIC_AZURE_AI_FOUNDRY_PROJECT_ENDPOINT || '',
+    model: process.env.NEXT_PUBLIC_VOICE_MODEL || 'gpt-realtime',
+    scenario: getScenarioById('host-agent-chat'),
+    onSendToA2A: async (message: string, metadata?: any) => {
+      // Send message through the host agent via HTTP POST (same as handleSend)
+      try {
+        console.log('[Voice Live] Sending message to A2A network:', message)
+        console.log('[Voice Live] Metadata:', metadata)
+        
+        const baseUrl = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
+        const messageId = `voice_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+        
+        // Store the mapping of messageId to Voice Live call_id
+        if (metadata?.tool_call_id) {
+          voiceLiveCallMapRef.current.set(messageId, metadata.tool_call_id)
+          console.log('[Voice Live] Stored call mapping:', messageId, '->', metadata.tool_call_id)
+        }
+        
+        const response = await fetch(`${baseUrl}/message/send`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            params: {
+              messageId,
+              contextId: conversationId,
+              role: 'user',
+              parts: [{ root: { kind: 'text', text: message } }],
+              agentMode: agentMode,
+              enableInterAgentMemory: enableInterAgentMemory,
+              workflow: agentMode && workflow ? workflow.trim() : undefined
+            }
+          })
+        })
+
+        if (!response.ok) {
+          console.error('[Voice Live] Failed to send message to backend:', response.statusText)
+          throw new Error(`Failed to send message: ${response.statusText}`)
+        }
+
+        console.log('[Voice Live] Message sent to backend successfully')
+        return conversationId
+      } catch (error) {
+        console.error('[Voice Live] Error sending to A2A:', error)
+        throw error
+      }
+    }
+  })
   
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState("")
@@ -1141,6 +1198,29 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
           agent: data.message.agent,
         }
         messagesToAdd.push(finalMessage)
+      }
+
+      // Check if this is a Voice Live response that needs to be injected back
+      if (voiceLive.isConnected && isHostAgent && data.message.content) {
+        // Check if any pending Voice Live calls exist
+        const voiceCallIds = Array.from(voiceLiveCallMapRef.current.entries())
+        console.log('[Voice Live] Checking for pending calls:', voiceCallIds)
+        
+        if (voiceCallIds.length > 0) {
+          // Get the most recent call_id (FIFO - first in, first out)
+          const [messageId, callId] = voiceCallIds[0]
+          console.log('[Voice Live] Injecting response for call_id:', callId)
+          
+          voiceLive.injectNetworkResponse({
+            call_id: callId,
+            message: data.message.content,
+            status: 'completed'
+          })
+          
+          // Remove from map
+          voiceLiveCallMapRef.current.delete(messageId)
+          console.log('[Voice Live] Response injected successfully')
+        }
       }
 
       // Add messages only if we have any
@@ -2144,6 +2224,28 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
                 }
               >
                 {voiceRecording.isRecording ? <MicOff size={18} /> : <Mic size={18} />}
+              </Button>
+              <Button 
+                variant="ghost" 
+                size="icon" 
+                disabled={isInferencing}
+                onClick={voiceLive.isConnected ? voiceLive.stopVoiceConversation : voiceLive.startVoiceConversation}
+                className={`${
+                  voiceLive.isConnected 
+                    ? 'bg-green-100 text-green-600 hover:bg-green-200' 
+                    : voiceLive.error 
+                    ? 'bg-red-100 text-red-600' 
+                    : ''
+                }`}
+                title={
+                  voiceLive.isConnected 
+                    ? 'End voice conversation' 
+                    : voiceLive.error 
+                    ? `Error: ${voiceLive.error}` 
+                    : 'Start voice conversation'
+                }
+              >
+                {voiceLive.isConnected ? <PhoneOff size={18} /> : <Phone size={18} />}
               </Button>
               <Button onClick={handleSend} disabled={isInferencing || (!input.trim() && !refineTarget)}>
                 <Send size={18} />
