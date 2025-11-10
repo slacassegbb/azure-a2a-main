@@ -1,0 +1,1028 @@
+# Complete Azure Container Apps Deployment with Managed Identity
+# This script deploys the entire A2A system with proper managed identity configuration
+
+param(
+    [Parameter(Mandatory=$false)]
+    [string]$SubscriptionId,
+    
+    [Parameter(Mandatory=$false)]
+    [string]$ResourceGroup = "rg-a2a-prod",
+    
+    [Parameter(Mandatory=$false)]
+    [string]$Location = "eastus",
+    
+    [Parameter(Mandatory=$false)]
+    [string]$AcrName = "acra2aprod",
+    
+    [Parameter(Mandatory=$false)]
+    [string]$Environment = "env-a2a-prod",
+    
+    [Parameter(Mandatory=$false)]
+    [string]$KeyVaultName = "kv-a2a-prod",
+    
+    [Parameter(Mandatory=$false)]
+    [string]$StorageAccountName = "sta2aprod"
+)
+
+$ErrorActionPreference = "Stop"
+
+Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
+Write-Host "   Azure Container Apps Deployment with Managed Identity" -ForegroundColor Cyan
+Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
+Write-Host ""
+
+# Check Azure CLI
+if (!(Get-Command az -ErrorAction SilentlyContinue)) {
+    Write-Host "❌ Azure CLI not found. Please install it first." -ForegroundColor Red
+    exit 1
+}
+
+# Login check
+Write-Host "🔐 Checking Azure login status..." -ForegroundColor Cyan
+$account = az account show 2>$null | ConvertFrom-Json
+if (!$account) {
+    Write-Host "⚠️  Not logged in. Launching Azure login..." -ForegroundColor Yellow
+    az login
+    $account = az account show | ConvertFrom-Json
+}
+
+Write-Host "✅ Logged in as: $($account.user.name)" -ForegroundColor Green
+
+# Set subscription if provided
+if ($SubscriptionId) {
+    Write-Host "📌 Setting subscription: $SubscriptionId" -ForegroundColor Cyan
+    az account set --subscription $SubscriptionId
+}
+
+$currentSub = az account show | ConvertFrom-Json
+Write-Host "✅ Using subscription: $($currentSub.name)" -ForegroundColor Green
+Write-Host ""
+
+# ============================================================================
+# STEP 0: Load Environment Variables from .env
+# ============================================================================
+Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
+Write-Host "STEP 0: Load Environment Configuration" -ForegroundColor Cyan
+Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
+
+$envVars = @{}
+$envFilePath = Join-Path $PSScriptRoot ".env"
+
+if (Test-Path $envFilePath) {
+    Write-Host "📄 Loading environment variables from .env..." -ForegroundColor Cyan
+    
+    Get-Content $envFilePath | ForEach-Object {
+        $line = $_.Trim()
+        # Skip empty lines and comments
+        if ($line -and !$line.StartsWith('#')) {
+            if ($line -match '^([^=]+)=(.*)$') {
+                $key = $matches[1].Trim()
+                $value = $matches[2].Trim()
+                # Remove surrounding quotes if present
+                $value = $value.Trim('"').Trim("'")
+                $envVars[$key] = $value
+            }
+        }
+    }
+    
+    Write-Host "✅ Loaded $($envVars.Count) environment variables" -ForegroundColor Green
+    
+    # Validate required variables
+    $requiredVars = @(
+        'AZURE_AI_FOUNDRY_PROJECT_ENDPOINT',
+        'AZURE_OPENAI_GPT_API_BASE',
+        'AZURE_OPENAI_GPT_API_VERSION',
+        'AZURE_OPENAI_GPT_DEPLOYMENT',
+        'AZURE_OPENAI_GPT_API_KEY',
+        'AZURE_OPENAI_EMBEDDINGS_ENDPOINT',
+        'AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT',
+        'AZURE_OPENAI_EMBEDDINGS_KEY',
+        'AZURE_SEARCH_SERVICE_ENDPOINT',
+        'AZURE_SEARCH_ADMIN_KEY',
+        'AZURE_STORAGE_ACCOUNT_NAME',
+        'AZURE_BLOB_CONTAINER',
+        'AZURE_TENANT_ID'
+    )
+    
+    $missingVars = @()
+    foreach ($var in $requiredVars) {
+        if (!$envVars.ContainsKey($var) -or [string]::IsNullOrWhiteSpace($envVars[$var])) {
+            $missingVars += $var
+        }
+    }
+    
+    if ($missingVars.Count -gt 0) {
+        Write-Host "❌ Missing required environment variables in .env:" -ForegroundColor Red
+        foreach ($var in $missingVars) {
+            Write-Host "   - $var" -ForegroundColor Red
+        }
+        Write-Host ""
+        Write-Host "Please add these variables to your .env file before continuing." -ForegroundColor Yellow
+        exit 1
+    }
+    
+    Write-Host "✅ All required environment variables present" -ForegroundColor Green
+} else {
+    Write-Host "❌ .env file not found at: $envFilePath" -ForegroundColor Red
+    Write-Host "Please create a .env file with all required configuration." -ForegroundColor Yellow
+    exit 1
+}
+
+Write-Host ""
+
+# ============================================================================
+# STEP 1: Create Resource Group
+# ============================================================================
+Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
+Write-Host "STEP 1: Resource Group" -ForegroundColor Cyan
+Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
+
+$rgExists = az group exists --name $ResourceGroup
+if ($rgExists -eq "true") {
+    Write-Host "✅ Resource group '$ResourceGroup' already exists" -ForegroundColor Green
+} else {
+    Write-Host "📦 Creating resource group: $ResourceGroup" -ForegroundColor Yellow
+    az group create --name $ResourceGroup --location $Location --output none
+    Write-Host "✅ Resource group created" -ForegroundColor Green
+}
+Write-Host ""
+
+# ============================================================================
+# STEP 2: Create Azure Container Registry
+# ============================================================================
+Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
+Write-Host "STEP 2: Azure Container Registry" -ForegroundColor Cyan
+Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
+
+$acrExists = az acr show --name $AcrName --resource-group $ResourceGroup 2>$null
+if ($acrExists) {
+    Write-Host "✅ ACR '$AcrName' already exists" -ForegroundColor Green
+} else {
+    Write-Host "🐳 Creating Azure Container Registry: $AcrName" -ForegroundColor Yellow
+    az acr create `
+        --resource-group $ResourceGroup `
+        --name $AcrName `
+        --sku Standard `
+        --admin-enabled false `
+        --output none
+    Write-Host "✅ ACR created" -ForegroundColor Green
+}
+
+# Login to ACR
+Write-Host "🔐 Logging in to ACR..." -ForegroundColor Cyan
+az acr login --name $AcrName
+Write-Host "✅ ACR login successful" -ForegroundColor Green
+Write-Host ""
+
+# ============================================================================
+# STEP 3: Create Key Vault for Secrets
+# ============================================================================
+Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
+Write-Host "STEP 3: Azure Key Vault" -ForegroundColor Cyan
+Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
+
+$kvExists = az keyvault show --name $KeyVaultName --resource-group $ResourceGroup 2>$null
+if ($kvExists) {
+    Write-Host "✅ Key Vault '$KeyVaultName' already exists" -ForegroundColor Green
+} else {
+    Write-Host "🔑 Creating Key Vault: $KeyVaultName" -ForegroundColor Yellow
+    az keyvault create `
+        --resource-group $ResourceGroup `
+        --name $KeyVaultName `
+        --location $Location `
+        --enable-rbac-authorization true `
+        --output none
+    Write-Host "✅ Key Vault created" -ForegroundColor Green
+}
+
+# Get current user for Key Vault permissions
+$currentUserId = $account.user.name
+Write-Host "🔐 Setting up Key Vault permissions for current user..." -ForegroundColor Cyan
+$kvId = az keyvault show --name $KeyVaultName --resource-group $ResourceGroup --query id -o tsv
+$userId = az ad signed-in-user show --query id -o tsv
+
+az role assignment create `
+    --role "Key Vault Secrets Officer" `
+    --assignee $userId `
+    --scope $kvId `
+    --output none 2>$null
+
+Write-Host "✅ Key Vault permissions configured" -ForegroundColor Green
+Write-Host ""
+
+# ============================================================================
+# STEP 4: Store Secrets in Key Vault
+# ============================================================================
+Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
+Write-Host "STEP 4: Configure Secrets" -ForegroundColor Cyan
+Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
+
+Write-Host "🔐 Storing secrets from .env file in Key Vault..." -ForegroundColor Cyan
+
+# Wait a bit for RBAC to propagate
+Start-Sleep -Seconds 5
+
+# Store secrets from .env file
+az keyvault secret set --vault-name $KeyVaultName --name "azure-ai-endpoint" --value $envVars['AZURE_AI_FOUNDRY_PROJECT_ENDPOINT'] --output none
+az keyvault secret set --vault-name $KeyVaultName --name "azure-openai-key" --value $envVars['AZURE_OPENAI_GPT_API_KEY'] --output none
+az keyvault secret set --vault-name $KeyVaultName --name "azure-openai-deployment" --value $envVars['AZURE_OPENAI_GPT_DEPLOYMENT'] --output none
+az keyvault secret set --vault-name $KeyVaultName --name "azure-openai-base" --value $envVars['AZURE_OPENAI_GPT_API_BASE'] --output none
+az keyvault secret set --vault-name $KeyVaultName --name "azure-openai-embeddings-key" --value $envVars['AZURE_OPENAI_EMBEDDINGS_KEY'] --output none
+az keyvault secret set --vault-name $KeyVaultName --name "azure-search-key" --value $envVars['AZURE_SEARCH_ADMIN_KEY'] --output none
+az keyvault secret set --vault-name $KeyVaultName --name "azure-ai-token" --value $envVars['VOICE_LIVE_API_KEY'] --output none
+
+Write-Host "✅ Secrets stored securely" -ForegroundColor Green
+Write-Host ""
+
+# ============================================================================
+# STEP 5: Create Storage Account for Backend Data
+# ============================================================================
+Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
+Write-Host "STEP 5: Azure Storage Account" -ForegroundColor Cyan
+Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
+
+$storageExists = az storage account show --name $StorageAccountName --resource-group $ResourceGroup 2>$null
+if ($storageExists) {
+    Write-Host "✅ Storage account '$StorageAccountName' already exists" -ForegroundColor Green
+} else {
+    Write-Host "💾 Creating storage account: $StorageAccountName" -ForegroundColor Yellow
+    az storage account create `
+        --name $StorageAccountName `
+        --resource-group $ResourceGroup `
+        --location $Location `
+        --sku Standard_LRS `
+        --kind StorageV2 `
+        --allow-blob-public-access false `
+        --output none
+    Write-Host "✅ Storage account created" -ForegroundColor Green
+}
+
+# Create file shares using Azure AD authentication
+Write-Host "📁 Creating file shares..." -ForegroundColor Cyan
+$shares = @("backend-data", "backend-uploads", "backend-voice")
+foreach ($share in $shares) {
+    $shareExists = az storage share exists --name $share --account-name $StorageAccountName --auth-mode login --query exists -o tsv 2>$null
+    if ($shareExists -eq "true") {
+        Write-Host "  ✅ Share '$share' already exists" -ForegroundColor Green
+    } else {
+        az storage share create --name $share --account-name $StorageAccountName --auth-mode login --output none 2>$null
+        Write-Host "  ✅ Created share '$share'" -ForegroundColor Green
+    }
+}
+Write-Host ""
+
+# ============================================================================
+# STEP 6: Create Container Apps Environment
+# ============================================================================
+Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
+Write-Host "STEP 6: Container Apps Environment" -ForegroundColor Cyan
+Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
+
+$envExists = az containerapp env show --name $Environment --resource-group $ResourceGroup 2>$null
+if ($envExists) {
+    Write-Host "✅ Environment '$Environment' already exists" -ForegroundColor Green
+} else {
+    Write-Host "🌍 Creating Container Apps Environment: $Environment" -ForegroundColor Yellow
+    az containerapp env create `
+        --name $Environment `
+        --resource-group $ResourceGroup `
+        --location $Location `
+        --output none
+    Write-Host "✅ Environment created" -ForegroundColor Green
+}
+Write-Host ""
+
+# ============================================================================
+# STEP 7: Configure Storage Mounts
+# ============================================================================
+Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
+Write-Host "STEP 7: Configure Storage Mounts" -ForegroundColor Cyan
+Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
+
+$storageKey = az storage account keys list `
+    --resource-group $ResourceGroup `
+    --account-name $StorageAccountName `
+    --query "[0].value" -o tsv
+
+Write-Host "💾 Configuring storage mounts for Container Apps Environment..." -ForegroundColor Cyan
+
+foreach ($share in $shares) {
+    $mountExists = az containerapp env storage show `
+        --name $Environment `
+        --resource-group $ResourceGroup `
+        --storage-name $share 2>$null
+    
+    if ($mountExists) {
+        Write-Host "  ✅ Mount '$share' already configured" -ForegroundColor Green
+    } else {
+        az containerapp env storage set `
+            --name $Environment `
+            --resource-group $ResourceGroup `
+            --storage-name $share `
+            --azure-file-account-name $StorageAccountName `
+            --azure-file-account-key $storageKey `
+            --azure-file-share-name $share `
+            --access-mode ReadWrite `
+            --output none
+        Write-Host "  ✅ Configured mount '$share'" -ForegroundColor Green
+    }
+}
+Write-Host ""
+
+# ============================================================================
+# STEP 8: Build and Push Container Images
+# ============================================================================
+Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
+Write-Host "STEP 8: Build and Push Container Images" -ForegroundColor Cyan
+Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
+
+$timestamp = Get-Date -Format "yyyyMMddHHmmss"
+$tag = "v$timestamp"
+
+Write-Host "🔨 Building images with tag: $tag" -ForegroundColor Cyan
+Write-Host ""
+
+# Backend
+Write-Host "  📦 Building backend..." -ForegroundColor Yellow
+docker build -f backend/Dockerfile -t "$AcrName.azurecr.io/a2a-backend:$tag" -t "$AcrName.azurecr.io/a2a-backend:latest" .
+Write-Host "  ✅ Backend built" -ForegroundColor Green
+
+# Frontend
+Write-Host "  📦 Building frontend..." -ForegroundColor Yellow
+docker build -f frontend/Dockerfile -t "$AcrName.azurecr.io/a2a-frontend:$tag" -t "$AcrName.azurecr.io/a2a-frontend:latest" ./frontend
+Write-Host "  ✅ Frontend built" -ForegroundColor Green
+
+# Visualizer
+Write-Host "  📦 Building visualizer..." -ForegroundColor Yellow
+docker build -f Visualizer/voice-a2a-fabric/Dockerfile -t "$AcrName.azurecr.io/a2a-visualizer:$tag" -t "$AcrName.azurecr.io/a2a-visualizer:latest" ./Visualizer/voice-a2a-fabric
+Write-Host "  ✅ Visualizer built" -ForegroundColor Green
+
+Write-Host ""
+Write-Host "📤 Pushing images to ACR..." -ForegroundColor Cyan
+
+docker push "$AcrName.azurecr.io/a2a-backend:$tag"
+docker push "$AcrName.azurecr.io/a2a-backend:latest"
+Write-Host "  ✅ Backend pushed" -ForegroundColor Green
+
+docker push "$AcrName.azurecr.io/a2a-frontend:$tag"
+docker push "$AcrName.azurecr.io/a2a-frontend:latest"
+Write-Host "  ✅ Frontend pushed" -ForegroundColor Green
+
+docker push "$AcrName.azurecr.io/a2a-visualizer:$tag"
+docker push "$AcrName.azurecr.io/a2a-visualizer:latest"
+Write-Host "  ✅ Visualizer pushed" -ForegroundColor Green
+
+Write-Host ""
+
+# ============================================================================
+# STEP 8.5: Get Environment Default Domain for Internal FQDNs
+# ============================================================================
+Write-Host "🔗 Getting environment default domain..." -ForegroundColor Cyan
+$envDefaultDomain = az containerapp env show `
+    --name $Environment `
+    --resource-group $ResourceGroup `
+    --query properties.defaultDomain -o tsv
+
+$backendInternalFqdn = "backend.internal.$envDefaultDomain"
+Write-Host "✅ Internal FQDN: $backendInternalFqdn" -ForegroundColor Green
+Write-Host ""
+
+# ============================================================================
+# STEP 9: Deploy Backend Container App with Managed Identity
+# ============================================================================
+Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
+Write-Host "STEP 9: Deploy Backend Container App" -ForegroundColor Cyan
+Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
+
+$backendExists = az containerapp show --name backend --resource-group $ResourceGroup 2>$null
+
+if ($backendExists) {
+    Write-Host "🔄 Updating existing backend container app..." -ForegroundColor Yellow
+    az containerapp update `
+        --name backend `
+        --resource-group $ResourceGroup `
+        --image "$AcrName.azurecr.io/a2a-backend:latest" `
+        --output none
+    Write-Host "✅ Backend updated" -ForegroundColor Green
+} else {
+    Write-Host "🚀 Creating backend container app..." -ForegroundColor Yellow
+    
+    # Create with managed identity and internal ingress for service-to-service communication
+    # Primary port 12000 for HTTP API, additional port 8080 for WebSocket
+    az containerapp create `
+        --name backend `
+        --resource-group $ResourceGroup `
+        --environment $Environment `
+        --image "$AcrName.azurecr.io/a2a-backend:latest" `
+        --target-port 12000 `
+        --exposed-port 8080 `
+        --ingress external `
+        --transport tcp `
+        --min-replicas 1 `
+        --max-replicas 5 `
+        --cpu 1.0 `
+        --memory 2.0Gi `
+        --registry-server "$AcrName.azurecr.io" `
+        --registry-identity system `
+        --system-assigned `
+        --output none
+    
+    Write-Host "✅ Backend created with system-assigned managed identity" -ForegroundColor Green
+    
+    # Configure additional port for WebSocket using YAML update
+    Write-Host "⚙️  Configuring WebSocket port 8080..." -ForegroundColor Cyan
+    
+    $backendConfig = @"
+properties:
+  configuration:
+    ingress:
+      additionalPortMappings:
+        - external: true
+          targetPort: 8080
+          exposedPort: 8080
+"@
+    
+    $backendConfig | az containerapp update --name backend --resource-group $ResourceGroup --yaml - --output none 2>$null
+    Write-Host "✅ WebSocket port configured" -ForegroundColor Green
+}
+
+# Get backend managed identity
+$backendIdentity = az containerapp show `
+    --name backend `
+    --resource-group $ResourceGroup `
+    --query identity.principalId -o tsv
+
+Write-Host "🔑 Backend Managed Identity: $backendIdentity" -ForegroundColor Cyan
+
+# Grant ACR pull permissions
+Write-Host "🔐 Granting ACR pull permissions to backend..." -ForegroundColor Cyan
+$acrId = az acr show --name $AcrName --resource-group $ResourceGroup --query id -o tsv
+az role assignment create `
+    --assignee $backendIdentity `
+    --role "AcrPull" `
+    --scope $acrId `
+    --output none 2>$null
+Write-Host "✅ ACR permissions granted" -ForegroundColor Green
+
+# Grant Key Vault access
+Write-Host "🔐 Granting Key Vault access to backend..." -ForegroundColor Cyan
+az role assignment create `
+    --role "Key Vault Secrets User" `
+    --assignee $backendIdentity `
+    --scope $kvId `
+    --output none 2>$null
+Write-Host "✅ Key Vault access granted" -ForegroundColor Green
+
+Write-Host "🔐 Granting Cognitive Services access to backend..." -ForegroundColor Cyan
+$subscriptionId = az account show --query id -o tsv
+az role assignment create `
+    --role "Cognitive Services User" `
+    --assignee $backendIdentity `
+    --scope "/subscriptions/$subscriptionId" `
+    --output none 2>$null
+Write-Host "✅ Cognitive Services access granted" -ForegroundColor Green
+
+# Configure environment variables with Key Vault references
+Write-Host "⚙️  Configuring environment variables..." -ForegroundColor Cyan
+
+$kvUri = az keyvault show --name $KeyVaultName --resource-group $ResourceGroup --query properties.vaultUri -o tsv
+
+az containerapp update `
+    --name backend `
+    --resource-group $ResourceGroup `
+    --set-env-vars `
+        "A2A_UI_HOST=0.0.0.0" `
+        "A2A_UI_PORT=12000" `
+        "WEBSOCKET_PORT=8080" `
+        "BACKEND_SERVER_URL=https://$backendInternalFqdn" `
+        "WEBSOCKET_SERVER_URL=https://$backendInternalFqdn:8080" `
+        "LOG_LEVEL=$($envVars['LOG_LEVEL'])" `
+        "AZURE_TENANT_ID=$($envVars['AZURE_TENANT_ID'])" `
+        "AZURE_AI_FOUNDRY_PROJECT_ENDPOINT=$($envVars['AZURE_AI_FOUNDRY_PROJECT_ENDPOINT'])" `
+        "AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME=$($envVars['AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME'])" `
+        "AZURE_OPENAI_GPT_API_BASE=$($envVars['AZURE_OPENAI_GPT_API_BASE'])" `
+        "AZURE_OPENAI_GPT_API_VERSION=$($envVars['AZURE_OPENAI_GPT_API_VERSION'])" `
+        "AZURE_OPENAI_GPT_DEPLOYMENT=$($envVars['AZURE_OPENAI_GPT_DEPLOYMENT'])" `
+        "AZURE_OPENAI_EMBEDDINGS_ENDPOINT=$($envVars['AZURE_OPENAI_EMBEDDINGS_ENDPOINT'])" `
+        "AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT=$($envVars['AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT'])" `
+        "AZURE_SEARCH_SERVICE_ENDPOINT=$($envVars['AZURE_SEARCH_SERVICE_ENDPOINT'])" `
+        "AZURE_SEARCH_SERVICE_NAME=$($envVars['AZURE_SEARCH_SERVICE_NAME'])" `
+        "AZURE_SEARCH_INDEX_NAME=$($envVars['AZURE_SEARCH_INDEX_NAME'])" `
+        "AZURE_SEARCH_VECTOR_DIMENSION=$($envVars['AZURE_SEARCH_VECTOR_DIMENSION'])" `
+        "AZURE_STORAGE_ACCOUNT_NAME=$($envVars['AZURE_STORAGE_ACCOUNT_NAME'])" `
+        "AZURE_BLOB_CONTAINER=$($envVars['AZURE_BLOB_CONTAINER'])" `
+        "AZURE_BLOB_SIZE_THRESHOLD=$($envVars['AZURE_BLOB_SIZE_THRESHOLD'])" `
+        "AZURE_CONTENT_UNDERSTANDING_ENDPOINT=$($envVars['AZURE_CONTENT_UNDERSTANDING_ENDPOINT'])" `
+        "AZURE_CONTENT_UNDERSTANDING_API_VERSION=$($envVars['AZURE_CONTENT_UNDERSTANDING_API_VERSION'])" `
+        "AZURE_OPENAI_GPT_API_KEY=secretref:azure-openai-key" `
+        "AZURE_OPENAI_EMBEDDINGS_KEY=secretref:azure-openai-embeddings-key" `
+        "AZURE_SEARCH_ADMIN_KEY=secretref:azure-search-key" `
+        "AZURE_CU_API_KEY=secretref:azure-openai-key" `
+    --secrets `
+        "azure-ai-endpoint=keyvaultref:${kvUri}secrets/azure-ai-endpoint,identityref:system" `
+        "azure-openai-key=keyvaultref:${kvUri}secrets/azure-openai-key,identityref:system" `
+        "azure-openai-deployment=keyvaultref:${kvUri}secrets/azure-openai-deployment,identityref:system" `
+        "azure-openai-base=keyvaultref:${kvUri}secrets/azure-openai-base,identityref:system" `
+        "azure-openai-embeddings-key=keyvaultref:${kvUri}secrets/azure-openai-embeddings-key,identityref:system" `
+        "azure-search-key=keyvaultref:${kvUri}secrets/azure-search-key,identityref:system" `
+    --output none
+
+Write-Host "✅ Environment variables configured" -ForegroundColor Green
+
+# Add storage mounts
+Write-Host "💾 Attaching storage volumes..." -ForegroundColor Cyan
+
+# Create YAML for storage mounts (az CLI doesn't support this directly in create command)
+$backendConfig = @"
+properties:
+  template:
+    containers:
+    - name: backend
+      volumeMounts:
+      - volumeName: backend-data
+        mountPath: /app/data
+      - volumeName: backend-uploads
+        mountPath: /app/uploads
+      - volumeName: backend-voice
+        mountPath: /app/voice_recordings
+    volumes:
+    - name: backend-data
+      storageType: AzureFile
+      storageName: backend-data
+    - name: backend-uploads
+      storageType: AzureFile
+      storageName: backend-uploads
+    - name: backend-voice
+      storageType: AzureFile
+      storageName: backend-voice
+"@
+
+$backendConfig | az containerapp update --name backend --resource-group $ResourceGroup --yaml - --output none 2>$null
+
+Write-Host "✅ Storage volumes attached" -ForegroundColor Green
+
+# Get backend FQDNs (both external and internal)
+$backendFqdn = az containerapp show `
+    --name backend `
+    --resource-group $ResourceGroup `
+    --query properties.configuration.ingress.fqdn -o tsv
+
+# Get environment default domain for internal FQDN
+$envDefaultDomain = az containerapp env show `
+    --name $Environment `
+    --resource-group $ResourceGroup `
+    --query properties.defaultDomain -o tsv
+
+$backendInternalFqdn = "backend.internal.$envDefaultDomain"
+
+Write-Host "✅ Backend deployed at:" -ForegroundColor Green
+Write-Host "   External: https://$backendFqdn" -ForegroundColor Cyan
+Write-Host "   Internal: https://$backendInternalFqdn" -ForegroundColor Cyan
+Write-Host ""
+
+# ============================================================================
+# STEP 10: Deploy Frontend Container App with Managed Identity
+# ============================================================================
+Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
+Write-Host "STEP 10: Deploy Frontend Container App" -ForegroundColor Cyan
+Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
+
+$frontendExists = az containerapp show --name frontend --resource-group $ResourceGroup 2>$null
+
+if ($frontendExists) {
+    Write-Host "🔄 Updating existing frontend container app..." -ForegroundColor Yellow
+    az containerapp update `
+        --name frontend `
+        --resource-group $ResourceGroup `
+        --image "$AcrName.azurecr.io/a2a-frontend:latest" `
+        --output none
+    Write-Host "✅ Frontend updated" -ForegroundColor Green
+} else {
+    Write-Host "🚀 Creating frontend container app..." -ForegroundColor Yellow
+    
+    az containerapp create `
+        --name frontend `
+        --resource-group $ResourceGroup `
+        --environment $Environment `
+        --image "$AcrName.azurecr.io/a2a-frontend:latest" `
+        --target-port 3000 `
+        --ingress external `
+        --min-replicas 1 `
+        --max-replicas 5 `
+        --cpu 0.5 `
+        --memory 1.0Gi `
+        --registry-server "$AcrName.azurecr.io" `
+        --registry-identity system `
+        --system-assigned `
+        --env-vars `
+            "NODE_ENV=production" `
+            "NEXT_PUBLIC_A2A_API_URL=https://$backendInternalFqdn" `
+            "NEXT_PUBLIC_WEBSOCKET_URL=wss://$backendInternalFqdn:8080/events" `
+            "NEXT_PUBLIC_DEV_MODE=$($envVars['NEXT_PUBLIC_DEV_MODE'])" `
+            "NEXT_PUBLIC_DEBUG_LOGS=$($envVars['NEXT_PUBLIC_DEBUG_LOGS'])" `
+            "NEXT_PUBLIC_AZURE_EVENTHUB_CONNECTION_STRING=$($envVars['NEXT_PUBLIC_AZURE_EVENTHUB_CONNECTION_STRING'])" `
+            "NEXT_PUBLIC_AZURE_EVENTHUB_NAME=$($envVars['NEXT_PUBLIC_AZURE_EVENTHUB_NAME'])" `
+            "NEXT_PUBLIC_AZURE_STORAGE_CONNECTION_STRING=$($envVars['NEXT_PUBLIC_AZURE_STORAGE_CONNECTION_STRING'])" `
+            "NEXT_PUBLIC_AZURE_STORAGE_CONTAINER_NAME=$($envVars['NEXT_PUBLIC_AZURE_STORAGE_CONTAINER_NAME'])" `
+            "NEXT_PUBLIC_USE_MOCK_EVENTHUB=$($envVars['NEXT_PUBLIC_USE_MOCK_EVENTHUB'])" `
+        --output none
+    
+    Write-Host "✅ Frontend created with system-assigned managed identity" -ForegroundColor Green
+}
+
+# Grant ACR pull permissions
+$frontendIdentity = az containerapp show `
+    --name frontend `
+    --resource-group $ResourceGroup `
+    --query identity.principalId -o tsv
+
+Write-Host "🔐 Granting ACR pull permissions to frontend..." -ForegroundColor Cyan
+az role assignment create `
+    --assignee $frontendIdentity `
+    --role "AcrPull" `
+    --scope $acrId `
+    --output none 2>$null
+Write-Host "✅ ACR permissions granted" -ForegroundColor Green
+
+$frontendFqdn = az containerapp show `
+    --name frontend `
+    --resource-group $ResourceGroup `
+    --query properties.configuration.ingress.fqdn -o tsv
+
+Write-Host "✅ Frontend deployed at: https://$frontendFqdn" -ForegroundColor Green
+Write-Host ""
+
+# ============================================================================
+# STEP 11: Deploy Visualizer Container App with Managed Identity
+# ============================================================================
+Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
+Write-Host "STEP 11: Deploy Visualizer Container App" -ForegroundColor Cyan
+Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
+
+$visualizerExists = az containerapp show --name visualizer --resource-group $ResourceGroup 2>$null
+
+if ($visualizerExists) {
+    Write-Host "🔄 Updating existing visualizer container app..." -ForegroundColor Yellow
+    az containerapp update `
+        --name visualizer `
+        --resource-group $ResourceGroup `
+        --image "$AcrName.azurecr.io/a2a-visualizer:latest" `
+        --output none
+    Write-Host "✅ Visualizer updated" -ForegroundColor Green
+} else {
+    Write-Host "🚀 Creating visualizer container app..." -ForegroundColor Yellow
+    
+    az containerapp create `
+        --name visualizer `
+        --resource-group $ResourceGroup `
+        --environment $Environment `
+        --image "$AcrName.azurecr.io/a2a-visualizer:latest" `
+        --target-port 3000 `
+        --ingress external `
+        --min-replicas 1 `
+        --max-replicas 3 `
+        --cpu 0.5 `
+        --memory 1.0Gi `
+        --registry-server "$AcrName.azurecr.io" `
+        --registry-identity system `
+        --system-assigned `
+        --output none
+    
+    Write-Host "✅ Visualizer created with system-assigned managed identity" -ForegroundColor Green
+}
+
+# Grant permissions
+$visualizerIdentity = az containerapp show `
+    --name visualizer `
+    --resource-group $ResourceGroup `
+    --query identity.principalId -o tsv
+
+Write-Host "🔐 Granting ACR pull permissions to visualizer..." -ForegroundColor Cyan
+az role assignment create `
+    --assignee $visualizerIdentity `
+    --role "AcrPull" `
+    --scope $acrId `
+    --output none 2>$null
+
+Write-Host "🔐 Granting Key Vault access to visualizer..." -ForegroundColor Cyan
+az role assignment create `
+    --role "Key Vault Secrets User" `
+    --assignee $visualizerIdentity `
+    --scope $kvId `
+    --output none 2>$null
+
+Write-Host "🔐 Granting Cognitive Services access to visualizer..." -ForegroundColor Cyan
+az role assignment create `
+    --role "Cognitive Services User" `
+    --assignee $visualizerIdentity `
+    --scope "/subscriptions/$subscriptionId" `
+    --output none 2>$null
+
+Write-Host "✅ Permissions granted" -ForegroundColor Green
+
+# Configure environment variables
+Write-Host "⚙️  Configuring environment variables..." -ForegroundColor Cyan
+
+az containerapp update `
+    --name visualizer `
+    --resource-group $ResourceGroup `
+    --set-env-vars `
+        "NODE_ENV=production" `
+        "NEXT_PUBLIC_A2A_API_URL=https://$backendInternalFqdn" `
+        "NEXT_PUBLIC_WEBSOCKET_URL=wss://$backendInternalFqdn:8080/events" `
+        "NEXT_PUBLIC_AZURE_AI_FOUNDRY_PROJECT_ENDPOINT=$($envVars['NEXT_PUBLIC_AZURE_AI_FOUNDRY_PROJECT_ENDPOINT'])" `
+        "NEXT_PUBLIC_VOICE_MODEL=$($envVars['NEXT_PUBLIC_VOICE_MODEL'])" `
+        "NEXT_PUBLIC_DEV_MODE=$($envVars['NEXT_PUBLIC_DEV_MODE'])" `
+        "NEXT_PUBLIC_DEBUG_LOGS=$($envVars['NEXT_PUBLIC_DEBUG_LOGS'])" `
+        "NEXT_PUBLIC_AZURE_AI_TOKEN=secretref:azure-ai-token" `
+    --secrets `
+        "azure-ai-token=keyvaultref:${kvUri}secrets/azure-ai-token,identityref:system" `
+    --output none
+
+Write-Host "✅ Environment variables configured" -ForegroundColor Green
+
+$visualizerFqdn = az containerapp show `
+    --name visualizer `
+    --resource-group $ResourceGroup `
+    --query properties.configuration.ingress.fqdn -o tsv
+
+Write-Host "✅ Visualizer deployed at: https://$visualizerFqdn" -ForegroundColor Green
+Write-Host ""
+
+# ============================================================================
+# STEP 12: Deploy Agent Container Apps with Managed Identity
+# ============================================================================
+Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
+Write-Host "STEP 12: Deploy Agent Container Apps" -ForegroundColor Cyan
+Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
+
+$agents = @(
+    @{Name="authentication-agent"; Port=8101; Path="contoso_agents/authentication_agent"},
+    @{Name="outage-check-agent"; Port=8102; Path="contoso_agents/outage_check_agent"},
+    @{Name="modem-check-agent"; Port=8103; Path="contoso_agents/modem_check_agent"},
+    @{Name="internet-plan-agent"; Port=8104; Path="contoso_agents/internet_plan_agent"},
+    @{Name="network-performance-agent"; Port=8105; Path="contoso_agents/network_performance_agent"},
+    @{Name="technical-dispatch-agent"; Port=8106; Path="contoso_agents/technical_dispatch_agent"}
+)
+
+Write-Host "🔨 Building and pushing agent images..." -ForegroundColor Cyan
+Write-Host ""
+
+foreach ($agent in $agents) {
+    $agentName = $agent.Name
+    $agentPath = $agent.Path
+    
+    Write-Host "  📦 Building $agentName..." -ForegroundColor Yellow
+    docker build -f "$agentPath/Dockerfile" -t "$AcrName.azurecr.io/${agentName}:${tag}" -t "$AcrName.azurecr.io/${agentName}:latest" $agentPath
+    
+    Write-Host "  📤 Pushing $agentName..." -ForegroundColor Yellow
+    docker push "$AcrName.azurecr.io/${agentName}:${tag}"
+    docker push "$AcrName.azurecr.io/${agentName}:latest"
+    
+    Write-Host "  ✅ $agentName image ready" -ForegroundColor Green
+}
+
+Write-Host ""
+Write-Host "🚀 Deploying agent container apps..." -ForegroundColor Cyan
+Write-Host ""
+
+$agentFqdns = @{}
+
+foreach ($agent in $agents) {
+    $agentName = $agent.Name
+    $agentPort = $agent.Port
+    
+    Write-Host "  🚀 Deploying $agentName..." -ForegroundColor Yellow
+    
+    $agentExists = az containerapp show --name $agentName --resource-group $ResourceGroup 2>$null
+    
+    if ($agentExists) {
+        az containerapp update `
+            --name $agentName `
+            --resource-group $ResourceGroup `
+            --image "$AcrName.azurecr.io/$agentName:latest" `
+            --output none
+    } else {
+        az containerapp create `
+            --name $agentName `
+            --resource-group $ResourceGroup `
+            --environment $Environment `
+            --image "$AcrName.azurecr.io/$agentName:latest" `
+            --target-port $agentPort `
+            --ingress internal `
+            --min-replicas 1 `
+            --max-replicas 3 `
+            --cpu 0.5 `
+            --memory 1.0Gi `
+            --registry-server "$AcrName.azurecr.io" `
+            --registry-identity system `
+            --system-assigned `
+            --env-vars `
+                "A2A_ENDPOINT=$agentName.internal.$envDefaultDomain" `
+                "A2A_PORT=$agentPort" `
+                "A2A_HOST=https://$backendInternalFqdn" `
+                "LOG_LEVEL=$($envVars['LOG_LEVEL'])" `
+                "AZURE_TENANT_ID=$($envVars['AZURE_TENANT_ID'])" `
+                "AZURE_AI_FOUNDRY_PROJECT_ENDPOINT=$($envVars['AZURE_AI_FOUNDRY_PROJECT_ENDPOINT'])" `
+                "AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME=$($envVars['AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME'])" `
+                "AZURE_OPENAI_GPT_API_BASE=$($envVars['AZURE_OPENAI_GPT_API_BASE'])" `
+                "AZURE_OPENAI_GPT_API_VERSION=$($envVars['AZURE_OPENAI_GPT_API_VERSION'])" `
+                "AZURE_OPENAI_GPT_DEPLOYMENT=$($envVars['AZURE_OPENAI_GPT_DEPLOYMENT'])" `
+                "AZURE_OPENAI_GPT_API_KEY=secretref:azure-openai-key" `
+            --secrets `
+                "azure-openai-key=keyvaultref:${kvUri}secrets/azure-openai-key,identityref:system" `
+            --output none
+    }
+    
+    # Grant ACR pull permissions
+    $agentIdentity = az containerapp show `
+        --name $agentName `
+        --resource-group $ResourceGroup `
+        --query identity.principalId -o tsv
+    
+    az role assignment create `
+        --assignee $agentIdentity `
+        --role AcrPull `
+        --scope $acrId `
+        --output none 2>$null
+    
+    # Grant Key Vault access
+    az role assignment create `
+        --assignee $agentIdentity `
+        --role "Key Vault Secrets User" `
+        --scope $kvId `
+        --output none 2>$null
+    
+    # Grant Cognitive Services access
+    az role assignment create `
+        --assignee $agentIdentity `
+        --role "Cognitive Services User" `
+        --scope "/subscriptions/$subscriptionId" `
+        --output none 2>$null
+    
+    # Get agent internal FQDN
+    $agentInternalFqdn = "$agentName.internal.$envDefaultDomain"
+    $agentFqdns[$agentName] = $agentInternalFqdn
+    
+    Write-Host "  ✅ $agentName deployed at https://$agentInternalFqdn" -ForegroundColor Green
+}
+
+Write-Host ""
+Write-Host "✅ All agents deployed with internal ingress" -ForegroundColor Green
+Write-Host ""
+
+# ============================================================================
+# STEP 13: Configure Backend with Agent URLs
+# ============================================================================
+Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
+Write-Host "STEP 13: Configure Backend with Agent URLs" -ForegroundColor Cyan
+Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
+
+Write-Host "⚙️  Updating backend environment variables with agent URLs..." -ForegroundColor Cyan
+
+# Build agent URL environment variables
+$agentEnvVars = @(
+    "AUTHENTICATION_AGENT_URL=https://$($agentFqdns['authentication-agent'])",
+    "OUTAGE_CHECK_AGENT_URL=https://$($agentFqdns['outage-check-agent'])",
+    "MODEM_CHECK_AGENT_URL=https://$($agentFqdns['modem-check-agent'])",
+    "INTERNET_PLAN_AGENT_URL=https://$($agentFqdns['internet-plan-agent'])",
+    "NETWORK_PERFORMANCE_AGENT_URL=https://$($agentFqdns['network-performance-agent'])",
+    "TECHNICAL_DISPATCH_AGENT_URL=https://$($agentFqdns['technical-dispatch-agent'])"
+)
+
+# Get existing environment variables (only the ones we're adding)
+$existingEnvVars = az containerapp show --name backend --resource-group $ResourceGroup --query "properties.template.containers[0].env[?name!='AUTHENTICATION_AGENT_URL' && name!='OUTAGE_CHECK_AGENT_URL' && name!='MODEM_CHECK_AGENT_URL' && name!='INTERNET_PLAN_AGENT_URL' && name!='NETWORK_PERFORMANCE_AGENT_URL' && name!='TECHNICAL_DISPATCH_AGENT_URL'].{name:name,value:value,secretRef:secretRef}" -o json | ConvertFrom-Json
+
+# Build env-vars parameter
+$envVarsParam = @()
+foreach ($var in $existingEnvVars) {
+    if ($var.secretRef) {
+        $envVarsParam += "$($var.name)=secretref:$($var.secretRef)"
+    } else {
+        $envVarsParam += "$($var.name)=$($var.value)"
+    }
+}
+$envVarsParam += $agentEnvVars
+
+az containerapp update `
+    --name backend `
+    --resource-group $ResourceGroup `
+    --set-env-vars $envVarsParam `
+    --output none
+
+Write-Host "✅ Backend configured with agent URLs" -ForegroundColor Green
+Write-Host ""
+
+# ============================================================================
+# STEP 14: Configure Auto-Scaling
+# ============================================================================
+Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
+Write-Host "STEP 14: Configure Auto-Scaling" -ForegroundColor Cyan
+Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
+
+Write-Host "⚙️  Configuring HTTP-based auto-scaling..." -ForegroundColor Cyan
+
+# Backend scaling
+az containerapp update `
+    --name backend `
+    --resource-group $ResourceGroup `
+    --min-replicas 1 `
+    --max-replicas 10 `
+    --scale-rule-name http-rule `
+    --scale-rule-type http `
+    --scale-rule-http-concurrency 50 `
+    --output none
+
+Write-Host "  ✅ Backend auto-scaling configured (1-10 replicas, 50 concurrent requests)" -ForegroundColor Green
+
+# Frontend scaling
+az containerapp update `
+    --name frontend `
+    --resource-group $ResourceGroup `
+    --min-replicas 1 `
+    --max-replicas 10 `
+    --scale-rule-name http-rule `
+    --scale-rule-type http `
+    --scale-rule-http-concurrency 100 `
+    --output none
+
+Write-Host "  ✅ Frontend auto-scaling configured (1-10 replicas, 100 concurrent requests)" -ForegroundColor Green
+
+# Visualizer scaling
+az containerapp update `
+    --name visualizer `
+    --resource-group $ResourceGroup `
+    --min-replicas 1 `
+    --max-replicas 5 `
+    --scale-rule-name http-rule `
+    --scale-rule-type http `
+    --scale-rule-http-concurrency 50 `
+    --output none
+
+Write-Host "  ✅ Visualizer auto-scaling configured (1-5 replicas, 50 concurrent requests)" -ForegroundColor Green
+Write-Host ""
+
+# ============================================================================
+# DEPLOYMENT SUMMARY
+# ============================================================================
+Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Green
+Write-Host "   🎉 DEPLOYMENT COMPLETED SUCCESSFULLY! 🎉" -ForegroundColor Green
+Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Green
+Write-Host ""
+
+Write-Host "📋 Deployment Summary:" -ForegroundColor Cyan
+Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
+Write-Host ""
+
+Write-Host "🌐 Application URLs:" -ForegroundColor Yellow
+Write-Host "  Backend:    https://$backendFqdn" -ForegroundColor White
+Write-Host "  Frontend:   https://$frontendFqdn" -ForegroundColor White
+Write-Host "  Visualizer: https://$visualizerFqdn" -ForegroundColor White
+Write-Host ""
+
+Write-Host "🔐 Managed Identities:" -ForegroundColor Yellow
+Write-Host "  Backend:    $backendIdentity" -ForegroundColor White
+Write-Host "  Frontend:   $frontendIdentity" -ForegroundColor White
+Write-Host "  Visualizer: $visualizerIdentity" -ForegroundColor White
+Write-Host ""
+
+Write-Host "📦 Azure Resources:" -ForegroundColor Yellow
+Write-Host "  Resource Group:    $ResourceGroup" -ForegroundColor White
+Write-Host "  Container Registry: $AcrName" -ForegroundColor White
+Write-Host "  Key Vault:         $KeyVaultName" -ForegroundColor White
+Write-Host "  Storage Account:   $StorageAccountName" -ForegroundColor White
+Write-Host "  ACA Environment:   $Environment" -ForegroundColor White
+Write-Host ""
+
+Write-Host "🔑 Security Features:" -ForegroundColor Yellow
+Write-Host "  ✅ Managed Identities for all services" -ForegroundColor Green
+Write-Host "  ✅ Key Vault for secret management" -ForegroundColor Green
+Write-Host "  ✅ ACR with managed identity authentication" -ForegroundColor Green
+Write-Host "  ✅ HTTPS-only ingress" -ForegroundColor Green
+Write-Host "  ✅ Azure File Storage with managed access" -ForegroundColor Green
+Write-Host ""
+
+Write-Host "📊 Useful Commands:" -ForegroundColor Yellow
+Write-Host ""
+Write-Host "View logs:" -ForegroundColor Cyan
+Write-Host "  az containerapp logs show --name backend --resource-group $ResourceGroup --follow" -ForegroundColor White
+Write-Host "  az containerapp logs show --name frontend --resource-group $ResourceGroup --follow" -ForegroundColor White
+Write-Host "  az containerapp logs show --name visualizer --resource-group $ResourceGroup --follow" -ForegroundColor White
+Write-Host "  az containerapp logs show --name authentication-agent --resource-group $ResourceGroup --follow" -ForegroundColor White
+Write-Host ""
+
+Write-Host "Update deployment:" -ForegroundColor Cyan
+Write-Host "  az containerapp update --name backend --resource-group $ResourceGroup --image $AcrName.azurecr.io/a2a-backend:latest" -ForegroundColor White
+Write-Host ""
+
+Write-Host "Scale manually:" -ForegroundColor Cyan
+Write-Host "  az containerapp update --name backend --resource-group $ResourceGroup --min-replicas 2 --max-replicas 20" -ForegroundColor White
+Write-Host ""
+
+Write-Host "View in Azure Portal:" -ForegroundColor Cyan
+Write-Host "  https://portal.azure.com/#@/resource/subscriptions/$($currentSub.id)/resourceGroups/$ResourceGroup/overview" -ForegroundColor White
+Write-Host ""
+
+Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
+Write-Host "✨ Your A2A system is now running in Azure Container Apps! ✨" -ForegroundColor Green
+Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan

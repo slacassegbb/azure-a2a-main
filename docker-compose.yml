@@ -1,0 +1,248 @@
+services:
+  # ============================================================================
+  # Core Services
+  # ============================================================================
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: a2a-backend
+    ports:
+      - "12000:12000"
+      - "8080:8080"
+    environment:
+      - A2A_UI_HOST=0.0.0.0
+      - A2A_UI_PORT=12000
+      - WEBSOCKET_SERVER_URL=http://localhost:8080
+      - AZURE_CONFIG_DIR=/root/.azure
+      - HOME=/root
+    env_file:
+      - .env
+    volumes:
+      # Persist data directories
+      - ./backend/data:/app/data
+      - ./backend/uploads:/app/uploads
+      - ./backend/voice_recordings:/app/voice_recordings
+      # Mount Azure credentials for DefaultAzureCredential (read-write for CLI cache)
+      - ${USERPROFILE}/.azure:/root/.azure
+    networks:
+      a2a-network:
+        aliases:
+          - localhost
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:12000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: a2a-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - NEXT_PUBLIC_A2A_API_URL=http://localhost:12000
+      - NEXT_PUBLIC_WEBSOCKET_URL=ws://localhost:8080/events
+      - NEXT_PUBLIC_DEV_MODE=false
+      - NEXT_PUBLIC_DEBUG_LOGS=false
+    env_file:
+      - .env
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - a2a-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 100s
+
+  visualizer:
+    build:
+      context: ./Visualizer/voice-a2a-fabric
+      dockerfile: Dockerfile
+      args:
+        - NEXT_PUBLIC_AZURE_AI_TOKEN=${NEXT_PUBLIC_AZURE_AI_TOKEN}
+        - NEXT_PUBLIC_AZURE_AI_FOUNDRY_PROJECT_ENDPOINT=${NEXT_PUBLIC_AZURE_AI_FOUNDRY_PROJECT_ENDPOINT}
+        - NEXT_PUBLIC_VOICE_MODEL=${NEXT_PUBLIC_VOICE_MODEL}
+        - NEXT_PUBLIC_A2A_API_URL=http://localhost:12000
+        - NEXT_PUBLIC_WEBSOCKET_URL=ws://localhost:8080/events
+        - NEXT_PUBLIC_DEBUG_LOGS=${NEXT_PUBLIC_DEBUG_LOGS}
+    container_name: a2a-visualizer
+    ports:
+      - "3001:3000"
+    environment:
+      - NODE_ENV=production
+    env_file:
+      - ./Visualizer/voice-a2a-fabric/.env
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - a2a-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 100s
+
+  # ============================================================================
+  # Contoso Agents - All use network_mode: host for localhost communication
+  # Mount Azure credentials for local development (DefaultAzureCredential)
+  # ============================================================================
+  authentication-agent:
+    build:
+      context: ./contoso_agents/authentication_agent
+      dockerfile: Dockerfile
+    container_name: a2a-authentication-agent
+    network_mode: host
+    env_file:
+      - .env
+      - ./contoso_agents/authentication_agent/.env
+    volumes:
+      - ${USERPROFILE}/.azure:/root/.azure
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8101/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 100s
+
+  internet-plan-agent:
+    build:
+      context: ./contoso_agents/internet_plan_agent
+      dockerfile: Dockerfile
+    container_name: a2a-internet-plan-agent
+    network_mode: host
+    env_file:
+      - .env
+      - ./contoso_agents/internet_plan_agent/.env
+    volumes:
+      - ${USERPROFILE}/.azure:/root/.azure
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8104/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 100s
+
+  modem-check-agent:
+    build:
+      context: ./contoso_agents/modem_check_agent
+      dockerfile: Dockerfile
+    container_name: a2a-modem-check-agent
+    network_mode: host
+    env_file:
+      - .env
+      - ./contoso_agents/modem_check_agent/.env
+    volumes:
+      - ${USERPROFILE}/.azure:/root/.azure
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8103/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 100s
+
+  network-performance-agent:
+    build:
+      context: ./contoso_agents/network_performance_agent
+      dockerfile: Dockerfile
+    container_name: a2a-network-performance-agent
+    network_mode: host
+    env_file:
+      - .env
+      - ./contoso_agents/network_performance_agent/.env
+    volumes:
+      - ${USERPROFILE}/.azure:/root/.azure
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8105/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 100s
+
+  outage-check-agent:
+    build:
+      context: ./contoso_agents/outage_check_agent
+      dockerfile: Dockerfile
+    container_name: a2a-outage-check-agent
+    network_mode: host
+    env_file:
+      - .env
+      - ./contoso_agents/outage_check_agent/.env
+    volumes:
+      - ${USERPROFILE}/.azure:/root/.azure
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8102/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 100s
+
+  technical-dispatch-agent:
+    build:
+      context: ./contoso_agents/technical_dispatch_agent
+      dockerfile: Dockerfile
+    container_name: a2a-technical-dispatch-agent
+    network_mode: host
+    env_file:
+      - .env
+      - ./contoso_agents/technical_dispatch_agent/.env
+    volumes:
+      - ${USERPROFILE}/.azure:/root/.azure
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8106/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 100s
+
+networks:
+  a2a-network:
+    driver: bridge
+
+volumes:
+  backend-data:
+  backend-uploads:
+  backend-voice:

@@ -17,8 +17,10 @@ interface VoiceLiveHook {
   isConnected: boolean
   isRecording: boolean
   isSpeaking: boolean
+  isMuted: boolean
   startVoiceConversation: () => Promise<void>
   stopVoiceConversation: () => void
+  toggleMute: () => void
   injectNetworkResponse: (response: any) => void
   error: string | null
 }
@@ -41,16 +43,20 @@ export function useVoiceLive(config: VoiceLiveConfig): VoiceLiveHook {
   const currentSourcesRef = useRef<AudioBufferSourceNode[]>([])
   const pendingCallIdRef = useRef<string | null>(null)
   const isRecordingRef = useRef(false)
+  const isMutedRef = useRef(false)
+  const [isMuted, setIsMuted] = useState(false)
 
   // Response lifecycle tracking (following Python SDK pattern)
   const activeResponseRef = useRef(false)
   const responseDoneRef = useRef(false)
-  const pendingFunctionCallRef = useRef<{
+  
+  // Track MULTIPLE pending function calls by call_id (fixes issue where 2nd call overwrites 1st)
+  const pendingFunctionCallsRef = useRef<Map<string, {
     name: string
     call_id: string
     previous_item_id?: string
     arguments?: string
-  } | null>(null)
+  }>>(new Map())
   
   // Track multiple async A2A operations by call_id (for later injection)
   const pendingA2ACallsRef = useRef<Map<string, {
@@ -245,13 +251,15 @@ export function useVoiceLive(config: VoiceLiveConfig): VoiceLiveHook {
           console.log('[VoiceLive] 🔑 call_id:', event.item.call_id)
           console.log('[VoiceLive] 🆔 item.id (will be previous_item_id):', event.item.id)
           
-          pendingFunctionCallRef.current = {
+          // Store in Map to support MULTIPLE function calls in one response
+          pendingFunctionCallsRef.current.set(event.item.call_id, {
             name: event.item.name,
             call_id: event.item.call_id,
             previous_item_id: event.item.id // This ID will be used to insert output after this call
-          }
+          })
           
-          console.log('[VoiceLive] 📝 ✅ Stored in pendingFunctionCallRef.current:', JSON.stringify(pendingFunctionCallRef.current))
+          console.log('[VoiceLive] 📝 ✅ Stored in Map. Call ID:', event.item.call_id)
+          console.log('[VoiceLive] 📊 Total pending function calls:', pendingFunctionCallsRef.current.size)
           console.log('[VoiceLive] ⏳ Waiting for arguments in response.function_call_arguments.done...')
         } else {
           console.log('[VoiceLive] ℹ️ Item created but not a function_call, type:', event.item?.type)
@@ -287,18 +295,18 @@ export function useVoiceLive(config: VoiceLiveConfig): VoiceLiveHook {
         console.log('[VoiceLive] 📋 response.function_call_arguments.done received')
         console.log('[VoiceLive] 🔑 Event call_id:', event.call_id)
         console.log('[VoiceLive] 📝 Arguments:', event.arguments)
-        console.log('[VoiceLive] 🔍 Checking pendingFunctionCallRef.current:', JSON.stringify(pendingFunctionCallRef.current))
         
-        // Python pattern: Add arguments to pending function call
-        if (pendingFunctionCallRef.current && event.call_id === pendingFunctionCallRef.current.call_id) {
-          console.log('[VoiceLive] ✅ MATCH! Adding arguments to pending function call')
-          pendingFunctionCallRef.current.arguments = event.arguments
-          console.log('[VoiceLive] ✅ Updated pendingFunctionCallRef.current:', JSON.stringify(pendingFunctionCallRef.current))
+        // Python pattern: Add arguments to pending function call in Map
+        const pendingCall = pendingFunctionCallsRef.current.get(event.call_id)
+        if (pendingCall) {
+          console.log('[VoiceLive] ✅ MATCH! Adding arguments to pending function call:', event.call_id)
+          pendingCall.arguments = event.arguments
+          pendingFunctionCallsRef.current.set(event.call_id, pendingCall)
+          console.log('[VoiceLive] ✅ Updated function call in Map')
           console.log('[VoiceLive] ⏳ Waiting for response.done to execute function...')
         } else {
-          console.warn('[VoiceLive] ⚠️ NO MATCH! Arguments not added.')
-          console.warn('[VoiceLive] Expected call_id:', pendingFunctionCallRef.current?.call_id)
-          console.warn('[VoiceLive] Received call_id:', event.call_id)
+          console.warn('[VoiceLive] ⚠️ NO MATCH! Call ID not found in Map:', event.call_id)
+          console.warn('[VoiceLive] Available call IDs:', Array.from(pendingFunctionCallsRef.current.keys()))
         }
         break
       
@@ -315,32 +323,38 @@ export function useVoiceLive(config: VoiceLiveConfig): VoiceLiveHook {
         console.log('[VoiceLive] Response ID:', event.response?.id)
         console.log('[VoiceLive] Response status:', event.response?.status)
         
-        // Python pattern: Mark response done and execute pending function
+        // Python pattern: Mark response done and execute ALL pending functions
         activeResponseRef.current = false
         responseDoneRef.current = true
         console.log('[VoiceLive] 📊 State: activeResponseRef = false, responseDoneRef = true')
         
-        // Execute pending function call if arguments are ready
-        console.log('[VoiceLive] 🔍 Checking for pending function call...')
-        console.log('[VoiceLive] pendingFunctionCallRef.current:', JSON.stringify(pendingFunctionCallRef.current))
+        // Execute ALL pending function calls (fixes 2nd function call issue!)
+        console.log('[VoiceLive] 🔍 Checking for pending function calls...')
+        console.log('[VoiceLive] 📊 Total pending function calls:', pendingFunctionCallsRef.current.size)
+        console.log('[VoiceLive] 🔑 Call IDs:', Array.from(pendingFunctionCallsRef.current.keys()))
         
-        if (pendingFunctionCallRef.current && pendingFunctionCallRef.current.arguments) {
-          console.log('[VoiceLive] ✅✅✅ EXECUTING FUNCTION CALL ✅✅✅')
-          console.log('[VoiceLive] 🔧 Function name:', pendingFunctionCallRef.current.name)
-          console.log('[VoiceLive] 🔑 call_id:', pendingFunctionCallRef.current.call_id)
-          console.log('[VoiceLive] 📝 Arguments:', pendingFunctionCallRef.current.arguments)
-          console.log('[VoiceLive] 🆔 previous_item_id:', pendingFunctionCallRef.current.previous_item_id)
-          
-          await handleFunctionCall(pendingFunctionCallRef.current)
-          console.log('[VoiceLive] ✅ Function call execution completed')
-          
-          pendingFunctionCallRef.current = null
-          console.log('[VoiceLive] 🗑️ Cleared pendingFunctionCallRef.current')
-        } else {
-          console.log('[VoiceLive] ℹ️ No pending function call to execute')
-          if (pendingFunctionCallRef.current) {
-            console.log('[VoiceLive] ⚠️ Function call exists but missing arguments:', pendingFunctionCallRef.current)
+        if (pendingFunctionCallsRef.current.size > 0) {
+          // Execute each function call that has arguments ready
+          for (const [callId, functionCallInfo] of pendingFunctionCallsRef.current.entries()) {
+            if (functionCallInfo.arguments) {
+              console.log('[VoiceLive] ✅✅✅ EXECUTING FUNCTION CALL ✅✅✅')
+              console.log('[VoiceLive] 🔧 Function name:', functionCallInfo.name)
+              console.log('[VoiceLive] 🔑 call_id:', callId)
+              console.log('[VoiceLive] 📝 Arguments:', functionCallInfo.arguments)
+              console.log('[VoiceLive] 🆔 previous_item_id:', functionCallInfo.previous_item_id)
+              
+              await handleFunctionCall(functionCallInfo)
+              console.log('[VoiceLive] ✅ Function call execution completed')
+            } else {
+              console.log('[VoiceLive] ⚠️ Function call missing arguments:', callId, functionCallInfo.name)
+            }
           }
+          
+          // Clear all processed function calls
+          pendingFunctionCallsRef.current.clear()
+          console.log('[VoiceLive] 🗑️ Cleared all pending function calls')
+        } else {
+          console.log('[VoiceLive] ℹ️ No pending function calls to execute')
         }
         break
 
@@ -674,6 +688,13 @@ export function useVoiceLive(config: VoiceLiveConfig): VoiceLiveHook {
     }
   }
 
+  // Toggle mute without stopping recording or websocket
+  const toggleMute = useCallback(() => {
+    isMutedRef.current = !isMutedRef.current
+    setIsMuted(isMutedRef.current)
+    console.log('[VoiceLive] 🔇 Mute toggled:', isMutedRef.current ? 'MUTED' : 'UNMUTED')
+  }, [])
+
   // Start recording audio
   const startRecording = async () => {
     try {
@@ -698,8 +719,8 @@ export function useVoiceLive(config: VoiceLiveConfig): VoiceLiveHook {
 
       let audioChunkCount = 0
       processor.onaudioprocess = (e) => {
-        // Only send audio when connected, not playing, and recording is active
-        if (wsRef.current?.readyState === WebSocket.OPEN && !isPlayingRef.current && isRecordingRef.current) {
+        // Only send audio when connected, not playing, recording is active, AND not muted
+        if (wsRef.current?.readyState === WebSocket.OPEN && !isPlayingRef.current && isRecordingRef.current && !isMutedRef.current) {
           const inputData = e.inputBuffer.getChannelData(0)
           
           // Convert Float32 to PCM16
@@ -830,8 +851,10 @@ export function useVoiceLive(config: VoiceLiveConfig): VoiceLiveHook {
     isConnected,
     isRecording,
     isSpeaking,
+    isMuted,
     startVoiceConversation,
     stopVoiceConversation,
+    toggleMute,
     injectNetworkResponse,
     error
   }

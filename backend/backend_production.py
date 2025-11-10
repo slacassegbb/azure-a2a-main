@@ -398,9 +398,13 @@ async def lifespan(app: FastAPI):
     httpx_client_wrapper.start()
     
     # Start WebSocket server for UI communication
+    # Uses environment variables for flexibility across environments
+    websocket_host = os.getenv("A2A_UI_HOST", "localhost")
+    websocket_port = int(os.getenv("WEBSOCKET_PORT", "8080"))
+    
     try:
-        start_websocket_server(host="localhost", port=8080)
-        print("[INFO] WebSocket server started successfully on ws://localhost:8080")
+        start_websocket_server(host=websocket_host, port=websocket_port)
+        print(f"[INFO] WebSocket server started successfully on ws://{websocket_host}:{websocket_port}")
         
         # Give the WebSocket server a moment to start listening
         import asyncio
