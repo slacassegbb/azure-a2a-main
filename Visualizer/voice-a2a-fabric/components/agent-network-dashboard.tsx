@@ -1793,6 +1793,19 @@ export function AgentNetworkDashboard() {
           </div>
           <div className="absolute top-4 right-4 z-10 flex flex-col gap-2 items-end">
             <div className="flex gap-2 items-center">
+              {voiceLive.isRecording && (
+                <button
+                  onClick={voiceLive.toggleMute}
+                  className={`p-2 rounded-lg transition-all duration-300 shadow-lg hover:shadow-xl hover:scale-105 active:scale-95 ${
+                    voiceLive.isMuted
+                      ? 'bg-red-600 hover:bg-red-500 text-white'
+                      : 'bg-slate-700 hover:bg-slate-600 text-slate-300'
+                  }`}
+                  title={voiceLive.isMuted ? 'Unmute microphone' : 'Mute microphone'}
+                >
+                  {voiceLive.isMuted ? <MicOff size={16} /> : <Mic size={16} />}
+                </button>
+              )}
               <button
                 onClick={openEditDialog}
                 className="p-2 bg-slate-700 text-slate-300 rounded-lg hover:bg-slate-600 transition-all duration-300 shadow-lg hover:shadow-xl hover:scale-105 active:scale-95"
