@@ -415,9 +415,7 @@ if ($backendExists) {
         --environment $Environment `
         --image "$AcrName.azurecr.io/a2a-backend:latest" `
         --target-port 12000 `
-        --exposed-port 8080 `
-        --ingress external `
-        --transport tcp `
+        --ingress internal `
         --min-replicas 1 `
         --max-replicas 5 `
         --cpu 1.0 `
@@ -437,9 +435,8 @@ properties:
   configuration:
     ingress:
       additionalPortMappings:
-        - external: true
+        - external: false
           targetPort: 8080
-          exposedPort: 8080
 "@
     
     $backendConfig | az containerapp update --name backend --resource-group $ResourceGroup --yaml - --output none 2>$null
