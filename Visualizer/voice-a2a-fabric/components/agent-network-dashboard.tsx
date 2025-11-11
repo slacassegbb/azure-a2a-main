@@ -231,11 +231,11 @@ export function AgentNetworkDashboard() {
         }
         
         console.log('[VOICE-A2A] ════════════════════════════════════════════════════════')
-        console.log('[VOICE-A2A] 📤 STEP 3: SENDING HTTP REQUEST')
+        console.log('[VOICE-A2A] 📤 STEP 3: SENDING ASYNC HTTP REQUEST')
         console.log('[VOICE-A2A] ════════════════════════════════════════════════════════')
-        console.log('[VOICE-A2A] URL:', `${baseUrl}/message/send`)
+        console.log('[VOICE-A2A] URL:', `${baseUrl}/message/send/async`)
         
-        const response = await fetch(`${baseUrl}/message/send`, {
+        const response = await fetch(`${baseUrl}/message/send/async`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(requestBody)
@@ -243,7 +243,7 @@ export function AgentNetworkDashboard() {
         
         console.log('[VOICE-A2A] Response status:', response.status)
         
-        if (!response.ok) {
+        if (response.status !== 202) {
           console.error('[Dashboard] ❌ Failed to send voice message:', response.statusText)
           // Stop host agent pulsing on error
           setProcessingAgents((prev) => {
@@ -254,10 +254,14 @@ export function AgentNetworkDashboard() {
           return 'error'
         }
         
+        // Parse 202 Accepted response
+        const responseData = await response.json()
         console.log('[VOICE-A2A] ════════════════════════════════════════════════════════')
-        console.log('[VOICE-A2A] ✅ STEP 4: HTTP REQUEST SUCCESSFUL')
+        console.log('[VOICE-A2A] ✅ STEP 4: ASYNC REQUEST ACCEPTED (202)')
         console.log('[VOICE-A2A] ════════════════════════════════════════════════════════')
-        console.log('[VOICE-A2A] Now waiting for WebSocket assistant message...')
+        console.log('[VOICE-A2A] Task ID:', responseData.task_id)
+        console.log('[VOICE-A2A] Voice Call ID:', responseData.voice_call_id)
+        console.log('[VOICE-A2A] Now waiting for async a2a_response WebSocket event...')
         
         return conversationId
       } catch (error) {
@@ -985,6 +989,100 @@ export function AgentNetworkDashboard() {
       addMessage('contoso-concierge', 'Contoso Concierge', 'New conversation initiated', 'event')
     }
 
+    // Handle async queue response events (from background workers)
+    const handleAsyncResponse = (data: any) => {
+      console.log('[VOICE-A2A] ════════════════════════════════════════════════════════')
+      console.log('[VOICE-A2A] 📬 ASYNC RESPONSE EVENT RECEIVED')
+      console.log('[VOICE-A2A] ════════════════════════════════════════════════════════')
+      console.log('[VOICE-A2A] Event type:', data.eventType)
+      console.log('[VOICE-A2A] Task ID:', data.task_id)
+      console.log('[VOICE-A2A] Voice Call ID:', data.voice_call_id)
+      console.log('[VOICE-A2A] Full data:', JSON.stringify(data, null, 2))
+      
+      const { task_id, voice_call_id, session_id, result } = data
+      
+      // Extract response text from result
+      const responseText = result?.text || JSON.stringify(result)
+      
+      console.log('[VOICE-A2A] Response text preview:', responseText.substring(0, 150))
+      
+      // If this is a voice call, add to injection queue
+      if (voice_call_id) {
+        console.log('[VOICE-A2A] ════════════════════════════════════════════════════════')
+        console.log('[VOICE-A2A] ✅ This is a VOICE response - adding to injection queue')
+        console.log('[VOICE-A2A] ════════════════════════════════════════════════════════')
+        
+        const newResponse = {
+          call_id: voice_call_id,
+          claim_id: session_id,
+          status: 'completed',
+          message: responseText,
+          next_steps: [],
+          timestamp: Date.now()
+        }
+        
+        setPendingInjectionQueue(prev => [...prev, newResponse])
+        console.log('[VOICE-A2A] ✅ Response added to injection queue')
+      } else {
+        console.log('[VOICE-A2A] ℹ️ Non-voice response - adding to activity log only')
+      }
+      
+      // Stop host agent pulsing
+      setProcessingAgents((prev) => {
+        const next = new Set(prev)
+        next.delete('contoso-concierge')
+        next.delete('host')
+        return next
+      })
+      
+      // Add to activity log
+      addMessage('system', 'Async Queue', `Task ${task_id} completed`, 'event')
+      setFinalResponse(responseText)
+      setShowResponsePanel(true)
+      setIsSimulating(false)
+    }
+
+    // Handle async queue error events
+    const handleAsyncError = (data: any) => {
+      console.log('[VOICE-A2A] ════════════════════════════════════════════════════════')
+      console.log('[VOICE-A2A] ❌ ASYNC ERROR EVENT RECEIVED')
+      console.log('[VOICE-A2A] ════════════════════════════════════════════════════════')
+      console.log('[VOICE-A2A] Task ID:', data.task_id)
+      console.log('[VOICE-A2A] Voice Call ID:', data.voice_call_id)
+      console.log('[VOICE-A2A] Error:', data.error)
+      
+      const { task_id, voice_call_id, session_id, error } = data
+      const errorMessage = `Error processing request: ${error}`
+      
+      // If this is a voice call, add error to injection queue
+      if (voice_call_id) {
+        console.log('[VOICE-A2A] ✅ Injecting error response to voice')
+        
+        const errorResponse = {
+          call_id: voice_call_id,
+          claim_id: session_id,
+          status: 'error',
+          message: errorMessage,
+          next_steps: [],
+          timestamp: Date.now()
+        }
+        
+        setPendingInjectionQueue(prev => [...prev, errorResponse])
+      }
+      
+      // Stop pulsing
+      setProcessingAgents((prev) => {
+        const next = new Set(prev)
+        next.delete('contoso-concierge')
+        next.delete('host')
+        return next
+      })
+      
+      // Add to activity log
+      addMessage('system', 'Async Queue', `Task ${task_id} failed: ${error}`, 'event')
+      setIsSimulating(false)
+    }
+
     // Handle general events
     const handleEvent = (data: any) => {
       if (DEBUG) console.log("[AgentDashboard] General event:", data)
@@ -1004,6 +1102,8 @@ export function AgentNetworkDashboard() {
     subscribe('tool_response', handleToolResponse)
     subscribe('inference_step', handleInferenceStep)
     subscribe('remote_agent_activity', handleRemoteAgentActivity)
+    subscribe('a2a_response', handleAsyncResponse)  // NEW: Async queue responses
+    subscribe('a2a_error', handleAsyncError)        // NEW: Async queue errors
 
     if (DEBUG) console.log("[AgentDashboard] WebSocket event handlers subscribed")
 
@@ -1021,6 +1121,8 @@ export function AgentNetworkDashboard() {
       unsubscribe('tool_response', handleToolResponse)
       unsubscribe('inference_step', handleInferenceStep)
       unsubscribe('remote_agent_activity', handleRemoteAgentActivity)
+      unsubscribe('a2a_response', handleAsyncResponse)  // NEW: Cleanup async handlers
+      unsubscribe('a2a_error', handleAsyncError)        // NEW: Cleanup async handlers
       if (DEBUG) console.log("[AgentDashboard] WebSocket event handlers unsubscribed")
     }
   }, [subscribe, unsubscribe, DEBUG])
@@ -1207,7 +1309,7 @@ export function AgentNetworkDashboard() {
       addMessage(hostAgentId, 'Contoso Concierge', 'Processing request and routing to agents...', 'event')
 
       const baseUrl = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
-      const response = await fetch(`${baseUrl}/message/send`, {
+      const response = await fetch(`${baseUrl}/message/send/async`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1231,7 +1333,7 @@ export function AgentNetworkDashboard() {
         })
       })
 
-      if (!response.ok) {
+      if (response.status !== 202) {
         console.error('[AgentDashboard] Failed to send message to backend:', response.statusText)
         // Stop host agent pulsing on error
         setProcessingAgents((prev) => {

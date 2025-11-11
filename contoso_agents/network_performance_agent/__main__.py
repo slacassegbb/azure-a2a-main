@@ -77,12 +77,13 @@ def resolve_agent_url(bind_host: str, bind_port: int) -> str:
 
 # Import self-registration utility
 try:
-    from utils.self_registration import register_with_host_agent, get_host_agent_url
+    from .utils.self_registration import register_with_host_agent, get_host_agent_url
 
     SELF_REGISTRATION_AVAILABLE = True
     logger.info("✅ Self-registration utility loaded")
-except ImportError:
+except ImportError as e:
     # Fallback if utils not available
+    logger.warning(f"⚠️ Self-registration import failed: {e}")
     async def register_with_host_agent(agent_card, host_url=None):
         logger.info(
             "ℹ️ Self-registration utility not available - skipping registration"

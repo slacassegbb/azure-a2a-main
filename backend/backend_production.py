@@ -599,12 +599,13 @@ class HTTPXClientWrapper:
 httpx_client_wrapper = HTTPXClientWrapper()
 agent_server = None
 websocket_streamer = None
+async_task_queue = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """FastAPI lifespan context manager for startup and shutdown."""
-    global websocket_streamer, agent_server
+    global websocket_streamer, agent_server, async_task_queue
 
     print("[INFO] Starting A2A Backend API...")
 
@@ -659,6 +660,193 @@ async def lifespan(app: FastAPI):
         print(f"[ERROR] Error details: {str(e)}")
         # Continue startup even if this fails
 
+    # Initialize async task queue
+    print("[STARTUP] Initializing async task queue...")
+    try:
+        if not agent_server:
+            print("[STARTUP] ⚠️ Cannot initialize async queue - agent_server not available")
+            async_task_queue = None
+        else:
+            from service.async_task_queue import AsyncTaskQueue
+            import time
+            import httpx
+            
+            # Create queue (5 workers, 10K task buffer)
+            async_task_queue = AsyncTaskQueue(max_workers=5, queue_size=10000)
+            
+            # Define task processor function
+            async def process_a2a_task(task):
+                """Process A2A message through agent system."""
+                print(f"[AsyncQueue] 🔄 STEP 1: Processing task {task.task_id}")
+                print(f"[AsyncQueue]    └─ voice_call_id: {task.voice_call_id}")
+                print(f"[AsyncQueue]    └─ session_id: {task.session_id}")
+                print(f"[AsyncQueue]    └─ user_id: {task.user_id}")
+                
+                try:
+                    from a2a.types import Message, Part, TextPart
+                    print(f"[AsyncQueue] ✅ STEP 2: Imported a2a.types successfully")
+                    
+                    # Transform message
+                    message_data = task.message
+                    print(f"[AsyncQueue] 🔄 STEP 3: Extracting message parameters...")
+                    
+                    # Extract context info from params structure
+                    params = message_data.get("params", {})
+                    context_id = params.get("contextId") or params.get("context_id", "")
+                    message_id = params.get("messageId") or params.get("message_id", "")
+                    
+                    print(f"[AsyncQueue]    └─ context_id: {context_id}")
+                    print(f"[AsyncQueue]    └─ message_id: {message_id}")
+                    
+                    # Build parts list
+                    parts = []
+                    if "parts" in params:
+                        print(f"[AsyncQueue] 🔄 STEP 4: Building message parts...")
+                        for i, part_data in enumerate(params["parts"]):
+                            if "root" in part_data:
+                                root = part_data["root"]
+                                if root.get("kind") == "text":
+                                    text = root["text"]
+                                    parts.append(Part(root=TextPart(text=text)))
+                                    print(f"[AsyncQueue]    └─ Part {i}: {text[:50]}..." if len(text) > 50 else f"[AsyncQueue]    └─ Part {i}: {text}")
+                    
+                    print(f"[AsyncQueue] ✅ STEP 5: Built {len(parts)} message part(s)")
+                    
+                    # Create message using Message constructor
+                    print(f"[AsyncQueue] 🔄 STEP 6: Creating A2A Message object...")
+                    message = Message(
+                        contextId=context_id,
+                        messageId=message_id,
+                        parts=parts,
+                        metadata=params.get("metadata", {})
+                    )
+                    print(f"[AsyncQueue] ✅ STEP 7: Message object created successfully")
+                    
+                    # Process through manager
+                    agent_mode = params.get("agentMode") or params.get("agent_mode", "route")
+                    enable_inter_agent_memory = params.get("enableInterAgentMemory") or params.get("enable_inter_agent_memory", True)
+                    workflow = params.get("workflow", None)
+                    
+                    print(f"[AsyncQueue] 🔄 STEP 8: Processing through agent manager...")
+                    print(f"[AsyncQueue]    └─ agent_mode: {agent_mode}")
+                    print(f"[AsyncQueue]    └─ inter_agent_memory: {enable_inter_agent_memory}")
+                    print(f"[AsyncQueue]    └─ workflow: {workflow}")
+                    
+                    await agent_server.manager.process_message(
+                        message, agent_mode, enable_inter_agent_memory, workflow
+                    )
+                    print(f"[AsyncQueue] ✅ STEP 9: Agent processing completed")
+                
+                except Exception as e:
+                    print(f"[AsyncQueue] ❌ ERROR in process_a2a_task: {type(e).__name__}: {str(e)}")
+                    import traceback
+                    print(f"[AsyncQueue] 📋 Traceback:\n{traceback.format_exc()}")
+                    raise
+                
+                # Extract response
+                print(f"[AsyncQueue] 🔄 STEP 10: Extracting response from conversation...")
+                conversation = agent_server.manager.get_conversation(context_id)
+                
+                if conversation and conversation.messages:
+                    print(f"[AsyncQueue]    └─ Found conversation with {len(conversation.messages)} message(s)")
+                    last_msg = conversation.messages[-1]
+                    response_text = ""
+                    
+                    if hasattr(last_msg, 'parts'):
+                        print(f"[AsyncQueue]    └─ Last message has {len(last_msg.parts)} part(s)")
+                        for i, part in enumerate(last_msg.parts):
+                            if hasattr(part, 'root') and hasattr(part.root, 'text'):
+                                text = part.root.text
+                                response_text += text
+                                preview = text[:100] + "..." if len(text) > 100 else text
+                                print(f"[AsyncQueue]    └─ Part {i}: {preview}")
+                    
+                    result = {
+                        "text": response_text or "Processing complete",
+                        "context_id": context_id,
+                        "message_id": message_id
+                    }
+                    print(f"[AsyncQueue] ✅ STEP 11: Response extracted successfully ({len(response_text)} chars)")
+                    return result
+                else:
+                    print(f"[AsyncQueue] ⚠️ STEP 11: No conversation found, returning default response")
+                
+                return {"text": "Processing complete", "context_id": context_id}
+            
+            # Define result callback (publishes to WebSocket)
+            async def on_task_result(task, result: dict):
+                """Publish task result to WebSocket clients."""
+                print(f"[AsyncQueue] 🎉 STEP 12: Task completed successfully!")
+                print(f"[AsyncQueue]    └─ task_id: {task.task_id}")
+                print(f"[AsyncQueue]    └─ voice_call_id: {task.voice_call_id}")
+                print(f"[AsyncQueue]    └─ result text length: {len(result.get('text', ''))}")
+                
+                try:
+                    event_data = {
+                        "eventType": "a2a_response",
+                        "task_id": task.task_id,
+                        "voice_call_id": task.voice_call_id,
+                        "session_id": task.session_id,
+                        "user_id": task.user_id,
+                        "result": result,
+                        "timestamp": time.time()
+                    }
+                    
+                    websocket_url = os.getenv("WEBSOCKET_SERVER_URL", "http://localhost:8080")
+                    print(f"[AsyncQueue] 🔄 STEP 13: Publishing to WebSocket relay at {websocket_url}/events")
+                    
+                    async with httpx.AsyncClient(timeout=5.0) as client:
+                        response = await client.post(f"{websocket_url}/events", json=event_data)
+                        print(f"[AsyncQueue]    └─ WebSocket relay response: {response.status_code}")
+                    
+                    print(f"[AsyncQueue] ✅ STEP 14: Published result for task {task.task_id} (voice_call_id: {task.voice_call_id})")
+                except Exception as e:
+                    print(f"[AsyncQueue] ❌ Failed to publish result: {type(e).__name__}: {str(e)}")
+            
+            # Define error callback
+            async def on_task_error(task, error: str):
+                """Publish task error to WebSocket clients."""
+                print(f"[AsyncQueue] ❌ Task failed!")
+                print(f"[AsyncQueue]    └─ task_id: {task.task_id}")
+                print(f"[AsyncQueue]    └─ voice_call_id: {task.voice_call_id}")
+                print(f"[AsyncQueue]    └─ error: {error}")
+                
+                try:
+                    event_data = {
+                        "eventType": "a2a_error",
+                        "task_id": task.task_id,
+                        "voice_call_id": task.voice_call_id,
+                        "session_id": task.session_id,
+                        "user_id": task.user_id,
+                        "error": error,
+                        "timestamp": time.time()
+                    }
+                    
+                    websocket_url = os.getenv("WEBSOCKET_SERVER_URL", "http://localhost:8080")
+                    print(f"[AsyncQueue] 🔄 Publishing error to WebSocket relay at {websocket_url}/events")
+                    
+                    async with httpx.AsyncClient(timeout=5.0) as client:
+                        response = await client.post(f"{websocket_url}/events", json=event_data)
+                        print(f"[AsyncQueue]    └─ WebSocket relay response: {response.status_code}")
+                    
+                    print(f"[AsyncQueue] ⚠️ Published error for task {task.task_id} (voice_call_id: {task.voice_call_id})")
+                except Exception as e:
+                    print(f"[AsyncQueue] ❌ Failed to publish error: {type(e).__name__}: {str(e)}")
+            
+            # Register callbacks
+            async_task_queue.on_result = on_task_result
+            async_task_queue.on_error = on_task_error
+            
+            # Start workers
+            await async_task_queue.start(process_a2a_task)
+            
+            print("[STARTUP] ✅ Async task queue started (5 workers, in-memory)")
+    except Exception as e:
+        print(f"[ERROR] Failed to initialize async task queue: {e}")
+        import traceback
+        print(f"[ERROR] Traceback: {traceback.format_exc()}")
+        async_task_queue = None
+
     print("[INFO] A2A Backend API startup complete")
 
     yield
@@ -667,6 +855,13 @@ async def lifespan(app: FastAPI):
     print("=" * 80)
     print("[SHUTDOWN] Shutting down A2A Backend API...")
     print("=" * 80)
+    
+    # Stop async task queue
+    if async_task_queue:
+        print("[SHUTDOWN] 🛑 Stopping async task queue...")
+        await async_task_queue.stop()
+        print("[SHUTDOWN] ✅ Async task queue stopped")
+    
     await httpx_client_wrapper.stop()
     await cleanup_websocket_streamer()
     print("[SHUTDOWN] ✅ A2A Backend API shutdown complete")
@@ -1149,6 +1344,108 @@ def main():
 
             traceback.print_exc()
             return {"success": False, "message": f"Error clearing memory: {str(e)}"}
+
+    @app.post("/message/send/async")
+    async def send_message_async(request: Request):
+        """
+        Async endpoint for A2A message processing.
+        Immediately returns 202 Accepted with task_id.
+        Result is published via WebSocket to relay server.
+        """
+        try:
+            if not async_task_queue:
+                print("[AsyncEndpoint] ❌ Async task queue not initialized")
+                return JSONResponse(
+                    status_code=503,
+                    content={"error": "Async task queue not available"}
+                )
+            
+            # Parse request body
+            body = await request.json()
+            print(f"[AsyncEndpoint] 📨 Received async message request")
+            print(f"[AsyncEndpoint]    └─ Body keys: {list(body.keys())}")
+            
+            # Extract parameters
+            user_id = body.get("user_id", "default_user")
+            session_id = body.get("session_id", "default_session")
+            voice_call_id = body.get("voice_call_id")  # Optional - only present for voice calls
+            message_data = body.get("message", {})
+            
+            print(f"[AsyncEndpoint] 📋 Parameters:")
+            print(f"[AsyncEndpoint]    ├─ user_id: {user_id}")
+            print(f"[AsyncEndpoint]    ├─ session_id: {session_id}")
+            print(f"[AsyncEndpoint]    ├─ voice_call_id: {voice_call_id}")
+            print(f"[AsyncEndpoint]    └─ message keys: {list(message_data.keys())}")
+            
+            # Enqueue the task
+            task = await async_task_queue.enqueue(
+                message=message_data,
+                user_id=user_id,
+                session_id=session_id,
+                voice_call_id=voice_call_id,
+                timeout_seconds=30,
+                max_retries=3
+            )
+            
+            print(f"[AsyncEndpoint] ✅ Task enqueued: {task.task_id}")
+            
+            # Return 202 Accepted immediately
+            response_data = {
+                "status": "accepted",
+                "task_id": task.task_id,
+                "message": "Task queued for processing"
+            }
+            
+            if voice_call_id:
+                response_data["voice_call_id"] = voice_call_id
+            
+            print(f"[AsyncEndpoint] 🎉 Returning 202 Accepted")
+            return JSONResponse(status_code=202, content=response_data)
+            
+        except Exception as e:
+            print(f"[AsyncEndpoint] ❌ Error: {type(e).__name__}: {str(e)}")
+            import traceback
+            print(f"[AsyncEndpoint] Traceback:\n{traceback.format_exc()}")
+            return JSONResponse(
+                status_code=500,
+                content={"error": f"Failed to enqueue task: {str(e)}"}
+            )
+
+    @app.get("/api/queue/metrics")
+    async def get_queue_metrics():
+        """Get async task queue metrics and statistics."""
+        if not async_task_queue:
+            return JSONResponse(
+                status_code=503,
+                content={"error": "Async task queue not available"}
+            )
+        
+        metrics = async_task_queue.get_metrics()
+        return JSONResponse(content=metrics)
+
+    @app.get("/api/queue/dlq")
+    async def get_dead_letter_queue():
+        """Get tasks in the dead letter queue (permanently failed)."""
+        if not async_task_queue:
+            return JSONResponse(
+                status_code=503,
+                content={"error": "Async task queue not available"}
+            )
+        
+        dlq_tasks = async_task_queue.get_dlq_tasks()
+        return JSONResponse(content={"tasks": dlq_tasks})
+
+    @app.post("/api/queue/dlq/clear")
+    async def clear_dead_letter_queue():
+        """Clear all tasks from the dead letter queue."""
+        if not async_task_queue:
+            return JSONResponse(
+                status_code=503,
+                content={"error": "Async task queue not available"}
+            )
+        
+        async_task_queue.clear_dlq()
+        return JSONResponse(content={"message": "Dead letter queue cleared"})
 
     @app.post("/start-agent")
     async def start_agent(request: Request):
