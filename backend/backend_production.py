@@ -61,14 +61,14 @@ import httpx
 import uvicorn
 import uuid
 import mimetypes
+import time
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, UploadFile, File, Request, HTTPException, Depends
+from fastapi import FastAPI, UploadFile, File, Request, HTTPException, Depends, WebSocket, WebSocketDisconnect, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import JSONResponse
 from service.server.server import ConversationServer
 from service.websocket_streamer import get_websocket_streamer, cleanup_websocket_streamer
-from service.websocket_server import start_websocket_server, stop_websocket_server, set_auth_service
 from service.agent_registry import get_registry
 from pydantic import BaseModel
 from datetime import datetime, timedelta, UTC
@@ -76,7 +76,7 @@ import jwt
 import hashlib
 import json
 from dataclasses import dataclass
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Set
 
 # Authentication constants and classes
 SECRET_KEY = os.environ.get("SECRET_KEY", "change-me")
@@ -351,6 +351,130 @@ class AuthService:
         return active_users_list
 
 
+@dataclass
+class AuthenticatedConnection:
+    """Represents an authenticated WebSocket connection."""
+    websocket: WebSocket
+    user_data: Dict[str, Any]
+    connected_at: float
+    
+    @property
+    def user_id(self) -> str:
+        return self.user_data.get("user_id", "anonymous")
+    
+    @property
+    def username(self) -> str:
+        return self.user_data.get("name", "Anonymous")
+    
+    @property
+    def email(self) -> str:
+        return self.user_data.get("email", "")
+
+
+class WebSocketManager:
+    """Manages WebSocket connections and event broadcasting."""
+    
+    def __init__(self, auth_service: AuthService):
+        self.active_connections: Set[WebSocket] = set()
+        self.authenticated_connections: Dict[WebSocket, AuthenticatedConnection] = {}
+        self.event_history: List[Dict[str, Any]] = []
+        self.max_history = 100
+        self.auth_service = auth_service
+        print("[WebSocketManager] ✅ Initialized")
+    
+    async def connect(self, websocket: WebSocket, token: Optional[str] = None):
+        """Connect a new WebSocket client with optional authentication."""
+        await websocket.accept()
+        self.active_connections.add(websocket)
+        
+        print(f"[WebSocket] New connection from {websocket.client}")
+        
+        # Authenticate if token provided
+        if token:
+            user_data = self.auth_service.verify_token(token)
+            if user_data:
+                auth_conn = AuthenticatedConnection(
+                    websocket=websocket,
+                    user_data=user_data,
+                    connected_at=time.time()
+                )
+                self.authenticated_connections[websocket] = auth_conn
+                self.auth_service.add_active_user(user_data)
+                print(f"[WebSocket] ✅ Authenticated user: {auth_conn.username} ({auth_conn.email})")
+                
+                # Send welcome message
+                welcome = {
+                    "eventType": "connection_established",
+                    "data": {
+                        "authenticated": True,
+                        "user": user_data,
+                        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+                    }
+                }
+                await websocket.send_text(json.dumps(welcome))
+            else:
+                print(f"[WebSocket] ⚠️ Invalid token provided")
+        else:
+            print(f"[WebSocket] ℹ️ Unauthenticated connection")
+        
+        # Send connection count to all clients
+        await self.broadcast_connection_count()
+        
+        print(f"[WebSocket] Total connections: {len(self.active_connections)}")
+    
+    def disconnect(self, websocket: WebSocket):
+        """Disconnect a WebSocket client."""
+        print(f"[WebSocket] Disconnecting client {websocket.client}")
+        
+        # Remove from authenticated connections and update active users
+        if websocket in self.authenticated_connections:
+            auth_conn = self.authenticated_connections.pop(websocket)
+            self.auth_service.remove_active_user(auth_conn.user_data)
+            print(f"[WebSocket] User logged out: {auth_conn.username}")
+        
+        # Remove from active connections
+        self.active_connections.discard(websocket)
+        
+        print(f"[WebSocket] Total connections: {len(self.active_connections)}")
+    
+    def get_connection_info(self, websocket: WebSocket) -> Optional[AuthenticatedConnection]:
+        """Get authentication info for a connection."""
+        return self.authenticated_connections.get(websocket)
+    
+    async def broadcast_event(self, event: Dict[str, Any]) -> int:
+        """Broadcast an event to all connected clients."""
+        # Add to history
+        self.event_history.append(event)
+        if len(self.event_history) > self.max_history:
+            self.event_history.pop(0)
+        
+        # Send to all connections
+        disconnected = []
+        for connection in self.active_connections:
+            try:
+                await connection.send_text(json.dumps(event))
+            except Exception as e:
+                print(f"[WebSocket] ❌ Error sending to client: {e}")
+                disconnected.append(connection)
+        
+        # Clean up disconnected clients
+        for connection in disconnected:
+            self.disconnect(connection)
+        
+        return len(self.active_connections)
+    
+    async def broadcast_connection_count(self):
+        """Broadcast updated connection count to all clients."""
+        event = {
+            "eventType": "connection_count",
+            "data": {
+                "total": len(self.active_connections),
+                "authenticated": len(self.authenticated_connections)
+            }
+        }
+        await self.broadcast_event(event)
+
+
 class HTTPXClientWrapper:
     """Wrapper to return the singleton client where needed."""
 
@@ -392,60 +516,55 @@ async def lifespan(app: FastAPI):
     """FastAPI lifespan context manager for startup and shutdown."""
     global websocket_streamer, agent_server
     
-    print("[INFO] Starting A2A Backend API...")
+    print("=" * 80)
+    print("[STARTUP] Starting A2A Backend API...")
+    print("=" * 80)
     
     # Start HTTP client
+    print("[STARTUP] Initializing HTTP client...")
     httpx_client_wrapper.start()
-    
-    # Start WebSocket server for UI communication
-    # Uses environment variables for flexibility across environments
-    websocket_host = os.getenv("A2A_UI_HOST", "localhost")
-    websocket_port = int(os.getenv("WEBSOCKET_PORT", "8080"))
-    
-    try:
-        start_websocket_server(host=websocket_host, port=websocket_port)
-        print(f"[INFO] WebSocket server started successfully on ws://{websocket_host}:{websocket_port}")
-        
-        # Give the WebSocket server a moment to start listening
-        import asyncio
-        await asyncio.sleep(2)
-        
-    except Exception as e:
-        print(f"[ERROR] Failed to start WebSocket server: {e}")
-        import traceback
-        print(f"[ERROR] WebSocket server traceback: {traceback.format_exc()}")
+    print("[STARTUP] ✅ HTTP client started")
     
     # Initialize WebSocket streamer with error handling
+    print("[STARTUP] Initializing WebSocket streamer...")
     try:
         websocket_streamer = await get_websocket_streamer()
         if websocket_streamer:
-            print("[INFO] WebSocket streamer initialized successfully")
+            print("[STARTUP] ✅ WebSocket streamer initialized successfully")
         else:
-            print("[WARNING] WebSocket streamer not available - check configuration")
+            print("[STARTUP] ⚠️ WebSocket streamer not available - check configuration")
     except Exception as e:
-        print(f"[ERROR] Failed to initialize WebSocket streamer: {type(e).__name__}: {e}")
-        print(f"[ERROR] Error details: {str(e)}")
+        print(f"[STARTUP] ❌ Failed to initialize WebSocket streamer: {type(e).__name__}: {e}")
+        import traceback
+        print(f"[STARTUP] Traceback:\n{traceback.format_exc()}")
         websocket_streamer = None
     
     # Initialize the conversation server (this registers all the API routes)
+    print("[STARTUP] Initializing conversation server...")
     try:
         agent_server = ConversationServer(app, httpx_client_wrapper())
-        print("[INFO] Conversation server initialized successfully")
+        print("[STARTUP] ✅ Conversation server initialized successfully")
     except Exception as e:
-        print(f"[ERROR] Failed to initialize conversation server: {type(e).__name__}: {e}")
-        print(f"[ERROR] Error details: {str(e)}")
+        print(f"[STARTUP] ❌ Failed to initialize conversation server: {type(e).__name__}: {e}")
+        import traceback
+        print(f"[STARTUP] Traceback:\n{traceback.format_exc()}")
         # Continue startup even if this fails
     
-    print("[INFO] A2A Backend API startup complete")
+    print("=" * 80)
+    print("[STARTUP] ✅ A2A Backend API startup complete - ready to accept connections")
+    print("[STARTUP] WebSocket endpoint available at: /events")
+    print("[STARTUP] HTTP API available at: /api/*")
+    print("=" * 80)
     
     yield
     
     # Cleanup
-    print("[INFO] Shutting down A2A Backend API...")
+    print("=" * 80)
+    print("[SHUTDOWN] Shutting down A2A Backend API...")
+    print("=" * 80)
     await httpx_client_wrapper.stop()
     await cleanup_websocket_streamer()
-    stop_websocket_server()
-    print("[INFO] A2A Backend API shutdown complete")
+    print("[SHUTDOWN] ✅ A2A Backend API shutdown complete")
 
 
 def main():
@@ -457,11 +576,19 @@ def main():
         lifespan=lifespan
     )
 
-    # Initialize auth service
-    auth_service = AuthService()
+    print("=" * 80)
+    print("[INIT] Initializing A2A Backend API...")
+    print("=" * 80)
     
-    # Connect the auth service to the websocket server
-    set_auth_service(auth_service)
+    # Initialize auth service
+    print("[INIT] Creating AuthService...")
+    auth_service = AuthService()
+    print("[INIT] ✅ AuthService created")
+    
+    # Initialize WebSocket manager
+    print("[INIT] Creating WebSocketManager...")
+    websocket_manager = WebSocketManager(auth_service)
+    print("[INIT] ✅ WebSocketManager created")
 
     # Add CORS middleware with very open settings for container deployment
     app.add_middleware(
@@ -481,9 +608,141 @@ def main():
             "service": "a2a-backend-api",
             "version": "1.0.0",
             "websocket_enabled": websocket_streamer is not None,
+            "websocket_connections": len(websocket_manager.active_connections),
             "auth_method": "managed_identity",
             "client_id": os.environ.get("AZURE_CLIENT_ID", "not_set")
         }
+
+    # WebSocket endpoint for real-time events
+    @app.websocket("/events")
+    async def websocket_endpoint(websocket: WebSocket, token: Optional[str] = Query(None)):
+        """WebSocket endpoint for real-time event streaming with optional authentication."""
+        print(f"[WebSocket] 🔌 New connection attempt from {websocket.client}")
+        
+        await websocket_manager.connect(websocket, token)
+        print(f"[WebSocket] ✅ Client connected successfully: {websocket.client}")
+        
+        try:
+            while True:
+                # Keep connection alive and handle client messages
+                data = await websocket.receive_text()
+                
+                # Parse incoming message
+                try:
+                    message = json.loads(data)
+                    message_type = message.get("type")
+                    print(f"[WebSocket] 📨 Received message type: {message_type} from {websocket.client}")
+                    
+                    if message_type == "chat":
+                        # Handle chat message
+                        auth_conn = websocket_manager.get_connection_info(websocket)
+                        if auth_conn:
+                            # Authenticated user sending chat message
+                            chat_event = {
+                                "eventType": "chat_message", 
+                                "data": {
+                                    "user_id": auth_conn.user_id,
+                                    "username": auth_conn.username,
+                                    "message": message.get("text", ""),
+                                    "timestamp": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+                                }
+                            }
+                            
+                            # Broadcast to all clients
+                            await websocket_manager.broadcast_event(chat_event)
+                            print(f"[WebSocket] 💬 Chat from {auth_conn.username}: {message.get('text', '')[:50]}...")
+                        else:
+                            # Anonymous user - reject chat
+                            error_event = {
+                                "eventType": "error",
+                                "data": {
+                                    "message": "Authentication required for chat"
+                                }
+                            }
+                            await websocket.send_text(json.dumps(error_event))
+                    
+                    elif message_type == "shared_message":
+                        # Handle shared message that should be broadcast to all clients
+                        message_data = message.get("message", {})
+                        
+                        # Create the event to broadcast
+                        shared_event = {
+                            "eventType": "shared_message",
+                            "data": {
+                                "message": message_data
+                            }
+                        }
+                        
+                        # Broadcast to all clients (including sender)
+                        await websocket_manager.broadcast_event(shared_event)
+                        print(f"[WebSocket] 📢 Shared message broadcasted: {message_data.get('content', '')[:50]}...")
+                    
+                    elif message_type == "shared_inference_started":
+                        # Handle shared inference started event
+                        inference_data = message.get("data", {})
+                        
+                        # Create the event to broadcast
+                        inference_event = {
+                            "eventType": "shared_inference_started",
+                            "data": inference_data
+                        }
+                        
+                        # Broadcast to all clients (including sender)
+                        await websocket_manager.broadcast_event(inference_event)
+                        print(f"[WebSocket] 🚀 Inference started for conversation: {inference_data.get('conversationId')}")
+                    
+                    elif message_type == "shared_inference_ended":
+                        # Handle shared inference ended event
+                        inference_data = message.get("data", {})
+                        
+                        # Create the event to broadcast
+                        inference_event = {
+                            "eventType": "shared_inference_ended", 
+                            "data": inference_data
+                        }
+                        
+                        # Broadcast to all clients (including sender)
+                        await websocket_manager.broadcast_event(inference_event)
+                        print(f"[WebSocket] ✅ Inference ended for conversation: {inference_data.get('conversationId')}")
+                    
+                    elif message_type == "ping":
+                        # Handle ping/pong for keepalive
+                        await websocket.send_text(json.dumps({"type": "pong"}))
+                        print(f"[WebSocket] 🏓 Ping/pong with {websocket.client}")
+                    
+                    else:
+                        print(f"[WebSocket] ⚠️ Unknown message type: {message_type}")
+                        
+                except json.JSONDecodeError:
+                    print(f"[WebSocket] ❌ Invalid JSON received from {websocket.client}: {data}")
+                    
+        except WebSocketDisconnect:
+            print(f"[WebSocket] 👋 Client disconnected: {websocket.client}")
+            websocket_manager.disconnect(websocket)
+        except Exception as e:
+            print(f"[WebSocket] ❌ Error: {e}")
+            import traceback
+            print(f"[WebSocket] Traceback:\n{traceback.format_exc()}")
+            websocket_manager.disconnect(websocket)
+
+    # HTTP endpoint for posting events to WebSocket clients
+    @app.post("/events")
+    async def post_event(event_data: Dict[str, Any]):
+        """HTTP endpoint for posting events to WebSocket clients."""
+        try:
+            print(f"[WebSocket] 📡 Broadcasting event via HTTP: {event_data.get('eventType', 'unknown')}")
+            client_count = await websocket_manager.broadcast_event(event_data)
+            print(f"[WebSocket] ✅ Event broadcasted to {client_count} clients")
+            return JSONResponse({
+                "success": True,
+                "clientCount": client_count,
+                "eventType": event_data.get('eventType', 'unknown')
+            })
+        except Exception as e:
+            print(f"[WebSocket] ❌ Error broadcasting event: {e}")
+            import traceback
+            print(f"[WebSocket] Traceback:\n{traceback.format_exc()}")
+            raise HTTPException(status_code=500, detail=str(e))
 
     # Agent Registry Endpoints
     @app.get("/api/agents")

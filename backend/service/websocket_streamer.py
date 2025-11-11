@@ -112,45 +112,19 @@ class WebSocketStreamer:
     async def initialize(self) -> bool:
         """Initialize the WebSocket streamer.
         
+        Since WebSocket is now integrated into the same FastAPI app,
+        we don't need to check if a separate server is running.
+        Just initialize the HTTP client for posting events.
+        
         Returns:
             bool: True if initialization successful, False otherwise
         """
         try:
-            # Create HTTP client for sending events
+            # Create HTTP client for sending events to /events endpoint
             self.http_client = httpx.AsyncClient(timeout=5.0)
-            
-            # Test connection to WebSocket server with retries
-            health_url = f"{self.websocket_url}/health"
-            
-            # Try multiple times to connect (WebSocket server might be starting up)
-            for attempt in range(3):
-                try:
-                    response = await self.http_client.get(health_url)
-                    
-                    if response.status_code == 200:
-                        self.is_initialized = True
-                        logger.info("✅ WebSocket streamer initialized successfully")
-                        log_debug(f"WebSocket streamer connected to {self.websocket_url}")
-                        return True
-                    else:
-                        logger.warning(f"WebSocket server health check failed: {response.status_code}")
-                        
-                except httpx.ConnectError:
-                    if attempt < 2:  # Don't log error on last attempt
-                        logger.info(f"WebSocket server not ready, attempt {attempt + 1}/3...")
-                        await asyncio.sleep(1)  # Wait 1 second before retry
-                    continue
-                except Exception as e:
-                    logger.warning(f"WebSocket connection attempt {attempt + 1} failed: {e}")
-                    if attempt < 2:
-                        await asyncio.sleep(1)
-                    continue
-            
-            # If we get here, all attempts failed
-            logger.error(f"❌ Failed to connect to WebSocket server at {self.websocket_url}")
-            # Still mark as initialized but warn it might not work
-            self.is_initialized = True  # Allow it to try sending events anyway
-            log_debug("WebSocket streamer initialized but connection uncertain")
+            self.is_initialized = True
+            logger.info("✅ WebSocket streamer initialized successfully")
+            log_debug(f"WebSocket streamer will post events to {self.events_endpoint}")
             return True
                 
         except Exception as e:

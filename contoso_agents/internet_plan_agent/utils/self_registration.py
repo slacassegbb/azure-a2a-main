@@ -91,7 +91,9 @@ async def register_with_host_agent(
 
 def get_host_agent_url() -> str:
     """Get the host agent URL from environment variables or default."""
-    if 'BACKEND_SERVER_URL' in os.environ:
+    if 'A2A_HOST' in os.environ:
+        host_url = os.getenv('A2A_HOST', '')
+    elif 'BACKEND_SERVER_URL' in os.environ:
         host_url = os.getenv('BACKEND_SERVER_URL', '')
     elif 'A2A_HOST_AGENT_URL' in os.environ:
         host_url = os.getenv('A2A_HOST_AGENT_URL', '')

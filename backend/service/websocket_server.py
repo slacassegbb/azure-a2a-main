@@ -598,9 +598,13 @@ class WebSocketServerThread:
         # Start periodic agent registry sync
         try:
             logger.info(f"Starting WebSocket server periodic sync (every {self.sync_interval}s)")
-            log_websocket_debug("About to call _schedule_agent_sync()")
-            self._schedule_agent_sync()
-            log_websocket_debug("_schedule_agent_sync() completed successfully")
+            log_websocket_debug("Delaying first agent registry sync to allow main backend to start...")
+            # Delay first sync by 15 seconds to allow main FastAPI backend to start listening
+            self.sync_timer = threading.Timer(15, self._schedule_agent_sync)
+            self.sync_timer.daemon = True
+            self.sync_timer.start()
+            logger.info("First agent registry sync scheduled for 15 seconds from now")
+            log_websocket_debug("_schedule_agent_sync() timer started successfully")
             logger.info("WebSocket periodic sync scheduled successfully")
         except Exception as e:
             logger.error(f"Failed to start periodic sync: {e}")
