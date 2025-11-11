@@ -4,7 +4,7 @@
 # Each target is documented for clarity and maintainability
 ############################################################
 
-.PHONY: create_conda_env activate_conda_env remove_conda_env start_backend start_frontend start_tunnel
+.PHONY: create_conda_env activate_conda_env remove_conda_env start_backend start_frontend start_tunnel run_network_agent
 
 # Python interpreter to use
 PYTHON_INTERPRETER = python
@@ -34,3 +34,6 @@ start_frontend:
 
 start_tunnel:
 	bash $(SCRIPTS_DIR)/start_devtunnel_host.sh
+
+run_network_agent:
+	HOST_AGENT_URL=http://localhost:12000 $(PYTHON_INTERPRETER) -m contoso_agents.network_performance_agent --host 127.0.0.1 --port 8105
