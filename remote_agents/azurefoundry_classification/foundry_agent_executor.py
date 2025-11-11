@@ -54,7 +54,7 @@ class FoundryClassificationAgentExecutor(AgentExecutor):
         """Get the shared agent that was initialized at startup (if available)."""
         async with cls._agent_lock:
             return cls._shared_foundry_agent
-    
+
     @classmethod
     async def initialize_at_startup(cls) -> None:
         """Initialize the shared classification agent at startup instead of on first request."""
@@ -65,9 +65,13 @@ class FoundryClassificationAgentExecutor(AgentExecutor):
                     cls._shared_foundry_agent = FoundryClassificationAgent()
                     await cls._shared_foundry_agent.create_agent()
                     cls._startup_complete = True
-                    logger.info("✅ Foundry Classification agent startup initialization completed successfully")
+                    logger.info(
+                        "✅ Foundry Classification agent startup initialization completed successfully"
+                    )
                 except Exception as e:
-                    logger.error(f"❌ Failed to initialize classification agent at startup: {e}")
+                    logger.error(
+                        f"❌ Failed to initialize classification agent at startup: {e}"
+                    )
                     cls._shared_foundry_agent = None
                     cls._startup_complete = False
                     raise
@@ -84,19 +88,23 @@ class FoundryClassificationAgentExecutor(AgentExecutor):
             if not FoundryClassificationAgentExecutor._shared_foundry_agent:
                 if FoundryClassificationAgentExecutor._startup_complete:
                     # Startup was supposed to happen but failed
-                    raise RuntimeError("Classification agent startup initialization failed - agent not available")
-                
+                    raise RuntimeError(
+                        "Classification agent startup initialization failed - agent not available"
+                    )
+
                 # Fallback to lazy creation if startup wasn't called
-                logger.warning("⚠️ Classification agent not initialized at startup, falling back to lazy creation...")
-                FoundryClassificationAgentExecutor._shared_foundry_agent = FoundryClassificationAgent()
+                logger.warning(
+                    "⚠️ Classification agent not initialized at startup, falling back to lazy creation..."
+                )
+                FoundryClassificationAgentExecutor._shared_foundry_agent = (
+                    FoundryClassificationAgent()
+                )
                 await FoundryClassificationAgentExecutor._shared_foundry_agent.create_agent()
                 logger.info("Fallback classification agent creation completed")
             return FoundryClassificationAgentExecutor._shared_foundry_agent
 
     async def _get_or_create_thread(
-        self,
-        context_id: str,
-        agent: Optional[FoundryClassificationAgent] = None
+        self, context_id: str, agent: Optional[FoundryClassificationAgent] = None
     ) -> str:
         if agent is None:
             agent = await self._get_or_create_agent()
@@ -109,8 +117,6 @@ class FoundryClassificationAgentExecutor(AgentExecutor):
         self._active_threads[context_id] = thread_id
         return thread_id
 
-
-
     async def _process_request(
         self,
         message_parts: List[Part],
@@ -121,36 +127,42 @@ class FoundryClassificationAgentExecutor(AgentExecutor):
             user_message = self._convert_parts_to_text(message_parts)
             agent = await self._get_or_create_agent()
             thread_id = await self._get_or_create_thread(context_id, agent)
-            
+
             # Use streaming to show tool calls in real-time
             responses = []
             tools_called = []
             seen_tools = set()
-            
+
             async for event in agent.run_conversation_stream(thread_id, user_message):
                 # Check if this is a tool call event from remote agent
                 if event.startswith("🛠️ Remote agent executing:"):
-                    tool_description = event.replace("🛠️ Remote agent executing: ", "").strip()
+                    tool_description = event.replace(
+                        "🛠️ Remote agent executing: ", ""
+                    ).strip()
                     if tool_description not in seen_tools:
                         seen_tools.add(tool_description)
                         tools_called.append(tool_description)
                         # Emit tool call in real-time
                         tool_event_msg = new_agent_text_message(
-                            f"🛠️ Remote agent executing: {tool_description}", context_id=context_id
+                            f"🛠️ Remote agent executing: {tool_description}",
+                            context_id=context_id,
                         )
                         await task_updater.update_status(
-                            TaskState.working,
-                            message=tool_event_msg
+                            TaskState.working, message=tool_event_msg
                         )
                 # Check if this is a processing message
-                elif event.startswith("🤖") or event.startswith("🧠") or event.startswith("🔍") or event.startswith("📝"):
+                elif (
+                    event.startswith("🤖")
+                    or event.startswith("🧠")
+                    or event.startswith("🔍")
+                    or event.startswith("📝")
+                ):
                     # Emit processing message in real-time
                     processing_msg = new_agent_text_message(
                         event, context_id=context_id
                     )
                     await task_updater.update_status(
-                        TaskState.working,
-                        message=processing_msg
+                        TaskState.working, message=processing_msg
                     )
                 # Check if this is an error
                 elif event.startswith("Error:"):
@@ -162,22 +174,32 @@ class FoundryClassificationAgentExecutor(AgentExecutor):
                 # Otherwise, treat as a regular response
                 else:
                     responses.append(event)
-            
+
             # Emit the final response
             if responses:
                 final_response = responses[-1]
                 # Log a preview of the response (first 500 chars)
-                response_preview = final_response[:500] + "..." if len(final_response) > 500 else final_response
-                logger.info(f"📤 Agent response ({len(final_response)} chars): {response_preview}")
+                response_preview = (
+                    final_response[:500] + "..."
+                    if len(final_response) > 500
+                    else final_response
+                )
+                logger.info(
+                    f"📤 Agent response ({len(final_response)} chars): {response_preview}"
+                )
                 await task_updater.complete(
-                    message=new_agent_text_message(final_response, context_id=context_id)
+                    message=new_agent_text_message(
+                        final_response, context_id=context_id
+                    )
                 )
             else:
                 logger.warning("⚠️ No response generated by agent")
                 await task_updater.complete(
-                    message=new_agent_text_message("No response generated", context_id=context_id)
+                    message=new_agent_text_message(
+                        "No response generated", context_id=context_id
+                    )
                 )
-                    
+
         except Exception as e:
             await task_updater.failed(
                 message=new_agent_text_message(f"Error: {e}", context_id=context_id)
@@ -197,7 +219,7 @@ class FoundryClassificationAgentExecutor(AgentExecutor):
                     data = base64.b64decode(p.file.bytes)
                     fname = p.file.name or "file"
                     path = os.path.join(tempfile.gettempdir(), fname)
-                    with open(path, 'wb') as f:
+                    with open(path, "wb") as f:
                         f.write(data)
                     texts.append(f"[Saved {fname} to {path}]")
                 except Exception as ex:
@@ -206,10 +228,15 @@ class FoundryClassificationAgentExecutor(AgentExecutor):
                 # Include a compact representation of structured data
                 try:
                     import json as _json
+
                     payload = getattr(p, "data", None)
                     if payload is None:
                         payload = getattr(p, "value", None)
-                    summary = payload if isinstance(payload, str) else _json.dumps(payload)[:500]
+                    summary = (
+                        payload
+                        if isinstance(payload, str)
+                        else _json.dumps(payload)[:500]
+                    )
                     texts.append(f"[Data: {summary}]")
                 except Exception:
                     texts.append("[Data payload]")
@@ -221,36 +248,59 @@ class FoundryClassificationAgentExecutor(AgentExecutor):
         event_queue: EventQueue,
     ):
         logger.info(f"Executing request for context {context.context_id}")
-        
+
         # CRITICAL: Apply rate limiting at the execute level to control between different user requests
         async with FoundryClassificationAgentExecutor._request_semaphore:
             # Check API call rate limiting
             current_time = time.time()
-            
+
             # Reset the window if it's been more than a minute
-            if current_time - FoundryClassificationAgentExecutor._api_call_window_start > 60:
+            if (
+                current_time - FoundryClassificationAgentExecutor._api_call_window_start
+                > 60
+            ):
                 FoundryClassificationAgentExecutor._api_call_count = 0
                 FoundryClassificationAgentExecutor._api_call_window_start = current_time
-            
+
             # Check if we're approaching the API limit
-            if FoundryClassificationAgentExecutor._api_call_count >= FoundryClassificationAgentExecutor._max_api_calls_per_minute:
-                wait_time = 60 - (current_time - FoundryClassificationAgentExecutor._api_call_window_start)
+            if (
+                FoundryClassificationAgentExecutor._api_call_count
+                >= FoundryClassificationAgentExecutor._max_api_calls_per_minute
+            ):
+                wait_time = 60 - (
+                    current_time
+                    - FoundryClassificationAgentExecutor._api_call_window_start
+                )
                 if wait_time > 0:
-                    logger.warning(f"API rate limit protection: waiting {wait_time:.1f}s to reset window")
+                    logger.warning(
+                        f"API rate limit protection: waiting {wait_time:.1f}s to reset window"
+                    )
                     await asyncio.sleep(wait_time)
                     # Reset counters
                     FoundryClassificationAgentExecutor._api_call_count = 0
-                    FoundryClassificationAgentExecutor._api_call_window_start = time.time()
-            
+                    FoundryClassificationAgentExecutor._api_call_window_start = (
+                        time.time()
+                    )
+
             # Enforce minimum interval between requests - THIS IS THE KEY FIX
-            time_since_last = current_time - FoundryClassificationAgentExecutor._last_request_time
-            if time_since_last < FoundryClassificationAgentExecutor._min_request_interval:
-                sleep_time = FoundryClassificationAgentExecutor._min_request_interval - time_since_last
-                logger.warning(f"🚦 RATE LIMITING: Waiting {sleep_time:.2f}s between user requests (last request was {time_since_last:.2f}s ago)")
+            time_since_last = (
+                current_time - FoundryClassificationAgentExecutor._last_request_time
+            )
+            if (
+                time_since_last
+                < FoundryClassificationAgentExecutor._min_request_interval
+            ):
+                sleep_time = (
+                    FoundryClassificationAgentExecutor._min_request_interval
+                    - time_since_last
+                )
+                logger.warning(
+                    f"🚦 RATE LIMITING: Waiting {sleep_time:.2f}s between user requests (last request was {time_since_last:.2f}s ago)"
+                )
                 await asyncio.sleep(sleep_time)
-            
+
             FoundryClassificationAgentExecutor._last_request_time = time.time()
-            
+
             # Now proceed with the actual request processing
             updater = TaskUpdater(event_queue, context.task_id, context.context_id)
             if not context.current_task:
@@ -269,7 +319,9 @@ class FoundryClassificationAgentExecutor(AgentExecutor):
             self._input_events[context.context_id].set()
         updater = TaskUpdater(event_queue, context.task_id, context.context_id)
         await updater.failed(
-            message=new_agent_text_message("Task cancelled", context_id=context.context_id)
+            message=new_agent_text_message(
+                "Task cancelled", context_id=context.context_id
+            )
         )
 
     async def cleanup(self):
@@ -280,7 +332,9 @@ class FoundryClassificationAgentExecutor(AgentExecutor):
         logger.info("Executor cleaned up")
 
 
-def create_foundry_agent_executor(card: AgentCard) -> FoundryClassificationAgentExecutor:
+def create_foundry_agent_executor(
+    card: AgentCard,
+) -> FoundryClassificationAgentExecutor:
     return FoundryClassificationAgentExecutor(card)
 
 
@@ -288,19 +342,19 @@ async def initialize_foundry_classification_agents_at_startup():
     """
     Convenience function to initialize shared classification agent resources at application startup.
     Call this once during your application's startup phase.
-    
+
     Example usage in your main application:
-    
+
     ```python
     # In your main startup code (e.g., main.py or app initialization)
     import asyncio
     from foundry_agent_executor import initialize_foundry_classification_agents_at_startup
-    
+
     async def startup():
         print("🚀 Starting classification application...")
         await initialize_foundry_classification_agents_at_startup()
         print("✅ Classification agent initialization complete, ready to handle requests")
-    
+
     # Run at startup
     asyncio.run(startup())
     ```

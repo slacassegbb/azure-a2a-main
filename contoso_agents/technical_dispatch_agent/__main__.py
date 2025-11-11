@@ -20,7 +20,11 @@ from starlette.requests import Request
 from starlette.responses import PlainTextResponse
 from starlette.routing import Route
 
-from foundry_agent_executor import create_foundry_agent_executor, initialize_foundry_agents_at_startup, TechnicalDispatchAgentExecutor
+from foundry_agent_executor import (
+    create_foundry_agent_executor,
+    initialize_foundry_agents_at_startup,
+    TechnicalDispatchAgentExecutor,
+)
 from a2a.server.apps import A2AStarletteApplication
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.tasks import InMemoryTaskStore
@@ -33,7 +37,9 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Silence verbose Azure SDK HTTP logging
-logging.getLogger("azure.core.pipeline.policies.http_logging_policy").setLevel(logging.WARNING)
+logging.getLogger("azure.core.pipeline.policies.http_logging_policy").setLevel(
+    logging.WARNING
+)
 logging.getLogger("azure.identity").setLevel(logging.WARNING)
 logging.getLogger("azure").setLevel(logging.WARNING)
 
@@ -43,17 +49,17 @@ executor_instance: TechnicalDispatchAgentExecutor | None = None
 
 def _normalize_env_value(raw_value: str | None) -> str:
     if raw_value is None:
-        return ''
+        return ""
     return raw_value.strip()
 
 
 def _resolve_default_host() -> str:
-    value = _normalize_env_value(os.getenv('A2A_ENDPOINT'))
-    return value or 'localhost'
+    value = _normalize_env_value(os.getenv("A2A_ENDPOINT"))
+    return value or "localhost"
 
 
 def _resolve_default_port() -> int:
-    raw_port = _normalize_env_value(os.getenv('A2A_PORT'))
+    raw_port = _normalize_env_value(os.getenv("A2A_PORT"))
     if raw_port:
         try:
             return int(raw_port)
@@ -63,28 +69,34 @@ def _resolve_default_port() -> int:
 
 
 def resolve_agent_url(bind_host: str, bind_port: int) -> str:
-    endpoint = _normalize_env_value(os.getenv('A2A_ENDPOINT'))
+    endpoint = _normalize_env_value(os.getenv("A2A_ENDPOINT"))
     if endpoint:
-        if endpoint.startswith(('http://', 'https://')):
-            return endpoint.rstrip('/') + '/'
+        if endpoint.startswith(("http://", "https://")):
+            return endpoint.rstrip("/") + "/"
         host_for_url = endpoint
     else:
         host_for_url = bind_host if bind_host != "0.0.0.0" else _resolve_default_host()
 
     return f"http://{host_for_url}:{bind_port}/"
 
+
 # Import self-registration utility
 try:
     from utils.self_registration import register_with_host_agent, get_host_agent_url
+
     SELF_REGISTRATION_AVAILABLE = True
     logger.info("✅ Self-registration utility loaded")
 except ImportError:
     # Fallback if utils not available
     async def register_with_host_agent(agent_card, host_url=None):
-        logger.info("ℹ️ Self-registration utility not available - skipping registration")
+        logger.info(
+            "ℹ️ Self-registration utility not available - skipping registration"
+        )
         return False
+
     def get_host_agent_url() -> str:
         return ""
+
     SELF_REGISTRATION_AVAILABLE = False
 
 DEFAULT_HOST = _resolve_default_host()
@@ -99,16 +111,22 @@ def _build_agent_skills() -> List[AgentSkill]:
     """
     return [
         AgentSkill(
-            id='dispatch_scheduling',
-            name='Technician Dispatch Scheduling',
+            id="dispatch_scheduling",
+            name="Technician Dispatch Scheduling",
             description="Schedule technician appointments for in-home visits when hardware/infrastructure issues require physical intervention. Also escalate complex cases to human experts via human-in-the-loop for edge cases, billing/account problems, or specialized technical scenarios.",
-            tags=['dispatch', 'technician', 'scheduling', 'escalation', 'human-in-loop'],
+            tags=[
+                "dispatch",
+                "technician",
+                "scheduling",
+                "escalation",
+                "human-in-loop",
+            ],
             examples=[
-                'Schedule a technician visit',
-                'I need a tech to come to my house',
-                'Escalate to human expert',
-                'This issue needs specialist attention',
-                'Schedule appointment for equipment replacement'
+                "Schedule a technician visit",
+                "I need a tech to come to my house",
+                "Escalate to human expert",
+                "This issue needs specialist attention",
+                "Schedule appointment for equipment replacement",
             ],
         ),
     ]
@@ -120,14 +138,14 @@ def _create_agent_card(host: str, port: int) -> AgentCard:
     """
     skills = _build_agent_skills()
     resolved_host_for_url = host if host != "0.0.0.0" else DEFAULT_HOST
-    
+
     return AgentCard(
-        name='Contoso Technical Dispatch Agent',
+        name="Contoso Technical Dispatch Agent",
         description="Final decision agent for Contoso customer support workflow. Capabilities: (1) Schedule technician appointments for in-home visits when hardware/infrastructure issues require physical intervention. (2) Escalate complex cases to human experts via human-in-the-loop for edge cases where all diagnostics pass but customer still experiences issues, billing/account problems, or specialized technical scenarios. Integrates complete diagnostic history from all previous agents (authentication, outage, modem, plan, network) to make informed dispatch decisions.",
         url=resolve_agent_url(resolved_host_for_url, port),
-        version='1.0.0',
-        defaultInputModes=['text'],
-        defaultOutputModes=['text'],
+        version="1.0.0",
+        defaultInputModes=["text"],
+        defaultOutputModes=["text"],
         capabilities={"streaming": True, "human_in_loop": True},
         skills=skills,
     )
@@ -144,34 +162,26 @@ def create_a2a_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
 
     # Create request handler
     request_handler = DefaultRequestHandler(
-        agent_executor=executor_instance, 
-        task_store=InMemoryTaskStore()
+        agent_executor=executor_instance, task_store=InMemoryTaskStore()
     )
 
     # Create A2A application
     a2a_app = A2AStarletteApplication(
-        agent_card=agent_card, 
-        http_handler=request_handler
+        agent_card=agent_card, http_handler=request_handler
     )
-    
+
     # Get routes
     routes = a2a_app.routes()
-    
+
     # Add health check endpoint
     async def health_check(_: Request) -> PlainTextResponse:
-        return PlainTextResponse('Contoso Technical Dispatch Agent is running!')
-    
-    routes.append(
-        Route(
-            path='/health',
-            methods=['GET'],
-            endpoint=health_check
-        )
-    )
+        return PlainTextResponse("Contoso Technical Dispatch Agent is running!")
+
+    routes.append(Route(path="/health", methods=["GET"], endpoint=health_check))
 
     # Create Starlette app
     app = Starlette(routes=routes)
-    
+
     return app
 
 
@@ -189,15 +199,25 @@ async def register_agent_with_host(agent_card):
         await asyncio.sleep(2)
         try:
             if not HOST_AGENT_URL:
-                logger.info("ℹ️ Host agent URL not configured; skipping registration attempt.")
+                logger.info(
+                    "ℹ️ Host agent URL not configured; skipping registration attempt."
+                )
                 return
 
-            logger.info(f"🤝 Attempting to register '{agent_card.name}' with host agent at {HOST_AGENT_URL}...")
-            registration_success = await register_with_host_agent(agent_card, host_url=HOST_AGENT_URL)
+            logger.info(
+                f"🤝 Attempting to register '{agent_card.name}' with host agent at {HOST_AGENT_URL}..."
+            )
+            registration_success = await register_with_host_agent(
+                agent_card, host_url=HOST_AGENT_URL
+            )
             if registration_success:
-                logger.info(f"🎉 '{agent_card.name}' successfully registered with host agent!")
+                logger.info(
+                    f"🎉 '{agent_card.name}' successfully registered with host agent!"
+                )
             else:
-                logger.info(f"📡 '{agent_card.name}' registration failed - host agent may be unavailable")
+                logger.info(
+                    f"📡 '{agent_card.name}' registration failed - host agent may be unavailable"
+                )
         except Exception as e:
             logger.warning(f"⚠️ Registration attempt failed: {e}")
 
@@ -205,12 +225,15 @@ async def register_agent_with_host(agent_card):
 def start_background_registration(agent_card):
     """Start background registration task."""
     if SELF_REGISTRATION_AVAILABLE:
+
         def run_registration():
             asyncio.run(register_agent_with_host(agent_card))
-        
+
         registration_thread = threading.Thread(target=run_registration, daemon=True)
         registration_thread.start()
-        logger.info(f"🚀 '{agent_card.name}' starting with background registration enabled")
+        logger.info(
+            f"🚀 '{agent_card.name}' starting with background registration enabled"
+        )
     else:
         logger.info(f"📡 '{agent_card.name}' starting without self-registration")
 
@@ -218,60 +241,66 @@ def start_background_registration(agent_card):
 def create_hitl_ui(ui_port: int, agent_card: AgentCard) -> gr.Blocks:
     """
     Create Gradio UI for human-in-the-loop escalations
-    
+
     This UI allows human experts to:
     1. View pending escalation requests with full diagnostic context
     2. Respond to escalated cases
     3. Monitor active escalations
     """
-    
+
     def get_pending_status() -> str:
         """Get current pending escalations"""
         global executor_instance
         if executor_instance is None:
             return "⚠️ Executor not initialized"
-        
+
         pending = TechnicalDispatchAgentExecutor.get_pending_escalations()
-        
+
         if not pending:
             return "✅ No pending escalations\n\nAll customer issues are being handled by automated systems or have been resolved."
-        
+
         # Format pending escalations
         status_lines = ["🚨 PENDING HUMAN ESCALATIONS\n"]
         for context_id, request_text in pending.items():
             status_lines.append(f"**Context ID:** `{context_id}`")
             status_lines.append(f"\n{request_text}\n")
             status_lines.append("-" * 80)
-        
+
         return "\n".join(status_lines)
-    
-    async def handle_human_response(context_id: str, response: str, history: List[dict]) -> tuple[str, str, List[dict]]:
+
+    async def handle_human_response(
+        context_id: str, response: str, history: List[dict]
+    ) -> tuple[str, str, List[dict]]:
         """Handle human expert response to escalation"""
         global executor_instance
-        
+
         history = history or []
-        
+
         if not context_id or not context_id.strip():
             error_msg = "❌ Please enter a Context ID"
             history.append({"role": "assistant", "content": error_msg})
             return "", get_pending_status(), history
-        
+
         if not response or not response.strip():
             error_msg = "❌ Please enter a response"
             history.append({"role": "assistant", "content": error_msg})
             return "", get_pending_status(), history
-        
+
         if executor_instance is None:
             error_msg = "❌ Executor not initialized"
             history.append({"role": "assistant", "content": error_msg})
             return "", get_pending_status(), history
-        
+
         # Add human response to history
-        history.append({"role": "user", "content": f"[Context: {context_id}] {response}"})
-        
+        history.append(
+            {"role": "user", "content": f"[Context: {context_id}] {response}"}
+        )
+
         try:
-            success = await executor_instance.send_human_response(context_id.strip(), response.strip())
-            
+            success = await executor_instance.send_human_response(
+                context_id.strip(), response.strip()
+            )
+
             if success:
                 success_msg = f"✅ Response sent successfully for context `{context_id}`"
                 history.append({"role": "assistant", "content": success_msg})
@@ -280,21 +309,22 @@ def create_hitl_ui(ui_port: int, agent_card: AgentCard) -> gr.Blocks:
                 error_msg = f"❌ No pending escalation found for context `{context_id}`"
                 history.append({"role": "assistant", "content": error_msg})
                 logger.warning(f"⚠️ No escalation found for {context_id}")
-        
+
         except Exception as e:
             error_msg = f"❌ Error sending response: {str(e)}"
             history.append({"role": "assistant", "content": error_msg})
             logger.error(f"❌ Error sending human response: {e}", exc_info=True)
-        
+
         return "", get_pending_status(), history
-    
+
     def refresh_status() -> str:
         """Refresh pending escalations status"""
         return get_pending_status()
-    
+
     # Create Gradio interface
     with gr.Blocks(title="Contoso Technical Dispatch - Human Expert Console") as ui:
-        gr.Markdown("""
+        gr.Markdown(
+            """
         # 🚨 Contoso Technical Dispatch - Human Expert Console
         
         This interface allows human experts to handle escalated customer cases that require manual intervention.
@@ -306,64 +336,61 @@ def create_hitl_ui(ui_port: int, agent_card: AgentCard) -> gr.Blocks:
         
         ## Your Role:
         Review the complete diagnostic history and provide expert resolution guidance.
-        """)
-        
+        """
+        )
+
         with gr.Row():
             with gr.Column(scale=2):
                 status_display = gr.Markdown(
-                    value=get_pending_status(),
-                    label="Pending Escalations",
-                    height=400
+                    value=get_pending_status(), label="Pending Escalations", height=400
                 )
-                
+
                 refresh_btn = gr.Button("🔄 Refresh Status", variant="secondary")
-                refresh_btn.click(
-                    fn=refresh_status,
-                    outputs=status_display
-                )
-            
+                refresh_btn.click(fn=refresh_status, outputs=status_display)
+
             with gr.Column(scale=1):
                 gr.Markdown("### Respond to Escalation")
-                
+
                 context_id_input = gr.Textbox(
                     label="Context ID",
                     placeholder="Enter context ID from escalation",
-                    lines=1
+                    lines=1,
                 )
-                
+
                 response_input = gr.Textbox(
                     label="Expert Response",
                     placeholder="Enter your resolution guidance for the customer...",
-                    lines=10
+                    lines=10,
                 )
-                
+
                 submit_btn = gr.Button("📤 Send Response", variant="primary")
-                
-                gr.Markdown("""
+
+                gr.Markdown(
+                    """
                 **Response Guidelines:**
                 - Provide clear, actionable resolution steps
                 - Reference specific diagnostic results when relevant
                 - Include any follow-up actions needed
                 - Be empathetic and professional
-                """)
-        
+                """
+                )
+
         gr.Markdown("---")
-        
+
         with gr.Row():
             chat_history = gr.Chatbot(
-                label="Response History",
-                height=300,
-                type="messages"
+                label="Response History", height=300, type="messages"
             )
-        
+
         # Wire up submit button
         submit_btn.click(
             fn=handle_human_response,
             inputs=[context_id_input, response_input, chat_history],
-            outputs=[response_input, status_display, chat_history]
+            outputs=[response_input, status_display, chat_history],
         )
-        
-        gr.Markdown("""
+
+        gr.Markdown(
+            """
         ---
         ## Quick Reference:
         
@@ -386,19 +413,25 @@ def create_hitl_ui(ui_port: int, agent_card: AgentCard) -> gr.Blocks:
         - Coordinate with field operations
         - Check for infrastructure maintenance in area
         - Review CMTS/DSLAM status
-        """)
-    
+        """
+        )
+
     return ui
 
 
-def main(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT, ui_port: int = 8086, enable_ui: bool = True):
+def main(
+    host: str = DEFAULT_HOST,
+    port: int = DEFAULT_PORT,
+    ui_port: int = 8086,
+    enable_ui: bool = True,
+):
     """Launch A2A server mode for Contoso Technical Dispatch Agent with startup initialization and optional UI."""
     # Verify required environment variables
     required_env_vars = [
-        'AZURE_AI_FOUNDRY_PROJECT_ENDPOINT',
-        'AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME'
+        "AZURE_AI_FOUNDRY_PROJECT_ENDPOINT",
+        "AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME",
     ]
-    
+
     missing_vars = [var for var in required_env_vars if not os.getenv(var)]
     if missing_vars:
         raise ValueError(
@@ -424,7 +457,7 @@ def main(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT, ui_port: int = 8086
 
     # Get agent card
     agent_card = _create_agent_card(host, port)
-    
+
     if enable_ui:
         # Start A2A server in background thread
         a2a_thread = threading.Thread(
@@ -433,13 +466,13 @@ def main(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT, ui_port: int = 8086
             daemon=True,
         )
         a2a_thread.start()
-        
+
         # Wait for server to start
         time.sleep(3)
-        
+
         # Register with host agent
         start_background_registration(agent_card)
-        
+
         # Launch Gradio UI for human experts
         logger.info("🎨 Launching Human Expert UI...")
         ui = create_hitl_ui(ui_port, agent_card)
@@ -457,18 +490,26 @@ def main(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT, ui_port: int = 8086
 
 
 @click.command()
-@click.option('--host', 'host', default=DEFAULT_HOST, help='Host to bind to')
-@click.option('--port', 'port', default=DEFAULT_PORT, help='Port for A2A server')
-@click.option('--ui-port', 'ui_port', default=8086, type=int, help='Port for human expert UI')
-@click.option('--enable-ui', 'enable_ui', is_flag=True, default=True, help='Enable the human expert Gradio UI')
+@click.option("--host", "host", default=DEFAULT_HOST, help="Host to bind to")
+@click.option("--port", "port", default=DEFAULT_PORT, help="Port for A2A server")
+@click.option(
+    "--ui-port", "ui_port", default=8086, type=int, help="Port for human expert UI"
+)
+@click.option(
+    "--enable-ui",
+    "enable_ui",
+    is_flag=True,
+    default=True,
+    help="Enable the human expert Gradio UI",
+)
 def cli(host: str, port: int, ui_port: int, enable_ui: bool):
     """
     Contoso Technical Dispatch Agent - run as an A2A server with optional Human-in-the-Loop UI.
-    
+
     Final decision agent for scheduling technician visits and escalating to human experts.
     """
     main(host, port, ui_port, enable_ui)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     cli()

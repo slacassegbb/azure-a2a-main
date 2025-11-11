@@ -7,7 +7,10 @@ from typing import List
 import click
 import uvicorn
 
-from foundry_agent_executor import create_foundry_agent_executor, initialize_foundry_agents_at_startup
+from foundry_agent_executor import (
+    create_foundry_agent_executor,
+    initialize_foundry_agents_at_startup,
+)
 from dotenv import load_dotenv
 from starlette.applications import Starlette
 from starlette.requests import Request
@@ -26,24 +29,26 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Silence verbose Azure SDK HTTP logging
-logging.getLogger("azure.core.pipeline.policies.http_logging_policy").setLevel(logging.WARNING)
+logging.getLogger("azure.core.pipeline.policies.http_logging_policy").setLevel(
+    logging.WARNING
+)
 logging.getLogger("azure.identity").setLevel(logging.WARNING)
 logging.getLogger("azure").setLevel(logging.WARNING)
 
 
 def _normalize_env_value(raw_value: str | None) -> str:
     if raw_value is None:
-        return ''
+        return ""
     return raw_value.strip()
 
 
 def _resolve_default_host() -> str:
-    value = _normalize_env_value(os.getenv('A2A_ENDPOINT'))
-    return value or 'localhost'
+    value = _normalize_env_value(os.getenv("A2A_ENDPOINT"))
+    return value or "localhost"
 
 
 def _resolve_default_port() -> int:
-    raw_port = _normalize_env_value(os.getenv('A2A_PORT'))
+    raw_port = _normalize_env_value(os.getenv("A2A_PORT"))
     if raw_port:
         try:
             return int(raw_port)
@@ -53,28 +58,34 @@ def _resolve_default_port() -> int:
 
 
 def resolve_agent_url(bind_host: str, bind_port: int) -> str:
-    endpoint = _normalize_env_value(os.getenv('A2A_ENDPOINT'))
+    endpoint = _normalize_env_value(os.getenv("A2A_ENDPOINT"))
     if endpoint:
-        if endpoint.startswith(('http://', 'https://')):
-            return endpoint.rstrip('/') + '/'
+        if endpoint.startswith(("http://", "https://")):
+            return endpoint.rstrip("/") + "/"
         host_for_url = endpoint
     else:
         host_for_url = bind_host if bind_host != "0.0.0.0" else _resolve_default_host()
 
     return f"http://{host_for_url}:{bind_port}/"
 
+
 # Import self-registration utility
 try:
     from utils.self_registration import register_with_host_agent, get_host_agent_url
+
     SELF_REGISTRATION_AVAILABLE = True
     logger.info("✅ Self-registration utility loaded")
 except ImportError:
     # Fallback if utils not available
     async def register_with_host_agent(agent_card, host_url=None):
-        logger.info("ℹ️ Self-registration utility not available - skipping registration")
+        logger.info(
+            "ℹ️ Self-registration utility not available - skipping registration"
+        )
         return False
+
     def get_host_agent_url() -> str:
         return ""
+
     SELF_REGISTRATION_AVAILABLE = False
 
 DEFAULT_HOST = _resolve_default_host()
@@ -92,15 +103,15 @@ def _build_agent_skills() -> List[AgentSkill]:
     """
     return [
         AgentSkill(
-            id='customer_authentication',
-            name='Customer Authentication',
+            id="customer_authentication",
+            name="Customer Authentication",
             description="Verify customer identity by collecting and validating first name, last name, postal code, and date of birth against the customer database.",
-            tags=['authentication', 'verification', 'identity', 'customer'],
+            tags=["authentication", "verification", "identity", "customer"],
             examples=[
-                'I need help with my internet',
-                'Verify my account',
-                'My name is Sarah Johnson',
-                'Authenticate customer'
+                "I need help with my internet",
+                "Verify my account",
+                "My name is Sarah Johnson",
+                "Authenticate customer",
             ],
         ),
     ]
@@ -112,14 +123,14 @@ def _create_agent_card(host: str, port: int) -> AgentCard:
     """
     skills = _build_agent_skills()
     resolved_host_for_url = host if host != "0.0.0.0" else DEFAULT_HOST
-    
+
     return AgentCard(
-        name='Contoso Authentication Agent',
+        name="Contoso Authentication Agent",
         description="Authenticates Contoso customers by verifying their first name, last name, postal code, and date of birth. This agent ensures secure identity verification before proceeding with support requests.",
         url=resolve_agent_url(resolved_host_for_url, port),
-        version='1.0.0',
-        defaultInputModes=['text'],
-        defaultOutputModes=['text'],
+        version="1.0.0",
+        defaultInputModes=["text"],
+        defaultOutputModes=["text"],
         capabilities={"streaming": True},
         skills=skills,
     )
@@ -136,34 +147,26 @@ def create_a2a_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
 
     # Create request handler
     request_handler = DefaultRequestHandler(
-        agent_executor=agent_executor_instance, 
-        task_store=InMemoryTaskStore()
+        agent_executor=agent_executor_instance, task_store=InMemoryTaskStore()
     )
 
     # Create A2A application
     a2a_app = A2AStarletteApplication(
-        agent_card=agent_card, 
-        http_handler=request_handler
+        agent_card=agent_card, http_handler=request_handler
     )
-    
+
     # Get routes
     routes = a2a_app.routes()
-    
+
     # Add health check endpoint
     async def health_check(_: Request) -> PlainTextResponse:
-        return PlainTextResponse('Contoso Authentication Agent is running!')
-    
-    routes.append(
-        Route(
-            path='/health',
-            methods=['GET'],
-            endpoint=health_check
-        )
-    )
+        return PlainTextResponse("Contoso Authentication Agent is running!")
+
+    routes.append(Route(path="/health", methods=["GET"], endpoint=health_check))
 
     # Create Starlette app
     app = Starlette(routes=routes)
-    
+
     return app
 
 
@@ -174,15 +177,25 @@ async def register_agent_with_host(agent_card):
         await asyncio.sleep(2)
         try:
             if not HOST_AGENT_URL:
-                logger.info("ℹ️ Host agent URL not configured; skipping registration attempt.")
+                logger.info(
+                    "ℹ️ Host agent URL not configured; skipping registration attempt."
+                )
                 return
 
-            logger.info(f"🤝 Attempting to register '{agent_card.name}' with host agent at {HOST_AGENT_URL}...")
-            registration_success = await register_with_host_agent(agent_card, host_url=HOST_AGENT_URL)
+            logger.info(
+                f"🤝 Attempting to register '{agent_card.name}' with host agent at {HOST_AGENT_URL}..."
+            )
+            registration_success = await register_with_host_agent(
+                agent_card, host_url=HOST_AGENT_URL
+            )
             if registration_success:
-                logger.info(f"🎉 '{agent_card.name}' successfully registered with host agent!")
+                logger.info(
+                    f"🎉 '{agent_card.name}' successfully registered with host agent!"
+                )
             else:
-                logger.info(f"📡 '{agent_card.name}' registration failed - host agent may be unavailable")
+                logger.info(
+                    f"📡 '{agent_card.name}' registration failed - host agent may be unavailable"
+                )
         except Exception as e:
             logger.warning(f"⚠️ Registration attempt failed: {e}")
 
@@ -190,12 +203,15 @@ async def register_agent_with_host(agent_card):
 def start_background_registration(agent_card):
     """Start background registration task."""
     if SELF_REGISTRATION_AVAILABLE:
+
         def run_registration():
             asyncio.run(register_agent_with_host(agent_card))
-        
+
         registration_thread = threading.Thread(target=run_registration, daemon=True)
         registration_thread.start()
-        logger.info(f"🚀 '{agent_card.name}' starting with background registration enabled")
+        logger.info(
+            f"🚀 '{agent_card.name}' starting with background registration enabled"
+        )
     else:
         logger.info(f"📡 '{agent_card.name}' starting without self-registration")
 
@@ -204,10 +220,10 @@ def main(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
     """Launch A2A server mode for Contoso Authentication Agent with startup initialization."""
     # Verify required environment variables
     required_env_vars = [
-        'AZURE_AI_FOUNDRY_PROJECT_ENDPOINT',
-        'AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME'
+        "AZURE_AI_FOUNDRY_PROJECT_ENDPOINT",
+        "AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME",
     ]
-    
+
     missing_vars = [var for var in required_env_vars if not os.getenv(var)]
     if missing_vars:
         raise ValueError(
@@ -225,25 +241,25 @@ def main(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
 
     logger.info(f"Starting Contoso Authentication Agent A2A server on {host}:{port}...")
     app = create_a2a_server(host, port)
-    
+
     # Get agent card and start background registration
     agent_card = _create_agent_card(host, port)
     start_background_registration(agent_card)
-    
+
     uvicorn.run(app, host=host, port=port)
 
 
 @click.command()
-@click.option('--host', 'host', default=DEFAULT_HOST, help='Host to bind to')
-@click.option('--port', 'port', default=DEFAULT_PORT, help='Port for A2A server')
+@click.option("--host", "host", default=DEFAULT_HOST, help="Host to bind to")
+@click.option("--port", "port", default=DEFAULT_PORT, help="Port for A2A server")
 def cli(host: str, port: int):
     """
     Contoso Authentication Agent - run as an A2A server.
-    
+
     Authenticates customers by verifying identity before support requests.
     """
     main(host, port)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     cli()

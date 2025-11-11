@@ -63,8 +63,10 @@ def retrieve_operational_context(
         logger.info("=" * 80)
 
         # Use network performance endpoint if available, fallback to airport_info for testing
-        endpoint = _network_perf_endpoint if _network_perf_endpoint else _airport_info_endpoint
-        
+        endpoint = (
+            _network_perf_endpoint if _network_perf_endpoint else _airport_info_endpoint
+        )
+
         if not endpoint:
             error_msg = "No Fabric endpoint configured. Please configure network_performance endpoint."
             logger.error(f"❌ {error_msg}")
@@ -72,9 +74,7 @@ def retrieve_operational_context(
 
         # Query the Fabric agent with the network performance endpoint
         response = ask_fabric_agent(
-            endpoint=endpoint, 
-            question=query,
-            credential=_azure_credential
+            endpoint=endpoint, question=query, credential=_azure_credential
         )
 
         logger.info("✅ Network operational data retrieved successfully from Fabric")

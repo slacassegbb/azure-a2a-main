@@ -44,19 +44,17 @@ class SentimentAnalysisAgentExecutor(AgentExecutor):
         # invoke the underlying agent, using streaming results. The streams
         # now are update events.
         async for item in self.agent.stream(query, task.context_id):
-            is_task_complete = item['is_task_complete']
+            is_task_complete = item["is_task_complete"]
             if not is_task_complete:
                 await updater.update_status(
                     TaskState.working,
-                    new_agent_text_message(
-                        item['updates'], task.context_id, task.id
-                    ),
+                    new_agent_text_message(item["updates"], task.context_id, task.id),
                 )
                 continue
             # Always treat the response as final sentiment analysis result
             await updater.update_status(
                 TaskState.completed,
-                new_agent_text_message(item['content'], task.context_id, task.id),
+                new_agent_text_message(item["content"], task.context_id, task.id),
                 final=True,
             )
             break

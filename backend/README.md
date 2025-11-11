@@ -83,8 +83,8 @@ AZURE_OPENAI_GPT_API_KEY=<your-foundry-api-key>
 AZURE_OPENAI_GPT_API_VERSION=2024-02-01-preview        # or your deployment version
 AZURE_OPENAI_GPT_DEPLOYMENT=<your-gpt-deployment-name>  # e.g. gpt-4o
 
-# Optional: Azure Blob Storage for file handling
-AZURE_STORAGE_CONNECTION_STRING=<connection-string>
+# Optional: Azure Blob Storage for file handling (uses Azure AD authentication)
+# Make sure your identity has "Storage Blob Data Contributor" role
 AZURE_STORAGE_ACCOUNT_NAME=<account-name>
 AZURE_BLOB_CONTAINER=a2a-files
 

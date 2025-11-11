@@ -31,10 +31,12 @@ DEFAULT_TIMEOUT_SEC: int = 300
 
 _cached_credential = None
 
+
 def _get_bearer() -> str:
     """Get fresh bearer token for each request"""
     global _cached_credential
     return _cached_credential.get_token(FABRIC_SCOPE).token
+
 
 class FabricOpenAI(OpenAI):
     def __init__(
@@ -70,7 +72,11 @@ class DataAgent(OpenAI):
     """
 
     def __init__(
-        self, base_url: str, api_version: str = FABRIC_API_VERSION, default_headers: dict = None, **kwargs
+        self,
+        base_url: str,
+        api_version: str = FABRIC_API_VERSION,
+        default_headers: dict = None,
+        **kwargs,
     ) -> None:
         self.api_version = api_version
         self._auth_headers = default_headers or {}
@@ -137,7 +143,9 @@ def ask_fabric_agent(
                 if time.time() - start > timeout_sec:
                     raise TimeoutError(f"Run polling exceeded {timeout_sec}s")
                 time.sleep(poll_interval_sec)
-                run = client.beta.threads.runs.retrieve(thread_id=thread.id, run_id=run.id)
+                run = client.beta.threads.runs.retrieve(
+                    thread_id=thread.id, run_id=run.id
+                )
 
             if run.status != "completed":
                 return f"[Run ended: {run.status}]"

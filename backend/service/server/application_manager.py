@@ -22,13 +22,11 @@ class ApplicationManager(ABC):
         pass
 
     @abstractmethod
-    def get_pending_messages(self) -> list[tuple[str,str]]:
+    def get_pending_messages(self) -> list[tuple[str, str]]:
         pass
 
     @abstractmethod
-    def get_conversation(
-        self, conversation_id: str | None
-    ) -> Conversation | None:
+    def get_conversation(self, conversation_id: str | None) -> Conversation | None:
         pass
 
     @property
