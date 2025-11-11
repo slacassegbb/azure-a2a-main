@@ -99,10 +99,10 @@ def _build_agent_skills() -> list[AgentSkill]:
     """
     return [
         AgentSkill(
-            id="modem_diagnostics",
-            name="Modem Diagnostics",
-            description="Analyze modem LED status indicators and perform backend configuration checks. Can accept modem video/image for LED analysis, check signal strength, firmware status, and identify connectivity issues.",
-            tags=["modem", "diagnostics", "led", "hardware", "configuration"],
+            id='modem_diagnostics',
+            name='Modem Diagnostics',
+            description="Analyze modem LED status indicators and perform backend configuration checks. Accepts customer descriptions of LED colors and patterns, checks signal strength, firmware status, and identifies connectivity issues.",
+            tags=['modem', 'diagnostics', 'led', 'hardware', 'configuration'],
             examples=[
                 "Check modem status for customer",
                 "Analyze modem LED lights",
@@ -122,12 +122,12 @@ def _create_agent_card(host: str, port: int) -> AgentCard:
     resolved_host_for_url = host if host != "0.0.0.0" else DEFAULT_HOST
 
     return AgentCard(
-        name="Contoso Modem Check Agent",
-        description="Performs comprehensive modem diagnostics including LED status analysis and backend configuration checks. Analyzes modem LED indicators (solid white, blinking white, yellow, red, no light) to determine modem state, checks backend systems for signal strength, firmware version, and configuration errors. Identifies discrepancies between visual and backend status.",
+        name='Contoso Modem Check Agent',
+        description="Performs comprehensive modem diagnostics including LED status analysis and backend configuration checks. Analyzes customer descriptions of modem LED indicators (solid white, blinking white, yellow, red, no light) to determine modem state, checks backend systems for signal strength, firmware version, and configuration errors. Identifies discrepancies between visual and backend status.",
         url=resolve_agent_url(resolved_host_for_url, port),
-        version="1.0.0",
-        defaultInputModes=["text", "image"],
-        defaultOutputModes=["text"],
+        version='1.0.0',
+        defaultInputModes=['text'],
+        defaultOutputModes=['text'],
         capabilities={"streaming": True},
         skills=skills,
     )

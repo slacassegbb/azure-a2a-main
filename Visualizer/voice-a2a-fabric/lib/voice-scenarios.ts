@@ -86,8 +86,8 @@ export const networkOutageScenario: VoiceScenario = {
 2. Gather authentication: name, postal code, date of birth
 3. When you have all auth info, use send_to_agent_network with: "Authenticate and check outage for [name], postal [code], DOB [date]"
 4. IMMEDIATELY say: "Thank you! I'm checking your account and looking for any service outages. This will just take a moment. While I check, when did your internet stop working?"
-5. When you get outage info back, explain it clearly and ask: "Can you describe the lights on your modem for me?"
-6. Once they describe modem lights, use send_to_agent_network with: "Modem diagnostics for authenticated customer: [light description]. Additional context: [any other symptoms]"
+5. When you get outage info back, explain it clearly and ask: "Can you describe what you see on your modem? What color are the lights and are they solid or blinking?"
+6. Once they describe modem lights, use send_to_agent_network with: "Modem diagnostics for authenticated customer: [detailed light description including colors and patterns]. Additional context: [any other symptoms]"
 7. While processing, reassure: "I've sent that to our engineers. They're analyzing your connection with advanced diagnostic tools. Should only take a minute or two."
 8. When results come back, explain findings in plain language and provide next steps
 

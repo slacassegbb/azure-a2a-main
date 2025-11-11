@@ -63,11 +63,12 @@ export function useVoiceLive(config: VoiceLiveConfig): VoiceLiveHook {
     previous_item_id?: string
   }>>(new Map())
 
-  // Get authentication token from Azure CLI
+  // Get authentication token from backend
   const getAuthToken = async (): Promise<string> => {
     try {
-      // Fetch token from local Azure CLI credentials
-      const response = await fetch('http://localhost:12000/api/azure-token', {
+      // Use the configured backend URL (works for both localhost and deployed)
+      const backendUrl = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
+      const response = await fetch(`${backendUrl}/api/azure-token`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',

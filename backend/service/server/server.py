@@ -426,22 +426,35 @@ class ConversationServer:
 
                 if success:
                     log_debug(f"✅ Self-registration successful for: {agent_address}")
-
-                    # Trigger immediate WebSocket sync to update UI in real-time
+                    
+                    # Broadcast updated agent list to all WebSocket clients
                     try:
-                        websocket_server = get_websocket_server()
-                        if websocket_server:
-                            websocket_server.trigger_immediate_sync()
-                            log_debug(
-                                "🔔 Triggered immediate agent registry sync for UI update"
-                            )
+                        # Get the live agent list (includes health checks)
+                        agent_data = await self._get_agents()
+                        if agent_data.get("success"):
+                            agents = agent_data.get("agents", [])
+                            
+                            # Get WebSocket manager from backend_production
+                            import backend.backend_production as backend_prod
+                            if hasattr(backend_prod, 'websocket_manager'):
+                                registry_event = {
+                                    "eventType": "agent_registry_sync",
+                                    "data": {
+                                        "agents": agents,
+                                        "timestamp": __import__('time').strftime("%Y-%m-%d %H:%M:%S", __import__('time').localtime())
+                                    }
+                                }
+                                client_count = await backend_prod.websocket_manager.broadcast_event(registry_event)
+                                log_debug(f"� Broadcasted agent_registry_sync to {client_count} clients with {len(agents)} LIVE agents")
+                            else:
+                                log_debug("⚠️ WebSocket manager not available for broadcast")
                         else:
-                            log_debug(
-                                "⚠️ WebSocket server not available for immediate sync"
-                            )
+                            log_debug(f"⚠️ Failed to get live agents: {agent_data.get('error')}")
                     except Exception as sync_error:
-                        log_debug(f"⚠️ Failed to trigger immediate sync: {sync_error}")
-
+                        log_debug(f"⚠️ Failed to broadcast agent sync: {sync_error}")
+                        import traceback
+                        log_debug(f"Traceback: {traceback.format_exc()}")
+                    
                     # Stream agent self-registration over WebSocket
                     log_debug(
                         "🌊 Attempting to stream agent self-registration to WebSocket..."

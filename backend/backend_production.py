@@ -507,6 +507,32 @@ class WebSocketManager:
         else:
             print(f"[WebSocket] ℹ️ Unauthenticated connection")
         
+        # Send initial agent registry sync with LIVE agents to newly connected client
+        try:
+            # Get live connected agents from agent_server (NOT the registry)
+            global agent_server
+            if agent_server:
+                agent_data = await agent_server._get_agents()
+                if agent_data.get("success"):
+                    agents = agent_data.get("agents", [])
+                    initial_sync = {
+                        "eventType": "agent_registry_sync",
+                        "data": {
+                            "agents": agents,
+                            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+                        }
+                    }
+                    await websocket.send_text(json.dumps(initial_sync))
+                    print(f"[WebSocket] 📤 Sent initial agent registry sync ({len(agents)} LIVE agents) to new client")
+                else:
+                    print(f"[WebSocket] ⚠️ Failed to get live agents: {agent_data.get('error')}")
+            else:
+                print(f"[WebSocket] ⚠️ Agent server not available for initial sync")
+        except Exception as e:
+            print(f"[WebSocket] ⚠️ Failed to send initial agent registry: {e}")
+            import traceback
+            print(f"[WebSocket] Traceback:\n{traceback.format_exc()}")
+        
         # Send connection count to all clients
         await self.broadcast_connection_count()
         
