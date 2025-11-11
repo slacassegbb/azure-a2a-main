@@ -176,7 +176,7 @@ export function AgentNetworkDashboard() {
       
       // Generate IDs - unique messageId per call, shared conversationId for session
       const messageId = `voice-msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
-      const conversationId = currentConversationId || `voice-${Date.now()}`
+      const conversationId = currentConversationId || 'visualizer-voice-context'
       const callId = claimData?.tool_call_id || claimData?.call_id || ''
       
       console.log('[VOICE-A2A] 🆔 Generated messageId:', messageId)
@@ -1195,7 +1195,7 @@ export function AgentNetworkDashboard() {
       // Send HTTP POST to /message/send (like frontend does)
       const message = requestMessage
       const messageId = `viz-msg-${Date.now()}`
-      const conversationId = currentConversationId || `viz-${Date.now()}`
+      const conversationId = currentConversationId || 'visualizer-request-context'
 
       // Add user message to activity log immediately
       addMessage('user', 'Visualizer', message, 'event')
