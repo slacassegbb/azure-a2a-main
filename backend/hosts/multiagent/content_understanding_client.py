@@ -309,7 +309,9 @@ class AzureContentUnderstandingClient:
                 return response.json()
             elif status == "failed":
                 error_response = response.json()
-                print(f"[DEBUG] Azure Content Understanding failed. Full response: {error_response}")
+                print(
+                    f"[DEBUG] Azure Content Understanding failed. Full response: {error_response}"
+                )
                 self._logger.error(f"Request failed. Reason: {error_response}")
                 raise RuntimeError(f"Request failed. Details: {error_response}")
             else:

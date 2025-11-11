@@ -54,12 +54,12 @@ Special thank you to Sergey Chernykh, Ryan Morgan and Owen Van Valkenburg for th
 A full companion paper is included with this repository, explaining the vision, architecture, protocols, and patterns behind this system.
 
 <p align="center">
-  <a href="./Scaling_Agents_Enterprise.pdf">
-    <img src="./paper_thumbnail.png" alt="Scaling Agents for Enterprises Whitepaper" width="350"/>
+  <a href="./utils/Scaling_Agents_Enterprise.pdf">
+    <img src="./utils/paper_thumbnail.png" alt="Scaling Agents for Enterprises Whitepaper" width="350"/>
   </a>
 </p>
 
-> _Click the thumbnail above to open **Scaling_Agents.pdf** — "Scaling Agents for Enterprises: Guide to designing and scaling enterprise multi-agent systems using open standard agent protocols."_
+> _Click the thumbnail above to open **Scaling_Agents_Enterprise.pdf** — "Scaling Agents for Enterprises: Guide to designing and scaling enterprise multi-agent systems using open standard agent protocols."_
 
 ---
 

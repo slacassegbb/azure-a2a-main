@@ -8,7 +8,11 @@ import os
 from typing import Any
 
 # Read verbose flag from environment (defaults to False for clean logs)
-VERBOSE_LOGGING = os.environ.get("VERBOSE_LOGGING", "false").lower() in ("true", "1", "yes")
+VERBOSE_LOGGING = os.environ.get("VERBOSE_LOGGING", "false").lower() in (
+    "true",
+    "1",
+    "yes",
+)
 
 
 def log_info(message: str, *args: Any) -> None:
@@ -58,4 +62,3 @@ def log_foundry_debug(message: str, *args: Any) -> None:
 def log_auth(message: str, *args: Any) -> None:
     """Log auth messages (always shown for security visibility)."""
     print(f"[AuthService] {message}", *args)
-

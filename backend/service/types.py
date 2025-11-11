@@ -10,7 +10,7 @@ from a2a.types import (
 
 
 class JSONRPCMessage(BaseModel):
-    jsonrpc: Literal['2.0'] = '2.0'
+    jsonrpc: Literal["2.0"] = "2.0"
     id: int | str | None = Field(default_factory=lambda: uuid4().hex)
 
 
@@ -28,14 +28,14 @@ class JSONRPCResponse(JSONRPCMessage):
 class Conversation(BaseModel):
     conversation_id: str
     is_active: bool
-    name: str = ''
+    name: str = ""
     task_ids: list[str] = Field(default_factory=list)
     messages: list[Message] = Field(default_factory=list)
 
 
 class Event(BaseModel):
     id: str
-    actor: str = ''
+    actor: str = ""
     # TODO: Extend to support internal concepts for models, like function calls.
     content: Message
     timestamp: float
