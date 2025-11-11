@@ -3,6 +3,7 @@ Fabric Agent Management Module
 Handles Fabric Data agents
 """
 
+import logging
 import time
 import uuid
 import typing as t
@@ -19,9 +20,9 @@ import os
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
-from utils.ml_logging import get_logger
+import logging 
 
-logger = get_logger("src.agents.dataagents")
+logger = logging.getLogger("src.agents.dataagents")
 
 FABRIC_SCOPE: str = "https://api.fabric.microsoft.com/.default"
 FABRIC_SCOPE_ALTERNATIVE: str = "https://analysis.windows.net/powerbi/api/.default"

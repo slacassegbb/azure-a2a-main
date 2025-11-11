@@ -201,7 +201,7 @@ class FoundryNetworkPerformanceAgent:
 
         # Import and configure tools
         try:
-            from tools import (
+            from .tools import (
                 retrieve_operational_context,
                 set_network_performance_endpoint,
                 set_azure_credential,
@@ -333,7 +333,7 @@ class FoundryNetworkPerformanceAgent:
                 # Handle retrieve_operational_context tool
                 if function_name == "retrieve_operational_context":
                     import json
-                    from tools import retrieve_operational_context
+                    from .tools import retrieve_operational_context
 
                     try:
                         args = (
@@ -440,7 +440,7 @@ class FoundryNetworkPerformanceAgent:
         iteration = 0
         while iteration < max_iterations:
             iteration += 1
-            run = agents_client.runs.retrieve(thread_id=thread_id, run_id=run.id)
+            run = agents_client.runs.get(thread_id=thread_id, run_id=run.id)
             logger.info(f"🟢 [NETWORK AGENT] Run status ({iteration}): {run.status}")
 
             if run.status == "requires_action":

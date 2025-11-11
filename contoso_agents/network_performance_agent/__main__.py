@@ -13,7 +13,7 @@ from typing import List
 import click
 import uvicorn
 
-from foundry_agent_executor import (
+from .foundry_agent_executor import (
     create_foundry_agent_executor,
     initialize_foundry_agents_at_startup,
 )
