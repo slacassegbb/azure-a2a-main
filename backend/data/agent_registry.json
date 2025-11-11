@@ -1223,5 +1223,41 @@
         ]
       }
     ]
+  },
+  {
+    "name": "Contoso Network Performance Agent",
+    "description": "Performs comprehensive network diagnostics for Contoso internet customers. Capabilities: ping tests to modem/pods/devices, device discovery with IP addresses, latency and packet loss analysis, proactive network reset recommendations. Can trigger network resets when performance issues detected or as preventive measure before declaring all clear. Identifies critical issues requiring technician dispatch.",
+    "version": "1.0.0",
+    "url": "http://127.0.0.1:8105/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "network_diagnostics",
+        "name": "Network Performance Diagnostics",
+        "description": "Perform comprehensive network diagnostics including ping tests to modem/pods/devices, device discovery with IP addresses, latency and packet loss analysis. Can trigger network resets when performance issues detected or as preventive measure. Identifies critical issues requiring technician dispatch.",
+        "examples": [
+          "Run network diagnostics",
+          "Check network performance for customer",
+          "Test latency and packet loss",
+          "Discover devices on network",
+          "Should we reset the network?"
+        ],
+        "tags": [
+          "network",
+          "diagnostics",
+          "performance",
+          "ping",
+          "latency"
+        ]
+      }
+    ]
   }
 ]

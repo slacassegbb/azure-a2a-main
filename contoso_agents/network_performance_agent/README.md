@@ -81,15 +81,20 @@ The agent follows this diagnostic protocol:
 Copy `.env.example` to `.env` and configure:
 
 ```bash
-# Azure AI Foundry
-AZURE_AI_PROJECTS_CONNECTION_STRING=your_connection_string
-AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4o
+# Azure AI Foundry Configuration
+AZURE_AI_FOUNDRY_PROJECT_ENDPOINT="https://your-project.services.ai.azure.com/api/projects/your-project-name"
+AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME="gpt-4o"
 
-# Server Configuration
-HOST=127.0.0.1
-PORT=8105
-HOST_AGENT_URL=http://localhost:12000
+# Agent Host Configuration
+HOST="127.0.0.1"
+PORT="8105"
+HOST_AGENT_URL="http://127.0.0.1:8100"
 ```
+
+**Required Variables:**
+- `AZURE_AI_FOUNDRY_PROJECT_ENDPOINT`: Your Azure AI Foundry project endpoint URL
+- `AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME`: OpenAI model deployment name (e.g., gpt-4o)
+- `HOST_AGENT_URL`: URL of the host agent for registration (default: http://127.0.0.1:8100)
 
 ### Port Assignment
 
@@ -111,12 +116,12 @@ python -m Contoso_agents.network_performance_agent
 
 Or with custom settings:
 ```bash
-python -m Contoso_agents.network_performance_agent --host 127.0.0.1 --port 8105 --host-agent-url http://localhost:12000
+python -m Contoso_agents.network_performance_agent --host 127.0.0.1 --port 8105 --host-agent-url http://127.0.0.1:8100
 ```
 
 ## Self-Registration
 
-The agent automatically registers with the host agent at `http://localhost:12000` on startup, providing:
+The agent automatically registers with the host agent at `http://127.0.0.1:8100` on startup, providing:
 - Agent name: "Contoso Network Performance Agent"
 - Agent URL: `http://127.0.0.1:8105`
 - Capabilities: Network diagnostics, ping tests, device discovery, proactive network resets

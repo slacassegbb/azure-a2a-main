@@ -35,15 +35,15 @@ def get_context_id(obj: Any, default: str = None) -> str:
     """
     try:
         # Try contextId first (official A2A protocol field name)
-        if hasattr(obj, 'contextId') and obj.contextId is not None:
+        if hasattr(obj, "contextId") and obj.contextId is not None:
             return obj.contextId
         # Fallback to context_id for compatibility
-        if hasattr(obj, 'context_id') and obj.context_id is not None:
+        if hasattr(obj, "context_id") and obj.context_id is not None:
             return obj.context_id
         # Final fallback using getattr
-        return getattr(obj, 'contextId', getattr(obj, 'context_id', default or ''))
+        return getattr(obj, "contextId", getattr(obj, "context_id", default or ""))
     except Exception:
-        return default or ''
+        return default or ""
 
 
 def get_message_id(obj: Any, default: str = None) -> str:
@@ -53,13 +53,15 @@ def get_message_id(obj: Any, default: str = None) -> str:
     """
     try:
         # Try messageId first (official A2A protocol field name)
-        if hasattr(obj, 'messageId') and obj.messageId is not None:
+        if hasattr(obj, "messageId") and obj.messageId is not None:
             return obj.messageId
         # Fallback to message_id for compatibility
-        if hasattr(obj, 'message_id') and obj.message_id is not None:
+        if hasattr(obj, "message_id") and obj.message_id is not None:
             return obj.message_id
         # Final fallback using getattr
-        return getattr(obj, 'messageId', getattr(obj, 'message_id', default or str(uuid.uuid4())))
+        return getattr(
+            obj, "messageId", getattr(obj, "message_id", default or str(uuid.uuid4()))
+        )
     except Exception:
         return default or str(uuid.uuid4())
 
@@ -71,13 +73,15 @@ def get_task_id(obj: Any, default: str = None) -> str:
     """
     try:
         # Try taskId first (official A2A protocol field name)
-        if hasattr(obj, 'taskId') and obj.taskId is not None:
+        if hasattr(obj, "taskId") and obj.taskId is not None:
             return obj.taskId
         # Fallback to task_id for compatibility
-        if hasattr(obj, 'task_id') and obj.task_id is not None:
+        if hasattr(obj, "task_id") and obj.task_id is not None:
             return obj.task_id
         # Final fallback using getattr
-        return getattr(obj, 'taskId', getattr(obj, 'task_id', default or str(uuid.uuid4())))
+        return getattr(
+            obj, "taskId", getattr(obj, "task_id", default or str(uuid.uuid4()))
+        )
     except Exception:
         return default or str(uuid.uuid4())
 
@@ -119,7 +123,7 @@ class ADKHostManager(ApplicationManager):
     def __init__(
         self,
         http_client: httpx.AsyncClient,
-        api_key: str = '',
+        api_key: str = "",
         uses_vertex_ai: bool = False,
     ):
         self._conversations: list[Conversation] = []
@@ -134,22 +138,22 @@ class ADKHostManager(ApplicationManager):
         self._memory_service = InMemoryMemoryService()
         self._host_agent = HostAgent([], http_client, self.task_callback)
         self._context_to_conversation: dict[str, str] = {}
-        self.user_id = 'test_user'
-        self.app_name = 'A2A'
-        self.api_key = api_key or os.environ.get('GOOGLE_API_KEY', '')
+        self.user_id = "test_user"
+        self.app_name = "A2A"
+        self.api_key = api_key or os.environ.get("GOOGLE_API_KEY", "")
         self.uses_vertex_ai = (
             uses_vertex_ai
-            or os.environ.get('GOOGLE_GENAI_USE_VERTEXAI', '').upper() == 'TRUE'
+            or os.environ.get("GOOGLE_GENAI_USE_VERTEXAI", "").upper() == "TRUE"
         )
 
         # Set environment variables based on auth method
         if self.uses_vertex_ai:
-            os.environ['GOOGLE_GENAI_USE_VERTEXAI'] = 'TRUE'
+            os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = "TRUE"
 
         elif self.api_key:
             # Use API key authentication
-            os.environ['GOOGLE_GENAI_USE_VERTEXAI'] = 'FALSE'
-            os.environ['GOOGLE_API_KEY'] = self.api_key
+            os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = "FALSE"
+            os.environ["GOOGLE_API_KEY"] = self.api_key
 
         self._initialize_host()
 
@@ -200,7 +204,7 @@ class ADKHostManager(ApplicationManager):
 
             # Only update if not using Vertex AI
             if not self.uses_vertex_ai:
-                os.environ['GOOGLE_API_KEY'] = api_key
+                os.environ["GOOGLE_API_KEY"] = api_key
                 # Reinitialize host with new API key
                 self._initialize_host()
 
@@ -228,25 +232,25 @@ class ADKHostManager(ApplicationManager):
         message_id = get_message_id(message)
         if not message_id:
             return
-        
+
         # Add message ID to pending list
         self._pending_message_ids.append(message_id)
-        
+
         # Get or create context_id
         context_id = get_context_id(message) or str(uuid.uuid4())
-        
+
         # Get or create conversation
         conversation = self.get_conversation(context_id)
         if not conversation:
             conversation = await self.create_conversation()
             self._context_to_conversation[context_id] = conversation.conversation_id
-            
+
             # Stream conversation creation to WebSocket
             print("[DEBUG] Streaming conversation creation to WebSocket...")
             try:
                 from service.websocket_streamer import get_websocket_streamer
                 import asyncio
-                
+
                 async def stream_conversation_created():
                     try:
                         streamer = await get_websocket_streamer()
@@ -256,37 +260,45 @@ class ADKHostManager(ApplicationManager):
                                 "conversationId": context_id,
                                 "conversationName": f"Chat {context_id[:8]}...",
                                 "isActive": True,
-                                "messageCount": 0
+                                "messageCount": 0,
                             }
-                            
-                            success = await streamer._send_event("conversation_created", event_data, context_id)
+
+                            success = await streamer._send_event(
+                                "conversation_created", event_data, context_id
+                            )
                             if success:
-                                print(f"[DEBUG] Conversation creation streamed: {event_data}")
+                                print(
+                                    f"[DEBUG] Conversation creation streamed: {event_data}"
+                                )
                             else:
                                 print("[DEBUG] Failed to stream conversation creation")
                         else:
-                            print("[DEBUG] WebSocket streamer not available for conversation creation")
+                            print(
+                                "[DEBUG] WebSocket streamer not available for conversation creation"
+                            )
                     except Exception as e:
                         print(f"[DEBUG] SPECIFIC ERROR in conversation streaming: {e}")
                         import traceback
+
                         traceback.print_exc()
-                
+
                 asyncio.create_task(stream_conversation_created())
-                
+
             except Exception as e:
                 print(f"[DEBUG] Error streaming conversation creation: {e}")
                 import traceback
+
                 traceback.print_exc()
-        
+
         # Add message to conversation and messages list
         self._messages.append(message)
         if conversation:
             conversation.messages.append(message)
-            
+
         self.add_event(
             Event(
                 id=str(uuid.uuid4()),
-                actor='user',
+                actor="user",
                 content=message,
                 timestamp=datetime.datetime.utcnow().timestamp(),
             )
@@ -294,39 +306,36 @@ class ADKHostManager(ApplicationManager):
         final_event = None
         # Determine if a task is to be resumed.
         session = await self._session_service.get_session(
-            app_name='A2A', user_id='test_user', session_id=context_id
+            app_name="A2A", user_id="test_user", session_id=context_id
         )
         task_id = get_task_id(message)
         # Update state must happen in an event
         state_update = {
-            'task_id': task_id,
-            'context_id': context_id,
-            'message_id': get_message_id(message),
+            "task_id": task_id,
+            "context_id": context_id,
+            "message_id": get_message_id(message),
         }
         # Need to upsert session state now, only way is to append an event.
         await self._session_service.append_event(
             session,
             ADKEvent(
                 id=ADKEvent.new_id(),
-                author='host_agent',
+                author="host_agent",
                 invocation_id=ADKEvent.new_id(),
                 actions=ADKEventActions(state_delta=state_update),
             ),
         )
-        
+
         # Ensure the agent is initialized before running
         self._ensure_agent_initialized()
-        
+
         async for event in self._host_runner.run_async(
             user_id=self.user_id,
             session_id=context_id,
             new_message=self.adk_content_from_message(message),
         ):
-            if (
-                event.actions.state_delta
-                and 'task_id' in event.actions.state_delta
-            ):
-                task_id = event.actions.state_delta['task_id']
+            if event.actions.state_delta and "task_id" in event.actions.state_delta:
+                task_id = event.actions.state_delta["task_id"]
             self.add_event(
                 Event(
                     id=event.id,
@@ -342,10 +351,10 @@ class ADKHostManager(ApplicationManager):
         if final_event:
             if (
                 final_event.actions.state_delta
-                and 'task_id' in final_event.actions.state_delta
+                and "task_id" in final_event.actions.state_delta
             ):
-                task_id = final_event.actions.state_delta['task_id']
-            final_event.content.role = 'model'
+                task_id = final_event.actions.state_delta["task_id"]
+            final_event.content.role = "model"
             response = await self.adk_content_to_message(
                 final_event.content, context_id, task_id
             )
@@ -353,7 +362,7 @@ class ADKHostManager(ApplicationManager):
 
         if conversation and response:
             conversation.messages.append(response)
-        
+
         # Remove message from pending list
         if message_id in self._pending_message_ids:
             self._pending_message_ids.remove(message_id)
@@ -466,8 +475,8 @@ class ADKHostManager(ApplicationManager):
             task.history = [task.status.message]
         else:
             print(
-                'Message id already in history',
-                get_message_id(task.status.message) if task.status.message else '',
+                "Message id already in history",
+                get_message_id(task.status.message) if task.status.message else "",
                 task.history,
             )
 
@@ -481,9 +490,7 @@ class ADKHostManager(ApplicationManager):
             task_id = get_task_id(event)
         if not task_id:
             task_id = str(uuid.uuid4())
-        current_task = next(
-            filter(lambda x: x.id == task_id, self._tasks), None
-        )
+        current_task = next(filter(lambda x: x.id == task_id, self._tasks), None)
         if not current_task:
             context_id = get_context_id(event)
             current_task = Task(
@@ -504,10 +511,7 @@ class ADKHostManager(ApplicationManager):
         artifact = task_update_event.artifact
         if not task_update_event.append:
             # received the first chunk or entire payload for an artifact
-            if (
-                task_update_event.lastChunk is None
-                or task_update_event.lastChunk
-            ):
+            if task_update_event.lastChunk is None or task_update_event.lastChunk:
                 # lastChunk bit is missing or is set to true, so this is the entire payload
                 # add this to artifacts
                 if not current_task.artifacts:
@@ -520,9 +524,7 @@ class ADKHostManager(ApplicationManager):
                 self._artifact_chunks[artifact.artifactId].append(artifact)
         else:
             # we received an append chunk, add to the existing temp artifact
-            current_temp_artifact = self._artifact_chunks[artifact.artifactId][
-                -1
-            ]
+            current_temp_artifact = self._artifact_chunks[artifact.artifactId][-1]
             # TODO handle if current_temp_artifact is missing
             current_temp_artifact.parts.extend(artifact.parts)
             if task_update_event.lastChunk:
@@ -553,26 +555,24 @@ class ADKHostManager(ApplicationManager):
         for message_id in self._pending_message_ids:
             if message_id in self._task_map:
                 task_id = self._task_map[message_id]
-                task = next(
-                    filter(lambda x: x.id == task_id, self._tasks), None
-                )
+                task = next(filter(lambda x: x.id == task_id, self._tasks), None)
                 if not task:
-                    rval.append((message_id, ''))
+                    rval.append((message_id, ""))
                 elif task.history and task.history[-1].parts:
                     if len(task.history) == 1:
-                        rval.append((message_id, 'Working...'))
+                        rval.append((message_id, "Working..."))
                     else:
                         part = task.history[-1].parts[0]
                         rval.append(
                             (
                                 message_id,
                                 part.root.text
-                                if part.root.kind == 'text'
-                                else 'Working...',
+                                if part.root.kind == "text"
+                                else "Working...",
                             )
                         )
             else:
-                rval.append((message_id, ''))
+                rval.append((message_id, ""))
         return rval
 
     def register_agent(self, url):
@@ -605,12 +605,12 @@ class ADKHostManager(ApplicationManager):
         parts: list[types.Part] = []
         for p in message.parts:
             part = p.root
-            if part.kind == 'text':
+            if part.kind == "text":
                 parts.append(types.Part.from_text(text=part.text))
-            elif part.kind == 'data':
+            elif part.kind == "data":
                 json_string = json.dumps(part.data)
                 parts.append(types.Part.from_text(text=json_string))
-            elif part.kind == 'file':
+            elif part.kind == "file":
                 if isinstance(part.file, FileWithUri):
                     parts.append(
                         types.Part.from_uri(
@@ -621,7 +621,7 @@ class ADKHostManager(ApplicationManager):
                 else:
                     parts.append(
                         types.Part.from_bytes(
-                            data=part.file.bytes.encode('utf-8'),
+                            data=part.file.bytes.encode("utf-8"),
                             mime_type=part.file.mimeType,
                         )
                     )
@@ -655,7 +655,7 @@ class ADKHostManager(ApplicationManager):
                     Part(
                         root=FilePart(
                             file=FileWithBytes(
-                                bytes=part.inline_data.decode('utf-8'),
+                                bytes=part.inline_data.decode("utf-8"),
                                 mimeType=part.file_data.mime_type,
                             ),
                         )
@@ -677,27 +677,21 @@ class ADKHostManager(ApplicationManager):
             # These aren't managed by the A2A message structure, these are internal
             # details of ADK, we will simply flatten these to json representations.
             elif part.video_metadata:
-                parts.append(
-                    Part(root=DataPart(data=part.video_metadata.model_dump()))
-                )
+                parts.append(Part(root=DataPart(data=part.video_metadata.model_dump())))
             elif part.thought:
-                parts.append(Part(root=TextPart(text='thought')))
+                parts.append(Part(root=TextPart(text="thought")))
             elif part.executable_code:
                 parts.append(
                     Part(root=DataPart(data=part.executable_code.model_dump()))
                 )
             elif part.function_call:
-                parts.append(
-                    Part(root=DataPart(data=part.function_call.model_dump()))
-                )
+                parts.append(Part(root=DataPart(data=part.function_call.model_dump())))
             elif part.function_response:
                 parts.extend(
-                    await self._handle_function_response(
-                        part, context_id, task_id
-                    )
+                    await self._handle_function_response(part, context_id, task_id)
                 )
             else:
-                raise ValueError('Unexpected content, unknown type')
+                raise ValueError("Unexpected content, unknown type")
         return Message(
             role=content.role if content.role == Role.user else Role.agent,
             parts=parts,
@@ -711,33 +705,31 @@ class ADKHostManager(ApplicationManager):
     ) -> list[Part]:
         parts = []
         try:
-            for p in part.function_response.response['result']:
+            for p in part.function_response.response["result"]:
                 if isinstance(p, str):
                     parts.append(Part(root=TextPart(text=p)))
                 elif isinstance(p, dict):
-                    if 'kind' in p and p['kind'] == 'file':
+                    if "kind" in p and p["kind"] == "file":
                         parts.append(Part(root=FilePart(**p)))
                     else:
                         parts.append(Part(root=DataPart(data=p)))
                 elif isinstance(p, DataPart):
-                    if 'artifact-file-id' in p.data:
+                    if "artifact-file-id" in p.data:
                         file_part = await self._artifact_service.load_artifact(
                             user_id=self.user_id,
                             session_id=context_id,
                             app_name=self.app_name,
-                            filename=p.data['artifact-file-id'],
+                            filename=p.data["artifact-file-id"],
                         )
                         file_data = file_part.inline_data
-                        base64_data = base64.b64encode(file_data.data).decode(
-                            'utf-8'
-                        )
+                        base64_data = base64.b64encode(file_data.data).decode("utf-8")
                         parts.append(
                             Part(
                                 root=FilePart(
                                     file=FileWithBytes(
                                         bytes=base64_data,
                                         mimeType=file_data.mime_type,
-                                        name='artifact_file',
+                                        name="artifact_file",
                                     )
                                 )
                             )
@@ -746,7 +738,7 @@ class ADKHostManager(ApplicationManager):
                         parts.append(Part(root=DataPart(data=p.data)))
                 else:
                     content = Message(
-                        parts=[Part(root=TextPart(text='Unknown content'))],
+                        parts=[Part(root=TextPart(text="Unknown content"))],
                         role=Role.agent,
                         messageId=str(uuid.uuid4()),
                         taskId=task_id,
@@ -754,21 +746,21 @@ class ADKHostManager(ApplicationManager):
                     )
         except Exception as e:
             print("Couldn't convert to messages:", e)
-            parts.append(
-                Part(root=DataPart(data=part.function_response.model_dump()))
-            )
+            parts.append(Part(root=DataPart(data=part.function_response.model_dump())))
         return parts
 
-    def process_message_threadsafe(self, message: Message, loop: asyncio.AbstractEventLoop):
+    def process_message_threadsafe(
+        self, message: Message, loop: asyncio.AbstractEventLoop
+    ):
         """Safely run process_message from a thread using the given event loop."""
         future = asyncio.run_coroutine_threadsafe(self.process_message(message), loop)
         return future  # You can call future.result() to get the result if needed
 
 
 def get_message_id(m: Message | None) -> str | None:
-    if not m or not m.metadata or 'message_id' not in m.metadata:
+    if not m or not m.metadata or "message_id" not in m.metadata:
         return None
-    return m.metadata['message_id']
+    return m.metadata["message_id"]
 
 
 def task_still_open(task: Task | None) -> bool:

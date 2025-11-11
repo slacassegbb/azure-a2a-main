@@ -12,7 +12,11 @@ import click
 import gradio as gr
 import uvicorn
 
-from foundry_agent_executor import create_foundry_agent_executor, initialize_foundry_agents_at_startup, FoundryAgentExecutor
+from foundry_agent_executor import (
+    create_foundry_agent_executor,
+    initialize_foundry_agents_at_startup,
+    FoundryAgentExecutor,
+)
 from dotenv import load_dotenv
 from starlette.applications import Starlette
 from starlette.requests import Request
@@ -31,24 +35,26 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Silence verbose Azure SDK HTTP logging
-logging.getLogger("azure.core.pipeline.policies.http_logging_policy").setLevel(logging.WARNING)
+logging.getLogger("azure.core.pipeline.policies.http_logging_policy").setLevel(
+    logging.WARNING
+)
 logging.getLogger("azure.identity").setLevel(logging.WARNING)
 logging.getLogger("azure").setLevel(logging.WARNING)
 
 
 def _normalize_env_value(raw_value: str | None) -> str:
     if raw_value is None:
-        return ''
+        return ""
     return raw_value.strip()
 
 
 def _resolve_default_host() -> str:
-    value = _normalize_env_value(os.getenv('A2A_ENDPOINT'))
-    return value or 'localhost'
+    value = _normalize_env_value(os.getenv("A2A_ENDPOINT"))
+    return value or "localhost"
 
 
 def _resolve_default_port() -> int:
-    raw_port = _normalize_env_value(os.getenv('A2A_PORT'))
+    raw_port = _normalize_env_value(os.getenv("A2A_PORT"))
     if raw_port:
         try:
             return int(raw_port)
@@ -58,28 +64,34 @@ def _resolve_default_port() -> int:
 
 
 def resolve_agent_url(bind_host: str, bind_port: int) -> str:
-    endpoint = _normalize_env_value(os.getenv('A2A_ENDPOINT'))
+    endpoint = _normalize_env_value(os.getenv("A2A_ENDPOINT"))
     if endpoint:
-        if endpoint.startswith(('http://', 'https://')):
-            return endpoint.rstrip('/') + '/'
+        if endpoint.startswith(("http://", "https://")):
+            return endpoint.rstrip("/") + "/"
         host_for_url = endpoint
     else:
         host_for_url = bind_host if bind_host != "0.0.0.0" else _resolve_default_host()
 
     return f"http://{host_for_url}:{bind_port}/"
 
+
 # Import self-registration utility
 try:
     from utils.self_registration import register_with_host_agent, get_host_agent_url
+
     SELF_REGISTRATION_AVAILABLE = True
     logger.info("✅ Self-registration utility loaded")
 except ImportError:
     # Fallback if utils not available
     async def register_with_host_agent(agent_card, _host_url=None):
-        logger.info("ℹ️ Self-registration utility not available - skipping registration")
+        logger.info(
+            "ℹ️ Self-registration utility not available - skipping registration"
+        )
         return False
+
     def get_host_agent_url() -> str:
         return ""
+
     SELF_REGISTRATION_AVAILABLE = False
 
 DEFAULT_HOST = _resolve_default_host()
@@ -98,85 +110,85 @@ HOST_AGENT_URL = _normalize_env_value(get_host_agent_url())
 def create_a2a_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
     """Create A2A server application for Azure Foundry agent."""
     global agent_executor_instance
-    
+
     # Define agent skills
     skills = [
         AgentSkill(
-                id='salesforce_management',
-                name='ServiceNow Management',
-                description="Create, search, and manage ServiceNow incidents, users, and knowledge base articles. Simulates ServiceNow actions with realistic synthetic data.",
-                tags=['servicenow', 'incident', 'it', 'support'],
-                examples=[
-                    'Create a new ServiceNow incident',
-                    'Search for incidents assigned to a user',
-                    'Update incident status',
-                    'List ServiceNow users',
-                    'Search ServiceNow knowledge base'
-                ],
-            ),
+            id="salesforce_management",
+            name="ServiceNow Management",
+            description="Create, search, and manage ServiceNow incidents, users, and knowledge base articles. Simulates ServiceNow actions with realistic synthetic data.",
+            tags=["servicenow", "incident", "it", "support"],
+            examples=[
+                "Create a new ServiceNow incident",
+                "Search for incidents assigned to a user",
+                "Update incident status",
+                "List ServiceNow users",
+                "Search ServiceNow knowledge base",
+            ],
+        ),
         AgentSkill(
-            id='Bank_actions',
-            name='Bank Actions',
+            id="Bank_actions",
+            name="Bank Actions",
             description="Simulate any action on the Bank system (block/unblock card, check balance, report fraud, create disputes, issue refunds, etc.) and return synthetic responses.",
-            tags=['banking', 'finance', 'card', 'dispute', 'refund'],
+            tags=["banking", "finance", "card", "dispute", "refund"],
             examples=[
-                'Block a credit card',
-                'Unblock a credit card',
-                'Check account balance',
-                'Report a fraudulent transaction',
-                'Create a dispute for a transaction',
-                'Issue a refund for a transaction',
-                'Check transaction details'
+                "Block a credit card",
+                "Unblock a credit card",
+                "Check account balance",
+                "Report a fraudulent transaction",
+                "Create a dispute for a transaction",
+                "Issue a refund for a transaction",
+                "Check transaction details",
             ],
         ),
         AgentSkill(
-            id='web_search',
-            name='Web Search',
+            id="web_search",
+            name="Web Search",
             description="Search the web for current information using Bing or other integrated search tools.",
-            tags=['web', 'search', 'bing', 'internet'],
+            tags=["web", "search", "bing", "internet"],
             examples=[
-                'Find the latest news about a company',
-                'Search for troubleshooting steps online',
-                'Get current weather information'
+                "Find the latest news about a company",
+                "Search for troubleshooting steps online",
+                "Get current weather information",
             ],
         ),
         AgentSkill(
-            id='file_knowledge_search',
-            name='File & Knowledge Search',
+            id="file_knowledge_search",
+            name="File & Knowledge Search",
             description="Search through uploaded documents, files, and knowledge bases for specific information.",
-            tags=['file', 'document', 'knowledge', 'search'],
+            tags=["file", "document", "knowledge", "search"],
             examples=[
-                'Search uploaded PDF for a keyword',
-                'Find information in a user manual',
-                'Extract data from a document'
+                "Search uploaded PDF for a keyword",
+                "Find information in a user manual",
+                "Extract data from a document",
             ],
         ),
         AgentSkill(
-            id='human_interaction',
-            name='Human Expert Escalation',
+            id="human_interaction",
+            name="Human Expert Escalation",
             description="Escalate complex issues to human experts or facilitate human-in-the-loop interactions when automated responses are insufficient.",
-            tags=['human-interaction', 'escalation', 'expert', 'human-capable'],
+            tags=["human-interaction", "escalation", "expert", "human-capable"],
             examples=[
-                'Escalate this issue to a human expert',
-                'I need to speak with a person',
-                'Request human assistance for complex decision',
-                'Connect me with a human agent'
+                "Escalate this issue to a human expert",
+                "I need to speak with a person",
+                "Request human assistance for complex decision",
+                "Connect me with a human agent",
             ],
-        )
+        ),
     ]
 
     resolved_host_for_url = host if host != "0.0.0.0" else DEFAULT_HOST
 
     # Create agent card
     agent_card = AgentCard(
-        name='ServiceNow, Web & Knowledge Agent',
+        name="ServiceNow, Web & Knowledge Agent",
         description="An intelligent agent specialized in ServiceNow management, Bank system actions, web search, and file/knowledge/document search. Can simulate ServiceNow incidents, users, and knowledge base operations, perform any Bank action (block card, check balance, report fraud, etc.), search the web for current information, and search through uploaded documents/files for specific information, all with realistic synthetic responses.",
-       # url=f'http://{host}:{port}/',
-        #url=f'https://agent1.ngrok.app/agent1/',
+        # url=f'http://{host}:{port}/',
+        # url=f'https://agent1.ngrok.app/agent1/',
         url=resolve_agent_url(resolved_host_for_url, port),
-        version='1.0.0',
-        defaultInputModes=['text'],
-        defaultOutputModes=['text'],
+        version="1.0.0",
+        defaultInputModes=["text"],
+        defaultOutputModes=["text"],
         capabilities={"streaming": True},
         skills=skills,
     )
@@ -186,34 +198,26 @@ def create_a2a_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
 
     # Create request handler
     request_handler = DefaultRequestHandler(
-        agent_executor=agent_executor_instance, 
-        task_store=InMemoryTaskStore()
+        agent_executor=agent_executor_instance, task_store=InMemoryTaskStore()
     )
 
     # Create A2A application
     a2a_app = A2AStarletteApplication(
-        agent_card=agent_card, 
-        http_handler=request_handler
+        agent_card=agent_card, http_handler=request_handler
     )
-    
+
     # Get routes
     routes = a2a_app.routes()
-    
+
     # Add health check endpoint
     async def health_check(_request: Request) -> PlainTextResponse:
-        return PlainTextResponse('AI Foundry Expert Agent is running!')
-    
-    routes.append(
-        Route(
-            path='/health',
-            methods=['GET'],
-            endpoint=health_check
-        )
-    )
+        return PlainTextResponse("AI Foundry Expert Agent is running!")
+
+    routes.append(Route(path="/health", methods=["GET"], endpoint=health_check))
 
     # Create Starlette app
     app = Starlette(routes=routes)
-    
+
     return app
 
 
@@ -231,15 +235,25 @@ async def register_agent_with_host(agent_card):
         await asyncio.sleep(2)
         try:
             if not HOST_AGENT_URL:
-                logger.info("ℹ️ Host agent URL not configured; skipping registration attempt.")
+                logger.info(
+                    "ℹ️ Host agent URL not configured; skipping registration attempt."
+                )
                 return
 
-            logger.info(f"🤝 Attempting to register '{agent_card.name}' with host agent at {HOST_AGENT_URL}...")
-            registration_success = await register_with_host_agent(agent_card, host_url=HOST_AGENT_URL)
+            logger.info(
+                f"🤝 Attempting to register '{agent_card.name}' with host agent at {HOST_AGENT_URL}..."
+            )
+            registration_success = await register_with_host_agent(
+                agent_card, host_url=HOST_AGENT_URL
+            )
             if registration_success:
-                logger.info(f"🎉 '{agent_card.name}' successfully registered with host agent!")
+                logger.info(
+                    f"🎉 '{agent_card.name}' successfully registered with host agent!"
+                )
             else:
-                logger.info(f"📡 '{agent_card.name}' registration failed - host agent may be unavailable")
+                logger.info(
+                    f"📡 '{agent_card.name}' registration failed - host agent may be unavailable"
+                )
         except Exception as e:
             logger.warning(f"⚠️ Registration attempt failed: {e}")
 
@@ -247,23 +261,28 @@ async def register_agent_with_host(agent_card):
 def start_background_registration(agent_card):
     """Start background registration task."""
     if SELF_REGISTRATION_AVAILABLE:
+
         def run_registration():
             asyncio.run(register_agent_with_host(agent_card))
-        
+
         registration_thread = threading.Thread(target=run_registration, daemon=True)
         registration_thread.start()
-        logger.info(f"🚀 '{agent_card.name}' starting with background registration enabled")
+        logger.info(
+            f"🚀 '{agent_card.name}' starting with background registration enabled"
+        )
     else:
         logger.info(f"📡 '{agent_card.name}' starting without self-registration")
 
 
-async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_port: int = DEFAULT_PORT):
+async def launch_ui(
+    host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_port: int = DEFAULT_PORT
+):
     """Launch a streamlined Gradio UI alongside the A2A server."""
     print("Starting ServiceNow Agent UI and A2A server...")
 
     required_env_vars = [
-        'AZURE_AI_FOUNDRY_PROJECT_ENDPOINT',
-        'AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME'
+        "AZURE_AI_FOUNDRY_PROJECT_ENDPOINT",
+        "AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME",
     ]
     missing_vars = [var for var in required_env_vars if not os.getenv(var)]
     if missing_vars:
@@ -289,78 +308,78 @@ async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_p
 
     skills = [
         AgentSkill(
-            id='salesforce_management',
-            name='ServiceNow Management',
+            id="salesforce_management",
+            name="ServiceNow Management",
             description="Create, search, and manage ServiceNow incidents, users, and knowledge base articles. Simulates ServiceNow actions with realistic synthetic data.",
-            tags=['servicenow', 'incident', 'it', 'support'],
+            tags=["servicenow", "incident", "it", "support"],
             examples=[
-                'Create a new ServiceNow incident',
-                'Search for incidents assigned to a user',
-                'Update incident status',
-                'List ServiceNow users',
-                'Search ServiceNow knowledge base'
+                "Create a new ServiceNow incident",
+                "Search for incidents assigned to a user",
+                "Update incident status",
+                "List ServiceNow users",
+                "Search ServiceNow knowledge base",
             ],
         ),
         AgentSkill(
-            id='bank_actions',
-            name='Bank Actions',
+            id="bank_actions",
+            name="Bank Actions",
             description="Simulate any action on the Bank system (block/unblock card, check balance, report fraud, create disputes, issue refunds, etc.) and return synthetic responses.",
-            tags=['banking', 'finance', 'card', 'dispute', 'refund'],
+            tags=["banking", "finance", "card", "dispute", "refund"],
             examples=[
-                'Block a credit card',
-                'Unblock a credit card',
-                'Check account balance',
-                'Report a fraudulent transaction',
-                'Create a dispute for a transaction',
-                'Issue a refund for a transaction',
-                'Check transaction details'
+                "Block a credit card",
+                "Unblock a credit card",
+                "Check account balance",
+                "Report a fraudulent transaction",
+                "Create a dispute for a transaction",
+                "Issue a refund for a transaction",
+                "Check transaction details",
             ],
         ),
         AgentSkill(
-            id='web_search',
-            name='Web Search',
+            id="web_search",
+            name="Web Search",
             description="Search the web for current information using Bing or other integrated search tools.",
-            tags=['web', 'search', 'bing', 'internet'],
+            tags=["web", "search", "bing", "internet"],
             examples=[
-                'Find the latest news about a company',
-                'Search for troubleshooting steps online',
-                'Get current weather information'
+                "Find the latest news about a company",
+                "Search for troubleshooting steps online",
+                "Get current weather information",
             ],
         ),
         AgentSkill(
-            id='file_knowledge_search',
-            name='File & Knowledge Search',
+            id="file_knowledge_search",
+            name="File & Knowledge Search",
             description="Search through uploaded documents, files, and knowledge bases for specific information.",
-            tags=['file', 'document', 'knowledge', 'search'],
+            tags=["file", "document", "knowledge", "search"],
             examples=[
-                'Search uploaded PDF for a keyword',
-                'Find information in a user manual',
-                'Extract data from a document'
+                "Search uploaded PDF for a keyword",
+                "Find information in a user manual",
+                "Extract data from a document",
             ],
         ),
         AgentSkill(
-            id='human_interaction',
-            name='Human Expert Escalation',
+            id="human_interaction",
+            name="Human Expert Escalation",
             description="Escalate complex issues to human experts or facilitate human-in-the-loop interactions when automated responses are insufficient.",
-            tags=['human-interaction', 'escalation', 'expert', 'human-capable'],
+            tags=["human-interaction", "escalation", "expert", "human-capable"],
             examples=[
-                'Escalate this issue to a human expert',
-                'I need to speak with a person',
-                'Request human assistance for complex decision',
-                'Connect me with a human agent'
+                "Escalate this issue to a human expert",
+                "I need to speak with a person",
+                "Request human assistance for complex decision",
+                "Connect me with a human agent",
             ],
-        )
+        ),
     ]
 
     resolved_host_for_ui_card = host if host != "0.0.0.0" else DEFAULT_HOST
     agent_card = AgentCard(
-        name='ServiceNow, Web & Knowledge Agent',
+        name="ServiceNow, Web & Knowledge Agent",
         description="An intelligent agent specialized in ServiceNow management, Bank system actions, web search, and file/knowledge/document search.",
         url=resolve_agent_url(resolved_host_for_ui_card, a2a_port),
-        version='1.0.0',
-        defaultInputModes=['text'],
-        defaultOutputModes=['text'],
-            capabilities={"streaming": True},
+        version="1.0.0",
+        defaultInputModes=["text"],
+        defaultOutputModes=["text"],
+        capabilities={"streaming": True},
         skills=skills,
     )
     start_background_registration(agent_card)
@@ -368,17 +387,21 @@ async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_p
     resolved_host_for_ui_url = host if host != "0.0.0.0" else DEFAULT_HOST
     display_host = resolved_host_for_ui_url
     ui_display_url = f"http://{display_host}:{ui_port}"
-    a2a_display_url = resolve_agent_url(display_host, a2a_port).rstrip('/')
+    a2a_display_url = resolve_agent_url(display_host, a2a_port).rstrip("/")
 
     def get_pending_status() -> str:
         """Return a human-readable summary of pending host-agent requests."""
         global agent_executor_instance
         if agent_executor_instance and agent_executor_instance._waiting_for_input:
-            context_id, request_text = next(iter(agent_executor_instance._waiting_for_input.items()))
+            context_id, request_text = next(
+                iter(agent_executor_instance._waiting_for_input.items())
+            )
             preview = request_text.strip()
             if len(preview) > 500:
                 preview = preview[:500] + "..."
-            return f"**Pending Host Request**\n\nContext ID: `{context_id}`\n\n{preview}"
+            return (
+                f"**Pending Host Request**\n\nContext ID: `{context_id}`\n\n{preview}"
+            )
         return "No pending host requests."
 
     async def chat_response(message: str, history: List[dict]) -> List[dict]:
@@ -389,23 +412,41 @@ async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_p
 
         global agent_executor_instance
         if agent_executor_instance and agent_executor_instance._waiting_for_input:
-            context_id, _ = next(iter(agent_executor_instance._waiting_for_input.items()))
+            context_id, _ = next(
+                iter(agent_executor_instance._waiting_for_input.items())
+            )
             history.append({"role": "user", "content": text})
             try:
-                success = await agent_executor_instance.send_human_response(context_id, text)
+                success = await agent_executor_instance.send_human_response(
+                    context_id, text
+                )
             except Exception as e:
                 logger.error(f"Error sending human response: {e}")
-                history.append({"role": "assistant", "content": f"❌ Failed to send response: {e}"})
+                history.append(
+                    {"role": "assistant", "content": f"❌ Failed to send response: {e}"}
+                )
                 return history
             if success:
-                history.append({"role": "assistant", "content": "✅ Response sent to host agent."})
+                history.append(
+                    {"role": "assistant", "content": "✅ Response sent to host agent."}
+                )
             else:
-                history.append({"role": "assistant", "content": "❌ Could not send response to host agent. The task may have expired."})
+                history.append(
+                    {
+                        "role": "assistant",
+                        "content": "❌ Could not send response to host agent. The task may have expired.",
+                    }
+                )
             return history
 
         foundry_agent = await FoundryAgentExecutor.get_shared_agent()
         if not foundry_agent:
-            history.append({"role": "assistant", "content": "❌ Agent not initialized. Please restart the application."})
+            history.append(
+                {
+                    "role": "assistant",
+                    "content": "❌ Agent not initialized. Please restart the application.",
+                }
+            )
             return history
 
         global ui_thread_id
@@ -417,15 +458,24 @@ async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_p
         thread_id = thread.id
 
         history.append({"role": "user", "content": text})
-        history.append({"role": "assistant", "content": "🤖 **Processing your request...**"})
+        history.append(
+            {"role": "assistant", "content": "🤖 **Processing your request...**"}
+        )
         responses: List[str] = []
         try:
-            async for response in foundry_agent.run_conversation_stream(thread_id, text):
+            async for response in foundry_agent.run_conversation_stream(
+                thread_id, text
+            ):
                 if isinstance(response, str):
                     stripped = response.strip()
-                    if stripped and not any(phrase in stripped.lower() for phrase in [
-                        "processing your request", "🤖 processing", "processing..."
-                    ]):
+                    if stripped and not any(
+                        phrase in stripped.lower()
+                        for phrase in [
+                            "processing your request",
+                            "🤖 processing",
+                            "processing...",
+                        ]
+                    ):
                         responses.append(stripped)
                 else:
                     responses.append(
@@ -433,14 +483,21 @@ async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_p
                     )
         except Exception as e:
             logger.error(f"Error streaming response: {e}")
-            responses.append(f"An error occurred while processing your request: {e}. Please check the server logs for details.")
+            responses.append(
+                f"An error occurred while processing your request: {e}. Please check the server logs for details."
+            )
 
         history.pop()  # remove processing placeholder
         if responses:
             for resp in responses:
                 history.append({"role": "assistant", "content": resp})
         else:
-            history.append({"role": "assistant", "content": "I processed your request but didn't receive a response. Please try again."})
+            history.append(
+                {
+                    "role": "assistant",
+                    "content": "I processed your request but didn't receive a response. Please try again.",
+                }
+            )
         return history
 
     async def process_message(message: str, history: List[dict]):
@@ -456,7 +513,9 @@ async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_p
         return get_pending_status()
 
     with gr.Blocks(theme=gr.themes.Ocean(), title="ServiceNow Agent Chat") as demo:
-        gr.Markdown(f"**Direct UI Access:** {ui_display_url} | **A2A API Access:** {a2a_display_url}")
+        gr.Markdown(
+            f"**Direct UI Access:** {ui_display_url} | **A2A API Access:** {a2a_display_url}"
+        )
         status_display = gr.Markdown(value=get_pending_status())
         refresh_btn = gr.Button("🔄 Refresh Status", size="sm")
         refresh_btn.click(refresh_status, outputs=status_display, queue=False)
@@ -464,12 +523,22 @@ async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_p
         timer.tick(refresh_status, outputs=status_display)
 
         chatbot_interface = gr.Chatbot(height=400, show_label=False, type="messages")
-        agent_input = gr.Textbox(placeholder="Ask a question or provide expert input...", show_label=False)
+        agent_input = gr.Textbox(
+            placeholder="Ask a question or provide expert input...", show_label=False
+        )
         send_btn = gr.Button("Send", variant="primary")
         reset_btn = gr.Button("🗑️ Reset Chat", variant="secondary")
 
-        send_btn.click(process_message, inputs=[agent_input, chatbot_interface], outputs=[agent_input, chatbot_interface, status_display])
-        agent_input.submit(process_message, inputs=[agent_input, chatbot_interface], outputs=[agent_input, chatbot_interface, status_display])
+        send_btn.click(
+            process_message,
+            inputs=[agent_input, chatbot_interface],
+            outputs=[agent_input, chatbot_interface, status_display],
+        )
+        agent_input.submit(
+            process_message,
+            inputs=[agent_input, chatbot_interface],
+            outputs=[agent_input, chatbot_interface, status_display],
+        )
         reset_btn.click(reset_conversation, outputs=chatbot_interface, queue=False)
 
     print(f"Launching ServiceNow Agent Gradio interface on {host}:{ui_port}...")
@@ -481,10 +550,10 @@ async def main_async(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
     """Launch A2A server mode for Azure Foundry agent with startup initialization."""
     # Verify required environment variables
     required_env_vars = [
-        'AZURE_AI_FOUNDRY_PROJECT_ENDPOINT',
-        'AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME'
+        "AZURE_AI_FOUNDRY_PROJECT_ENDPOINT",
+        "AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME",
     ]
-    
+
     missing_vars = [var for var in required_env_vars if not os.getenv(var)]
     if missing_vars:
         raise ValueError(
@@ -502,93 +571,94 @@ async def main_async(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
 
     print(f"Starting AI Foundry Expert Agent A2A server on {host}:{port}...")
     app = create_a2a_server(host, port)
-    
+
     # Create agent card for registration
     skills = [
         AgentSkill(
-            id='salesforce_management',
-            name='ServiceNow Management',
+            id="salesforce_management",
+            name="ServiceNow Management",
             description="Create, search, and manage ServiceNow incidents, users, and knowledge base articles. Simulates ServiceNow actions with realistic synthetic data.",
-            tags=['servicenow', 'incident', 'it', 'support'],
+            tags=["servicenow", "incident", "it", "support"],
             examples=[
-                'Create a new ServiceNow incident',
-                'Search for incidents assigned to a user',
-                'Update incident status',
-                'List ServiceNow users',
-                'Search ServiceNow knowledge base'
+                "Create a new ServiceNow incident",
+                "Search for incidents assigned to a user",
+                "Update incident status",
+                "List ServiceNow users",
+                "Search ServiceNow knowledge base",
             ],
         ),
         AgentSkill(
-            id='bank_actions',
-            name='Bank Actions',
+            id="bank_actions",
+            name="Bank Actions",
             description="Simulate any action on the Bank system (block/unblock card, check balance, report fraud, create disputes, issue refunds, etc.) and return synthetic responses.",
-            tags=['banking', 'finance', 'card', 'dispute', 'refund'],
+            tags=["banking", "finance", "card", "dispute", "refund"],
             examples=[
-                'Block a credit card',
-                'Unblock a credit card',
-                'Check account balance',
-                'Report a fraudulent transaction',
-                'Create a dispute for a transaction',
-                'Issue a refund for a transaction',
-                'Check transaction details'
+                "Block a credit card",
+                "Unblock a credit card",
+                "Check account balance",
+                "Report a fraudulent transaction",
+                "Create a dispute for a transaction",
+                "Issue a refund for a transaction",
+                "Check transaction details",
             ],
         ),
         AgentSkill(
-            id='web_search',
-            name='Web Search',
+            id="web_search",
+            name="Web Search",
             description="Search the web for current information using Bing or other integrated search tools.",
-            tags=['web', 'search', 'bing', 'internet'],
+            tags=["web", "search", "bing", "internet"],
             examples=[
-                'Find the latest news about a company',
-                'Search for troubleshooting steps online',
-                'Get current weather information'
+                "Find the latest news about a company",
+                "Search for troubleshooting steps online",
+                "Get current weather information",
             ],
         ),
         AgentSkill(
-            id='file_knowledge_search',
-            name='File & Knowledge Search',
+            id="file_knowledge_search",
+            name="File & Knowledge Search",
             description="Search through uploaded documents, files, and knowledge bases for specific information.",
-            tags=['file', 'document', 'knowledge', 'search'],
+            tags=["file", "document", "knowledge", "search"],
             examples=[
-                'Search uploaded PDF for a keyword',
-                'Find information in a user manual',
-                'Extract data from a document'
+                "Search uploaded PDF for a keyword",
+                "Find information in a user manual",
+                "Extract data from a document",
             ],
         ),
         AgentSkill(
-            id='human_interaction',
-            name='Human Expert Escalation',
+            id="human_interaction",
+            name="Human Expert Escalation",
             description="Escalate complex issues to human experts or facilitate human-in-the-loop interactions when automated responses are insufficient.",
-            tags=['human-interaction', 'escalation', 'expert', 'human-capable'],
+            tags=["human-interaction", "escalation", "expert", "human-capable"],
             examples=[
-                'Escalate this issue to a human expert',
-                'I need to speak with a person',
-                'Request human assistance for complex decision',
-                'Connect me with a human agent'
+                "Escalate this issue to a human expert",
+                "I need to speak with a person",
+                "Request human assistance for complex decision",
+                "Connect me with a human agent",
             ],
-        )
+        ),
     ]
 
     resolved_host_for_url = host if host != "0.0.0.0" else DEFAULT_HOST
 
     agent_card = AgentCard(
-        name='ServiceNow, Web & Knowledge Agent',
+        name="ServiceNow, Web & Knowledge Agent",
         description="An intelligent agent specialized in ServiceNow management, Bank system actions, web search, and file/knowledge/document search. Can simulate ServiceNow incidents, users, and knowledge base operations, perform any Bank action (block card, check balance, report fraud, etc.), search the web for current information, and search through uploaded documents/files for specific information, all with realistic synthetic responses.",
-        #url=f'http://{host}:{port}/',
-        #url=f'https://agent1.ngrok.app/agent1/',
+        # url=f'http://{host}:{port}/',
+        # url=f'https://agent1.ngrok.app/agent1/',
         url=resolve_agent_url(resolved_host_for_url, port),
-        version='1.0.0',
-        defaultInputModes=['text'],
-        defaultOutputModes=['text'],
+        version="1.0.0",
+        defaultInputModes=["text"],
+        defaultOutputModes=["text"],
         capabilities={"streaming": True},
         skills=skills,
     )
-    
+
     # Start background registration
     start_background_registration(agent_card)
-    
+
     # Use uvicorn server directly instead of uvicorn.run() to avoid event loop conflicts
     import uvicorn.server
+
     config = uvicorn.Config(app, host=host, port=port)
     server = uvicorn.Server(config)
     await server.serve()
@@ -600,10 +670,15 @@ def main(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
 
 
 @click.command()
-@click.option('--host', 'host', default=DEFAULT_HOST, help='Host to bind to')
-@click.option('--port', 'port', default=DEFAULT_PORT, help='Port for A2A server')
-@click.option('--ui', is_flag=True, help='Launch Gradio UI (also runs A2A server)')
-@click.option('--ui-port', 'ui_port', default=DEFAULT_UI_PORT, help='Port for Gradio UI (only used with --ui flag)')
+@click.option("--host", "host", default=DEFAULT_HOST, help="Host to bind to")
+@click.option("--port", "port", default=DEFAULT_PORT, help="Port for A2A server")
+@click.option("--ui", is_flag=True, help="Launch Gradio UI (also runs A2A server)")
+@click.option(
+    "--ui-port",
+    "ui_port",
+    default=DEFAULT_UI_PORT,
+    help="Port for Gradio UI (only used with --ui flag)",
+)
 def cli(host: str, port: int, ui: bool, ui_port: int):
     """AI Foundry Expert Agent - can run as A2A server or with Gradio UI + A2A server."""
     if ui:
@@ -612,5 +687,5 @@ def cli(host: str, port: int, ui: bool, ui_port: int):
         main(host, port)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     cli()

@@ -20,7 +20,16 @@ from a2a.server.agent_execution import AgentExecutor
 from a2a.server.agent_execution.context import RequestContext
 from a2a.server.events.event_queue import EventQueue
 from a2a.server.tasks import TaskUpdater
-from a2a.types import AgentCard, DataPart, FilePart, FileWithBytes, FileWithUri, Part, TaskState, TextPart
+from a2a.types import (
+    AgentCard,
+    DataPart,
+    FilePart,
+    FileWithBytes,
+    FileWithUri,
+    Part,
+    TaskState,
+    TextPart,
+)
 from a2a.utils.message import new_agent_text_message
 
 logger = logging.getLogger(__name__)
@@ -51,7 +60,7 @@ class FoundryModemCheckAgentExecutor(AgentExecutor):
         """Get the shared agent that was initialized at startup (if available)."""
         async with cls._agent_lock:
             return cls._shared_foundry_agent
-    
+
     @classmethod
     async def initialize_at_startup(cls) -> None:
         """Initialize the shared agent at startup instead of on first request."""
@@ -62,7 +71,9 @@ class FoundryModemCheckAgentExecutor(AgentExecutor):
                     cls._shared_foundry_agent = FoundryModemCheckAgent()
                     await cls._shared_foundry_agent.create_agent()
                     cls._startup_complete = True
-                    logger.info("✅ Foundry agent startup initialization completed successfully")
+                    logger.info(
+                        "✅ Foundry agent startup initialization completed successfully"
+                    )
                 except Exception as e:
                     logger.error(f"❌ Failed to initialize agent at startup: {e}")
                     cls._shared_foundry_agent = None
@@ -82,19 +93,23 @@ class FoundryModemCheckAgentExecutor(AgentExecutor):
             if not FoundryModemCheckAgentExecutor._shared_foundry_agent:
                 if FoundryModemCheckAgentExecutor._startup_complete:
                     # Startup was supposed to happen but failed
-                    raise RuntimeError("Branding agent startup initialization failed - agent not available")
+                    raise RuntimeError(
+                        "Branding agent startup initialization failed - agent not available"
+                    )
 
                 # Fallback to lazy creation if startup wasn't called
-                logger.warning("⚠️ Branding agent not initialized at startup, falling back to lazy creation...")
-                FoundryModemCheckAgentExecutor._shared_foundry_agent = FoundryModemCheckAgent()
+                logger.warning(
+                    "⚠️ Branding agent not initialized at startup, falling back to lazy creation..."
+                )
+                FoundryModemCheckAgentExecutor._shared_foundry_agent = (
+                    FoundryModemCheckAgent()
+                )
                 await FoundryModemCheckAgentExecutor._shared_foundry_agent.create_agent()
                 logger.info("Fallback branding agent creation completed")
             return FoundryModemCheckAgentExecutor._shared_foundry_agent
 
     async def _get_or_create_thread(
-        self,
-        context_id: str,
-        agent: Optional[FoundryModemCheckAgent] = None
+        self, context_id: str, agent: Optional[FoundryModemCheckAgent] = None
     ) -> str:
         if agent is None:
             agent = await self._get_or_create_agent()
@@ -107,15 +122,15 @@ class FoundryModemCheckAgentExecutor(AgentExecutor):
         self._active_threads[context_id] = thread_id
         return thread_id
 
-
-
     async def _process_request(
         self,
         message_parts: List[Part],
         context_id: str,
         task_updater: TaskUpdater,
     ) -> None:
-        logger.info(f"🟡 [AUTH EXECUTOR] _process_request called with {len(message_parts)} parts")
+        logger.info(
+            f"🟡 [AUTH EXECUTOR] _process_request called with {len(message_parts)} parts"
+        )
         received_files: List[Dict[str, str]] = []
         if message_parts:
             for part in message_parts:
@@ -125,40 +140,58 @@ class FoundryModemCheckAgentExecutor(AgentExecutor):
                     if isinstance(root_part, FilePart):
                         file_obj = root_part.file
                         if isinstance(file_obj, FileWithUri):
-                            received_files.append({
-                                "name": getattr(file_obj, "name", "unknown"),
-                                "uri": getattr(file_obj, "uri", ""),
-                                "mime": getattr(file_obj, "mimeType", ""),
-                            })
+                            received_files.append(
+                                {
+                                    "name": getattr(file_obj, "name", "unknown"),
+                                    "uri": getattr(file_obj, "uri", ""),
+                                    "mime": getattr(file_obj, "mimeType", ""),
+                                }
+                            )
                         elif isinstance(file_obj, FileWithBytes):
-                            received_files.append({
-                                "name": getattr(file_obj, "name", "unknown"),
-                                "uri": "",
-                                "mime": getattr(file_obj, "mimeType", ""),
-                                "bytes": len(getattr(file_obj, "bytes", b""))
-                            })
+                            received_files.append(
+                                {
+                                    "name": getattr(file_obj, "name", "unknown"),
+                                    "uri": "",
+                                    "mime": getattr(file_obj, "mimeType", ""),
+                                    "bytes": len(getattr(file_obj, "bytes", b"")),
+                                }
+                            )
 
                     elif isinstance(root_part, DataPart):
                         data = getattr(root_part, "data", None)
                         if isinstance(data, dict) and data.get("artifact-uri"):
-                            received_files.append({
-                                "name": data.get("file-name", "unknown"),
-                                "uri": data.get("artifact-uri", ""),
-                                "mime": data.get("mime", ""),
-                            })
+                            received_files.append(
+                                {
+                                    "name": data.get("file-name", "unknown"),
+                                    "uri": data.get("artifact-uri", ""),
+                                    "mime": data.get("mime", ""),
+                                }
+                            )
 
         if received_files:
             self._last_received_files = received_files
             print("[Branding Executor] Received file references:")
             for file_meta in received_files:
-                print(f"  • name={file_meta.get('name')} uri={file_meta.get('uri')} mime={file_meta.get('mime')}")
-            logger.info("📎 Received file references in A2A message", extra={"files": received_files, "context_id": context_id})
+                print(
+                    f"  • name={file_meta.get('name')} uri={file_meta.get('uri')} mime={file_meta.get('mime')}"
+                )
+            logger.info(
+                "📎 Received file references in A2A message",
+                extra={"files": received_files, "context_id": context_id},
+            )
         else:
-            logger.info("📎 No file references received in A2A message for context %s", context_id)
+            logger.info(
+                "📎 No file references received in A2A message for context %s",
+                context_id,
+            )
         try:
             user_message = self._convert_parts_to_text(message_parts)
             if user_message:
-                preview = user_message if len(user_message) <= 2000 else user_message[:2000] + "..."
+                preview = (
+                    user_message
+                    if len(user_message) <= 2000
+                    else user_message[:2000] + "..."
+                )
                 logger.info(
                     "🧾 A2A conversation payload (%d chars) for context %s:\n%s",
                     len(user_message),
@@ -166,39 +199,48 @@ class FoundryModemCheckAgentExecutor(AgentExecutor):
                     preview,
                 )
             else:
-                logger.info("🧾 Received empty A2A conversation payload for context %s", context_id)
+                logger.info(
+                    "🧾 Received empty A2A conversation payload for context %s",
+                    context_id,
+                )
             agent = await self._get_or_create_agent()
             thread_id = await self._get_or_create_thread(context_id, agent)
-            
+
             # Use streaming to show tool calls in real-time
             responses = []
             tools_called = []
             seen_tools = set()
-            
+
             async for event in agent.run_conversation_stream(thread_id, user_message):
                 # Check if this is a tool call event from remote agent
                 if event.startswith("🛠️ Remote agent executing:"):
-                    tool_description = event.replace("🛠️ Remote agent executing: ", "").strip()
+                    tool_description = event.replace(
+                        "🛠️ Remote agent executing: ", ""
+                    ).strip()
                     if tool_description not in seen_tools:
                         seen_tools.add(tool_description)
                         tools_called.append(tool_description)
                         # Emit tool call in real-time
                         tool_event_msg = new_agent_text_message(
-                            f"🛠️ Remote agent executing: {tool_description}", context_id=context_id
+                            f"🛠️ Remote agent executing: {tool_description}",
+                            context_id=context_id,
                         )
                         await task_updater.update_status(
-                            TaskState.working,
-                            message=tool_event_msg
+                            TaskState.working, message=tool_event_msg
                         )
                 # Check if this is a processing message
-                elif event.startswith("🤖") or event.startswith("🧠") or event.startswith("🔍") or event.startswith("📝"):
+                elif (
+                    event.startswith("🤖")
+                    or event.startswith("🧠")
+                    or event.startswith("🔍")
+                    or event.startswith("📝")
+                ):
                     # Emit processing message in real-time
                     processing_msg = new_agent_text_message(
                         event, context_id=context_id
                     )
                     await task_updater.update_status(
-                        TaskState.working,
-                        message=processing_msg
+                        TaskState.working, message=processing_msg
                     )
                 # Check if this is an error
                 elif event.startswith("Error:"):
@@ -210,24 +252,36 @@ class FoundryModemCheckAgentExecutor(AgentExecutor):
                 # Otherwise, treat as a regular response
                 else:
                     responses.append(event)
-            
+
             # Emit the final response
             if responses:
                 final_response = responses[-1]
                 # Log a preview of the response (first 500 chars)
-                response_preview = final_response[:500] + "..." if len(final_response) > 500 else final_response
-                logger.info(f"📤 Agent response ({len(final_response)} chars): {response_preview}")
+                response_preview = (
+                    final_response[:500] + "..."
+                    if len(final_response) > 500
+                    else final_response
+                )
+                logger.info(
+                    f"📤 Agent response ({len(final_response)} chars): {response_preview}"
+                )
                 await task_updater.complete(
-                    message=new_agent_text_message(final_response, context_id=context_id)
+                    message=new_agent_text_message(
+                        final_response, context_id=context_id
+                    )
                 )
             else:
                 logger.warning("⚠️ No response generated by agent")
                 await task_updater.complete(
-                    message=new_agent_text_message("No response generated", context_id=context_id)
+                    message=new_agent_text_message(
+                        "No response generated", context_id=context_id
+                    )
                 )
-                    
+
         except Exception as e:
-            logger.error(f"❌ [AUTH EXECUTOR] Exception in _process_request: {e}", exc_info=True)
+            logger.error(
+                f"❌ [AUTH EXECUTOR] Exception in _process_request: {e}", exc_info=True
+            )
             await task_updater.failed(
                 message=new_agent_text_message(f"Error: {e}", context_id=context_id)
             )
@@ -256,7 +310,7 @@ class FoundryModemCheckAgentExecutor(AgentExecutor):
                     data = base64.b64decode(p.file.bytes)
                     fname = p.file.name or "file"
                     path = os.path.join(tempfile.gettempdir(), fname)
-                    with open(path, 'wb') as f:
+                    with open(path, "wb") as f:
                         f.write(data)
                     texts.append(f"[Saved {fname} to {path}]")
                 except Exception as ex:
@@ -268,57 +322,92 @@ class FoundryModemCheckAgentExecutor(AgentExecutor):
         context: RequestContext,
         event_queue: EventQueue,
     ):
-        logger.info(f"🔵 [AUTH EXECUTOR] Starting execute for context {context.context_id}")
-        logger.info(f"🔵 [AUTH EXECUTOR] Request has message: {context.message is not None}")
+        logger.info(
+            f"🔵 [AUTH EXECUTOR] Starting execute for context {context.context_id}"
+        )
+        logger.info(
+            f"🔵 [AUTH EXECUTOR] Request has message: {context.message is not None}"
+        )
         if context.message:
-            logger.info(f"🔵 [AUTH EXECUTOR] Message has {len(context.message.parts)} parts")
-        
+            logger.info(
+                f"🔵 [AUTH EXECUTOR] Message has {len(context.message.parts)} parts"
+            )
+
         try:
             # CRITICAL: Apply rate limiting at the execute level to control between different user requests
             async with FoundryModemCheckAgentExecutor._request_semaphore:
                 # Check API call rate limiting
                 current_time = time.time()
-                
+
                 # Reset the window if it's been more than a minute
-                if current_time - FoundryModemCheckAgentExecutor._api_call_window_start > 60:
+                if (
+                    current_time - FoundryModemCheckAgentExecutor._api_call_window_start
+                    > 60
+                ):
                     FoundryModemCheckAgentExecutor._api_call_count = 0
                     FoundryModemCheckAgentExecutor._api_call_window_start = current_time
-                
+
                 # Check if we're approaching the API limit
-                if FoundryModemCheckAgentExecutor._api_call_count >= FoundryModemCheckAgentExecutor._max_api_calls_per_minute:
-                    wait_time = 60 - (current_time - FoundryModemCheckAgentExecutor._api_call_window_start)
+                if (
+                    FoundryModemCheckAgentExecutor._api_call_count
+                    >= FoundryModemCheckAgentExecutor._max_api_calls_per_minute
+                ):
+                    wait_time = 60 - (
+                        current_time
+                        - FoundryModemCheckAgentExecutor._api_call_window_start
+                    )
                     if wait_time > 0:
-                        logger.warning(f"API rate limit protection: waiting {wait_time:.1f}s to reset window")
+                        logger.warning(
+                            f"API rate limit protection: waiting {wait_time:.1f}s to reset window"
+                        )
                         await asyncio.sleep(wait_time)
                         # Reset counters
                         FoundryModemCheckAgentExecutor._api_call_count = 0
-                        FoundryModemCheckAgentExecutor._api_call_window_start = time.time()
-                
+                        FoundryModemCheckAgentExecutor._api_call_window_start = (
+                            time.time()
+                        )
+
                 # Enforce minimum interval between requests - THIS IS THE KEY FIX
-                time_since_last = current_time - FoundryModemCheckAgentExecutor._last_request_time
-                if time_since_last < FoundryModemCheckAgentExecutor._min_request_interval:
-                    sleep_time = FoundryModemCheckAgentExecutor._min_request_interval - time_since_last
-                    logger.warning(f"🚦 RATE LIMITING: Waiting {sleep_time:.2f}s between user requests (last request was {time_since_last:.2f}s ago)")
+                time_since_last = (
+                    current_time - FoundryModemCheckAgentExecutor._last_request_time
+                )
+                if (
+                    time_since_last
+                    < FoundryModemCheckAgentExecutor._min_request_interval
+                ):
+                    sleep_time = (
+                        FoundryModemCheckAgentExecutor._min_request_interval
+                        - time_since_last
+                    )
+                    logger.warning(
+                        f"🚦 RATE LIMITING: Waiting {sleep_time:.2f}s between user requests (last request was {time_since_last:.2f}s ago)"
+                    )
                     await asyncio.sleep(sleep_time)
-                
+
                 FoundryModemCheckAgentExecutor._last_request_time = time.time()
-                
+
                 logger.info(f"🔵 [AUTH EXECUTOR] Creating task updater")
                 # Now proceed with the actual request processing
                 updater = TaskUpdater(event_queue, context.task_id, context.context_id)
                 if not context.current_task:
                     await updater.submit()
-                
-                logger.info(f"🔵 [AUTH EXECUTOR] Starting work on task {context.task_id}")
+
+                logger.info(
+                    f"🔵 [AUTH EXECUTOR] Starting work on task {context.task_id}"
+                )
                 await updater.start_work()
-                
-                logger.info(f"🔵 [AUTH EXECUTOR] Processing request with {len(context.message.parts if context.message else [])} parts")
+
+                logger.info(
+                    f"🔵 [AUTH EXECUTOR] Processing request with {len(context.message.parts if context.message else [])} parts"
+                )
                 await self._process_request(
                     context.message.parts if context.message else [],
                     context.context_id,
                     updater,
                 )
-                logger.info(f"✅ [AUTH EXECUTOR] Completed execution for {context.context_id}")
+                logger.info(
+                    f"✅ [AUTH EXECUTOR] Completed execution for {context.context_id}"
+                )
         except Exception as e:
             logger.error(f"❌ [AUTH EXECUTOR] Error in execute: {e}", exc_info=True)
             raise
@@ -329,7 +418,9 @@ class FoundryModemCheckAgentExecutor(AgentExecutor):
             self._input_events[context.context_id].set()
         updater = TaskUpdater(event_queue, context.task_id, context.context_id)
         await updater.failed(
-            message=new_agent_text_message("Task cancelled", context_id=context.context_id)
+            message=new_agent_text_message(
+                "Task cancelled", context_id=context.context_id
+            )
         )
 
     async def cleanup(self):
