@@ -330,53 +330,12 @@ foreach ($share in $shares) {
 Write-Host ""
 
 # ============================================================================
-# STEP 8: Build and Push Container Images
+# STEP 8: Get Environment Default Domain for Internal FQDNs
 # ============================================================================
 Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
-Write-Host "STEP 8: Build and Push Container Images" -ForegroundColor Cyan
+Write-Host "STEP 8: Get Environment Default Domain" -ForegroundColor Cyan
 Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
 
-$timestamp = Get-Date -Format "yyyyMMddHHmmss"
-$tag = "v$timestamp"
-
-Write-Host "🔨 Building images with tag: $tag" -ForegroundColor Cyan
-Write-Host ""
-
-# Backend
-Write-Host "  📦 Building backend..." -ForegroundColor Yellow
-docker build -f backend/Dockerfile -t "$AcrName.azurecr.io/a2a-backend:$tag" -t "$AcrName.azurecr.io/a2a-backend:latest" .
-Write-Host "  ✅ Backend built" -ForegroundColor Green
-
-# Frontend
-Write-Host "  📦 Building frontend..." -ForegroundColor Yellow
-docker build -f frontend/Dockerfile -t "$AcrName.azurecr.io/a2a-frontend:$tag" -t "$AcrName.azurecr.io/a2a-frontend:latest" ./frontend
-Write-Host "  ✅ Frontend built" -ForegroundColor Green
-
-# Visualizer
-Write-Host "  📦 Building visualizer..." -ForegroundColor Yellow
-docker build -f Visualizer/voice-a2a-fabric/Dockerfile -t "$AcrName.azurecr.io/a2a-visualizer:$tag" -t "$AcrName.azurecr.io/a2a-visualizer:latest" ./Visualizer/voice-a2a-fabric
-Write-Host "  ✅ Visualizer built" -ForegroundColor Green
-
-Write-Host ""
-Write-Host "📤 Pushing images to ACR..." -ForegroundColor Cyan
-
-docker push "$AcrName.azurecr.io/a2a-backend:$tag"
-docker push "$AcrName.azurecr.io/a2a-backend:latest"
-Write-Host "  ✅ Backend pushed" -ForegroundColor Green
-
-docker push "$AcrName.azurecr.io/a2a-frontend:$tag"
-docker push "$AcrName.azurecr.io/a2a-frontend:latest"
-Write-Host "  ✅ Frontend pushed" -ForegroundColor Green
-
-docker push "$AcrName.azurecr.io/a2a-visualizer:$tag"
-docker push "$AcrName.azurecr.io/a2a-visualizer:latest"
-Write-Host "  ✅ Visualizer pushed" -ForegroundColor Green
-
-Write-Host ""
-
-# ============================================================================
-# STEP 8.5: Get Environment Default Domain for Internal FQDNs
-# ============================================================================
 Write-Host "🔗 Getting environment default domain..." -ForegroundColor Cyan
 $envDefaultDomain = az containerapp env show `
     --name $Environment `
@@ -384,7 +343,37 @@ $envDefaultDomain = az containerapp env show `
     --query properties.defaultDomain -o tsv
 
 $backendInternalFqdn = "backend.internal.$envDefaultDomain"
-Write-Host "✅ Internal FQDN: $backendInternalFqdn" -ForegroundColor Green
+$backendExternalFqdn = "backend.$envDefaultDomain"
+Write-Host "✅ Backend FQDNs calculated:" -ForegroundColor Green
+Write-Host "   External: $backendExternalFqdn" -ForegroundColor Cyan
+Write-Host "   Internal: $backendInternalFqdn" -ForegroundColor Cyan
+Write-Host ""
+
+# ============================================================================
+# STEP 8.5: Build and Push Container Images
+# ============================================================================
+Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
+Write-Host "STEP 8.5: Build and Push Container Images" -ForegroundColor Cyan
+Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
+
+$timestamp = Get-Date -Format "yyyyMMddHHmmss"
+$tag = "v$timestamp"
+
+Write-Host "🔨 Building backend image with tag: $tag" -ForegroundColor Cyan
+Write-Host ""
+
+# Backend only - frontend and visualizer will be built after backend deployment
+Write-Host "  📦 Building backend..." -ForegroundColor Yellow
+docker build -f backend/Dockerfile -t "$AcrName.azurecr.io/a2a-backend:$tag" -t "$AcrName.azurecr.io/a2a-backend:latest" .
+Write-Host "  ✅ Backend built" -ForegroundColor Green
+
+Write-Host ""
+Write-Host "📤 Pushing backend image to ACR..." -ForegroundColor Cyan
+
+docker push "$AcrName.azurecr.io/a2a-backend:$tag"
+docker push "$AcrName.azurecr.io/a2a-backend:latest"
+Write-Host "  ✅ Backend pushed" -ForegroundColor Green
+
 Write-Host ""
 
 # ============================================================================
@@ -394,30 +383,91 @@ Write-Host "══════════════════════�
 Write-Host "STEP 9: Deploy Backend Container App" -ForegroundColor Cyan
 Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
 
+# Generate unique revision suffix using timestamp (used for both create and update)
+$revisionSuffix = "v$(Get-Date -Format 'yyyyMMddHHmmss')"
+Write-Host "📝 Using revision suffix: $revisionSuffix" -ForegroundColor Cyan
+
 $backendExists = az containerapp show --name backend --resource-group $ResourceGroup 2>$null
 
 if ($backendExists) {
     Write-Host "🔄 Updating existing backend container app..." -ForegroundColor Yellow
+    
+    $kvUri = az keyvault show --name $KeyVaultName --resource-group $ResourceGroup --query properties.vaultUri -o tsv
+    
+    # First update secrets (names must be ≤20 chars) - no revision suffix here
+    Write-Host "⚙️  Updating secrets..." -ForegroundColor Cyan
+    az containerapp secret set `
+        --name backend `
+        --resource-group $ResourceGroup `
+        --secrets `
+            "ai-endpoint=keyvaultref:${kvUri}secrets/azure-ai-endpoint,identityref:system" `
+            "openai-key=keyvaultref:${kvUri}secrets/azure-openai-key,identityref:system" `
+            "openai-deployment=keyvaultref:${kvUri}secrets/azure-openai-deployment,identityref:system" `
+            "openai-base=keyvaultref:${kvUri}secrets/azure-openai-base,identityref:system" `
+            "openai-embed-key=keyvaultref:${kvUri}secrets/azure-openai-embeddings-key,identityref:system" `
+            "search-key=keyvaultref:${kvUri}secrets/azure-search-key,identityref:system" `
+        --output none
+    
+    # Enable external ingress (if not already enabled, will reuse revision)
+    Write-Host "⚙️  Configuring external ingress..." -ForegroundColor Cyan
+    az containerapp ingress enable `
+        --name backend `
+        --resource-group $ResourceGroup `
+        --type external `
+        --target-port 12000 `
+        --allow-insecure `
+        --output none 2>$null
+    
+    # Then update image and environment variables with same revision suffix
+    Write-Host "⚙️  Updating image and environment variables..." -ForegroundColor Cyan
     az containerapp update `
         --name backend `
         --resource-group $ResourceGroup `
         --image "$AcrName.azurecr.io/a2a-backend:latest" `
+        --revision-suffix $revisionSuffix `
+        --set-env-vars `
+            "A2A_UI_HOST=0.0.0.0" `
+            "A2A_UI_PORT=12000" `
+            "WEBSOCKET_PORT=12000" `
+            "BACKEND_SERVER_URL=http://localhost:12000" `
+            "WEBSOCKET_SERVER_URL=http://localhost:12000" `
+            "LOG_LEVEL=$($envVars['LOG_LEVEL'])" `
+            "AZURE_TENANT_ID=$($envVars['AZURE_TENANT_ID'])" `
+            "AZURE_AI_FOUNDRY_PROJECT_ENDPOINT=$($envVars['AZURE_AI_FOUNDRY_PROJECT_ENDPOINT'])" `
+            "AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME=$($envVars['AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME'])" `
+            "AZURE_OPENAI_GPT_API_BASE=$($envVars['AZURE_OPENAI_GPT_API_BASE'])" `
+            "AZURE_OPENAI_GPT_API_VERSION=$($envVars['AZURE_OPENAI_GPT_API_VERSION'])" `
+            "AZURE_OPENAI_GPT_DEPLOYMENT=$($envVars['AZURE_OPENAI_GPT_DEPLOYMENT'])" `
+            "AZURE_OPENAI_EMBEDDINGS_ENDPOINT=$($envVars['AZURE_OPENAI_EMBEDDINGS_ENDPOINT'])" `
+            "AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT=$($envVars['AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT'])" `
+            "AZURE_SEARCH_SERVICE_ENDPOINT=$($envVars['AZURE_SEARCH_SERVICE_ENDPOINT'])" `
+            "AZURE_SEARCH_SERVICE_NAME=$($envVars['AZURE_SEARCH_SERVICE_NAME'])" `
+            "AZURE_SEARCH_INDEX_NAME=$($envVars['AZURE_SEARCH_INDEX_NAME'])" `
+            "AZURE_SEARCH_VECTOR_DIMENSION=$($envVars['AZURE_SEARCH_VECTOR_DIMENSION'])" `
+            "AZURE_STORAGE_ACCOUNT_NAME=$($envVars['AZURE_STORAGE_ACCOUNT_NAME'])" `
+            "AZURE_BLOB_CONTAINER=$($envVars['AZURE_BLOB_CONTAINER'])" `
+            "AZURE_BLOB_SIZE_THRESHOLD=$($envVars['AZURE_BLOB_SIZE_THRESHOLD'])" `
+            "AZURE_CONTENT_UNDERSTANDING_ENDPOINT=$($envVars['AZURE_CONTENT_UNDERSTANDING_ENDPOINT'])" `
+            "AZURE_CONTENT_UNDERSTANDING_API_VERSION=$($envVars['AZURE_CONTENT_UNDERSTANDING_API_VERSION'])" `
+            "AZURE_OPENAI_GPT_API_KEY=secretref:openai-key" `
+            "AZURE_OPENAI_EMBEDDINGS_KEY=secretref:openai-embed-key" `
+            "AZURE_SEARCH_ADMIN_KEY=secretref:search-key" `
+            "AZURE_CU_API_KEY=secretref:openai-key" `
         --output none
-    Write-Host "✅ Backend updated" -ForegroundColor Green
+    
+    Write-Host "✅ Backend updated with environment variables" -ForegroundColor Green
 } else {
     Write-Host "🚀 Creating backend container app..." -ForegroundColor Yellow
     
-    # Create with managed identity and internal ingress for service-to-service communication
-    # Primary port 12000 for HTTP API, additional port 8080 for WebSocket
+    # Create with managed identity and external ingress for browser access
+    # Port 12000 serves both HTTP API and WebSocket on the same FastAPI instance
     az containerapp create `
         --name backend `
         --resource-group $ResourceGroup `
         --environment $Environment `
         --image "$AcrName.azurecr.io/a2a-backend:latest" `
         --target-port 12000 `
-        --exposed-port 8080 `
         --ingress external `
-        --transport tcp `
         --min-replicas 1 `
         --max-replicas 5 `
         --cpu 1.0 `
@@ -427,23 +477,7 @@ if ($backendExists) {
         --system-assigned `
         --output none
     
-    Write-Host "✅ Backend created with system-assigned managed identity" -ForegroundColor Green
-    
-    # Configure additional port for WebSocket using YAML update
-    Write-Host "⚙️  Configuring WebSocket port 8080..." -ForegroundColor Cyan
-    
-    $backendConfig = @"
-properties:
-  configuration:
-    ingress:
-      additionalPortMappings:
-        - external: true
-          targetPort: 8080
-          exposedPort: 8080
-"@
-    
-    $backendConfig | az containerapp update --name backend --resource-group $ResourceGroup --yaml - --output none 2>$null
-    Write-Host "✅ WebSocket port configured" -ForegroundColor Green
+    Write-Host "✅ Backend created with system-assigned managed identity (HTTP + WebSocket on port 12000)" -ForegroundColor Green
 }
 
 # Get backend managed identity
@@ -473,61 +507,127 @@ az role assignment create `
     --output none 2>$null
 Write-Host "✅ Key Vault access granted" -ForegroundColor Green
 
-Write-Host "🔐 Granting Cognitive Services access to backend..." -ForegroundColor Cyan
-$subscriptionId = az account show --query id -o tsv
+Write-Host "🔐 Granting AI Foundry access to backend..." -ForegroundColor Cyan
+
+# Use the full Azure resource ID for the AI Foundry project
+$aiProjectResourceId = "/subscriptions/06c3ae7e-1159-4ea8-954e-fbd478d9d003/resourceGroups/rg-owenv-7962/providers/Microsoft.CognitiveServices/accounts/owenv-foundry-resource/projects/owenv-foundry"
+Write-Host "  📍 AI Foundry project resource ID: $aiProjectResourceId" -ForegroundColor Cyan
+
+Write-Host "  🔐 Granting Azure AI User role..." -ForegroundColor Cyan
 az role assignment create `
-    --role "Cognitive Services User" `
+    --role "Azure AI User" `
     --assignee $backendIdentity `
-    --scope "/subscriptions/$subscriptionId" `
+    --scope $aiProjectResourceId `
     --output none 2>$null
-Write-Host "✅ Cognitive Services access granted" -ForegroundColor Green
 
-# Configure environment variables with Key Vault references
-Write-Host "⚙️  Configuring environment variables..." -ForegroundColor Cyan
+Write-Host "  🔐 Granting Azure AI Developer role..." -ForegroundColor Cyan
+az role assignment create `
+    --role "Azure AI Developer" `
+    --assignee $backendIdentity `
+    --scope $aiProjectResourceId `
+    --output none 2>$null
 
-$kvUri = az keyvault show --name $KeyVaultName --resource-group $ResourceGroup --query properties.vaultUri -o tsv
+Write-Host "  ✅ Azure AI User and Azure AI Developer roles assigned at project scope" -ForegroundColor Green
 
-az containerapp update `
+Write-Host "  ⏳ Waiting 10 seconds for role propagation..." -ForegroundColor Cyan
+Start-Sleep -Seconds 10
+
+Write-Host "  🔄 Restarting backend to pick up new permissions..." -ForegroundColor Cyan
+az containerapp revision restart `
     --name backend `
     --resource-group $ResourceGroup `
-    --set-env-vars `
-        "A2A_UI_HOST=0.0.0.0" `
-        "A2A_UI_PORT=12000" `
-        "WEBSOCKET_PORT=8080" `
-        "BACKEND_SERVER_URL=https://$backendInternalFqdn" `
-        "WEBSOCKET_SERVER_URL=https://$backendInternalFqdn:8080" `
-        "LOG_LEVEL=$($envVars['LOG_LEVEL'])" `
-        "AZURE_TENANT_ID=$($envVars['AZURE_TENANT_ID'])" `
-        "AZURE_AI_FOUNDRY_PROJECT_ENDPOINT=$($envVars['AZURE_AI_FOUNDRY_PROJECT_ENDPOINT'])" `
-        "AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME=$($envVars['AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME'])" `
-        "AZURE_OPENAI_GPT_API_BASE=$($envVars['AZURE_OPENAI_GPT_API_BASE'])" `
-        "AZURE_OPENAI_GPT_API_VERSION=$($envVars['AZURE_OPENAI_GPT_API_VERSION'])" `
-        "AZURE_OPENAI_GPT_DEPLOYMENT=$($envVars['AZURE_OPENAI_GPT_DEPLOYMENT'])" `
-        "AZURE_OPENAI_EMBEDDINGS_ENDPOINT=$($envVars['AZURE_OPENAI_EMBEDDINGS_ENDPOINT'])" `
-        "AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT=$($envVars['AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT'])" `
-        "AZURE_SEARCH_SERVICE_ENDPOINT=$($envVars['AZURE_SEARCH_SERVICE_ENDPOINT'])" `
-        "AZURE_SEARCH_SERVICE_NAME=$($envVars['AZURE_SEARCH_SERVICE_NAME'])" `
-        "AZURE_SEARCH_INDEX_NAME=$($envVars['AZURE_SEARCH_INDEX_NAME'])" `
-        "AZURE_SEARCH_VECTOR_DIMENSION=$($envVars['AZURE_SEARCH_VECTOR_DIMENSION'])" `
-        "AZURE_STORAGE_ACCOUNT_NAME=$($envVars['AZURE_STORAGE_ACCOUNT_NAME'])" `
-        "AZURE_BLOB_CONTAINER=$($envVars['AZURE_BLOB_CONTAINER'])" `
-        "AZURE_BLOB_SIZE_THRESHOLD=$($envVars['AZURE_BLOB_SIZE_THRESHOLD'])" `
-        "AZURE_CONTENT_UNDERSTANDING_ENDPOINT=$($envVars['AZURE_CONTENT_UNDERSTANDING_ENDPOINT'])" `
-        "AZURE_CONTENT_UNDERSTANDING_API_VERSION=$($envVars['AZURE_CONTENT_UNDERSTANDING_API_VERSION'])" `
-        "AZURE_OPENAI_GPT_API_KEY=secretref:azure-openai-key" `
-        "AZURE_OPENAI_EMBEDDINGS_KEY=secretref:azure-openai-embeddings-key" `
-        "AZURE_SEARCH_ADMIN_KEY=secretref:azure-search-key" `
-        "AZURE_CU_API_KEY=secretref:azure-openai-key" `
-    --secrets `
-        "azure-ai-endpoint=keyvaultref:${kvUri}secrets/azure-ai-endpoint,identityref:system" `
-        "azure-openai-key=keyvaultref:${kvUri}secrets/azure-openai-key,identityref:system" `
-        "azure-openai-deployment=keyvaultref:${kvUri}secrets/azure-openai-deployment,identityref:system" `
-        "azure-openai-base=keyvaultref:${kvUri}secrets/azure-openai-base,identityref:system" `
-        "azure-openai-embeddings-key=keyvaultref:${kvUri}secrets/azure-openai-embeddings-key,identityref:system" `
-        "azure-search-key=keyvaultref:${kvUri}secrets/azure-search-key,identityref:system" `
-    --output none
+    --output none 2>$null
 
-Write-Host "✅ Environment variables configured" -ForegroundColor Green
+Write-Host "✅ Azure AI User role granted and backend restarted" -ForegroundColor Green
+
+# Configure health probes (applies to both new and existing backends)
+Write-Host "⚙️  Configuring health probes..." -ForegroundColor Cyan
+$healthProbeConfig = @"
+properties:
+  template:
+    containers:
+    - name: backend
+      probes:
+      - type: liveness
+        httpGet:
+          path: /health
+          port: 12000
+        initialDelaySeconds: 90
+        periodSeconds: 30
+        timeoutSeconds: 10
+        failureThreshold: 3
+"@
+
+$healthProbeConfig | az containerapp update --name backend --resource-group $ResourceGroup --yaml - --output none 2>$null
+Write-Host "✅ Health probes configured (90s initial delay, 30s checks, 3 failures = 90s grace)" -ForegroundColor Green
+
+# Configure environment variables for newly created backend (update path handles this inline)
+if (-not $backendExists) {
+    Write-Host "⚙️  Configuring secrets for new backend..." -ForegroundColor Cyan
+    
+    $kvUri = az keyvault show --name $KeyVaultName --resource-group $ResourceGroup --query properties.vaultUri -o tsv
+    
+    # Set secrets first (separate command)
+    az containerapp secret set `
+        --name backend `
+        --resource-group $ResourceGroup `
+        --secrets `
+            "ai-endpoint=keyvaultref:${kvUri}secrets/azure-ai-endpoint,identityref:system" `
+            "openai-key=keyvaultref:${kvUri}secrets/azure-openai-key,identityref:system" `
+            "openai-deployment=keyvaultref:${kvUri}secrets/azure-openai-deployment,identityref:system" `
+            "openai-base=keyvaultref:${kvUri}secrets/azure-openai-base,identityref:system" `
+            "openai-embed-key=keyvaultref:${kvUri}secrets/azure-openai-embeddings-key,identityref:system" `
+            "search-key=keyvaultref:${kvUri}secrets/azure-search-key,identityref:system" `
+        --output none
+    
+    Write-Host "✅ Secrets configured" -ForegroundColor Green
+    
+    Write-Host "⚙️  Configuring environment variables for new backend..." -ForegroundColor Cyan
+    
+    # Get backend FQDN for WebSocket configuration
+    $backendFqdn = az containerapp show `
+        --name backend `
+        --resource-group $ResourceGroup `
+        --query properties.configuration.ingress.fqdn `
+        -o tsv
+    
+    # Then update with environment variables
+    az containerapp update `
+        --name backend `
+        --resource-group $ResourceGroup `
+        --revision-suffix $revisionSuffix `
+        --set-env-vars `
+            "A2A_UI_HOST=0.0.0.0" `
+            "A2A_UI_PORT=12000" `
+            "WEBSOCKET_PORT=12000" `
+            "BACKEND_SERVER_URL=http://localhost:12000" `
+            "WEBSOCKET_SERVER_URL=http://localhost:12000" `
+            "LOG_LEVEL=$($envVars['LOG_LEVEL'])" `
+            "AZURE_TENANT_ID=$($envVars['AZURE_TENANT_ID'])" `
+            "AZURE_AI_FOUNDRY_PROJECT_ENDPOINT=$($envVars['AZURE_AI_FOUNDRY_PROJECT_ENDPOINT'])" `
+            "AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME=$($envVars['AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME'])" `
+            "AZURE_OPENAI_GPT_API_BASE=$($envVars['AZURE_OPENAI_GPT_API_BASE'])" `
+            "AZURE_OPENAI_GPT_API_VERSION=$($envVars['AZURE_OPENAI_GPT_API_VERSION'])" `
+            "AZURE_OPENAI_GPT_DEPLOYMENT=$($envVars['AZURE_OPENAI_GPT_DEPLOYMENT'])" `
+            "AZURE_OPENAI_EMBEDDINGS_ENDPOINT=$($envVars['AZURE_OPENAI_EMBEDDINGS_ENDPOINT'])" `
+            "AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT=$($envVars['AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT'])" `
+            "AZURE_SEARCH_SERVICE_ENDPOINT=$($envVars['AZURE_SEARCH_SERVICE_ENDPOINT'])" `
+            "AZURE_SEARCH_SERVICE_NAME=$($envVars['AZURE_SEARCH_SERVICE_NAME'])" `
+            "AZURE_SEARCH_INDEX_NAME=$($envVars['AZURE_SEARCH_INDEX_NAME'])" `
+            "AZURE_SEARCH_VECTOR_DIMENSION=$($envVars['AZURE_SEARCH_VECTOR_DIMENSION'])" `
+            "AZURE_STORAGE_ACCOUNT_NAME=$($envVars['AZURE_STORAGE_ACCOUNT_NAME'])" `
+            "AZURE_BLOB_CONTAINER=$($envVars['AZURE_BLOB_CONTAINER'])" `
+            "AZURE_BLOB_SIZE_THRESHOLD=$($envVars['AZURE_BLOB_SIZE_THRESHOLD'])" `
+            "AZURE_CONTENT_UNDERSTANDING_ENDPOINT=$($envVars['AZURE_CONTENT_UNDERSTANDING_ENDPOINT'])" `
+            "AZURE_CONTENT_UNDERSTANDING_API_VERSION=$($envVars['AZURE_CONTENT_UNDERSTANDING_API_VERSION'])" `
+            "AZURE_OPENAI_GPT_API_KEY=secretref:openai-key" `
+            "AZURE_OPENAI_EMBEDDINGS_KEY=secretref:openai-embed-key" `
+            "AZURE_SEARCH_ADMIN_KEY=secretref:search-key" `
+            "AZURE_CU_API_KEY=secretref:openai-key" `
+        --output none
+    
+    Write-Host "✅ Environment variables configured" -ForegroundColor Green
+}
 
 # Add storage mounts
 Write-Host "💾 Attaching storage volumes..." -ForegroundColor Cyan
@@ -581,6 +681,51 @@ Write-Host "   Internal: https://$backendInternalFqdn" -ForegroundColor Cyan
 Write-Host ""
 
 # ============================================================================
+# STEP 9.5: Build Frontend and Visualizer with Real Backend URL
+# ============================================================================
+Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
+Write-Host "STEP 9.5: Build Frontend and Visualizer Images" -ForegroundColor Cyan
+Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
+
+Write-Host "🔨 Building frontend and visualizer with actual backend URL: $backendFqdn" -ForegroundColor Cyan
+Write-Host ""
+
+# Frontend - Use HARDCODED backend FQDN for NEXT_PUBLIC_ build-time variables
+Write-Host "  📦 Building frontend..." -ForegroundColor Yellow
+docker build -f frontend/Dockerfile `
+    --build-arg NEXT_PUBLIC_A2A_API_URL="https://backend.purplepebble-ee78c1ee.eastus.azurecontainerapps.io" `
+    --build-arg NEXT_PUBLIC_WEBSOCKET_URL="wss://backend.purplepebble-ee78c1ee.eastus.azurecontainerapps.io/events" `
+    --build-arg NEXT_PUBLIC_DEV_MODE="false" `
+    --build-arg NEXT_PUBLIC_DEBUG_LOGS="$($envVars['NEXT_PUBLIC_DEBUG_LOGS'])" `
+    -t "$AcrName.azurecr.io/a2a-frontend:$tag" -t "$AcrName.azurecr.io/a2a-frontend:latest" ./frontend
+Write-Host "  ✅ Frontend built with HARDCODED backend URL" -ForegroundColor Green
+
+# Visualizer - Use actual backend FQDN for NEXT_PUBLIC_ build-time variables
+Write-Host "  📦 Building visualizer..." -ForegroundColor Yellow
+docker build -f Visualizer/voice-a2a-fabric/Dockerfile `
+    --build-arg NEXT_PUBLIC_AZURE_AI_FOUNDRY_PROJECT_ENDPOINT="$($envVars['NEXT_PUBLIC_AZURE_AI_FOUNDRY_PROJECT_ENDPOINT'])" `
+    --build-arg NEXT_PUBLIC_AZURE_AI_TOKEN="$($envVars['VOICE_LIVE_API_KEY'])" `
+    --build-arg NEXT_PUBLIC_VOICE_MODEL="$($envVars['NEXT_PUBLIC_VOICE_MODEL'])" `
+    --build-arg NEXT_PUBLIC_A2A_API_URL="https://backend.purplepebble-ee78c1ee.eastus.azurecontainerapps.io" `
+    --build-arg NEXT_PUBLIC_WEBSOCKET_URL="wss://backend.purplepebble-ee78c1ee.eastus.azurecontainerapps.io/events" `
+    --build-arg NEXT_PUBLIC_DEBUG_LOGS="$($envVars['NEXT_PUBLIC_DEBUG_LOGS'])" `
+    -t "$AcrName.azurecr.io/a2a-visualizer:$tag" -t "$AcrName.azurecr.io/a2a-visualizer:latest" ./Visualizer/voice-a2a-fabric
+Write-Host "  ✅ Visualizer built with backend URL: https://$backendFqdn" -ForegroundColor Green
+
+Write-Host ""
+Write-Host "📤 Pushing frontend and visualizer images to ACR..." -ForegroundColor Cyan
+
+docker push "$AcrName.azurecr.io/a2a-frontend:$tag"
+docker push "$AcrName.azurecr.io/a2a-frontend:latest"
+Write-Host "  ✅ Frontend pushed" -ForegroundColor Green
+
+docker push "$AcrName.azurecr.io/a2a-visualizer:$tag"
+docker push "$AcrName.azurecr.io/a2a-visualizer:latest"
+Write-Host "  ✅ Visualizer pushed" -ForegroundColor Green
+
+Write-Host ""
+
+# ============================================================================
 # STEP 10: Deploy Frontend Container App with Managed Identity
 # ============================================================================
 Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
@@ -595,8 +740,18 @@ if ($frontendExists) {
         --name frontend `
         --resource-group $ResourceGroup `
         --image "$AcrName.azurecr.io/a2a-frontend:latest" `
+        --set-env-vars `
+            "NODE_ENV=production" `
+            "NEXT_PUBLIC_A2A_API_URL=https://backend.purplepebble-ee78c1ee.eastus.azurecontainerapps.io" `
+            "NEXT_PUBLIC_WEBSOCKET_URL=wss://backend.purplepebble-ee78c1ee.eastus.azurecontainerapps.io/events" `
+            "NEXT_PUBLIC_DEV_MODE=$($envVars['NEXT_PUBLIC_DEV_MODE'])" `
+            "NEXT_PUBLIC_DEBUG_LOGS=$($envVars['NEXT_PUBLIC_DEBUG_LOGS'])" `
+            "NEXT_PUBLIC_AZURE_EVENTHUB_CONNECTION_STRING=$($envVars['NEXT_PUBLIC_AZURE_EVENTHUB_CONNECTION_STRING'])" `
+            "NEXT_PUBLIC_AZURE_EVENTHUB_NAME=$($envVars['NEXT_PUBLIC_AZURE_EVENTHUB_NAME'])" `
+            "NEXT_PUBLIC_AZURE_STORAGE_CONNECTION_STRING=$($envVars['NEXT_PUBLIC_AZURE_STORAGE_CONNECTION_STRING'])" `
+            "NEXT_PUBLIC_AZURE_STORAGE_CONTAINER_NAME=$($envVars['NEXT_PUBLIC_AZURE_STORAGE_CONTAINER_NAME'])" `
         --output none
-    Write-Host "✅ Frontend updated" -ForegroundColor Green
+    Write-Host "✅ Frontend updated with environment variables" -ForegroundColor Green
 } else {
     Write-Host "🚀 Creating frontend container app..." -ForegroundColor Yellow
     
@@ -616,8 +771,8 @@ if ($frontendExists) {
         --system-assigned `
         --env-vars `
             "NODE_ENV=production" `
-            "NEXT_PUBLIC_A2A_API_URL=https://$backendInternalFqdn" `
-            "NEXT_PUBLIC_WEBSOCKET_URL=wss://$backendInternalFqdn:8080/events" `
+            "NEXT_PUBLIC_A2A_API_URL=https://backend.purplepebble-ee78c1ee.eastus.azurecontainerapps.io" `
+            "NEXT_PUBLIC_WEBSOCKET_URL=wss://backend.purplepebble-ee78c1ee.eastus.azurecontainerapps.io//events" `
             "NEXT_PUBLIC_DEV_MODE=$($envVars['NEXT_PUBLIC_DEV_MODE'])" `
             "NEXT_PUBLIC_DEBUG_LOGS=$($envVars['NEXT_PUBLIC_DEBUG_LOGS'])" `
             "NEXT_PUBLIC_AZURE_EVENTHUB_CONNECTION_STRING=$($envVars['NEXT_PUBLIC_AZURE_EVENTHUB_CONNECTION_STRING'])" `
@@ -663,12 +818,35 @@ $visualizerExists = az containerapp show --name visualizer --resource-group $Res
 
 if ($visualizerExists) {
     Write-Host "🔄 Updating existing visualizer container app..." -ForegroundColor Yellow
+    
+    $kvUri = az keyvault show --name $KeyVaultName --resource-group $ResourceGroup --query properties.vaultUri -o tsv
+    
+    # First update secrets
+    Write-Host "⚙️  Updating secrets..." -ForegroundColor Cyan
+    az containerapp secret set `
+        --name visualizer `
+        --resource-group $ResourceGroup `
+        --secrets `
+            "ai-token=keyvaultref:${kvUri}secrets/azure-ai-token,identityref:system" `
+        --output none
+    
+    # Then update image and environment variables
     az containerapp update `
         --name visualizer `
         --resource-group $ResourceGroup `
         --image "$AcrName.azurecr.io/a2a-visualizer:latest" `
+        --set-env-vars `
+            "NODE_ENV=production" `
+            "NEXT_PUBLIC_A2A_API_URL=https://backend.purplepebble-ee78c1ee.eastus.azurecontainerapps.io" `
+            "NEXT_PUBLIC_WEBSOCKET_URL=wss://backend.purplepebble-ee78c1ee.eastus.azurecontainerapps.io/events" `
+            "NEXT_PUBLIC_AZURE_AI_FOUNDRY_PROJECT_ENDPOINT=$($envVars['NEXT_PUBLIC_AZURE_AI_FOUNDRY_PROJECT_ENDPOINT'])" `
+            "NEXT_PUBLIC_VOICE_MODEL=$($envVars['NEXT_PUBLIC_VOICE_MODEL'])" `
+            "NEXT_PUBLIC_DEV_MODE=$($envVars['NEXT_PUBLIC_DEV_MODE'])" `
+            "NEXT_PUBLIC_DEBUG_LOGS=$($envVars['NEXT_PUBLIC_DEBUG_LOGS'])" `
+            "NEXT_PUBLIC_AZURE_AI_TOKEN=secretref:ai-token" `
         --output none
-    Write-Host "✅ Visualizer updated" -ForegroundColor Green
+    
+    Write-Host "✅ Visualizer updated with environment variables" -ForegroundColor Green
 } else {
     Write-Host "🚀 Creating visualizer container app..." -ForegroundColor Yellow
     
@@ -720,26 +898,30 @@ az role assignment create `
 
 Write-Host "✅ Permissions granted" -ForegroundColor Green
 
-# Configure environment variables
-Write-Host "⚙️  Configuring environment variables..." -ForegroundColor Cyan
-
-az containerapp update `
-    --name visualizer `
-    --resource-group $ResourceGroup `
-    --set-env-vars `
-        "NODE_ENV=production" `
-        "NEXT_PUBLIC_A2A_API_URL=https://$backendInternalFqdn" `
-        "NEXT_PUBLIC_WEBSOCKET_URL=wss://$backendInternalFqdn:8080/events" `
-        "NEXT_PUBLIC_AZURE_AI_FOUNDRY_PROJECT_ENDPOINT=$($envVars['NEXT_PUBLIC_AZURE_AI_FOUNDRY_PROJECT_ENDPOINT'])" `
-        "NEXT_PUBLIC_VOICE_MODEL=$($envVars['NEXT_PUBLIC_VOICE_MODEL'])" `
-        "NEXT_PUBLIC_DEV_MODE=$($envVars['NEXT_PUBLIC_DEV_MODE'])" `
-        "NEXT_PUBLIC_DEBUG_LOGS=$($envVars['NEXT_PUBLIC_DEBUG_LOGS'])" `
-        "NEXT_PUBLIC_AZURE_AI_TOKEN=secretref:azure-ai-token" `
-    --secrets `
-        "azure-ai-token=keyvaultref:${kvUri}secrets/azure-ai-token,identityref:system" `
-    --output none
-
-Write-Host "✅ Environment variables configured" -ForegroundColor Green
+# Configure environment variables for newly created visualizer (update path handles this inline)
+if (-not $visualizerExists) {
+    Write-Host "⚙️  Configuring environment variables for new visualizer..." -ForegroundColor Cyan
+    
+    $kvUri = az keyvault show --name $KeyVaultName --resource-group $ResourceGroup --query properties.vaultUri -o tsv
+    
+    az containerapp update `
+        --name visualizer `
+        --resource-group $ResourceGroup `
+        --set-env-vars `
+            "NODE_ENV=production" `
+            "NEXT_PUBLIC_A2A_API_URL=https://backend.purplepebble-ee78c1ee.eastus.azurecontainerapps.io" `
+            "NEXT_PUBLIC_WEBSOCKET_URL=wss://backend.purplepebble-ee78c1ee.eastus.azurecontainerapps.io/events" `
+            "NEXT_PUBLIC_AZURE_AI_FOUNDRY_PROJECT_ENDPOINT=$($envVars['NEXT_PUBLIC_AZURE_AI_FOUNDRY_PROJECT_ENDPOINT'])" `
+            "NEXT_PUBLIC_VOICE_MODEL=$($envVars['NEXT_PUBLIC_VOICE_MODEL'])" `
+            "NEXT_PUBLIC_DEV_MODE=$($envVars['NEXT_PUBLIC_DEV_MODE'])" `
+            "NEXT_PUBLIC_DEBUG_LOGS=$($envVars['NEXT_PUBLIC_DEBUG_LOGS'])" `
+            "NEXT_PUBLIC_AZURE_AI_TOKEN=secretref:ai-token" `
+        --secrets `
+            "ai-token=keyvaultref:${kvUri}secrets/azure-ai-token,identityref:system" `
+        --output none
+    
+    Write-Host "✅ Environment variables configured" -ForegroundColor Green
+}
 
 $visualizerFqdn = az containerapp show `
     --name visualizer `
@@ -786,6 +968,9 @@ Write-Host ""
 Write-Host "🚀 Deploying agent container apps..." -ForegroundColor Cyan
 Write-Host ""
 
+# Get Key Vault URI for secret references
+$kvUri = az keyvault show --name $KeyVaultName --resource-group $ResourceGroup --query properties.vaultUri -o tsv
+
 $agentFqdns = @{}
 
 foreach ($agent in $agents) {
@@ -797,12 +982,37 @@ foreach ($agent in $agents) {
     $agentExists = az containerapp show --name $agentName --resource-group $ResourceGroup 2>$null
     
     if ($agentExists) {
+        Write-Host "  ⚙️  Updating secrets for $agentName..." -ForegroundColor Cyan
+        
+        # First update secrets
+        az containerapp secret set `
+            --name $agentName `
+            --resource-group $ResourceGroup `
+            --secrets `
+                "openai-key=keyvaultref:${kvUri}secrets/azure-openai-key,identityref:system" `
+            --output none 2>&1 | Out-Null
+        
+        Write-Host "  ⚙️  Updating image and environment for $agentName..." -ForegroundColor Cyan
+        
+        # Then update image and environment variables
         az containerapp update `
             --name $agentName `
             --resource-group $ResourceGroup `
-            --image "$AcrName.azurecr.io/$agentName:latest" `
+            --image "${AcrName}.azurecr.io/${agentName}:latest" `
+            --set-env-vars `
+                "A2A_ENDPOINT=https://$agentName.internal.$envDefaultDomain" `
+                "A2A_HOST=https://$backendInternalFqdn" `
+                "LOG_LEVEL=$($envVars['LOG_LEVEL'])" `
+                "AZURE_TENANT_ID=$($envVars['AZURE_TENANT_ID'])" `
+                "AZURE_AI_FOUNDRY_PROJECT_ENDPOINT=$($envVars['AZURE_AI_FOUNDRY_PROJECT_ENDPOINT'])" `
+                "AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME=$($envVars['AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME'])" `
+                "AZURE_OPENAI_GPT_API_BASE=$($envVars['AZURE_OPENAI_GPT_API_BASE'])" `
+                "AZURE_OPENAI_GPT_API_VERSION=$($envVars['AZURE_OPENAI_GPT_API_VERSION'])" `
+                "AZURE_OPENAI_GPT_DEPLOYMENT=$($envVars['AZURE_OPENAI_GPT_DEPLOYMENT'])" `
+                "AZURE_OPENAI_GPT_API_KEY=secretref:openai-key" `
             --output none
     } else {
+        # Create with env vars but without secrets
         az containerapp create `
             --name $agentName `
             --resource-group $ResourceGroup `
@@ -818,8 +1028,7 @@ foreach ($agent in $agents) {
             --registry-identity system `
             --system-assigned `
             --env-vars `
-                "A2A_ENDPOINT=$agentName.internal.$envDefaultDomain" `
-                "A2A_PORT=$agentPort" `
+                "A2A_ENDPOINT=https://$agentName.internal.$envDefaultDomain" `
                 "A2A_HOST=https://$backendInternalFqdn" `
                 "LOG_LEVEL=$($envVars['LOG_LEVEL'])" `
                 "AZURE_TENANT_ID=$($envVars['AZURE_TENANT_ID'])" `
@@ -828,9 +1037,22 @@ foreach ($agent in $agents) {
                 "AZURE_OPENAI_GPT_API_BASE=$($envVars['AZURE_OPENAI_GPT_API_BASE'])" `
                 "AZURE_OPENAI_GPT_API_VERSION=$($envVars['AZURE_OPENAI_GPT_API_VERSION'])" `
                 "AZURE_OPENAI_GPT_DEPLOYMENT=$($envVars['AZURE_OPENAI_GPT_DEPLOYMENT'])" `
-                "AZURE_OPENAI_GPT_API_KEY=secretref:azure-openai-key" `
+            --output none
+        
+        # Set secrets after creation
+        az containerapp secret set `
+            --name $agentName `
+            --resource-group $ResourceGroup `
             --secrets `
-                "azure-openai-key=keyvaultref:${kvUri}secrets/azure-openai-key,identityref:system" `
+                "openai-key=keyvaultref:${kvUri}secrets/azure-openai-key,identityref:system" `
+            --output none
+        
+        # Update to add secret reference
+        az containerapp update `
+            --name $agentName `
+            --resource-group $ResourceGroup `
+            --set-env-vars `
+                "AZURE_OPENAI_GPT_API_KEY=secretref:openai-key" `
             --output none
     }
     
@@ -853,11 +1075,18 @@ foreach ($agent in $agents) {
         --scope $kvId `
         --output none 2>$null
     
-    # Grant Cognitive Services access
+    # Grant Azure AI User and Developer roles for AI Foundry agent creation
+    $aiProjectResourceId = "/subscriptions/06c3ae7e-1159-4ea8-954e-fbd478d9d003/resourceGroups/rg-owenv-7962/providers/Microsoft.CognitiveServices/accounts/owenv-foundry-resource/projects/owenv-foundry"
     az role assignment create `
         --assignee $agentIdentity `
-        --role "Cognitive Services User" `
-        --scope "/subscriptions/$subscriptionId" `
+        --role "Azure AI User" `
+        --scope $aiProjectResourceId `
+        --output none 2>$null
+    
+    az role assignment create `
+        --assignee $agentIdentity `
+        --role "Azure AI Developer" `
+        --scope $aiProjectResourceId `
         --output none 2>$null
     
     # Get agent internal FQDN

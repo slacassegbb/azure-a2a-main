@@ -122,7 +122,7 @@ class WebSocketStreamer:
             bool: True if initialization successful, False otherwise
         """
         try:
-            # Create HTTP client for sending events
+            # Create HTTP client for sending events to /events endpoint
             self.http_client = httpx.AsyncClient(timeout=5.0)
 
             # Test connection to WebSocket server with retries
