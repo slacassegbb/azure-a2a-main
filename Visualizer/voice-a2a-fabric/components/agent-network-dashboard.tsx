@@ -174,17 +174,21 @@ export function AgentNetworkDashboard() {
       console.log('[VOICE-A2A] Message:', message)
       console.log('[VOICE-A2A] Metadata:', claimData)
       
-      // Generate IDs - unique messageId per call, shared conversationId for session
-      const messageId = `voice-msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
-      const conversationId = currentConversationId || 'visualizer-voice-context'
+      // Generate IDs - unique messageId per call, persistent conversationId for voice session
+      const timestamp = Date.now()
+      const messageId = `voice-msg-${timestamp}-${Math.random().toString(36).substr(2, 9)}`
+      // Use existing session conversationId or create new one (persists across function calls)
+      const conversationId = currentConversationId || `voice-session-${Date.now()}`
       const callId = claimData?.tool_call_id || claimData?.call_id || ''
       
       console.log('[VOICE-A2A] 🆔 Generated messageId:', messageId)
-      console.log('[VOICE-A2A] 💬 ConversationId:', conversationId)
+      console.log('[VOICE-A2A] 💬 ConversationId (session):', conversationId)
       console.log('[VOICE-A2A] 🔑 Extracted call_id:', callId)
       
-      // Store conversationId for session, track THIS message for response matching
-      setCurrentConversationId(conversationId)
+      // Store conversationId for session (only set once), track THIS message for response matching
+      if (!currentConversationId) {
+        setCurrentConversationId(conversationId)
+      }
       setPendingA2AResponse(messageId)
       
       // Map messageId -> callId so we can match responses to the right function call
@@ -231,11 +235,11 @@ export function AgentNetworkDashboard() {
         }
         
         console.log('[VOICE-A2A] ════════════════════════════════════════════════════════')
-        console.log('[VOICE-A2A] 📤 STEP 3: SENDING HTTP REQUEST')
+        console.log('[VOICE-A2A] 📤 STEP 3: SENDING ASYNC HTTP REQUEST')
         console.log('[VOICE-A2A] ════════════════════════════════════════════════════════')
-        console.log('[VOICE-A2A] URL:', `${baseUrl}/message/send`)
+        console.log('[VOICE-A2A] URL:', `${baseUrl}/message/send/async`)
         
-        const response = await fetch(`${baseUrl}/message/send`, {
+        const response = await fetch(`${baseUrl}/message/send/async`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(requestBody)
@@ -243,7 +247,7 @@ export function AgentNetworkDashboard() {
         
         console.log('[VOICE-A2A] Response status:', response.status)
         
-        if (!response.ok) {
+        if (response.status !== 202) {
           console.error('[Dashboard] ❌ Failed to send voice message:', response.statusText)
           // Stop host agent pulsing on error
           setProcessingAgents((prev) => {
@@ -254,10 +258,14 @@ export function AgentNetworkDashboard() {
           return 'error'
         }
         
+        // Parse 202 Accepted response
+        const responseData = await response.json()
         console.log('[VOICE-A2A] ════════════════════════════════════════════════════════')
-        console.log('[VOICE-A2A] ✅ STEP 4: HTTP REQUEST SUCCESSFUL')
+        console.log('[VOICE-A2A] ✅ STEP 4: ASYNC REQUEST ACCEPTED (202)')
         console.log('[VOICE-A2A] ════════════════════════════════════════════════════════')
-        console.log('[VOICE-A2A] Now waiting for WebSocket assistant message...')
+        console.log('[VOICE-A2A] Task ID:', responseData.task_id)
+        console.log('[VOICE-A2A] Voice Call ID:', responseData.voice_call_id)
+        console.log('[VOICE-A2A] Now waiting for async a2a_response WebSocket event...')
         
         return conversationId
       } catch (error) {
@@ -764,27 +772,27 @@ export function AgentNetworkDashboard() {
           const responseConversationId = data.conversation_id || data.contextId || data.conversationId
           
           console.log('[VOICE-A2A] ════════════════════════════════════════════════════════')
-          console.log('[VOICE-A2A] 📬 STEP 5: Checking for voice call match by contextId')
+          console.log('[VOICE-A2A] 📬 STEP 5: Checking for voice call match by conversationId')
           console.log('[VOICE-A2A] ════════════════════════════════════════════════════════')
           console.log('[VOICE-A2A] responseConversationId:', responseConversationId)
           console.log('[VOICE-A2A] Map size:', pendingCallIdMapRef.current.size)
           console.log('[VOICE-A2A] Map keys:', Array.from(pendingCallIdMapRef.current.keys()))
           
-          // Find the messageId that matches this contextId
-          // Our messageId format: voice-msg-{timestamp}-{random}
-          // Our contextId format: voice-{timestamp}
+          // Check if this response is for a voice session by checking conversationId format
+          // Voice session conversationId format: voice-session-{timestamp}
           let matchedCallId: string | null = null
           let matchedMessageId: string | null = null
           
-          for (const [messageId, callId] of pendingCallIdMapRef.current.entries()) {
-            if (messageId.startsWith('voice-msg-')) {
-              const timestamp = messageId.split('-')[2]
-              const expectedContextId = `voice-${timestamp}`
-              console.log('[VOICE-A2A] Checking messageId:', messageId, '→ contextId:', expectedContextId)
-              if (expectedContextId === responseConversationId) {
+          if (responseConversationId && responseConversationId.startsWith('voice-session-')) {
+            // This is a voice response! Find the most recent pending call for this session
+            // Since we're in a single voice session, match by checking map has entries
+            for (const [messageId, callId] of pendingCallIdMapRef.current.entries()) {
+              if (messageId.startsWith('voice-msg-')) {
+                // Take the first (oldest) pending call - FIFO order
                 matchedCallId = callId
                 matchedMessageId = messageId
-                console.log('[VOICE-A2A] ✅ MATCH FOUND!')
+                console.log('[VOICE-A2A] ✅ MATCH FOUND - Voice session response!')
+                console.log('[VOICE-A2A] Matched messageId:', messageId, 'to call_id:', callId)
                 break
               }
             }
@@ -985,6 +993,100 @@ export function AgentNetworkDashboard() {
       addMessage('contoso-concierge', 'Contoso Concierge', 'New conversation initiated', 'event')
     }
 
+    // Handle async queue response events (from background workers)
+    const handleAsyncResponse = (data: any) => {
+      console.log('[VOICE-A2A] ════════════════════════════════════════════════════════')
+      console.log('[VOICE-A2A] 📬 ASYNC RESPONSE EVENT RECEIVED')
+      console.log('[VOICE-A2A] ════════════════════════════════════════════════════════')
+      console.log('[VOICE-A2A] Event type:', data.eventType)
+      console.log('[VOICE-A2A] Task ID:', data.task_id)
+      console.log('[VOICE-A2A] Voice Call ID:', data.voice_call_id)
+      console.log('[VOICE-A2A] Full data:', JSON.stringify(data, null, 2))
+      
+      const { task_id, voice_call_id, session_id, result } = data
+      
+      // Extract response text from result
+      const responseText = result?.text || JSON.stringify(result)
+      
+      console.log('[VOICE-A2A] Response text preview:', responseText.substring(0, 150))
+      
+      // If this is a voice call, add to injection queue
+      if (voice_call_id) {
+        console.log('[VOICE-A2A] ════════════════════════════════════════════════════════')
+        console.log('[VOICE-A2A] ✅ This is a VOICE response - adding to injection queue')
+        console.log('[VOICE-A2A] ════════════════════════════════════════════════════════')
+        
+        const newResponse = {
+          call_id: voice_call_id,
+          claim_id: session_id,
+          status: 'completed',
+          message: responseText,
+          next_steps: [],
+          timestamp: Date.now()
+        }
+        
+        setPendingInjectionQueue(prev => [...prev, newResponse])
+        console.log('[VOICE-A2A] ✅ Response added to injection queue')
+      } else {
+        console.log('[VOICE-A2A] ℹ️ Non-voice response - adding to activity log only')
+      }
+      
+      // Stop host agent pulsing
+      setProcessingAgents((prev) => {
+        const next = new Set(prev)
+        next.delete('contoso-concierge')
+        next.delete('host')
+        return next
+      })
+      
+      // Add to activity log
+      addMessage('system', 'Async Queue', `Task ${task_id} completed`, 'event')
+      setFinalResponse(responseText)
+      setShowResponsePanel(true)
+      setIsSimulating(false)
+    }
+
+    // Handle async queue error events
+    const handleAsyncError = (data: any) => {
+      console.log('[VOICE-A2A] ════════════════════════════════════════════════════════')
+      console.log('[VOICE-A2A] ❌ ASYNC ERROR EVENT RECEIVED')
+      console.log('[VOICE-A2A] ════════════════════════════════════════════════════════')
+      console.log('[VOICE-A2A] Task ID:', data.task_id)
+      console.log('[VOICE-A2A] Voice Call ID:', data.voice_call_id)
+      console.log('[VOICE-A2A] Error:', data.error)
+      
+      const { task_id, voice_call_id, session_id, error } = data
+      const errorMessage = `Error processing request: ${error}`
+      
+      // If this is a voice call, add error to injection queue
+      if (voice_call_id) {
+        console.log('[VOICE-A2A] ✅ Injecting error response to voice')
+        
+        const errorResponse = {
+          call_id: voice_call_id,
+          claim_id: session_id,
+          status: 'error',
+          message: errorMessage,
+          next_steps: [],
+          timestamp: Date.now()
+        }
+        
+        setPendingInjectionQueue(prev => [...prev, errorResponse])
+      }
+      
+      // Stop pulsing
+      setProcessingAgents((prev) => {
+        const next = new Set(prev)
+        next.delete('contoso-concierge')
+        next.delete('host')
+        return next
+      })
+      
+      // Add to activity log
+      addMessage('system', 'Async Queue', `Task ${task_id} failed: ${error}`, 'event')
+      setIsSimulating(false)
+    }
+
     // Handle general events
     const handleEvent = (data: any) => {
       if (DEBUG) console.log("[AgentDashboard] General event:", data)
@@ -1004,6 +1106,8 @@ export function AgentNetworkDashboard() {
     subscribe('tool_response', handleToolResponse)
     subscribe('inference_step', handleInferenceStep)
     subscribe('remote_agent_activity', handleRemoteAgentActivity)
+    subscribe('a2a_response', handleAsyncResponse)  // NEW: Async queue responses
+    subscribe('a2a_error', handleAsyncError)        // NEW: Async queue errors
 
     if (DEBUG) console.log("[AgentDashboard] WebSocket event handlers subscribed")
 
@@ -1021,6 +1125,8 @@ export function AgentNetworkDashboard() {
       unsubscribe('tool_response', handleToolResponse)
       unsubscribe('inference_step', handleInferenceStep)
       unsubscribe('remote_agent_activity', handleRemoteAgentActivity)
+      unsubscribe('a2a_response', handleAsyncResponse)  // NEW: Cleanup async handlers
+      unsubscribe('a2a_error', handleAsyncError)        // NEW: Cleanup async handlers
       if (DEBUG) console.log("[AgentDashboard] WebSocket event handlers unsubscribed")
     }
   }, [subscribe, unsubscribe, DEBUG])
@@ -1232,7 +1338,7 @@ export function AgentNetworkDashboard() {
       addMessage(hostAgentId, 'Contoso Concierge', 'Processing request and routing to agents...', 'event')
 
       const baseUrl = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
-      const response = await fetch(`${baseUrl}/message/send`, {
+      const response = await fetch(`${baseUrl}/message/send/async`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1256,7 +1362,7 @@ export function AgentNetworkDashboard() {
         })
       })
 
-      if (!response.ok) {
+      if (response.status !== 202) {
         console.error('[AgentDashboard] Failed to send message to backend:', response.statusText)
         // Stop host agent pulsing on error
         setProcessingAgents((prev) => {
@@ -1816,7 +1922,82 @@ export function AgentNetworkDashboard() {
               </div>
             )}
           </div>
-          {/* Top right corner intentionally empty - controls moved to bottom panel */}
+          <div className="absolute top-4 right-4 z-10 flex flex-col gap-2 items-end">
+            {/* Voice Live Status Badge */}
+            {voiceLive.isConnected && (
+              <div className={`px-4 py-2 rounded-lg shadow-lg border-2 transition-all duration-300 ${
+                voiceLive.isRecording 
+                  ? 'bg-emerald-900/80 border-emerald-500 text-emerald-100' 
+                  : 'bg-slate-800/80 border-slate-600 text-slate-300'
+              }`}>
+                <div className="flex items-center gap-2">
+                  <div className={`w-3 h-3 rounded-full ${voiceLive.isRecording ? 'bg-emerald-500 animate-pulse' : 'bg-slate-500'}`} />
+                  <span className="text-sm font-semibold">
+                    {voiceLive.isRecording 
+                      ? (voiceLive.isSpeaking ? '🔊 AI Speaking' : '🎤 Listening') 
+                      : '🔌 Voice Connected'}
+                  </span>
+                </div>
+                {voiceLive.isMuted && (
+                  <div className="text-xs text-red-400 mt-1">🔇 Microphone Muted</div>
+                )}
+              </div>
+            )}
+            <div className="flex gap-2 items-center">
+              {voiceLive.isRecording && (
+                <button
+                  onClick={voiceLive.toggleMute}
+                  className={`p-2 rounded-lg transition-all duration-300 shadow-lg hover:shadow-xl hover:scale-105 active:scale-95 ${
+                    voiceLive.isMuted
+                      ? 'bg-red-600 hover:bg-red-500 text-white'
+                      : 'bg-slate-700 hover:bg-slate-600 text-slate-300'
+                  }`}
+                  title={voiceLive.isMuted ? 'Unmute microphone' : 'Mute microphone'}
+                >
+                  {voiceLive.isMuted ? <MicOff size={16} /> : <Mic size={16} />}
+                </button>
+              )}
+              <button
+                onClick={openEditDialog}
+                className="p-2 bg-slate-700 text-slate-300 rounded-lg hover:bg-slate-600 transition-all duration-300 shadow-lg hover:shadow-xl hover:scale-105 active:scale-95"
+                title="Edit request message"
+              >
+                <Pencil size={16} />
+              </button>
+              <button
+                onClick={voiceLive.isRecording ? voiceLive.stopVoiceConversation : voiceLive.startVoiceConversation}
+                className={`p-2 rounded-lg transition-all duration-300 shadow-lg hover:shadow-xl hover:scale-105 active:scale-95 ${
+                  voiceLive.isRecording 
+                    ? 'bg-red-600 hover:bg-red-500 text-white animate-pulse' 
+                    : 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                }`}
+                title={voiceLive.isRecording ? 'Stop voice conversation' : 'Start voice conversation'}
+              >
+                {voiceLive.isRecording ? <Phone size={16} /> : <Mic size={16} />}
+              </button>
+              <button
+                onClick={simulateRequest}
+                disabled={isSimulating || !isConnected}
+                className="px-5 py-2.5 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-lg font-semibold hover:from-indigo-500 hover:to-purple-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-300 shadow-lg hover:shadow-xl hover:scale-105 active:scale-95"
+                title={!isConnected ? 'Connect to backend to send requests' : 'Send request to agent network'}
+              >
+                {isSimulating ? "Processing..." : "Send Request"}
+              </button>
+            </div>
+            <button
+              onClick={clearMemory}
+              disabled={isClearingMemory || !isConnected}
+              className="px-5 py-2.5 bg-gradient-to-r from-rose-600 to-orange-600 text-white rounded-lg font-semibold hover:from-rose-500 hover:to-orange-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-300 shadow-lg hover:shadow-xl hover:scale-105 active:scale-95"
+              title={!isConnected ? 'Connect to backend to clear memory' : 'Clear inter-agent memory index'}
+            >
+              {isClearingMemory ? "Clearing..." : "Clear Memory"}
+            </button>
+            {!isConnected && (
+              <p className="text-xs text-amber-400">
+                Waiting for backend connection...
+              </p>
+            )}
+          </div>
           <canvas ref={canvasRef} className="w-full h-full" />
         </div>
 

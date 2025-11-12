@@ -104,18 +104,19 @@ def install_dependencies() -> None:
         logger.info("✅ Dependencies installed successfully.")
         logger.info("")
     except subprocess.CalledProcessError as exc:
-        logger.error("❌ Failed to install dependencies: %s", exc.stderr.strip() if exc.stderr else exc)
+        logger.error(
+            "❌ Failed to install dependencies: %s",
+            exc.stderr.strip() if exc.stderr else exc,
+        )
         raise RuntimeError("Dependency installation failed") from exc
 
 
 def install_libreoffice() -> bool:
     """Install LibreOffice for document processing with user confirmation."""
-    logger.info("📄 LibreOffice is used for advanced document processing (PDF, DOCX, etc.)")
-    response = (
-        input("   Install LibreOffice? (y/n) [n]: ")
-        .strip()
-        .lower()
+    logger.info(
+        "📄 LibreOffice is used for advanced document processing (PDF, DOCX, etc.)"
     )
+    response = input("   Install LibreOffice? (y/n) [n]: ").strip().lower()
 
     if response != "y":
         logger.info("   ⏩ Skipping LibreOffice installation.")
@@ -145,7 +146,9 @@ def install_libreoffice() -> bool:
         return False
     except FileNotFoundError:
         logger.warning("   ⚠️  Package manager not found.")
-        logger.info("   Please install LibreOffice manually if you need document processing.")
+        logger.info(
+            "   Please install LibreOffice manually if you need document processing."
+        )
         logger.info("")
         return False
 
@@ -178,35 +181,53 @@ def check_azure_login() -> None:
                 az_command = path
                 az_found = True
                 break
-            except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            except (
+                FileNotFoundError,
+                subprocess.CalledProcessError,
+                subprocess.TimeoutExpired,
+            ):
                 continue
-        
+
         if not az_found:
             logger.warning("⚠️  Azure CLI not found in PATH.")
             logger.info("   Checking if Azure CLI is installed...")
             logger.info("")
-            response = input("Do you have Azure CLI installed? (y/n) [y]: ").strip().lower()
-            
+            response = (
+                input("Do you have Azure CLI installed? (y/n) [y]: ").strip().lower()
+            )
+
             if response == "y":
                 logger.info("")
                 logger.info("💡 Azure CLI is installed but not in PATH.")
                 logger.info("   To fix this, add Azure CLI to your PATH:")
                 logger.info('   1. Search for "Environment Variables" in Windows')
                 logger.info("   2. Edit System Environment Variables")
-                logger.info('   3. Add to PATH: C:\\Program Files\\Microsoft SDKs\\Azure\\CLI2\\wbin')
+                logger.info(
+                    "   3. Add to PATH: C:\\Program Files\\Microsoft SDKs\\Azure\\CLI2\\wbin"
+                )
                 logger.info("")
-                logger.info("   OR run this script from a fresh terminal after installing Azure CLI")
+                logger.info(
+                    "   OR run this script from a fresh terminal after installing Azure CLI"
+                )
                 logger.info("")
-                response2 = input("Continue without Azure login check? (y/n) [n]: ").strip().lower()
+                response2 = (
+                    input("Continue without Azure login check? (y/n) [n]: ")
+                    .strip()
+                    .lower()
+                )
                 if response2 != "y":
                     sys.exit(1)
-                logger.info("⚠️  Skipping Azure login check - backend may fail if Azure credentials are missing")
+                logger.info(
+                    "⚠️  Skipping Azure login check - backend may fail if Azure credentials are missing"
+                )
                 logger.info("")
                 return
             else:
                 logger.error("❌ Azure CLI is REQUIRED to run the backend.")
                 logger.info("   Install from: https://aka.ms/installazurecliwindows")
-                logger.info("   After installation, restart your terminal and try again.")
+                logger.info(
+                    "   After installation, restart your terminal and try again."
+                )
                 sys.exit(1)
 
     try:
@@ -222,12 +243,18 @@ def check_azure_login() -> None:
         return
     except FileNotFoundError:
         logger.error("❌ Azure CLI not found.")
-        logger.error("   Install from: https://aka.ms/installazurecliwindows" if platform.system() == "Windows" else "https://docs.microsoft.com/en-us/cli/azure/install-azure-cli")
+        logger.error(
+            "   Install from: https://aka.ms/installazurecliwindows"
+            if platform.system() == "Windows"
+            else "https://docs.microsoft.com/en-us/cli/azure/install-azure-cli"
+        )
         logger.error("   Azure CLI is REQUIRED to run the backend.")
         sys.exit(1)
     except subprocess.TimeoutExpired:
         logger.warning("⚠️  Azure CLI check timed out.")
-        response = input("Continue without Azure login check? (y/n) [n]: ").strip().lower()
+        response = (
+            input("Continue without Azure login check? (y/n) [n]: ").strip().lower()
+        )
         if response != "y":
             sys.exit(1)
         return
@@ -236,19 +263,19 @@ def check_azure_login() -> None:
         logger.warning("⚠️  Not logged into Azure.")
         logger.info("   Azure login is REQUIRED to run the backend.")
         logger.info("")
-        
+
         response = input("Run 'az login' now? (y/n) [y]: ").strip().lower()
-        
+
         if response == "n":
             logger.error("❌ Cannot start backend without Azure login.")
             sys.exit(1)
-        
+
         # Run az login
         logger.info("")
         logger.info("🔐 Running 'az login'...")
         logger.info("   Follow the prompts in your browser to authenticate.")
         logger.info("")
-        
+
         try:
             subprocess.run([az_command, "login"], check=True)
             logger.info("")
@@ -284,9 +311,7 @@ def activate_and_start_backend(env_name: str) -> None:
         logger.info("   • Install Python dependencies (pip)")
         logger.info("   • Install LibreOffice (optional document processing)")
         logger.info("")
-        setup_response = (
-            input("Run first-time setup now? (y/n) [n]: ").strip().lower()
-        )
+        setup_response = input("Run first-time setup now? (y/n) [n]: ").strip().lower()
         logger.info("")
 
         if setup_response == "y":

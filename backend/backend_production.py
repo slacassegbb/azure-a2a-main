@@ -1,7 +1,7 @@
 """Production backend API server for A2A system.
 
 This starts a FastAPI-only server with WebSocket integration for local development.
-Configured with open CORS and hardcoded environment variables.
+Configured with open CORS and environment variables from config.py.
 Exposes only the API endpoints, no UI.
 
 Usage:
@@ -11,19 +11,10 @@ Usage:
 import os
 from pathlib import Path
 
-# Resolve important backend directories up front so path-dependent imports work
-BASE_DIR = Path(__file__).resolve().parent
-DATA_DIR = BASE_DIR / "data"
-UPLOADS_DIR = BASE_DIR / "uploads"
-HOSTS_DIR = BASE_DIR / "hosts"
-
-# Ensure critical directories exist when the backend boots
-DATA_DIR.mkdir(parents=True, exist_ok=True)
-UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
-
 # Ensure backend directory is on sys.path for consistent imports regardless of cwd
 import sys
 
+BASE_DIR = Path(__file__).resolve().parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
@@ -32,9 +23,8 @@ from dotenv import load_dotenv
 ROOT_ENV_PATH = Path(__file__).resolve().parents[1] / ".env"
 load_dotenv(dotenv_path=ROOT_ENV_PATH, override=False)
 
-# Set default environment variables if not provided
+# Set default environment variables if not provided (for backward compatibility)
 os.environ.setdefault("A2A_HOST", "FOUNDRY")
-# Configure for managed identity authentication (recommended for production)
 os.environ.setdefault("A2A_UI_HOST", "0.0.0.0")
 os.environ.setdefault("A2A_UI_PORT", "12000")
 os.environ.setdefault("DEBUG_MODE", "false")
@@ -52,17 +42,27 @@ os.environ.setdefault(
 # WebSocket Configuration for local development
 os.environ.setdefault("WEBSOCKET_SERVER_URL", "http://localhost:8080")
 
-# Configure for Managed Identity authentication
-# Replace with your managed identity's client ID
+# Import configuration and logging
+from config import config, display_config_summary
+from log_config import (
+    log_debug,
+    log_info,
+    log_success,
+    log_warning,
+    log_error,
+    log_websocket_debug,
+    log_a2a_debug,
+    log_voice_debug,
+    LogCategory,
+)
 
-# When running in Azure Container Apps, this will automatically use managed identity
+# Display configuration on startup
+if config.debug_mode or config.verbose_logging:
+    display_config_summary()
 
-# Import logging config
-from log_config import log_debug
-
-log_debug(f"Environment loaded, A2A_HOST: {os.environ.get('A2A_HOST')}")
-log_debug(f"WebSocket URL: {os.environ.get('WEBSOCKET_SERVER_URL')}")
-log_debug(f"Azure Tenant ID: {os.environ.get('AZURE_TENANT_ID')}")
+log_debug(f"A2A_HOST: {config.a2a_host}", LogCategory.SYSTEM)
+log_debug(f"WebSocket URL: {config.websocket_server_url}", LogCategory.SYSTEM)
+log_debug(f"Azure Tenant ID: {config.azure_tenant_id}", LogCategory.SYSTEM)
 
 import httpx
 import uvicorn
@@ -70,7 +70,17 @@ import uuid
 import mimetypes
 import time
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, UploadFile, File, Request, HTTPException, Depends, WebSocket, WebSocketDisconnect, Query
+from fastapi import (
+    FastAPI,
+    UploadFile,
+    File,
+    Request,
+    HTTPException,
+    Depends,
+    WebSocket,
+    WebSocketDisconnect,
+    Query,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import JSONResponse
@@ -83,7 +93,9 @@ from service.websocket_server import (
     start_websocket_server,
     stop_websocket_server,
     set_auth_service,
+    websocket_manager,
 )
+from service.async_task_queue import AsyncTaskQueue, AsyncTask, TaskStatus
 from service.agent_registry import get_registry
 from pydantic import BaseModel
 from datetime import datetime, timedelta, UTC
@@ -93,9 +105,9 @@ import json
 from dataclasses import dataclass
 from typing import Optional, Dict, Any, List, Set
 
-# Authentication constants and classes
-SECRET_KEY = os.environ.get("SECRET_KEY", "change-me")
-ALGORITHM = os.environ.get("JWT_ALGORITHM", "HS256")
+# Authentication constants from config
+SECRET_KEY = config.secret_key
+ALGORITHM = config.jwt_algorithm
 
 
 @dataclass
@@ -115,7 +127,9 @@ class User:
 class AuthService:
     """Handles user authentication and JWT token management using JSON file storage."""
 
-    def __init__(self, users_file: Path | str = DATA_DIR / "users.json"):
+    def __init__(self, users_file: Path | str = None):
+        if users_file is None:
+            users_file = config.users_file
         self.users_file = Path(users_file)
         self.users: Dict[str, User] = {}
         # Track active users (user_data dict keyed by user_id)
@@ -444,18 +458,19 @@ class AuthService:
 @dataclass
 class AuthenticatedConnection:
     """Represents an authenticated WebSocket connection."""
+
     websocket: WebSocket
     user_data: Dict[str, Any]
     connected_at: float
-    
+
     @property
     def user_id(self) -> str:
         return self.user_data.get("user_id", "anonymous")
-    
+
     @property
     def username(self) -> str:
         return self.user_data.get("name", "Anonymous")
-    
+
     @property
     def email(self) -> str:
         return self.user_data.get("email", "")
@@ -463,7 +478,7 @@ class AuthenticatedConnection:
 
 class WebSocketManager:
     """Manages WebSocket connections and event broadcasting."""
-    
+
     def __init__(self, auth_service: AuthService):
         self.active_connections: Set[WebSocket] = set()
         self.authenticated_connections: Dict[WebSocket, AuthenticatedConnection] = {}
@@ -471,42 +486,44 @@ class WebSocketManager:
         self.max_history = 100
         self.auth_service = auth_service
         print("[WebSocketManager] ✅ Initialized")
-    
+
     async def connect(self, websocket: WebSocket, token: Optional[str] = None):
         """Connect a new WebSocket client with optional authentication."""
         await websocket.accept()
         self.active_connections.add(websocket)
-        
+
         print(f"[WebSocket] New connection from {websocket.client}")
-        
+
         # Authenticate if token provided
         if token:
             user_data = self.auth_service.verify_token(token)
             if user_data:
                 auth_conn = AuthenticatedConnection(
-                    websocket=websocket,
-                    user_data=user_data,
-                    connected_at=time.time()
+                    websocket=websocket, user_data=user_data, connected_at=time.time()
                 )
                 self.authenticated_connections[websocket] = auth_conn
                 self.auth_service.add_active_user(user_data)
-                print(f"[WebSocket] ✅ Authenticated user: {auth_conn.username} ({auth_conn.email})")
-                
+                print(
+                    f"[WebSocket] ✅ Authenticated user: {auth_conn.username} ({auth_conn.email})"
+                )
+
                 # Send welcome message
                 welcome = {
                     "eventType": "connection_established",
                     "data": {
                         "authenticated": True,
                         "user": user_data,
-                        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-                    }
+                        "timestamp": time.strftime(
+                            "%Y-%m-%d %H:%M:%S", time.localtime()
+                        ),
+                    },
                 }
                 await websocket.send_text(json.dumps(welcome))
             else:
                 print(f"[WebSocket] ⚠️ Invalid token provided")
         else:
             print(f"[WebSocket] ℹ️ Unauthenticated connection")
-        
+
         # Send initial agent registry sync with LIVE agents to newly connected client
         try:
             # Get live connected agents from agent_server (NOT the registry)
@@ -519,51 +536,60 @@ class WebSocketManager:
                         "eventType": "agent_registry_sync",
                         "data": {
                             "agents": agents,
-                            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-                        }
+                            "timestamp": time.strftime(
+                                "%Y-%m-%d %H:%M:%S", time.localtime()
+                            ),
+                        },
                     }
                     await websocket.send_text(json.dumps(initial_sync))
-                    print(f"[WebSocket] 📤 Sent initial agent registry sync ({len(agents)} LIVE agents) to new client")
+                    print(
+                        f"[WebSocket] 📤 Sent initial agent registry sync ({len(agents)} LIVE agents) to new client"
+                    )
                 else:
-                    print(f"[WebSocket] ⚠️ Failed to get live agents: {agent_data.get('error')}")
+                    print(
+                        f"[WebSocket] ⚠️ Failed to get live agents: {agent_data.get('error')}"
+                    )
             else:
                 print(f"[WebSocket] ⚠️ Agent server not available for initial sync")
         except Exception as e:
             print(f"[WebSocket] ⚠️ Failed to send initial agent registry: {e}")
             import traceback
+
             print(f"[WebSocket] Traceback:\n{traceback.format_exc()}")
-        
+
         # Send connection count to all clients
         await self.broadcast_connection_count()
-        
+
         print(f"[WebSocket] Total connections: {len(self.active_connections)}")
-    
+
     def disconnect(self, websocket: WebSocket):
         """Disconnect a WebSocket client."""
         print(f"[WebSocket] Disconnecting client {websocket.client}")
-        
+
         # Remove from authenticated connections and update active users
         if websocket in self.authenticated_connections:
             auth_conn = self.authenticated_connections.pop(websocket)
             self.auth_service.remove_active_user(auth_conn.user_data)
             print(f"[WebSocket] User logged out: {auth_conn.username}")
-        
+
         # Remove from active connections
         self.active_connections.discard(websocket)
-        
+
         print(f"[WebSocket] Total connections: {len(self.active_connections)}")
-    
-    def get_connection_info(self, websocket: WebSocket) -> Optional[AuthenticatedConnection]:
+
+    def get_connection_info(
+        self, websocket: WebSocket
+    ) -> Optional[AuthenticatedConnection]:
         """Get authentication info for a connection."""
         return self.authenticated_connections.get(websocket)
-    
+
     async def broadcast_event(self, event: Dict[str, Any]) -> int:
         """Broadcast an event to all connected clients."""
         # Add to history
         self.event_history.append(event)
         if len(self.event_history) > self.max_history:
             self.event_history.pop(0)
-        
+
         # Send to all connections
         disconnected = []
         for connection in self.active_connections:
@@ -572,21 +598,21 @@ class WebSocketManager:
             except Exception as e:
                 print(f"[WebSocket] ❌ Error sending to client: {e}")
                 disconnected.append(connection)
-        
+
         # Clean up disconnected clients
         for connection in disconnected:
             self.disconnect(connection)
-        
+
         return len(self.active_connections)
-    
+
     async def broadcast_connection_count(self):
         """Broadcast updated connection count to all clients."""
         event = {
             "eventType": "connection_count",
             "data": {
                 "total": len(self.active_connections),
-                "authenticated": len(self.authenticated_connections)
-            }
+                "authenticated": len(self.authenticated_connections),
+            },
         }
         await self.broadcast_event(event)
 
@@ -625,12 +651,13 @@ class HTTPXClientWrapper:
 httpx_client_wrapper = HTTPXClientWrapper()
 agent_server = None
 websocket_streamer = None
+async_task_queue = None  # Global async task queue
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """FastAPI lifespan context manager for startup and shutdown."""
-    global websocket_streamer, agent_server
+    global websocket_streamer, agent_server, async_task_queue
 
     print("[INFO] Starting A2A Backend API...")
 
@@ -640,13 +667,16 @@ async def lifespan(app: FastAPI):
 
     # Start WebSocket server for UI communication
     # Uses environment variables for flexibility across environments
-    websocket_host = os.getenv("A2A_UI_HOST", "localhost")
-    websocket_port = int(os.getenv("WEBSOCKET_PORT", "8080"))
-    
+    websocket_host = config.host
+    websocket_port = config.websocket_port
+
     try:
         start_websocket_server(host=websocket_host, port=websocket_port)
-        print(f"[INFO] WebSocket server started successfully on ws://{websocket_host}:{websocket_port}")
-        
+        log_success(
+            f"WebSocket server started on ws://{websocket_host}:{websocket_port}",
+            LogCategory.WEBSOCKET,
+        )
+
         # Give the WebSocket server a moment to start listening
         import asyncio
 
@@ -685,6 +715,91 @@ async def lifespan(app: FastAPI):
         print(f"[ERROR] Error details: {str(e)}")
         # Continue startup even if this fails
 
+    # Initialize Async Task Queue for voice integration
+    print("[STARTUP] Initializing async task queue...")
+    try:
+        async_task_queue = AsyncTaskQueue(max_workers=5, queue_size=10000)
+
+        # Define result callback - publishes A2A results to WebSocket
+        async def on_result(task: AsyncTask, result: Dict[str, Any]):
+            print(f"[AsyncQueue] ✅ Task {task.task_id} completed, broadcasting result")
+            await websocket_manager.broadcast_event(
+                {
+                    "eventType": "a2a_response",
+                    "data": {
+                        "task_id": task.task_id,
+                        "voice_call_id": task.voice_call_id,
+                        "message_id": result.get("message_id"),
+                        "context_id": result.get("context_id"),
+                        "result": result,
+                    },
+                }
+            )
+
+        # Define error callback - publishes errors to WebSocket
+        async def on_error(task: AsyncTask, error: str):
+            print(f"[AsyncQueue] ❌ Task {task.task_id} failed: {error}")
+            await websocket_manager.broadcast_event(
+                {
+                    "eventType": "a2a_error",
+                    "data": {
+                        "task_id": task.task_id,
+                        "voice_call_id": task.voice_call_id,
+                        "error": error,
+                    },
+                }
+            )
+
+        # Attach callbacks
+        async_task_queue.on_result = on_result
+        async_task_queue.on_error = on_error
+
+        # Define processing function
+        async def process_a2a_task(task: AsyncTask) -> Dict[str, Any]:
+            """Process A2A message using the conversation server."""
+            print(f"[AsyncQueue] Processing task {task.task_id}")
+
+            # Extract message data
+            message_data = task.message
+            agent_mode = message_data.get("params", {}).get("agentMode", False)
+            enable_inter_agent_memory = message_data.get("params", {}).get(
+                "enableInterAgentMemory", False
+            )
+            workflow = message_data.get("params", {}).get("workflow")
+
+            # Process message through agent_server
+            if agent_server and hasattr(agent_server, "manager"):
+                from a2a.types import Message
+                from service.server.server import get_message_id, get_context_id
+
+                # Transform and create message
+                transformed_params = agent_server._transform_message_data(
+                    message_data["params"]
+                )
+                message = Message(**transformed_params)
+                message = agent_server.manager.sanitize_message(message)
+
+                # Process message
+                await agent_server.manager.process_message(
+                    message, agent_mode, enable_inter_agent_memory, workflow
+                )
+
+                return {
+                    "status": "completed",
+                    "message_id": get_message_id(message),
+                    "context_id": get_context_id(message),
+                    "task_id": task.task_id,
+                }
+            else:
+                raise Exception("Agent server not available")
+
+        # Start workers
+        await async_task_queue.start(process_func=process_a2a_task)
+        print("[STARTUP] ✅ Async task queue started (5 workers, in-memory)")
+    except Exception as e:
+        print(f"[ERROR] Failed to initialize async task queue: {e}")
+        async_task_queue = None
+
     print("[INFO] A2A Backend API startup complete")
 
     yield
@@ -693,6 +808,12 @@ async def lifespan(app: FastAPI):
     print("=" * 80)
     print("[SHUTDOWN] Shutting down A2A Backend API...")
     print("=" * 80)
+
+    # Stop async task queue
+    if async_task_queue:
+        await async_task_queue.stop()
+        print("[SHUTDOWN] ✅ Async task queue stopped")
+
     await httpx_client_wrapper.stop()
     await cleanup_websocket_streamer()
     print("[SHUTDOWN] ✅ A2A Backend API shutdown complete")
@@ -710,7 +831,7 @@ def main():
     print("=" * 80)
     print("[INIT] Initializing A2A Backend API...")
     print("=" * 80)
-    
+
     # Initialize auth service
     print("[INIT] Creating AuthService...")
     auth_service = AuthService()
@@ -743,113 +864,126 @@ def main():
 
     # WebSocket endpoint for real-time events
     @app.websocket("/events")
-    async def websocket_endpoint(websocket: WebSocket, token: Optional[str] = Query(None)):
+    async def websocket_endpoint(
+        websocket: WebSocket, token: Optional[str] = Query(None)
+    ):
         """WebSocket endpoint for real-time event streaming with optional authentication."""
         print(f"[WebSocket] 🔌 New connection attempt from {websocket.client}")
-        
+
         await websocket_manager.connect(websocket, token)
         print(f"[WebSocket] ✅ Client connected successfully: {websocket.client}")
-        
+
         try:
             while True:
                 # Keep connection alive and handle client messages
                 data = await websocket.receive_text()
-                
+
                 # Parse incoming message
                 try:
                     message = json.loads(data)
                     message_type = message.get("type")
-                    print(f"[WebSocket] 📨 Received message type: {message_type} from {websocket.client}")
-                    
+                    print(
+                        f"[WebSocket] 📨 Received message type: {message_type} from {websocket.client}"
+                    )
+
                     if message_type == "chat":
                         # Handle chat message
                         auth_conn = websocket_manager.get_connection_info(websocket)
                         if auth_conn:
                             # Authenticated user sending chat message
                             chat_event = {
-                                "eventType": "chat_message", 
+                                "eventType": "chat_message",
                                 "data": {
                                     "user_id": auth_conn.user_id,
                                     "username": auth_conn.username,
                                     "message": message.get("text", ""),
-                                    "timestamp": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-                                }
+                                    "timestamp": time.strftime(
+                                        "%Y-%m-%d %H:%M:%S", time.localtime()
+                                    ),
+                                },
                             }
-                            
+
                             # Broadcast to all clients
                             await websocket_manager.broadcast_event(chat_event)
-                            print(f"[WebSocket] 💬 Chat from {auth_conn.username}: {message.get('text', '')[:50]}...")
+                            print(
+                                f"[WebSocket] 💬 Chat from {auth_conn.username}: {message.get('text', '')[:50]}..."
+                            )
                         else:
                             # Anonymous user - reject chat
                             error_event = {
                                 "eventType": "error",
-                                "data": {
-                                    "message": "Authentication required for chat"
-                                }
+                                "data": {"message": "Authentication required for chat"},
                             }
                             await websocket.send_text(json.dumps(error_event))
-                    
+
                     elif message_type == "shared_message":
                         # Handle shared message that should be broadcast to all clients
                         message_data = message.get("message", {})
-                        
+
                         # Create the event to broadcast
                         shared_event = {
                             "eventType": "shared_message",
-                            "data": {
-                                "message": message_data
-                            }
+                            "data": {"message": message_data},
                         }
-                        
+
                         # Broadcast to all clients (including sender)
                         await websocket_manager.broadcast_event(shared_event)
-                        print(f"[WebSocket] 📢 Shared message broadcasted: {message_data.get('content', '')[:50]}...")
-                    
+                        print(
+                            f"[WebSocket] 📢 Shared message broadcasted: {message_data.get('content', '')[:50]}..."
+                        )
+
                     elif message_type == "shared_inference_started":
                         # Handle shared inference started event
                         inference_data = message.get("data", {})
-                        
+
                         # Create the event to broadcast
                         inference_event = {
                             "eventType": "shared_inference_started",
-                            "data": inference_data
+                            "data": inference_data,
                         }
-                        
+
                         # Broadcast to all clients (including sender)
                         await websocket_manager.broadcast_event(inference_event)
-                        print(f"[WebSocket] 🚀 Inference started for conversation: {inference_data.get('conversationId')}")
-                    
+                        print(
+                            f"[WebSocket] 🚀 Inference started for conversation: {inference_data.get('conversationId')}"
+                        )
+
                     elif message_type == "shared_inference_ended":
                         # Handle shared inference ended event
                         inference_data = message.get("data", {})
-                        
+
                         # Create the event to broadcast
                         inference_event = {
-                            "eventType": "shared_inference_ended", 
-                            "data": inference_data
+                            "eventType": "shared_inference_ended",
+                            "data": inference_data,
                         }
-                        
+
                         # Broadcast to all clients (including sender)
                         await websocket_manager.broadcast_event(inference_event)
-                        print(f"[WebSocket] ✅ Inference ended for conversation: {inference_data.get('conversationId')}")
-                    
+                        print(
+                            f"[WebSocket] ✅ Inference ended for conversation: {inference_data.get('conversationId')}"
+                        )
+
                     elif message_type == "ping":
                         # Handle ping/pong for keepalive
                         await websocket.send_text(json.dumps({"type": "pong"}))
                         print(f"[WebSocket] 🏓 Ping/pong with {websocket.client}")
-                    
+
                     else:
                         print(f"[WebSocket] ⚠️ Unknown message type: {message_type}")
-                        
+
                 except json.JSONDecodeError:
-                    print(f"[WebSocket] ❌ Invalid JSON received from {websocket.client}: {data}")
-                    
+                    print(
+                        f"[WebSocket] ❌ Invalid JSON received from {websocket.client}: {data}"
+                    )
+
         except WebSocketDisconnect:
             print(f"[WebSocket] 👋 Client disconnected: {websocket.client}")
             websocket_manager.disconnect(websocket)
         except Exception as e:
             print(f"[WebSocket] ❌ Error: {e}")
             import traceback
+
             print(f"[WebSocket] Traceback:\n{traceback.format_exc()}")
             websocket_manager.disconnect(websocket)
 
@@ -858,17 +992,22 @@ def main():
     async def post_event(event_data: Dict[str, Any]):
         """HTTP endpoint for posting events to WebSocket clients."""
         try:
-            print(f"[WebSocket] 📡 Broadcasting event via HTTP: {event_data.get('eventType', 'unknown')}")
+            print(
+                f"[WebSocket] 📡 Broadcasting event via HTTP: {event_data.get('eventType', 'unknown')}"
+            )
             client_count = await websocket_manager.broadcast_event(event_data)
             print(f"[WebSocket] ✅ Event broadcasted to {client_count} clients")
-            return JSONResponse({
-                "success": True,
-                "clientCount": client_count,
-                "eventType": event_data.get('eventType', 'unknown')
-            })
+            return JSONResponse(
+                {
+                    "success": True,
+                    "clientCount": client_count,
+                    "eventType": event_data.get("eventType", "unknown"),
+                }
+            )
         except Exception as e:
             print(f"[WebSocket] ❌ Error broadcasting event: {e}")
             import traceback
+
             print(f"[WebSocket] Traceback:\n{traceback.format_exc()}")
             raise HTTPException(status_code=500, detail=str(e))
 
@@ -1132,7 +1271,7 @@ def main():
     async def get_azure_token():
         """Return Azure AI Foundry API key for Voice Live API."""
         # Using API key for Azure AI Foundry Voice Live API
-        api_key = os.getenv("VOICE_LIVE_API_KEY")
+        api_key = config.voice_live_api_key
         if not api_key:
             raise HTTPException(
                 status_code=500,
@@ -1352,10 +1491,11 @@ Read-Host "Press Enter to close this window"
             from azure.identity import DefaultAzureCredential
 
             # Get Azure storage account name
-            storage_account_name = os.getenv("AZURE_STORAGE_ACCOUNT_NAME")
+            storage_account_name = config.azure_storage_account_name
             if not storage_account_name:
-                print(
-                    f"[WARN] AZURE_STORAGE_ACCOUNT_NAME not set, returning local path"
+                log_warning(
+                    "AZURE_STORAGE_ACCOUNT_NAME not set, returning local path",
+                    LogCategory.STORAGE,
                 )
                 return f"/uploads/{file_id}"
 
@@ -1363,10 +1503,9 @@ Read-Host "Press Enter to close this window"
             account_url = f"https://{storage_account_name}.blob.core.windows.net"
             credential = DefaultAzureCredential()
             blob_service_client = BlobServiceClient(
-                account_url=account_url,
-                credential=credential
+                account_url=account_url, credential=credential
             )
-            container_name = os.getenv("AZURE_BLOB_CONTAINER", "a2a-files")
+            container_name = config.azure_blob_container
 
             # Generate blob name
             safe_file_name = file_name.replace("/", "_").replace("\\", "_")
@@ -1441,7 +1580,7 @@ Read-Host "Press Enter to close this window"
 
             # Create unique filename with extension
             filename = f"{file_id}{file_extension}"
-            file_path = UPLOADS_DIR / filename
+            file_path = config.UPLOADS_DIR / filename
 
             # Read file content
             content = await file.read()
@@ -1521,7 +1660,7 @@ Read-Host "Press Enter to close this window"
                 # Change to the multiagent directory so relative paths work
                 original_cwd = os.getcwd()
                 try:
-                    multiagent_dir = HOSTS_DIR / "multiagent"
+                    multiagent_dir = config.HOSTS_DIR / "multiagent"
                     os.chdir(multiagent_dir)
 
                     transcript = process_audio(str(file_path), return_text=True)
@@ -1581,6 +1720,89 @@ Read-Host "Press Enter to close this window"
         except Exception as e:
             print(f"[ERROR] Voice upload failed: {e}")
             return {"success": False, "error": str(e)}
+
+    # Async Queue Monitoring Endpoints
+    @app.get("/api/queue/metrics")
+    async def queue_metrics():
+        """Get async task queue metrics."""
+        if not async_task_queue:
+            return JSONResponse(
+                status_code=503, content={"error": "Async task queue not initialized"}
+            )
+
+        metrics = async_task_queue.get_metrics()
+        return {"success": True, "metrics": metrics, "timestamp": time.time()}
+
+    @app.get("/api/queue/health")
+    async def queue_health():
+        """Check async task queue health."""
+        if not async_task_queue:
+            return JSONResponse(
+                status_code=503,
+                content={"healthy": False, "error": "Queue not initialized"},
+            )
+
+        is_healthy = async_task_queue.is_healthy()
+        status_code = 200 if is_healthy else 503
+
+        return JSONResponse(
+            status_code=status_code,
+            content={
+                "healthy": is_healthy,
+                "workers": async_task_queue.max_workers,
+                "queue_size": async_task_queue.queue.qsize()
+                if async_task_queue.queue
+                else 0,
+            },
+        )
+
+    @app.get("/api/queue/dlq")
+    async def queue_dlq():
+        """Get dead letter queue (failed tasks)."""
+        if not async_task_queue:
+            return JSONResponse(
+                status_code=503, content={"error": "Async task queue not initialized"}
+            )
+
+        failed_tasks = []
+        for task_id, (
+            task,
+            error,
+            failed_at,
+        ) in async_task_queue.dead_letter_queue.items():
+            failed_tasks.append(
+                {
+                    "task_id": task_id,
+                    "error": error,
+                    "retry_count": task.retry_count,
+                    "failed_at": failed_at,
+                    "voice_call_id": task.voice_call_id,
+                    "user_id": task.user_id,
+                }
+            )
+
+        return {
+            "success": True,
+            "failed_tasks": failed_tasks,
+            "count": len(failed_tasks),
+        }
+
+    @app.post("/api/queue/dlq/clear")
+    async def clear_dlq():
+        """Clear the dead letter queue."""
+        if not async_task_queue:
+            return JSONResponse(
+                status_code=503, content={"error": "Async task queue not initialized"}
+            )
+
+        count = len(async_task_queue.dead_letter_queue)
+        async_task_queue.dead_letter_queue.clear()
+
+        return {
+            "success": True,
+            "cleared": count,
+            "message": f"Cleared {count} failed tasks",
+        }
 
     # Add a root endpoint that shows available endpoints
     @app.get("/")
