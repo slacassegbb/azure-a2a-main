@@ -1160,6 +1160,29 @@ export function AgentNetworkDashboard() {
   const clearMemory = async () => {
     setIsClearingMemory(true)
     try {
+      console.log('[AgentDashboard] Starting comprehensive clear and reset...')
+      
+      // Step 1: Clear conversation history (messages) in UI
+      console.log('[AgentDashboard] Clearing conversation history...')
+      setMessages([])
+      
+      // Step 2: Reset conversation ID to start fresh A2A thread
+      const newConversationId = `visualizer-context-${Date.now()}`
+      console.log('[AgentDashboard] Resetting conversation ID:', newConversationId)
+      setCurrentConversationId(newConversationId)
+      
+      // Step 3: Restart WebSocket connection if voice is active
+      if (voiceLive.isRecording) {
+        console.log('[AgentDashboard] Stopping and restarting voice WebSocket...')
+        voiceLive.stopVoiceConversation()
+        // Wait a moment for cleanup
+        await new Promise(resolve => setTimeout(resolve, 500))
+        // Restart voice conversation with fresh context
+        await voiceLive.startVoiceConversation()
+      }
+      
+      // Step 4: Clear backend memory index
+      console.log('[AgentDashboard] Clearing backend memory index...')
       const baseUrl = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
       const response = await fetch(`${baseUrl}/clear-memory`, {
         method: 'POST',
@@ -1171,13 +1194,15 @@ export function AgentNetworkDashboard() {
       const data = await response.json()
 
       if (data.success) {
-        alert('Memory index cleared successfully!')
+        console.log('[AgentDashboard] ✅ Complete reset successful!')
+        alert('System reset: Memory cleared, conversation reset, and WebSocket restarted!')
       } else {
-        alert('Failed to clear memory: ' + (data.message || 'Unknown error'))
+        console.warn('[AgentDashboard] Backend memory clear failed:', data.message)
+        alert('UI reset successful, but backend memory clear failed: ' + (data.message || 'Unknown error'))
       }
     } catch (error) {
-      console.error('[AgentDashboard] Error clearing memory:', error)
-      alert('Error clearing memory: ' + error)
+      console.error('[AgentDashboard] Error during clear and reset:', error)
+      alert('Error during system reset: ' + error)
     } finally {
       setIsClearingMemory(false)
     }
@@ -1791,79 +1816,119 @@ export function AgentNetworkDashboard() {
               </div>
             )}
           </div>
-          <div className="absolute top-4 right-4 z-10 flex flex-col gap-2 items-end">
-            <div className="flex gap-2 items-center">
-              {voiceLive.isRecording && (
-                <button
-                  onClick={voiceLive.toggleMute}
-                  className={`p-2 rounded-lg transition-all duration-300 shadow-lg hover:shadow-xl hover:scale-105 active:scale-95 ${
-                    voiceLive.isMuted
-                      ? 'bg-red-600 hover:bg-red-500 text-white'
-                      : 'bg-slate-700 hover:bg-slate-600 text-slate-300'
-                  }`}
-                  title={voiceLive.isMuted ? 'Unmute microphone' : 'Mute microphone'}
-                >
-                  {voiceLive.isMuted ? <MicOff size={16} /> : <Mic size={16} />}
-                </button>
-              )}
-              <button
-                onClick={openEditDialog}
-                className="p-2 bg-slate-700 text-slate-300 rounded-lg hover:bg-slate-600 transition-all duration-300 shadow-lg hover:shadow-xl hover:scale-105 active:scale-95"
-                title="Edit request message"
-              >
-                <Pencil size={16} />
-              </button>
-              <button
-                onClick={voiceLive.isRecording ? voiceLive.stopVoiceConversation : voiceLive.startVoiceConversation}
-                className={`p-2 rounded-lg transition-all duration-300 shadow-lg hover:shadow-xl hover:scale-105 active:scale-95 ${
-                  voiceLive.isRecording 
-                    ? 'bg-red-600 hover:bg-red-500 text-white animate-pulse' 
-                    : 'bg-emerald-600 hover:bg-emerald-500 text-white'
-                }`}
-                title={voiceLive.isRecording ? 'Stop voice conversation' : 'Start voice conversation'}
-              >
-                {voiceLive.isRecording ? <Phone size={16} /> : <Mic size={16} />}
-              </button>
-              <button
-                onClick={simulateRequest}
-                disabled={isSimulating || !isConnected}
-                className="px-5 py-2.5 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-lg font-semibold hover:from-indigo-500 hover:to-purple-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-300 shadow-lg hover:shadow-xl hover:scale-105 active:scale-95"
-                title={!isConnected ? 'Connect to backend to send requests' : 'Send request to agent network'}
-              >
-                {isSimulating ? "Processing..." : "Send Request"}
-              </button>
-            </div>
-            <button
-              onClick={clearMemory}
-              disabled={isClearingMemory || !isConnected}
-              className="px-5 py-2.5 bg-gradient-to-r from-rose-600 to-orange-600 text-white rounded-lg font-semibold hover:from-rose-500 hover:to-orange-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-300 shadow-lg hover:shadow-xl hover:scale-105 active:scale-95"
-              title={!isConnected ? 'Connect to backend to clear memory' : 'Clear inter-agent memory index'}
-            >
-              {isClearingMemory ? "Clearing..." : "Clear Memory"}
-            </button>
-            {!isConnected && (
-              <p className="text-xs text-amber-400">
-                Waiting for backend connection...
-              </p>
-            )}
-          </div>
+          {/* Top right corner intentionally empty - controls moved to bottom panel */}
           <canvas ref={canvasRef} className="w-full h-full" />
         </div>
 
         <div className="border-t border-slate-700 bg-slate-800 p-6">
           <div className="grid grid-cols-3 gap-6">
-            {kpis.map((kpi, index) => (
-              <Card key={index} className="bg-gradient-to-br from-slate-700 to-slate-800 border-slate-600 shadow-lg">
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                  <CardTitle className="text-sm font-medium text-slate-300">{kpi.title}</CardTitle>
-                  <div className="text-slate-400">{kpi.icon}</div>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold text-slate-100">{kpi.value}</div>
-                  <p className="text-xs text-emerald-400 mt-1 font-medium">{kpi.change} from last period</p>
-                </CardContent>
-              </Card>
-            ))}
+            {/* Active Agents KPI */}
+            <Card className="bg-gradient-to-br from-slate-700 to-slate-800 border-slate-600 shadow-lg">
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium text-slate-300">{kpis[0].title}</CardTitle>
+                <div className="text-slate-400">{kpis[0].icon}</div>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold text-slate-100">{kpis[0].value}</div>
+                <p className="text-xs text-emerald-400 mt-1 font-medium">{kpis[0].change} from last period</p>
+              </CardContent>
+            </Card>
+
+            {/* Events Processed KPI */}
+            <Card className="bg-gradient-to-br from-slate-700 to-slate-800 border-slate-600 shadow-lg">
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium text-slate-300">{kpis[1].title}</CardTitle>
+                <div className="text-slate-400">{kpis[1].icon}</div>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold text-slate-100">{kpis[1].value}</div>
+                <p className="text-xs text-emerald-400 mt-1 font-medium">{kpis[1].change} from last period</p>
+              </CardContent>
+            </Card>
+
+            {/* Controls Panel - Replaces Response Time KPI */}
+            <Card className="bg-gradient-to-br from-slate-700 to-slate-800 border-slate-600 shadow-lg">
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium text-slate-300">Controls</CardTitle>
+                <div className="text-slate-400">
+                  {!isConnected && (
+                    <div className="flex items-center gap-1">
+                      <div className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+                      <span className="text-xs text-amber-400">Connecting...</span>
+                    </div>
+                  )}
+                </div>
+              </CardHeader>
+              <CardContent className="p-2">
+                {/* 2x2 Quadrant Grid */}
+                <div className="grid grid-cols-2 grid-rows-2 gap-2 h-full">
+                  {/* Top-Left: Voice Controls */}
+                  <div className="flex items-center justify-center p-2">
+                    <div className="flex flex-col gap-1 items-center w-full max-w-[50%]">
+                      <button
+                        onClick={voiceLive.isRecording ? voiceLive.stopVoiceConversation : voiceLive.startVoiceConversation}
+                        className={`w-full py-1.5 rounded-lg transition-all duration-300 shadow-md hover:shadow-lg hover:scale-105 active:scale-95 text-xs font-semibold ${
+                          voiceLive.isRecording 
+                            ? 'bg-red-600 hover:bg-red-500 text-white animate-pulse' 
+                            : 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                        }`}
+                        title={voiceLive.isRecording ? 'Stop voice' : 'Start voice'}
+                      >
+                        {voiceLive.isRecording ? <Phone size={14} className="mx-auto" /> : <Mic size={14} className="mx-auto" />}
+                      </button>
+                      {voiceLive.isRecording && (
+                        <button
+                          onClick={voiceLive.toggleMute}
+                          className={`w-full py-1.5 rounded-lg transition-all duration-300 shadow-md hover:shadow-lg hover:scale-105 active:scale-95 text-xs ${
+                            voiceLive.isMuted
+                              ? 'bg-red-600 hover:bg-red-500 text-white'
+                              : 'bg-slate-600 hover:bg-slate-500 text-slate-300'
+                          }`}
+                          title={voiceLive.isMuted ? 'Unmute' : 'Mute'}
+                        >
+                          {voiceLive.isMuted ? <MicOff size={14} className="mx-auto" /> : <Mic size={14} className="mx-auto" />}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Top-Right: Send Request */}
+                  <div className="flex items-center justify-center p-2">
+                    <button
+                      onClick={simulateRequest}
+                      disabled={isSimulating || !isConnected}
+                      className="w-full max-w-[50%] py-2 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-lg font-semibold hover:from-indigo-500 hover:to-purple-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-300 shadow-md hover:shadow-lg hover:scale-105 active:scale-95 text-xs"
+                      title={!isConnected ? 'Connect to send' : 'Send request'}
+                    >
+                      {isSimulating ? "..." : "Send"}
+                    </button>
+                  </div>
+
+                  {/* Bottom-Left: Edit Message */}
+                  <div className="flex items-center justify-center p-2">
+                    <button
+                      onClick={openEditDialog}
+                      className="w-full max-w-[50%] py-2 bg-slate-600 text-slate-200 rounded-lg hover:bg-slate-500 transition-all duration-300 shadow-md hover:shadow-lg hover:scale-105 active:scale-95 text-xs font-semibold"
+                      title="Edit request"
+                    >
+                      <Pencil size={14} className="mx-auto" />
+                    </button>
+                  </div>
+
+                  {/* Bottom-Right: Clear Memory */}
+                  <div className="flex items-center justify-center p-2">
+                    <button
+                      onClick={clearMemory}
+                      disabled={isClearingMemory || !isConnected}
+                      className="w-full max-w-[50%] py-2 bg-gradient-to-r from-rose-600 to-orange-600 text-white rounded-lg font-semibold hover:from-rose-500 hover:to-orange-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-300 shadow-md hover:shadow-lg hover:scale-105 active:scale-95 text-xs"
+                      title={!isConnected ? 'Connect to clear' : 'Clear & reset'}
+                    >
+                      {isClearingMemory ? "..." : "Clear"}
+                    </button>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
           </div>
         </div>
       </div>
