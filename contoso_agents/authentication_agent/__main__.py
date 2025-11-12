@@ -7,7 +7,7 @@ from typing import List
 import click
 import uvicorn
 
-from .foundry_agent_executor import (
+from foundry_agent_executor import (
     create_foundry_agent_executor,
     initialize_foundry_agents_at_startup,
 )
@@ -71,7 +71,7 @@ def resolve_agent_url(bind_host: str, bind_port: int) -> str:
 
 # Import self-registration utility
 try:
-    from .utils.self_registration import register_with_host_agent, get_host_agent_url
+    from utils.self_registration import register_with_host_agent, get_host_agent_url
 
     SELF_REGISTRATION_AVAILABLE = True
     logger.info("✅ Self-registration utility loaded")

@@ -40,7 +40,7 @@ from service.types import (
 from .adk_host_manager import ADKHostManager, get_message_id
 from .application_manager import ApplicationManager
 from .in_memory_manager import InMemoryFakeAgentManager
-
+from .foundry_host_manager import FoundryHostManager
 
 def get_context_id(obj, default: str = None) -> str:
     """
@@ -108,7 +108,7 @@ def serialize_capabilities(capabilities) -> dict:
     }
 
 
-from .foundry_host_manager import FoundryHostManager
+
 
 ROOT_ENV_PATH = Path(__file__).resolve().parents[3] / ".env"
 load_dotenv(dotenv_path=ROOT_ENV_PATH, override=False)

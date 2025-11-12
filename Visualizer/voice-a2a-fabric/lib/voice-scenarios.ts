@@ -92,6 +92,7 @@ export const networkOutageScenario: VoiceScenario = {
 8. When results come back, explain findings in plain language and provide next steps
 
 **CRITICAL RULES:**
+- ANY TIME YOU RECEIVE A TOOL CALL RESPONSE, YOU MUST TELL THE USER RIGHT AWAY, regardless of where you are in your flow, if you see a tool call come in, you must tell the user the details.
 - NEVER wait silently - always keep talking between tool calls
 - Be empathetic about work urgency
 - Use plain language, not jargon

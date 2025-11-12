@@ -198,8 +198,32 @@ if (Test-Path $envFilePath) {
     
     Write-Host "✅ Loaded $($envVars.Count) environment variables" -ForegroundColor Green
     
+    # Extract Azure AI Foundry configuration
+    $azureSubId = if ($SubscriptionId) { $SubscriptionId } else { $envVars["AZURE_SUBSCRIPTION_ID"] }
+    if (!$azureSubId) {
+        $azureSubId = $currentSub.id
+    }
+    $azureRgName = $envVars["AZURE_RESOURCE_GROUP"]
+    $aiFoundryResourceName = $envVars["AZURE_AI_FOUNDRY_RESOURCE_NAME"]
+    $aiFoundryProjectName = $envVars["AZURE_AI_FOUNDRY_PROJECT_NAME"]
+    
+    # Construct Azure AI Foundry resource ID if components are available
+    if ($azureSubId -and $azureRgName -and $aiFoundryResourceName -and $aiFoundryProjectName) {
+        $aiProjectResourceId = "/subscriptions/$azureSubId/resourceGroups/$azureRgName/providers/Microsoft.CognitiveServices/accounts/$aiFoundryResourceName/projects/$aiFoundryProjectName"
+        Write-Host "✅ Constructed AI Foundry resource ID from .env:" -ForegroundColor Green
+        Write-Host "   $aiProjectResourceId" -ForegroundColor Gray
+    } else {
+        Write-Host "⚠️  Azure AI Foundry components not fully configured in .env" -ForegroundColor Yellow
+        Write-Host "   Required: AZURE_SUBSCRIPTION_ID, AZURE_RESOURCE_GROUP, AZURE_AI_FOUNDRY_RESOURCE_NAME, AZURE_AI_FOUNDRY_PROJECT_NAME" -ForegroundColor Yellow
+        $aiProjectResourceId = $null
+    }
+    
     # Validate required variables
     $requiredVars = @(
+        'AZURE_SUBSCRIPTION_ID',
+        'AZURE_RESOURCE_GROUP',
+        'AZURE_AI_FOUNDRY_RESOURCE_NAME',
+        'AZURE_AI_FOUNDRY_PROJECT_NAME',
         'AZURE_AI_FOUNDRY_PROJECT_ENDPOINT',
         'AZURE_OPENAI_GPT_API_BASE',
         'AZURE_OPENAI_GPT_API_VERSION',
@@ -555,6 +579,10 @@ if ($backendExists) {
             "WEBSOCKET_SERVER_URL=http://localhost:12000" `
             "LOG_LEVEL=$($envVars['LOG_LEVEL'])" `
             "AZURE_TENANT_ID=$($envVars['AZURE_TENANT_ID'])" `
+            "AZURE_SUBSCRIPTION_ID=$($envVars['AZURE_SUBSCRIPTION_ID'])" `
+            "AZURE_RESOURCE_GROUP=$($envVars['AZURE_RESOURCE_GROUP'])" `
+            "AZURE_AI_FOUNDRY_RESOURCE_NAME=$($envVars['AZURE_AI_FOUNDRY_RESOURCE_NAME'])" `
+            "AZURE_AI_FOUNDRY_PROJECT_NAME=$($envVars['AZURE_AI_FOUNDRY_PROJECT_NAME'])" `
             "AZURE_AI_FOUNDRY_PROJECT_ENDPOINT=$($envVars['AZURE_AI_FOUNDRY_PROJECT_ENDPOINT'])" `
             "AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME=$($envVars['AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME'])" `
             "AZURE_OPENAI_GPT_API_BASE=$($envVars['AZURE_OPENAI_GPT_API_BASE'])" `
@@ -632,11 +660,13 @@ Write-Host "✅ Key Vault access granted" -ForegroundColor Green
 
 Write-Host "🔐 Granting AI Foundry access to backend..." -ForegroundColor Cyan
 
-# Use the full Azure resource ID for the AI Foundry project
-    $aiProjectResourceId = "/subscriptions/06c3ae7e-1159-4ea8-954e-fbd478d9d003/resourceGroups/rg-owenv-7962/providers/Microsoft.CognitiveServices/accounts/owenv-foundry-resource/projects/owenv-foundry"
-    Write-Host "  📍 AI Foundry project resource ID: $aiProjectResourceId" -ForegroundColor Cyan
+# Use the constructed Azure AI Foundry resource ID from .env
+    if (!$aiProjectResourceId) {
+        Write-Host "⚠️  Skipping AI Foundry RBAC - resource ID not configured" -ForegroundColor Yellow
+    } else {
+        Write-Host "  📍 AI Foundry project resource ID: $aiProjectResourceId" -ForegroundColor Cyan
 
-    Write-Host "  🔐 Granting Azure AI User role..." -ForegroundColor Cyan
+        Write-Host "  🔐 Granting Azure AI User role..." -ForegroundColor Cyan
     az role assignment create `
         --role "Azure AI User" `
         --assignee $backendIdentity `
@@ -650,18 +680,19 @@ Write-Host "🔐 Granting AI Foundry access to backend..." -ForegroundColor Cyan
         --scope $aiProjectResourceId `
         --output none 2>$null
 
-    Write-Host "  ✅ Azure AI User and Azure AI Developer roles assigned at project scope" -ForegroundColor Green
+        Write-Host "  ✅ Azure AI User and Azure AI Developer roles assigned at project scope" -ForegroundColor Green
 
-    Write-Host "  ⏳ Waiting 10 seconds for role propagation..." -ForegroundColor Cyan
-    Start-Sleep -Seconds 10
+        Write-Host "  ⏳ Waiting 10 seconds for role propagation..." -ForegroundColor Cyan
+        Start-Sleep -Seconds 10
 
-    Write-Host "  🔄 Restarting backend to pick up new permissions..." -ForegroundColor Cyan
-    az containerapp revision restart `
-        --name backend `
-        --resource-group $ResourceGroup `
-        --output none 2>$null
+        Write-Host "  🔄 Restarting backend to pick up new permissions..." -ForegroundColor Cyan
+        az containerapp revision restart `
+            --name backend `
+            --resource-group $ResourceGroup `
+            --output none 2>$null
 
-    Write-Host "✅ Azure AI User role granted and backend restarted" -ForegroundColor Green
+        Write-Host "✅ Azure AI User role granted and backend restarted" -ForegroundColor Green
+    }
 
     if ($updateHealthChecks) {
     # Configure health probes (applies to both new and existing backends)
@@ -732,6 +763,10 @@ properties:
             "WEBSOCKET_SERVER_URL=http://localhost:12000" `
             "LOG_LEVEL=$($envVars['LOG_LEVEL'])" `
             "AZURE_TENANT_ID=$($envVars['AZURE_TENANT_ID'])" `
+            "AZURE_SUBSCRIPTION_ID=$($envVars['AZURE_SUBSCRIPTION_ID'])" `
+            "AZURE_RESOURCE_GROUP=$($envVars['AZURE_RESOURCE_GROUP'])" `
+            "AZURE_AI_FOUNDRY_RESOURCE_NAME=$($envVars['AZURE_AI_FOUNDRY_RESOURCE_NAME'])" `
+            "AZURE_AI_FOUNDRY_PROJECT_NAME=$($envVars['AZURE_AI_FOUNDRY_PROJECT_NAME'])" `
             "AZURE_AI_FOUNDRY_PROJECT_ENDPOINT=$($envVars['AZURE_AI_FOUNDRY_PROJECT_ENDPOINT'])" `
             "AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME=$($envVars['AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME'])" `
             "AZURE_OPENAI_GPT_API_BASE=$($envVars['AZURE_OPENAI_GPT_API_BASE'])" `
@@ -1228,6 +1263,10 @@ foreach ($agent in $agents) {
                 "A2A_HOST=https://$backendInternalFqdn" `
                 "LOG_LEVEL=$($envVars['LOG_LEVEL'])" `
                 "AZURE_TENANT_ID=$($envVars['AZURE_TENANT_ID'])" `
+                "AZURE_SUBSCRIPTION_ID=$($envVars['AZURE_SUBSCRIPTION_ID'])" `
+                "AZURE_RESOURCE_GROUP=$($envVars['AZURE_RESOURCE_GROUP'])" `
+                "AZURE_AI_FOUNDRY_RESOURCE_NAME=$($envVars['AZURE_AI_FOUNDRY_RESOURCE_NAME'])" `
+                "AZURE_AI_FOUNDRY_PROJECT_NAME=$($envVars['AZURE_AI_FOUNDRY_PROJECT_NAME'])" `
                 "AZURE_AI_FOUNDRY_PROJECT_ENDPOINT=$($envVars['AZURE_AI_FOUNDRY_PROJECT_ENDPOINT'])" `
                 "AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME=$($envVars['AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME'])" `
                 "AZURE_OPENAI_GPT_API_BASE=$($envVars['AZURE_OPENAI_GPT_API_BASE'])" `
@@ -1256,6 +1295,10 @@ foreach ($agent in $agents) {
                 "A2A_HOST=https://$backendInternalFqdn" `
                 "LOG_LEVEL=$($envVars['LOG_LEVEL'])" `
                 "AZURE_TENANT_ID=$($envVars['AZURE_TENANT_ID'])" `
+                "AZURE_SUBSCRIPTION_ID=$($envVars['AZURE_SUBSCRIPTION_ID'])" `
+                "AZURE_RESOURCE_GROUP=$($envVars['AZURE_RESOURCE_GROUP'])" `
+                "AZURE_AI_FOUNDRY_RESOURCE_NAME=$($envVars['AZURE_AI_FOUNDRY_RESOURCE_NAME'])" `
+                "AZURE_AI_FOUNDRY_PROJECT_NAME=$($envVars['AZURE_AI_FOUNDRY_PROJECT_NAME'])" `
                 "AZURE_AI_FOUNDRY_PROJECT_ENDPOINT=$($envVars['AZURE_AI_FOUNDRY_PROJECT_ENDPOINT'])" `
                 "AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME=$($envVars['AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME'])" `
                 "AZURE_OPENAI_GPT_API_BASE=$($envVars['AZURE_OPENAI_GPT_API_BASE'])" `
@@ -1300,18 +1343,21 @@ foreach ($agent in $agents) {
         --output none 2>$null
     
     # Grant Azure AI User and Developer roles for AI Foundry agent creation
-    $aiProjectResourceId = "/subscriptions/06c3ae7e-1159-4ea8-954e-fbd478d9d003/resourceGroups/rg-owenv-7962/providers/Microsoft.CognitiveServices/accounts/owenv-foundry-resource/projects/owenv-foundry"
-    az role assignment create `
-        --assignee $agentIdentity `
-        --role "Azure AI User" `
-        --scope $aiProjectResourceId `
-        --output none 2>$null
-    
-    az role assignment create `
-        --assignee $agentIdentity `
-        --role "Azure AI Developer" `
-        --scope $aiProjectResourceId `
-        --output none 2>$null
+    if ($aiProjectResourceId) {
+        az role assignment create `
+            --assignee $agentIdentity `
+            --role "Azure AI User" `
+            --scope $aiProjectResourceId `
+            --output none 2>$null
+        
+        az role assignment create `
+            --assignee $agentIdentity `
+            --role "Azure AI Developer" `
+            --scope $aiProjectResourceId `
+            --output none 2>$null
+    } else {
+        Write-Host "⚠️  Skipping AI Foundry RBAC for $agentName - resource ID not configured" -ForegroundColor Yellow
+    }
     
     # Get agent internal FQDN
     $agentInternalFqdn = "$agentName.internal.$envDefaultDomain"

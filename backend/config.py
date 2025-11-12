@@ -63,6 +63,13 @@ class Config:
     azure_tenant_id: Optional[str]
     azure_client_id: Optional[str]
     azure_client_secret: Optional[str]
+    azure_subscription_id: Optional[str]
+    azure_resource_group: Optional[str]
+
+    # Azure AI Foundry Configuration
+    azure_ai_foundry_resource_name: Optional[str]
+    azure_ai_foundry_project_name: Optional[str]
+    azure_ai_foundry_project_endpoint: Optional[str]
 
     # Azure AI Services
     azure_ai_service_endpoint: Optional[str]
@@ -144,6 +151,18 @@ def load_config() -> Config:
     Returns:
         Validated Config instance.
     """
+    # Load Azure AI Foundry components
+    azure_subscription_id = os.environ.get("AZURE_SUBSCRIPTION_ID")
+    azure_resource_group = os.environ.get("AZURE_RESOURCE_GROUP")
+    azure_ai_foundry_resource_name = os.environ.get("AZURE_AI_FOUNDRY_RESOURCE_NAME")
+    azure_ai_foundry_project_name = os.environ.get("AZURE_AI_FOUNDRY_PROJECT_NAME")
+    
+    # Construct endpoint if not explicitly provided
+    azure_ai_foundry_project_endpoint = os.environ.get("AZURE_AI_FOUNDRY_PROJECT_ENDPOINT")
+    if not azure_ai_foundry_project_endpoint and azure_ai_foundry_resource_name and azure_ai_foundry_project_name:
+        azure_ai_foundry_project_endpoint = f"https://{azure_ai_foundry_resource_name}.services.ai.azure.com/api/projects/{azure_ai_foundry_project_name}"
+        print(f"[Config] ✅ Constructed Azure AI Foundry endpoint: {azure_ai_foundry_project_endpoint}")
+    
     config = Config(
         # Server
         host=os.environ.get("A2A_UI_HOST", "0.0.0.0"),
@@ -163,6 +182,12 @@ def load_config() -> Config:
         azure_tenant_id=os.environ.get("AZURE_TENANT_ID"),
         azure_client_id=os.environ.get("AZURE_CLIENT_ID"),
         azure_client_secret=os.environ.get("AZURE_CLIENT_SECRET"),
+        azure_subscription_id=azure_subscription_id,
+        azure_resource_group=azure_resource_group,
+        # Azure AI Foundry
+        azure_ai_foundry_resource_name=azure_ai_foundry_resource_name,
+        azure_ai_foundry_project_name=azure_ai_foundry_project_name,
+        azure_ai_foundry_project_endpoint=azure_ai_foundry_project_endpoint,
         # Azure AI Services
         azure_ai_service_endpoint=os.environ.get(
             "AZURE_AI_SERVICE_ENDPOINT",
@@ -203,6 +228,47 @@ ensure_directories()
 
 
 # ============================================================================
+# Azure AI Foundry Helper Functions
+# ============================================================================
+def get_azure_ai_foundry_endpoint() -> Optional[str]:
+    """
+    Get the Azure AI Foundry project endpoint URL.
+    
+    Returns:
+        The full endpoint URL, or None if not configured.
+    """
+    return config.azure_ai_foundry_project_endpoint
+
+
+def get_azure_ai_foundry_resource_id() -> Optional[str]:
+    """
+    Construct the full Azure resource ID for the AI Foundry project.
+    
+    Used for RBAC assignments and resource management.
+    
+    Returns:
+        Full resource ID in format:
+        /subscriptions/{sub-id}/resourceGroups/{rg}/providers/Microsoft.CognitiveServices/accounts/{resource}/projects/{project}
+        
+        Or None if required components are missing.
+    """
+    if not all([
+        config.azure_subscription_id,
+        config.azure_resource_group,
+        config.azure_ai_foundry_resource_name,
+        config.azure_ai_foundry_project_name
+    ]):
+        return None
+    
+    return (
+        f"/subscriptions/{config.azure_subscription_id}"
+        f"/resourceGroups/{config.azure_resource_group}"
+        f"/providers/Microsoft.CognitiveServices/accounts/{config.azure_ai_foundry_resource_name}"
+        f"/projects/{config.azure_ai_foundry_project_name}"
+    )
+
+
+# ============================================================================
 # Configuration Display
 # ============================================================================
 def display_config_summary() -> None:
@@ -216,6 +282,11 @@ def display_config_summary() -> None:
     print(f"Debug Mode:          {config.debug_mode}")
     print(f"Verbose Logging:     {config.verbose_logging}")
     print(f"Azure Tenant:        {config.azure_tenant_id or 'Not set'}")
+    print(f"Azure Subscription:  {config.azure_subscription_id or 'Not set'}")
+    print(f"Azure Resource Grp:  {config.azure_resource_group or 'Not set'}")
+    print(f"AI Foundry Resource: {config.azure_ai_foundry_resource_name or 'Not set'}")
+    print(f"AI Foundry Project:  {config.azure_ai_foundry_project_name or 'Not set'}")
+    print(f"AI Foundry Endpoint: {config.azure_ai_foundry_project_endpoint or 'Not set'}")
     print(
         f"Voice API Key:       {'✓ Set' if config.voice_live_api_key else '✗ Not set'}"
     )

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { VoiceScenario } from '@/lib/voice-scenarios'
 import { VOICE_CONFIG } from '@/lib/voice-config'
 import { VoiceStateMachine, VoiceState, createVoiceStateMachine } from '@/lib/voice-state-machine'
+import { AnnotationProvider, createAnnotationProvider, AnnotationProviderType } from '@/lib/annotation-provider'
 
 interface VoiceLiveConfig {
   foundryProjectUrl: string
@@ -13,6 +14,15 @@ interface VoiceLiveConfig {
   scenario?: VoiceScenario
   onToolCall?: (toolName: string, args: any) => void
   onSendToA2A?: (message: string, claimData?: any) => Promise<string>
+  
+  // Annotation system configuration
+  annotationType?: AnnotationProviderType  // 'simple' | 'events' | 'none'
+  annotationConfig?: {
+    enabled?: boolean
+    minGapMs?: number
+    maxQueueSize?: number
+    maxAgeMs?: number
+  }
 }
 
 interface VoiceLiveHook {
@@ -24,6 +34,7 @@ interface VoiceLiveHook {
   stopVoiceConversation: () => void
   toggleMute: () => void
   injectNetworkResponse: (response: any) => void
+  handleDashboardEvent: (eventType: string, eventData: any) => void
   error: string | null
 }
 
@@ -70,6 +81,20 @@ export function useVoiceLive(config: VoiceLiveConfig): VoiceLiveHook {
   // Response lifecycle tracking (following Python SDK pattern)
   const activeResponseRef = useRef(false)
   const responseDoneRef = useRef(false)
+  
+  // Annotation provider for filling conversational gaps
+  const annotationProviderRef = useRef<AnnotationProvider>(
+    createAnnotationProvider(
+      config.annotationType || 'simple',
+      config.annotationConfig
+    )
+  )
+  
+  // Track if we're in the middle of delivering an annotation
+  const isDeliveringAnnotationRef = useRef(false)
+  
+  // Queue for responses that arrive while AI is speaking an acknowledgement
+  const pendingResponseQueueRef = useRef<any[]>([])
   
   // Conversation state tracking for proper truncation (Voice Live API best practice)
   const currentAssistantItemRef = useRef<{
@@ -523,6 +548,10 @@ export function useVoiceLive(config: VoiceLiveConfig): VoiceLiveHook {
     if (config.onToolCall) {
       config.onToolCall(functionName, args)
     }
+    
+    // Notify annotation provider about the function call
+    console.log('[VoiceLive] 📢 Notifying annotation provider about function call:', functionName)
+    annotationProviderRef.current.onFunctionCallSent(functionName, args)
 
     // Handle the universal send_to_agent_network tool
     if (functionName === 'send_to_agent_network') {
@@ -578,6 +607,10 @@ export function useVoiceLive(config: VoiceLiveConfig): VoiceLiveHook {
             console.log('[VoiceLive] ════════════════════════════════════════════════')
             console.log('[VoiceLive] Conversation ID:', conversationId)
             console.log('[VoiceLive] ⏳ Now waiting for dashboard to receive response and add to queue...')
+            
+            // FORCE inject annotation immediately after successful function call (bypass speaking checks)
+            console.log('[VoiceLive] 🎯 Forcing annotation injection after function call')
+            tryInjectAnnotation(true)
           }).catch((err) => {
             console.log('[VoiceLive] ════════════════════════════════════════════════')
             console.error('[VoiceLive] ❌ A2A NETWORK ERROR')
@@ -642,6 +675,14 @@ export function useVoiceLive(config: VoiceLiveConfig): VoiceLiveHook {
     
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
       console.warn('[VOICE-A2A] ❌ WebSocket not connected - readyState:', wsRef.current?.readyState)
+      return
+    }
+
+    // If AI is speaking acknowledgement, queue the response
+    if (isPlayingRef.current || isDeliveringAnnotationRef.current) {
+      console.log('[VOICE-A2A] ⏸️ AI is speaking acknowledgement, queueing response')
+      pendingResponseQueueRef.current.push(response)
+      console.log('[VOICE-A2A] 📋 Queue size:', pendingResponseQueueRef.current.length)
       return
     }
 
@@ -773,6 +814,14 @@ export function useVoiceLive(config: VoiceLiveConfig): VoiceLiveHook {
           nextStartTimeRef.current = 0
           stopBargeInDetection() // Stop monitoring when AI finishes speaking
           console.log('[VoiceLive] Playback complete')
+          
+          // Process any queued responses now that AI finished speaking
+          if (pendingResponseQueueRef.current.length > 0) {
+            console.log('[VoiceLive] 🔄 Processing', pendingResponseQueueRef.current.length, 'queued responses')
+            const queuedResponses = [...pendingResponseQueueRef.current]
+            pendingResponseQueueRef.current = []
+            queuedResponses.forEach(resp => injectNetworkResponse(resp))
+          }
         }
       }
       
@@ -1221,8 +1270,134 @@ export function useVoiceLive(config: VoiceLiveConfig): VoiceLiveHook {
       
       // Stop everything
       stopVoiceConversation()
+      
+      // Clear annotation provider
+      annotationProviderRef.current.clear()
     }
   }, [])
+
+  // ============================================================================
+  // Annotation System Functions
+  // ============================================================================
+
+  /**
+   * Try to inject an annotation if one is ready
+   * Should only be called when:
+   * - WebSocket is connected
+   * - AI is not currently speaking
+   * - User is not currently recording
+   * - We're not already delivering an annotation
+   */
+  const tryInjectAnnotation = useCallback((force: boolean = false) => {
+    // Safety checks
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+      console.log('[Annotation] ⚠️ WebSocket not connected, skipping annotation')
+      return
+    }
+    
+    if (!force && isRecordingRef.current) {
+      console.log('[Annotation] ⚠️ User is speaking, skipping annotation')
+      return
+    }
+    
+    if (!force && isPlayingRef.current) {
+      console.log('[Annotation] ⚠️ AI is speaking, skipping annotation')
+      return
+    }
+    
+    if (isDeliveringAnnotationRef.current) {
+      console.log('[Annotation] ⚠️ Already delivering annotation, skipping')
+      return
+    }
+    
+    // Check if annotation provider has something ready
+    if (!annotationProviderRef.current.shouldAnnotate()) {
+      console.log('[Annotation] ℹ️ No annotation ready or timing constraints not met')
+      return
+    }
+    
+    // Get the next annotation
+    const annotation = annotationProviderRef.current.getNextAnnotation()
+    if (!annotation) {
+      console.log('[Annotation] ℹ️ No annotation returned')
+      return
+    }
+    
+    console.log('[Annotation] ════════════════════════════════════════════════')
+    console.log('[Annotation] 🎤 INJECTING ANNOTATION')
+    console.log('[Annotation] ════════════════════════════════════════════════')
+    console.log('[Annotation] Message:', annotation)
+    
+    // Mark that we're delivering
+    isDeliveringAnnotationRef.current = true
+    
+    try {
+      // Create a user message to prompt the AI to respond naturally
+      // This makes the AI aware that we want it to continue the conversation
+      const annotationMessage = {
+        type: 'conversation.item.create',
+        item: {
+          type: 'message',
+          role: 'system',
+          content: [{
+            type: 'text',
+            text: annotation
+          }]
+        }
+      }
+      
+      console.log('[Annotation] 📤 Sending annotation message')
+      wsRef.current.send(JSON.stringify(annotationMessage))
+      
+      // Trigger response generation - AI will naturally continue the conversation
+      console.log('[Annotation] 📤 Triggering response.create')
+      wsRef.current.send(JSON.stringify({ type: 'response.create' }))
+      
+      console.log('[Annotation] ✅ Annotation injection complete')
+      console.log('[Annotation] ════════════════════════════════════════════════')
+      
+      // Reset flag after a short delay
+      setTimeout(() => {
+        isDeliveringAnnotationRef.current = false
+      }, 1000)
+      
+    } catch (error) {
+      console.error('[Annotation] ❌ Error injecting annotation:', error)
+      isDeliveringAnnotationRef.current = false
+    }
+  }, [])
+
+  /**
+   * Handle dashboard events for Phase 2 (event-based annotations)
+   * Call this from the dashboard when A2A network events occur
+   */
+  const handleDashboardEvent = useCallback((eventType: string, eventData: any) => {
+    console.log('[Annotation] 📨 Dashboard event received:', eventType)
+    
+    // Notify annotation provider
+    annotationProviderRef.current.onEventReceived(eventType, eventData)
+    
+    // Try to inject annotation if one is ready
+    // This will respect all timing and state constraints
+    tryInjectAnnotation()
+  }, [tryInjectAnnotation])
+
+  /**
+   * Periodic check for pending annotations
+   * This ensures annotations get delivered even if events are missed
+   */
+  useEffect(() => {
+    const annotationCheckInterval = setInterval(() => {
+      // Only try if annotation provider has something ready
+      if (annotationProviderRef.current.shouldAnnotate()) {
+        tryInjectAnnotation()
+      }
+    }, 2000) // Check every 2 seconds
+    
+    return () => {
+      clearInterval(annotationCheckInterval)
+    }
+  }, [tryInjectAnnotation])
 
   return {
     isConnected,
@@ -1233,6 +1408,7 @@ export function useVoiceLive(config: VoiceLiveConfig): VoiceLiveHook {
     stopVoiceConversation,
     toggleMute,
     injectNetworkResponse,
+    handleDashboardEvent,
     error
   }
 }

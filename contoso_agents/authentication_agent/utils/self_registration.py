@@ -105,6 +105,8 @@ def get_host_agent_url() -> str:
         host_url = os.getenv("BACKEND_SERVER_URL", "")
     elif "A2A_HOST_AGENT_URL" in os.environ:
         host_url = os.getenv("A2A_HOST_AGENT_URL", "")
+    elif "A2A_HOST" in os.environ:
+        host_url = os.getenv("A2A_HOST", "")
     else:
         return "http://localhost:12000"
 

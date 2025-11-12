@@ -155,6 +155,19 @@ export function AgentNetworkDashboard() {
     foundryProjectUrl: process.env.NEXT_PUBLIC_AZURE_AI_FOUNDRY_PROJECT_ENDPOINT || '',
     model: process.env.NEXT_PUBLIC_VOICE_MODEL || 'gpt-4o-realtime',
     scenario: currentScenario,
+    
+    // ============================================================================
+    // PHASE 1: Simple post-function-call annotations
+    // Change to 'events' when ready for full event-based annotations (Phase 2)
+    // ============================================================================
+    annotationType: 'simple',
+    annotationConfig: {
+      enabled: true,
+      minGapMs: 2000, // 2 seconds between annotations
+      maxQueueSize: 10,
+      maxAgeMs: 15000 // Drop annotations older than 15 seconds
+    },
+    
     onToolCall: (toolName, args) => {
       console.log('[Dashboard] Tool called:', toolName, args)
       
@@ -933,6 +946,16 @@ export function AgentNetworkDashboard() {
       setTimeout(() => {
         addThoughtBubble(agentId, `Using ${toolName}`)
       }, Math.random() * 400)
+      
+      // ============================================================================
+      // PHASE 2: Notify Voice Live about this event for event-based annotations
+      // This is currently a no-op in Phase 1 (simple mode) but will be used in Phase 2
+      // ============================================================================
+      voiceLive.handleDashboardEvent('tool_call', {
+        tool_name: toolName,
+        agent_name: agentName,
+        agent_id: agentId
+      })
     }
 
     // Handle tool responses
@@ -951,6 +974,16 @@ export function AgentNetworkDashboard() {
       setTimeout(() => {
         addThoughtBubble(agentId, `${toolName} completed`)
       }, Math.random() * 400)
+      
+      // ============================================================================
+      // PHASE 2: Notify Voice Live about this event
+      // ============================================================================
+      voiceLive.handleDashboardEvent('tool_response', {
+        tool_name: toolName,
+        agent_name: agentName,
+        agent_id: agentId,
+        duration: data.duration
+      })
     }
 
     // Handle inference steps
@@ -969,6 +1002,15 @@ export function AgentNetworkDashboard() {
       setTimeout(() => {
         addThoughtBubble(agentId, status)
       }, Math.random() * 400)
+      
+      // ============================================================================
+      // PHASE 2: Notify Voice Live about this event
+      // ============================================================================
+      voiceLive.handleDashboardEvent('inference_step', {
+        agent_name: agentName,
+        agent_id: agentId,
+        status: status
+      })
     }
 
     // Handle remote agent activity
@@ -981,6 +1023,16 @@ export function AgentNetworkDashboard() {
       
       // Only trigger glow, don't add message/bubble since tool_call events handle that
       triggerGlow(agentId)
+      
+      // ============================================================================
+      // PHASE 2: Notify Voice Live about this event
+      // ============================================================================
+      voiceLive.handleDashboardEvent('agent_activity', {
+        agent_name: agentName,
+        agent_id: agentId,
+        activity: activity,
+        action: activity
+      })
     }
 
     // Handle conversation created

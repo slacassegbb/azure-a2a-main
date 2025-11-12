@@ -176,14 +176,15 @@ export const VOICE_CONFIG = {
   /**
    * A2A network call timeout (in milliseconds)
    * Pending calls older than this will be cleaned up
+   * Increased to 5 minutes to handle long-running agent operations
    */
-  A2A_TIMEOUT_MS: 30000,
+  A2A_TIMEOUT_MS: 300000, // 5 minutes
   
   /**
    * A2A cleanup check interval (in milliseconds)
    * How often to check for timed-out A2A calls
    */
-  A2A_CLEANUP_INTERVAL_MS: 5000,
+  A2A_CLEANUP_INTERVAL_MS: 30000, // Check every 30 seconds
   
   // ============================================================================
   // MICROPHONE SETTINGS

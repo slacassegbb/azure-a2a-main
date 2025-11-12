@@ -39,8 +39,8 @@ os.environ.setdefault(
     os.environ.get("AZURE_CONTENT_UNDERSTANDING_API_VERSION", "2024-12-01-preview"),
 )
 
-# WebSocket Configuration for local development
-os.environ.setdefault("WEBSOCKET_SERVER_URL", "http://localhost:8080")
+# WebSocket Configuration - same port as API server (12000)
+os.environ.setdefault("WEBSOCKET_SERVER_URL", "ws://localhost:12000/events")
 
 # Import configuration and logging
 from config import config, display_config_summary
@@ -88,12 +88,6 @@ from service.server.server import ConversationServer
 from service.websocket_streamer import (
     get_websocket_streamer,
     cleanup_websocket_streamer,
-)
-from service.websocket_server import (
-    start_websocket_server,
-    stop_websocket_server,
-    set_auth_service,
-    websocket_manager,
 )
 from service.async_task_queue import AsyncTaskQueue, AsyncTask, TaskStatus
 from service.agent_registry import get_registry
@@ -652,6 +646,7 @@ httpx_client_wrapper = HTTPXClientWrapper()
 agent_server = None
 websocket_streamer = None
 async_task_queue = None  # Global async task queue
+websocket_manager: "WebSocketManager | None" = None  # Single in-process WebSocket manager
 
 
 @asynccontextmanager
@@ -664,29 +659,6 @@ async def lifespan(app: FastAPI):
     # Start HTTP client
     print("[STARTUP] Initializing HTTP client...")
     httpx_client_wrapper.start()
-
-    # Start WebSocket server for UI communication
-    # Uses environment variables for flexibility across environments
-    websocket_host = config.host
-    websocket_port = config.websocket_port
-
-    try:
-        start_websocket_server(host=websocket_host, port=websocket_port)
-        log_success(
-            f"WebSocket server started on ws://{websocket_host}:{websocket_port}",
-            LogCategory.WEBSOCKET,
-        )
-
-        # Give the WebSocket server a moment to start listening
-        import asyncio
-
-        await asyncio.sleep(2)
-
-    except Exception as e:
-        print(f"[ERROR] Failed to start WebSocket server: {e}")
-        import traceback
-
-        print(f"[ERROR] WebSocket server traceback: {traceback.format_exc()}")
 
     # Initialize WebSocket streamer with error handling
     print("[STARTUP] Initializing WebSocket streamer...")
@@ -811,7 +783,7 @@ async def lifespan(app: FastAPI):
 
     # Stop async task queue
     if async_task_queue:
-        await async_task_queue.stop()
+        await async_task_queue.shutdown()
         print("[SHUTDOWN] ✅ Async task queue stopped")
 
     await httpx_client_wrapper.stop()
@@ -821,6 +793,8 @@ async def lifespan(app: FastAPI):
 
 def main():
     """Main entry point for the production API server."""
+    global websocket_manager
+    
     app = FastAPI(
         title="A2A Backend API",
         description="Agent-to-Agent communication backend with WebSocket integration",
@@ -836,8 +810,10 @@ def main():
     print("[INIT] Creating AuthService...")
     auth_service = AuthService()
 
-    # Connect the auth service to the websocket server
-    set_auth_service(auth_service)
+    # Initialize the single in-process WebSocket manager
+    print("[INIT] Creating WebSocketManager...")
+    websocket_manager = WebSocketManager(auth_service)
+    print("[INIT] ✅ WebSocketManager initialized successfully")
 
     # Add CORS middleware with very open settings for container deployment
     app.add_middleware(
@@ -1531,12 +1507,15 @@ Read-Host "Press Enter to close this window"
                 overwrite=True,
             )
 
-            # Generate SAS token with 24-hour expiry
+            # Try to generate SAS token if connection string is available
+            connection_string = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
             account_key = None
-            for part in connection_string.split(";"):
-                if part.startswith("AccountKey="):
-                    account_key = part.split("=", 1)[1]
-                    break
+            
+            if connection_string:
+                for part in connection_string.split(";"):
+                    if part.startswith("AccountKey="):
+                        account_key = part.split("=", 1)[1]
+                        break
 
             if account_key:
                 sas_token = generate_blob_sas(
@@ -1555,7 +1534,7 @@ Read-Host "Press Enter to close this window"
                 return blob_url
             else:
                 print(
-                    f"[WARN] Could not generate SAS token, returning blob URL without SAS"
+                    f"[WARN] Could not generate SAS token (using managed identity), returning blob URL without SAS"
                 )
                 return blob_client.url
 
@@ -1818,7 +1797,7 @@ Read-Host "Press Enter to close this window"
                 "openapi": "/openapi.json",
                 "conversations": "/conversations/*",
                 "agents": "/agents/*",
-                "websocket": "ws://localhost:8080/events",
+                "websocket": "ws://localhost:12000/events",
             },
             "websocket_enabled": websocket_streamer is not None,
             "auth_method": "managed_identity",
