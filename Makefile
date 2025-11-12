@@ -37,3 +37,6 @@ start_tunnel:
 
 run_network_agent:
 	HOST_AGENT_URL=http://localhost:12000 $(PYTHON_INTERPRETER) -m contoso_agents.network_performance_agent --host 127.0.0.1 --port 8105
+
+run_auth_agent:
+	HOST_AGENT_URL=http://localhost:12000 $(PYTHON_INTERPRETER) -m contoso_agents.authentication_agent --host 127.0.0.1 --port 8107

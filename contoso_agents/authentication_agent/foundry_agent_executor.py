@@ -14,7 +14,7 @@ import tempfile
 import time
 from typing import Optional, Dict, List
 
-from foundry_agent import FoundryAuthenticationAgent
+from .foundry_agent import FoundryAuthenticationAgent
 
 from a2a.server.agent_execution import AgentExecutor
 from a2a.server.agent_execution.context import RequestContext

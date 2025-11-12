@@ -158,6 +158,9 @@ class ConversationServer:
             "/conversation/list", self._list_conversation, methods=["POST"]
         )
         app.add_api_route("/message/send", self._send_message, methods=["POST"])
+        app.add_api_route(
+            "/message/send/async", self._send_message_async, methods=["POST"]
+        )
         app.add_api_route("/events/get", self._get_events, methods=["POST"])
         app.add_api_route("/message/list", self._list_messages, methods=["POST"])
         app.add_api_route("/message/pending", self._pending_messages, methods=["POST"])
@@ -331,6 +334,72 @@ class ConversationServer:
             )
         )
 
+    async def _send_message_async(self, request: Request):
+        """
+        Async endpoint for voice integration - returns 202 Accepted immediately.
+        Frontend expects this for voice messages to avoid blocking.
+        """
+        from starlette.responses import JSONResponse
+
+        message_data = await request.json()
+
+        # Extract params
+        agent_mode = message_data.get("params", {}).get("agentMode", False)
+        enable_inter_agent_memory = message_data.get("params", {}).get(
+            "enableInterAgentMemory", False
+        )
+        workflow = message_data.get("params", {}).get("workflow")
+
+        log_debug(
+            f"_send_message_async: Agent Mode = {agent_mode}, Inter-Agent Memory = {enable_inter_agent_memory}"
+        )
+
+        # Transform and create message
+        transformed_params = self._transform_message_data(message_data["params"])
+        message = Message(**transformed_params)
+        message = self.manager.sanitize_message(message)
+
+        message_id = get_message_id(message)
+        context_id = get_context_id(message)
+
+        log_debug(
+            f"_send_message_async: Queuing message {message_id} for contextId: {context_id}"
+        )
+
+        # Process message asynchronously in background
+        if isinstance(self.manager, ADKHostManager):
+            loop = asyncio.get_event_loop()
+            t = threading.Thread(
+                target=lambda: cast(
+                    ADKHostManager, self.manager
+                ).process_message_threadsafe(message, loop)
+            )
+        else:
+            t = threading.Thread(
+                target=lambda: asyncio.run_coroutine_threadsafe(
+                    self.manager.process_message(
+                        message, agent_mode, enable_inter_agent_memory, workflow
+                    ),
+                    main_loop,
+                )
+            )
+        t.start()
+
+        log_debug(
+            f"_send_message_async: Background processing started for {message_id}"
+        )
+
+        # Return 202 Accepted with task info
+        return JSONResponse(
+            status_code=202,
+            content={
+                "status": "accepted",
+                "message_id": message_id,
+                "context_id": context_id,
+                "message": "Message queued for processing",
+            },
+        )
+
     async def _list_messages(self, request: Request):
         message_data = await request.json()
         conversation_id = message_data["params"]
@@ -426,35 +495,48 @@ class ConversationServer:
 
                 if success:
                     log_debug(f"✅ Self-registration successful for: {agent_address}")
-                    
+
                     # Broadcast updated agent list to all WebSocket clients
                     try:
                         # Get the live agent list (includes health checks)
                         agent_data = await self._get_agents()
                         if agent_data.get("success"):
                             agents = agent_data.get("agents", [])
-                            
+
                             # Get WebSocket manager from backend_production
                             import backend.backend_production as backend_prod
-                            if hasattr(backend_prod, 'websocket_manager'):
+
+                            if hasattr(backend_prod, "websocket_manager"):
                                 registry_event = {
                                     "eventType": "agent_registry_sync",
                                     "data": {
                                         "agents": agents,
-                                        "timestamp": __import__('time').strftime("%Y-%m-%d %H:%M:%S", __import__('time').localtime())
-                                    }
+                                        "timestamp": __import__("time").strftime(
+                                            "%Y-%m-%d %H:%M:%S",
+                                            __import__("time").localtime(),
+                                        ),
+                                    },
                                 }
-                                client_count = await backend_prod.websocket_manager.broadcast_event(registry_event)
-                                log_debug(f"� Broadcasted agent_registry_sync to {client_count} clients with {len(agents)} LIVE agents")
+                                client_count = await backend_prod.websocket_manager.broadcast_event(
+                                    registry_event
+                                )
+                                log_debug(
+                                    f"� Broadcasted agent_registry_sync to {client_count} clients with {len(agents)} LIVE agents"
+                                )
                             else:
-                                log_debug("⚠️ WebSocket manager not available for broadcast")
+                                log_debug(
+                                    "⚠️ WebSocket manager not available for broadcast"
+                                )
                         else:
-                            log_debug(f"⚠️ Failed to get live agents: {agent_data.get('error')}")
+                            log_debug(
+                                f"⚠️ Failed to get live agents: {agent_data.get('error')}"
+                            )
                     except Exception as sync_error:
                         log_debug(f"⚠️ Failed to broadcast agent sync: {sync_error}")
                         import traceback
+
                         log_debug(f"Traceback: {traceback.format_exc()}")
-                    
+
                     # Stream agent self-registration over WebSocket
                     log_debug(
                         "🌊 Attempting to stream agent self-registration to WebSocket..."

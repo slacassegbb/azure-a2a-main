@@ -84,6 +84,7 @@ try:
 except ImportError as e:
     # Fallback if utils not available
     logger.warning(f"⚠️ Self-registration import failed: {e}")
+
     async def register_with_host_agent(agent_card, host_url=None):
         logger.info(
             "ℹ️ Self-registration utility not available - skipping registration"

@@ -1259,5 +1259,39 @@
         ]
       }
     ]
+  },
+  {
+    "name": "Contoso Authentication Agent",
+    "description": "Authenticates Contoso customers by verifying their first name, last name, postal code, and date of birth. This agent ensures secure identity verification before proceeding with support requests.",
+    "version": "1.0.0",
+    "url": "http://localhost:8107/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "customer_authentication",
+        "name": "Customer Authentication",
+        "description": "Verify customer identity by collecting and validating first name, last name, postal code, and date of birth against the customer database.",
+        "examples": [
+          "I need help with my internet",
+          "Verify my account",
+          "My name is Sarah Johnson",
+          "Authenticate customer"
+        ],
+        "tags": [
+          "authentication",
+          "verification",
+          "identity",
+          "customer"
+        ]
+      }
+    ]
   }
 ]

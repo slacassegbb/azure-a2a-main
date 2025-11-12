@@ -83,6 +83,18 @@
       "email": "robert.anderson@email.com",
       "account_status": "active",
       "region": "Toronto West"
+    },
+    {
+      "customer_id": "CUST007",
+      "first_name": "Pablo",
+      "last_name": "Salvador",
+      "date_of_birth": "1985-08-28",
+      "postal_code": "A1A1A1",
+      "address": "123 Developer Street, Toronto, ON SAL555",
+      "phone": "416-555-0107",
+      "email": "pablo.salvador@email.com",
+      "account_status": "active",
+      "region": "Toronto Central"
     }
   ]
 }

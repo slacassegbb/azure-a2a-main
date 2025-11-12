@@ -174,17 +174,21 @@ export function AgentNetworkDashboard() {
       console.log('[VOICE-A2A] Message:', message)
       console.log('[VOICE-A2A] Metadata:', claimData)
       
-      // Generate IDs - unique messageId per call, shared conversationId for session
-      const messageId = `voice-msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
-      const conversationId = currentConversationId || 'visualizer-voice-context'
+      // Generate IDs - unique messageId per call, persistent conversationId for voice session
+      const timestamp = Date.now()
+      const messageId = `voice-msg-${timestamp}-${Math.random().toString(36).substr(2, 9)}`
+      // Use existing session conversationId or create new one (persists across function calls)
+      const conversationId = currentConversationId || `voice-session-${Date.now()}`
       const callId = claimData?.tool_call_id || claimData?.call_id || ''
       
       console.log('[VOICE-A2A] 🆔 Generated messageId:', messageId)
-      console.log('[VOICE-A2A] 💬 ConversationId:', conversationId)
+      console.log('[VOICE-A2A] 💬 ConversationId (session):', conversationId)
       console.log('[VOICE-A2A] 🔑 Extracted call_id:', callId)
       
-      // Store conversationId for session, track THIS message for response matching
-      setCurrentConversationId(conversationId)
+      // Store conversationId for session (only set once), track THIS message for response matching
+      if (!currentConversationId) {
+        setCurrentConversationId(conversationId)
+      }
       setPendingA2AResponse(messageId)
       
       // Map messageId -> callId so we can match responses to the right function call
@@ -768,27 +772,27 @@ export function AgentNetworkDashboard() {
           const responseConversationId = data.conversation_id || data.contextId || data.conversationId
           
           console.log('[VOICE-A2A] ════════════════════════════════════════════════════════')
-          console.log('[VOICE-A2A] 📬 STEP 5: Checking for voice call match by contextId')
+          console.log('[VOICE-A2A] 📬 STEP 5: Checking for voice call match by conversationId')
           console.log('[VOICE-A2A] ════════════════════════════════════════════════════════')
           console.log('[VOICE-A2A] responseConversationId:', responseConversationId)
           console.log('[VOICE-A2A] Map size:', pendingCallIdMapRef.current.size)
           console.log('[VOICE-A2A] Map keys:', Array.from(pendingCallIdMapRef.current.keys()))
           
-          // Find the messageId that matches this contextId
-          // Our messageId format: voice-msg-{timestamp}-{random}
-          // Our contextId format: voice-{timestamp}
+          // Check if this response is for a voice session by checking conversationId format
+          // Voice session conversationId format: voice-session-{timestamp}
           let matchedCallId: string | null = null
           let matchedMessageId: string | null = null
           
-          for (const [messageId, callId] of pendingCallIdMapRef.current.entries()) {
-            if (messageId.startsWith('voice-msg-')) {
-              const timestamp = messageId.split('-')[2]
-              const expectedContextId = `voice-${timestamp}`
-              console.log('[VOICE-A2A] Checking messageId:', messageId, '→ contextId:', expectedContextId)
-              if (expectedContextId === responseConversationId) {
+          if (responseConversationId && responseConversationId.startsWith('voice-session-')) {
+            // This is a voice response! Find the most recent pending call for this session
+            // Since we're in a single voice session, match by checking map has entries
+            for (const [messageId, callId] of pendingCallIdMapRef.current.entries()) {
+              if (messageId.startsWith('voice-msg-')) {
+                // Take the first (oldest) pending call - FIFO order
                 matchedCallId = callId
                 matchedMessageId = messageId
-                console.log('[VOICE-A2A] ✅ MATCH FOUND!')
+                console.log('[VOICE-A2A] ✅ MATCH FOUND - Voice session response!')
+                console.log('[VOICE-A2A] Matched messageId:', messageId, 'to call_id:', callId)
                 break
               }
             }
@@ -1894,6 +1898,26 @@ export function AgentNetworkDashboard() {
             )}
           </div>
           <div className="absolute top-4 right-4 z-10 flex flex-col gap-2 items-end">
+            {/* Voice Live Status Badge */}
+            {voiceLive.isConnected && (
+              <div className={`px-4 py-2 rounded-lg shadow-lg border-2 transition-all duration-300 ${
+                voiceLive.isRecording 
+                  ? 'bg-emerald-900/80 border-emerald-500 text-emerald-100' 
+                  : 'bg-slate-800/80 border-slate-600 text-slate-300'
+              }`}>
+                <div className="flex items-center gap-2">
+                  <div className={`w-3 h-3 rounded-full ${voiceLive.isRecording ? 'bg-emerald-500 animate-pulse' : 'bg-slate-500'}`} />
+                  <span className="text-sm font-semibold">
+                    {voiceLive.isRecording 
+                      ? (voiceLive.isSpeaking ? '🔊 AI Speaking' : '🎤 Listening') 
+                      : '🔌 Voice Connected'}
+                  </span>
+                </div>
+                {voiceLive.isMuted && (
+                  <div className="text-xs text-red-400 mt-1">🔇 Microphone Muted</div>
+                )}
+              </div>
+            )}
             <div className="flex gap-2 items-center">
               {voiceLive.isRecording && (
                 <button

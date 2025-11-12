@@ -119,9 +119,7 @@ class FoundryImageGeneratorAgent:
             logger.error(
                 "AZURE_STORAGE_ACCOUNT_NAME must be set when FORCE_AZURE_BLOB=true"
             )
-            raise RuntimeError(
-                "Missing AZURE_STORAGE_ACCOUNT_NAME for blob uploads"
-            )
+            raise RuntimeError("Missing AZURE_STORAGE_ACCOUNT_NAME for blob uploads")
 
         try:
             # Use Azure AD authentication with DefaultAzureCredential
@@ -131,7 +129,9 @@ class FoundryImageGeneratorAgent:
                 credential=self.credential,
                 api_version="2023-11-03",
             )
-            logger.info(f"✅ BlobServiceClient created with Azure AD authentication for {storage_account_name}")
+            logger.info(
+                f"✅ BlobServiceClient created with Azure AD authentication for {storage_account_name}"
+            )
             return self._blob_service_client
         except Exception as e:
             logger.error(f"Failed to create BlobServiceClient with Azure AD: {e}")
