@@ -1258,6 +1258,7 @@ class FoundryHostAgent2:
         plan = AgentModePlan(goal=goal_text, goal_status="incomplete")
         iteration = 0
         max_iterations = 20  # Safety limit to prevent infinite loops
+        workflow_step_count = 0  # Will be set if workflow is provided
         
         # Accumulate outputs from all completed tasks
         all_task_outputs = []
@@ -1339,17 +1340,27 @@ Do NOT skip steps. Do NOT mark goal as completed until ALL workflow steps are do
         
         # Add workflow-specific completion logic if workflow is present
         if workflow and workflow.strip():
-            system_prompt += """
+            # Count the workflow steps to make it explicit
+            workflow_step_count = len([line for line in workflow.strip().split('\n') if line.strip() and (line.strip()[0].isdigit() or line.strip().startswith('-'))])
+            print(f"📊 [Agent Mode] Detected {workflow_step_count} steps in workflow")
+            log_debug(f"📊 [Agent Mode] Workflow step count: {workflow_step_count}")
+            
+            system_prompt += f"""
 
 ### 🚨 CRITICAL: WHEN TO STOP (WORKFLOW MODE)
-- A WORKFLOW IS ACTIVE - You MUST complete ALL workflow steps before marking goal as "completed"
-- Compare completed tasks against the workflow steps above
-- If ANY workflow step is missing or incomplete, goal_status MUST be "incomplete"
-- ONLY mark goal_status="completed" when:
-  1. EVERY workflow step has a corresponding completed task, AND
-  2. All completed tasks succeeded, OR
-  3. Agents explicitly asked for user input and are waiting for a response
-- Do NOT assume "one task is enough" - check the workflow step count and verify all are done!"""
+- A WORKFLOW IS ACTIVE with **{workflow_step_count} MANDATORY STEPS** - You MUST complete ALL {workflow_step_count} workflow steps before marking goal as "completed"
+- **STEP COUNTING**: The workflow has EXACTLY {workflow_step_count} steps. Count your completed tasks carefully!
+- **VERIFICATION CHECKLIST**:
+  1. Count the number of workflow steps above (should be {workflow_step_count})
+  2. Count the number of successfully completed tasks in your plan
+  3. Match each workflow step to a completed task
+  4. If completed tasks < {workflow_step_count}, goal_status MUST be "incomplete"
+- **COMPLETION CRITERIA** - Mark goal_status="completed" ONLY when:
+  1. You have AT LEAST {workflow_step_count} successfully completed tasks, AND
+  2. Each workflow step has been addressed by a completed task, AND
+  3. All completed tasks succeeded (or agents are waiting for user input)
+- **WARNING**: Do NOT mark as completed after only 1, 2, or 3 steps if the workflow has {workflow_step_count} steps!
+- If ANY workflow step is missing or incomplete, goal_status MUST be "incomplete" and you must create the next task"""
         else:
             system_prompt += """
 
@@ -1445,7 +1456,12 @@ Analyze the plan and determine the next step. If you need information that isn't
                 print(f"{'='*80}\n")
                 
                 if next_step.goal_status == "completed":
-                    log_info(f"✅ [Agent Mode] Goal completed after {iteration} iterations!")
+                    completed_tasks_count = len([t for t in plan.tasks if t.state == "completed"])
+                    log_info(f"✅ [Agent Mode] Goal marked as completed after {iteration} iterations")
+                    log_info(f"📊 [Agent Mode] Completed tasks: {completed_tasks_count} / Expected workflow steps: {workflow_step_count if workflow and workflow.strip() else 'N/A'}")
+                    if workflow and workflow.strip() and completed_tasks_count < workflow_step_count:
+                        print(f"⚠️  [Agent Mode] WARNING: Only {completed_tasks_count} tasks completed but workflow has {workflow_step_count} steps!")
+                        print(f"⚠️  [Agent Mode] LLM reasoning: {next_step.reasoning}")
                     await self._emit_status_event("Goal achieved! Generating final response...", context_id)
                     break
                 

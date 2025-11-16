@@ -118,6 +118,7 @@ export function VisualWorkflowDesigner({
   const workflowStepsMapRef = useRef<Map<string, WorkflowStep>>(new Map())
   const imageCache = useRef<Map<string, HTMLImageElement>>(new Map())
   const testTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const [hostMessage, setHostMessage] = useState<{ message: string, target: string } | null>(null)
   
   // Event Hub for live updates
   const { subscribe, unsubscribe } = useEventHub()
@@ -729,9 +730,24 @@ export function VisualWorkflowDesigner({
       console.log("[WorkflowTest] 📤 Outgoing message:", data)
       
       if (data.targetAgent && data.message) {
-        // Show outgoing message on the source agent (usually host)
-        // Note: Outgoing messages are logged but not displayed on canvas
-        console.log("[WorkflowTest] Message to", data.targetAgent, ":", data.message.substring(0, 50) + "...")
+        console.log("[WorkflowTest] 📨 Setting host message to", data.targetAgent)
+        
+        // Set the host message
+        setHostMessage({
+          message: data.message,
+          target: data.targetAgent
+        })
+        
+        // Clear host message after 8 seconds
+        setTimeout(() => {
+          setHostMessage(prev => {
+            // Only clear if it's the same message
+            if (prev?.message === data.message) {
+              return null
+            }
+            return prev
+          })
+        }, 8000)
       }
     }
     
@@ -868,15 +884,73 @@ export function VisualWorkflowDesigner({
   }
   
   // Handle test workflow submission
+  // Helper function to generate workflow text from current refs
+  const generateWorkflowTextFromRefs = (): string => {
+    const steps = workflowStepsRef.current
+    const conns = connectionsRef.current
+    
+    if (steps.length === 0) return ""
+    
+    // If connections exist, use them to determine order
+    if (conns.length > 0) {
+      const visited = new Set<string>()
+      const result: WorkflowStep[] = []
+      
+      const connectedStepIds = new Set<string>()
+      conns.forEach(conn => {
+        connectedStepIds.add(conn.fromStepId)
+        connectedStepIds.add(conn.toStepId)
+      })
+      
+      const hasIncoming = new Set(conns.map(c => c.toStepId))
+      const rootNodes = steps.filter(step => 
+        connectedStepIds.has(step.id) && !hasIncoming.has(step.id)
+      )
+      
+      const dfs = (stepId: string) => {
+        if (visited.has(stepId)) return
+        visited.add(stepId)
+        
+        const step = steps.find(s => s.id === stepId)
+        if (step) {
+          result.push(step)
+          const outgoing = conns.filter(c => c.fromStepId === stepId)
+          outgoing.forEach(conn => dfs(conn.toStepId))
+        }
+      }
+      
+      rootNodes.forEach(node => dfs(node.id))
+      
+      // Generate text ONLY from connected nodes
+      return result.map((step, index) => 
+        `${index + 1}. ${step.description || `Use the ${step.agentName} agent`}`
+      ).join('\n')
+    } else {
+      // No connections - use visual order
+      const sortedSteps = [...steps].sort((a, b) => a.order - b.order)
+      return sortedSteps.map((step, index) => 
+        `${index + 1}. ${step.description || `Use the ${step.agentName} agent`}`
+      ).join('\n')
+    }
+  }
+  
   const handleTestSubmit = async () => {
-    if (!testInput.trim() || !generatedWorkflowText) return
+    if (!testInput.trim()) return
+    
+    // Generate workflow text from current refs to ensure we have the latest
+    const currentWorkflowText = generateWorkflowTextFromRefs()
+    
+    if (!currentWorkflowText) {
+      alert("Please add agents to your workflow before testing")
+      return
+    }
     
     setIsTesting(true)
     setTestMessages([{ role: "user", content: testInput }])
     setStepStatuses(new Map())
     stepStatusesRef.current = new Map()
     
-    console.log("[WorkflowTest] 🚀 Starting test with workflow:", generatedWorkflowText)
+    console.log("[WorkflowTest] 🚀 Starting test with workflow:", currentWorkflowText)
     
     try {
       const baseUrl = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
@@ -895,7 +969,7 @@ export function VisualWorkflowDesigner({
       console.log('[WorkflowTest] Sending message:', {
         messageId,
         contextId: 'workflow-test',
-        workflow: generatedWorkflowText.substring(0, 100) + '...',
+        workflow: currentWorkflowText.substring(0, 100) + '...',
         partsCount: parts.length
       })
       
@@ -912,7 +986,7 @@ export function VisualWorkflowDesigner({
             role: 'user',
             agentMode: true,
             enableInterAgentMemory: true,
-            workflow: generatedWorkflowText
+            workflow: currentWorkflowText
           }
         })
       })
@@ -958,6 +1032,7 @@ export function VisualWorkflowDesigner({
     setTestMessages([])
     setStepStatuses(new Map())
     stepStatusesRef.current = new Map()
+    setHostMessage(null)
   }
   
   // Cleanup timeout on unmount
@@ -1000,6 +1075,57 @@ export function VisualWorkflowDesigner({
       
       setWorkflowSteps(steps)
       setConnections(template.connections)
+      
+      // Update refs immediately to ensure test workflow uses latest data
+      workflowStepsRef.current = steps
+      connectionsRef.current = template.connections
+      
+      // Update workflow steps map ref for event handlers
+      const newMap = new Map<string, WorkflowStep>()
+      steps.forEach((step: WorkflowStep) => {
+        newMap.set(step.agentName, step)
+        newMap.set(step.agentId, step)
+      })
+      workflowStepsMapRef.current = newMap
+      
+      // Calculate and update workflow order map immediately
+      if (template.connections && template.connections.length > 0) {
+        const visited = new Set<string>()
+        const result: WorkflowStep[] = []
+        
+        const connectedStepIds = new Set<string>()
+        template.connections.forEach((conn: Connection) => {
+          connectedStepIds.add(conn.fromStepId)
+          connectedStepIds.add(conn.toStepId)
+        })
+        
+        const hasIncoming = new Set(template.connections.map((c: Connection) => c.toStepId))
+        const rootNodes = steps.filter((step: WorkflowStep) => 
+          connectedStepIds.has(step.id) && !hasIncoming.has(step.id)
+        )
+        
+        const dfs = (stepId: string) => {
+          if (visited.has(stepId)) return
+          visited.add(stepId)
+          
+          const step = steps.find((s: WorkflowStep) => s.id === stepId)
+          if (step) {
+            result.push(step)
+            const outgoing = template.connections.filter((c: Connection) => c.fromStepId === stepId)
+            outgoing.forEach((conn: Connection) => dfs(conn.toStepId))
+          }
+        }
+        
+        rootNodes.forEach((node: WorkflowStep) => dfs(node.id))
+        
+        const orderMap = new Map<string, number>()
+        result.forEach((step, index) => {
+          orderMap.set(step.id, index + 1)
+        })
+        
+        setWorkflowOrderMap(orderMap)
+        workflowOrderMapRef.current = orderMap
+      }
       
       // Save to localStorage immediately
       const data = {
@@ -1747,6 +1873,74 @@ export function VisualWorkflowDesigner({
         ctx.strokeRect(10, 10, rect.width - 20, rect.height - 20)
         ctx.setLineDash([])
       }
+      
+      // Host agent message in bottom right corner (during testing)
+      if (isTesting && hostMessage) {
+        ctx.save()
+        
+        const messageMaxWidth = 300
+        const padding = 12
+        const lineHeight = 16
+        
+        // Word wrap the message
+        ctx.font = "13px system-ui"
+        const words = hostMessage.message.split(' ')
+        const lines: string[] = []
+        let currentLine = words[0] || ''
+        
+        for (let i = 1; i < words.length; i++) {
+          const testLine = currentLine + ' ' + words[i]
+          const metrics = ctx.measureText(testLine)
+          if (metrics.width > messageMaxWidth && currentLine.length > 0) {
+            lines.push(currentLine)
+            currentLine = words[i]
+          } else {
+            currentLine = testLine
+          }
+        }
+        lines.push(currentLine)
+        
+        // Limit to 8 lines
+        const displayLines = lines.slice(0, 8)
+        if (lines.length > 8) {
+          displayLines[7] = displayLines[7].substring(0, 40) + '...'
+        }
+        
+        const labelHeight = 22
+        const boxHeight = displayLines.length * lineHeight + padding * 2 + labelHeight
+        const boxWidth = messageMaxWidth + padding * 2
+        
+        // Position in bottom right corner
+        const boxX = rect.width - boxWidth - 20
+        const boxY = rect.height - boxHeight - 20
+        
+        // Draw message box with host color
+        const gradient = ctx.createLinearGradient(boxX, boxY, boxX, boxY + boxHeight)
+        gradient.addColorStop(0, 'rgba(30, 41, 59, 0.95)')
+        gradient.addColorStop(1, 'rgba(15, 23, 42, 0.95)')
+        ctx.fillStyle = gradient
+        ctx.fillRect(boxX, boxY, boxWidth, boxHeight)
+        
+        // Border with host color
+        ctx.strokeStyle = HOST_COLOR
+        ctx.lineWidth = 2
+        ctx.strokeRect(boxX, boxY, boxWidth, boxHeight)
+        
+        // Label
+        ctx.fillStyle = HOST_COLOR
+        ctx.font = "bold 12px system-ui"
+        ctx.textAlign = "left"
+        ctx.fillText(`📤 To ${hostMessage.target}`, boxX + padding, boxY + padding + 12)
+        
+        // Message text
+        ctx.fillStyle = "rgba(255, 255, 255, 0.95)"
+        ctx.font = "13px system-ui"
+        displayLines.forEach((line, i) => {
+          ctx.fillText(line, boxX + padding, boxY + padding + labelHeight + 4 + i * lineHeight)
+        })
+        
+        ctx.restore()
+      }
     }
 
     let animationFrameId = requestAnimationFrame(function animate() {
@@ -1755,7 +1949,7 @@ export function VisualWorkflowDesigner({
     })
 
     return () => cancelAnimationFrame(animationFrameId)
-  }, [workflowSteps, selectedStepId, isDraggingOver, connections, isCreatingConnection, connectionStart, connectionPreview, workflowOrderMap, editingStepId, editingDescription, cursorPosition, showCursor, isTesting, stepStatuses])
+  }, [workflowSteps, selectedStepId, isDraggingOver, connections, isCreatingConnection, connectionStart, connectionPreview, workflowOrderMap, editingStepId, editingDescription, cursorPosition, showCursor, isTesting, stepStatuses, hostMessage])
   
   // Cursor blinking effect
   useEffect(() => {
