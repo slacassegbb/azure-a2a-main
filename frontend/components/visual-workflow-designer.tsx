@@ -415,17 +415,10 @@ export function VisualWorkflowDesigner({
         return targetStepId
       }
       
-      // CRITICAL: Check if all previous steps in the workflow are completed
-      // This enforces sequential execution at the UI level
-      for (const [checkStepId, checkOrder] of workflowOrderMapRef.current.entries()) {
-        if (checkOrder < targetStepOrder) {
-          const prevStatus = stepStatusesRef.current.get(checkStepId)
-          if (!prevStatus || prevStatus.status !== "completed") {
-            console.log("[WorkflowTest] ⚠️ Blocking update to", agentName, "step", targetStepId, "- previous step", checkStepId, "(order", checkOrder + ") is not completed yet")
-            return null // Block this update - previous steps must complete first!
-          }
-        }
-      }
+      // NOTE: Removed strict sequential validation - the backend already handles sequential execution.
+      // The UI should display events as they come in, not block them.
+      // Previous validation was blocking legitimate updates to steps 4, 5, etc. when step 3
+      // was still in "working" state, even though the backend was executing correctly.
       
       console.log("[WorkflowTest] ✅ Found uncompleted step for", agentName, ":", targetStepId, "order:", targetStepOrder)
       return targetStepId
@@ -1009,9 +1002,9 @@ export function VisualWorkflowDesigner({
         clearTimeout(testTimeoutRef.current)
       }
       testTimeoutRef.current = setTimeout(() => {
-        console.log('[WorkflowTest] Test timeout reached, stopping...')
+        console.log('[WorkflowTest] Test timeout reached (10 minutes), stopping...')
         setIsTesting(false)
-      }, 180000) // 180 seconds (3 minutes) - allows for retries and fallbacks
+      }, 600000) // 600 seconds (10 minutes) - allows for multi-step workflows with retries and fallbacks
       
     } catch (error) {
       console.error('[WorkflowTest] Error sending message:', error)
