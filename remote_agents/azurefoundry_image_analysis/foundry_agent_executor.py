@@ -361,6 +361,21 @@ class FoundryImageAnalysisAgentExecutor(AgentExecutor):
 
         prompt_text = "\n\n".join(texts).strip()
 
+        # Deduplicate file parts by URI to prevent sending the same image multiple times to Azure OpenAI
+        seen_uris = set()
+        deduplicated_parts = []
+        for part in encoded_parts:
+            if isinstance(part, dict) and part.get("kind") == "file":
+                file_info = part.get("file", {})
+                uri = file_info.get("uri")
+                if uri:
+                    if uri in seen_uris:
+                        continue  # Skip duplicate
+                    seen_uris.add(uri)
+            deduplicated_parts.append(part)
+        
+        encoded_parts = deduplicated_parts
+
         has_base = any(
             isinstance(part, dict)
             and part.get("kind") == "file"
