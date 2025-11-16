@@ -3,7 +3,7 @@
 import type React from "react"
 import { useEffect, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
-import { X, Plus, Trash2, Download, Upload, Library, X as CloseIcon, Send, Loader2, PlayCircle, StopCircle, Phone, PhoneOff } from "lucide-react"
+import { X, Plus, Trash2, Download, Upload, Library, X as CloseIcon, Send, Loader2, PlayCircle, StopCircle, Phone, PhoneOff, Mic, MicOff } from "lucide-react"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { WorkflowCatalog } from "./workflow-catalog"
 import { Input } from "@/components/ui/input"
@@ -2586,6 +2586,21 @@ export function VisualWorkflowDesigner({
                 >
                   {voiceLive.isConnected ? <PhoneOff className="h-3 w-3" /> : <Phone className="h-3 w-3" />}
                 </Button>
+                {voiceLive.isConnected && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={voiceLive.toggleMute}
+                    className={`h-8 ${
+                      voiceLive.isMuted 
+                        ? 'bg-red-100 text-red-600 hover:bg-red-200' 
+                        : 'bg-blue-100 text-blue-600 hover:bg-blue-200'
+                    }`}
+                    title={voiceLive.isMuted ? 'Unmute microphone' : 'Mute microphone'}
+                  >
+                    {voiceLive.isMuted ? <MicOff className="h-3 w-3" /> : <Mic className="h-3 w-3" />}
+                  </Button>
+                )}
                 <Button
                   onClick={handleTestSubmit}
                   disabled={!testInput.trim() || isTesting}

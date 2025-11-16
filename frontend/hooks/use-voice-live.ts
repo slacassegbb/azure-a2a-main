@@ -17,8 +17,10 @@ interface VoiceLiveHook {
   isConnected: boolean
   isRecording: boolean
   isSpeaking: boolean
+  isMuted: boolean
   startVoiceConversation: () => Promise<void>
   stopVoiceConversation: () => void
+  toggleMute: () => void
   injectNetworkResponse: (response: any) => void
   error: string | null
 }
@@ -27,6 +29,7 @@ export function useVoiceLive(config: VoiceLiveConfig): VoiceLiveHook {
   const [isConnected, setIsConnected] = useState(false)
   const [isRecording, setIsRecording] = useState(false)
   const [isSpeaking, setIsSpeaking] = useState(false)
+  const [isMuted, setIsMuted] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const wsRef = useRef<WebSocket | null>(null)
@@ -41,6 +44,7 @@ export function useVoiceLive(config: VoiceLiveConfig): VoiceLiveHook {
   const currentSourcesRef = useRef<AudioBufferSourceNode[]>([])
   const pendingCallIdRef = useRef<string | null>(null)
   const isRecordingRef = useRef(false)
+  const isMutedRef = useRef(false)
 
   // Response lifecycle tracking (following Python SDK pattern)
   const activeResponseRef = useRef(false)
@@ -750,8 +754,8 @@ export function useVoiceLive(config: VoiceLiveConfig): VoiceLiveHook {
 
       let audioChunkCount = 0
       processor.onaudioprocess = (e) => {
-        // Only send audio when connected, not playing, and recording is active
-        if (wsRef.current?.readyState === WebSocket.OPEN && !isPlayingRef.current && isRecordingRef.current) {
+        // Only send audio when connected, not playing, recording is active, and NOT muted
+        if (wsRef.current?.readyState === WebSocket.OPEN && !isPlayingRef.current && isRecordingRef.current && !isMutedRef.current) {
           const inputData = e.inputBuffer.getChannelData(0)
           
           // Convert Float32 to PCM16
@@ -866,9 +870,19 @@ export function useVoiceLive(config: VoiceLiveConfig): VoiceLiveHook {
     setIsConnected(false)
     setIsSpeaking(false)
     setIsRecording(false)
+    setIsMuted(false)
+    isMutedRef.current = false
     audioQueueRef.current = []
     isPlayingRef.current = false
     nextStartTimeRef.current = 0
+  }, [])
+
+  // Toggle mute (stops sending audio but keeps recording active)
+  const toggleMute = useCallback(() => {
+    const newMutedState = !isMutedRef.current
+    isMutedRef.current = newMutedState
+    setIsMuted(newMutedState)
+    console.log('[VoiceLive] Microphone', newMutedState ? 'MUTED' : 'UNMUTED')
   }, [])
 
   // Cleanup on unmount
@@ -882,8 +896,10 @@ export function useVoiceLive(config: VoiceLiveConfig): VoiceLiveHook {
     isConnected,
     isRecording,
     isSpeaking,
+    isMuted,
     startVoiceConversation,
     stopVoiceConversation,
+    toggleMute,
     injectNetworkResponse,
     error
   }
