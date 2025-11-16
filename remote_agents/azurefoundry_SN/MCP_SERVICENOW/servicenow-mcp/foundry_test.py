@@ -1,40 +1,40 @@
-import time
 import json
+import time
 
-from azure.ai.agents.models import MessageTextContent, ListSortOrder
+from azure.ai.agents.models import ListSortOrder, MessageTextContent
 from azure.ai.projects import AIProjectClient
 from azure.identity import DefaultAzureCredential
 
 project_client = AIProjectClient(
     endpoint="https://mcpagent.services.ai.azure.com/api/projects/firstProject",
-    credential=DefaultAzureCredential()
+    credential=DefaultAzureCredential(),
 )
 
 with project_client:
     agent = project_client.agents.create_agent(
-        model="gpt-4o", 
-        name="my-mcp-agent", 
+        model="gpt-4o",
+        name="my-mcp-agent",
         instructions="You are a helpful assistant. Use the tools provided to answer the user's questions. Be sure to cite your sources.",
-        tools= [
+        tools=[
             {
                 "type": "mcp",
-		        "server_label": "ServiceNow",
-                #"server_url": "http://127.0.0.1:8001/mcp/",
+                "server_label": "ServiceNow",
+                # "server_url": "http://127.0.0.1:8001/mcp/",
                 "server_url": "https://servicenowmcp.purplebeach-9bf4f526.eastus2.azurecontainerapps.io/mcp/",
-                "require_approval": "never"
+                "require_approval": "never",
             }
         ],
-        tool_resources=None
+        tool_resources=None,
     )
     print(f"Created agent, agent ID: {agent.id}")
-
-
 
     thread = project_client.agents.threads.create()
     print(f"Created thread, thread ID: {thread.id}")
 
     message = project_client.agents.messages.create(
-        thread_id=thread.id, role="user", content="Show me all incidents with priority 1",
+        thread_id=thread.id,
+        role="user",
+        content="Show me all incidents with priority 1",
     )
     print(f"Created message, message ID: {message.id}")
 
@@ -58,7 +58,9 @@ with project_client:
             for tool_call in step.step_details.tool_calls:
                 print(json.dumps(tool_call.as_dict(), indent=2))
 
-    messages = project_client.agents.messages.list(thread_id=thread.id, order=ListSortOrder.ASCENDING)
+    messages = project_client.agents.messages.list(
+        thread_id=thread.id, order=ListSortOrder.ASCENDING
+    )
     for data_point in messages:
         last_message_content = data_point.content[-1]
         if isinstance(last_message_content, MessageTextContent):

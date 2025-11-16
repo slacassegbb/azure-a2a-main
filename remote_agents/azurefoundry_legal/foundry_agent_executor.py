@@ -3,31 +3,22 @@ AI Foundry Agent Executor for A2A framework.
 Adapted from ADK agent executor pattern to work with Azure AI Foundry agents.
 """
 import asyncio
-import logging
 import base64
+import logging
 import os
+import re
 import tempfile
 import time
-from typing import Optional, Dict, Any, List
-import re
-
-from foundry_agent import FoundryLegalAgent
+from typing import Any, Dict, List, Optional
 
 from a2a.server.agent_execution import AgentExecutor
 from a2a.server.agent_execution.context import RequestContext
 from a2a.server.events.event_queue import EventQueue
 from a2a.server.tasks import TaskUpdater
-from a2a.types import (
-    AgentCard,
-    FilePart,
-    FileWithBytes,
-    FileWithUri,
-    DataPart,
-    Part,
-    TaskState,
-    TextPart,
-)
+from a2a.types import (AgentCard, DataPart, FilePart, FileWithBytes,
+                       FileWithUri, Part, TaskState, TextPart)
 from a2a.utils.message import new_agent_text_message
+from foundry_agent import FoundryLegalAgent
 
 logger = logging.getLogger(__name__)
 # Set to INFO to hide verbose debug logs (can be changed to DEBUG for troubleshooting)
@@ -56,7 +47,7 @@ class FoundryLegalAgentExecutor(AgentExecutor):
         """Get the shared legal agent that was initialized at startup (if available)."""
         async with cls._agent_lock:
             return cls._shared_foundry_agent
-    
+
     @classmethod
     async def initialize_at_startup(cls) -> None:
         """Initialize the shared legal agent at startup instead of on first request."""
@@ -67,7 +58,9 @@ class FoundryLegalAgentExecutor(AgentExecutor):
                     cls._shared_foundry_agent = FoundryLegalAgent()
                     await cls._shared_foundry_agent.create_agent()
                     cls._startup_complete = True
-                    logger.info("✅ Foundry legal agent startup initialization completed successfully")
+                    logger.info(
+                        "✅ Foundry legal agent startup initialization completed successfully"
+                    )
                 except Exception as e:
                     logger.error(f"❌ Failed to initialize legal agent at startup: {e}")
                     cls._shared_foundry_agent = None
@@ -86,19 +79,21 @@ class FoundryLegalAgentExecutor(AgentExecutor):
             if not FoundryLegalAgentExecutor._shared_foundry_agent:
                 if FoundryLegalAgentExecutor._startup_complete:
                     # Startup was supposed to happen but failed
-                    raise RuntimeError("Agent startup initialization failed - agent not available")
-                
+                    raise RuntimeError(
+                        "Agent startup initialization failed - agent not available"
+                    )
+
                 # Fallback to lazy creation if startup wasn't called
-                logger.warning("⚠️ Agent not initialized at startup, falling back to lazy creation...")
+                logger.warning(
+                    "⚠️ Agent not initialized at startup, falling back to lazy creation..."
+                )
                 FoundryLegalAgentExecutor._shared_foundry_agent = FoundryLegalAgent()
                 await FoundryLegalAgentExecutor._shared_foundry_agent.create_agent()
                 logger.info("Fallback agent creation completed")
             return FoundryLegalAgentExecutor._shared_foundry_agent
 
     async def _get_or_create_thread(
-        self,
-        context_id: str,
-        agent: Optional[FoundryLegalAgent] = None
+        self, context_id: str, agent: Optional[FoundryLegalAgent] = None
     ) -> str:
         if agent is None:
             agent = await self._get_or_create_agent()
@@ -115,12 +110,15 @@ class FoundryLegalAgentExecutor(AgentExecutor):
         """Log pending requests so dashboards can poll executor state."""
         logger.info(
             "UI pending request update",
-            extra={"context_id": context_id, "request_preview": request_text[:120]}
+            extra={"context_id": context_id, "request_preview": request_text[:120]},
         )
 
     async def send_human_response(self, context_id: str, human_response: str) -> bool:
         """Send human response to complete a pending input_required task."""
-        if context_id in self._waiting_for_input and context_id in self._pending_updaters:
+        if (
+            context_id in self._waiting_for_input
+            and context_id in self._pending_updaters
+        ):
             updater = self._pending_updaters[context_id]
             await updater.complete(
                 message=new_agent_text_message(
@@ -147,40 +145,46 @@ class FoundryLegalAgentExecutor(AgentExecutor):
             logger.info(f"Message parts count: {len(message_parts)}")
             for i, part in enumerate(message_parts):
                 logger.info(f"Part {i}: {part}")
-                if hasattr(part, 'root'):
+                if hasattr(part, "root"):
                     logger.info(f"Part {i} root: {part.root}")
             agent = await self._get_or_create_agent()
             thread_id = await self._get_or_create_thread(context_id, agent)
-            
+
             # Use streaming to show tool calls in real-time
             responses = []
             tools_called = []
             seen_tools = set()
-            
+
             async for event in agent.run_conversation_stream(thread_id, user_message):
                 # Check if this is a tool call event from remote agent
                 if event.startswith("🛠️ Remote agent executing:"):
-                    tool_description = event.replace("🛠️ Remote agent executing: ", "").strip()
+                    tool_description = event.replace(
+                        "🛠️ Remote agent executing: ", ""
+                    ).strip()
                     if tool_description not in seen_tools:
                         seen_tools.add(tool_description)
                         tools_called.append(tool_description)
                         # Emit tool call in real-time
                         tool_event_msg = new_agent_text_message(
-                            f"🛠️ Remote agent executing: {tool_description}", context_id=context_id
+                            f"🛠️ Remote agent executing: {tool_description}",
+                            context_id=context_id,
                         )
                         await task_updater.update_status(
-                            TaskState.working,
-                            message=tool_event_msg
+                            TaskState.working, message=tool_event_msg
                         )
                 # Check if this is a processing message
-                elif event.startswith("🤖") or event.startswith("🧠") or event.startswith("🔍") or event.startswith("📝"):
+                elif (
+                    event.startswith("🤖")
+                    or event.startswith("🧠")
+                    or event.startswith("🔍")
+                    or event.startswith("📝")
+                ):
                     # Emit processing message in real-time
                     processing_msg = new_agent_text_message(
                         event, context_id=context_id
                     )
                     await task_updater.update_status(
-                        TaskState.working,
-                        message=processing_msg
+                        TaskState.working, message=processing_msg
                     )
                 # Check if this is an error
                 elif event.startswith("Error:"):
@@ -191,73 +195,107 @@ class FoundryLegalAgentExecutor(AgentExecutor):
                 # Check for human escalation
                 elif event.strip().upper().startswith("HUMAN_ESCALATION_REQUIRED"):
                     responses.append(event)
-                    
+
                     # Debug: Let's see what's in the RequestContext from the host agent
                     logger.info(f"RequestContext type: {type(request_context)}")
                     logger.info(f"RequestContext attributes: {dir(request_context)}")
-                    
+
                     # Try to get conversation history from different sources
                     conversation_history = ""
-                    
+
                     # Method 1: Check if we have a task with history
-                    if hasattr(request_context, 'task') and request_context.task:
+                    if hasattr(request_context, "task") and request_context.task:
                         logger.info(f"Task attributes: {dir(request_context.task)}")
-                        if hasattr(request_context.task, 'history'):
-                            logger.info(f"Task history length: {len(request_context.task.history) if request_context.task.history else 0}")
+                        if hasattr(request_context.task, "history"):
+                            logger.info(
+                                f"Task history length: {len(request_context.task.history) if request_context.task.history else 0}"
+                            )
                             if request_context.task.history:
                                 for i, msg in enumerate(request_context.task.history):
                                     logger.info(f"History message {i}: {msg}")
                                     # Extract text content from message
-                                    if hasattr(msg, 'parts') and msg.parts:
+                                    if hasattr(msg, "parts") and msg.parts:
                                         for part in msg.parts:
-                                            if hasattr(part, 'root') and hasattr(part.root, 'text'):
+                                            if hasattr(part, "root") and hasattr(
+                                                part.root, "text"
+                                            ):
                                                 text = part.root.text
                                                 if text.strip():
                                                     conversation_history += f"{text}\n"
-                    
+
                     # Method 2: Check if we have a current_task with history
-                    if hasattr(request_context, 'current_task') and request_context.current_task:
-                        logger.info(f"Current task attributes: {dir(request_context.current_task)}")
-                        if hasattr(request_context.current_task, 'history'):
-                            logger.info(f"Current task history length: {len(request_context.current_task.history) if request_context.current_task.history else 0}")
+                    if (
+                        hasattr(request_context, "current_task")
+                        and request_context.current_task
+                    ):
+                        logger.info(
+                            f"Current task attributes: {dir(request_context.current_task)}"
+                        )
+                        if hasattr(request_context.current_task, "history"):
+                            logger.info(
+                                f"Current task history length: {len(request_context.current_task.history) if request_context.current_task.history else 0}"
+                            )
                             if request_context.current_task.history:
-                                for i, msg in enumerate(request_context.current_task.history):
-                                    logger.info(f"Current task history message {i}: {msg}")
+                                for i, msg in enumerate(
+                                    request_context.current_task.history
+                                ):
+                                    logger.info(
+                                        f"Current task history message {i}: {msg}"
+                                    )
                                     # Extract text content from message
-                                    if hasattr(msg, 'parts') and msg.parts:
+                                    if hasattr(msg, "parts") and msg.parts:
                                         for part in msg.parts:
-                                            if hasattr(part, 'root') and hasattr(part.root, 'text'):
+                                            if hasattr(part, "root") and hasattr(
+                                                part.root, "text"
+                                            ):
                                                 text = part.root.text
                                                 if text.strip():
                                                     conversation_history += f"{text}\n"
-                    
+
                     # Method 3: Check if we have related_tasks with history
-                    if hasattr(request_context, 'related_tasks') and request_context.related_tasks:
-                        logger.info(f"Related tasks count: {len(request_context.related_tasks)}")
+                    if (
+                        hasattr(request_context, "related_tasks")
+                        and request_context.related_tasks
+                    ):
+                        logger.info(
+                            f"Related tasks count: {len(request_context.related_tasks)}"
+                        )
                         for i, task in enumerate(request_context.related_tasks):
-                            if hasattr(task, 'history') and task.history:
-                                logger.info(f"Related task {i} history length: {len(task.history)}")
+                            if hasattr(task, "history") and task.history:
+                                logger.info(
+                                    f"Related task {i} history length: {len(task.history)}"
+                                )
                                 for j, msg in enumerate(task.history):
-                                    logger.info(f"Related task {i} history message {j}: {msg}")
+                                    logger.info(
+                                        f"Related task {i} history message {j}: {msg}"
+                                    )
                                     # Extract text content from message
-                                    if hasattr(msg, 'parts') and msg.parts:
+                                    if hasattr(msg, "parts") and msg.parts:
                                         for part in msg.parts:
-                                            if hasattr(part, 'root') and hasattr(part.root, 'text'):
+                                            if hasattr(part, "root") and hasattr(
+                                                part.root, "text"
+                                            ):
                                                 text = part.root.text
                                                 if text.strip():
                                                     conversation_history += f"{text}\n"
-                    
-                    logger.info(f"Extracted conversation history: {conversation_history}")
-                    logger.info(f"Using raw user message from host agent: {user_message}")
-                    
+
+                    logger.info(
+                        f"Extracted conversation history: {conversation_history}"
+                    )
+                    logger.info(
+                        f"Using raw user message from host agent: {user_message}"
+                    )
+
                     # Build the full request text with conversation history
                     full_request_text = ""
                     if conversation_history.strip():
-                        full_request_text += f"Conversation History:\n{conversation_history}\n\n"
+                        full_request_text += (
+                            f"Conversation History:\n{conversation_history}\n\n"
+                        )
                     full_request_text += f"Current Request: {user_message}"
-                    
+
                     logger.info(f"Full request text: {full_request_text}")
-                    
+
                     # Set up pending request for human input
                     self._waiting_for_input[context_id] = full_request_text
                     self._pending_updaters[context_id] = task_updater
@@ -266,8 +304,9 @@ class FoundryLegalAgentExecutor(AgentExecutor):
                     await task_updater.update_status(
                         TaskState.input_required,
                         message=new_agent_text_message(
-                            f"Human expert input required: {user_message}", context_id=context_id
-                        )
+                            f"Human expert input required: {user_message}",
+                            context_id=context_id,
+                        ),
                     )
                     # Wait for human input
                     await self._input_events[context_id].wait()
@@ -279,22 +318,32 @@ class FoundryLegalAgentExecutor(AgentExecutor):
                 # Otherwise, treat as a regular response
                 else:
                     responses.append(event)
-            
+
             # Emit the final response
             if responses:
                 final_response = responses[-1]
                 # Log a preview of the response (first 500 chars)
-                response_preview = final_response[:500] + "..." if len(final_response) > 500 else final_response
-                logger.info(f"📤 Agent response ({len(final_response)} chars): {response_preview}")
+                response_preview = (
+                    final_response[:500] + "..."
+                    if len(final_response) > 500
+                    else final_response
+                )
+                logger.info(
+                    f"📤 Agent response ({len(final_response)} chars): {response_preview}"
+                )
                 await task_updater.complete(
-                    message=new_agent_text_message(final_response, context_id=context_id)
+                    message=new_agent_text_message(
+                        final_response, context_id=context_id
+                    )
                 )
             else:
                 logger.warning("⚠️ No response generated by agent")
                 await task_updater.complete(
-                    message=new_agent_text_message("No response generated", context_id=context_id)
+                    message=new_agent_text_message(
+                        "No response generated", context_id=context_id
+                    )
                 )
-                    
+
         except Exception as e:
             await task_updater.failed(
                 message=new_agent_text_message(f"Error: {e}", context_id=context_id)
@@ -315,7 +364,7 @@ class FoundryLegalAgentExecutor(AgentExecutor):
                         data = base64.b64decode(p.file.bytes)
                         fname = p.file.name or "file"
                         path = os.path.join(tempfile.gettempdir(), fname)
-                        with open(path, 'wb') as f:
+                        with open(path, "wb") as f:
                             f.write(data)
                         texts.append(f"[Saved {fname} to {path}]")
                     except Exception as ex:
@@ -324,10 +373,15 @@ class FoundryLegalAgentExecutor(AgentExecutor):
                 # Include a compact representation of structured data
                 try:
                     import json as _json
+
                     payload = getattr(p, "data", None)
                     if payload is None:
                         payload = getattr(p, "value", None)
-                    summary = payload if isinstance(payload, str) else _json.dumps(payload)[:500]
+                    summary = (
+                        payload
+                        if isinstance(payload, str)
+                        else _json.dumps(payload)[:500]
+                    )
                     texts.append(f"[Data: {summary}]")
                 except Exception:
                     texts.append("[Data payload]")
@@ -339,36 +393,49 @@ class FoundryLegalAgentExecutor(AgentExecutor):
         event_queue: EventQueue,
     ):
         logger.info(f"Executing request for context {context.context_id}")
-        
+
         # CRITICAL: Apply rate limiting at the execute level to control between different user requests
         async with FoundryLegalAgentExecutor._request_semaphore:
             # Check API call rate limiting
             current_time = time.time()
-            
+
             # Reset the window if it's been more than a minute
             if current_time - FoundryLegalAgentExecutor._api_call_window_start > 60:
                 FoundryLegalAgentExecutor._api_call_count = 0
                 FoundryLegalAgentExecutor._api_call_window_start = current_time
-            
+
             # Check if we're approaching the API limit
-            if FoundryLegalAgentExecutor._api_call_count >= FoundryLegalAgentExecutor._max_api_calls_per_minute:
-                wait_time = 60 - (current_time - FoundryLegalAgentExecutor._api_call_window_start)
+            if (
+                FoundryLegalAgentExecutor._api_call_count
+                >= FoundryLegalAgentExecutor._max_api_calls_per_minute
+            ):
+                wait_time = 60 - (
+                    current_time - FoundryLegalAgentExecutor._api_call_window_start
+                )
                 if wait_time > 0:
-                    logger.warning(f"API rate limit protection: waiting {wait_time:.1f}s to reset window")
+                    logger.warning(
+                        f"API rate limit protection: waiting {wait_time:.1f}s to reset window"
+                    )
                     await asyncio.sleep(wait_time)
                     # Reset counters
                     FoundryLegalAgentExecutor._api_call_count = 0
                     FoundryLegalAgentExecutor._api_call_window_start = time.time()
-            
+
             # Enforce minimum interval between requests - THIS IS THE KEY FIX
-            time_since_last = current_time - FoundryLegalAgentExecutor._last_request_time
+            time_since_last = (
+                current_time - FoundryLegalAgentExecutor._last_request_time
+            )
             if time_since_last < FoundryLegalAgentExecutor._min_request_interval:
-                sleep_time = FoundryLegalAgentExecutor._min_request_interval - time_since_last
-                logger.warning(f"🚦 RATE LIMITING: Waiting {sleep_time:.2f}s between user requests (last request was {time_since_last:.2f}s ago)")
+                sleep_time = (
+                    FoundryLegalAgentExecutor._min_request_interval - time_since_last
+                )
+                logger.warning(
+                    f"🚦 RATE LIMITING: Waiting {sleep_time:.2f}s between user requests (last request was {time_since_last:.2f}s ago)"
+                )
                 await asyncio.sleep(sleep_time)
-            
+
             FoundryLegalAgentExecutor._last_request_time = time.time()
-            
+
             # Now proceed with the actual request processing
             updater = TaskUpdater(event_queue, context.task_id, context.context_id)
             if not context.current_task:
@@ -388,7 +455,9 @@ class FoundryLegalAgentExecutor(AgentExecutor):
             self._input_events[context.context_id].set()
         updater = TaskUpdater(event_queue, context.task_id, context.context_id)
         await updater.failed(
-            message=new_agent_text_message("Task cancelled", context_id=context.context_id)
+            message=new_agent_text_message(
+                "Task cancelled", context_id=context.context_id
+            )
         )
 
     async def cleanup(self):

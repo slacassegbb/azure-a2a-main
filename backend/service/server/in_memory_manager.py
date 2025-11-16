@@ -2,23 +2,12 @@ import asyncio
 import datetime
 import uuid
 
-from a2a.types import (
-    AgentCard,
-    Artifact,
-    DataPart,
-    Message,
-    Part,
-    Role,
-    Task,
-    TaskState,
-    TaskStatus,
-    TextPart,
-)
-from utils.agent_card import get_agent_card
-
+from a2a.types import (AgentCard, Artifact, DataPart, Message, Part, Role,
+                       Task, TaskState, TaskStatus, TextPart)
 from service.server import test_image
 from service.server.application_manager import ApplicationManager
 from service.types import Conversation, Event
+from utils.agent_card import get_agent_card
 
 
 class InMemoryFakeAgentManager(ApplicationManager):
@@ -76,8 +65,8 @@ class InMemoryFakeAgentManager(ApplicationManager):
     async def process_message(self, message: Message):
         self._messages.append(message)
         message_id = message.messageId
-        context_id = message.context_id or ''
-        task_id = message.taskId or ''
+        context_id = message.context_id or ""
+        task_id = message.taskId or ""
         if message_id:
             self._pending_message_ids.append(message_id)
         conversation = self.get_conversation(context_id)
@@ -86,7 +75,7 @@ class InMemoryFakeAgentManager(ApplicationManager):
         self._events.append(
             Event(
                 id=str(uuid.uuid4()),
-                actor='host',
+                actor="host",
                 content=message,
                 timestamp=datetime.datetime.utcnow().timestamp(),
             )
@@ -112,7 +101,7 @@ class InMemoryFakeAgentManager(ApplicationManager):
         self._events.append(
             Event(
                 id=str(uuid.uuid4()),
-                actor='host',
+                actor="host",
                 content=response,
                 timestamp=datetime.datetime.utcnow().timestamp(),
             )
@@ -123,7 +112,7 @@ class InMemoryFakeAgentManager(ApplicationManager):
             task.status.state = TaskState.completed
             task.artifacts = [
                 Artifact(
-                    name='response',
+                    name="response",
                     parts=response.parts,
                     artifactId=str(uuid.uuid4()),
                 )
@@ -148,14 +137,10 @@ class InMemoryFakeAgentManager(ApplicationManager):
 
     def next_message(self) -> Message:
         message = _message_queue[self._next_message_idx]
-        self._next_message_idx = (self._next_message_idx + 1) % len(
-            _message_queue
-        )
+        self._next_message_idx = (self._next_message_idx + 1) % len(_message_queue)
         return message
 
-    def get_conversation(
-        self, conversation_id: str | None
-    ) -> Conversation | None:
+    def get_conversation(self, conversation_id: str | None) -> Conversation | None:
         if not conversation_id:
             return None
         return next(
@@ -171,28 +156,26 @@ class InMemoryFakeAgentManager(ApplicationManager):
         for message_id in self._pending_message_ids:
             if message_id in self._task_map:
                 task_id = self._task_map[message_id]
-                task = next(
-                    filter(lambda x: x.id == task_id, self._tasks), None
-                )
+                task = next(filter(lambda x: x.id == task_id, self._tasks), None)
                 if not task:
-                    rval.append((message_id, ''))
+                    rval.append((message_id, ""))
                 elif task.history and task.history[-1].parts:
                     if len(task.history) == 1:
-                        rval.append((message_id, 'Working...'))
+                        rval.append((message_id, "Working..."))
                     else:
                         part = task.history[-1].parts[0]
                         rval.append(
                             (
                                 message_id,
                                 part.root.text
-                                if part.root.kind == 'text'
-                                else 'Working...',
+                                if part.root.kind == "text"
+                                else "Working...",
                             )
                         )
             else:
-                rval.append((message_id, ''))
+                rval.append((message_id, ""))
             return rval
-        return [(x, '') for x in self._pending_message_ids]
+        return [(x, "") for x in self._pending_message_ids]
 
     def register_agent(self, url):
         agent_data = get_agent_card(url)
@@ -224,7 +207,7 @@ _contextId = str(uuid.uuid4())
 _message_queue: list[Message] = [
     Message(
         role=Role.agent,
-        parts=[Part(root=TextPart(text='Hello'))],
+        parts=[Part(root=TextPart(text="Hello"))],
         contextId=_contextId,
         messageId=str(uuid.uuid4()),
     ),
@@ -234,28 +217,28 @@ _message_queue: list[Message] = [
             Part(
                 root=DataPart(
                     data={
-                        'type': 'form',
-                        'form': {
-                            'type': 'object',
-                            'properties': {
-                                'name': {
-                                    'type': 'string',
-                                    'description': 'Enter your name',
-                                    'title': 'Name',
+                        "type": "form",
+                        "form": {
+                            "type": "object",
+                            "properties": {
+                                "name": {
+                                    "type": "string",
+                                    "description": "Enter your name",
+                                    "title": "Name",
                                 },
-                                'date': {
-                                    'type': 'string',
-                                    'format': 'date',
-                                    'description': 'Birthday',
-                                    'title': 'Birthday',
+                                "date": {
+                                    "type": "string",
+                                    "format": "date",
+                                    "description": "Birthday",
+                                    "title": "Birthday",
                                 },
                             },
-                            'required': ['date'],
+                            "required": ["date"],
                         },
-                        'form_data': {
-                            'name': 'John Smith',
+                        "form_data": {
+                            "name": "John Smith",
                         },
-                        'instructions': 'Please provide your birthday and name',
+                        "instructions": "Please provide your birthday and name",
                     }
                 )
             ),
@@ -265,14 +248,14 @@ _message_queue: list[Message] = [
     ),
     Message(
         role=Role.agent,
-        parts=[Part(root=TextPart(text='I like cats'))],
+        parts=[Part(root=TextPart(text="I like cats"))],
         contextId=_contextId,
         messageId=str(uuid.uuid4()),
     ),
     test_image.make_test_image(_contextId),
     Message(
         role=Role.agent,
-        parts=[Part(root=TextPart(text='And I like dogs'))],
+        parts=[Part(root=TextPart(text="And I like dogs"))],
         contextId=_contextId,
         messageId=str(uuid.uuid4()),
     ),

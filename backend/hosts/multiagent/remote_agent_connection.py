@@ -1,21 +1,15 @@
-from typing import Callable
 import sys
 from pathlib import Path
+from typing import Callable
+from uuid import uuid4
+
 import httpx
 from a2a.client import A2AClient
 from a2a.client.errors import A2AClientHTTPError
-from a2a.types import (
-    AgentCard,
-    Task,
-    Message,
-    MessageSendParams,
-    TaskStatusUpdateEvent,
-    TaskArtifactUpdateEvent,
-    SendMessageRequest,
-    SendStreamingMessageRequest,
-    JSONRPCErrorResponse,
-)
-from uuid import uuid4
+from a2a.types import (AgentCard, JSONRPCErrorResponse, Message,
+                       MessageSendParams, SendMessageRequest,
+                       SendStreamingMessageRequest, Task,
+                       TaskArtifactUpdateEvent, TaskStatusUpdateEvent)
 
 # Add backend directory to path for log_config import
 backend_dir = Path(__file__).resolve().parents[2]
@@ -31,7 +25,12 @@ TaskUpdateCallback = Callable[[TaskCallbackArg, AgentCard], Task]
 class RemoteAgentConnections:
     """A class to hold the connections to the remote agents."""
 
-    def __init__(self, client: httpx.AsyncClient, agent_card: AgentCard, task_callback: TaskUpdateCallback | None = None):
+    def __init__(
+        self,
+        client: httpx.AsyncClient,
+        agent_card: AgentCard,
+        task_callback: TaskUpdateCallback | None = None,
+    ):
         self.agent_client = A2AClient(client, agent_card)
         self.card = agent_card
         self.pending_tasks = set()
@@ -47,8 +46,10 @@ class RemoteAgentConnections:
     ) -> Task | Message | None:
         # Use provided callback or fall back to instance callback
         callback = task_callback or self.task_callback
-        capabilities = getattr(self.card, 'capabilities', None)
-        streaming_supported = bool(getattr(capabilities, 'streaming', False)) if capabilities else False
+        capabilities = getattr(self.card, "capabilities", None)
+        streaming_supported = (
+            bool(getattr(capabilities, "streaming", False)) if capabilities else False
+        )
 
         if streaming_supported:
             try:
@@ -57,26 +58,34 @@ class RemoteAgentConnections:
                     SendStreamingMessageRequest(id=str(uuid4()), params=request)
                 ):
                     if not response.root.result:
-                        log_debug(f"RemoteAgentConnections.send_message (streaming): response.root.result is None or error:: {response.root}")
+                        log_debug(
+                            f"RemoteAgentConnections.send_message (streaming): response.root.result is None or error:: {response.root}"
+                        )
                         return response.root.error
                     # In the case a message is returned, that is the end of the interaction.
                     event = response.root.result
-                    log_debug(f"RemoteAgentConnections.send_message (streaming): event:: {event}")
+                    log_debug(
+                        f"RemoteAgentConnections.send_message (streaming): event:: {event}"
+                    )
                     if isinstance(event, Message):
                         return event
 
                     # Otherwise we are in the Task + TaskUpdate cycle.
                     if callback and event:
                         task = callback(event, self.card)
-                    if hasattr(event, 'final') and event.final:
+                    if hasattr(event, "final") and event.final:
                         break
-                log_debug(f"RemoteAgentConnections.send_message (streaming): final task:: {task}")
+                log_debug(
+                    f"RemoteAgentConnections.send_message (streaming): final task:: {task}"
+                )
                 return task
             except A2AClientHTTPError as exc:
                 error_text = str(exc)
-                if exc.status_code == 400 and 'Invalid SSE response' in error_text:
-                    log_debug(f"Streaming not supported for {self.card.name}; falling back to non-streaming. Error: {error_text}")
-                    if capabilities and hasattr(capabilities, 'streaming'):
+                if exc.status_code == 400 and "Invalid SSE response" in error_text:
+                    log_debug(
+                        f"Streaming not supported for {self.card.name}; falling back to non-streaming. Error: {error_text}"
+                    )
+                    if capabilities and hasattr(capabilities, "streaming"):
                         try:
                             capabilities.streaming = False
                         except Exception:
@@ -89,7 +98,9 @@ class RemoteAgentConnections:
         response = await self.agent_client.send_message(
             SendMessageRequest(id=str(uuid4()), params=request)
         )
-        log_debug(f"RemoteAgentConnections.send_message (non-streaming): response.root:: {response.root}")
+        log_debug(
+            f"RemoteAgentConnections.send_message (non-streaming): response.root:: {response.root}"
+        )
         if isinstance(response.root, JSONRPCErrorResponse):
             return response.root.error
         if isinstance(response.root.result, Message):

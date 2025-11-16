@@ -3,21 +3,21 @@ AI Foundry Image Generator Agent Executor for A2A framework.
 Adapted from ADK agent executor pattern to work with Azure AI Foundry agents for prompt orchestration and image generation.
 """
 import asyncio
-import logging
 import base64
+import logging
 import os
 import tempfile
 import time
-from typing import Optional, Dict, List, Any
-
-from foundry_agent import FoundryImageGeneratorAgent
+from typing import Any, Dict, List, Optional
 
 from a2a.server.agent_execution import AgentExecutor
 from a2a.server.agent_execution.context import RequestContext
 from a2a.server.events.event_queue import EventQueue
 from a2a.server.tasks import TaskUpdater
-from a2a.types import AgentCard, DataPart, FilePart, FileWithBytes, FileWithUri, Part, TaskState, TextPart
-from a2a.utils.message import new_agent_text_message, new_agent_parts_message
+from a2a.types import (AgentCard, DataPart, FilePart, FileWithBytes,
+                       FileWithUri, Part, TaskState, TextPart)
+from a2a.utils.message import new_agent_parts_message, new_agent_text_message
+from foundry_agent import FoundryImageGeneratorAgent
 
 logger = logging.getLogger(__name__)
 # Set to INFO to hide verbose debug logs (can be changed to DEBUG for troubleshooting)
@@ -45,20 +45,26 @@ class FoundryImageGeneratorAgentExecutor(AgentExecutor):
         """Get the shared agent that was initialized at startup (if available)."""
         async with cls._agent_lock:
             return cls._shared_foundry_agent
-    
+
     @classmethod
     async def initialize_at_startup(cls) -> None:
         """Initialize the shared image generator agent at startup instead of on first request."""
         async with cls._agent_lock:
             if not cls._shared_foundry_agent:
-                logger.info("🚀 Initializing Foundry Image Generator agent at startup...")
+                logger.info(
+                    "🚀 Initializing Foundry Image Generator agent at startup..."
+                )
                 try:
                     cls._shared_foundry_agent = FoundryImageGeneratorAgent()
                     await cls._shared_foundry_agent.create_agent()
                     cls._startup_complete = True
-                    logger.info("✅ Foundry Image Generator agent startup initialization completed successfully")
+                    logger.info(
+                        "✅ Foundry Image Generator agent startup initialization completed successfully"
+                    )
                 except Exception as e:
-                    logger.error(f"❌ Failed to initialize image generator agent at startup: {e}")
+                    logger.error(
+                        f"❌ Failed to initialize image generator agent at startup: {e}"
+                    )
                     cls._shared_foundry_agent = None
                     cls._startup_complete = False
                     raise
@@ -76,19 +82,23 @@ class FoundryImageGeneratorAgentExecutor(AgentExecutor):
             if not FoundryImageGeneratorAgentExecutor._shared_foundry_agent:
                 if FoundryImageGeneratorAgentExecutor._startup_complete:
                     # Startup was supposed to happen but failed
-                    raise RuntimeError("Image generator agent startup initialization failed - agent not available")
+                    raise RuntimeError(
+                        "Image generator agent startup initialization failed - agent not available"
+                    )
 
                 # Fallback to lazy creation if startup wasn't called
-                logger.warning("⚠️ Image generator agent not initialized at startup, falling back to lazy creation...")
-                FoundryImageGeneratorAgentExecutor._shared_foundry_agent = FoundryImageGeneratorAgent()
+                logger.warning(
+                    "⚠️ Image generator agent not initialized at startup, falling back to lazy creation..."
+                )
+                FoundryImageGeneratorAgentExecutor._shared_foundry_agent = (
+                    FoundryImageGeneratorAgent()
+                )
                 await FoundryImageGeneratorAgentExecutor._shared_foundry_agent.create_agent()
                 logger.info("Fallback image generator agent creation completed")
             return FoundryImageGeneratorAgentExecutor._shared_foundry_agent
 
     async def _get_or_create_thread(
-        self,
-        context_id: str,
-        agent: Optional[FoundryImageGeneratorAgent] = None
+        self, context_id: str, agent: Optional[FoundryImageGeneratorAgent] = None
     ) -> str:
         if agent is None:
             agent = await self._get_or_create_agent()
@@ -100,8 +110,6 @@ class FoundryImageGeneratorAgentExecutor(AgentExecutor):
         thread_id = thread.id
         self._active_threads[context_id] = thread_id
         return thread_id
-
-
 
     async def _process_request(
         self,
@@ -118,36 +126,50 @@ class FoundryImageGeneratorAgentExecutor(AgentExecutor):
                     if isinstance(root_part, FilePart):
                         file_obj = root_part.file
                         if isinstance(file_obj, FileWithUri):
-                            received_files.append({
-                                "name": getattr(file_obj, "name", "unknown"),
-                                "uri": getattr(file_obj, "uri", ""),
-                                "mime": getattr(file_obj, "mimeType", ""),
-                            })
+                            received_files.append(
+                                {
+                                    "name": getattr(file_obj, "name", "unknown"),
+                                    "uri": getattr(file_obj, "uri", ""),
+                                    "mime": getattr(file_obj, "mimeType", ""),
+                                }
+                            )
                         elif isinstance(file_obj, FileWithBytes):
-                            received_files.append({
-                                "name": getattr(file_obj, "name", "unknown"),
-                                "uri": "",
-                                "mime": getattr(file_obj, "mimeType", ""),
-                                "bytes": len(getattr(file_obj, "bytes", b""))
-                            })
+                            received_files.append(
+                                {
+                                    "name": getattr(file_obj, "name", "unknown"),
+                                    "uri": "",
+                                    "mime": getattr(file_obj, "mimeType", ""),
+                                    "bytes": len(getattr(file_obj, "bytes", b"")),
+                                }
+                            )
 
                     elif isinstance(root_part, DataPart):
                         data = getattr(root_part, "data", None)
                         if isinstance(data, dict) and data.get("artifact-uri"):
-                            received_files.append({
-                                "name": data.get("file-name", "unknown"),
-                                "uri": data.get("artifact-uri", ""),
-                                "mime": data.get("mime", ""),
-                            })
+                            received_files.append(
+                                {
+                                    "name": data.get("file-name", "unknown"),
+                                    "uri": data.get("artifact-uri", ""),
+                                    "mime": data.get("mime", ""),
+                                }
+                            )
 
         if received_files:
             self._last_received_files = received_files
             print("[Image Generator Executor] Received file references:")
             for file_meta in received_files:
-                print(f"  • name={file_meta.get('name')} uri={file_meta.get('uri')} mime={file_meta.get('mime')}")
-            logger.info("📎 Received file references in A2A message", extra={"files": received_files, "context_id": context_id})
+                print(
+                    f"  • name={file_meta.get('name')} uri={file_meta.get('uri')} mime={file_meta.get('mime')}"
+                )
+            logger.info(
+                "📎 Received file references in A2A message",
+                extra={"files": received_files, "context_id": context_id},
+            )
         else:
-            logger.info("📎 No file references received in A2A message for context %s", context_id)
+            logger.info(
+                "📎 No file references received in A2A message for context %s",
+                context_id,
+            )
         try:
             user_message, attachments = self._convert_parts_to_payload(message_parts)
             agent = await self._get_or_create_agent()
@@ -170,32 +192,40 @@ class FoundryImageGeneratorAgentExecutor(AgentExecutor):
                     ):
                         # Check if this is a tool call event from remote agent
                         if event.startswith("🛠️ Remote agent executing:"):
-                            tool_description = event.replace("🛠️ Remote agent executing: ", "").strip()
+                            tool_description = event.replace(
+                                "🛠️ Remote agent executing: ", ""
+                            ).strip()
                             if tool_description not in seen_tools:
                                 seen_tools.add(tool_description)
                                 tools_called.append(tool_description)
                                 # Emit tool call in real-time
                                 tool_event_msg = new_agent_text_message(
-                                    f"🛠️ Remote agent executing: {tool_description}", context_id=context_id
+                                    f"🛠️ Remote agent executing: {tool_description}",
+                                    context_id=context_id,
                                 )
                                 await task_updater.update_status(
-                                    TaskState.working,
-                                    message=tool_event_msg
+                                    TaskState.working, message=tool_event_msg
                                 )
                         # Check if this is a processing message
-                        elif event.startswith("🤖") or event.startswith("🧠") or event.startswith("🔍") or event.startswith("📝"):
+                        elif (
+                            event.startswith("🤖")
+                            or event.startswith("🧠")
+                            or event.startswith("🔍")
+                            or event.startswith("📝")
+                        ):
                             # Emit processing message in real-time
                             processing_msg = new_agent_text_message(
                                 event, context_id=context_id
                             )
                             await task_updater.update_status(
-                                TaskState.working,
-                                message=processing_msg
+                                TaskState.working, message=processing_msg
                             )
                         # Check if this is an error
                         elif event.startswith("Error:"):
                             await task_updater.failed(
-                                message=new_agent_text_message(event, context_id=context_id)
+                                message=new_agent_text_message(
+                                    event, context_id=context_id
+                                )
                             )
                             return
 
@@ -208,46 +238,63 @@ class FoundryImageGeneratorAgentExecutor(AgentExecutor):
                         artifacts = agent.pop_latest_artifacts()
                         artifact_parts = []
                         if artifacts:
-                            artifact_parts = [Part(root=DataPart(data=artifact)) for artifact in artifacts]
-                            artifact_message = new_agent_parts_message(parts=artifact_parts, context_id=context_id)
+                            artifact_parts = [
+                                Part(root=DataPart(data=artifact))
+                                for artifact in artifacts
+                            ]
+                            artifact_message = new_agent_parts_message(
+                                parts=artifact_parts, context_id=context_id
+                            )
                             responses.append(artifact_message)
                             await task_updater.update_status(
-                                TaskState.working,
-                                message=artifact_message
+                                TaskState.working, message=artifact_message
                             )
                         final_text_response = next(
-                            (resp for resp in reversed(responses) if isinstance(resp, str)),
-                            None
+                            (
+                                resp
+                                for resp in reversed(responses)
+                                if isinstance(resp, str)
+                            ),
+                            None,
                         )
                         if final_text_response is None:
                             final_text_response = "Image generated successfully."
-                        
+
                         # Include both text summary AND artifact parts in final completion message
                         # Log a preview of the response (first 500 chars)
-                        response_preview = final_text_response[:500] + "..." if len(final_text_response) > 500 else final_text_response
-                        logger.info(f"📤 Agent response ({len(final_text_response)} chars, {len(artifact_parts)} artifacts): {response_preview}")
-                        
+                        response_preview = (
+                            final_text_response[:500] + "..."
+                            if len(final_text_response) > 500
+                            else final_text_response
+                        )
+                        logger.info(
+                            f"📤 Agent response ({len(final_text_response)} chars, {len(artifact_parts)} artifacts): {response_preview}"
+                        )
+
                         # This ensures downstream agents receive file metadata for agent-to-agent file exchange
-                        final_parts = [Part(root=TextPart(text=final_text_response, kind='text'))]
+                        final_parts = [
+                            Part(root=TextPart(text=final_text_response, kind="text"))
+                        ]
                         if artifact_parts:
                             final_parts.extend(artifact_parts)
-                        
+
                         await task_updater.complete(
-                            message=new_agent_parts_message(parts=final_parts, context_id=context_id)
+                            message=new_agent_parts_message(
+                                parts=final_parts, context_id=context_id
+                            )
                         )
                     else:
                         logger.warning("⚠️ No response generated by agent")
                         await task_updater.complete(
-                            message=new_agent_text_message("No response generated", context_id=context_id)
+                            message=new_agent_text_message(
+                                "No response generated", context_id=context_id
+                            )
                         )
                     return
 
                 except RuntimeError as run_error:
                     error_text = str(run_error)
-                    if (
-                        "active Azure AI Foundry run(s)" in error_text
-                        and attempt < 2
-                    ):
+                    if "active Azure AI Foundry run(s)" in error_text and attempt < 2:
                         logger.warning(
                             "Thread %s still has active run(s); creating a fresh thread for context %s",
                             thread_id,
@@ -263,7 +310,9 @@ class FoundryImageGeneratorAgentExecutor(AgentExecutor):
             logger.info("Request processing for context %s was cancelled", context_id)
             try:
                 await task_updater.failed(
-                    message=new_agent_text_message("Task cancelled", context_id=context_id)
+                    message=new_agent_text_message(
+                        "Task cancelled", context_id=context_id
+                    )
                 )
             except Exception as update_error:  # pragma: no cover - defensive logging
                 logger.warning(
@@ -278,7 +327,9 @@ class FoundryImageGeneratorAgentExecutor(AgentExecutor):
                 message=new_agent_text_message(f"Error: {e}", context_id=context_id)
             )
 
-    def _convert_parts_to_payload(self, parts: List[Part]) -> tuple[str, List[Dict[str, Any]]]:
+    def _convert_parts_to_payload(
+        self, parts: List[Part]
+    ) -> tuple[str, List[Dict[str, Any]]]:
         """Convert message parts to text prompt plus structured file attachments."""
         texts: List[str] = []
         encoded_parts: List[Dict[str, Any]] = []
@@ -298,25 +349,31 @@ class FoundryImageGeneratorAgentExecutor(AgentExecutor):
                         metadata = p.data.get("metadata") or {}
                         role = metadata.get("role")
                     if uri:
-                        encoded_parts.append({
-                            "kind": "file",
-                            "file": {
-                                "name": file_name,
-                                "mimeType": mime or "application/octet-stream",
-                                "uri": uri,
-                                "size": p.data.get("file-size"),
-                                "storage": p.data.get("storage-type"),
-                                **({"role": role} if role else {}),
-                            },
-                        })
+                        encoded_parts.append(
+                            {
+                                "kind": "file",
+                                "file": {
+                                    "name": file_name,
+                                    "mimeType": mime or "application/octet-stream",
+                                    "uri": uri,
+                                    "size": p.data.get("file-size"),
+                                    "storage": p.data.get("storage-type"),
+                                    **({"role": role} if role else {}),
+                                },
+                            }
+                        )
                     else:
                         encoded_parts.append({"kind": "data", "data": p.data})
                 else:
                     encoded_parts.append({"kind": "data", "data": p.data})
             elif isinstance(p.file, FileWithUri):
                 role_hint = getattr(p.file, "role", None)
-                metadata_role = (p.metadata or {}).get("role") if getattr(p, "metadata", None) else None
-                resolved_role = (role_hint or metadata_role)
+                metadata_role = (
+                    (p.metadata or {}).get("role")
+                    if getattr(p, "metadata", None)
+                    else None
+                )
+                resolved_role = role_hint or metadata_role
                 file_payload = {
                     "name": getattr(p.file, "name", "file"),
                     "mimeType": getattr(p.file, "mimeType", "application/octet-stream"),
@@ -327,22 +384,34 @@ class FoundryImageGeneratorAgentExecutor(AgentExecutor):
                 if getattr(p, "metadata", None):
                     file_payload["metadata"] = {**p.metadata}
 
-                encoded_parts.append({
-                    "kind": "file",
-                    "file": file_payload,
-                })
+                encoded_parts.append(
+                    {
+                        "kind": "file",
+                        "file": file_payload,
+                    }
+                )
             elif isinstance(p.file, FileWithBytes):
                 try:
                     raw_bytes = base64.b64decode(p.file.bytes)
                 except Exception:
-                    raw_bytes = p.file.bytes if isinstance(p.file.bytes, (bytes, bytearray)) else None
+                    raw_bytes = (
+                        p.file.bytes
+                        if isinstance(p.file.bytes, (bytes, bytearray))
+                        else None
+                    )
 
                 file_entry: Dict[str, Any] = {
                     "kind": "file",
                     "file": {
                         "name": getattr(p.file, "name", "file"),
-                        "mimeType": getattr(p.file, "mimeType", "application/octet-stream"),
-                        **({"role": getattr(p.file, "role", None)} if getattr(p.file, "role", None) else {}),
+                        "mimeType": getattr(
+                            p.file, "mimeType", "application/octet-stream"
+                        ),
+                        **(
+                            {"role": getattr(p.file, "role", None)}
+                            if getattr(p.file, "role", None)
+                            else {}
+                        ),
                     },
                 }
 
@@ -370,10 +439,16 @@ class FoundryImageGeneratorAgentExecutor(AgentExecutor):
 
         if has_base:
             prompt_sections = [prompt_text] if prompt_text else []
-            prompt_sections.append("Reuse the supplied base image exactly; do not regenerate a new subject.")
+            prompt_sections.append(
+                "Reuse the supplied base image exactly; do not regenerate a new subject."
+            )
             if has_mask:
-                prompt_sections.append("Apply the requested edits only inside the provided transparency mask.")
-            prompt_text = "\n\n".join(section for section in prompt_sections if section).strip()
+                prompt_sections.append(
+                    "Apply the requested edits only inside the provided transparency mask."
+                )
+            prompt_text = "\n\n".join(
+                section for section in prompt_sections if section
+            ).strip()
 
         return prompt_text, encoded_parts
 
@@ -383,36 +458,59 @@ class FoundryImageGeneratorAgentExecutor(AgentExecutor):
         event_queue: EventQueue,
     ):
         logger.info(f"Executing request for context {context.context_id}")
-        
+
         # CRITICAL: Apply rate limiting at the execute level to control between different user requests
         async with FoundryImageGeneratorAgentExecutor._request_semaphore:
             # Check API call rate limiting
             current_time = time.time()
-            
+
             # Reset the window if it's been more than a minute
-            if current_time - FoundryImageGeneratorAgentExecutor._api_call_window_start > 60:
+            if (
+                current_time - FoundryImageGeneratorAgentExecutor._api_call_window_start
+                > 60
+            ):
                 FoundryImageGeneratorAgentExecutor._api_call_count = 0
                 FoundryImageGeneratorAgentExecutor._api_call_window_start = current_time
-            
+
             # Check if we're approaching the API limit
-            if FoundryImageGeneratorAgentExecutor._api_call_count >= FoundryImageGeneratorAgentExecutor._max_api_calls_per_minute:
-                wait_time = 60 - (current_time - FoundryImageGeneratorAgentExecutor._api_call_window_start)
+            if (
+                FoundryImageGeneratorAgentExecutor._api_call_count
+                >= FoundryImageGeneratorAgentExecutor._max_api_calls_per_minute
+            ):
+                wait_time = 60 - (
+                    current_time
+                    - FoundryImageGeneratorAgentExecutor._api_call_window_start
+                )
                 if wait_time > 0:
-                    logger.warning(f"API rate limit protection: waiting {wait_time:.1f}s to reset window")
+                    logger.warning(
+                        f"API rate limit protection: waiting {wait_time:.1f}s to reset window"
+                    )
                     await asyncio.sleep(wait_time)
                     # Reset counters
                     FoundryImageGeneratorAgentExecutor._api_call_count = 0
-                    FoundryImageGeneratorAgentExecutor._api_call_window_start = time.time()
-            
+                    FoundryImageGeneratorAgentExecutor._api_call_window_start = (
+                        time.time()
+                    )
+
             # Enforce minimum interval between requests - THIS IS THE KEY FIX
-            time_since_last = current_time - FoundryImageGeneratorAgentExecutor._last_request_time
-            if time_since_last < FoundryImageGeneratorAgentExecutor._min_request_interval:
-                sleep_time = FoundryImageGeneratorAgentExecutor._min_request_interval - time_since_last
-                logger.warning(f"🚦 RATE LIMITING: Waiting {sleep_time:.2f}s between user requests (last request was {time_since_last:.2f}s ago)")
+            time_since_last = (
+                current_time - FoundryImageGeneratorAgentExecutor._last_request_time
+            )
+            if (
+                time_since_last
+                < FoundryImageGeneratorAgentExecutor._min_request_interval
+            ):
+                sleep_time = (
+                    FoundryImageGeneratorAgentExecutor._min_request_interval
+                    - time_since_last
+                )
+                logger.warning(
+                    f"🚦 RATE LIMITING: Waiting {sleep_time:.2f}s between user requests (last request was {time_since_last:.2f}s ago)"
+                )
                 await asyncio.sleep(sleep_time)
-            
+
             FoundryImageGeneratorAgentExecutor._last_request_time = time.time()
-            
+
             # Now proceed with the actual request processing
             updater = TaskUpdater(event_queue, context.task_id, context.context_id)
             if not context.current_task:
@@ -431,7 +529,9 @@ class FoundryImageGeneratorAgentExecutor(AgentExecutor):
             self._input_events[context.context_id].set()
         updater = TaskUpdater(event_queue, context.task_id, context.context_id)
         await updater.failed(
-            message=new_agent_text_message("Task cancelled", context_id=context.context_id)
+            message=new_agent_text_message(
+                "Task cancelled", context_id=context.context_id
+            )
         )
 
     async def cleanup(self):
@@ -442,7 +542,9 @@ class FoundryImageGeneratorAgentExecutor(AgentExecutor):
         logger.info("Executor cleaned up")
 
 
-def create_foundry_agent_executor(card: AgentCard) -> FoundryImageGeneratorAgentExecutor:
+def create_foundry_agent_executor(
+    card: AgentCard,
+) -> FoundryImageGeneratorAgentExecutor:
     return FoundryImageGeneratorAgentExecutor(card)
 
 

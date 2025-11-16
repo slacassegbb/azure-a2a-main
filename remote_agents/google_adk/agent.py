@@ -1,5 +1,6 @@
 import json
 from typing import Any, AsyncIterable, Optional
+
 from google.adk.agents.llm_agent import LlmAgent
 from google.adk.artifacts import InMemoryArtifactService
 from google.adk.memory.in_memory_memory_service import InMemoryMemoryService
@@ -7,20 +8,45 @@ from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
 
+
 # --- Sentiment Analysis Tool ---
 def detect_sentiment(text: str) -> dict[str, Any]:
     text_lower = text.lower()
-    if any(word in text_lower for word in ["happy", "great", "good", "love", "excellent", "awesome", "fantastic"]):
+    if any(
+        word in text_lower
+        for word in [
+            "happy",
+            "great",
+            "good",
+            "love",
+            "excellent",
+            "awesome",
+            "fantastic",
+        ]
+    ):
         sentiment = "positive"
-    elif any(word in text_lower for word in ["sad", "bad", "terrible", "hate", "awful", "horrible", "angry", "fraud"]):
+    elif any(
+        word in text_lower
+        for word in [
+            "sad",
+            "bad",
+            "terrible",
+            "hate",
+            "awful",
+            "horrible",
+            "angry",
+            "fraud",
+        ]
+    ):
         sentiment = "negative"
     else:
         sentiment = "neutral"
     return {
         "sentiment": sentiment,
         "input": text,
-        "personalized_message": personalize_experience(sentiment, text)
+        "personalized_message": personalize_experience(sentiment, text),
     }
+
 
 def personalize_experience(sentiment: str, context: str) -> str:
     if sentiment == "positive":
@@ -30,23 +56,27 @@ def personalize_experience(sentiment: str, context: str) -> str:
     else:
         return "Thank you for your feedback. If you have any specific requests or feelings to share, we're here to listen."
 
-def format_sentiment_response(sentiment: str, context: str, personalized_message: str) -> str:
+
+def format_sentiment_response(
+    sentiment: str, context: str, personalized_message: str
+) -> str:
     # Compose a warm, customer-focused message without mentioning the agent
     return (
         f"We detected a {sentiment} sentiment regarding the issue you raised: '{context}'. "
         f"Here's a personalized message for you:\n\n"
-        f"\"{personalized_message}\"\n\n"
+        f'"{personalized_message}"\n\n'
         f"Let us know how we can help further!"
     )
+
 
 class SentimentAnalysisAgent:
     """An agent that analyzes sentiment and personalizes the customer experience."""
 
-    SUPPORTED_CONTENT_TYPES = ['text', 'text/plain']
+    SUPPORTED_CONTENT_TYPES = ["text", "text/plain"]
 
     def __init__(self):
         self._agent = self._build_agent()
-        self._user_id = 'remote_agent'
+        self._user_id = "remote_agent"
         self._runner = Runner(
             app_name=self._agent.name,
             agent=self._agent,
@@ -56,16 +86,16 @@ class SentimentAnalysisAgent:
         )
 
     def get_processing_message(self) -> str:
-        return 'Analyzing sentiment and personalizing your experience...'
+        return "Analyzing sentiment and personalizing your experience..."
 
     def _build_agent(self) -> LlmAgent:
         """Builds the LLM agent for sentiment analysis."""
         return LlmAgent(
-            model='gemini-2.0-flash-001',
-            name='sentiment_analysis_agent',
+            model="gemini-2.0-flash-001",
+            name="sentiment_analysis_agent",
             description=(
-                'This agent determines the sentiment of a customer given context, '
-                'and personalizes the experience based on sentiment and context.'
+                "This agent determines the sentiment of a customer given context, "
+                "and personalizes the experience based on sentiment and context."
             ),
             instruction="""
 You are a sentiment analysis agent. Your job is to:
@@ -100,9 +130,7 @@ Always be concise, friendly, and context-aware.
             user_id=self._user_id,
             session_id=session_id,
         )
-        content = types.Content(
-            role='user', parts=[types.Part.from_text(text=query)]
-        )
+        content = types.Content(role="user", parts=[types.Part.from_text(text=query)])
         if session is None:
             session = await self._runner.session_service.create_session(
                 app_name=self._agent.name,
@@ -114,41 +142,46 @@ Always be concise, friendly, and context-aware.
             user_id=self._user_id, session_id=session.id, new_message=content
         ):
             if event.is_final_response():
-                response = ''
+                response = ""
                 # Try to extract the function/tool response if present
                 if (
                     event.content
                     and event.content.parts
                     and any(
-                        [getattr(p, 'function_response', None) for p in event.content.parts]
+                        [
+                            getattr(p, "function_response", None)
+                            for p in event.content.parts
+                        ]
                     )
                 ):
                     # Use the tool response to format the final message
                     tool_result = next(
                         p.function_response.model_dump()
                         for p in event.content.parts
-                        if getattr(p, 'function_response', None)
+                        if getattr(p, "function_response", None)
                     )
                     if isinstance(tool_result, str):
                         tool_result = json.loads(tool_result)
-                    sentiment = tool_result.get('sentiment', 'neutral')
-                    context = tool_result.get('input', query)
-                    personalized_message = tool_result.get('personalized_message', '')
-                    response = format_sentiment_response(sentiment, context, personalized_message)
+                    sentiment = tool_result.get("sentiment", "neutral")
+                    context = tool_result.get("input", query)
+                    personalized_message = tool_result.get("personalized_message", "")
+                    response = format_sentiment_response(
+                        sentiment, context, personalized_message
+                    )
                 elif (
                     event.content
                     and event.content.parts
                     and event.content.parts[0].text
                 ):
-                    response = '\n'.join(
+                    response = "\n".join(
                         [p.text for p in event.content.parts if p.text]
                     )
                 yield {
-                    'is_task_complete': True,
-                    'content': response,
+                    "is_task_complete": True,
+                    "content": response,
                 }
             else:
                 yield {
-                    'is_task_complete': False,
-                    'updates': self.get_processing_message(),
+                    "is_task_complete": False,
+                    "updates": self.get_processing_message(),
                 }

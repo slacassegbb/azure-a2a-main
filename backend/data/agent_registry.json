@@ -911,8 +911,8 @@
     ]
   },
   {
-    "name": "AI Foundry Branding & Content Agent",
-    "description": "An intelligent branding partner powered by Azure AI Foundry. Delivers on-brand messaging, visual direction, and creative prompts grounded in the Company Branding Guide.",
+    "name": "AI Foundry Template Agent",
+    "description": "A template agent powered by Azure AI Foundry. Customize this description to explain what your agent does and what domain knowledge it has access to.",
     "version": "1.0.0",
     "url": "http://localhost:9020/",
     "defaultInputModes": [
@@ -926,88 +926,18 @@
     },
     "skills": [
       {
-        "id": "brand_strategy_alignment",
-        "name": "Brand Strategy Alignment",
-        "description": "Map campaign goals, audiences, and messaging pillars to the Company Branding Guide, ensuring voice, tone, and terminology remain on-brand.",
+        "id": "example_skill_1",
+        "name": "Example Skill",
+        "description": "This is a template skill. Replace this with your agent's actual capabilities based on your domain knowledge and uploaded documents.",
         "examples": [
-          "Outline messaging pillars for a product-launch email aligned to the brand voice",
-          "Review draft tagline options and recommend the on-brand choice with rationale",
-          "Summarize how a campaign concept supports our innovation + trust positioning",
-          "Identify missing brand attributes in a draft hero statement and propose fixes"
+          "Example query 1 - replace with real use case",
+          "Example query 2 - replace with real use case",
+          "Example query 3 - replace with real use case"
         ],
         "tags": [
-          "branding",
-          "strategy",
-          "messaging",
-          "tone"
-        ]
-      },
-      {
-        "id": "visual_identity_direction",
-        "name": "Visual Identity Direction",
-        "description": "Provide art direction, mood, and composition notes anchored in brand colors, lighting, and imagery guidelines from `company_branding.md`.",
-        "examples": [
-          "Translate the brand palette into a prompt for a hero illustration",
-          "Advise on lighting and depth for a LinkedIn carousel background",
-          "Recommend iconography and layout for a landing page hero graphic",
-          "Evaluate a storyboard concept for adherence to brand mood and colors"
-        ],
-        "tags": [
-          "visual",
-          "design",
-          "palette",
-          "composition"
-        ]
-      },
-      {
-        "id": "brand_voice_copywriting",
-        "name": "Brand Voice Copywriting",
-        "description": "Draft or refine copy so it reflects the confident, professional, forward-looking voice defined in the branding guide.",
-        "examples": [
-          "Rewrite social captions to emphasize calm confidence and innovation",
-          "Transform a technical paragraph into on-brand website copy",
-          "Craft CTA variations that stay within voice and typography rules",
-          "Edit onboarding email copy to remove off-brand phrasing"
-        ],
-        "tags": [
-          "copywriting",
-          "voice",
-          "tone",
-          "editing"
-        ]
-      },
-      {
-        "id": "generative_prompt_engineering",
-        "name": "Generative Prompt Engineering",
-        "description": "Create positive and negative prompts for image/video generation that encode brand palette, lighting, typography, and prohibited elements.",
-        "examples": [
-          "Draft a stable diffusion prompt for a brand-aligned product hero image",
-          "Provide Midjourney prompt + negatives for a futuristic workspace scene",
-          "Generate prompt variants for thumbnails following brand composition rules",
-          "Audit an existing AI prompt and adjust it to match company branding"
-        ],
-        "tags": [
-          "prompt",
-          "imaging",
-          "ai-art",
-          "guidelines"
-        ]
-      },
-      {
-        "id": "brand_review_feedback",
-        "name": "Brand Review & QA",
-        "description": "Evaluate supplied copy, prompts, or visuals and document brand compliance gaps with actionable corrections.",
-        "examples": [
-          "Assess a video script for voice consistency and suggest edits",
-          "Flag off-brand colors in a design mock and propose replacements",
-          "Provide a brand compliance checklist for a cross-channel campaign",
-          "Summarize risks before publishing content created by external partners"
-        ],
-        "tags": [
-          "review",
-          "qa",
-          "compliance",
-          "feedback"
+          "example",
+          "template",
+          "customize"
         ]
       }
     ]

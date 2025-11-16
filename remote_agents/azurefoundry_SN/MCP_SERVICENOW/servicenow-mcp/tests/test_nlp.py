@@ -22,7 +22,9 @@ class TestNLPProcessor:
         assert "123TEXTQUERY321=admin" in result["query"]
 
         # Test with priority
-        result = NLPProcessor.parse_search_query("show me all incidents with high priority")
+        result = NLPProcessor.parse_search_query(
+            "show me all incidents with high priority"
+        )
         assert result["table"] == "incident"
         assert "priority=1" in result["query"]
 

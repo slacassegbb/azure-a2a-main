@@ -1,0 +1,362 @@
+version: '3.8'
+
+services:
+  # ============================================================================
+  # Core Services
+  # ============================================================================
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: a2a-backend
+    ports:
+      - "12000:12000"
+      - "8080:8080"
+    environment:
+      - A2A_UI_HOST=0.0.0.0
+      - A2A_UI_PORT=12000
+      - WEBSOCKET_SERVER_URL=http://localhost:8080
+      - AZURE_CONFIG_DIR=/root/.azure
+      - HOME=/root
+    env_file:
+      - .env
+    volumes:
+      # Persist data directories
+      - ./backend/data:/app/data
+      - ./backend/uploads:/app/uploads
+      - ./backend/voice_recordings:/app/voice_recordings
+      # Mount Azure credentials for DefaultAzureCredential (read-write for CLI cache)
+      - ${USERPROFILE}/.azure:/root/.azure
+    networks:
+      a2a-network:
+        aliases:
+          - localhost
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:12000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: a2a-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - NEXT_PUBLIC_A2A_API_URL=http://localhost:12000
+      - NEXT_PUBLIC_WEBSOCKET_URL=ws://localhost:8080/events
+      - NEXT_PUBLIC_DEV_MODE=false
+      - NEXT_PUBLIC_DEBUG_LOGS=false
+    env_file:
+      - .env
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - a2a-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 100s
+
+  # ============================================================================
+  # Azure Foundry Remote Agents - All use network_mode: host for localhost communication
+  # Mount Azure credentials for local development (DefaultAzureCredential)
+  # ============================================================================
+  
+  # Template Agent (Port 9020)
+  agent-template:
+    build:
+      context: ./remote_agents/azurefoundry_template
+      dockerfile: Dockerfile
+    container_name: a2a-agent-template
+    network_mode: host
+    env_file:
+      - .env
+      - ./remote_agents/azurefoundry_template/.env
+    volumes:
+      - ${USERPROFILE}/.azure:/root/.azure
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:9020/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 100s
+
+  # Assessment & Estimation Agent (Port 9002)
+  agent-assessment:
+    build:
+      context: ./remote_agents/azurefoundry_assessment
+      dockerfile: Dockerfile
+    container_name: a2a-agent-assessment
+    network_mode: host
+    env_file:
+      - .env
+      - ./remote_agents/azurefoundry_assessment/.env
+    volumes:
+      - ${USERPROFILE}/.azure:/root/.azure
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:9002/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 100s
+
+  # Branding Agent (Port 9033)
+  agent-branding:
+    build:
+      context: ./remote_agents/azurefoundry_branding
+      dockerfile: Dockerfile
+    container_name: a2a-agent-branding
+    network_mode: host
+    env_file:
+      - .env
+      - ./remote_agents/azurefoundry_branding/.env
+    volumes:
+      - ${USERPROFILE}/.azure:/root/.azure
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:9033/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 100s
+
+  # Claims Agent (Port 9001)
+  agent-claims:
+    build:
+      context: ./remote_agents/azurefoundry_claims
+      dockerfile: Dockerfile
+    container_name: a2a-agent-claims
+    network_mode: host
+    env_file:
+      - .env
+      - ./remote_agents/azurefoundry_claims/.env
+    volumes:
+      - ${USERPROFILE}/.azure:/root/.azure
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:9001/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 100s
+
+  # Classification Agent (Port 8001)
+  agent-classification:
+    build:
+      context: ./remote_agents/azurefoundry_classification
+      dockerfile: Dockerfile
+    container_name: a2a-agent-classification
+    network_mode: host
+    env_file:
+      - .env
+      - ./remote_agents/azurefoundry_classification/.env
+    volumes:
+      - ${USERPROFILE}/.azure:/root/.azure
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8001/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 100s
+
+  # Deep Search Agent (Port 8002)
+  agent-deep-search:
+    build:
+      context: ./remote_agents/azurefoundry_Deep_Search
+      dockerfile: Dockerfile
+    container_name: a2a-agent-deep-search
+    network_mode: host
+    env_file:
+      - .env
+      - ./remote_agents/azurefoundry_Deep_Search/.env
+    volumes:
+      - ${USERPROFILE}/.azure:/root/.azure
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8002/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 100s
+
+  # Fraud Intelligence Agent (Port 9004)
+  agent-fraud:
+    build:
+      context: ./remote_agents/azurefoundry_fraud
+      dockerfile: Dockerfile
+    container_name: a2a-agent-fraud
+    network_mode: host
+    env_file:
+      - .env
+      - ./remote_agents/azurefoundry_fraud/.env
+    volumes:
+      - ${USERPROFILE}/.azure:/root/.azure
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:9004/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 100s
+
+  # Image Analysis Agent (Port 9066)
+  agent-image-analysis:
+    build:
+      context: ./remote_agents/azurefoundry_image_analysis
+      dockerfile: Dockerfile
+    container_name: a2a-agent-image-analysis
+    network_mode: host
+    env_file:
+      - .env
+      - ./remote_agents/azurefoundry_image_analysis/.env
+    volumes:
+      - ${USERPROFILE}/.azure:/root/.azure
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:9066/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 100s
+
+  # Image Generator Agent (Port 9010)
+  agent-image-generator:
+    build:
+      context: ./remote_agents/azurefoundry_image_generator
+      dockerfile: Dockerfile
+    container_name: a2a-agent-image-generator
+    network_mode: host
+    env_file:
+      - .env
+      - ./remote_agents/azurefoundry_image_generator/.env
+    volumes:
+      - ${USERPROFILE}/.azure:/root/.azure
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:9010/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 100s
+
+  # Legal Compliance Agent (Port 8006)
+  agent-legal:
+    build:
+      context: ./remote_agents/azurefoundry_legal
+      dockerfile: Dockerfile
+    container_name: a2a-agent-legal
+    network_mode: host
+    env_file:
+      - .env
+      - ./remote_agents/azurefoundry_legal/.env
+    volumes:
+      - ${USERPROFILE}/.azure:/root/.azure
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8006/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 100s
+
+  # Customer Support (ServiceNow MCP) Agent (Port 8000)
+  agent-servicenow:
+    build:
+      context: ./remote_agents/azurefoundry_SN
+      dockerfile: Dockerfile
+    container_name: a2a-agent-servicenow
+    network_mode: host
+    env_file:
+      - .env
+      - ./remote_agents/azurefoundry_SN/.env
+    volumes:
+      - ${USERPROFILE}/.azure:/root/.azure
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 100s
+
+  # Google ADK Sentiment Agent (Port 8003)
+  agent-google-adk:
+    build:
+      context: ./remote_agents/google_adk
+      dockerfile: Dockerfile
+    container_name: a2a-agent-google-adk
+    network_mode: host
+    env_file:
+      - .env
+      - ./remote_agents/google_adk/.env
+    volumes:
+      - ${USERPROFILE}/.azure:/root/.azure
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8003/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 100s
+
+networks:
+  a2a-network:
+    driver: bridge
+
+volumes:
+  backend-data:
+  backend-uploads:
+  backend-voice:
