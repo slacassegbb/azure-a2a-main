@@ -38,30 +38,34 @@ Common symptoms when TPM is too low:
 
 Reference: https://learn.microsoft.com/en-us/answers/questions/2237624/getting-rate-limit-exceeded-when-testing-ai-agent
 """
-import os
-import time
 import asyncio
-import logging
-import json
 import base64
-import tempfile
-import uuid
-from pathlib import Path
-from typing import Optional, Dict, List, Any, Tuple
-from datetime import datetime, timedelta
-
-from azure.ai.agents import AgentsClient
-from azure.ai.agents.models import Agent, ThreadMessage, ThreadRun, AgentThread, ToolOutput, BingGroundingTool, ListSortOrder, FilePurpose, FileSearchTool, RequiredMcpToolCall, ToolApproval
-from azure.ai.projects import AIProjectClient
-from azure.identity import DefaultAzureCredential
 import glob
-from openai import OpenAI
-from azure.storage.blob import BlobServiceClient, generate_blob_sas, BlobSasPermissions
-from azure.core.credentials import AzureNamedKeyCredential, AzureSasCredential
-from a2a.types import Part, DataPart
-from a2a.utils.message import new_agent_parts_message
+import json
+import logging
+import os
+import tempfile
+import time
+import uuid
+from datetime import datetime, timedelta
 from io import BytesIO
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
 import httpx
+from a2a.types import DataPart, Part
+from a2a.utils.message import new_agent_parts_message
+from azure.ai.agents import AgentsClient
+from azure.ai.agents.models import (Agent, AgentThread, BingGroundingTool,
+                                    FilePurpose, FileSearchTool, ListSortOrder,
+                                    RequiredMcpToolCall, ThreadMessage,
+                                    ThreadRun, ToolApproval, ToolOutput)
+from azure.ai.projects import AIProjectClient
+from azure.core.credentials import AzureNamedKeyCredential, AzureSasCredential
+from azure.identity import DefaultAzureCredential
+from azure.storage.blob import (BlobSasPermissions, BlobServiceClient,
+                                generate_blob_sas)
+from openai import OpenAI
 from PIL import Image, UnidentifiedImageError
 
 logger = logging.getLogger(__name__)
@@ -73,14 +77,14 @@ class FoundryImageGeneratorAgent:
     This class adapts the ADK agent pattern for Azure AI Foundry with focus on prompt parsing,
     style grounding, and delegating image creation to an external tool (dummy placeholder for now).
     """
-    
+
     # Class-level shared resources for brand/style document search (created once)
     _shared_vector_store = None
     _shared_uploaded_files = []
     _shared_file_search_tool = None
     _file_search_setup_lock = asyncio.Lock()
     _ACTIVE_RUN_STATUSES = {"queued", "in_progress", "requires_action", "cancelling"}
-    
+
     def __init__(self):
         self.endpoint = os.environ["AZURE_AI_FOUNDRY_PROJECT_ENDPOINT"]
         self.credential = DefaultAzureCredential()
@@ -104,8 +108,12 @@ class FoundryImageGeneratorAgent:
 
         connection_string = os.getenv("AZURE_STORAGE_CONNECTION_STRING")
         if not connection_string:
-            logger.error("AZURE_STORAGE_CONNECTION_STRING must be set when FORCE_AZURE_BLOB=true")
-            raise RuntimeError("Missing AZURE_STORAGE_CONNECTION_STRING for blob uploads")
+            logger.error(
+                "AZURE_STORAGE_CONNECTION_STRING must be set when FORCE_AZURE_BLOB=true"
+            )
+            raise RuntimeError(
+                "Missing AZURE_STORAGE_CONNECTION_STRING for blob uploads"
+            )
 
         try:
             self._blob_service_client = BlobServiceClient.from_connection_string(
@@ -116,7 +124,7 @@ class FoundryImageGeneratorAgent:
         except Exception as e:
             logger.error(f"Failed to create BlobServiceClient: {e}")
             raise
-        
+
     def _get_client(self) -> AgentsClient:
         """Get a cached AgentsClient instance to reduce API calls."""
         if self._agents_client is None:
@@ -125,7 +133,7 @@ class FoundryImageGeneratorAgent:
                 credential=self.credential,
             )
         return self._agents_client
-        
+
     def _get_project_client(self) -> AIProjectClient:
         """Get a cached AIProjectClient instance to reduce API calls."""
         if self._project_client is None:
@@ -134,35 +142,54 @@ class FoundryImageGeneratorAgent:
                 credential=self.credential,
             )
         return self._project_client
-    
-    async def _setup_file_search(self, files_directory: str = "documents") -> Optional[FileSearchTool]:
+
+    async def _setup_file_search(
+        self, files_directory: str = "documents"
+    ) -> Optional[FileSearchTool]:
         """Upload files from local directory and create vector store for style guidance search - ONCE per class."""
         async with FoundryImageGeneratorAgent._file_search_setup_lock:
             if FoundryImageGeneratorAgent._shared_file_search_tool is not None:
                 logger.info("Reusing existing shared file search tool")
                 return FoundryImageGeneratorAgent._shared_file_search_tool
-            
+
             try:
                 # Check if files directory exists
                 if not os.path.exists(files_directory):
-                    logger.info(f"No {files_directory} directory found, skipping file search setup")
+                    logger.info(
+                        f"No {files_directory} directory found, skipping file search setup"
+                    )
                     return None
-                
+
                 # Find all supported files in the directory
-                supported_extensions = ['*.txt', '*.md', '*.pdf', '*.docx', '*.json', '*.csv']
+                supported_extensions = [
+                    "*.txt",
+                    "*.md",
+                    "*.pdf",
+                    "*.docx",
+                    "*.json",
+                    "*.csv",
+                ]
                 file_paths = set()  # Use set to avoid duplicates
                 for ext in supported_extensions:
                     file_paths.update(glob.glob(os.path.join(files_directory, ext)))
-                    file_paths.update(glob.glob(os.path.join(files_directory, "**", ext), recursive=True))
-                
+                    file_paths.update(
+                        glob.glob(
+                            os.path.join(files_directory, "**", ext), recursive=True
+                        )
+                    )
+
                 file_paths = list(file_paths)  # Convert back to list
-                
+
                 if not file_paths:
-                    logger.info(f"No supported files found in {files_directory}, skipping file search setup")
+                    logger.info(
+                        f"No supported files found in {files_directory}, skipping file search setup"
+                    )
                     return None
-                
-                logger.info(f"Found {len(file_paths)} files to upload: {[os.path.basename(f) for f in file_paths]}")
-                
+
+                logger.info(
+                    f"Found {len(file_paths)} files to upload: {[os.path.basename(f) for f in file_paths]}"
+                )
+
                 # Upload files ONCE
                 file_ids = []
                 project_client = self._get_project_client()
@@ -170,61 +197,79 @@ class FoundryImageGeneratorAgent:
                     try:
                         logger.info(f"Uploading file: {os.path.basename(file_path)}")
                         file = project_client.agents.files.upload_and_poll(
-                            file_path=file_path, 
-                            purpose=FilePurpose.AGENTS
+                            file_path=file_path, purpose=FilePurpose.AGENTS
                         )
                         file_ids.append(file.id)
-                        FoundryImageGeneratorAgent._shared_uploaded_files.append(file.id)
-                        logger.info(f"Uploaded file: {os.path.basename(file_path)} (ID: {file.id})")
+                        FoundryImageGeneratorAgent._shared_uploaded_files.append(
+                            file.id
+                        )
+                        logger.info(
+                            f"Uploaded file: {os.path.basename(file_path)} (ID: {file.id})"
+                        )
                     except Exception as e:
                         logger.warning(f"Failed to upload {file_path}: {e}")
-                
+
                 if not file_ids:
                     logger.warning("No files were successfully uploaded")
                     return None
-                
+
                 # Create vector store ONCE using project client
                 logger.info("Creating shared vector store with uploaded files...")
-                FoundryImageGeneratorAgent._shared_vector_store = project_client.agents.vector_stores.create_and_poll(
-                    file_ids=file_ids, 
-                    name="image-generator-vectorstore"
+                FoundryImageGeneratorAgent._shared_vector_store = (
+                    project_client.agents.vector_stores.create_and_poll(
+                        file_ids=file_ids, name="image-generator-vectorstore"
+                    )
                 )
-                logger.info(f"Created shared vector store: {FoundryImageGeneratorAgent._shared_vector_store.id}")
-                
+                logger.info(
+                    f"Created shared vector store: {FoundryImageGeneratorAgent._shared_vector_store.id}"
+                )
+
                 # Create file search tool ONCE
-                file_search = FileSearchTool(vector_store_ids=[FoundryImageGeneratorAgent._shared_vector_store.id])
-                logger.info(f"File search capability prepared, type: {type(file_search)}")
+                file_search = FileSearchTool(
+                    vector_store_ids=[
+                        FoundryImageGeneratorAgent._shared_vector_store.id
+                    ]
+                )
+                logger.info(
+                    f"File search capability prepared, type: {type(file_search)}"
+                )
                 logger.debug(f"FileSearchTool object: {file_search}")
-                
+
                 # Verify the object has the expected attributes
-                if not hasattr(file_search, 'definitions'):
-                    logger.error(f"FileSearchTool missing 'definitions' attribute. Object: {file_search}")
+                if not hasattr(file_search, "definitions"):
+                    logger.error(
+                        f"FileSearchTool missing 'definitions' attribute. Object: {file_search}"
+                    )
                     return None
-                if not hasattr(file_search, 'resources'):
-                    logger.error(f"FileSearchTool missing 'resources' attribute. Object: {file_search}")
+                if not hasattr(file_search, "resources"):
+                    logger.error(
+                        f"FileSearchTool missing 'resources' attribute. Object: {file_search}"
+                    )
                     return None
-                
+
                 # Cache the shared file search tool
                 FoundryImageGeneratorAgent._shared_file_search_tool = file_search
                 logger.info("Cached shared file search tool for future use")
-                    
+
                 return file_search
-                    
+
             except Exception as e:
                 logger.error(f"Error setting up file search: {e}")
                 return None
-        
+
     async def create_agent(self) -> Agent:
         """Create the AI Foundry agent with optional web search and style document search capabilities."""
         if self.agent:
-            logger.info("Image generator agent already exists, returning existing instance")
+            logger.info(
+                "Image generator agent already exists, returning existing instance"
+            )
             return self.agent
-        
+
         tools = []
         tool_resources = None
-        
+
         project_client = self._get_project_client()
-        
+
         # Add image generation function tool definition
         generate_image_tool = {
             "type": "function",
@@ -252,36 +297,36 @@ For new image generation:
                     "type": "object",
                     "properties": {
                         "prompt": {
-                            "type": "string", 
-                            "description": "Primary creative prompt describing the desired image or edits to make."
+                            "type": "string",
+                            "description": "Primary creative prompt describing the desired image or edits to make.",
                         },
                         "style": {
-                            "type": "string", 
-                            "description": "Optional style or art direction (e.g. 'photorealistic', 'oil painting')."
+                            "type": "string",
+                            "description": "Optional style or art direction (e.g. 'photorealistic', 'oil painting').",
                         },
                         "size": {
-                            "type": "string", 
-                            "description": "Desired output resolution (e.g. '1024x1024', '1792x1024')."
+                            "type": "string",
+                            "description": "Desired output resolution (e.g. '1024x1024', '1792x1024').",
                         },
                         "n": {
-                            "type": "integer", 
-                            "minimum": 1, 
-                            "maximum": 1, 
-                            "description": "Number of images to generate. Always use 1 unless explicitly requested otherwise."
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 1,
+                            "description": "Number of images to generate. Always use 1 unless explicitly requested otherwise.",
                         },
                         "model": {
-                            "type": "string", 
-                            "description": "OpenAI model name (typically 'gpt-image-1')."
+                            "type": "string",
+                            "description": "OpenAI model name (typically 'gpt-image-1').",
                         },
                         "input_fidelity": {
-                            "type": "string", 
-                            "description": "Optional edit fidelity override (e.g. 'high', 'medium', 'low')."
+                            "type": "string",
+                            "description": "Optional edit fidelity override (e.g. 'high', 'medium', 'low').",
                         },
                     },
                     "required": ["prompt"],
-                    "additionalProperties": False
-                }
-            }
+                    "additionalProperties": False,
+                },
+            },
         }
         tools.append(generate_image_tool)
 
@@ -293,33 +338,35 @@ For new image generation:
         except Exception as e:
             logger.warning(f"Could not add Bing search: {e}")
             logger.info("Agent will work without web search capabilities")
-        
+
         if self._file_search_tool is None:
             self._file_search_tool = await self._setup_file_search()
-        
+
         if self._file_search_tool:
             logger.info(f"Using file search tool, type: {type(self._file_search_tool)}")
-            if hasattr(self._file_search_tool, 'definitions'):
+            if hasattr(self._file_search_tool, "definitions"):
                 tools.extend(self._file_search_tool.definitions)
-                logger.info("Extended tools with file search definitions for style references")
-            if hasattr(self._file_search_tool, 'resources'):
+                logger.info(
+                    "Extended tools with file search definitions for style references"
+                )
+            if hasattr(self._file_search_tool, "resources"):
                 tool_resources = self._file_search_tool.resources
                 logger.info("Added file search tool resources for style documents")
-                
+
         with project_client:
             agent_kwargs = dict(
-                    model="gpt-4o",
+                model="gpt-4o",
                 name="foundry-image-generator",
-                    instructions=self._get_agent_instructions(),
-                    tools=tools
-                )
+                instructions=self._get_agent_instructions(),
+                tools=tools,
+            )
             if tool_resources:
                 agent_kwargs["tool_resources"] = tool_resources
             self.agent = project_client.agents.create_agent(**agent_kwargs)
-        
+
         logger.info(f"Created AI Foundry agent: {self.agent.id}")
         return self.agent
-    
+
     def _get_agent_instructions(self) -> str:
         """Get the agent instructions for image generation and creative guidance."""
         return f"""
@@ -376,17 +423,13 @@ Current date and time: {datetime.now().isoformat()}
 
 Always validate the prompt for safety before invoking the tool.
 """
-    
-
-    
-
 
     async def create_thread(self, thread_id: Optional[str] = None) -> AgentThread:
         """Create or retrieve a conversation thread."""
         if thread_id and thread_id in self.threads:
             # Return thread info - we'll need to get it fresh each time
             pass
-            
+
         client = self._get_client()
         thread = client.threads.create()
         self.threads[thread.id] = thread.id
@@ -492,18 +535,18 @@ Always validate the prompt for safety before invoking the tool.
         raise RuntimeError(
             f"Thread {thread_id} still has active Azure AI Foundry run(s) after cancellation attempts"
         )
-    
-    async def send_message(self, thread_id: str, content: str, role: str = "user") -> ThreadMessage:
+
+    async def send_message(
+        self, thread_id: str, content: str, role: str = "user"
+    ) -> ThreadMessage:
         """Send a message to the conversation thread."""
         client = self._get_client()
         message = client.messages.create(
-            thread_id=thread_id,
-            role=role,
-            content=content
+            thread_id=thread_id, role=role, content=content
         )
         logger.info(f"Created message in thread {thread_id}: {message.id}")
         return message
-    
+
     async def run_conversation_stream(
         self,
         thread_id: str,
@@ -516,10 +559,14 @@ Always validate the prompt for safety before invoking the tool.
 
         if attachments:
             self._pending_file_refs_by_thread[thread_id] = attachments
-            logger.info(f"Stored {len(attachments)} attachment(s) for thread {thread_id} - will be automatically available to generate_image tool")
+            logger.info(
+                f"Stored {len(attachments)} attachment(s) for thread {thread_id} - will be automatically available to generate_image tool"
+            )
             for idx, att in enumerate(attachments):
                 file_info = att.get("file", {})
-                logger.info(f"  Attachment[{idx}]: name={file_info.get('name')} role={file_info.get('role')} uri={file_info.get('uri', 'no-uri')[:80]}...")
+                logger.info(
+                    f"  Attachment[{idx}]: name={file_info.get('name')} role={file_info.get('role')} uri={file_info.get('uri', 'no-uri')[:80]}..."
+                )
 
         await self.ensure_thread_ready(thread_id)
         await self.send_message(thread_id, user_message)
@@ -534,24 +581,31 @@ Always validate the prompt for safety before invoking the tool.
         stuck_run_count = 0
         max_stuck_runs = 3
 
-        while run.status in ["queued", "in_progress", "requires_action"] and iterations < max_iterations:
+        while (
+            run.status in ["queued", "in_progress", "requires_action"]
+            and iterations < max_iterations
+        ):
             iterations += 1
             await asyncio.sleep(2)
-            
+
             # Check for new tool calls in real-time (only show what we can actually detect)
             try:
                 run_steps = client.run_steps.list(thread_id, run.id)
                 for run_step in run_steps:
-                    if (hasattr(run_step, "step_details") and
-                        hasattr(run_step.step_details, "type") and
-                        run_step.step_details.type == "tool_calls" and
-                        hasattr(run_step.step_details, "tool_calls")):
+                    if (
+                        hasattr(run_step, "step_details")
+                        and hasattr(run_step.step_details, "type")
+                        and run_step.step_details.type == "tool_calls"
+                        and hasattr(run_step.step_details, "tool_calls")
+                    ):
                         for tool_call in run_step.step_details.tool_calls:
                             if tool_call and hasattr(tool_call, "type"):
                                 tool_type = tool_call.type
                                 if tool_type not in tool_calls_yielded:
                                     # Show actual tool calls that we can detect
-                                    tool_description = self._get_tool_description(tool_type, tool_call)
+                                    tool_description = self._get_tool_description(
+                                        tool_type, tool_call
+                                    )
                                     yield f"🛠️ Remote agent executing: {tool_description}"
                                     tool_calls_yielded.add(tool_type)
             except Exception as e:
@@ -564,7 +618,7 @@ Always validate the prompt for safety before invoking the tool.
                 if "rate limit" in str(e).lower() or "429" in str(e):
                     retry_count += 1
                     if retry_count <= max_retries:
-                        backoff_time = min(15 * (2 ** retry_count), 45)
+                        backoff_time = min(15 * (2**retry_count), 45)
                         await asyncio.sleep(backoff_time)
                         continue
                     else:
@@ -584,14 +638,18 @@ Always validate the prompt for safety before invoking the tool.
                 logger.info(f"Run {run.id} requires action - checking for tool calls")
                 try:
                     # Check if there are actually tool calls to handle
-                    if hasattr(run, 'required_action') and run.required_action:
+                    if hasattr(run, "required_action") and run.required_action:
                         logger.info(f"Found required action: {run.required_action}")
                         await self._handle_tool_calls(run, thread_id)
                     else:
-                        logger.warning(f"Run status is 'requires_action' but no required_action found - this may indicate a stuck run")
+                        logger.warning(
+                            f"Run status is 'requires_action' but no required_action found - this may indicate a stuck run"
+                        )
                         stuck_run_count += 1
                         if stuck_run_count >= max_stuck_runs:
-                            logger.error(f"Run {run.id} is stuck in requires_action state without tool calls after {stuck_run_count} attempts")
+                            logger.error(
+                                f"Run {run.id} is stuck in requires_action state without tool calls after {stuck_run_count} attempts"
+                            )
                             yield f"Error: Run is stuck in requires_action state - please try again"
                             return
                         # Try to get the run again to see if it has progressed
@@ -609,190 +667,268 @@ Always validate the prompt for safety before invoking the tool.
             return
 
         # After run is complete, yield the assistant's response(s) with citation formatting
-        messages = list(client.messages.list(thread_id=thread_id, order=ListSortOrder.ASCENDING))
+        messages = list(
+            client.messages.list(thread_id=thread_id, order=ListSortOrder.ASCENDING)
+        )
         logger.debug(f"Found {len(messages)} messages in thread")
         for msg in reversed(messages):
-            logger.debug(f"Processing message: role={msg.role}, content_count={len(msg.content) if msg.content else 0}")
+            logger.debug(
+                f"Processing message: role={msg.role}, content_count={len(msg.content) if msg.content else 0}"
+            )
             if msg.role == "assistant" and msg.content:
                 for content_item in msg.content:
                     logger.debug(f"Processing content item: type={type(content_item)}")
-                    if hasattr(content_item, 'text'):
+                    if hasattr(content_item, "text"):
                         text_content = content_item.text.value
                         logger.debug(f"Original text content: {text_content[:200]}...")
                         citations = []
                         # Extract citations as before
-                        if hasattr(content_item.text, 'annotations') and content_item.text.annotations:
-                            logger.debug(f"Found {len(content_item.text.annotations)} annotations")
-                            main_text = content_item.text.value if hasattr(content_item.text, 'value') else str(content_item.text)
-                            for i, annotation in enumerate(content_item.text.annotations):
-                                logger.debug(f"Processing annotation {i}: {type(annotation)}")
+                        if (
+                            hasattr(content_item.text, "annotations")
+                            and content_item.text.annotations
+                        ):
+                            logger.debug(
+                                f"Found {len(content_item.text.annotations)} annotations"
+                            )
+                            main_text = (
+                                content_item.text.value
+                                if hasattr(content_item.text, "value")
+                                else str(content_item.text)
+                            )
+                            for i, annotation in enumerate(
+                                content_item.text.annotations
+                            ):
+                                logger.debug(
+                                    f"Processing annotation {i}: {type(annotation)}"
+                                )
                                 # File citations
-                                if hasattr(annotation, 'file_citation') and annotation.file_citation:
+                                if (
+                                    hasattr(annotation, "file_citation")
+                                    and annotation.file_citation
+                                ):
                                     file_citation = annotation.file_citation
-                                    quote = getattr(file_citation, 'quote', '') or ''
-                                    file_id = getattr(file_citation, 'file_id', '') or ''
-                                    annotation_text = getattr(annotation, 'text', '') or ''
-                                    citation_context = self._extract_citation_context(main_text, annotation, quote)
-                                    citation_text = self._create_meaningful_citation_text(quote, citation_context, file_id)
-                                    citations.append({
-                                        'type': 'file',
-                                        'text': citation_text,
-                                        'file_id': file_id,
-                                        'quote': quote,
-                                        'context': citation_context,
-                                        'annotation_text': annotation_text
-                                    })
-                                    logger.debug(f"Added file citation: {citation_text}")
+                                    quote = getattr(file_citation, "quote", "") or ""
+                                    file_id = (
+                                        getattr(file_citation, "file_id", "") or ""
+                                    )
+                                    annotation_text = (
+                                        getattr(annotation, "text", "") or ""
+                                    )
+                                    citation_context = self._extract_citation_context(
+                                        main_text, annotation, quote
+                                    )
+                                    citation_text = (
+                                        self._create_meaningful_citation_text(
+                                            quote, citation_context, file_id
+                                        )
+                                    )
+                                    citations.append(
+                                        {
+                                            "type": "file",
+                                            "text": citation_text,
+                                            "file_id": file_id,
+                                            "quote": quote,
+                                            "context": citation_context,
+                                            "annotation_text": annotation_text,
+                                        }
+                                    )
+                                    logger.debug(
+                                        f"Added file citation: {citation_text}"
+                                    )
                                 # File path citations
-                                elif hasattr(annotation, 'file_path') and annotation.file_path:
+                                elif (
+                                    hasattr(annotation, "file_path")
+                                    and annotation.file_path
+                                ):
                                     file_path = annotation.file_path
-                                    file_id = getattr(file_path, 'file_id', '') or ''
+                                    file_id = getattr(file_path, "file_id", "") or ""
                                     try:
                                         project_client = self._get_project_client()
-                                        file_info = project_client.agents.files.get(file_id)
-                                        if hasattr(file_info, 'filename') and file_info.filename:
+                                        file_info = project_client.agents.files.get(
+                                            file_id
+                                        )
+                                        if (
+                                            hasattr(file_info, "filename")
+                                            and file_info.filename
+                                        ):
                                             citation_text = file_info.filename
                                         else:
-                                            citation_text = f"File Reference (ID: {file_id[-8:]})"
+                                            citation_text = (
+                                                f"File Reference (ID: {file_id[-8:]})"
+                                            )
                                     except Exception as e:
-                                        citation_text = f"File Reference (ID: {file_id[-8:]})"
-                                    citations.append({
-                                        'type': 'file_path',
-                                        'text': citation_text,
-                                        'file_id': file_id
-                                    })
-                                    logger.debug(f"Added file_path citation: {citation_text}")
+                                        citation_text = (
+                                            f"File Reference (ID: {file_id[-8:]})"
+                                        )
+                                    citations.append(
+                                        {
+                                            "type": "file_path",
+                                            "text": citation_text,
+                                            "file_id": file_id,
+                                        }
+                                    )
+                                    logger.debug(
+                                        f"Added file_path citation: {citation_text}"
+                                    )
                                 # URL citations
-                                elif hasattr(annotation, 'url_citation') and annotation.url_citation:
+                                elif (
+                                    hasattr(annotation, "url_citation")
+                                    and annotation.url_citation
+                                ):
                                     url_citation = annotation.url_citation
-                                    url = getattr(url_citation, 'url', '') or '#'
-                                    title = getattr(url_citation, 'title', '') or 'Web Source'
-                                    citations.append({
-                                        'type': 'web',
-                                        'text': title,
-                                        'url': url
-                                    })
-                                    logger.debug(f"Added URL citation: {title} -> {url}")
+                                    url = getattr(url_citation, "url", "") or "#"
+                                    title = (
+                                        getattr(url_citation, "title", "")
+                                        or "Web Source"
+                                    )
+                                    citations.append(
+                                        {"type": "web", "text": title, "url": url}
+                                    )
+                                    logger.debug(
+                                        f"Added URL citation: {title} -> {url}"
+                                    )
                         else:
                             logger.debug(f"No annotations found in content item")
-                        
+
                         logger.debug(f"Total citations found: {len(citations)}")
                         if citations:
                             logger.debug(f"Citations: {citations}")
                         else:
-                            logger.debug(f"No citations found - this is why sources are missing!")
-                        formatted_response = self._format_response_with_citations(text_content, citations)
-                        logger.debug(f"Formatted response: {formatted_response[:200]}...")
-                        logger.debug(f"Full formatted response length: {len(formatted_response)}")
-                        logger.debug(f"Sources section in response: {'📚 Sources:' in formatted_response}")
-                        if '📚 Sources:' in formatted_response:
-                            sources_start = formatted_response.find('📚 Sources:')
-                            logger.debug(f"Sources section: {formatted_response[sources_start:sources_start+200]}...")
+                            logger.debug(
+                                f"No citations found - this is why sources are missing!"
+                            )
+                        formatted_response = self._format_response_with_citations(
+                            text_content, citations
+                        )
+                        logger.debug(
+                            f"Formatted response: {formatted_response[:200]}..."
+                        )
+                        logger.debug(
+                            f"Full formatted response length: {len(formatted_response)}"
+                        )
+                        logger.debug(
+                            f"Sources section in response: {'📚 Sources:' in formatted_response}"
+                        )
+                        if "📚 Sources:" in formatted_response:
+                            sources_start = formatted_response.find("📚 Sources:")
+                            logger.debug(
+                                f"Sources section: {formatted_response[sources_start:sources_start+200]}..."
+                            )
                         yield formatted_response
                 break
-    
-    def _format_response_with_citations(self, text_content: str, citations: List[Dict]) -> str:
+
+    def _format_response_with_citations(
+        self, text_content: str, citations: List[Dict]
+    ) -> str:
         """Format the response text with clickable citations for Gradio UI."""
         if not citations:
             return text_content
-        
+
         logger.debug(f"Processing {len(citations)} citations before deduplication")
-        
+
         # Smart deduplication that preserves meaningful content
         unique_citations = []
         seen_citations = set()
-        
+
         for citation in citations:
             # Create a unique key based on meaningful content
-            if citation['type'] == 'web':
+            if citation["type"] == "web":
                 key = f"web_{citation.get('url', '')}"
-            elif citation['type'] in ['file', 'file_path']:
-                file_id = citation.get('file_id', '')
-                quote = citation.get('quote', '').strip()
-                context = citation.get('context', '').strip()
-                
+            elif citation["type"] in ["file", "file_path"]:
+                file_id = citation.get("file_id", "")
+                quote = citation.get("quote", "").strip()
+                context = citation.get("context", "").strip()
+
                 # Use content-based uniqueness for better deduplication
                 if quote and len(quote) > 20:
                     # Use first 50 chars of quote for uniqueness
-                    content_key = quote[:50].lower().replace(' ', '').replace('\n', '')
+                    content_key = quote[:50].lower().replace(" ", "").replace("\n", "")
                     key = f"file_content_{content_key}"
                 elif context and len(context) > 20:
                     # Use first 50 chars of context for uniqueness
-                    content_key = context[:50].lower().replace(' ', '').replace('\n', '')
+                    content_key = (
+                        context[:50].lower().replace(" ", "").replace("\n", "")
+                    )
                     key = f"file_context_{content_key}"
                 else:
                     # Fallback to file_id
                     key = f"file_{file_id}"
             else:
                 # For other types, use text content
-                text_key = citation.get('text', '')[:50].lower().replace(' ', '')
+                text_key = citation.get("text", "")[:50].lower().replace(" ", "")
                 key = f"{citation['type']}_{text_key}"
-            
+
             # Only add if we haven't seen this content before
             if key not in seen_citations:
                 seen_citations.add(key)
                 unique_citations.append(citation)
-        
+
         logger.debug(f"After deduplication: {len(unique_citations)} unique citations")
-        
+
         # Start with the main text and clean up citation markers
         formatted_text = text_content
-        
+
         # Remove Azure AI Foundry citation markers like 【4:0†source】
         import re
-        formatted_text = re.sub(r'【\d+:\d+†source】', '', formatted_text)
-        
+
+        formatted_text = re.sub(r"【\d+:\d+†source】", "", formatted_text)
+
         # Add a sources section if we have citations
         if unique_citations:
             formatted_text += "\n\n**📚 Sources:**\n"
-            
+
             citation_num = 1
             for citation in unique_citations:
-                if citation['type'] == 'web':
+                if citation["type"] == "web":
                     formatted_text += f"{citation_num}. 🌐 [{citation.get('text', 'Web Source')}]({citation.get('url', '#')})\n"
-                elif citation['type'] in ['file', 'file_path']:
+                elif citation["type"] in ["file", "file_path"]:
                     # Use our improved method to get meaningful citation text
                     meaningful_text = self._get_readable_file_name(citation)
                     formatted_text += f"{citation_num}. 📄 **{meaningful_text}** *(from uploaded documents)*\n"
                 citation_num += 1
-            
-            logger.info(f"Generated sources section with {len(unique_citations)} citations")
-        
-        return formatted_text
-    
 
-    
+            logger.info(
+                f"Generated sources section with {len(unique_citations)} citations"
+            )
+
+        return formatted_text
+
     async def _handle_tool_calls(self, run: ThreadRun, thread_id: str):
         """Handle tool calls during agent execution."""
         logger.info(f"Handling tool calls for run {run.id}")
-        
-        if not hasattr(run, 'required_action') or not run.required_action:
+
+        if not hasattr(run, "required_action") or not run.required_action:
             logger.warning(f"No required action found in run {run.id}")
             return
-            
+
         required_action = run.required_action
         logger.info(f"Required action type: {type(required_action)}")
         logger.info(f"Required action attributes: {dir(required_action)}")
-        
-        if not hasattr(required_action, 'submit_tool_outputs') or not required_action.submit_tool_outputs:
+
+        if (
+            not hasattr(required_action, "submit_tool_outputs")
+            or not required_action.submit_tool_outputs
+        ):
             logger.warning(f"No tool outputs required in run {run.id}")
             return
-            
+
         try:
-            action_type = getattr(required_action, 'type', 'submit_tool_outputs')
+            action_type = getattr(required_action, "type", "submit_tool_outputs")
             tool_calls = required_action.submit_tool_outputs.tool_calls
             if not tool_calls:
                 logger.warning("No tool calls found in required action")
                 return
-            
+
             tool_outputs = []
 
             async def handle_single_tool_call(tool_call):
                 function_name = tool_call.function.name
                 arguments = tool_call.function.arguments
-                logger.info(f"Processing tool call: {function_name} with args: {arguments}")
+                logger.info(
+                    f"Processing tool call: {function_name} with args: {arguments}"
+                )
                 logger.debug(f"Tool call ID: {tool_call.id}")
-                
+
                 if function_name == "generate_image":
                     try:
                         payload = json.loads(arguments)
@@ -808,12 +944,17 @@ Always validate the prompt for safety before invoking the tool.
                                 "mask_url": payload.get("mask_url"),
                                 "mask_image_url": payload.get("mask_image_url"),
                             },
-                            payload.get("input_fidelity") or payload.get("edit_input_fidelity"),
+                            payload.get("input_fidelity")
+                            or payload.get("edit_input_fidelity"),
                         )
                     except Exception:  # pragma: no cover - defensive logging
-                        logger.info("Initial tool payload snapshot unavailable due to non-standard payload type")
+                        logger.info(
+                            "Initial tool payload snapshot unavailable due to non-standard payload type"
+                        )
 
-                    pending_attachments = self._pending_file_refs_by_thread.get(thread_id) or []
+                    pending_attachments = (
+                        self._pending_file_refs_by_thread.get(thread_id) or []
+                    )
                     if pending_attachments:
                         logger.info(
                             "🎯 Thread %s: Automatically mapping %d attachment(s) to tool parameters",
@@ -826,10 +967,15 @@ Always validate the prompt for safety before invoking the tool.
                                 "  📎 Attachment[%d]: name=%s role=%s uri=%s bytes=%s",
                                 idx,
                                 file_info.get("name"),
-                                (file_info.get("role")
-                                 or (file_info.get("metadata") or {}).get("role")),
+                                (
+                                    file_info.get("role")
+                                    or (file_info.get("metadata") or {}).get("role")
+                                ),
                                 file_info.get("uri", "no-uri")[:80] + "...",
-                                "yes" if file_info.get("bytes") or file_info.get("bytes_base64") else "no",
+                                "yes"
+                                if file_info.get("bytes")
+                                or file_info.get("bytes_base64")
+                                else "no",
                             )
                         logger.debug(
                             "Injecting %d attachment(s) into payload for thread %s",
@@ -838,7 +984,9 @@ Always validate the prompt for safety before invoking the tool.
                         )
                         payload.setdefault("attachments", pending_attachments)
 
-                        base_uri = self._extract_attachment_uri_by_role(pending_attachments, role="base")
+                        base_uri = self._extract_attachment_uri_by_role(
+                            pending_attachments, role="base"
+                        )
                         if base_uri:
                             payload["image_url"] = base_uri
                             logger.info(
@@ -846,8 +994,12 @@ Always validate the prompt for safety before invoking the tool.
                                 base_uri[:80] + "...",
                             )
                         else:
-                            requested_image_url = payload.get("image_url") or payload.get("input_image_url")
-                            if requested_image_url and not str(requested_image_url).lower().startswith(("http://", "https://")):
+                            requested_image_url = payload.get(
+                                "image_url"
+                            ) or payload.get("input_image_url")
+                            if requested_image_url and not str(
+                                requested_image_url
+                            ).lower().startswith(("http://", "https://")):
                                 logger.info(
                                     "Discarding non-URL base image reference for thread %s: %s",
                                     thread_id,
@@ -857,7 +1009,9 @@ Always validate the prompt for safety before invoking the tool.
                                 payload.pop("input_image_url", None)
                                 requested_image_url = None
                             if not requested_image_url:
-                                fallback_uri = self._extract_first_attachment_uri(pending_attachments)
+                                fallback_uri = self._extract_first_attachment_uri(
+                                    pending_attachments
+                                )
                                 if fallback_uri:
                                     payload["image_url"] = fallback_uri
                                     logger.debug(
@@ -865,7 +1019,9 @@ Always validate the prompt for safety before invoking the tool.
                                         thread_id,
                                     )
 
-                        mask_uri = self._extract_attachment_uri_by_role(pending_attachments, role="mask")
+                        mask_uri = self._extract_attachment_uri_by_role(
+                            pending_attachments, role="mask"
+                        )
                         if mask_uri:
                             payload["mask_url"] = mask_uri
                             logger.info(
@@ -875,7 +1031,11 @@ Always validate the prompt for safety before invoking the tool.
                         else:
                             existing_mask = payload.get("mask_url")
                             if existing_mask:
-                                if not str(existing_mask).lower().startswith(("http://", "https://")):
+                                if (
+                                    not str(existing_mask)
+                                    .lower()
+                                    .startswith(("http://", "https://"))
+                                ):
                                     logger.info(
                                         "Discarding non-URL mask reference for thread %s: %s",
                                         thread_id,
@@ -887,31 +1047,41 @@ Always validate the prompt for safety before invoking the tool.
                                 (
                                     (att.get("file") or {}).get("name"),
                                     (att.get("file") or {}).get("role")
-                                    or ((att.get("file") or {}).get("metadata") or {}).get("role"),
+                                    or (
+                                        (att.get("file") or {}).get("metadata") or {}
+                                    ).get("role"),
                                 )
                                 for att in payload.get("attachments", [])
                             ]
                             logger.info(
                                 "Post-normalization payload | image_url=%s | mask_url=%s | attachment_roles=%s",
-                                payload.get("image_url") or payload.get("input_image_url"),
-                                payload.get("mask_url") or payload.get("mask_image_url"),
+                                payload.get("image_url")
+                                or payload.get("input_image_url"),
+                                payload.get("mask_url")
+                                or payload.get("mask_image_url"),
                                 attachment_roles,
                             )
                         except Exception:  # pragma: no cover
-                            logger.info("Unable to log post-normalization payload details")
+                            logger.info(
+                                "Unable to log post-normalization payload details"
+                            )
                     else:
                         logger.debug(
                             "No attachments found for thread %s; payload keys=%s",
                             thread_id,
                             list(payload.keys()),
                         )
-                        if not payload.get("image_url") and not payload.get("input_image_url"):
+                        if not payload.get("image_url") and not payload.get(
+                            "input_image_url"
+                        ):
                             logger.warning(
                                 "Thread %s lacks attachments providing a base image; edit may fail",
                                 thread_id,
                             )
 
-                    if not payload.get("image_url") and not payload.get("input_image_url"):
+                    if not payload.get("image_url") and not payload.get(
+                        "input_image_url"
+                    ):
                         if pending_attachments:
                             error_msg = (
                                 "Image edit request is missing a base image attachment or image_url; "
@@ -920,40 +1090,51 @@ Always validate the prompt for safety before invoking the tool.
                             logger.error(error_msg)
                             return {
                                 "tool_call_id": tool_call.id,
-                                "output": json.dumps({"status": "error", "message": error_msg}),
+                                "output": json.dumps(
+                                    {"status": "error", "message": error_msg}
+                                ),
                             }
                         else:
-                            logger.debug("No base attachment provided; treating as fresh generation")
+                            logger.debug(
+                                "No base attachment provided; treating as fresh generation"
+                            )
 
                     try:
                         openai_result = self._generate_image_via_openai(payload)
                         if openai_result is not None:
-                            openai_result["tool_call_id"] = getattr(tool_call, "id", None)
+                            openai_result["tool_call_id"] = getattr(
+                                tool_call, "id", None
+                            )
                             output_payload = json.dumps(openai_result)
                         else:
-                            output_payload = json.dumps({"status": "error", "message": "Image generation returned no result"})
+                            output_payload = json.dumps(
+                                {
+                                    "status": "error",
+                                    "message": "Image generation returned no result",
+                                }
+                            )
                     except Exception as exc:
                         logger.error(f"Image generation failed: {exc}")
-                        output_payload = json.dumps({"status": "error", "message": str(exc)})
+                        output_payload = json.dumps(
+                            {"status": "error", "message": str(exc)}
+                        )
                     finally:
                         if thread_id in self._pending_file_refs_by_thread:
-                            cached_count = len(self._pending_file_refs_by_thread.get(thread_id, []))
+                            cached_count = len(
+                                self._pending_file_refs_by_thread.get(thread_id, [])
+                            )
                             logger.debug(
                                 "Clearing %d cached attachment(s) for thread %s after tool call",
                                 cached_count,
                                 thread_id,
                             )
                             self._pending_file_refs_by_thread.pop(thread_id, None)
-                    return {
-                        "tool_call_id": tool_call.id,
-                        "output": output_payload
-                    }
+                    return {"tool_call_id": tool_call.id, "output": output_payload}
 
-                logger.info(f"Skipping system tool call: {function_name} (handled automatically)")
-                return {
-                    "tool_call_id": tool_call.id,
-                    "output": "{}"
-                }
+                logger.info(
+                    f"Skipping system tool call: {function_name} (handled automatically)"
+                )
+                return {"tool_call_id": tool_call.id, "output": "{}"}
 
             # Run all tool calls in parallel
             results = await asyncio.gather(
@@ -963,17 +1144,23 @@ Always validate the prompt for safety before invoking the tool.
             tool_outputs = [r for r in results if r is not None]
 
             if not tool_outputs:
-                logger.info("No valid tool outputs generated - submitting empty outputs to move run forward")
+                logger.info(
+                    "No valid tool outputs generated - submitting empty outputs to move run forward"
+                )
                 # Submit empty tool outputs to move the run forward
-                tool_outputs = [{"tool_call_id": tc.id, "output": "{}"} for tc in tool_calls if hasattr(tc, 'id') and tc.id]
-                
+                tool_outputs = [
+                    {"tool_call_id": tc.id, "output": "{}"}
+                    for tc in tool_calls
+                    if hasattr(tc, "id") and tc.id
+                ]
+
             logger.debug(f"Tool outputs to submit: {tool_outputs}")
-            
+
         except Exception as e:
             logger.error(f"Error processing tool calls: {e}")
             logger.error(f"Required action structure: {required_action}")
             raise
-        
+
         # Submit the tool outputs or approvals
         client = self._get_client()
         try:
@@ -981,23 +1168,22 @@ Always validate the prompt for safety before invoking the tool.
                 # Create tool outputs in the expected format
                 formatted_outputs = []
                 for output in tool_outputs:
-                    formatted_outputs.append(ToolOutput(
-                        tool_call_id=output["tool_call_id"],
-                        output=output["output"]
-                    ))
-                
+                    formatted_outputs.append(
+                        ToolOutput(
+                            tool_call_id=output["tool_call_id"], output=output["output"]
+                        )
+                    )
+
                 logger.debug(f"Submitting formatted tool outputs: {formatted_outputs}")
-                
+
                 client.runs.submit_tool_outputs(
-                    thread_id=thread_id,
-                    run_id=run.id,
-                    tool_outputs=formatted_outputs
+                    thread_id=thread_id, run_id=run.id, tool_outputs=formatted_outputs
                 )
                 logger.info(f"Submitted {len(formatted_outputs)} tool outputs")
             elif action_type == "submit_tool_approval":
                 # For tool approvals, we need to approve the MCP tool calls
                 logger.info(f"Handling tool approval for {len(tool_calls)} tool calls")
-                
+
                 tool_approvals = []
                 for tool_call in tool_calls:
                     if isinstance(tool_call, RequiredMcpToolCall):
@@ -1007,17 +1193,19 @@ Always validate the prompt for safety before invoking the tool.
                                 ToolApproval(
                                     tool_call_id=tool_call.id,
                                     approve=True,
-                                    headers={}  # Add any required headers here
+                                    headers={},  # Add any required headers here
                                 )
                             )
                         except Exception as e:
-                            logger.error(f"Error approving tool_call {tool_call.id}: {e}")
-                
+                            logger.error(
+                                f"Error approving tool_call {tool_call.id}: {e}"
+                            )
+
                 if tool_approvals:
                     client.runs.submit_tool_outputs(
                         thread_id=thread_id,
                         run_id=run.id,
-                        tool_approvals=tool_approvals
+                        tool_approvals=tool_approvals,
                     )
                     logger.info(f"Approved {len(tool_approvals)} MCP tool calls")
                 else:
@@ -1029,47 +1217,45 @@ Always validate the prompt for safety before invoking the tool.
             try:
                 logger.info("Trying fallback submission with raw dict format")
                 client.runs.submit_tool_outputs(
-                    thread_id=thread_id,
-                    run_id=run.id,
-                    tool_outputs=tool_outputs
+                    thread_id=thread_id, run_id=run.id, tool_outputs=tool_outputs
                 )
                 logger.info(f"Fallback submission successful")
             except Exception as e2:
                 logger.error(f"Fallback submission also failed: {e2}")
                 raise e
-        
+
     def _get_readable_file_name(self, citation: Dict) -> str:
         """Get meaningful citation text based on content, not just file names."""
-        
+
         # Priority 1: Use actual quote/content if available and meaningful
-        quote = citation.get('quote', '').strip()
+        quote = citation.get("quote", "").strip()
         if quote and len(quote) > 20:  # Ensure substantial content
             # Clean and truncate the quote for readability
-            clean_quote = quote.replace('\n', ' ').replace('\r', ' ')
+            clean_quote = quote.replace("\n", " ").replace("\r", " ")
             if len(clean_quote) > 100:
                 clean_quote = clean_quote[:97] + "..."
             return f'"{clean_quote}"'
-        
+
         # Priority 2: Extract meaningful content from the citation text itself
-        citation_text = citation.get('text', '').strip()
-        if citation_text and 'Document excerpt:' in citation_text:
+        citation_text = citation.get("text", "").strip()
+        if citation_text and "Document excerpt:" in citation_text:
             # Already formatted as an excerpt
             return citation_text
-        
+
         # Priority 3: Try to create meaningful content from available text
         if citation_text and len(citation_text) > 20:
-            clean_text = citation_text.replace('\n', ' ').replace('\r', ' ')
+            clean_text = citation_text.replace("\n", " ").replace("\r", " ")
             if len(clean_text) > 100:
                 clean_text = clean_text[:97] + "..."
             return f'Document excerpt: "{clean_text}"'
-        
+
         # Priority 4: Use file information if available
-        file_id = citation.get('file_id', '')
+        file_id = citation.get("file_id", "")
         if file_id:
             return f"Document (ID: {file_id[-8:]})"  # Use last 8 chars for brevity
-        
+
         # Fallback: Generic but still informative
-        source_type = citation.get('type', 'document')
+        source_type = citation.get("type", "document")
         return f"Referenced {source_type}"
 
     def _extract_citation_context(self, main_text: str, annotation, quote: str) -> str:
@@ -1078,17 +1264,20 @@ Always validate the prompt for safety before invoking the tool.
             # If we have a quote, try to find it in the main text and get surrounding context
             if quote and len(quote.strip()) > 10:
                 import re
+
                 # Look for the quote or similar content in the main text
                 quote_words = quote.strip().split()[:5]  # First 5 words
                 if len(quote_words) >= 2:
-                    pattern = r'.{0,50}' + re.escape(' '.join(quote_words[:2])) + r'.{0,50}'
+                    pattern = (
+                        r".{0,50}" + re.escape(" ".join(quote_words[:2])) + r".{0,50}"
+                    )
                     match = re.search(pattern, main_text, re.IGNORECASE)
                     if match:
                         context = match.group(0).strip()
                         return context
-            
+
             # Fallback: Try to get context around citation markers
-            if hasattr(annotation, 'text') and annotation.text:
+            if hasattr(annotation, "text") and annotation.text:
                 marker = annotation.text
                 # Look for the citation marker in the main text
                 marker_pos = main_text.find(marker)
@@ -1098,52 +1287,54 @@ Always validate the prompt for safety before invoking the tool.
                     end = min(len(main_text), marker_pos + len(marker) + 100)
                     context = main_text[start:end].strip()
                     # Clean up the context
-                    context = context.replace(marker, '').strip()
+                    context = context.replace(marker, "").strip()
                     if context:
                         return context
-            
+
             return ""
         except Exception as e:
             logger.debug(f"Error extracting citation context: {e}")
             return ""
 
-    def _create_meaningful_citation_text(self, quote: str, context: str, file_id: str) -> str:
+    def _create_meaningful_citation_text(
+        self, quote: str, context: str, file_id: str
+    ) -> str:
         """Create meaningful citation text using available information."""
-        
+
         # Priority 1: Use substantial quote content
         if quote and len(quote.strip()) > 20:
-            clean_quote = quote.replace('\n', ' ').replace('\r', ' ').strip()
+            clean_quote = quote.replace("\n", " ").replace("\r", " ").strip()
             if len(clean_quote) > 100:
                 clean_quote = clean_quote[:97] + "..."
             return f'Document excerpt: "{clean_quote}"'
-        
+
         # Priority 2: Use extracted context
         if context and len(context.strip()) > 20:
-            clean_context = context.replace('\n', ' ').replace('\r', ' ').strip()
+            clean_context = context.replace("\n", " ").replace("\r", " ").strip()
             if len(clean_context) > 100:
                 clean_context = clean_context[:97] + "..."
             return f'Document content: "{clean_context}"'
-        
+
         # Priority 3: Try to get meaningful filename
         if file_id:
             try:
                 project_client = self._get_project_client()
                 file_info = project_client.agents.files.get(file_id)
-                if hasattr(file_info, 'filename') and file_info.filename:
+                if hasattr(file_info, "filename") and file_info.filename:
                     # Clean up the filename for display
                     filename = file_info.filename
-                    if filename.endswith('.pdf'):
+                    if filename.endswith(".pdf"):
                         filename = filename[:-4]  # Remove .pdf extension
                     return f'Document: "{filename}"'
             except Exception as e:
                 logger.debug(f"Could not retrieve filename for {file_id}: {e}")
-        
+
         # Priority 4: Use shortened file ID
         if file_id and len(file_id) > 8:
             return f"Document (ID: {file_id[-8:]})"
         elif file_id:
             return f"Document (ID: {file_id})"
-        
+
         # Fallback
         return "Referenced document"
 
@@ -1151,28 +1342,32 @@ Always validate the prompt for safety before invoking the tool.
         """Helper to get a more meaningful tool description from the tool call."""
         try:
             # Try to get the actual function name from the tool call
-            if hasattr(tool_call, 'function') and hasattr(tool_call.function, 'name'):
+            if hasattr(tool_call, "function") and hasattr(tool_call.function, "name"):
                 function_name = tool_call.function.name
                 # Try to get arguments if available
-                if hasattr(tool_call.function, 'arguments'):
+                if hasattr(tool_call.function, "arguments"):
                     try:
                         import json
+
                         args = json.loads(tool_call.function.arguments)
                         # Create a more descriptive message based on function name and args
-                        if function_name == "bing_grounding" or function_name == "web_search":
-                            query = args.get('query', '')
+                        if (
+                            function_name == "bing_grounding"
+                            or function_name == "web_search"
+                        ):
+                            query = args.get("query", "")
                             if query:
                                 return f"Searching the web for: '{query[:50]}{'...' if len(query) > 50 else ''}'"
                             else:
                                 return "Performing web search"
                         elif function_name == "file_search":
-                            query = args.get('query', '')
+                            query = args.get("query", "")
                             if query:
                                 return f"Searching documents for: '{query[:50]}{'...' if len(query) > 50 else ''}'"
                             else:
                                 return "Searching through uploaded documents"
                         elif function_name.startswith("search_"):
-                            search_term = args.get('search_term', args.get('query', ''))
+                            search_term = args.get("search_term", args.get("query", ""))
                             if search_term:
                                 return f"Searching ServiceNow for: '{search_term[:50]}{'...' if len(search_term) > 50 else ''}'"
                             else:
@@ -1201,7 +1396,9 @@ Always validate the prompt for safety before invoking the tool.
         if self._openai_client is None:
             api_key = os.getenv("OPENAI_API_KEY")
             if not api_key:
-                raise RuntimeError("OPENAI_API_KEY environment variable is required for image generation")
+                raise RuntimeError(
+                    "OPENAI_API_KEY environment variable is required for image generation"
+                )
             self._openai_client = OpenAI(api_key=api_key)
         return self._openai_client
 
@@ -1212,15 +1409,21 @@ Always validate the prompt for safety before invoking the tool.
         style = payload.get("style")
         size = payload.get("size", "1024x1024")
         n_images = int(payload.get("n", 1))
-        
+
         # SAFETY: Force n=1 for agent-to-agent mode to prevent multiple image generation
         # This prevents the agent from creating variations when a single image is requested
         if n_images > 1:
-            logger.warning(f"Agent requested n={n_images} images, forcing n=1 for agent-to-agent mode")
+            logger.warning(
+                f"Agent requested n={n_images} images, forcing n=1 for agent-to-agent mode"
+            )
             n_images = 1
 
         requested_model_raw = payload.get("model")
-        if isinstance(requested_model_raw, str) and requested_model_raw.strip() and requested_model_raw.strip() != "gpt-image-1":
+        if (
+            isinstance(requested_model_raw, str)
+            and requested_model_raw.strip()
+            and requested_model_raw.strip() != "gpt-image-1"
+        ):
             logger.info(
                 "Ignoring requested image model '%s'; using 'gpt-image-1' for all generations",
                 requested_model_raw.strip(),
@@ -1298,12 +1501,17 @@ Always validate the prompt for safety before invoking the tool.
             n=n_images,
         )
 
-        response_id = getattr(image_response, "id", None) or getattr(image_response, "created", None)
+        response_id = getattr(image_response, "id", None) or getattr(
+            image_response, "created", None
+        )
 
         for output_index, data in enumerate(image_response.data[:n_images]):
             result_payload = data
 
-            filename = payload.get("output_filename") or f"generated_{uuid.uuid4().hex[:8]}_{output_index}.png"
+            filename = (
+                payload.get("output_filename")
+                or f"generated_{uuid.uuid4().hex[:8]}_{output_index}.png"
+            )
             output_path = output_dir / filename
 
             entry = {
@@ -1318,7 +1526,9 @@ Always validate the prompt for safety before invoking the tool.
             if isinstance(result_payload, str):
                 b64_payload = result_payload
             elif isinstance(result_payload, dict):
-                b64_payload = result_payload.get("image_base64") or result_payload.get("b64_json")
+                b64_payload = result_payload.get("image_base64") or result_payload.get(
+                    "b64_json"
+                )
                 if not b64_payload:
                     entry["source_url"] = result_payload.get("url")
             elif hasattr(result_payload, "b64_json"):
@@ -1333,7 +1543,9 @@ Always validate the prompt for safety before invoking the tool.
                 entry["file_size_bytes"] = len(image_bytes)
             elif entry.get("source_url"):
                 try:
-                    with httpx.Client(timeout=30.0, follow_redirects=True) as client_http:
+                    with httpx.Client(
+                        timeout=30.0, follow_redirects=True
+                    ) as client_http:
                         resp = client_http.get(entry["source_url"])
                         resp.raise_for_status()
                         output_path.write_bytes(resp.content)
@@ -1369,7 +1581,9 @@ Always validate the prompt for safety before invoking the tool.
                         artifact_record["file-size"] = entry["file_size_bytes"]
                     if entry.get("source_url"):
                         artifact_record["source-url"] = entry["source_url"]
-                    logger.info(f"🖼️ [EDIT] Created artifact_record: file={artifact_record.get('file-name')}, has_role={'role' in artifact_record}, keys={list(artifact_record.keys())}")
+                    logger.info(
+                        f"🖼️ [EDIT] Created artifact_record: file={artifact_record.get('file-name')}, has_role={'role' in artifact_record}, keys={list(artifact_record.keys())}"
+                    )
                     generated_artifacts.append(artifact_record)
 
             images.append(entry)
@@ -1377,7 +1591,11 @@ Always validate the prompt for safety before invoking the tool.
         if generated_artifacts:
             self._latest_artifacts.extend(generated_artifacts)
 
-        response_id = images[0].get("response_id") if images else (download_errors[0] if download_errors else None)
+        response_id = (
+            images[0].get("response_id")
+            if images
+            else (download_errors[0] if download_errors else None)
+        )
 
         result: Dict[str, Any] = {
             "status": "success" if images else "error",
@@ -1445,7 +1663,8 @@ Always validate the prompt for safety before invoking the tool.
                     idx,
                     file_info.get("name"),
                     file_info.get("uri"),
-                    file_info.get("role") or (file_info.get("metadata") or {}).get("role"),
+                    file_info.get("role")
+                    or (file_info.get("metadata") or {}).get("role"),
                     file_info.get("mimeType") or file_info.get("mime_type"),
                 )
 
@@ -1503,7 +1722,9 @@ Always validate the prompt for safety before invoking the tool.
 
             if uri:
                 try:
-                    with httpx.Client(timeout=60.0, follow_redirects=True) as http_client:
+                    with httpx.Client(
+                        timeout=60.0, follow_redirects=True
+                    ) as http_client:
                         resp = http_client.get(uri)
                         resp.raise_for_status()
                         return resp.content
@@ -1528,7 +1749,8 @@ Always validate the prompt for safety before invoking the tool.
                     return None
 
             return None
-# ... ensure_png definition added
+
+        # ... ensure_png definition added
 
         unique_files = self._extract_file_infos(attachments)
 
@@ -1549,13 +1771,21 @@ Always validate the prompt for safety before invoking the tool.
                 role = "mask"
             role_assignments.append((info, role, name_lower))
 
-        base_info = next((info for info, role, _ in role_assignments if role == "base"), None)
-        mask_info = next((info for info, role, _ in role_assignments if role == "mask"), None)
-        overlay_infos = [info for info, role, _ in role_assignments if role == "overlay"]
+        base_info = next(
+            (info for info, role, _ in role_assignments if role == "base"), None
+        )
+        mask_info = next(
+            (info for info, role, _ in role_assignments if role == "mask"), None
+        )
+        overlay_infos = [
+            info for info, role, _ in role_assignments if role == "overlay"
+        ]
 
         for info, role, name_lower in role_assignments:
             looks_like_base_name = (
-                "_base" in name_lower or name_lower.endswith("-base.png") or name_lower.endswith("_base.png")
+                "_base" in name_lower
+                or name_lower.endswith("-base.png")
+                or name_lower.endswith("_base.png")
             )
 
             if role == "base" or looks_like_base_name:
@@ -1571,7 +1801,9 @@ Always validate the prompt for safety before invoking the tool.
 
             if base_info is None:
                 base_info = info
-            elif mask_info is None and ("mask" in name_lower or name_lower.endswith("_mask.png")):
+            elif mask_info is None and (
+                "mask" in name_lower or name_lower.endswith("_mask.png")
+            ):
                 mask_info = info
             else:
                 if info not in overlay_infos:
@@ -1619,7 +1851,11 @@ Always validate the prompt for safety before invoking the tool.
                     image_bytes = maybe_bytes
                     break
 
-        if mask_bytes is None and mask_url and mask_url.lower().startswith(("http://", "https://")):
+        if (
+            mask_bytes is None
+            and mask_url
+            and mask_url.lower().startswith(("http://", "https://"))
+        ):
             mask_bytes = _attachment_to_bytes({"file": {"uri": mask_url}})
 
         if image_bytes is None and image_url:
@@ -1628,9 +1864,15 @@ Always validate the prompt for safety before invoking the tool.
                     base_image_resp = http_client.get(image_url)
                     base_image_resp.raise_for_status()
                     image_bytes = base_image_resp.content
-                logger.info("Downloaded base image from %s (%d bytes)", image_url, len(image_bytes))
+                logger.info(
+                    "Downloaded base image from %s (%d bytes)",
+                    image_url,
+                    len(image_bytes),
+                )
             except Exception as download_err:
-                error_msg = f"Failed to download base image from {image_url}: {download_err}"
+                error_msg = (
+                    f"Failed to download base image from {image_url}: {download_err}"
+                )
                 logger.error(error_msg)
                 download_errors.append(error_msg)
 
@@ -1640,7 +1882,9 @@ Always validate the prompt for safety before invoking the tool.
                     mask_resp = http_client.get(mask_url)
                     mask_resp.raise_for_status()
                     mask_bytes = mask_resp.content
-                logger.info("Downloaded mask from %s (%d bytes)", mask_url, len(mask_bytes))
+                logger.info(
+                    "Downloaded mask from %s (%d bytes)", mask_url, len(mask_bytes)
+                )
             except Exception as mask_err:
                 error_msg = f"Failed to download mask image from {mask_url}: {mask_err}"
                 logger.error(error_msg)
@@ -1648,7 +1892,9 @@ Always validate the prompt for safety before invoking the tool.
 
         if mask_bytes is not None and image_bytes is not None:
             try:
-                with Image.open(BytesIO(image_bytes)) as base_image, Image.open(BytesIO(mask_bytes)) as mask_image:
+                with Image.open(BytesIO(image_bytes)) as base_image, Image.open(
+                    BytesIO(mask_bytes)
+                ) as mask_image:
                     if mask_image.size != base_image.size:
                         raise ValueError(
                             f"Mask dimensions {mask_image.size} do not match base image dimensions {base_image.size}."
@@ -1658,7 +1904,10 @@ Always validate the prompt for safety before invoking the tool.
 
         if image_bytes is None:
             if download_errors:
-                raise ValueError("Could not obtain base image for refinement: " + "; ".join(download_errors))
+                raise ValueError(
+                    "Could not obtain base image for refinement: "
+                    + "; ".join(download_errors)
+                )
             raise ValueError("No base image available for refinement")
 
         if image_bytes is not None:
@@ -1681,7 +1930,9 @@ Always validate the prompt for safety before invoking the tool.
             }
 
             current_payload = getattr(self, "_current_tool_payload", {})
-            fidelity = current_payload.get("input_fidelity") or current_payload.get("edit_input_fidelity")
+            fidelity = current_payload.get("input_fidelity") or current_payload.get(
+                "edit_input_fidelity"
+            )
             payload_has_mask = self._payload_has_mask(current_payload)
 
             try:
@@ -1700,9 +1951,7 @@ Always validate the prompt for safety before invoking the tool.
             elif not payload_has_mask:
                 edit_kwargs["input_fidelity"] = "high"
             elif fidelity:
-                logger.debug(
-                    "Omitting input_fidelity=%s for mask-based edit", fidelity
-                )
+                logger.debug("Omitting input_fidelity=%s for mask-based edit", fidelity)
 
             if payload_has_mask and mask_bytes is None:
                 logger.warning(
@@ -1771,13 +2020,16 @@ Always validate the prompt for safety before invoking the tool.
 
             entry: Dict[str, Any] = {
                 "index": output_index,
-                "response_id": getattr(edit_response, "id", None) or f"edit_{uuid.uuid4().hex}",
+                "response_id": getattr(edit_response, "id", None)
+                or f"edit_{uuid.uuid4().hex}",
                 "image_call_id": getattr(data, "id", None),
                 "model": model,
             }
 
             saved_path: Optional[Path] = None
-            b64_json = getattr(data, "b64_json", None) or (data.get("b64_json") if isinstance(data, dict) else None)
+            b64_json = getattr(data, "b64_json", None) or (
+                data.get("b64_json") if isinstance(data, dict) else None
+            )
             if b64_json:
                 image_bytes = base64.b64decode(b64_json)
                 output_path.write_bytes(image_bytes)
@@ -1786,7 +2038,9 @@ Always validate the prompt for safety before invoking the tool.
             elif isinstance(data, dict) and data.get("url"):
                 entry["source_url"] = data["url"]
                 try:
-                    with httpx.Client(timeout=30.0, follow_redirects=True) as http_client:
+                    with httpx.Client(
+                        timeout=30.0, follow_redirects=True
+                    ) as http_client:
                         resp = http_client.get(data["url"])
                         resp.raise_for_status()
                         output_path.write_bytes(resp.content)
@@ -1820,7 +2074,9 @@ Always validate the prompt for safety before invoking the tool.
                         artifact_record["file-size"] = entry["file_size_bytes"]
                     if entry.get("source_url"):
                         artifact_record["source-url"] = entry["source_url"]
-                    logger.info(f"🖼️ [GEN] Created artifact_record: file={artifact_record.get('file-name')}, has_role={'role' in artifact_record}, keys={list(artifact_record.keys())}")
+                    logger.info(
+                        f"🖼️ [GEN] Created artifact_record: file={artifact_record.get('file-name')}, has_role={'role' in artifact_record}, keys={list(artifact_record.keys())}"
+                    )
                     generated_artifacts.append(artifact_record)
 
             images.append(entry)
@@ -1828,7 +2084,11 @@ Always validate the prompt for safety before invoking the tool.
         if generated_artifacts:
             self._latest_artifacts.extend(generated_artifacts)
 
-        response_id = images[0].get("response_id") if images else (download_errors[0] if download_errors else None)
+        response_id = (
+            images[0].get("response_id")
+            if images
+            else (download_errors[0] if download_errors else None)
+        )
 
         result: Dict[str, Any] = {
             "status": "success" if images else "error",
@@ -1873,7 +2133,9 @@ Always validate the prompt for safety before invoking the tool.
         logger.debug("Wrote temp PNG for edit: %s", tmp.name)
         return tmp.name
 
-    def _extract_first_attachment_uri(self, attachments: List[Dict[str, Any]]) -> Optional[str]:
+    def _extract_first_attachment_uri(
+        self, attachments: List[Dict[str, Any]]
+    ) -> Optional[str]:
         for part in attachments:
             file_info = part.get("file") or {}
             uri = file_info.get("uri")
@@ -1892,9 +2154,17 @@ Always validate the prompt for safety before invoking the tool.
             file_info = part.get("file") if isinstance(part, dict) else None
             if not file_info:
                 continue
-            role_val = (file_info.get("role") or (file_info.get("metadata") or {}).get("role") or "").lower()
+            role_val = (
+                file_info.get("role")
+                or (file_info.get("metadata") or {}).get("role")
+                or ""
+            ).lower()
             name_val = str(file_info.get("name", "")).lower()
-            if role_val == "mask" or "_mask" in name_val or name_val.endswith("-mask.png"):
+            if (
+                role_val == "mask"
+                or "_mask" in name_val
+                or name_val.endswith("-mask.png")
+            ):
                 return True
         return False
 
@@ -1907,11 +2177,19 @@ Always validate the prompt for safety before invoking the tool.
             file_info = part.get("file") if isinstance(part, dict) else None
             if not file_info:
                 continue
-            role_val = (file_info.get("role") or (file_info.get("metadata") or {}).get("role") or "").lower()
+            role_val = (
+                file_info.get("role")
+                or (file_info.get("metadata") or {}).get("role")
+                or ""
+            ).lower()
             name_val = str(file_info.get("name", "")).lower()
             if role_val == "overlay" or "logo" in name_val or name_val.endswith(".png"):
                 # treat any non-base, non-mask image as overlay when explicitly tagged
-                if role_val == "overlay" or ("_base" not in name_val and "-base" not in name_val and "mask" not in name_val):
+                if role_val == "overlay" or (
+                    "_base" not in name_val
+                    and "-base" not in name_val
+                    and "mask" not in name_val
+                ):
                     return True
         return False
 
@@ -1940,15 +2218,28 @@ Always validate the prompt for safety before invoking the tool.
                 is_match = True
             elif role_lower == "mask" and "mask" in name:
                 is_match = True
-            elif role_lower == "base" and "mask" not in name and file_role != "mask" and meta_role != "mask":
+            elif (
+                role_lower == "base"
+                and "mask" not in name
+                and file_role != "mask"
+                and meta_role != "mask"
+            ):
                 # Remember non-mask candidates for fallback once explicit base patterns are checked
                 if uri and str(uri).lower().startswith(("http://", "https://")):
                     base_fallback.append((uri, name))
                 # Prefer files that look like base assets
-                if "_base" in name or name.endswith("-base.png") or name.endswith("_base.png"):
+                if (
+                    "_base" in name
+                    or name.endswith("-base.png")
+                    or name.endswith("_base.png")
+                ):
                     is_match = True
 
-            if is_match and uri and str(uri).lower().startswith(("http://", "https://")):
+            if (
+                is_match
+                and uri
+                and str(uri).lower().startswith(("http://", "https://"))
+            ):
                 return uri
 
         if role_lower == "base":
@@ -2029,18 +2320,22 @@ Always validate the prompt for safety before invoking the tool.
                             blob_name=blob_name,
                             account_key=account_key_value,
                             permission=BlobSasPermissions(read=True),
-                            expiry=datetime.utcnow() + timedelta(minutes=sas_duration_minutes),
+                            expiry=datetime.utcnow()
+                            + timedelta(minutes=sas_duration_minutes),
                             protocol="https",
                             version="2023-11-03",
                         )
                     except Exception as sas_error:
-                        logger.error(f"Failed to generate SAS URL with shared key: {sas_error}")
+                        logger.error(
+                            f"Failed to generate SAS URL with shared key: {sas_error}"
+                        )
 
             if sas_token is None and self._blob_service_client is not None:
                 try:
                     delegation_key = self._blob_service_client.get_user_delegation_key(
                         key_start_time=datetime.utcnow() - timedelta(minutes=5),
-                        key_expiry_time=datetime.utcnow() + timedelta(minutes=sas_duration_minutes),
+                        key_expiry_time=datetime.utcnow()
+                        + timedelta(minutes=sas_duration_minutes),
                     )
                     sas_token = generate_blob_sas(
                         account_name=self._blob_service_client.account_name,
@@ -2048,24 +2343,27 @@ Always validate the prompt for safety before invoking the tool.
                         blob_name=blob_name,
                         user_delegation_key=delegation_key,
                         permission=BlobSasPermissions(read=True),
-                        expiry=datetime.utcnow() + timedelta(minutes=sas_duration_minutes),
+                        expiry=datetime.utcnow()
+                        + timedelta(minutes=sas_duration_minutes),
                         version="2023-11-03",
                     )
                 except Exception as ude_err:
                     logger.warning(f"Failed to generate user delegation SAS: {ude_err}")
 
             if sas_token:
-                base_url = blob_client.get_blob_client(container=container_name, blob=blob_name).url
+                base_url = blob_client.get_blob_client(
+                    container=container_name, blob=blob_name
+                ).url
                 token = sas_token.lstrip("?")
-                separator = '&' if '?' in base_url else '?'
+                separator = "&" if "?" in base_url else "?"
                 return f"{base_url}{separator}{token}"
 
-            raise RuntimeError("Unable to generate SAS token for blob upload; verify storage credentials")
+            raise RuntimeError(
+                "Unable to generate SAS token for blob upload; verify storage credentials"
+            )
         except Exception as e:
             logger.error(f"Failed to upload {file_path} to blob storage: {e}")
             return None
-
-
 
 
 async def create_foundry_image_generator_agent() -> FoundryImageGeneratorAgent:
@@ -2079,7 +2377,7 @@ async def create_foundry_image_generator_agent() -> FoundryImageGeneratorAgent:
 async def demo_agent_interaction():
     """Demo function showing how to use the Foundry Image Generator agent for creative prompts."""
     agent = await create_foundry_image_generator_agent()
-    
+
     try:
         thread = await agent.create_thread()
         message = "Generate a surreal landscape with floating islands and waterfalls."

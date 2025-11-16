@@ -7,8 +7,29 @@ Set VERBOSE_LOGGING=true in environment to see detailed debug logs.
 import os
 from typing import Any
 
-# Read verbose flag from environment (defaults to False for clean logs)
-VERBOSE_LOGGING = os.environ.get("VERBOSE_LOGGING", "false").lower() in ("true", "1", "yes")
+
+def _is_verbose() -> bool:
+    """
+    Check if verbose logging is enabled.
+    
+    Lazy evaluation to avoid circular import with settings module.
+    
+    :return: True if verbose logging is enabled
+    """
+    # Try to get from settings first (if available)
+    try:
+        from config import settings
+        if hasattr(settings, 'server') and hasattr(settings.server, 'verbose_logging'):
+            return settings.server.verbose_logging
+    except (ImportError, RuntimeError, AttributeError):
+        pass
+    
+    # Fallback to environment variable during initialization
+    return os.environ.get("VERBOSE_LOGGING", "false").lower() in (
+        "true",
+        "1",
+        "yes",
+    )
 
 
 def log_info(message: str, *args: Any) -> None:
@@ -33,29 +54,28 @@ def log_error(message: str, *args: Any) -> None:
 
 def log_debug(message: str, *args: Any) -> None:
     """Log debug messages (only shown when VERBOSE_LOGGING=true)."""
-    if VERBOSE_LOGGING:
+    if _is_verbose():
         print(f"[DEBUG] {message}", *args)
 
 
 def log_websocket_debug(message: str, *args: Any) -> None:
     """Log WebSocket debug messages (only shown when VERBOSE_LOGGING=true)."""
-    if VERBOSE_LOGGING:
+    if _is_verbose():
         print(f"[WEBSOCKET DEBUG] {message}", *args)
 
 
 def log_memory_debug(message: str, *args: Any) -> None:
     """Log memory service debug messages (only shown when VERBOSE_LOGGING=true)."""
-    if VERBOSE_LOGGING:
+    if _is_verbose():
         print(f"[A2AMemoryService] {message}", *args)
 
 
 def log_foundry_debug(message: str, *args: Any) -> None:
     """Log Foundry agent debug messages (only shown when VERBOSE_LOGGING=true)."""
-    if VERBOSE_LOGGING:
+    if _is_verbose():
         print(f"🔍 DEBUG: {message}", *args)
 
 
 def log_auth(message: str, *args: Any) -> None:
     """Log auth messages (always shown for security visibility)."""
     print(f"[AuthService] {message}", *args)
-
