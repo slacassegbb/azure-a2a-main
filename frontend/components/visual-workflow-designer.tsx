@@ -1,0 +1,2382 @@
+"use client"
+
+import type React from "react"
+import { useEffect, useRef, useState } from "react"
+import { Button } from "@/components/ui/button"
+import { X, Plus, Trash2, Download, Upload, Library, X as CloseIcon, Send, Loader2, PlayCircle, StopCircle } from "lucide-react"
+import { ScrollArea } from "@/components/ui/scroll-area"
+import { WorkflowCatalog } from "./workflow-catalog"
+import { Input } from "@/components/ui/input"
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { useEventHub } from "@/hooks/use-event-hub"
+
+interface WorkflowStep {
+  id: string
+  agentId: string
+  agentName: string
+  agentColor: string
+  description: string
+  x: number
+  y: number
+  order: number
+}
+
+interface Connection {
+  id: string
+  fromStepId: string
+  toStepId: string
+}
+
+interface Agent {
+  id?: string
+  name: string
+  description?: string
+  skills?: Array<{
+    id: string
+    name: string
+    description: string
+    tags?: string[]
+    examples?: string[]
+  }>
+  color?: string
+  [key: string]: any
+}
+
+interface VisualWorkflowDesignerProps {
+  registeredAgents: Agent[]
+  onWorkflowGenerated: (workflowText: string) => void
+  initialWorkflow?: string
+}
+
+const AGENT_COLORS = [
+  "#ec4899", // pink
+  "#8b5cf6", // purple
+  "#06b6d4", // cyan
+  "#10b981", // emerald
+  "#f59e0b", // amber
+  "#ef4444", // red
+  "#3b82f6", // blue
+  "#14b8a6", // teal
+  "#f97316", // orange
+  "#a855f7", // violet
+]
+
+const HOST_COLOR = "#6366f1"
+
+export function VisualWorkflowDesigner({ 
+  registeredAgents, 
+  onWorkflowGenerated,
+  initialWorkflow 
+}: VisualWorkflowDesignerProps) {
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const [workflowSteps, setWorkflowSteps] = useState<WorkflowStep[]>([])
+  const workflowStepsRef = useRef<WorkflowStep[]>([])
+  const [connections, setConnections] = useState<Connection[]>([])
+  const connectionsRef = useRef<Connection[]>([])
+  const [selectedStepId, setSelectedStepId] = useState<string | null>(null)
+  const selectedStepIdRef = useRef<string | null>(null)
+  const [draggedAgent, setDraggedAgent] = useState<Agent | null>(null)
+  const [isDraggingOver, setIsDraggingOver] = useState(false)
+  const [editingDescription, setEditingDescription] = useState<string>("")
+  const [editingStepId, setEditingStepId] = useState<string | null>(null)
+  const [cursorPosition, setCursorPosition] = useState<number>(0)
+  const [showCursor, setShowCursor] = useState<boolean>(true)
+  const [generatedWorkflowText, setGeneratedWorkflowText] = useState<string>("")
+  const [workflowOrderMap, setWorkflowOrderMap] = useState<Map<string, number>>(new Map())
+  const workflowOrderMapRef = useRef<Map<string, number>>(new Map())
+  const hasInitializedRef = useRef(false)
+  const [showCatalog, setShowCatalog] = useState(true)
+  const [showSaveDialog, setShowSaveDialog] = useState(false)
+  const [workflowName, setWorkflowName] = useState("")
+  const [workflowDescription, setWorkflowDescription] = useState("")
+  const [workflowCategory, setWorkflowCategory] = useState("Custom")
+  const [catalogRefreshTrigger, setCatalogRefreshTrigger] = useState(0)
+  
+  // Component lifecycle logging (for debugging)
+  // useEffect(() => {
+  // }, [])
+  
+  // Connection creation state
+  const [isCreatingConnection, setIsCreatingConnection] = useState(false)
+  const isCreatingConnectionRef = useRef(false)
+  const [connectionStart, setConnectionStart] = useState<{ stepId: string, x: number, y: number } | null>(null)
+  const connectionStartRef = useRef<{ stepId: string, x: number, y: number } | null>(null)
+  const [connectionPreview, setConnectionPreview] = useState<{ x: number, y: number } | null>(null)
+  
+  // Zoom and pan
+  const zoomRef = useRef(1)
+  const panOffsetRef = useRef({ x: 0, y: 0 })
+  const [isPanning, setIsPanning] = useState(false)
+  const panStartRef = useRef({ x: 0, y: 0 })
+  
+  // Testing state
+  const [testInput, setTestInput] = useState("")
+  const [isTesting, setIsTesting] = useState(false)
+  const [testMessages, setTestMessages] = useState<Array<{ role: string, content: string, agent?: string }>>([])
+  const [stepStatuses, setStepStatuses] = useState<Map<string, { status: string, message?: string, imageUrl?: string, fileName?: string, completedAt?: number }>>(new Map())
+  const stepStatusesRef = useRef<Map<string, { status: string, message?: string, imageUrl?: string, fileName?: string, completedAt?: number }>>(new Map())
+  const workflowStepsMapRef = useRef<Map<string, WorkflowStep>>(new Map())
+  const imageCache = useRef<Map<string, HTMLImageElement>>(new Map())
+  const testTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  
+  // Event Hub for live updates
+  const { subscribe, unsubscribe } = useEventHub()
+  
+  // Agent dragging
+  const [draggingStepId, setDraggingStepId] = useState<string | null>(null)
+  const draggingStepIdRef = useRef<string | null>(null)
+  const dragOffsetRef = useRef({ x: 0, y: 0 })
+
+  // Keep callback ref in sync
+  const onWorkflowGeneratedRef = useRef(onWorkflowGenerated)
+  useEffect(() => {
+    onWorkflowGeneratedRef.current = onWorkflowGenerated
+  }, [onWorkflowGenerated])
+
+  // Keep refs in sync with state
+  useEffect(() => {
+    workflowStepsRef.current = workflowSteps
+  }, [workflowSteps])
+  
+  useEffect(() => {
+    connectionsRef.current = connections
+  }, [connections])
+  
+  useEffect(() => {
+    isCreatingConnectionRef.current = isCreatingConnection
+  }, [isCreatingConnection])
+  
+  useEffect(() => {
+    connectionStartRef.current = connectionStart
+  }, [connectionStart])
+  
+  useEffect(() => {
+    selectedStepIdRef.current = selectedStepId
+  }, [selectedStepId])
+  
+  // Sync stepStatuses to ref for synchronous access in event handlers
+  useEffect(() => {
+    stepStatusesRef.current = stepStatuses
+  }, [stepStatuses])
+  
+  // Sync workflowOrderMap to ref for synchronous access in event handlers
+  useEffect(() => {
+    workflowOrderMapRef.current = workflowOrderMap
+  }, [workflowOrderMap])
+  
+  // Keep workflow steps map in sync for fast lookup during testing
+  useEffect(() => {
+    const newMap = new Map<string, WorkflowStep>()
+    workflowSteps.forEach(step => {
+      newMap.set(step.agentName, step)
+      newMap.set(step.agentId, step)
+    })
+    workflowStepsMapRef.current = newMap
+  }, [workflowSteps])
+
+  // Save positions and connections to localStorage (but not during initial load)
+  useEffect(() => {
+    // Don't save during initial load from localStorage
+    if (!hasInitializedRef.current) {
+      return
+    }
+    
+    if (workflowSteps.length > 0) {
+      const data = {
+        positions: workflowSteps.map(step => ({
+          id: step.id,
+          agentId: step.agentId,
+          agentName: step.agentName,
+          agentColor: step.agentColor,
+          x: step.x,
+          y: step.y,
+          order: step.order,
+          description: step.description
+        })),
+        connections: connections.map(conn => ({
+          id: conn.id,
+          fromStepId: conn.fromStepId,
+          toStepId: conn.toStepId
+        }))
+      }
+      localStorage.setItem('workflow-visual-data', JSON.stringify(data))
+    }
+  }, [workflowSteps, connections])
+
+  // Assign colors to agents
+  const getAgentColor = (index: number): string => {
+    return AGENT_COLORS[index % AGENT_COLORS.length]
+  }
+
+  // Load from localStorage ONCE on mount only
+  useEffect(() => {
+    if (hasInitializedRef.current) {
+      return
+    }
+    
+    hasInitializedRef.current = true
+    
+    // Only load from localStorage, never parse from text
+    try {
+      const saved = localStorage.getItem('workflow-visual-data')
+      if (saved) {
+        const data = JSON.parse(saved)
+        const savedPositions = data.positions || []
+        const savedConnections = data.connections || []
+        
+        if (savedPositions.length > 0) {
+          // Restore with saved IDs to maintain connections
+          const steps: WorkflowStep[] = savedPositions.map((pos: any) => {
+            // Find the agent in registeredAgents to get the correct color
+            // Always look up the color to ensure consistency, even if saved color exists
+            const agentIndex = registeredAgents.findIndex(a => 
+              (a.id || a.name.toLowerCase().replace(/\s+/g, '-')) === pos.agentId ||
+              a.name === pos.agentName
+            )
+            
+            return {
+              id: pos.id,
+              agentId: pos.agentId,
+              agentName: pos.agentName,
+              agentColor: agentIndex >= 0 ? getAgentColor(agentIndex) : (pos.agentColor || getAgentColor(pos.order)),
+              description: pos.description,
+              x: pos.x,
+              y: pos.y,
+              order: pos.order
+            }
+          })
+          
+          setWorkflowSteps(steps)
+          
+          // Restore connections with saved IDs
+          if (savedConnections.length > 0) {
+            const restoredConnections: Connection[] = savedConnections.map((conn: any) => ({
+              id: conn.id,
+              fromStepId: conn.fromStepId,
+              toStepId: conn.toStepId
+            }))
+            
+            setConnections(restoredConnections)
+          }
+          
+          // Mark as initialized AFTER state updates
+          setTimeout(() => {
+            hasInitializedRef.current = true
+          }, 0)
+        } else {
+          // No saved data - mark as initialized so new changes can be saved
+          hasInitializedRef.current = true
+        }
+      } else {
+        // No saved data - mark as initialized so new changes can be saved
+        hasInitializedRef.current = true
+      }
+    } catch (e) {
+      console.error('Failed to load saved data:', e)
+      hasInitializedRef.current = true
+    }
+  }, [])
+
+  // Update workflow text whenever steps or connections change
+  useEffect(() => {
+    if (workflowSteps.length === 0) {
+      setGeneratedWorkflowText("")
+      setWorkflowOrderMap(new Map())
+      onWorkflowGeneratedRef.current("")
+      return
+    }
+    
+    // If connections exist, use them to determine order
+    if (connections.length > 0) {
+      const visited = new Set<string>()
+      const result: WorkflowStep[] = []
+      
+      const connectedStepIds = new Set<string>()
+      connections.forEach(conn => {
+        connectedStepIds.add(conn.fromStepId)
+        connectedStepIds.add(conn.toStepId)
+      })
+      
+      const hasIncoming = new Set(connections.map(c => c.toStepId))
+      const rootNodes = workflowSteps.filter(step => 
+        connectedStepIds.has(step.id) && !hasIncoming.has(step.id)
+      )
+      
+      const dfs = (stepId: string) => {
+        if (visited.has(stepId)) return
+        visited.add(stepId)
+        
+        const step = workflowSteps.find(s => s.id === stepId)
+        if (step) {
+          result.push(step)
+          const outgoing = connections.filter(c => c.fromStepId === stepId)
+          outgoing.forEach(conn => dfs(conn.toStepId))
+        }
+      }
+      
+      rootNodes.forEach(node => dfs(node.id))
+      
+      // Generate text ONLY from connected nodes
+      const workflowText = result.map((step, index) => 
+        `${index + 1}. ${step.description || `Use the ${step.agentName} agent`}`
+      ).join('\n')
+      
+      const orderMap = new Map<string, number>()
+      result.forEach((step, index) => {
+        orderMap.set(step.id, index + 1)
+      })
+      
+      setWorkflowOrderMap(orderMap)
+      setGeneratedWorkflowText(workflowText)
+      onWorkflowGeneratedRef.current(workflowText)
+    } else {
+      // No connections - use visual order
+      const sortedSteps = [...workflowSteps].sort((a, b) => a.order - b.order)
+      const workflowText = sortedSteps.map((step, index) => 
+        `${index + 1}. ${step.description || `Use the ${step.agentName} agent`}`
+      ).join('\n')
+      
+      const orderMap = new Map<string, number>()
+      sortedSteps.forEach((step, index) => {
+        orderMap.set(step.id, index + 1)
+      })
+      
+      setWorkflowOrderMap(orderMap)
+      setGeneratedWorkflowText(workflowText)
+      onWorkflowGeneratedRef.current(workflowText)
+    }
+  }, [workflowSteps, connections])
+  
+  // Subscribe to event hub for live workflow testing
+  useEffect(() => {
+    if (!isTesting) return
+    
+    console.log("[WorkflowTest] 🎬 Setting up event listeners for testing session")
+    
+    // Helper to find the FIRST uncompleted step for an agent (sequential workflow!)
+    // Returns null if agent not in workflow OR if previous steps aren't completed
+    const findStepForAgent = (agentName: string): string | null => {
+      if (!agentName) return null
+      
+      // Normalize for comparison (no fuzzy includes!)
+      const normalizedEventName = agentName.toLowerCase().trim().replace(/[-_]/g, ' ')
+      
+      // Find all steps that match this agent
+      const matchingSteps: string[] = []
+      
+      // Use ref to avoid dependency on workflowSteps (prevents event listener churn)
+      workflowStepsRef.current.forEach(step => {
+        const normalizedStepName = step.agentName.toLowerCase().trim().replace(/[-_]/g, ' ')
+        const normalizedStepId = step.agentId.toLowerCase().trim().replace(/[-_]/g, ' ')
+        
+        // STRICT matching only - no fuzzy includes!
+        const matches = normalizedStepName === normalizedEventName ||
+                       normalizedStepId === normalizedEventName ||
+                       step.agentName === agentName ||
+                       step.agentId === agentName
+        
+        if (matches) {
+          matchingSteps.push(step.id)
+        }
+      })
+      
+      if (matchingSteps.length === 0) {
+        // Agent not in workflow (e.g., host agent) - this is OK, just ignore
+        console.log("[WorkflowTest] Agent", agentName, "not in workflow, ignoring")
+        return null
+      }
+      
+      // Sort by workflow order (use ref to avoid dependency issues)
+      matchingSteps.sort((a, b) => {
+        const orderA = workflowOrderMapRef.current.get(a) || 999
+        const orderB = workflowOrderMapRef.current.get(b) || 999
+        return orderA - orderB
+      })
+      
+      // Find the first uncompleted step
+      let targetStepId: string | null = null
+      let targetStepOrder = 999
+      
+      for (const stepId of matchingSteps) {
+        const status = stepStatusesRef.current.get(stepId)
+        if (!status || status.status !== "completed") {
+          targetStepId = stepId
+          targetStepOrder = workflowOrderMapRef.current.get(stepId) || 999
+          break
+        }
+      }
+      
+      // If all are completed, use the last one
+      if (!targetStepId) {
+        targetStepId = matchingSteps[matchingSteps.length - 1]
+        targetStepOrder = workflowOrderMapRef.current.get(targetStepId) || 999
+        console.log("[WorkflowTest] All steps completed for", agentName, ", using last:", targetStepId)
+        return targetStepId
+      }
+      
+      // CRITICAL: Check if all previous steps in the workflow are completed
+      // This enforces sequential execution at the UI level
+      for (const [checkStepId, checkOrder] of workflowOrderMapRef.current.entries()) {
+        if (checkOrder < targetStepOrder) {
+          const prevStatus = stepStatusesRef.current.get(checkStepId)
+          if (!prevStatus || prevStatus.status !== "completed") {
+            console.log("[WorkflowTest] ⚠️ Blocking update to", agentName, "step", targetStepId, "- previous step", checkStepId, "(order", checkOrder + ") is not completed yet")
+            return null // Block this update - previous steps must complete first!
+          }
+        }
+      }
+      
+      console.log("[WorkflowTest] ✅ Found uncompleted step for", agentName, ":", targetStepId, "order:", targetStepOrder)
+      return targetStepId
+    }
+    
+    const handleStatusUpdate = (data: any) => {
+      console.log("[WorkflowTest] ✅ Status update:", data)
+      const { agent: agentName, status } = data
+      if (!agentName) return
+      
+      const stepId = findStepForAgent(agentName)
+      if (!stepId) return
+      
+      setStepStatuses(prev => {
+        const newMap = new Map(prev)
+        const currentStatus = prev.get(stepId)
+        
+        // Don't downgrade from "completed" to "working"
+        const newStatus = status?.includes("completed") ? "completed" : 
+                         currentStatus?.status === "completed" ? "completed" : 
+                         "working"
+        
+        newMap.set(stepId, { 
+          ...currentStatus, // Preserve existing fields like imageUrl
+          status: newStatus,
+          message: currentStatus?.message || status,
+          // Add timestamp when transitioning to completed
+          completedAt: newStatus === "completed" && currentStatus?.status !== "completed" 
+            ? Date.now() 
+            : currentStatus?.completedAt
+        })
+        stepStatusesRef.current = newMap
+        return newMap
+      })
+    }
+    
+    const handleTaskUpdate = (data: any) => {
+      console.log("[WorkflowTest] 📋 Task update:", data)
+      const { taskId, state, agentName } = data
+      if (!agentName) return
+      
+      const stepId = findStepForAgent(agentName)
+      if (!stepId) return
+      
+      setStepStatuses(prev => {
+        const newMap = new Map(prev)
+        const currentStatus = prev.get(stepId)
+        
+        // Don't downgrade from completed
+        const newStatus = state === "completed" ? "completed" : 
+                         state === "failed" ? "failed" : 
+                         currentStatus?.status === "completed" ? "completed" :
+                         "working"
+        
+        newMap.set(stepId, {
+          ...currentStatus,
+          status: newStatus
+        })
+        stepStatusesRef.current = newMap
+        return newMap
+      })
+    }
+    
+    const handleAgentMessage = (data: any) => {
+      console.log("[WorkflowTest] 💬 Agent message:", data)
+      const { agentName, content } = data
+      
+      if (agentName && content) {
+        const stepId = findStepForAgent(agentName)
+        if (!stepId) return
+        
+        setStepStatuses(prev => {
+          const newMap = new Map(prev)
+          const currentStatus = prev.get(stepId)
+          newMap.set(stepId, { 
+            ...currentStatus,
+            status: currentStatus?.status === "completed" ? "completed" : "working",
+            message: content 
+          })
+          stepStatusesRef.current = newMap
+          return newMap
+        })
+      }
+    }
+    
+    const handleToolCall = (data: any) => {
+      console.log("[WorkflowTest] 🔧 Tool call:", data)
+      
+      if (data.agentName && data.toolName) {
+        const stepId = findStepForAgent(data.agentName)
+        if (!stepId) return
+        
+        const message = `🛠️ Calling ${data.toolName}`
+        setStepStatuses(prev => {
+          const newMap = new Map(prev)
+          const currentStatus = prev.get(stepId)
+          newMap.set(stepId, { 
+            ...currentStatus,
+            status: currentStatus?.status === "completed" ? "completed" : "working",
+            message 
+          })
+          stepStatusesRef.current = newMap
+          return newMap
+        })
+      }
+    }
+    
+    const handleToolResponse = (data: any) => {
+      console.log("[WorkflowTest] 🔧 Tool response:", data)
+      
+      if (data.agentName && data.toolName) {
+        const stepId = findStepForAgent(data.agentName)
+        if (!stepId) return
+        
+        const message = data.status === "success" 
+          ? `✅ ${data.toolName} completed`
+          : `❌ ${data.toolName} failed`
+        setStepStatuses(prev => {
+          const newMap = new Map(prev)
+          const currentStatus = prev.get(stepId)
+          newMap.set(stepId, { 
+            ...currentStatus,
+            status: currentStatus?.status === "completed" ? "completed" : "working",
+            message 
+          })
+          stepStatusesRef.current = newMap
+          return newMap
+        })
+      }
+    }
+    
+    const handleAgentActivity = (data: any) => {
+      console.log("[WorkflowTest] 🔄 Agent activity:", data)
+      
+      if (data.agentName && data.activity) {
+        const stepId = findStepForAgent(data.agentName)
+        if (!stepId) return
+        
+        setStepStatuses(prev => {
+          const newMap = new Map(prev)
+          const currentStatus = prev.get(stepId)
+          newMap.set(stepId, { 
+            ...currentStatus,
+            status: currentStatus?.status === "completed" ? "completed" : "working",
+            message: data.activity 
+          })
+          stepStatusesRef.current = newMap
+          return newMap
+        })
+      }
+    }
+    
+    const handleMessage = (data: any) => {
+      console.log("[WorkflowTest] 📨 Message event:", data)
+      
+      let messageText = ""
+      let rawAgentName = data.agentName || data.agent || data.from
+      
+      // Try different message formats (matching DAG)
+      if (data.content && Array.isArray(data.content)) {
+        const textContent = data.content.find((c: any) => c.type === "text")?.content || ""
+        messageText = textContent
+      } else if (data.message && typeof data.message === "string") {
+        messageText = data.message
+      } else if (typeof data.content === "string") {
+        messageText = data.content
+      }
+      
+      if (messageText && rawAgentName) {
+        const stepId = findStepForAgent(rawAgentName)
+        if (!stepId) return
+        
+        console.log("[WorkflowTest] ✨ Setting message for", rawAgentName, "step:", stepId, ":", messageText.substring(0, 100) + "...")
+        setTestMessages(prev => [...prev, { role: "assistant", content: messageText, agent: rawAgentName }])
+        setStepStatuses(prev => {
+          const newMap = new Map(prev)
+          const currentStatus = prev.get(stepId)
+          // IMPORTANT: Message alone doesn't mean completed! Keep existing status or set to working
+          newMap.set(stepId, { 
+            ...currentStatus,
+            status: currentStatus?.status || "working",
+            message: messageText 
+          })
+          stepStatusesRef.current = newMap
+          return newMap
+        })
+      } else {
+        console.log("[WorkflowTest] ⚠️ Could not extract message or agent from event")
+      }
+    }
+    
+    // Handle remote agent activity (matching DAG)
+    const handleRemoteAgentActivity = (data: any) => {
+      console.log("[WorkflowTest] 🤖 Remote agent activity:", data)
+      
+      if (data.agentName && data.content) {
+        const stepId = findStepForAgent(data.agentName)
+        if (!stepId) return
+        
+        const fullContent = data.content
+        console.log("[WorkflowTest] ✨ Setting REMOTE AGENT response for", data.agentName, "step:", stepId, ":", fullContent.substring(0, 100) + "...")
+        
+        setStepStatuses(prev => {
+          const newMap = new Map(prev)
+          const currentStatus = prev.get(stepId)
+          newMap.set(stepId, { 
+            ...currentStatus,
+            status: currentStatus?.status === "completed" ? "completed" : "working",
+            message: fullContent 
+          })
+          stepStatusesRef.current = newMap
+          return newMap
+        })
+      } else {
+        console.log("[WorkflowTest] ⚠️ Missing agentName or content in remote agent activity")
+      }
+    }
+    
+    // Handle final response (matching DAG)
+    const handleFinalResponse = (data: any) => {
+      console.log("[WorkflowTest] 🎯 Final response:", data)
+      
+      if (data.message?.agent && data.message?.content) {
+        const stepId = findStepForAgent(data.message.agent)
+        if (!stepId) return
+        
+        const fullContent = data.message.content
+        console.log("[WorkflowTest] ✨ Setting final response for", data.message.agent, "step:", stepId, ":", fullContent.substring(0, 100) + "...")
+        
+        setTestMessages(prev => [...prev, { role: "assistant", content: fullContent, agent: data.message.agent }])
+        setStepStatuses(prev => {
+          const newMap = new Map(prev)
+          const currentStatus = prev.get(stepId)
+          // Final response DOES mark as completed
+          newMap.set(stepId, { 
+            ...currentStatus,
+            status: "completed",
+            message: fullContent,
+            // Add timestamp when completing
+            completedAt: currentStatus?.status !== "completed" ? Date.now() : currentStatus?.completedAt
+          })
+          stepStatusesRef.current = newMap
+          return newMap
+        })
+      }
+    }
+    
+    const handleFileUploaded = (data: any) => {
+      console.log("[WorkflowTest] 📎 File uploaded event:", data)
+      
+      if (data.fileInfo && data.fileInfo.source_agent && data.fileInfo.uri) {
+        const sourceAgent = data.fileInfo.source_agent
+        const fileUri = data.fileInfo.uri
+        const fileName = data.fileInfo.filename || "unknown"
+        const contentType = data.fileInfo.content_type || ""
+        
+        console.log("[WorkflowTest] 📄 File from agent:", sourceAgent, "| URI:", fileUri, "| Type:", contentType)
+        
+        const stepId = findStepForAgent(sourceAgent)
+        if (!stepId) return
+        
+        const isImage = contentType.startsWith("image/")
+        console.log("[WorkflowTest] 🖼️ Setting", isImage ? "image" : "file", "for step:", stepId)
+        
+        setStepStatuses(prev => {
+          const newMap = new Map(prev)
+          const currentStatus = prev.get(stepId)
+          // IMPORTANT: Don't mark as completed! File upload is just displaying the image.
+          newMap.set(stepId, { 
+            ...currentStatus,
+            imageUrl: isImage ? fileUri : undefined,
+            fileName: fileName
+          })
+          stepStatusesRef.current = newMap
+          return newMap
+        })
+      }
+    }
+    
+    const handleInferenceStep = (data: any) => {
+      console.log("[WorkflowTest] 🧠 Inference step:", data)
+      
+      if (data.agent && data.status) {
+        const stepId = findStepForAgent(data.agent)
+        if (!stepId) return
+        
+        setStepStatuses(prev => {
+          const newMap = new Map(prev)
+          const currentStatus = prev.get(stepId)
+          newMap.set(stepId, { 
+            ...currentStatus,
+            status: currentStatus?.status === "completed" ? "completed" : "working",
+            message: data.status 
+          })
+          stepStatusesRef.current = newMap
+          return newMap
+        })
+      }
+    }
+    
+    const handleOutgoingMessage = (data: any) => {
+      console.log("[WorkflowTest] 📤 Outgoing message:", data)
+      
+      if (data.targetAgent && data.message) {
+        // Show outgoing message on the source agent (usually host)
+        // Note: Outgoing messages are logged but not displayed on canvas
+        console.log("[WorkflowTest] Message to", data.targetAgent, ":", data.message.substring(0, 50) + "...")
+      }
+    }
+    
+    // Subscribe to ALL events (matching agent-network-dag.tsx)
+    subscribe("status_update", handleStatusUpdate)
+    subscribe("task_updated", handleTaskUpdate)
+    subscribe("agent_message", handleAgentMessage)
+    subscribe("message", handleMessage)
+    subscribe("final_response", handleFinalResponse)
+    subscribe("tool_call", handleToolCall)
+    subscribe("tool_response", handleToolResponse)
+    subscribe("agent_activity", handleAgentActivity)
+    subscribe("remote_agent_activity", handleRemoteAgentActivity)
+    subscribe("inference_step", handleInferenceStep)
+    subscribe("file", handleFileUploaded)
+    subscribe("outgoing_agent_message", handleOutgoingMessage)
+    
+    console.log("[WorkflowTest] ✅ All WebSocket listeners registered - subscriptions are now STABLE (no re-runs during testing)")
+    
+    return () => {
+      console.log("[WorkflowTest] 🔌 Unsubscribing from WebSocket events")
+      unsubscribe("status_update", handleStatusUpdate)
+      unsubscribe("task_updated", handleTaskUpdate)
+      unsubscribe("agent_message", handleAgentMessage)
+      unsubscribe("message", handleMessage)
+      unsubscribe("final_response", handleFinalResponse)
+      unsubscribe("tool_call", handleToolCall)
+      unsubscribe("tool_response", handleToolResponse)
+      unsubscribe("agent_activity", handleAgentActivity)
+      unsubscribe("remote_agent_activity", handleRemoteAgentActivity)
+      unsubscribe("inference_step", handleInferenceStep)
+      unsubscribe("file", handleFileUploaded)
+      unsubscribe("outgoing_agent_message", handleOutgoingMessage)
+    }
+    // CRITICAL: Only depend on isTesting
+    // subscribe/unsubscribe are from context and stable enough
+    // All other data (workflowSteps, workflowOrderMap, stepStatuses) accessed via refs
+    // This prevents constant resubscription which causes missed events!
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isTesting])
+
+  // Handle canvas drop
+  const handleCanvasDrop = (e: React.DragEvent) => {
+    e.preventDefault()
+    setIsDraggingOver(false)
+    
+    if (!draggedAgent || !canvasRef.current) return
+    
+    const canvas = canvasRef.current
+    const rect = canvas.getBoundingClientRect()
+    
+    // Calculate position accounting for zoom and pan
+    const centerX = rect.width / 2
+    const centerY = rect.height / 2
+    const mouseX = e.clientX - rect.left
+    const mouseY = e.clientY - rect.top
+    
+    // Convert screen coordinates to canvas coordinates
+    const x = (mouseX - centerX - panOffsetRef.current.x) / zoomRef.current
+    const y = (mouseY - centerY - panOffsetRef.current.y) / zoomRef.current
+    const order = workflowSteps.length
+    
+    
+    const agentId = draggedAgent.id || draggedAgent.name.toLowerCase().replace(/\s+/g, '-')
+    const agentIndex = registeredAgents.findIndex(a => (a.id || a.name) === (draggedAgent.id || draggedAgent.name))
+    
+    const newStep: WorkflowStep = {
+      id: `step-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      agentId: agentId,
+      agentName: draggedAgent.name,
+      agentColor: getAgentColor(agentIndex),
+      description: `Use the ${draggedAgent.name} agent`,
+      x,
+      y,
+      order
+    }
+    
+    setWorkflowSteps(prev => [...prev, newStep])
+    setSelectedStepId(newStep.id)
+    setEditingDescription(newStep.description)
+    setDraggedAgent(null)
+  }
+
+  // Delete selected step
+  const deleteSelectedStep = () => {
+    if (!selectedStepId) return
+    setWorkflowSteps(prev => {
+      const filtered = prev.filter(s => s.id !== selectedStepId)
+      // Reorder remaining steps
+      return filtered.map((step, index) => ({ ...step, order: index }))
+    })
+    setSelectedStepId(null)
+  }
+
+  // Update step description
+  const updateStepDescription = (description: string, stepId?: string) => {
+    const targetStepId = stepId || selectedStepId
+    if (!targetStepId) return
+    setWorkflowSteps(prev => 
+      prev.map(step => 
+        step.id === targetStepId ? { ...step, description } : step
+      )
+    )
+    setEditingDescription(description)
+  }
+
+  // Reorder step
+  const moveStepOrder = (stepId: string, direction: 'up' | 'down') => {
+    setWorkflowSteps(prev => {
+      const sorted = [...prev].sort((a, b) => a.order - b.order)
+      const index = sorted.findIndex(s => s.id === stepId)
+      
+      if (index === -1) return prev
+      if (direction === 'up' && index === 0) return prev
+      if (direction === 'down' && index === sorted.length - 1) return prev
+      
+      const newIndex = direction === 'up' ? index - 1 : index + 1
+      const temp = sorted[index]
+      sorted[index] = sorted[newIndex]
+      sorted[newIndex] = temp
+      
+      // Update order numbers
+      return sorted.map((step, i) => ({ ...step, order: i }))
+    })
+  }
+
+  // Clear all steps
+  const clearWorkflow = () => {
+    setWorkflowSteps([])
+    setConnections([])
+    setSelectedStepId(null)
+    // Clear saved data from localStorage
+    localStorage.removeItem('workflow-visual-data')
+  }
+  
+  // Handle test workflow submission
+  const handleTestSubmit = async () => {
+    if (!testInput.trim() || !generatedWorkflowText) return
+    
+    setIsTesting(true)
+    setTestMessages([{ role: "user", content: testInput }])
+    setStepStatuses(new Map())
+    stepStatusesRef.current = new Map()
+    
+    console.log("[WorkflowTest] 🚀 Starting test with workflow:", generatedWorkflowText)
+    
+    try {
+      const baseUrl = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
+      const messageId = `test_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+      
+      // Build message parts in proper A2A format
+      const parts: any[] = [
+        {
+          root: {
+            kind: 'text',
+            text: testInput
+          }
+        }
+      ]
+      
+      console.log('[WorkflowTest] Sending message:', {
+        messageId,
+        contextId: 'workflow-test',
+        workflow: generatedWorkflowText.substring(0, 100) + '...',
+        partsCount: parts.length
+      })
+      
+      const response = await fetch(`${baseUrl}/message/send`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          params: {
+            messageId,
+            contextId: 'workflow-test',  // Changed from conversationId to contextId
+            parts: parts,
+            role: 'user',
+            agentMode: true,
+            enableInterAgentMemory: true,
+            workflow: generatedWorkflowText
+          }
+        })
+      })
+      
+      console.log('[WorkflowTest] Response status:', response.status)
+      
+      if (!response.ok) {
+        const errorText = await response.text()
+        console.error('[WorkflowTest] Failed to send message:', response.statusText, errorText)
+        alert(`Failed to send message: ${response.statusText}\n${errorText}`)
+        setIsTesting(false)
+        return
+      }
+      
+      // Successfully sent - response will come through WebSocket events
+      console.log('[WorkflowTest] Message sent successfully, waiting for events...')
+      
+      // Set a timeout to automatically stop testing after 60 seconds
+      if (testTimeoutRef.current) {
+        clearTimeout(testTimeoutRef.current)
+      }
+      testTimeoutRef.current = setTimeout(() => {
+        console.log('[WorkflowTest] Test timeout reached, stopping...')
+        setIsTesting(false)
+      }, 180000) // 180 seconds (3 minutes) - allows for retries and fallbacks
+      
+    } catch (error) {
+      console.error('[WorkflowTest] Error sending message:', error)
+      alert(`Error sending message: ${error instanceof Error ? error.message : String(error)}`)
+      setIsTesting(false)
+    }
+    
+    setTestInput("")
+  }
+  
+  // Stop testing
+  const handleStopTest = () => {
+    if (testTimeoutRef.current) {
+      clearTimeout(testTimeoutRef.current)
+      testTimeoutRef.current = null
+    }
+    setIsTesting(false)
+    setTestMessages([])
+    setStepStatuses(new Map())
+    stepStatusesRef.current = new Map()
+  }
+  
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (testTimeoutRef.current) {
+        clearTimeout(testTimeoutRef.current)
+      }
+    }
+  }, [])
+
+  // Load workflow from template
+  const loadWorkflow = (template: any) => {
+    // Clear existing workflow first
+    setWorkflowSteps([])
+    setConnections([])
+    setSelectedStepId(null)
+    
+    // Small delay to ensure state is cleared
+    setTimeout(() => {
+      // Map template steps to workflow steps with colors
+      const steps = template.steps.map((step: any) => {
+        // Find the agent in registeredAgents to get the correct color
+        const agentIndex = registeredAgents.findIndex(a => 
+          (a.id || a.name.toLowerCase().replace(/\s+/g, '-')) === step.agentId ||
+          a.name === step.agentName
+        )
+        
+        return {
+          id: step.id,
+          agentId: step.agentId,
+          agentName: step.agentName,
+          agentColor: getAgentColor(agentIndex >= 0 ? agentIndex : step.order),
+          description: step.description,
+          x: step.x,
+          y: step.y,
+          order: step.order
+        }
+      })
+      
+      setWorkflowSteps(steps)
+      setConnections(template.connections)
+      
+      // Save to localStorage immediately
+      const data = {
+        positions: steps.map((step: any) => ({
+          id: step.id,
+          agentId: step.agentId,
+          agentName: step.agentName,
+          agentColor: step.agentColor,
+          x: step.x,
+          y: step.y,
+          order: step.order,
+          description: step.description
+        })),
+        connections: template.connections.map((conn: any) => ({
+          id: conn.id,
+          fromStepId: conn.fromStepId,
+          toStepId: conn.toStepId
+        }))
+      }
+      localStorage.setItem('workflow-visual-data', JSON.stringify(data))
+    }, 100)
+  }
+
+  // Save current workflow to catalog
+  const handleSaveWorkflow = () => {
+    if (!workflowName.trim()) {
+      alert("Please enter a workflow name")
+      return
+    }
+    
+    const customWorkflow = {
+      id: `custom-${Date.now()}`,
+      name: workflowName,
+      description: workflowDescription || "Custom workflow",
+      category: workflowCategory,
+      steps: workflowSteps.map(step => ({
+        id: step.id,
+        agentId: step.agentId,
+        agentName: step.agentName,
+        description: step.description,
+        order: step.order,
+        x: step.x,
+        y: step.y
+      })),
+      connections: connections.map(conn => ({
+        id: conn.id,
+        fromStepId: conn.fromStepId,
+        toStepId: conn.toStepId
+      })),
+      isCustom: true
+    }
+    
+    // Save to localStorage
+    const saved = localStorage.getItem('custom-workflows')
+    const existing = saved ? JSON.parse(saved) : []
+    existing.push(customWorkflow)
+    localStorage.setItem('custom-workflows', JSON.stringify(existing))
+    
+    // Reset form and close dialog
+    setWorkflowName("")
+    setWorkflowDescription("")
+    setWorkflowCategory("Custom")
+    setShowSaveDialog(false)
+    
+    // Trigger catalog refresh
+    setCatalogRefreshTrigger(prev => prev + 1)
+    
+    alert("Workflow saved successfully!")
+  }
+
+  // Canvas rendering
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+
+    const ctx = canvas.getContext("2d")
+    if (!ctx) return
+
+    const draw = () => {
+      const rect = canvas.getBoundingClientRect()
+      canvas.width = rect.width * window.devicePixelRatio
+      canvas.height = rect.height * window.devicePixelRatio
+      ctx.scale(window.devicePixelRatio, window.devicePixelRatio)
+
+      const centerX = rect.width / 2
+      const centerY = rect.height / 2
+
+      // Background
+      const bgGradient = ctx.createLinearGradient(0, 0, 0, rect.height)
+      bgGradient.addColorStop(0, "hsl(222.2 47.4% 11.2%)")
+      bgGradient.addColorStop(1, "hsl(220 17% 17%)")
+      ctx.fillStyle = bgGradient
+      ctx.fillRect(0, 0, rect.width, rect.height)
+
+      // Apply transformations
+      ctx.save()
+      ctx.translate(centerX + panOffsetRef.current.x, centerY + panOffsetRef.current.y)
+      ctx.scale(zoomRef.current, zoomRef.current)
+      ctx.translate(-centerX, -centerY)
+
+      // Grid
+      ctx.strokeStyle = "rgba(148, 163, 184, 0.05)"
+      ctx.lineWidth = 1
+      const gridSize = 30
+      for (let x = 0; x < rect.width; x += gridSize) {
+        ctx.beginPath()
+        ctx.moveTo(x, 0)
+        ctx.lineTo(x, rect.height)
+        ctx.stroke()
+      }
+      for (let y = 0; y < rect.height; y += gridSize) {
+        ctx.beginPath()
+        ctx.moveTo(0, y)
+        ctx.lineTo(rect.width, y)
+        ctx.stroke()
+      }
+
+      // Draw connections based on connection state
+      connections.forEach((connection) => {
+        const from = workflowSteps.find(s => s.id === connection.fromStepId)
+        const to = workflowSteps.find(s => s.id === connection.toStepId)
+        
+        if (!from || !to) return
+        
+        const fromCenterX = centerX + from.x
+        const fromCenterY = centerY + from.y
+        const toCenterX = centerX + to.x
+        const toCenterY = centerY + to.y
+        
+        // Calculate angle between agents
+        const angle = Math.atan2(to.y - from.y, to.x - from.x)
+        
+        // Hexagon boundary radius (approximate)
+        const hexRadius = 40
+        
+        // Once connected, line starts from hexagon border (center)
+        const fromX = fromCenterX + Math.cos(angle) * hexRadius
+        const fromY = fromCenterY + Math.sin(angle) * hexRadius
+        const toX = toCenterX - Math.cos(angle) * hexRadius
+        const toY = toCenterY - Math.sin(angle) * hexRadius
+        
+        // Check if this connection involves the selected agent
+        const isConnectionSelected = selectedStepId && (
+          connection.fromStepId === selectedStepId || 
+          connection.toStepId === selectedStepId
+        )
+        
+        // Draw connection line
+        ctx.strokeStyle = isConnectionSelected ? "rgba(99, 102, 241, 0.7)" : "rgba(99, 102, 241, 0.5)"
+        ctx.lineWidth = isConnectionSelected ? 4 : 3
+        ctx.shadowColor = "rgba(99, 102, 241, 0.3)"
+        ctx.shadowBlur = isConnectionSelected ? 6 : 4
+        
+        ctx.beginPath()
+        ctx.moveTo(fromX, fromY)
+        ctx.lineTo(toX, toY)
+        ctx.stroke()
+        ctx.shadowBlur = 0
+        
+        // Draw arrow at target end
+        const arrowLength = 12
+        const arrowX = toX
+        const arrowY = toY
+        
+        ctx.save()
+        ctx.translate(arrowX, arrowY)
+        ctx.rotate(angle)
+        ctx.beginPath()
+        ctx.moveTo(0, 0)
+        ctx.lineTo(-arrowLength, -6)
+        ctx.lineTo(-arrowLength, 6)
+        ctx.closePath()
+        ctx.fillStyle = isConnectionSelected ? "rgba(99, 102, 241, 0.9)" : "rgba(99, 102, 241, 0.7)"
+        ctx.fill()
+        ctx.restore()
+        
+        // Draw delete button on connection (middle point) - only for selected agent connections
+        if (isConnectionSelected) {
+          const midX = (fromX + toX) / 2
+          const midY = (fromY + toY) / 2
+          
+          // Delete button circle
+          ctx.fillStyle = "#ef4444"
+          ctx.shadowColor = "rgba(239, 68, 68, 0.5)"
+          ctx.shadowBlur = 8
+          ctx.beginPath()
+          ctx.arc(midX, midY, 10, 0, Math.PI * 2)
+          ctx.fill()
+          ctx.shadowBlur = 0
+          
+          // X mark
+          ctx.strokeStyle = "#ffffff"
+          ctx.lineWidth = 2
+          ctx.beginPath()
+          ctx.moveTo(midX - 4, midY - 4)
+          ctx.lineTo(midX + 4, midY + 4)
+          ctx.moveTo(midX + 4, midY - 4)
+          ctx.lineTo(midX - 4, midY + 4)
+          ctx.stroke()
+        }
+      })
+      
+      // Draw connection preview while dragging
+      if (isCreatingConnection && connectionStart && connectionPreview) {
+        const startStep = workflowSteps.find(s => s.id === connectionStart.stepId)
+        if (startStep) {
+          const fromCenterX = centerX + startStep.x
+          const fromCenterY = centerY + startStep.y
+          const toX = centerX + connectionPreview.x
+          const toY = centerY + connectionPreview.y
+          
+          // Start from button position (x + 50)
+          const buttonOffsetX = 50
+          const fromX = fromCenterX + buttonOffsetX
+          const fromY = fromCenterY
+          
+          ctx.strokeStyle = "rgba(99, 102, 241, 0.3)"
+          ctx.lineWidth = 3
+          ctx.setLineDash([10, 5])
+          
+          ctx.beginPath()
+          ctx.moveTo(fromX, fromY)
+          ctx.lineTo(toX, toY)
+          ctx.stroke()
+          
+          ctx.setLineDash([])
+        }
+      }
+
+      // Draw workflow steps
+      workflowSteps.forEach((step) => {
+        const x = centerX + step.x
+        const y = centerY + step.y
+        const isSelected = step.id === selectedStepId
+
+        // Agent icon (hexagon)
+        ctx.save()
+        ctx.translate(x, y)
+        
+        const size = 30
+        
+        // Draw animated hexagon for selected state
+        if (isSelected) {
+          const pulse = Math.sin(Date.now() / 300) * 0.15 + 0.85 // Pulsing between 0.7 and 1.0
+          
+          // Outer animated hexagon with pulsing glow - WHITE
+          ctx.strokeStyle = "#ffffff"
+          ctx.lineWidth = 6
+          ctx.shadowColor = "#ffffff"
+          ctx.shadowBlur = 20 * pulse
+          ctx.beginPath()
+          for (let i = 0; i < 6; i++) {
+            const angle = (Math.PI / 3) * i - Math.PI / 2
+            const expandedSize = size + 6 * pulse // Pulsing expansion
+            const px = Math.cos(angle) * expandedSize
+            const py = Math.sin(angle) * expandedSize
+            if (i === 0) ctx.moveTo(px, py)
+            else ctx.lineTo(px, py)
+          }
+          ctx.closePath()
+          ctx.stroke()
+          
+          // Animated dashed hexagon layer - WHITE with transparency
+          const dashOffset = (Date.now() / 40) % 20
+          ctx.setLineDash([10, 5])
+          ctx.lineDashOffset = -dashOffset
+          ctx.lineWidth = 3
+          ctx.strokeStyle = "rgba(255, 255, 255, 0.8)"
+          ctx.shadowBlur = 10
+          ctx.beginPath()
+          for (let i = 0; i < 6; i++) {
+            const angle = (Math.PI / 3) * i - Math.PI / 2
+            const dashedSize = size + 3
+            const px = Math.cos(angle) * dashedSize
+            const py = Math.sin(angle) * dashedSize
+            if (i === 0) ctx.moveTo(px, py)
+            else ctx.lineTo(px, py)
+          }
+          ctx.closePath()
+          ctx.stroke()
+          ctx.setLineDash([])
+          ctx.shadowBlur = 0
+        } else {
+          // Normal hexagon outline
+          ctx.strokeStyle = step.agentColor
+          ctx.lineWidth = 3
+          ctx.shadowColor = step.agentColor
+          ctx.shadowBlur = 4
+          ctx.beginPath()
+          for (let i = 0; i < 6; i++) {
+            const angle = (Math.PI / 3) * i - Math.PI / 2
+            const px = Math.cos(angle) * size
+            const py = Math.sin(angle) * size
+            if (i === 0) ctx.moveTo(px, py)
+            else ctx.lineTo(px, py)
+          }
+          ctx.closePath()
+          ctx.stroke()
+          ctx.shadowBlur = 0
+        }
+
+        // Inner fill (same for both selected and normal)
+        ctx.fillStyle = step.agentColor
+        ctx.beginPath()
+        for (let i = 0; i < 6; i++) {
+          const angle = (Math.PI / 3) * i - Math.PI / 2
+          const px = Math.cos(angle) * (size * 0.7)
+          const py = Math.sin(angle) * (size * 0.7)
+          if (i === 0) ctx.moveTo(px, py)
+          else ctx.lineTo(px, py)
+        }
+        ctx.closePath()
+        ctx.fill()
+
+        // Center circle (brighter when selected)
+        ctx.fillStyle = isSelected ? "#ffffff" : "rgba(255, 255, 255, 0.9)"
+        ctx.beginPath()
+        ctx.arc(0, 0, size * 0.35, 0, Math.PI * 2)
+        ctx.fill()
+        
+        ctx.restore()
+
+        // Order badge - show workflow order in the center white circle
+        const workflowOrder = workflowOrderMap.get(step.id)
+        if (workflowOrder !== undefined) {
+          // Draw number inside the center white circle
+          ctx.fillStyle = step.agentColor
+          ctx.font = "bold 16px system-ui"
+          ctx.textAlign = "center"
+          ctx.textBaseline = "middle"
+          ctx.fillText(workflowOrder.toString(), x, y)
+        } else {
+          // Not in workflow - show grayed out dash in center
+          ctx.fillStyle = "rgba(148, 163, 184, 0.4)"
+          ctx.font = "bold 16px system-ui"
+          ctx.textAlign = "center"
+          ctx.textBaseline = "middle"
+          ctx.fillText("-", x, y)
+        }
+
+        // Status indicator (working/completed) when testing
+        if (isTesting) {
+          const stepStatus = stepStatuses.get(step.id)
+          if (stepStatus) {
+            const statusX = x - 28
+            const statusY = y - 28
+            
+            if (stepStatus.status === "working") {
+              // Pulsing green dot
+              const pulse = Math.sin(Date.now() / 300) * 0.3 + 0.7 // 0.4 to 1.0
+              ctx.fillStyle = `rgba(34, 197, 94, ${pulse})`
+              ctx.shadowColor = "rgba(34, 197, 94, 0.6)"
+              ctx.shadowBlur = 8
+              ctx.beginPath()
+              ctx.arc(statusX, statusY, 5, 0, Math.PI * 2)
+              ctx.fill()
+              ctx.shadowBlur = 0
+            } else if (stepStatus.status === "completed") {
+              // Green checkmark
+              ctx.fillStyle = "#22c55e"
+              ctx.shadowColor = "rgba(34, 197, 94, 0.6)"
+              ctx.shadowBlur = 6
+              ctx.beginPath()
+              ctx.arc(statusX, statusY, 8, 0, Math.PI * 2)
+              ctx.fill()
+              ctx.shadowBlur = 0
+              
+              // White checkmark
+              ctx.strokeStyle = "#ffffff"
+              ctx.lineWidth = 2
+              ctx.lineCap = "round"
+              ctx.lineJoin = "round"
+              ctx.beginPath()
+              ctx.moveTo(statusX - 3, statusY)
+              ctx.lineTo(statusX - 1, statusY + 2)
+              ctx.lineTo(statusX + 3, statusY - 2)
+              ctx.stroke()
+            }
+          }
+        }
+        
+        // Delete button (top center, floating above hexagon) - only show on selected agent
+        if (isSelected) {
+          const deleteX = x
+          const deleteY = y - 55
+          const deleteRadius = 9
+          
+          // Red gradient for delete button
+          const deleteGradient = ctx.createRadialGradient(deleteX, deleteY, 0, deleteX, deleteY, deleteRadius)
+          deleteGradient.addColorStop(0, "#ef4444")
+          deleteGradient.addColorStop(1, "#dc2626")
+          ctx.fillStyle = deleteGradient
+          ctx.shadowColor = "rgba(239, 68, 68, 0.5)"
+          ctx.shadowBlur = 10
+          ctx.beginPath()
+          ctx.arc(deleteX, deleteY, deleteRadius, 0, Math.PI * 2)
+          ctx.fill()
+          ctx.shadowBlur = 0
+          
+          // X icon (smaller)
+          ctx.strokeStyle = "#ffffff"
+          ctx.lineWidth = 1.8
+          ctx.lineCap = "round"
+          ctx.beginPath()
+          ctx.moveTo(deleteX - 3, deleteY - 3)
+          ctx.lineTo(deleteX + 3, deleteY + 3)
+          ctx.moveTo(deleteX + 3, deleteY - 3)
+          ctx.lineTo(deleteX - 3, deleteY + 3)
+          ctx.stroke()
+        }
+        
+        // Connection handle (arrow button on the right side) - only show on selected agent if it doesn't have outgoing connection
+        if (isSelected) {
+          // Check if this agent already has an outgoing connection
+          const hasOutgoingConnection = connections.some(c => c.fromStepId === step.id)
+          
+          // Only show handle if no outgoing connection (sequential workflow)
+          if (!hasOutgoingConnection) {
+            const handleX = x + 50
+            const handleY = y
+            const handleRadius = 10
+            
+            // Glow on/off animation
+            const glow = Math.sin(Date.now() / 250) * 0.5 + 0.5 // Oscillates between 0 and 1
+            
+            // Gradient for handle
+            const handleGradient = ctx.createRadialGradient(handleX, handleY, 0, handleX, handleY, handleRadius)
+            handleGradient.addColorStop(0, "#818cf8")
+            handleGradient.addColorStop(1, "#6366f1")
+            ctx.fillStyle = handleGradient
+            
+            // Glowing shadow
+            ctx.shadowColor = `rgba(99, 102, 241, ${0.3 + glow * 0.7})` // Opacity varies from 0.3 to 1.0
+            ctx.shadowBlur = 8 + glow * 12 // Shadow blur varies from 8 to 20
+            ctx.beginPath()
+            ctx.arc(handleX, handleY, handleRadius, 0, Math.PI * 2)
+            ctx.fill()
+            ctx.shadowBlur = 0
+            
+            // Arrow icon (smaller)
+            ctx.save()
+            ctx.translate(handleX, handleY)
+            ctx.fillStyle = "#ffffff"
+            ctx.beginPath()
+            ctx.moveTo(2.5, 0)
+            ctx.lineTo(-2.5, -4)
+            ctx.lineTo(-2.5, 4)
+            ctx.closePath()
+            ctx.fill()
+            ctx.restore()
+          }
+        }
+
+        // Agent name - positioned below hexagon
+        const nameYOffset = 50
+        
+        ctx.shadowColor = "rgba(0, 0, 0, 0.5)"
+        ctx.shadowBlur = 2
+        ctx.fillStyle = isSelected ? step.agentColor : "#f1f5f9"
+        ctx.font = isSelected ? "bold 13px system-ui" : "600 12px system-ui"
+        ctx.textAlign = "center"
+        
+        if (isSelected) {
+          // Add background bar for selected agent name
+          const textWidth = ctx.measureText(step.agentName).width
+          ctx.fillStyle = "rgba(30, 41, 59, 0.9)"
+          ctx.fillRect(x - textWidth / 2 - 8, y + nameYOffset - 8, textWidth + 16, 20)
+          ctx.fillStyle = step.agentColor
+        }
+        
+        ctx.fillText(step.agentName, x, y + nameYOffset)
+        ctx.shadowBlur = 0
+        
+        // Draw description below agent name (editable) - wrap text to multiple lines
+        const descYOffset = nameYOffset + 25
+        ctx.font = "11px system-ui"
+        ctx.textAlign = "center"
+        
+        const maxWidth = 240 // Max width per line
+        const isEditingThis = editingStepId === step.id
+        const displayText = isEditingThis ? editingDescription : (step.description || "Click to add description")
+        
+        // Word wrap function
+        const wrapText = (text: string, maxWidth: number) => {
+          const words = text.split(' ')
+          const lines: string[] = []
+          let currentLine = ''
+          
+          for (const word of words) {
+            const testLine = currentLine ? currentLine + ' ' + word : word
+            const metrics = ctx.measureText(testLine)
+            
+            if (metrics.width > maxWidth && currentLine) {
+              lines.push(currentLine)
+              currentLine = word
+            } else {
+              currentLine = testLine
+            }
+          }
+          if (currentLine) {
+            lines.push(currentLine)
+          }
+          
+          return lines
+        }
+        
+        const lines = wrapText(displayText || " ", maxWidth)
+        const lineHeight = 14
+        const totalHeight = lines.length * lineHeight
+        
+        // Draw background for all lines
+        const bgWidth = Math.max(...lines.map(line => ctx.measureText(line).width), 100) + 16
+        ctx.fillStyle = isEditingThis ? "rgba(30, 41, 59, 0.95)" : "rgba(15, 23, 42, 0.8)"
+        ctx.fillRect(x - bgWidth / 2 - 4, y + descYOffset - 10, bgWidth + 8, totalHeight + 8)
+        
+        // Draw border when editing
+        if (isEditingThis) {
+          ctx.strokeStyle = "rgba(129, 140, 248, 0.8)"
+          ctx.lineWidth = 2
+          ctx.strokeRect(x - bgWidth / 2 - 4, y + descYOffset - 10, bgWidth + 8, totalHeight + 8)
+        }
+        
+        // Draw each line
+        ctx.fillStyle = isEditingThis ? "rgba(129, 140, 248, 0.95)" : "rgba(148, 163, 184, 0.9)"
+        lines.forEach((line, i) => {
+          ctx.fillText(line, x, y + descYOffset + i * lineHeight)
+        })
+        
+        // Draw blinking cursor when editing
+        if (isEditingThis && showCursor) {
+          // Calculate cursor position
+          const textBeforeCursor = displayText.substring(0, cursorPosition)
+          const linesBeforeCursor = wrapText(textBeforeCursor, maxWidth)
+          const currentLineIndex = Math.max(0, linesBeforeCursor.length - 1)
+          const currentLineText = linesBeforeCursor[currentLineIndex] || ""
+          const cursorX = x + ctx.measureText(currentLineText).width / 2
+          const cursorY = y + descYOffset + currentLineIndex * lineHeight
+          
+          ctx.fillStyle = "rgba(129, 140, 248, 1)"
+          ctx.fillRect(cursorX, cursorY - 8, 2, 12)
+        }
+        
+        // Add a subtle indicator that text is clickable (only when not editing)
+        if (!isEditingThis) {
+          ctx.font = "9px system-ui"
+          ctx.fillStyle = "rgba(148, 163, 184, 0.4)"
+          ctx.fillText("(click to edit)", x, y + descYOffset + totalHeight + 8)
+        } else {
+          ctx.font = "9px system-ui"
+          ctx.fillStyle = "rgba(148, 163, 184, 0.6)"
+          ctx.fillText("(press Enter to save, Esc to cancel)", x, y + descYOffset + totalHeight + 8)
+        }
+        
+        // Display agent status and messages during testing (above the agent)
+        if (isTesting) {
+          // Use step ID to get the correct status (handles duplicate agents)
+          const stepStatus = stepStatuses.get(step.id)
+          
+          if (stepStatus) {
+            const messageMaxWidth = 250
+            
+            // Current response display (above the agent)
+            // Show message for 4 seconds after completion, then disappear
+            const shouldShowMessage = stepStatus.message && (
+              stepStatus.status !== "completed" || 
+              (stepStatus.completedAt && Date.now() - stepStatus.completedAt < 4000)
+            )
+            
+            if (shouldShowMessage) {
+              ctx.save()
+              
+              ctx.font = "12px system-ui"
+              const words = stepStatus.message.split(' ')
+              const lines: string[] = []
+              let currentLine = words[0]
+              
+              for (let i = 1; i < words.length; i++) {
+                const testLine = currentLine + ' ' + words[i]
+                const metrics = ctx.measureText(testLine)
+                if (metrics.width > messageMaxWidth && currentLine.length > 0) {
+                  lines.push(currentLine)
+                  currentLine = words[i]
+                } else {
+                  currentLine = testLine
+                }
+              }
+              lines.push(currentLine)
+              
+              const displayLines = lines.slice(0, 10)
+              if (lines.length > 10) {
+                displayLines[9] = displayLines[9].substring(0, 30) + '...'
+              }
+              
+              const lineHeight = 15
+              const padding = 10
+              const boxWidth = messageMaxWidth + padding * 2
+              const labelSpace = 20
+              const boxHeight = displayLines.length * lineHeight + padding * 2 + labelSpace
+              
+              // Position ABOVE the agent (centered)
+              const responseX = x - boxWidth / 2
+              const responseY = y - 120 // Position above agent
+              
+              // Draw response box (matching DAG gradient style)
+              const boxGradient = ctx.createLinearGradient(
+                responseX,
+                responseY - boxHeight / 2,
+                responseX + boxWidth,
+                responseY + boxHeight / 2
+              )
+              boxGradient.addColorStop(0, "#1e293b")
+              boxGradient.addColorStop(1, "#0f172a")
+              
+              ctx.shadowColor = "rgba(0, 0, 0, 0.3)"
+              ctx.shadowBlur = 4
+              ctx.fillStyle = boxGradient
+              ctx.strokeStyle = step.agentColor
+              ctx.lineWidth = 2
+              
+              ctx.beginPath()
+              ctx.roundRect(
+                responseX,
+                responseY - boxHeight / 2,
+                boxWidth,
+                boxHeight,
+                8
+              )
+              ctx.fill()
+              ctx.stroke()
+              ctx.shadowBlur = 0
+              
+              // Add "From [Agent Name]" label
+              ctx.fillStyle = step.agentColor
+              ctx.font = "600 10px system-ui"
+              ctx.textAlign = "left"
+              ctx.fillText(`📥 From ${step.agentName}`, responseX + padding, responseY - boxHeight / 2 + padding + 8)
+              
+              // Draw message text
+              ctx.fillStyle = "#e2e8f0"
+              ctx.font = "12px system-ui"
+              ctx.textAlign = "left"
+              
+              for (let i = 0; i < displayLines.length; i++) {
+                ctx.fillText(
+                  displayLines[i],
+                  responseX + padding,
+                  responseY - boxHeight / 2 + padding + 28 + i * lineHeight
+                )
+              }
+              
+              ctx.restore()
+              
+              // Display image below message (matching DAG style)
+              if (stepStatus.imageUrl) {
+                const imageUrl = stepStatus.imageUrl
+                const imageSize = 120
+                const fileDisplayY = responseY + boxHeight / 2 + 20
+                const fileDisplayCenterX = responseX + boxWidth / 2
+                const imageX = fileDisplayCenterX - imageSize / 2
+                const imageY = fileDisplayY
+                
+                ctx.save()
+                
+                // Draw image background (matching DAG style)
+                ctx.shadowColor = "rgba(0, 0, 0, 0.3)"
+                ctx.shadowBlur = 4
+                ctx.fillStyle = "#1e293b"
+                ctx.strokeStyle = step.agentColor
+                ctx.lineWidth = 3
+                
+                ctx.beginPath()
+                ctx.roundRect(imageX - 4, imageY - 4, imageSize + 8, imageSize + 8, 8)
+                ctx.fill()
+                ctx.stroke()
+                ctx.shadowBlur = 0
+                
+                // Load and draw image using cache (matching DAG)
+                let img = imageCache.current.get(imageUrl)
+                if (!img) {
+                  img = new Image()
+                  const imgRef = img
+                  imgRef.onload = () => {
+                    console.log("[VisualWorkflowDesigner] ✅ Image loaded:", imageUrl)
+                    imageCache.current.set(imageUrl, imgRef)
+                  }
+                  imgRef.onerror = () => {
+                    console.error('[VisualWorkflowDesigner] ❌ Failed to load image:', imageUrl)
+                    imageCache.current.delete(imageUrl)
+                  }
+                  imgRef.src = imageUrl
+                  imageCache.current.set(imageUrl, imgRef)
+                }
+                
+                if (img && img.complete && img.naturalWidth > 0) {
+                  ctx.save()
+                  ctx.beginPath()
+                  ctx.roundRect(imageX, imageY, imageSize, imageSize, 4)
+                  ctx.clip()
+                  ctx.drawImage(img, imageX, imageY, imageSize, imageSize)
+                  ctx.restore()
+                } else {
+                  // Show loading indicator (matching DAG)
+                  ctx.fillStyle = "#475569"
+                  ctx.font = "12px system-ui"
+                  ctx.textAlign = "center"
+                  ctx.fillText("Loading...", fileDisplayCenterX, imageY + imageSize / 2)
+                }
+                
+                // Draw filename below image (matching DAG)
+                if (stepStatus.fileName) {
+                  ctx.fillStyle = "#94a3b8"
+                  ctx.font = "600 10px system-ui"
+                  ctx.textAlign = "center"
+                  const filenameY = imageY + imageSize + 18
+                  let displayName = stepStatus.fileName
+                  if (displayName.length > 20) {
+                    displayName = displayName.substring(0, 17) + "..."
+                  }
+                  ctx.fillText(`📎 ${displayName}`, fileDisplayCenterX, filenameY)
+                }
+                
+                ctx.restore()
+              }
+            }
+          }
+        }
+      })
+
+      ctx.restore()
+
+      // Instructions overlay (when empty)
+      if (workflowSteps.length === 0 && !isDraggingOver) {
+        ctx.fillStyle = "rgba(148, 163, 184, 0.3)"
+        ctx.font = "16px system-ui"
+        ctx.textAlign = "center"
+        ctx.fillText("Drag agents from the left panel onto this canvas", centerX, centerY - 20)
+        ctx.fillText("to build your workflow step by step", centerX, centerY + 10)
+      }
+      
+      // Drag over indicator
+      if (isDraggingOver) {
+        ctx.strokeStyle = "rgba(99, 102, 241, 0.5)"
+        ctx.lineWidth = 4
+        ctx.setLineDash([20, 10])
+        ctx.strokeRect(10, 10, rect.width - 20, rect.height - 20)
+        ctx.setLineDash([])
+      }
+    }
+
+    let animationFrameId = requestAnimationFrame(function animate() {
+      draw()
+      animationFrameId = requestAnimationFrame(animate)
+    })
+
+    return () => cancelAnimationFrame(animationFrameId)
+  }, [workflowSteps, selectedStepId, isDraggingOver, connections, isCreatingConnection, connectionStart, connectionPreview, workflowOrderMap, editingStepId, editingDescription, cursorPosition, showCursor, isTesting, stepStatuses])
+  
+  // Cursor blinking effect
+  useEffect(() => {
+    if (editingStepId) {
+      const interval = setInterval(() => {
+        setShowCursor(prev => !prev)
+      }, 530) // Blink every 530ms
+      return () => clearInterval(interval)
+    } else {
+      setShowCursor(true)
+    }
+  }, [editingStepId])
+
+  // Mouse handlers for pan and agent dragging
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    
+    let isPanningLocal = false
+    let isDraggingAgentLocal = false
+
+    const handleMouseDown = (e: MouseEvent) => {
+      const rect = canvas.getBoundingClientRect()
+      const centerX = rect.width / 2
+      const centerY = rect.height / 2
+      const mouseX = e.clientX - rect.left
+      const mouseY = e.clientY - rect.top
+      
+      // Convert to canvas coordinates
+      const canvasX = (mouseX - centerX - panOffsetRef.current.x) / zoomRef.current
+      const canvasY = (mouseY - centerY - panOffsetRef.current.y) / zoomRef.current
+      
+      // First, check if clicking on an agent to determine what step is under cursor
+      const clickedStep = workflowStepsRef.current.find(step => {
+        const dx = canvasX - step.x
+        const dy = canvasY - step.y
+        const distance = Math.sqrt(dx * dx + dy * dy)
+        return distance < 40 // 40px radius
+      })
+      
+      // Check for clicks on description text area (highest priority)
+      for (const step of workflowStepsRef.current) {
+        const nameYOffset = 50
+        const descYOffset = nameYOffset + 25
+        
+        // Estimate the description area bounds
+        const descText = step.description || "Click to add description"
+        const maxWidth = 240
+        const lineHeight = 14
+        
+        // Rough calculation for multi-line text height
+        const estimatedCharsPerLine = Math.floor(maxWidth / 6.5)
+        const estimatedLines = Math.ceil(descText.length / estimatedCharsPerLine)
+        const totalHeight = estimatedLines * lineHeight
+        
+        // Check if click is within description area
+        const dx = Math.abs(canvasX - step.x)
+        const dy = canvasY - (step.y + descYOffset)
+        
+        // Description area is centered horizontally and extends vertically
+        if (dx < 130 && dy > -10 && dy < totalHeight + 10) {
+          e.preventDefault()
+          e.stopPropagation()
+          setEditingStepId(step.id)
+          const desc = step.description || ""
+          setEditingDescription(desc)
+          setCursorPosition(desc.length) // Put cursor at end
+          setSelectedStepId(step.id)
+          return
+        }
+      }
+      
+      // Check for delete button clicks on the selected step (check before other interactions)
+      if (selectedStepIdRef.current) {
+        const selectedStep = workflowStepsRef.current.find(s => s.id === selectedStepIdRef.current)
+        
+        if (selectedStep) {
+          // Check if clicking on delete button (top center)
+          const deleteX = selectedStep.x
+          const deleteY = selectedStep.y - 55
+          const deleteDx = canvasX - deleteX
+          const deleteDy = canvasY - deleteY
+          const deleteDistance = Math.sqrt(deleteDx * deleteDx + deleteDy * deleteDy)
+          
+          if (deleteDistance < 14) { // 14px radius for delete button (increased for easier clicking)
+            e.preventDefault()
+            e.stopPropagation()
+            // Delete the agent and any connections involving it
+            setWorkflowSteps(prev => prev.filter(s => s.id !== selectedStep.id))
+            setConnections(prev => prev.filter(c => 
+              c.fromStepId !== selectedStep.id && c.toStepId !== selectedStep.id
+            ))
+            setSelectedStepId(null)
+            return
+          }
+          
+          // Check if clicking on connection handle (arrow button)
+          // Only allow if agent doesn't already have an outgoing connection (sequential workflow)
+          const hasOutgoingConnection = connectionsRef.current.some(c => c.fromStepId === selectedStep.id)
+          
+          if (!hasOutgoingConnection) {
+            const handleX = selectedStep.x + 50
+            const handleY = selectedStep.y
+            const handleDx = canvasX - handleX
+            const handleDy = canvasY - handleY
+            const handleDistance = Math.sqrt(handleDx * handleDx + handleDy * handleDy)
+            
+            if (handleDistance < 12) { // 12px radius for handle (slightly larger for easier clicking)
+              // Start creating a connection
+              isCreatingConnectionRef.current = true
+              setIsCreatingConnection(true)
+              const startData = {
+                stepId: selectedStep.id,
+                x: selectedStep.x,
+                y: selectedStep.y
+              }
+              connectionStartRef.current = startData
+              setConnectionStart(startData)
+              setConnectionPreview({ x: canvasX, y: canvasY })
+              return
+            }
+          }
+          
+          // Check if clicking on a connection delete button (only for selected agent's connections)
+          for (const connection of connectionsRef.current) {
+            // Only check if connection involves selected agent
+            if (connection.fromStepId !== selectedStep.id && connection.toStepId !== selectedStep.id) {
+              continue
+            }
+            
+            const from = workflowStepsRef.current.find(s => s.id === connection.fromStepId)
+            const to = workflowStepsRef.current.find(s => s.id === connection.toStepId)
+            
+            if (from && to) {
+              const midX = (from.x + to.x) / 2
+              const midY = (from.y + to.y) / 2
+              const dx = canvasX - midX
+              const dy = canvasY - midY
+              const distance = Math.sqrt(dx * dx + dy * dy)
+              
+              if (distance < 10) { // 10px radius for delete button
+                setConnections(prev => prev.filter(c => c.id !== connection.id))
+                return
+              }
+            }
+          }
+        }
+      }
+      
+      // Handle agent click/drag
+      if (clickedStep) {
+        // Start dragging agent
+        isDraggingAgentLocal = true
+        draggingStepIdRef.current = clickedStep.id
+        setDraggingStepId(clickedStep.id)
+        setSelectedStepId(clickedStep.id)
+        setEditingDescription(clickedStep.description)
+        
+        // Store offset from agent center to mouse position
+        dragOffsetRef.current = {
+          x: canvasX - clickedStep.x,
+          y: canvasY - clickedStep.y
+        }
+      } else {
+        // Start panning canvas
+        isPanningLocal = true
+        setIsPanning(true)
+        panStartRef.current = { 
+          x: e.clientX - panOffsetRef.current.x, 
+          y: e.clientY - panOffsetRef.current.y 
+        }
+      }
+    }
+
+    const handleMouseMove = (e: MouseEvent) => {
+      const rect = canvas.getBoundingClientRect()
+      const centerX = rect.width / 2
+      const centerY = rect.height / 2
+      const mouseX = e.clientX - rect.left
+      const mouseY = e.clientY - rect.top
+      
+      const canvasX = (mouseX - centerX - panOffsetRef.current.x) / zoomRef.current
+      const canvasY = (mouseY - centerY - panOffsetRef.current.y) / zoomRef.current
+      
+      if (isCreatingConnectionRef.current) {
+        // Update connection preview
+        setConnectionPreview({ x: canvasX, y: canvasY })
+      } else if (isDraggingAgentLocal && draggingStepIdRef.current) {
+        // Update agent position
+        setWorkflowSteps(prev => 
+          prev.map(step => 
+            step.id === draggingStepIdRef.current
+              ? { 
+                  ...step, 
+                  x: canvasX - dragOffsetRef.current.x,
+                  y: canvasY - dragOffsetRef.current.y
+                }
+              : step
+          )
+        )
+      } else if (isPanningLocal) {
+        // Pan canvas
+        panOffsetRef.current = {
+          x: e.clientX - panStartRef.current.x,
+          y: e.clientY - panStartRef.current.y
+        }
+      }
+    }
+
+    const handleMouseUp = (e: MouseEvent) => {
+      // Handle connection creation
+      if (isCreatingConnectionRef.current && connectionStartRef.current) {
+        const rect = canvas.getBoundingClientRect()
+        const centerX = rect.width / 2
+        const centerY = rect.height / 2
+        const mouseX = e.clientX - rect.left
+        const mouseY = e.clientY - rect.top
+        
+        const canvasX = (mouseX - centerX - panOffsetRef.current.x) / zoomRef.current
+        const canvasY = (mouseY - centerY - panOffsetRef.current.y) / zoomRef.current
+        
+        // Check if releasing on an agent
+        const targetStep = workflowStepsRef.current.find(step => {
+          if (step.id === connectionStartRef.current!.stepId) return false // Can't connect to self
+          const dx = canvasX - step.x
+          const dy = canvasY - step.y
+          const distance = Math.sqrt(dx * dx + dy * dy)
+          return distance < 40 // 40px radius
+        })
+        
+        if (targetStep) {
+          // Check if source agent already has an outgoing connection (sequential workflow constraint)
+          const hasOutgoing = connectionsRef.current.some(c => 
+            c.fromStepId === connectionStartRef.current!.stepId
+          )
+          
+          if (hasOutgoing) {
+            // Reset connection creation state
+            isCreatingConnectionRef.current = false
+            connectionStartRef.current = null
+            setIsCreatingConnection(false)
+            setConnectionStart(null)
+            setConnectionPreview(null)
+            return
+          }
+          
+          // Check if target agent already has an incoming connection (sequential workflow constraint)
+          const hasIncoming = connectionsRef.current.some(c => 
+            c.toStepId === targetStep.id
+          )
+          
+          if (hasIncoming) {
+            // Reset connection creation state
+            isCreatingConnectionRef.current = false
+            connectionStartRef.current = null
+            setIsCreatingConnection(false)
+            setConnectionStart(null)
+            setConnectionPreview(null)
+            return
+          }
+          
+          // Create connection
+          const newConnection: Connection = {
+            id: `conn-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+            fromStepId: connectionStartRef.current.stepId,
+            toStepId: targetStep.id
+          }
+          
+          // Check if connection already exists (shouldn't happen but double-check)
+          const exists = connectionsRef.current.some(c => 
+            c.fromStepId === newConnection.fromStepId && c.toStepId === newConnection.toStepId
+          )
+          
+          if (!exists) {
+            setConnections(prev => [...prev, newConnection])
+          }
+        }
+        
+        // Reset connection creation state
+        isCreatingConnectionRef.current = false
+        connectionStartRef.current = null
+        setIsCreatingConnection(false)
+        setConnectionStart(null)
+        setConnectionPreview(null)
+      }
+      
+      isPanningLocal = false
+      isDraggingAgentLocal = false
+      setIsPanning(false)
+      draggingStepIdRef.current = null
+      setDraggingStepId(null)
+    }
+
+    canvas.addEventListener('mousedown', handleMouseDown)
+    window.addEventListener('mousemove', handleMouseMove)
+    window.addEventListener('mouseup', handleMouseUp)
+
+    return () => {
+      canvas.removeEventListener('mousedown', handleMouseDown)
+      window.removeEventListener('mousemove', handleMouseMove)
+      window.removeEventListener('mouseup', handleMouseUp)
+    }
+    // No dependencies - handlers use refs which don't trigger re-runs
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Mouse wheel zoom
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+
+    const handleWheel = (e: WheelEvent) => {
+      e.preventDefault()
+      const zoomFactor = e.deltaY > 0 ? 0.95 : 1.05
+      const newZoom = zoomRef.current * zoomFactor
+      zoomRef.current = Math.max(0.3, Math.min(3, newZoom))
+    }
+
+    canvas.addEventListener('wheel', handleWheel, { passive: false })
+    return () => canvas.removeEventListener('wheel', handleWheel)
+  }, [])
+
+  // Keyboard shortcuts and text input
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Handle editing mode
+      if (editingStepId) {
+        if (e.key === 'Enter' && !e.shiftKey) {
+          // Save on Enter
+          e.preventDefault()
+          updateStepDescription(editingDescription, editingStepId)
+          setEditingStepId(null)
+          setCursorPosition(0)
+        } else if (e.key === 'Escape') {
+          // Cancel on Escape
+          e.preventDefault()
+          setEditingStepId(null)
+          setCursorPosition(0)
+        } else if (e.key === 'Backspace') {
+          // Handle backspace
+          e.preventDefault()
+          if (cursorPosition > 0) {
+            const newText = editingDescription.slice(0, cursorPosition - 1) + editingDescription.slice(cursorPosition)
+            setEditingDescription(newText)
+            setCursorPosition(cursorPosition - 1)
+          }
+        } else if (e.key === 'Delete') {
+          // Handle delete
+          e.preventDefault()
+          if (cursorPosition < editingDescription.length) {
+            const newText = editingDescription.slice(0, cursorPosition) + editingDescription.slice(cursorPosition + 1)
+            setEditingDescription(newText)
+          }
+        } else if (e.key === 'ArrowLeft') {
+          // Move cursor left
+          e.preventDefault()
+          setCursorPosition(Math.max(0, cursorPosition - 1))
+        } else if (e.key === 'ArrowRight') {
+          // Move cursor right
+          e.preventDefault()
+          setCursorPosition(Math.min(editingDescription.length, cursorPosition + 1))
+        } else if (e.key === 'Home') {
+          // Move to start
+          e.preventDefault()
+          setCursorPosition(0)
+        } else if (e.key === 'End') {
+          // Move to end
+          e.preventDefault()
+          setCursorPosition(editingDescription.length)
+        } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) {
+          // Regular character input
+          e.preventDefault()
+          const newText = editingDescription.slice(0, cursorPosition) + e.key + editingDescription.slice(cursorPosition)
+          setEditingDescription(newText)
+          setCursorPosition(cursorPosition + 1)
+        }
+        return
+      }
+      
+      // Normal shortcuts (when not editing)
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        if (selectedStepId && document.activeElement?.tagName !== 'TEXTAREA' && document.activeElement?.tagName !== 'INPUT') {
+          e.preventDefault()
+          deleteSelectedStep()
+        }
+      } else if (e.key === '0') {
+        e.preventDefault()
+        zoomRef.current = 1
+        panOffsetRef.current = { x: 0, y: 0 }
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [selectedStepId, editingStepId, editingDescription, cursorPosition])
+
+  const selectedStep = workflowSteps.find(s => s.id === selectedStepId)
+
+  return (
+    <div className="flex flex-col h-full gap-4">
+      <div className="flex gap-4 h-full">
+        {/* Agent Palette */}
+        <div className="w-64 flex flex-col gap-2 bg-slate-900 rounded-lg p-4 border border-slate-800">
+          <h3 className="text-sm font-semibold text-slate-200 mb-2">Available Agents</h3>
+          <ScrollArea className="flex-1">
+            <div className="space-y-2">
+              {registeredAgents.length === 0 ? (
+                <p className="text-xs text-slate-500">No agents registered</p>
+              ) : (
+                registeredAgents.map((agent, index) => (
+                  <div
+                    key={agent.id || agent.name}
+                    draggable
+                    onDragStart={() => setDraggedAgent(agent)}
+                    onDragEnd={() => setDraggedAgent(null)}
+                    className="p-3 bg-slate-800 rounded border border-slate-700 hover:border-slate-600 cursor-move transition-colors"
+                    style={{
+                      borderLeftColor: getAgentColor(index),
+                      borderLeftWidth: '3px'
+                    }}
+                  >
+                    <div className="text-sm font-medium text-slate-200">{agent.name}</div>
+                    {agent.description && (
+                      <div className="text-xs text-slate-400 mt-1 line-clamp-2">{agent.description}</div>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+          </ScrollArea>
+        </div>
+
+        {/* Canvas */}
+        <div className="flex-1 flex flex-col gap-2">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-slate-200">Workflow Canvas</h3>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowCatalog(!showCatalog)}
+                className="text-xs"
+              >
+                <Library className="h-3 w-3 mr-1" />
+                {showCatalog ? "Hide" : "Show"} Templates
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  zoomRef.current = 1
+                  panOffsetRef.current = { x: 0, y: 0 }
+                }}
+                className="text-xs"
+              >
+                Reset View
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={clearWorkflow}
+                disabled={workflowSteps.length === 0}
+                className="text-xs"
+              >
+                <Trash2 className="h-3 w-3 mr-1" />
+                Clear All
+              </Button>
+            </div>
+          </div>
+          
+          {/* Test Workflow Panel - Compact version above canvas */}
+          {workflowSteps.length > 0 && generatedWorkflowText && (
+            <div className="bg-slate-800/50 rounded-lg p-3 border border-slate-700">
+              <div className="flex items-center gap-2">
+                <PlayCircle className="h-4 w-4 text-indigo-400" />
+                <Input
+                  value={testInput}
+                  onChange={(e) => setTestInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault()
+                      handleTestSubmit()
+                    }
+                  }}
+                  placeholder="Test your workflow - enter a message and press Enter..."
+                  disabled={isTesting}
+                  className="flex-1 text-sm h-8"
+                />
+                <Button
+                  onClick={handleTestSubmit}
+                  disabled={!testInput.trim() || isTesting}
+                  size="sm"
+                  className="h-8"
+                >
+                  {isTesting ? (
+                    <>
+                      <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                      Testing
+                    </>
+                  ) : (
+                    <>
+                      <Send className="h-3 w-3 mr-1" />
+                      Test
+                    </>
+                  )}
+                </Button>
+                {isTesting && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleStopTest}
+                    className="h-8"
+                  >
+                    <StopCircle className="h-3 w-3 mr-1" />
+                    Stop
+                  </Button>
+                )}
+              </div>
+            </div>
+          )}
+          
+          <div 
+            className="flex-1 relative bg-slate-900 rounded-lg border-2 border-dashed border-slate-800 overflow-hidden"
+            onDragOver={(e) => {
+              e.preventDefault()
+              setIsDraggingOver(true)
+            }}
+            onDragLeave={() => setIsDraggingOver(false)}
+            onDrop={handleCanvasDrop}
+          >
+            <canvas
+              ref={canvasRef}
+              className="w-full h-full"
+              style={{ 
+                minHeight: "400px",
+                cursor: draggingStepId ? 'move' : isPanning ? 'grabbing' : 'grab'
+              }}
+            />
+          </div>
+
+          <div className="text-xs text-slate-500">
+            <span className="font-medium">Tips:</span> Drag agents to reposition • Click description to edit (Enter to save, Esc to cancel) • Click arrow to connect • Click red X to delete • Drag canvas to pan • Scroll to zoom
+          </div>
+        </div>
+
+        {/* Workflow Catalog Sidebar */}
+        {showCatalog && (
+          <div className="w-80 flex flex-col">
+            <WorkflowCatalog
+              onLoadWorkflow={loadWorkflow}
+              onSaveWorkflow={() => setShowSaveDialog(true)}
+              currentWorkflowSteps={workflowSteps.length}
+              refreshTrigger={catalogRefreshTrigger}
+            />
+          </div>
+        )}
+      </div>
+
+      {/* Generated Workflow Preview - Collapsible */}
+      {workflowSteps.length > 0 && generatedWorkflowText && (
+        <details className="bg-slate-900 rounded-lg border border-slate-800">
+          <summary className="cursor-pointer p-3 text-sm font-semibold text-slate-200 hover:bg-slate-800/50 rounded-lg">
+            Generated Workflow Text (click to expand)
+          </summary>
+          <div className="p-4 pt-0">
+            <pre className="text-xs font-mono text-slate-300 bg-slate-950 p-3 rounded whitespace-pre-wrap">
+              {generatedWorkflowText}
+            </pre>
+          </div>
+        </details>
+      )}
+
+      {/* Save Workflow Dialog */}
+      <Dialog open={showSaveDialog} onOpenChange={setShowSaveDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Save Workflow Template</DialogTitle>
+            <DialogDescription>
+              Save your current workflow to the catalog for reuse
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <label className="text-sm font-medium text-slate-200">Workflow Name *</label>
+              <Input
+                value={workflowName}
+                onChange={(e) => setWorkflowName(e.target.value)}
+                placeholder="e.g., My Custom Pipeline"
+                className="mt-1"
+              />
+            </div>
+            <div>
+              <label className="text-sm font-medium text-slate-200">Description</label>
+              <Input
+                value={workflowDescription}
+                onChange={(e) => setWorkflowDescription(e.target.value)}
+                placeholder="Brief description of this workflow"
+                className="mt-1"
+              />
+            </div>
+            <div>
+              <label className="text-sm font-medium text-slate-200">Category</label>
+              <Input
+                value={workflowCategory}
+                onChange={(e) => setWorkflowCategory(e.target.value)}
+                placeholder="e.g., Custom, Marketing, Quality Control"
+                className="mt-1"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowSaveDialog(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleSaveWorkflow}>
+              Save Workflow
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  )
+}
+

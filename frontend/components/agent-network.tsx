@@ -11,8 +11,10 @@ import { Textarea } from "@/components/ui/textarea"
 import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
 import { PanelRightClose, PanelRightOpen, ShieldCheck, ChevronDown, ChevronRight, Globe, Hash, Zap, FileText, ExternalLink, Settings, Clock, CheckCircle, XCircle, AlertCircle, Pause, Brain, Search, MessageSquare, Database, Shield, BarChart3, Gavel, Users, Bot, Trash2, User, ListOrdered } from "lucide-react"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { SimulateAgentRegistration } from "./simulate-agent-registration"
 import { ConnectedUsers } from "./connected-users"
+import { VisualWorkflowDesigner } from "./visual-workflow-designer"
 import { cn } from "@/lib/utils"
 import { useState, useEffect, useCallback } from "react"
 import { useEventHub } from "@/contexts/event-hub-context"
@@ -917,27 +919,50 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, agentMod
                             {workflow ? "Edit Workflow" : "Define Workflow"}
                           </Button>
                         </DialogTrigger>
-                        <DialogContent className="max-w-2xl">
-                          <DialogHeader>
-                            <DialogTitle>Agent Mode Workflow</DialogTitle>
-                            <DialogDescription>
-                              Define the workflow steps that will be appended to your goal. This helps guide the orchestration.
-                            </DialogDescription>
-                          </DialogHeader>
-                          <div className="space-y-4">
-                            <Textarea
-                              value={editedWorkflow}
-                              onChange={(e) => setEditedWorkflow(e.target.value)}
-                              placeholder="Example:&#10;1. Use the image generator agent to create an image&#10;2. Use the branding agent to get branding guidelines&#10;3. Use the image generator to refine the image based on branding&#10;4. Use the image analysis agent to review the result"
-                              className="min-h-[200px] font-mono text-sm"
-                            />
-                            {workflow && (
-                              <div className="text-xs text-muted-foreground">
-                                <p className="font-medium mb-1">Current workflow:</p>
-                                <pre className="whitespace-pre-wrap bg-muted p-2 rounded">{workflow}</pre>
+                        <DialogContent className="max-w-[95vw] max-h-[95vh] h-[900px]">
+                          <Tabs defaultValue="visual" className="flex-1 flex flex-col w-full">
+                            <DialogHeader className="mb-4">
+                              <DialogTitle>Agent Mode Workflow</DialogTitle>
+                              <DialogDescription>
+                                Define the workflow steps that will be appended to your goal. This helps guide the orchestration.
+                              </DialogDescription>
+                            </DialogHeader>
+                            
+                            <TabsList className="grid w-full grid-cols-2 mb-4">
+                              <TabsTrigger value="visual">Visual Designer</TabsTrigger>
+                              <TabsTrigger value="text">Text Editor</TabsTrigger>
+                            </TabsList>
+                            
+                            <TabsContent value="visual" className="flex-1 overflow-hidden w-full">
+                              <div className="h-[680px] w-full">
+                                <VisualWorkflowDesigner
+                                  registeredAgents={registeredAgents.map(agent => ({
+                                    ...agent,
+                                    id: agent.name.toLowerCase().replace(/\s+/g, '-')
+                                  }))}
+                                  onWorkflowGenerated={(text) => setEditedWorkflow(text)}
+                                  initialWorkflow={editedWorkflow}
+                                />
                               </div>
-                            )}
-                          </div>
+                            </TabsContent>                            
+                            <TabsContent value="text" className="flex-1 overflow-hidden w-full">
+                              <div className="space-y-4 h-full flex flex-col w-full">
+                                <Textarea
+                                  value={editedWorkflow}
+                                  onChange={(e) => setEditedWorkflow(e.target.value)}
+                                  placeholder="Example:&#10;1. Use the image generator agent to create an image&#10;2. Use the branding agent to get branding guidelines&#10;3. Use the image generator to refine the image based on branding&#10;4. Use the image analysis agent to review the result"
+                                  className="flex-1 font-mono text-sm"
+                                />
+                                {workflow && (
+                                  <div className="text-xs text-muted-foreground">
+                                    <p className="font-medium mb-1">Current workflow:</p>
+                                    <pre className="whitespace-pre-wrap bg-muted p-2 rounded">{workflow}</pre>
+                                  </div>
+                                )}
+                              </div>
+                            </TabsContent>
+                          </Tabs>
+                          
                           <DialogFooter>
                             <Button
                               variant="outline"
