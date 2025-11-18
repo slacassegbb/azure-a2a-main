@@ -54,7 +54,7 @@ Special thank you to Sergey Chernykh, Ryan Morgan, David Barkol and Owen Van Val
 A full companion paper is included with this repository, explaining the vision, architecture, protocols, and patterns behind this system.
 
 <p align="center">
-  <a href="./Scaling_Agents_Enterprise.pdf">
+  <a href="https://github.com/slacassegbb/azure-a2a-main/raw/main/Scaling_Agents_Enterprise.pdf">
     <img src="./paper_thumbnail.png" alt="Scaling Agents for Enterprises Whitepaper" width="350"/>
   </a>
 </p>
