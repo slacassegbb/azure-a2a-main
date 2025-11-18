@@ -1,29 +1,29 @@
 import asyncio
+import datetime
+import json
 import logging
 import os
-import traceback
-import threading
-import json
-import datetime
 import re
-from typing import Dict, List, Tuple, Optional
-import pandas as pd
+import threading
+import traceback
+from typing import Dict, List, Optional, Tuple
 
 import click
 import gradio as gr
+import pandas as pd
 import uvicorn
-
-from foundry_agent_executor import create_foundry_legal_agent_executor, initialize_foundry_legal_agents_at_startup, FoundryLegalAgentExecutor
+from a2a.server.apps import A2AStarletteApplication
+from a2a.server.request_handlers import DefaultRequestHandler
+from a2a.server.tasks import InMemoryTaskStore
+from a2a.types import AgentCapabilities, AgentCard, AgentSkill
 from dotenv import load_dotenv
+from foundry_agent_executor import (FoundryLegalAgentExecutor,
+                                    create_foundry_legal_agent_executor,
+                                    initialize_foundry_legal_agents_at_startup)
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse
 from starlette.routing import Route
-
-from a2a.server.apps import A2AStarletteApplication
-from a2a.server.request_handlers import DefaultRequestHandler 
-from a2a.server.tasks import InMemoryTaskStore
-from a2a.types import AgentCapabilities, AgentCard, AgentSkill
 
 load_dotenv()
 
@@ -32,24 +32,26 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Silence verbose Azure SDK HTTP logging
-logging.getLogger("azure.core.pipeline.policies.http_logging_policy").setLevel(logging.WARNING)
+logging.getLogger("azure.core.pipeline.policies.http_logging_policy").setLevel(
+    logging.WARNING
+)
 logging.getLogger("azure.identity").setLevel(logging.WARNING)
 logging.getLogger("azure").setLevel(logging.WARNING)
 
 
 def _normalize_env_value(raw_value: str | None) -> str:
     if raw_value is None:
-        return ''
+        return ""
     return raw_value.strip()
 
 
 def _resolve_default_host() -> str:
-    value = _normalize_env_value(os.getenv('A2A_ENDPOINT'))
-    return value or 'localhost'
+    value = _normalize_env_value(os.getenv("A2A_ENDPOINT"))
+    return value or "localhost"
 
 
 def _resolve_default_port() -> int:
-    raw_port = _normalize_env_value(os.getenv('A2A_PORT'))
+    raw_port = _normalize_env_value(os.getenv("A2A_PORT"))
     if raw_port:
         try:
             return int(raw_port)
@@ -59,28 +61,35 @@ def _resolve_default_port() -> int:
 
 
 def resolve_agent_url(bind_host: str, bind_port: int) -> str:
-    endpoint = _normalize_env_value(os.getenv('A2A_ENDPOINT'))
+    endpoint = _normalize_env_value(os.getenv("A2A_ENDPOINT"))
     if endpoint:
-        if endpoint.startswith(('http://', 'https://')):
-            return endpoint.rstrip('/') + '/'
+        if endpoint.startswith(("http://", "https://")):
+            return endpoint.rstrip("/") + "/"
         host_for_url = endpoint
     else:
         host_for_url = bind_host if bind_host != "0.0.0.0" else _resolve_default_host()
 
     return f"http://{host_for_url}:{bind_port}/"
 
+
 # Import self-registration utility
 try:
-    from utils.self_registration import register_with_host_agent, get_host_agent_url
+    from utils.self_registration import (get_host_agent_url,
+                                         register_with_host_agent)
+
     SELF_REGISTRATION_AVAILABLE = True
     logger.info("✅ Self-registration utility loaded")
 except ImportError:
     # Fallback if utils not available
     async def register_with_host_agent(agent_card, host_url=None):
-        logger.info("ℹ️ Self-registration utility not available - skipping registration")
+        logger.info(
+            "ℹ️ Self-registration utility not available - skipping registration"
+        )
         return False
+
     def get_host_agent_url() -> str:
         return ""
+
     SELF_REGISTRATION_AVAILABLE = False
 
 DEFAULT_HOST = _resolve_default_host()
@@ -106,9 +115,9 @@ class LegalComplianceDashboard:
             "status": "In Progress",
             "assigned_attorney": "Michael Rodriguez",
             "last_updated": "January 27, 2025 - 3:15 PM EST",
-            "compliance_deadline": "March 15, 2025"
+            "compliance_deadline": "March 15, 2025",
         }
-        
+
         # SOX audit case data (for complex compliance)
         self.sox_audit_case = {
             "case_id": "SOX-2025-002",
@@ -121,21 +130,23 @@ class LegalComplianceDashboard:
             "status": "Under Review",
             "assigned_attorney": "Jennifer Williams",
             "last_updated": "January 27, 2025 - 1:30 PM EST",
-            "compliance_deadline": "February 28, 2025"
+            "compliance_deadline": "February 28, 2025",
         }
-        
+
         # Set default case to GDPR compliance
         self.current_case = self.gdpr_compliance_case
-        
+
         # Add missing attributes for dashboard data
         self.recent_transactions = []
         self.accounts = []
         self.open_tickets = []
         self.agent_knowledge = {
             "login_issues": {"solution": "Contact IT support for login assistance"},
-            "credit_limit": {"solution": "Contact credit department for limit increase"}
+            "credit_limit": {
+                "solution": "Contact credit department for limit increase"
+            },
         }
-        
+
         # Ana Lucia account information (default)
         self.ana_lucia_accounts = [
             {
@@ -143,27 +154,27 @@ class LegalComplianceDashboard:
                 "account_number": "****4881",
                 "balance": "R$24,750.30",
                 "status": "Active",
-                "last_transaction": "Jul 1, 2025"
+                "last_transaction": "Jul 1, 2025",
             },
             {
                 "account_type": "Savings",
                 "account_number": "****2001",
                 "balance": "R$87,450.12",
-                "status": "Active", 
-                "last_transaction": "Jun 28, 2025"
+                "status": "Active",
+                "last_transaction": "Jun 28, 2025",
             },
             {
                 "account_type": "Credit Card",
                 "account_number": "****5887",
                 "balance": "R$3,240.10",
                 "status": "Active",
-                "last_transaction": "Jul 2, 2025"
-            }
+                "last_transaction": "Jul 2, 2025",
+            },
         ]
-        
+
         # Set default accounts to Ana Lucia
         self.accounts = self.ana_lucia_accounts
-        
+
         # Open tickets
         self.open_tickets = [
             {
@@ -175,10 +186,10 @@ class LegalComplianceDashboard:
                 "assigned_to": "Digital Banking Team",
                 "last_update": "Jan 15, 2024 02:15 PM",
                 "description": "Customer reports authentication errors when trying to log into online banking platform",
-                "resolution_time": "4 hours"
+                "resolution_time": "4 hours",
             },
             {
-                "ticket_id": "REQ0067890", 
+                "ticket_id": "REQ0067890",
                 "priority": "Medium",
                 "status": "Pending Approval",
                 "subject": "Credit limit increase request",
@@ -186,19 +197,44 @@ class LegalComplianceDashboard:
                 "assigned_to": "Credit Operations",
                 "last_update": "Jan 15, 2024 10:45 AM",
                 "description": "Customer requesting credit limit increase from $5,000 to $10,000",
-                "resolution_time": "24 hours"
-            }
+                "resolution_time": "24 hours",
+            },
         ]
-        
+
         # Recent transactions
         self.recent_transactions = [
-            {"date": "Jan 15, 2024", "description": "Amazon Purchase", "amount": "-$89.99", "account": "****1234"},
-            {"date": "Jan 15, 2024", "description": "Salary Deposit", "amount": "+$3,200.00", "account": "****1234"},
-            {"date": "Jan 14, 2024", "description": "Starbucks", "amount": "-$5.67", "account": "****9012"},
-            {"date": "Jan 14, 2024", "description": "Gas Station", "amount": "-$45.20", "account": "****9012"},
-            {"date": "Jan 13, 2024", "description": "Transfer to Savings", "amount": "-$500.00", "account": "****1234"}
+            {
+                "date": "Jan 15, 2024",
+                "description": "Amazon Purchase",
+                "amount": "-$89.99",
+                "account": "****1234",
+            },
+            {
+                "date": "Jan 15, 2024",
+                "description": "Salary Deposit",
+                "amount": "+$3,200.00",
+                "account": "****1234",
+            },
+            {
+                "date": "Jan 14, 2024",
+                "description": "Starbucks",
+                "amount": "-$5.67",
+                "account": "****9012",
+            },
+            {
+                "date": "Jan 14, 2024",
+                "description": "Gas Station",
+                "amount": "-$45.20",
+                "account": "****9012",
+            },
+            {
+                "date": "Jan 13, 2024",
+                "description": "Transfer to Savings",
+                "amount": "-$500.00",
+                "account": "****1234",
+            },
         ]
-        
+
         # Knowledge base for agent responses
         self.agent_knowledge = {
             "login_issues": {
@@ -220,11 +256,9 @@ class LegalComplianceDashboard:
 - Send password reset link to registered email
 - Create follow-up task for 24 hours
 - Document resolution in Salesforce""",
-                
                 "escalation": "Digital Banking Team - Level 2 Support",
-                "sla": "4 hours for High priority login issues"
+                "sla": "4 hours for High priority login issues",
             },
-            
             "credit_limit": {
                 "solution": """**Credit Limit Increase Process:**
 1. Verify customer identity and account standing ✓
@@ -243,20 +277,19 @@ class LegalComplianceDashboard:
 - Request recent pay stubs
 - Schedule callback within 24 hours
 - Update customer on approval timeline""",
-                
                 "escalation": "Credit Operations Manager",
-                "sla": "24-48 hours for credit decisions"
-            }
+                "sla": "24-48 hours for credit decisions",
+            },
         }
 
     def switch_to_sox_audit(self):
         """Switch to SOX audit case for complex compliance"""
         self.current_case = self.sox_audit_case
-    
+
     def switch_to_gdpr_compliance(self):
         """Switch back to GDPR compliance case (default)"""
         self.current_case = self.gdpr_compliance_case
-    
+
     def get_case_analytics(self):
         """Get case analytics based on current legal case"""
         if self.current_case == self.gdpr_compliance_case:
@@ -335,7 +368,7 @@ class LegalComplianceDashboard:
                 <p><strong>External Audit:</strong> KPMG Q2 2025</p>
             </div>
             """
-    
+
     def get_dashboard_data(self):
         """Return all dashboard data for display"""
         return {
@@ -343,34 +376,37 @@ class LegalComplianceDashboard:
             "accounts": self.accounts,
             "tickets": self.open_tickets,
             "transactions": self.recent_transactions,
-            "analytics": self.get_case_analytics()
+            "analytics": self.get_case_analytics(),
         }
 
     def process_agent_query(self, query: str) -> str:
         """Process agent queries and provide relevant information"""
         query_lower = query.lower()
-        
+
         # Check for ticket references
-        ticket_pattern = r'(INC|REQ|CHG|PRB)\d{7}'
+        ticket_pattern = r"(INC|REQ|CHG|PRB)\d{7}"
         ticket_match = re.search(ticket_pattern, query.upper())
-        
+
         if ticket_match:
             ticket_id = ticket_match.group()
             return self.get_ticket_details(ticket_id)
-        
+
         # Knowledge base responses
-        if any(word in query_lower for word in ["login", "password", "access", "authentication"]):
+        if any(
+            word in query_lower
+            for word in ["login", "password", "access", "authentication"]
+        ):
             return self.agent_knowledge["login_issues"]["solution"]
-        
+
         elif any(word in query_lower for word in ["credit", "limit", "increase"]):
             return self.agent_knowledge["credit_limit"]["solution"]
-        
+
         elif any(word in query_lower for word in ["account", "balance", "transaction"]):
             return self.get_account_summary()
-        
+
         elif any(word in query_lower for word in ["escalate", "manager", "supervisor"]):
             return self.get_escalation_options()
-        
+
         else:
             return self.get_general_agent_response()
 
@@ -400,15 +436,15 @@ class LegalComplianceDashboard:
 - Last contacted: {ticket['last_update']}
 - Preferred contact: Email
 - Next follow-up: Within 2 hours"""
-        
+
         return f"❌ Ticket {ticket_id} not found in current customer's open tickets."
 
     def get_account_summary(self) -> str:
         """Provide case summary for legal agent"""
-        case_name = self.current_case.get('name', 'Unknown Case')
-        case_type = self.current_case.get('type', 'Compliance')
-        risk_level = self.current_case.get('risk_level', 'Medium')
-        
+        case_name = self.current_case.get("name", "Unknown Case")
+        case_type = self.current_case.get("type", "Compliance")
+        risk_level = self.current_case.get("risk_level", "Medium")
+
         return f"""**⚖️ Case Summary for {case_name}**
 
 **Case Type**: {case_type}
@@ -481,107 +517,107 @@ How can I assist you today?"""
 def create_a2a_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
     """Create A2A server application for Azure Foundry agent."""
     global agent_executor_instance
-    
+
     # Define agent skills
     skills = [
         AgentSkill(
-            id='legal_compliance',
-            name='Legal Compliance',
+            id="legal_compliance",
+            name="Legal Compliance",
             description="Analyze compliance requirements for specific regulations (GDPR, SOX, CCPA, etc.) and provide regulatory guidance.",
-            tags=['legal', 'compliance', 'gdpr', 'sox', 'ccpa', 'regulatory'],
+            tags=["legal", "compliance", "gdpr", "sox", "ccpa", "regulatory"],
             examples=[
-                'Assess GDPR compliance for data processing',
-                'Conduct SOX compliance audit',
-                'Evaluate CCPA compliance requirements',
-                'Analyze regulatory requirements for a business activity'
+                "Assess GDPR compliance for data processing",
+                "Conduct SOX compliance audit",
+                "Evaluate CCPA compliance requirements",
+                "Analyze regulatory requirements for a business activity",
             ],
         ),
         AgentSkill(
-            id='risk_assessment',
-            name='Risk Assessment',
+            id="risk_assessment",
+            name="Risk Assessment",
             description="Assess legal and compliance risks for business activities and provide mitigation strategies.",
-            tags=['risk', 'assessment', 'legal', 'compliance', 'mitigation'],
+            tags=["risk", "assessment", "legal", "compliance", "mitigation"],
             examples=[
-                'Assess legal risks for a new business activity',
-                'Evaluate compliance risks for data processing',
-                'Provide risk mitigation strategies',
-                'Conduct regulatory risk assessment'
+                "Assess legal risks for a new business activity",
+                "Evaluate compliance risks for data processing",
+                "Provide risk mitigation strategies",
+                "Conduct regulatory risk assessment",
             ],
         ),
         AgentSkill(
-            id='regulatory_research',
-            name='Regulatory Research',
+            id="regulatory_research",
+            name="Regulatory Research",
             description="Research specific regulations and their requirements using legal databases and web search.",
-            tags=['research', 'regulatory', 'legal', 'compliance', 'gdpr', 'sox'],
+            tags=["research", "regulatory", "legal", "compliance", "gdpr", "sox"],
             examples=[
-                'Research GDPR Article 6 requirements',
-                'Find SOX Section 404 compliance requirements',
-                'Look up CCPA data subject rights',
-                'Research regulatory guidance for data transfers'
+                "Research GDPR Article 6 requirements",
+                "Find SOX Section 404 compliance requirements",
+                "Look up CCPA data subject rights",
+                "Research regulatory guidance for data transfers",
             ],
         ),
         AgentSkill(
-            id='document_analysis',
-            name='Document Analysis',
+            id="document_analysis",
+            name="Document Analysis",
             description="Analyze legal documents, contracts, and compliance materials for regulatory requirements.",
-            tags=['document', 'analysis', 'legal', 'contract', 'compliance'],
+            tags=["document", "analysis", "legal", "contract", "compliance"],
             examples=[
-                'Analyze privacy policy for GDPR compliance',
-                'Review data processing agreement',
-                'Assess contract for regulatory requirements',
-                'Analyze compliance documentation'
+                "Analyze privacy policy for GDPR compliance",
+                "Review data processing agreement",
+                "Assess contract for regulatory requirements",
+                "Analyze compliance documentation",
             ],
         ),
         AgentSkill(
-            id='incident_response',
-            name='Incident Response',
+            id="incident_response",
+            name="Incident Response",
             description="Handle data breach and compliance incident reporting with proper procedures.",
-            tags=['incident', 'response', 'breach', 'compliance', 'reporting'],
+            tags=["incident", "response", "breach", "compliance", "reporting"],
             examples=[
-                'Create data breach incident report',
-                'Generate compliance violation report',
-                'Provide incident response procedures',
-                'Assess incident severity and impact'
+                "Create data breach incident report",
+                "Generate compliance violation report",
+                "Provide incident response procedures",
+                "Assess incident severity and impact",
             ],
         ),
         AgentSkill(
-            id='web_search',
-            name='Web Search',
+            id="web_search",
+            name="Web Search",
             description="Search the web for current legal and regulatory information using Bing or other integrated search tools.",
-            tags=['web', 'search', 'bing', 'internet', 'legal', 'regulatory'],
+            tags=["web", "search", "bing", "internet", "legal", "regulatory"],
             examples=[
-                'Find latest regulatory updates',
-                'Search for legal precedents',
-                'Get current compliance guidance',
-                'Research regulatory enforcement actions'
+                "Find latest regulatory updates",
+                "Search for legal precedents",
+                "Get current compliance guidance",
+                "Research regulatory enforcement actions",
             ],
         ),
         AgentSkill(
-            id='file_knowledge_search',
-            name='File & Knowledge Search',
+            id="file_knowledge_search",
+            name="File & Knowledge Search",
             description="Search through uploaded legal documents, compliance materials, and knowledge bases for specific information.",
-            tags=['file', 'document', 'knowledge', 'search', 'legal', 'compliance'],
+            tags=["file", "document", "knowledge", "search", "legal", "compliance"],
             examples=[
-                'Search legal documents for specific requirements',
-                'Find compliance guidance in uploaded materials',
-                'Extract regulatory information from documents',
-                'Search through compliance policies'
+                "Search legal documents for specific requirements",
+                "Find compliance guidance in uploaded materials",
+                "Extract regulatory information from documents",
+                "Search through compliance policies",
             ],
-        )
+        ),
     ]
 
     resolved_host_for_url = host if host != "0.0.0.0" else DEFAULT_HOST
 
     # Create agent card
     agent_card = AgentCard(
-        name='Legal Compliance & Regulatory Agent',
+        name="Legal Compliance & Regulatory Agent",
         description="An intelligent legal and compliance agent specialized in regulatory analysis, risk assessment, document analysis, and incident response. Can analyze compliance requirements for GDPR, SOX, CCPA and other regulations, assess legal risks, research regulatory requirements, analyze legal documents, handle incident reporting, search the web for current legal information, and search through uploaded legal documents and compliance materials, all with professional legal guidance.",
-       # url=f'http://{host}:{port}/',
-        #url=f'https://agent1.ngrok.app/agent5/',
+        # url=f'http://{host}:{port}/',
+        # url=f'https://agent1.ngrok.app/agent5/',
         url=resolve_agent_url(resolved_host_for_url, port),
-        version='1.0.0',
-        defaultInputModes=['text'],
-        defaultOutputModes=['text'],
+        version="1.0.0",
+        defaultInputModes=["text"],
+        defaultOutputModes=["text"],
         capabilities=AgentCapabilities(streaming=True),
         skills=skills,
     )
@@ -591,34 +627,26 @@ def create_a2a_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
 
     # Create request handler
     request_handler = DefaultRequestHandler(
-        agent_executor=agent_executor_instance, 
-        task_store=InMemoryTaskStore()
+        agent_executor=agent_executor_instance, task_store=InMemoryTaskStore()
     )
 
     # Create A2A application
     a2a_app = A2AStarletteApplication(
-        agent_card=agent_card, 
-        http_handler=request_handler
+        agent_card=agent_card, http_handler=request_handler
     )
-    
+
     # Get routes
     routes = a2a_app.routes()
-    
+
     # Add health check endpoint
     async def health_check(_request: Request) -> PlainTextResponse:
-        return PlainTextResponse('AI Foundry Legal Agent is running!')
-    
-    routes.append(
-        Route(
-            path='/health',
-            methods=['GET'],
-            endpoint=health_check
-        )
-    )
+        return PlainTextResponse("AI Foundry Legal Agent is running!")
+
+    routes.append(Route(path="/health", methods=["GET"], endpoint=health_check))
 
     # Create Starlette app
     app = Starlette(routes=routes)
-    
+
     return app
 
 
@@ -636,15 +664,25 @@ async def register_agent_with_host(agent_card):
         await asyncio.sleep(2)
         try:
             if not HOST_AGENT_URL:
-                logger.info("ℹ️ Host agent URL not configured; skipping registration attempt.")
+                logger.info(
+                    "ℹ️ Host agent URL not configured; skipping registration attempt."
+                )
                 return
 
-            logger.info(f"🤝 Attempting to register '{agent_card.name}' with host agent at {HOST_AGENT_URL}...")
-            registration_success = await register_with_host_agent(agent_card, host_url=HOST_AGENT_URL)
+            logger.info(
+                f"🤝 Attempting to register '{agent_card.name}' with host agent at {HOST_AGENT_URL}..."
+            )
+            registration_success = await register_with_host_agent(
+                agent_card, host_url=HOST_AGENT_URL
+            )
             if registration_success:
-                logger.info(f"🎉 '{agent_card.name}' successfully registered with host agent!")
+                logger.info(
+                    f"🎉 '{agent_card.name}' successfully registered with host agent!"
+                )
             else:
-                logger.info(f"📡 '{agent_card.name}' registration failed - host agent may be unavailable")
+                logger.info(
+                    f"📡 '{agent_card.name}' registration failed - host agent may be unavailable"
+                )
         except Exception as e:
             logger.warning(f"⚠️ Registration attempt failed: {e}")
 
@@ -652,26 +690,31 @@ async def register_agent_with_host(agent_card):
 def start_background_registration(agent_card):
     """Start background registration task."""
     if SELF_REGISTRATION_AVAILABLE:
+
         def run_registration():
             asyncio.run(register_agent_with_host(agent_card))
-        
+
         registration_thread = threading.Thread(target=run_registration, daemon=True)
         registration_thread.start()
-        logger.info(f"🚀 '{agent_card.name}' starting with background registration enabled")
+        logger.info(
+            f"🚀 '{agent_card.name}' starting with background registration enabled"
+        )
     else:
         logger.info(f"📡 '{agent_card.name}' starting without self-registration")
 
 
-async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_port: int = DEFAULT_PORT):
+async def launch_ui(
+    host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_port: int = DEFAULT_PORT
+):
     """Launch Gradio UI and A2A server simultaneously."""
     print("Starting AI Foundry Expert Agent with both UI and A2A server...")
-    
+
     # Verify required environment variables
     required_env_vars = [
-        'AZURE_AI_FOUNDRY_PROJECT_ENDPOINT',
-        'AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME'
+        "AZURE_AI_FOUNDRY_PROJECT_ENDPOINT",
+        "AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME",
     ]
-    
+
     missing_vars = [var for var in required_env_vars if not os.getenv(var)]
     if missing_vars:
         raise ValueError(
@@ -691,116 +734,116 @@ async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_p
     a2a_thread = threading.Thread(
         target=run_a2a_server_in_thread,
         args=(host if host != "0.0.0.0" else DEFAULT_HOST, a2a_port),
-        daemon=True
+        daemon=True,
     )
     a2a_thread.start()
-    
+
     # Give the A2A server a moment to start
     await asyncio.sleep(2)
-    
+
     # Start background registration for UI mode
     skills = [
         AgentSkill(
-            id='legal_compliance',
-            name='Legal Compliance',
+            id="legal_compliance",
+            name="Legal Compliance",
             description="Analyze compliance requirements for specific regulations (GDPR, SOX, CCPA, etc.) and provide regulatory guidance.",
-            tags=['legal', 'compliance', 'gdpr', 'sox', 'ccpa', 'regulatory'],
+            tags=["legal", "compliance", "gdpr", "sox", "ccpa", "regulatory"],
             examples=[
-                'Assess GDPR compliance for data processing',
-                'Conduct SOX compliance audit',
-                'Evaluate CCPA compliance requirements',
-                'Analyze regulatory requirements for a business activity'
+                "Assess GDPR compliance for data processing",
+                "Conduct SOX compliance audit",
+                "Evaluate CCPA compliance requirements",
+                "Analyze regulatory requirements for a business activity",
             ],
         ),
         AgentSkill(
-            id='risk_assessment',
-            name='Risk Assessment',
+            id="risk_assessment",
+            name="Risk Assessment",
             description="Assess legal and compliance risks for business activities and provide mitigation strategies.",
-            tags=['risk', 'assessment', 'legal', 'compliance', 'mitigation'],
+            tags=["risk", "assessment", "legal", "compliance", "mitigation"],
             examples=[
-                'Assess legal risks for a new business activity',
-                'Evaluate compliance risks for data processing',
-                'Provide risk mitigation strategies',
-                'Conduct regulatory risk assessment'
+                "Assess legal risks for a new business activity",
+                "Evaluate compliance risks for data processing",
+                "Provide risk mitigation strategies",
+                "Conduct regulatory risk assessment",
             ],
         ),
         AgentSkill(
-            id='regulatory_research',
-            name='Regulatory Research',
+            id="regulatory_research",
+            name="Regulatory Research",
             description="Research specific regulations and their requirements using legal databases and web search.",
-            tags=['research', 'regulatory', 'legal', 'compliance', 'gdpr', 'sox'],
+            tags=["research", "regulatory", "legal", "compliance", "gdpr", "sox"],
             examples=[
-                'Research GDPR Article 6 requirements',
-                'Find SOX Section 404 compliance requirements',
-                'Look up CCPA data subject rights',
-                'Research regulatory guidance for data transfers'
+                "Research GDPR Article 6 requirements",
+                "Find SOX Section 404 compliance requirements",
+                "Look up CCPA data subject rights",
+                "Research regulatory guidance for data transfers",
             ],
         ),
         AgentSkill(
-            id='document_analysis',
-            name='Document Analysis',
+            id="document_analysis",
+            name="Document Analysis",
             description="Analyze legal documents, contracts, and compliance materials for regulatory requirements.",
-            tags=['document', 'analysis', 'legal', 'contract', 'compliance'],
+            tags=["document", "analysis", "legal", "contract", "compliance"],
             examples=[
-                'Analyze privacy policy for GDPR compliance',
-                'Review data processing agreement',
-                'Assess contract for regulatory requirements',
-                'Analyze compliance documentation'
+                "Analyze privacy policy for GDPR compliance",
+                "Review data processing agreement",
+                "Assess contract for regulatory requirements",
+                "Analyze compliance documentation",
             ],
         ),
         AgentSkill(
-            id='incident_response',
-            name='Incident Response',
+            id="incident_response",
+            name="Incident Response",
             description="Handle data breach and compliance incident reporting with proper procedures.",
-            tags=['incident', 'response', 'breach', 'compliance', 'reporting'],
+            tags=["incident", "response", "breach", "compliance", "reporting"],
             examples=[
-                'Create data breach incident report',
-                'Generate compliance violation report',
-                'Provide incident response procedures',
-                'Assess incident severity and impact'
+                "Create data breach incident report",
+                "Generate compliance violation report",
+                "Provide incident response procedures",
+                "Assess incident severity and impact",
             ],
         ),
         AgentSkill(
-            id='web_search',
-            name='Web Search',
+            id="web_search",
+            name="Web Search",
             description="Search the web for current legal and regulatory information using Bing or other integrated search tools.",
-            tags=['web', 'search', 'bing', 'internet', 'legal', 'regulatory'],
+            tags=["web", "search", "bing", "internet", "legal", "regulatory"],
             examples=[
-                'Find latest regulatory updates',
-                'Search for legal precedents',
-                'Get current compliance guidance',
-                'Research regulatory enforcement actions'
+                "Find latest regulatory updates",
+                "Search for legal precedents",
+                "Get current compliance guidance",
+                "Research regulatory enforcement actions",
             ],
         ),
         AgentSkill(
-            id='file_knowledge_search',
-            name='File & Knowledge Search',
+            id="file_knowledge_search",
+            name="File & Knowledge Search",
             description="Search through uploaded legal documents, compliance materials, and knowledge bases for specific information.",
-            tags=['file', 'document', 'knowledge', 'search', 'legal', 'compliance'],
+            tags=["file", "document", "knowledge", "search", "legal", "compliance"],
             examples=[
-                'Search legal documents for specific requirements',
-                'Find compliance guidance in uploaded materials',
-                'Extract regulatory information from documents',
-                'Search through compliance policies'
+                "Search legal documents for specific requirements",
+                "Find compliance guidance in uploaded materials",
+                "Extract regulatory information from documents",
+                "Search through compliance policies",
             ],
-        )
+        ),
     ]
 
     resolved_host_for_url = host if host != "0.0.0.0" else DEFAULT_HOST
 
     agent_card = AgentCard(
-        name='Legal Compliance & Regulatory Agent',
+        name="Legal Compliance & Regulatory Agent",
         description="An intelligent legal and compliance agent specialized in regulatory analysis, risk assessment, document analysis, and incident response. Can analyze compliance requirements for GDPR, SOX, CCPA and other regulations, assess legal risks, research regulatory requirements, analyze legal documents, handle incident reporting, search the web for current legal information, and search through uploaded legal documents and compliance materials, all with professional legal guidance.",
-        #url=f'http://{host if host != "0.0.0.0" else DEFAULT_HOST}:{a2a_port}/',
-        #url=f'https://agent1.ngrok.app/agent5/',
+        # url=f'http://{host if host != "0.0.0.0" else DEFAULT_HOST}:{a2a_port}/',
+        # url=f'https://agent1.ngrok.app/agent5/',
         url=resolve_agent_url(resolved_host_for_url, a2a_port),
-        version='1.0.0',
-        defaultInputModes=['text'],
-        defaultOutputModes=['text'],
+        version="1.0.0",
+        defaultInputModes=["text"],
+        defaultOutputModes=["text"],
         capabilities=AgentCapabilities(streaming=True),
         skills=skills,
     )
-    
+
     # Start background registration
     start_background_registration(agent_card)
 
@@ -810,138 +853,191 @@ async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_p
         if agent_executor_instance and agent_executor_instance._waiting_for_input:
             context_id = next(iter(agent_executor_instance._waiting_for_input.keys()))
             request_text = agent_executor_instance._waiting_for_input[context_id]
-            
+
             # DEBUG: Log the full request text to see what we're getting
             logger.debug(f"Full request text length: {len(request_text)}")
             logger.debug(f"Request text preview: {request_text[:500]}...")
-            
+
             # Extract conversation history from the memory results
             conversation_text = ""
             if "Relevant context from previous interactions:" in request_text:
                 import json
                 import re
-                
+
                 # Find all the memory result entries
                 # Pattern: "  {number}. From {agent_name}: {content}"
-                memory_pattern = r'\s+(\d+)\.\s+From\s+([^:]+):\s+(.+)'
+                memory_pattern = r"\s+(\d+)\.\s+From\s+([^:]+):\s+(.+)"
                 matches = re.findall(memory_pattern, request_text)
-                
+
                 logger.debug(f"Found {len(matches)} memory matches")
-                
+
                 for i, match in enumerate(matches):
                     try:
                         _, agent_name, content = match
-                        logger.debug(f"Processing memory match {i+1}: agent={agent_name}, content_length={len(content)}")
+                        logger.debug(
+                            f"Processing memory match {i+1}: agent={agent_name}, content_length={len(content)}"
+                        )
                         logger.debug(f"Content preview: {content[:200]}...")
-                        
+
                         # The content might be a JSON string or just text
-                        if content.startswith('{'):
+                        if content.startswith("{"):
                             # Try to parse as Python dict (since it uses single quotes)
                             try:
                                 import ast
+
                                 # Find the end of the dict object (before the ...)
-                                if '...' in content:
-                                    content = content.split('...')[0]
+                                if "..." in content:
+                                    content = content.split("...")[0]
                                     # Try to find the closing brace
                                     brace_count = 0
                                     end_pos = 0
                                     for i, char in enumerate(content):
-                                        if char == '{':
+                                        if char == "{":
                                             brace_count += 1
-                                        elif char == '}':
+                                        elif char == "}":
                                             brace_count -= 1
                                             if brace_count == 0:
                                                 end_pos = i + 1
                                                 break
                                     if end_pos > 0:
                                         content = content[:end_pos]
-                                
+
                                 data = ast.literal_eval(content)
                                 logger.debug(f"Parsed JSON keys: {list(data.keys())}")
-                                
+
                                 # Look for conversation history in the JSON
-                                if 'inbound_payload' in data:
-                                    inbound = data['inbound_payload']
-                                    logger.debug(f"Found inbound_payload, type: {type(inbound)}, length: {len(str(inbound))}")
-                                    
+                                if "inbound_payload" in data:
+                                    inbound = data["inbound_payload"]
+                                    logger.debug(
+                                        f"Found inbound_payload, type: {type(inbound)}, length: {len(str(inbound))}"
+                                    )
+
                                     if isinstance(inbound, str):
                                         try:
                                             # Handle truncated JSON in inbound_payload
-                                            if '...' in inbound:
-                                                inbound = inbound.split('...')[0]
+                                            if "..." in inbound:
+                                                inbound = inbound.split("...")[0]
                                                 # Try to find the closing brace
                                                 brace_count = 0
                                                 end_pos = 0
                                                 for i, char in enumerate(inbound):
-                                                    if char == '{':
+                                                    if char == "{":
                                                         brace_count += 1
-                                                    elif char == '}':
+                                                    elif char == "}":
                                                         brace_count -= 1
                                                         if brace_count == 0:
                                                             end_pos = i + 1
                                                             break
                                                 if end_pos > 0:
                                                     inbound = inbound[:end_pos]
-                                            
+
                                             inbound_data = json.loads(inbound)
-                                            logger.debug(f"Parsed inbound_data keys: {list(inbound_data.keys())}")
-                                            
-                                            if 'history' in inbound_data and inbound_data['history']:
-                                                logger.debug(f"Found history with {len(inbound_data['history'])} messages")
-                                                for j, msg in enumerate(inbound_data['history']):
-                                                    logger.debug(f"History message {j}: {msg}")
-                                                    if 'parts' in msg and msg['parts']:
-                                                        for part in msg['parts']:
-                                                            if 'root' in part and 'text' in part['root']:
-                                                                text = part['root']['text']
+                                            logger.debug(
+                                                f"Parsed inbound_data keys: {list(inbound_data.keys())}"
+                                            )
+
+                                            if (
+                                                "history" in inbound_data
+                                                and inbound_data["history"]
+                                            ):
+                                                logger.debug(
+                                                    f"Found history with {len(inbound_data['history'])} messages"
+                                                )
+                                                for j, msg in enumerate(
+                                                    inbound_data["history"]
+                                                ):
+                                                    logger.debug(
+                                                        f"History message {j}: {msg}"
+                                                    )
+                                                    if "parts" in msg and msg["parts"]:
+                                                        for part in msg["parts"]:
+                                                            if (
+                                                                "root" in part
+                                                                and "text"
+                                                                in part["root"]
+                                                            ):
+                                                                text = part["root"][
+                                                                    "text"
+                                                                ]
                                                                 if text.strip():
-                                                                    conversation_text += f"{text}\n"
-                                                                    logger.debug(f"Added conversation text: {text[:100]}...")
+                                                                    conversation_text += (
+                                                                        f"{text}\n"
+                                                                    )
+                                                                    logger.debug(
+                                                                        f"Added conversation text: {text[:100]}..."
+                                                                    )
                                             else:
-                                                logger.debug(f"No history found in inbound_data")
-                                                
+                                                logger.debug(
+                                                    f"No history found in inbound_data"
+                                                )
+
                                             # Also try to extract from the raw inbound_payload string if history is empty
-                                            if not conversation_text and isinstance(inbound, str):
+                                            if not conversation_text and isinstance(
+                                                inbound, str
+                                            ):
                                                 # Look for conversation patterns in the raw string
                                                 # Common patterns: "text": "actual message content"
                                                 text_pattern = r'"text":\s*"([^"]*)"'
-                                                text_matches = re.findall(text_pattern, inbound)
+                                                text_matches = re.findall(
+                                                    text_pattern, inbound
+                                                )
                                                 if text_matches:
-                                                    logger.debug(f"Found {len(text_matches)} text matches in raw payload")
+                                                    logger.debug(
+                                                        f"Found {len(text_matches)} text matches in raw payload"
+                                                    )
                                                     for text_match in text_matches:
-                                                        if text_match.strip() and len(text_match.strip()) > 10:  # Only meaningful content
+                                                        if (
+                                                            text_match.strip()
+                                                            and len(text_match.strip())
+                                                            > 10
+                                                        ):  # Only meaningful content
                                                             conversation_text += f"{text_match.strip()}\n"
-                                                            logger.debug(f"Added raw text: {text_match.strip()[:100]}...")
+                                                            logger.debug(
+                                                                f"Added raw text: {text_match.strip()[:100]}..."
+                                                            )
                                         except Exception as e:
-                                            logger.debug(f"Error parsing inbound_payload: {e}")
+                                            logger.debug(
+                                                f"Error parsing inbound_payload: {e}"
+                                            )
                                             # If parsing fails, just show the raw inbound_payload
-                                            conversation_text += f"Raw payload: {inbound[:200]}...\n"
+                                            conversation_text += (
+                                                f"Raw payload: {inbound[:200]}...\n"
+                                            )
                             except Exception as e:
                                 logger.debug(f"Error parsing JSON: {e}")
                                 # If not valid JSON, just use the content as text
-                                conversation_text += f"Raw content: {content[:200]}...\n"
+                                conversation_text += (
+                                    f"Raw content: {content[:200]}...\n"
+                                )
                         else:
                             # Just use the content as text
                             conversation_text += f"{content}\n"
-                            
+
                         # Additional fallback: try to extract conversation from the raw content
                         if not conversation_text.strip():
                             # Look for any text patterns in the raw content
                             text_pattern = r'"text":\s*"([^"]*)"'
                             text_matches = re.findall(text_pattern, content)
                             if text_matches:
-                                logger.debug(f"Found {len(text_matches)} text matches in raw content")
+                                logger.debug(
+                                    f"Found {len(text_matches)} text matches in raw content"
+                                )
                                 for text_match in text_matches:
-                                    if text_match.strip() and len(text_match.strip()) > 10:  # Only meaningful content
+                                    if (
+                                        text_match.strip()
+                                        and len(text_match.strip()) > 10
+                                    ):  # Only meaningful content
                                         conversation_text += f"{text_match.strip()}\n"
-                                        logger.debug(f"Added raw content text: {text_match.strip()[:100]}...")
+                                        logger.debug(
+                                            f"Added raw content text: {text_match.strip()[:100]}..."
+                                        )
                     except Exception as e:
                         logger.debug(f"Error processing memory match: {e}")
                         continue
-            
+
             logger.debug(f"Final conversation text length: {len(conversation_text)}")
             logger.debug(f"Conversation text: {conversation_text}")
-            
+
             # Add static conversation data for human intervention scenarios
             static_conversation = """Assistant: Hello! How can I help you today?
 
@@ -957,12 +1053,14 @@ Any Merchant or Transaction Details (if available)
 I'll ensure your concern is escalated to the appropriate team and actions like blocking the card and initiating an investigation are taken promptly. Let me know if there's anything else you'd like me to prioritize.
 
 User: 1500$, yesterday"""
-            
+
             # Combine extracted conversation with static data
             full_conversation = static_conversation
             if conversation_text.strip():
-                full_conversation += f"\n\n--- Additional Context from Memory ---\n{conversation_text}"
-            
+                full_conversation += (
+                    f"\n\n--- Additional Context from Memory ---\n{conversation_text}"
+                )
+
             # Display the conversation history
             return f"""
 <div style="background: linear-gradient(135deg, #dc2626 0%, #ef4444 100%); color: white; padding: 20px; border-radius: 10px; margin: 10px 0; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
@@ -983,21 +1081,21 @@ User: 1500$, yesterday"""
 
     # Create dashboard instance
     dashboard = LegalComplianceDashboard()
-    
+
     def format_case_info(case):
         """Format legal case information for display"""
         # Set priority icon based on value
-        if case.get('priority') == 'Low':
-            priority_icon = '🟢'
-        elif case.get('priority') == 'Medium':
-            priority_icon = '🟡'
-        elif case.get('priority') == 'High':
-            priority_icon = '🔴'
-        elif case.get('priority') == 'Critical':
-            priority_icon = '🚨'
+        if case.get("priority") == "Low":
+            priority_icon = "🟢"
+        elif case.get("priority") == "Medium":
+            priority_icon = "🟡"
+        elif case.get("priority") == "High":
+            priority_icon = "🔴"
+        elif case.get("priority") == "Critical":
+            priority_icon = "🚨"
         else:
-            priority_icon = '⚪'
-            
+            priority_icon = "⚪"
+
         return f"""
 **Case ID:** {case.get('case_id', 'N/A')}  
 **Client:** {case.get('client_name', 'N/A')}  
@@ -1011,39 +1109,39 @@ User: 1500$, yesterday"""
 **Last Updated:** {case.get('last_updated', 'N/A')}  
 **Compliance Deadline:** {case.get('compliance_deadline', 'N/A')}
 """
-    
+
     def format_accounts_table(accounts):
         """Format accounts as a table"""
         df = pd.DataFrame(accounts)
         return df
-    
+
     def format_tickets_table(tickets):
         """Format tickets as a table"""
         df = pd.DataFrame(tickets)
         return df
-    
+
     def format_transactions_table(transactions):
         """Format transactions as a table"""
         df = pd.DataFrame(transactions)
         return df
-    
+
     def refresh_case_data():
         """Refresh case information display"""
         global agent_executor_instance
-        
+
         # Check if there are pending requests and switch cases accordingly
         if agent_executor_instance and agent_executor_instance._waiting_for_input:
             dashboard.switch_to_sox_audit()
         else:
             dashboard.switch_to_gdpr_compliance()
-        
+
         data = dashboard.get_dashboard_data()
         return (
             format_case_info(data["case"]),
             format_accounts_table(data["accounts"]),
             format_tickets_table(data["tickets"]),
             format_transactions_table(data["transactions"]),
-            data["analytics"]
+            data["analytics"],
         )
 
     # Custom CSS for dashboard styling
@@ -1122,12 +1220,16 @@ User: 1500$, yesterday"""
 
     display_host = resolved_host_for_url
     ui_display_url = f"http://{display_host}:{ui_port}"
-    a2a_display_url = resolve_agent_url(display_host, a2a_port).rstrip('/')
+    a2a_display_url = resolve_agent_url(display_host, a2a_port).rstrip("/")
 
-    with gr.Blocks(css=dashboard_css, theme=gr.themes.Ocean(), title="Legal Compliance Dashboard - AI Foundry Legal Agent") as demo:
-        
+    with gr.Blocks(
+        css=dashboard_css,
+        theme=gr.themes.Ocean(),
+        title="Legal Compliance Dashboard - AI Foundry Legal Agent",
+    ) as demo:
         # Dashboard Header
-        gr.HTML(f"""
+        gr.HTML(
+            f"""
         <div class="dashboard-header">
             <div style="display: flex; align-items: center; justify-content: center; gap: 15px;">
                 <div>
@@ -1138,21 +1240,23 @@ User: 1500$, yesterday"""
                 </div>
             </div>
         </div>
-        """)
-        
+        """
+        )
+
         # Status display for pending requests (preserved from original) - full width
         status_display = gr.HTML(value=check_pending_requests())
-        
+
         with gr.Row():
             gr.Column(scale=4)  # Empty space
             refresh_btn = gr.Button("🔄 Refresh Status", size="sm", scale=1)
             refresh_btn.click(fn=check_pending_requests, outputs=status_display)
-        
+
         # Set up automatic refresh using timer (every 2 seconds) - will be configured later
         timer = gr.Timer(2)
-        
+
         # Add a hidden component that triggers refresh via JavaScript
-        gr.HTML("""
+        gr.HTML(
+            """
         <script>
         setInterval(function() {
             // Find the refresh button by its text content
@@ -1165,59 +1269,60 @@ User: 1500$, yesterday"""
             }
         }, 3000);
         </script>
-        """, visible=False)
-        
+        """,
+            visible=False,
+        )
+
         # Agent Support Chat - Full Width
         gr.Markdown("### 💬 Agent Support Chat")
-        
+
         chatbot_interface = gr.Chatbot(
-            value=[{"role": "assistant", "content": dashboard.get_general_agent_response()}],
+            value=[
+                {"role": "assistant", "content": dashboard.get_general_agent_response()}
+            ],
             height=400,
             show_label=False,
             container=True,
             elem_classes=["chat-container"],
-            type="messages"
+            type="messages",
         )
-        
+
         with gr.Row():
             agent_input = gr.Textbox(
                 placeholder="Ask about tickets, accounts, or type ticket number (e.g., INC0012345)...",
                 show_label=False,
-                scale=4
+                scale=4,
             )
             send_btn = gr.Button("Send", variant="primary", scale=1)
-        
+
         # Agent Quick Commands
         with gr.Row():
+
             def set_tickets_query():
                 return "show all open tickets"
-            
+
             def set_account_summary():
                 return "account summary"
-            
+
             def set_escalation():
                 return "escalation options"
-            
+
             def set_knowledge_base():
                 return "search knowledge base"
-            
+
             gr.Button("🎫 View Tickets", size="sm").click(
-                set_tickets_query,
-                outputs=agent_input
+                set_tickets_query, outputs=agent_input
             )
             gr.Button("💰 Account Summary", size="sm").click(
-                set_account_summary,
-                outputs=agent_input
+                set_account_summary, outputs=agent_input
             )
             gr.Button("🔺 Escalate", size="sm").click(
-                set_escalation,
-                outputs=agent_input
+                set_escalation, outputs=agent_input
             )
             gr.Button("📋 Knowledge Base", size="sm").click(
-                set_knowledge_base,
-                outputs=agent_input
+                set_knowledge_base, outputs=agent_input
             )
-        
+
         # Quick Actions - Full Width
         gr.Markdown("### ⚡ Quick Actions")
         with gr.Row():
@@ -1225,44 +1330,58 @@ User: 1500$, yesterday"""
             gr.Button("❄️ Freeze Account", size="sm")
             gr.Button("💳 Order Card", size="sm")
             gr.Button("📧 Send Email", size="sm")
-        
+
         # Customer Information and Account Details Section
         with gr.Row():
             # Left Panel - Customer Information, Accounts, Tickets, Transactions
             with gr.Column(scale=1):
                 gr.Markdown("### ⚖️ Case Information")
                 case_info = gr.Markdown(
-                    format_case_info(dashboard.current_case),
-                    elem_classes=["case-info"]
+                    format_case_info(dashboard.current_case), elem_classes=["case-info"]
                 )
-                
+
                 gr.Markdown("### 💳 Account Overview")
                 accounts_table = gr.Dataframe(
                     value=format_accounts_table(dashboard.accounts),
-                    headers=["Account Type", "Number", "Balance", "Status", "Last Transaction"],
-                    interactive=False
+                    headers=[
+                        "Account Type",
+                        "Number",
+                        "Balance",
+                        "Status",
+                        "Last Transaction",
+                    ],
+                    interactive=False,
                 )
-                
+
                 gr.Markdown("### 🎫 Open Salesforce Cases")
                 tickets_table = gr.Dataframe(
                     value=format_tickets_table(dashboard.open_tickets),
-                    headers=["Ticket ID", "Priority", "Status", "Subject", "Created", "Assigned To", "Last Update", "Description", "Resolution Time"],
-                    interactive=False
+                    headers=[
+                        "Ticket ID",
+                        "Priority",
+                        "Status",
+                        "Subject",
+                        "Created",
+                        "Assigned To",
+                        "Last Update",
+                        "Description",
+                        "Resolution Time",
+                    ],
+                    interactive=False,
                 )
-                
+
                 gr.Markdown("### 💸 Recent Transactions")
                 transactions_table = gr.Dataframe(
                     value=format_transactions_table(dashboard.recent_transactions),
                     headers=["Date", "Description", "Amount", "Account"],
-                    interactive=False
+                    interactive=False,
                 )
-            
+
             # Right Panel - Customer Analytics
             with gr.Column(scale=1):
                 gr.Markdown("### 📊 Case Analytics & Services")
                 customer_analytics = gr.HTML(value=dashboard.get_case_analytics())
 
-        
         # Agent Tools Panel
         with gr.Row():
             with gr.Column():
@@ -1273,11 +1392,18 @@ User: 1500$, yesterday"""
                     gr.Button("✉️ Send Secure Message", variant="secondary")
                     gr.Button("🔄 Refresh Data", variant="secondary").click(
                         refresh_case_data,
-                        outputs=[case_info, accounts_table, tickets_table, transactions_table, customer_analytics]
+                        outputs=[
+                            case_info,
+                            accounts_table,
+                            tickets_table,
+                            transactions_table,
+                            customer_analytics,
+                        ],
                     )
-        
+
         # Status Bar
-        gr.HTML("""
+        gr.HTML(
+            """
         <div style="background: #f1f5f9; padding: 10px; border-radius: 5px; margin-top: 20px; text-align: center; font-size: 12px; color: #1f2937; font-weight: 500;">
             <strong style="color: #1e3a8a;">Agent Status:</strong> Available | 
             <strong style="color: #1e3a8a;">Queue:</strong> 3 customers waiting | 
@@ -1285,33 +1411,39 @@ User: 1500$, yesterday"""
             <strong style="color: #1e3a8a;">Cases Today:</strong> 12 resolved | 
             <strong style="color: #1e3a8a;">System Status:</strong> 🟢 All systems operational
         </div>
-        """)
-        
+        """
+        )
+
         # Event handlers for dashboard chat
-        async def chat_response(message: str, history: List[dict]) -> Tuple[str, List[dict]]:
+        async def chat_response(
+            message: str, history: List[dict]
+        ) -> Tuple[str, List[dict]]:
             """Process agent chat messages - handles both dashboard and AI Foundry queries"""
             global agent_executor_instance
-            
+
             if not message.strip():
                 return "", history
-            
+
             # Check if this is a dashboard-specific query first (using precise word matching)
             query_lower = message.lower()
             # Use word boundaries to avoid false matches like "incident" matching "inc"
             import re
+
             dashboard_patterns = [
-                r'\binc\d+',  # Match INC followed by numbers (e.g., INC0012345)
-                r'\breq\d+',  # Match REQ followed by numbers  
-                r'\bticket\s+\d+',  # Match "ticket" followed by numbers
-                r'\baccount\s+balance\b',  # Match specific phrase
-                r'\bescalate\b',  # Match whole word only
-                r'\blogin\s+issue\b',  # Match specific phrase
-                r'\bpassword\s+reset\b',  # Match specific phrase
-                r'\bcredit\s+limit\b'  # Match specific phrase
+                r"\binc\d+",  # Match INC followed by numbers (e.g., INC0012345)
+                r"\breq\d+",  # Match REQ followed by numbers
+                r"\bticket\s+\d+",  # Match "ticket" followed by numbers
+                r"\baccount\s+balance\b",  # Match specific phrase
+                r"\bescalate\b",  # Match whole word only
+                r"\blogin\s+issue\b",  # Match specific phrase
+                r"\bpassword\s+reset\b",  # Match specific phrase
+                r"\bcredit\s+limit\b",  # Match specific phrase
             ]
-            
-            is_dashboard_query = any(re.search(pattern, query_lower) for pattern in dashboard_patterns)
-            
+
+            is_dashboard_query = any(
+                re.search(pattern, query_lower) for pattern in dashboard_patterns
+            )
+
             if is_dashboard_query:
                 # Handle as dashboard query
                 response = dashboard.process_agent_query(message)
@@ -1320,96 +1452,156 @@ User: 1500$, yesterday"""
                 return "", history
             else:
                 # Handle as AI Foundry query - check for pending requests first
-                if agent_executor_instance and agent_executor_instance._waiting_for_input:
-                    context_id = next(iter(agent_executor_instance._waiting_for_input.keys()))
-                    request_text = agent_executor_instance._waiting_for_input[context_id]
-                    
+                if (
+                    agent_executor_instance
+                    and agent_executor_instance._waiting_for_input
+                ):
+                    context_id = next(
+                        iter(agent_executor_instance._waiting_for_input.keys())
+                    )
+                    request_text = agent_executor_instance._waiting_for_input[
+                        context_id
+                    ]
+
                     # This is the human expert's response to a pending request
                     history.append({"role": "user", "content": message})
-                    history.append({"role": "assistant", "content": f"✅ **Sending your response to Host Agent...**\n\nExpert Response: \"{message}\""})
-                    
+                    history.append(
+                        {
+                            "role": "assistant",
+                            "content": f'✅ **Sending your response to Host Agent...**\n\nExpert Response: "{message}"',
+                        }
+                    )
+
                     # Send the human response to complete the waiting task
-                    success = await agent_executor_instance.send_human_response(context_id, message)
-                    
+                    success = await agent_executor_instance.send_human_response(
+                        context_id, message
+                    )
+
                     if success:
-                        history.append({"role": "assistant", "content": "✅ **Response sent successfully!** The Host Agent has received your expert input and will continue processing."})
+                        history.append(
+                            {
+                                "role": "assistant",
+                                "content": "✅ **Response sent successfully!** The Host Agent has received your expert input and will continue processing.",
+                            }
+                        )
                     else:
-                        history.append({"role": "assistant", "content": "❌ **Error:** Could not send response to Host Agent. The task may have expired."})
-                    
+                        history.append(
+                            {
+                                "role": "assistant",
+                                "content": "❌ **Error:** Could not send response to Host Agent. The task may have expired.",
+                            }
+                        )
+
                     return "", history
-                
+
                 # Regular AI Foundry interaction
                 try:
                     # Get the shared agent that was initialized at startup
                     foundry_agent = await FoundryLegalAgentExecutor.get_shared_agent()
-                    
+
                     if not foundry_agent:
-                        history.append({"role": "assistant", "content": "❌ Agent not initialized. Please restart the application."})
+                        history.append(
+                            {
+                                "role": "assistant",
+                                "content": "❌ Agent not initialized. Please restart the application.",
+                            }
+                        )
                         return "", history
-                    
+
                     # Create a thread for this conversation
                     thread = await foundry_agent.create_thread()
                     thread_id = thread.id
-                    
+
                     # Add processing message
                     history.append({"role": "user", "content": message})
-                    history.append({"role": "assistant", "content": "🤖 **Processing your request...**"})
-                    
+                    history.append(
+                        {
+                            "role": "assistant",
+                            "content": "🤖 **Processing your request...**",
+                        }
+                    )
+
                     # Run the conversation using the streaming method
                     response_count = 0
-                    async for response in foundry_agent.run_conversation_stream(thread_id, message):
+                    async for response in foundry_agent.run_conversation_stream(
+                        thread_id, message
+                    ):
                         if isinstance(response, str):
                             if response.strip():
                                 # Filter out processing messages
-                                if not any(phrase in response.lower() for phrase in [
-                                    "processing your request", "🤖 processing", "processing..."
-                                ]):
-                                    history.append({"role": "assistant", "content": response})
+                                if not any(
+                                    phrase in response.lower()
+                                    for phrase in [
+                                        "processing your request",
+                                        "🤖 processing",
+                                        "processing...",
+                                    ]
+                                ):
+                                    history.append(
+                                        {"role": "assistant", "content": response}
+                                    )
                                     response_count += 1
                         else:
                             # handle other types if needed
-                            history.append({"role": "assistant", "content": f"An error occurred while processing your request: {str(response)}. Please check the server logs for details."})
+                            history.append(
+                                {
+                                    "role": "assistant",
+                                    "content": f"An error occurred while processing your request: {str(response)}. Please check the server logs for details.",
+                                }
+                            )
                             response_count += 1
-                    
+
                     # If no responses were yielded, show a default message
                     if response_count == 0:
-                        history.append({"role": "assistant", "content": "I processed your request but didn't receive a response. Please try again."})
-                    
+                        history.append(
+                            {
+                                "role": "assistant",
+                                "content": "I processed your request but didn't receive a response. Please try again.",
+                            }
+                        )
+
                 except Exception as e:
                     logger.error(f"Error in chat_response (Type: {type(e)}): {e}")
                     traceback.print_exc()
-                    history.append({"role": "assistant", "content": f"An error occurred while processing your request: {str(e)}. Please check the server logs for details."})
-                
+                    history.append(
+                        {
+                            "role": "assistant",
+                            "content": f"An error occurred while processing your request: {str(e)}. Please check the server logs for details.",
+                        }
+                    )
+
                 return "", history
-        
+
         # Create a synchronous wrapper for the async function
-        def sync_chat_response(message: str, history: List[dict]) -> Tuple[str, List[dict]]:
+        def sync_chat_response(
+            message: str, history: List[dict]
+        ) -> Tuple[str, List[dict]]:
             """Synchronous wrapper for async chat_response"""
             return asyncio.run(chat_response(message, history))
-        
+
         send_btn.click(
             sync_chat_response,
             inputs=[agent_input, chatbot_interface],
-            outputs=[agent_input, chatbot_interface]
+            outputs=[agent_input, chatbot_interface],
         )
-        
+
         agent_input.submit(
             sync_chat_response,
             inputs=[agent_input, chatbot_interface],
-            outputs=[agent_input, chatbot_interface]
+            outputs=[agent_input, chatbot_interface],
         )
-        
+
         # Configure the timer now that all components are defined
         def combined_refresh():
             """Combined refresh for both status and case data"""
             global agent_executor_instance
-            
+
             # Check if there are pending requests and switch cases accordingly
             if agent_executor_instance and agent_executor_instance._waiting_for_input:
                 dashboard.switch_to_sox_audit()
             else:
                 dashboard.switch_to_gdpr_compliance()
-            
+
             data = dashboard.get_dashboard_data()
             return (
                 check_pending_requests(),
@@ -1417,10 +1609,20 @@ User: 1500$, yesterday"""
                 format_accounts_table(data["accounts"]),
                 format_tickets_table(data["tickets"]),
                 format_transactions_table(data["transactions"]),
-                data["analytics"]
+                data["analytics"],
             )
-        
-        timer.tick(fn=combined_refresh, outputs=[status_display, case_info, accounts_table, tickets_table, transactions_table, customer_analytics])
+
+        timer.tick(
+            fn=combined_refresh,
+            outputs=[
+                status_display,
+                case_info,
+                accounts_table,
+                tickets_table,
+                transactions_table,
+                customer_analytics,
+            ],
+        )
 
     print(f"Launching AI Foundry Legal Agent Gradio interface on {host}:{ui_port}...")
     demo.queue().launch(
@@ -1434,10 +1636,10 @@ async def main_async(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
     """Launch A2A server mode for Azure Foundry agent with startup initialization."""
     # Verify required environment variables
     required_env_vars = [
-        'AZURE_AI_FOUNDRY_PROJECT_ENDPOINT',
-        'AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME'
+        "AZURE_AI_FOUNDRY_PROJECT_ENDPOINT",
+        "AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME",
     ]
-    
+
     missing_vars = [var for var in required_env_vars if not os.getenv(var)]
     if missing_vars:
         raise ValueError(
@@ -1455,113 +1657,113 @@ async def main_async(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
 
     print(f"Starting AI Foundry Legal Agent A2A server on {host}:{port}...")
     app = create_a2a_server(host, port)
-    
+
     # Create agent card for registration
     skills = [
         AgentSkill(
-            id='legal_compliance',
-            name='Legal Compliance',
+            id="legal_compliance",
+            name="Legal Compliance",
             description="Analyze compliance requirements for specific regulations (GDPR, SOX, CCPA, etc.) and provide regulatory guidance.",
-            tags=['legal', 'compliance', 'gdpr', 'sox', 'ccpa', 'regulatory'],
+            tags=["legal", "compliance", "gdpr", "sox", "ccpa", "regulatory"],
             examples=[
-                'Assess GDPR compliance for data processing',
-                'Conduct SOX compliance audit',
-                'Evaluate CCPA compliance requirements',
-                'Analyze regulatory requirements for a business activity'
+                "Assess GDPR compliance for data processing",
+                "Conduct SOX compliance audit",
+                "Evaluate CCPA compliance requirements",
+                "Analyze regulatory requirements for a business activity",
             ],
         ),
         AgentSkill(
-            id='risk_assessment',
-            name='Risk Assessment',
+            id="risk_assessment",
+            name="Risk Assessment",
             description="Assess legal and compliance risks for business activities and provide mitigation strategies.",
-            tags=['risk', 'assessment', 'legal', 'compliance', 'mitigation'],
+            tags=["risk", "assessment", "legal", "compliance", "mitigation"],
             examples=[
-                'Assess legal risks for a new business activity',
-                'Evaluate compliance risks for data processing',
-                'Provide risk mitigation strategies',
-                'Conduct regulatory risk assessment'
+                "Assess legal risks for a new business activity",
+                "Evaluate compliance risks for data processing",
+                "Provide risk mitigation strategies",
+                "Conduct regulatory risk assessment",
             ],
         ),
         AgentSkill(
-            id='regulatory_research',
-            name='Regulatory Research',
+            id="regulatory_research",
+            name="Regulatory Research",
             description="Research specific regulations and their requirements using legal databases and web search.",
-            tags=['research', 'regulatory', 'legal', 'compliance', 'gdpr', 'sox'],
+            tags=["research", "regulatory", "legal", "compliance", "gdpr", "sox"],
             examples=[
-                'Research GDPR Article 6 requirements',
-                'Find SOX Section 404 compliance requirements',
-                'Look up CCPA data subject rights',
-                'Research regulatory guidance for data transfers'
+                "Research GDPR Article 6 requirements",
+                "Find SOX Section 404 compliance requirements",
+                "Look up CCPA data subject rights",
+                "Research regulatory guidance for data transfers",
             ],
         ),
         AgentSkill(
-            id='document_analysis',
-            name='Document Analysis',
+            id="document_analysis",
+            name="Document Analysis",
             description="Analyze legal documents, contracts, and compliance materials for regulatory requirements.",
-            tags=['document', 'analysis', 'legal', 'contract', 'compliance'],
+            tags=["document", "analysis", "legal", "contract", "compliance"],
             examples=[
-                'Analyze privacy policy for GDPR compliance',
-                'Review data processing agreement',
-                'Assess contract for regulatory requirements',
-                'Analyze compliance documentation'
+                "Analyze privacy policy for GDPR compliance",
+                "Review data processing agreement",
+                "Assess contract for regulatory requirements",
+                "Analyze compliance documentation",
             ],
         ),
         AgentSkill(
-            id='incident_response',
-            name='Incident Response',
+            id="incident_response",
+            name="Incident Response",
             description="Handle data breach and compliance incident reporting with proper procedures.",
-            tags=['incident', 'response', 'breach', 'compliance', 'reporting'],
+            tags=["incident", "response", "breach", "compliance", "reporting"],
             examples=[
-                'Create data breach incident report',
-                'Generate compliance violation report',
-                'Provide incident response procedures',
-                'Assess incident severity and impact'
+                "Create data breach incident report",
+                "Generate compliance violation report",
+                "Provide incident response procedures",
+                "Assess incident severity and impact",
             ],
         ),
         AgentSkill(
-            id='web_search',
-            name='Web Search',
+            id="web_search",
+            name="Web Search",
             description="Search the web for current legal and regulatory information using Bing or other integrated search tools.",
-            tags=['web', 'search', 'bing', 'internet', 'legal', 'regulatory'],
+            tags=["web", "search", "bing", "internet", "legal", "regulatory"],
             examples=[
-                'Find latest regulatory updates',
-                'Search for legal precedents',
-                'Get current compliance guidance',
-                'Research regulatory enforcement actions'
+                "Find latest regulatory updates",
+                "Search for legal precedents",
+                "Get current compliance guidance",
+                "Research regulatory enforcement actions",
             ],
         ),
         AgentSkill(
-            id='file_knowledge_search',
-            name='File & Knowledge Search',
+            id="file_knowledge_search",
+            name="File & Knowledge Search",
             description="Search through uploaded legal documents, compliance materials, and knowledge bases for specific information.",
-            tags=['file', 'document', 'knowledge', 'search', 'legal', 'compliance'],
+            tags=["file", "document", "knowledge", "search", "legal", "compliance"],
             examples=[
-                'Search legal documents for specific requirements',
-                'Find compliance guidance in uploaded materials',
-                'Extract regulatory information from documents',
-                'Search through compliance policies'
+                "Search legal documents for specific requirements",
+                "Find compliance guidance in uploaded materials",
+                "Extract regulatory information from documents",
+                "Search through compliance policies",
             ],
-        )
+        ),
     ]
 
     resolved_host_for_url = host if host != "0.0.0.0" else DEFAULT_HOST
 
     agent_card = AgentCard(
-        name='Legal Compliance & Regulatory Agent',
+        name="Legal Compliance & Regulatory Agent",
         description="An intelligent legal and compliance agent specialized in regulatory analysis, risk assessment, document analysis, and incident response. Can analyze compliance requirements for GDPR, SOX, CCPA and other regulations, assess legal risks, research regulatory requirements, analyze legal documents, handle incident reporting, search the web for current legal information, and search through uploaded legal documents and compliance materials, all with professional legal guidance.",
-        #url=f'http://{host}:{port}/',
-        #url=f'https://agent1.ngrok.app/agent5/',
+        # url=f'http://{host}:{port}/',
+        # url=f'https://agent1.ngrok.app/agent5/',
         url=resolve_agent_url(resolved_host_for_url, port),
-        version='1.0.0',
-        defaultInputModes=['text'],
-        defaultOutputModes=['text'],
+        version="1.0.0",
+        defaultInputModes=["text"],
+        defaultOutputModes=["text"],
         capabilities=AgentCapabilities(streaming=True),
         skills=skills,
     )
-    
+
     # Start background registration
     start_background_registration(agent_card)
-    
+
     config = uvicorn.Config(app, host=host, port=port, log_level="info")
     server = uvicorn.Server(config)
     await server.serve()
@@ -1573,10 +1775,15 @@ def main(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
 
 
 @click.command()
-@click.option('--host', 'host', default=DEFAULT_HOST, help='Host to bind to')
-@click.option('--port', 'port', default=DEFAULT_PORT, help='Port for A2A server')
-@click.option('--ui', is_flag=True, help='Launch Gradio UI (also runs A2A server)')
-@click.option('--ui-port', 'ui_port', default=DEFAULT_UI_PORT, help='Port for Gradio UI (only used with --ui flag)')
+@click.option("--host", "host", default=DEFAULT_HOST, help="Host to bind to")
+@click.option("--port", "port", default=DEFAULT_PORT, help="Port for A2A server")
+@click.option("--ui", is_flag=True, help="Launch Gradio UI (also runs A2A server)")
+@click.option(
+    "--ui-port",
+    "ui_port",
+    default=DEFAULT_UI_PORT,
+    help="Port for Gradio UI (only used with --ui flag)",
+)
 def cli(host: str, port: int, ui: bool, ui_port: int):
     """AI Foundry Legal Agent - can run as A2A server or with Gradio UI + A2A server."""
     if ui:
@@ -1585,5 +1792,5 @@ def cli(host: str, port: int, ui: bool, ui_port: int):
         main(host, port)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     cli()
