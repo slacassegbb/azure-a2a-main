@@ -342,6 +342,7 @@ async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_p
         """Check system status for the agent."""
         return "✅ **Status:** Agent Ready!"  # ⚠️ CUSTOMIZATION: Update status message
 
+    resolved_host_for_url = host if host != "0.0.0.0" else DEFAULT_HOST
     display_host = resolved_host_for_url
     ui_display_url = f"http://{display_host}:{ui_port}"
     a2a_display_url = resolve_agent_url(display_host, a2a_port).rstrip('/')
