@@ -911,8 +911,8 @@
     ]
   },
   {
-    "name": "AI Foundry Branding & Content Agent",
-    "description": "An intelligent branding partner powered by Azure AI Foundry. Delivers on-brand messaging, visual direction, and creative prompts grounded in the Company Branding Guide.",
+    "name": "AI Consulting Interview Agent",
+    "description": "An intelligent interview agent that conducts consultative discovery conversations to qualify leads for AI consulting services. Asks probing questions to understand business challenges, technical context, stakeholders, and implementation requirements. Designed to build rapport while systematically gathering the information needed to provide valuable recommendations.",
     "version": "1.0.0",
     "url": "http://localhost:9020/",
     "defaultInputModes": [
@@ -926,88 +926,85 @@
     },
     "skills": [
       {
-        "id": "brand_strategy_alignment",
-        "name": "Brand Strategy Alignment",
-        "description": "Map campaign goals, audiences, and messaging pillars to the Company Branding Guide, ensuring voice, tone, and terminology remain on-brand.",
+        "id": "lead_qualification",
+        "name": "Lead Qualification Interview",
+        "description": "Conduct consultative interviews to understand customer AI and automation needs, gather comprehensive information about their business challenges, and qualify leads for AI consulting services",
         "examples": [
-          "Outline messaging pillars for a product-launch email aligned to the brand voice",
-          "Review draft tagline options and recommend the on-brand choice with rationale",
-          "Summarize how a campaign concept supports our innovation + trust positioning",
-          "Identify missing brand attributes in a draft hero statement and propose fixes"
+          "I want to learn more about AI solutions for my business",
+          "Can you help me understand what AI could do for my company?",
+          "We need to automate some of our business processes",
+          "Tell me about your AI consulting services"
         ],
         "tags": [
-          "branding",
-          "strategy",
-          "messaging",
-          "tone"
+          "interview",
+          "lead",
+          "qualification",
+          "discovery",
+          "consultation"
         ]
       },
       {
-        "id": "visual_identity_direction",
-        "name": "Visual Identity Direction",
-        "description": "Provide art direction, mood, and composition notes anchored in brand colors, lighting, and imagery guidelines from `company_branding.md`.",
+        "id": "needs_assessment",
+        "name": "Business Needs Assessment",
+        "description": "Deep-dive into customer business challenges, pain points, and opportunities for AI implementation. Probes for technical context, scale, timeline, and success criteria",
         "examples": [
-          "Translate the brand palette into a prompt for a hero illustration",
-          "Advise on lighting and depth for a LinkedIn carousel background",
-          "Recommend iconography and layout for a landing page hero graphic",
-          "Evaluate a storyboard concept for adherence to brand mood and colors"
+          "What questions do you need to ask to understand my AI needs?",
+          "Help me articulate what I need from an AI solution",
+          "We have a problem but don't know if AI can help"
         ],
         "tags": [
-          "visual",
-          "design",
-          "palette",
-          "composition"
+          "assessment",
+          "discovery",
+          "requirements",
+          "business-analysis"
         ]
       },
       {
-        "id": "brand_voice_copywriting",
-        "name": "Brand Voice Copywriting",
-        "description": "Draft or refine copy so it reflects the confident, professional, forward-looking voice defined in the branding guide.",
+        "id": "technical_discovery",
+        "name": "Technical Environment Discovery",
+        "description": "Gather information about current technology stack, data infrastructure, team capabilities, and technical constraints to assess implementation feasibility",
         "examples": [
-          "Rewrite social captions to emphasize calm confidence and innovation",
-          "Transform a technical paragraph into on-brand website copy",
-          "Craft CTA variations that stay within voice and typography rules",
-          "Edit onboarding email copy to remove off-brand phrasing"
+          "What do you need to know about our technical setup?",
+          "We use Azure and have data in SQL databases",
+          "Our team has limited AI experience"
         ],
         "tags": [
-          "copywriting",
-          "voice",
-          "tone",
-          "editing"
+          "technical",
+          "infrastructure",
+          "stack",
+          "capability-assessment"
         ]
       },
       {
-        "id": "generative_prompt_engineering",
-        "name": "Generative Prompt Engineering",
-        "description": "Create positive and negative prompts for image/video generation that encode brand palette, lighting, typography, and prohibited elements.",
+        "id": "stakeholder_identification",
+        "name": "Stakeholder & Decision Process Mapping",
+        "description": "Identify key stakeholders, decision-makers, budget owners, and approval processes to ensure proper engagement and follow-up",
         "examples": [
-          "Draft a stable diffusion prompt for a brand-aligned product hero image",
-          "Provide Midjourney prompt + negatives for a futuristic workspace scene",
-          "Generate prompt variants for thumbnails following brand composition rules",
-          "Audit an existing AI prompt and adjust it to match company branding"
+          "Who needs to be involved in evaluating AI solutions?",
+          "What's the approval process for this type of project?",
+          "I need to get buy-in from multiple departments"
         ],
         "tags": [
-          "prompt",
-          "imaging",
-          "ai-art",
-          "guidelines"
+          "stakeholders",
+          "decision-makers",
+          "process",
+          "engagement"
         ]
       },
       {
-        "id": "brand_review_feedback",
-        "name": "Brand Review & QA",
-        "description": "Evaluate supplied copy, prompts, or visuals and document brand compliance gaps with actionable corrections.",
+        "id": "next_steps",
+        "name": "Consultation Scheduling & Next Steps",
+        "description": "Summarize gathered information, suggest appropriate next steps, and coordinate follow-up consultations with AI specialists",
         "examples": [
-          "Assess a video script for voice consistency and suggest edits",
-          "Flag off-brand colors in a design mock and propose replacements",
-          "Provide a brand compliance checklist for a cross-channel campaign",
-          "Summarize risks before publishing content created by external partners"
+          "What are the next steps after this conversation?",
+          "Can you schedule a consultation with an AI specialist?",
+          "I'd like to move forward with exploring this"
         ],
         "tags": [
-          "review",
-          "qa",
-          "compliance",
-          "feedback"
+          "scheduling",
+          "follow-up",
+          "next-steps",
+          "consultation"
         ]
       }
     ]

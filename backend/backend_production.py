@@ -570,6 +570,29 @@ def main():
                 "success": False,
                 "error": str(e)
             }
+    
+    @app.patch("/api/agents")
+    async def upsert_agent(request: Request):
+        """Update an existing agent or add as new if it doesn't exist."""
+        try:
+            agent_data = await request.json()
+            registry = get_registry()
+            success = registry.update_or_add_agent(agent_data)
+            if success:
+                return {
+                    "success": True,
+                    "message": "Agent updated or added successfully"
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": "Failed to update or add agent"
+                }
+        except ValueError as e:
+            return {
+                "success": False,
+                "error": str(e)
+            }
         except Exception as e:
             return {
                 "success": False,

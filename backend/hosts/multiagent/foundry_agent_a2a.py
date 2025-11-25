@@ -395,10 +395,18 @@ class FoundryHostAgent2:
             card_dict = self._agent_card_to_dict(card)
             
             existing_index = None
+            # First, check by name (primary identifier)
             for i, existing_agent in enumerate(registry):
-                if existing_agent.get("url") == card.url:
+                if existing_agent.get("name") == card.name:
                     existing_index = i
                     break
+            
+            # If not found by name, check by URL (for backward compatibility)
+            if existing_index is None:
+                for i, existing_agent in enumerate(registry):
+                    if existing_agent.get("url") == card.url:
+                        existing_index = i
+                        break
             
             if existing_index is not None:
                 registry[existing_index] = card_dict
