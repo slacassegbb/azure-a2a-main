@@ -566,34 +566,51 @@ export function VisualWorkflowDesigner({
   useEffect(() => {
     console.log("[WorkflowTest] 🎬 Setting up event listeners on mount")
     
-    // Helper to find the FIRST uncompleted step for an agent (sequential workflow!)
-    // CRITICAL: Uses sticky assignment - once a step is assigned to an agent, keep using it until completed
-    // SIMPLE: Just find the step that matches the agent name. No blocking, no complex routing.
-    // Trust the backend to orchestrate correctly.
+    // SIMPLE sequential workflow: find the step for this agent, 
+    // but ONLY if all previous steps are completed
     const findStepForAgent = (agentName: string): string | null => {
       if (!agentName) return null
       
       const normalizedEventName = agentName.toLowerCase().trim().replace(/[-_]/g, ' ')
+      const sortedSteps = Array.from(workflowStepsRef.current).sort((a, b) => a.order - b.order)
+      
+      // Helper: check if all steps before this one are completed
+      const canActivateStep = (targetStep: WorkflowStep): boolean => {
+        for (const step of sortedSteps) {
+          if (step.order >= targetStep.order) break // Reached target, all previous are done
+          const status = stepStatusesRef.current.get(step.id)
+          if (status?.status !== "completed") {
+            return false // Previous step not completed
+          }
+        }
+        return true
+      }
       
       // Find step that matches this agent
-      for (const step of workflowStepsRef.current) {
+      for (const step of sortedSteps) {
         const normalizedStepName = step.agentName.toLowerCase().trim().replace(/[-_]/g, ' ')
         const normalizedStepId = step.agentId.toLowerCase().trim().replace(/[-_]/g, ' ')
         
-        if (normalizedStepName === normalizedEventName ||
+        const matches = normalizedStepName === normalizedEventName ||
             normalizedStepId === normalizedEventName ||
             step.agentName === agentName ||
             step.agentId === agentName ||
-            // Fuzzy match for common patterns
-            normalizedEventName.includes('interview') && normalizedStepName.includes('interview') ||
-            normalizedEventName.includes('branding') && normalizedStepName.includes('branding')) {
-          return step.id
+            (normalizedEventName.includes('interview') && normalizedStepName.includes('interview')) ||
+            (normalizedEventName.includes('branding') && normalizedStepName.includes('branding'))
+        
+        if (matches) {
+          // Only route to this step if previous steps are completed
+          if (canActivateStep(step)) {
+            return step.id
+          } else {
+            console.log("[WorkflowTest] 🛑 Blocking event for", agentName, "- previous steps not completed")
+            return null
+          }
         }
       }
       
       // Host agent events: route to first non-completed step
       if (normalizedEventName.includes('host')) {
-        const sortedSteps = Array.from(workflowStepsRef.current).sort((a, b) => a.order - b.order)
         for (const step of sortedSteps) {
           const status = stepStatusesRef.current.get(step.id)
           if (!status || status.status !== "completed") {
