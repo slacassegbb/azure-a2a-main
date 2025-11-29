@@ -174,6 +174,10 @@ class SessionContext(BaseModel):
     # Human-in-the-loop tracking: which agent is waiting for user input
     pending_input_agent: Optional[str] = Field(default=None, description="Agent name waiting for input_required response")
     pending_input_task_id: Optional[str] = Field(default=None, description="Task ID of the pending input_required task")
+    # Workflow state for pausing/resuming on input_required
+    pending_workflow: Optional[str] = Field(default=None, description="Workflow definition to resume after HITL completes")
+    pending_workflow_outputs: List[str] = Field(default_factory=list, description="Task outputs collected before HITL pause")
+    pending_workflow_user_message: Optional[str] = Field(default=None, description="Original user message for workflow")
 
 
 # Agent Mode Orchestration Models
@@ -1265,6 +1269,9 @@ class FoundryHostAgent2:
             else:
                 print(f"🔄 [Agent Mode] Continuing workflow - NOT treating as follow-up")
         
+        # Use the class method for extracting clean text from A2A response objects
+        extract_text_from_response = self._extract_text_from_response
+        
         # Initialize execution plan with empty task list
         plan = AgentModePlan(goal=goal_text, goal_status="incomplete")
         iteration = 0
@@ -1566,6 +1573,29 @@ Analyze the plan and determine the next step. If you need information that isn't
                             if responses and len(responses) > 0:
                                 response_obj = responses[0] if isinstance(responses, list) else responses
                                 
+                                # WORKFLOW PAUSE: Check if agent returned input_required
+                                # This is detected via session_context.pending_input_agent being set
+                                if session_context.pending_input_agent:
+                                    log_info(f"⏸️ [Agent Mode] Agent '{recommended_agent}' returned input_required - PAUSING WORKFLOW")
+                                    task.state = "input_required"
+                                    
+                                    # Collect any output from the agent's question (properly extract text)
+                                    output_text = extract_text_from_response(response_obj)
+                                    if output_text:
+                                        all_task_outputs.append(output_text)
+                                    
+                                    # Store workflow state for resumption after HITL
+                                    session_context.pending_workflow = workflow
+                                    session_context.pending_workflow_outputs = all_task_outputs.copy()
+                                    session_context.pending_workflow_user_message = user_message
+                                    
+                                    log_info(f"⏸️ [Agent Mode] Workflow paused. Collected {len(all_task_outputs)} outputs so far.")
+                                    log_info(f"⏸️ [Agent Mode] Waiting for user response to '{recommended_agent}'")
+                                    await self._emit_status_event(f"Waiting for your response to continue...", context_id)
+                                    
+                                    # Return current outputs - workflow will resume after HITL
+                                    return all_task_outputs
+                                
                                 # A2A Task response includes detailed state and artifacts
                                 if isinstance(response_obj, Task):
                                     task.state = response_obj.status.state
@@ -1620,10 +1650,11 @@ Analyze the plan and determine the next step. If you need information that isn't
                                         else:
                                             all_task_outputs.append(output_text)
                                 else:
-                                    # Simple string response (legacy format)
+                                    # Simple string response (legacy format) - extract text properly
                                     task.state = "completed"
-                                    task.output = {"result": str(response_obj)}
-                                    all_task_outputs.append(str(response_obj))
+                                    output_text = extract_text_from_response(response_obj)
+                                    task.output = {"result": output_text}
+                                    all_task_outputs.append(output_text)
                                     log_info(f"✅ [Agent Mode] Task completed successfully")
                             else:
                                 # No response indicates communication failure
@@ -2355,6 +2386,50 @@ Analyze the plan and determine the next step. If you need information that isn't
         except Exception as e:
             log_foundry_debug(f"⚠️ Error extracting message content: {e}")
             return ""
+
+    @staticmethod
+    def _extract_text_from_response(obj) -> str:
+        """Extract clean text from various A2A response types.
+        
+        Handles Part, TextPart, DataPart objects and avoids ugly Python repr output.
+        """
+        if obj is None:
+            return ""
+        if isinstance(obj, str):
+            return obj
+        # Handle Part objects with root
+        if hasattr(obj, 'root'):
+            root = obj.root
+            if hasattr(root, 'text'):
+                return root.text
+            if hasattr(root, 'kind') and root.kind == 'text' and hasattr(root, 'text'):
+                return root.text
+            if hasattr(root, 'data'):
+                return str(root.data)
+        # Handle TextPart/DataPart directly
+        if hasattr(obj, 'kind'):
+            if obj.kind == 'text' and hasattr(obj, 'text'):
+                return obj.text
+            if obj.kind == 'data' and hasattr(obj, 'data'):
+                return str(obj.data)
+        # Handle dict
+        if isinstance(obj, dict):
+            if 'text' in obj:
+                return obj['text']
+            return str(obj)
+        # Handle list - extract text from each item
+        if isinstance(obj, list):
+            texts = [FoundryHostAgent2._extract_text_from_response(item) for item in obj]
+            return "\n".join(t for t in texts if t)
+        # Fallback - but avoid ugly repr
+        result = str(obj)
+        # If it looks like a Python repr, try to extract the text
+        if result.startswith("kind='text'") and "text='" in result:
+            import re
+            match = re.search(r"text='([^']*)'", result)
+            if match:
+                return match.group(1).replace("\\n", "\n")
+        return result
 
     def get_session_context(self, context_id: str) -> SessionContext:
         if context_id not in self.session_contexts:
@@ -4550,8 +4625,13 @@ Original request: {message}"""
             if session_context.pending_input_agent:
                 pending_agent = session_context.pending_input_agent
                 pending_task_id = session_context.pending_input_task_id
+                pending_workflow = session_context.pending_workflow
+                pending_workflow_outputs = session_context.pending_workflow_outputs or []
+                
                 log_info(f"🔄 [HITL] Found pending input_required agent: '{pending_agent}' (task_id: {pending_task_id})")
                 log_info(f"🔄 [HITL] Routing user response directly to waiting agent instead of orchestration")
+                if pending_workflow:
+                    log_info(f"🔄 [HITL] Workflow will resume after agent completes ({len(pending_workflow_outputs)} outputs collected)")
                 
                 # Clear the pending state before routing
                 session_context.pending_input_agent = None
@@ -4574,7 +4654,52 @@ Original request: {message}"""
                         suppress_streaming=False
                     )
                     log_info(f"🔄 [HITL] Response from agent '{pending_agent}': {str(hitl_response)[:200]}...")
-                    return hitl_response if isinstance(hitl_response, list) else [str(hitl_response)]
+                    
+                    # Helper to extract clean text from responses
+                    def clean_response(resp):
+                        if isinstance(resp, list):
+                            return [self._extract_text_from_response(r) for r in resp]
+                        return [self._extract_text_from_response(resp)]
+                    
+                    # Check if agent is STILL requesting input (multi-turn HITL)
+                    if session_context.pending_input_agent:
+                        log_info(f"🔄 [HITL] Agent still requires more input - staying paused")
+                        # Keep the pending workflow state for next turn
+                        return clean_response(hitl_response)
+                    
+                    # Agent completed! Check if we need to resume a paused workflow
+                    if pending_workflow:
+                        log_info(f"▶️ [HITL] Agent completed - RESUMING WORKFLOW")
+                        
+                        # Add this agent's response to the collected outputs (properly extract text)
+                        hitl_outputs = clean_response(hitl_response)
+                        all_outputs = pending_workflow_outputs + hitl_outputs
+                        
+                        # Clear workflow pause state
+                        session_context.pending_workflow = None
+                        session_context.pending_workflow_outputs = []
+                        session_context.pending_workflow_user_message = None
+                        
+                        log_info(f"▶️ [HITL] Resuming workflow with {len(all_outputs)} total outputs")
+                        
+                        # Continue the workflow from where we left off
+                        # The orchestrator will pick up from the next step
+                        remaining_outputs = await self._agent_mode_orchestration_loop(
+                            user_message="Continue the workflow. The previous step has completed.",
+                            context_id=context_id,
+                            session_context=session_context,
+                            event_logger=event_logger,
+                            workflow=pending_workflow
+                        )
+                        
+                        # Clean any remaining outputs too
+                        clean_remaining = []
+                        for out in remaining_outputs:
+                            clean_remaining.append(self._extract_text_from_response(out))
+                        
+                        return all_outputs + clean_remaining
+                    
+                    return clean_response(hitl_response)
                 except Exception as e:
                     log_error(f"🔄 [HITL] Error routing to pending agent '{pending_agent}': {e}")
                     # Fall through to normal processing if routing fails
