@@ -148,7 +148,7 @@ export function VisualWorkflowDesigner({
   const [hostMessage, setHostMessage] = useState<{ message: string, target: string } | null>(null)
   
   // Event Hub for live updates
-  const { subscribe, unsubscribe } = useEventHub()
+  const { subscribe, unsubscribe, emit } = useEventHub()
   
   // Track Voice Live call IDs for response injection
   const voiceLiveCallMapRef = useRef<Map<string, string>>(new Map()) // messageId -> call_id
@@ -1479,6 +1479,15 @@ export function VisualWorkflowDesigner({
       // Successfully sent - response will come through WebSocket events
       console.log('[WorkflowTest] Message sent successfully, waiting for events...')
       
+      // Emit message_sent event so chat panel can show the user message
+      emit("message_sent", {
+        role: "user",
+        content: testInput,
+        conversationId: newConversationId,
+        contextId: newConversationId,
+        timestamp: new Date().toISOString()
+      })
+      
       // NOTE: URL update moved to handleFinalResponse to prevent chat panel from
       // clearing messages during the workflow (the URL change triggers a reload)
       
@@ -1536,13 +1545,29 @@ export function VisualWorkflowDesigner({
     
     // Capture response and clear input immediately
     const responseToSend = waitingResponse
-    setWaitingResponse("")
+    const currentWaitingStepId = waitingStepId
     
-    // DON'T clear waiting state here - let the backend's response determine what happens
-    // The backend will either:
-    // 1. Send another input_required with new question -> we update waitingMessage
-    // 2. Send completed/working -> handleTaskUpdate will clear waiting state
-    // This prevents race conditions and ensures we don't miss the next question
+    // Clear waiting UI immediately - user clicked Reply, box should disappear
+    setWaitingResponse("")
+    setWaitingStepId(null)
+    setWaitingMessage(null)
+    waitingStepIdRef.current = null
+    
+    // Set step to "working" while processing
+    if (currentWaitingStepId) {
+      setStepStatuses(prev => {
+        const newMap = new Map(prev)
+        const currentStatus = prev.get(currentWaitingStepId)
+        newMap.set(currentWaitingStepId, { ...currentStatus, status: "working" })
+        return newMap
+      })
+      stepStatusesRef.current.set(currentWaitingStepId, { 
+        ...stepStatusesRef.current.get(currentWaitingStepId), 
+        status: "working" 
+      })
+    }
+    
+    // If another input_required comes in, handleTaskUpdate will show the box again
     
     // Send the response via API (same format as handleTestSubmit)
     try {
@@ -1580,6 +1605,15 @@ export function VisualWorkflowDesigner({
         console.error("[WorkflowTest] ❌ API error:", response.status, response.statusText, errorText)
       } else {
         console.log("[WorkflowTest] ✅ Response sent successfully")
+        
+        // Emit message_sent event so chat panel can show the user message
+        emit("message_sent", {
+          role: "user",
+          content: responseToSend,
+          conversationId: workflowConversationId,
+          contextId: workflowConversationId,
+          timestamp: new Date().toISOString()
+        })
       }
     } catch (err) {
       console.error("[WorkflowTest] ❌ Error sending response:", err)

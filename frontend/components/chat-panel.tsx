@@ -936,9 +936,28 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
       }
     }
 
-    // Handle message sent events (when AI sends message to thread)
+    // Handle message sent events (when user sends message from workflow designer)
     const handleMessageSent = (data: any) => {
-      console.log("[ChatPanel] Message sent to thread:", data)
+      console.log("[ChatPanel] Message sent:", data)
+      
+      // If this is a user message (from workflow designer reply), add it to messages
+      if (data.role === "user" && data.content && data.conversationId === conversationId) {
+        const newMessage: Message = {
+          id: data.messageId || `user_${Date.now()}`,
+          role: "user",
+          content: data.content,
+          username: currentUsername || undefined,
+          userColor: currentUserColor || undefined
+        }
+        setMessages(prev => {
+          // Avoid duplicates
+          if (prev.some(m => m.content === data.content && m.role === "user")) {
+            return prev
+          }
+          return [...prev, newMessage]
+        })
+      }
+      
       if (data.messageId) {
         emit("status_update", {
           inferenceId: data.conversationId || data.messageId,
