@@ -571,17 +571,18 @@ export function VisualWorkflowDesigner({
       // CRITICAL: Sequential workflow enforcement
       // ONLY allow events for the FIRST non-completed step in the workflow
       
-      // Sort all workflow steps by order
+      // Sort all workflow steps by their ORDER property (this is always set when step is created)
       const sortedWorkflowSteps = Array.from(workflowStepsRef.current).sort((a, b) => {
-        const orderA = workflowOrderMapRef.current.get(a.id) ?? a.order ?? 999
-        const orderB = workflowOrderMapRef.current.get(b.id) ?? b.order ?? 999
-        return orderA - orderB
+        return a.order - b.order
       })
+      
+      console.log("[WorkflowTest] 📊 Sorted steps:", sortedWorkflowSteps.map(s => `${s.order}:${s.agentName}`).join(" → "))
       
       // Find the FIRST non-completed step - this is the ONLY step that should receive events
       let activeStep: WorkflowStep | undefined
       for (const step of sortedWorkflowSteps) {
         const status = stepStatusesRef.current.get(step.id)
+        console.log("[WorkflowTest] 📊 Step", step.agentName, "status:", status?.status || "none")
         if (!status || status.status !== "completed") {
           activeStep = step
           break
@@ -598,6 +599,8 @@ export function VisualWorkflowDesigner({
         const activeStepNameNorm = activeStep.agentName.toLowerCase().trim().replace(/[-_]/g, ' ')
         const activeStepIdNorm = activeStep.agentId.toLowerCase().trim().replace(/[-_]/g, ' ')
         const isHostAgent = agentName.toLowerCase().includes('host')
+        
+        console.log("[WorkflowTest] 🔍 Checking event agent:", eventAgentNormalized, "vs active step:", activeStepNameNorm, "isHost:", isHostAgent)
         
         const isForActiveStep = 
           activeStepNameNorm === eventAgentNormalized ||
