@@ -941,17 +941,17 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
       console.log("[ChatPanel] Message sent:", data)
       
       // If this is a user message (from workflow designer reply), add it to messages
-      if (data.role === "user" && data.content && data.conversationId === conversationId) {
+      if (data.role === "user" && data.content) {
+        console.log("[ChatPanel] Adding user message from workflow:", data.content?.substring(0, 50))
         const newMessage: Message = {
           id: data.messageId || `user_${Date.now()}`,
           role: "user",
-          content: data.content,
-          username: currentUsername || undefined,
-          userColor: currentUserColor || undefined
+          content: data.content
         }
         setMessages(prev => {
           // Avoid duplicates
           if (prev.some(m => m.content === data.content && m.role === "user")) {
+            console.log("[ChatPanel] Skipping duplicate user message")
             return prev
           }
           return [...prev, newMessage]
