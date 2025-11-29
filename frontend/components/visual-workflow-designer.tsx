@@ -568,35 +568,67 @@ export function VisualWorkflowDesigner({
     const findStepForAgent = (agentName: string): string | null => {
       if (!agentName) return null
       
-      // CRITICAL: If ANY step is in "waiting" state, ALL events should go to that step ONLY
-      // This prevents the next agent from receiving events while the current one is waiting for input
-      for (const [stepId, status] of stepStatusesRef.current.entries()) {
-        if (status?.status === "waiting") {
-          const waitingStep = workflowStepsRef.current.find(s => s.id === stepId)
-          console.log("[WorkflowTest] 🚫 Workflow blocked - step", waitingStep?.agentName, "is waiting for input")
-          
-          // Only allow events for the waiting step's agent
-          const normalizedEventName = agentName.toLowerCase().trim().replace(/[-_]/g, ' ')
-          const normalizedStepName = waitingStep?.agentName.toLowerCase().trim().replace(/[-_]/g, ' ')
-          const normalizedStepId = waitingStep?.agentId.toLowerCase().trim().replace(/[-_]/g, ' ')
-          
-          if (normalizedStepName === normalizedEventName || 
-              normalizedStepId === normalizedEventName ||
-              waitingStep?.agentName === agentName ||
-              waitingStep?.agentId === agentName ||
-              agentName.toLowerCase().includes('host')) {
-            // This event is for the waiting agent (or host) - allow it
-            console.log("[WorkflowTest] ✅ Event for waiting agent:", agentName, "-> step:", stepId)
-            return stepId
-          } else {
-            // This event is for a different agent - BLOCK IT
-            console.log("[WorkflowTest] 🛑 BLOCKING event for", agentName, "- workflow paused at", waitingStep?.agentName)
-            return null
+      // CRITICAL: Sequential workflow enforcement
+      // Find which step this agent belongs to and ensure all PREVIOUS steps are completed
+      const eventAgentNormalized = agentName.toLowerCase().trim().replace(/[-_]/g, ' ')
+      
+      // Find the step for this agent
+      let eventTargetStep: WorkflowStep | undefined
+      let eventTargetOrder = 999
+      
+      for (const step of workflowStepsRef.current) {
+        const stepNameNorm = step.agentName.toLowerCase().trim().replace(/[-_]/g, ' ')
+        const stepIdNorm = step.agentId.toLowerCase().trim().replace(/[-_]/g, ' ')
+        
+        if (stepNameNorm === eventAgentNormalized || 
+            stepIdNorm === eventAgentNormalized ||
+            step.agentName === agentName ||
+            step.agentId === agentName) {
+          const order = workflowOrderMapRef.current.get(step.id) || 999
+          if (order < eventTargetOrder) {
+            eventTargetStep = step
+            eventTargetOrder = order
           }
         }
       }
       
-      // No step is waiting - proceed with normal routing
+      // If this is not the host agent and we found a target step, check if we can proceed
+      if (eventTargetStep && !agentName.toLowerCase().includes('host')) {
+        // Check ALL previous steps - they must be COMPLETED
+        for (const [prevStepId, prevOrder] of workflowOrderMapRef.current.entries()) {
+          if (prevOrder < eventTargetOrder) {
+            const prevStatus = stepStatusesRef.current.get(prevStepId)
+            const prevStep = workflowStepsRef.current.find(s => s.id === prevStepId)
+            
+            // If ANY previous step is not completed, BLOCK this event
+            if (!prevStatus || prevStatus.status !== "completed") {
+              console.log("[WorkflowTest] 🛑 BLOCKING event for", agentName, 
+                "- previous step", prevStep?.agentName, "is not completed (status:", prevStatus?.status || "none", ")")
+              return null
+            }
+          }
+        }
+      }
+      
+      // Host agent events - route to the first non-completed step
+      if (agentName.toLowerCase().includes('host')) {
+        // Find first uncompleted step
+        const hostSortedSteps = Array.from(workflowStepsRef.current).sort((a, b) => {
+          const orderA = workflowOrderMapRef.current.get(a.id) || 999
+          const orderB = workflowOrderMapRef.current.get(b.id) || 999
+          return orderA - orderB
+        })
+        
+        for (const step of hostSortedSteps) {
+          const status = stepStatusesRef.current.get(step.id)
+          if (!status || status.status !== "completed") {
+            console.log("[WorkflowTest] 🎯 Host event routed to first uncompleted step:", step.agentName)
+            return step.id
+          }
+        }
+      }
+      
+      // Proceed with normal routing
       
       // Check if we already have an active step for this agent (sticky assignment)
       const existingActiveStep = activeStepPerAgentRef.current.get(agentName)
@@ -871,8 +903,11 @@ export function VisualWorkflowDesigner({
         setWaitingStepId(stepId)
         
         // Capture the message - check multiple sources
-        const newCapturedMessage = data.content || currentStatus?.message || data.message || null
-        console.log("[WorkflowTest] 📋 New captured message:", newCapturedMessage?.substring?.(0, 200) || newCapturedMessage)
+        // FILTER OUT state strings that shouldn't be displayed as messages
+        const stateStrings = ['input_required', 'input-required', 'working', 'completed', 'failed', 'submitted']
+        const rawContent = data.content || currentStatus?.message || data.message || null
+        const newCapturedMessage = (rawContent && !stateStrings.includes(rawContent.toLowerCase())) ? rawContent : currentStatus?.message || null
+        console.log("[WorkflowTest] 📋 New captured message:", newCapturedMessage?.substring?.(0, 200) || newCapturedMessage, "(raw:", rawContent?.substring?.(0, 50), ")")
         
         // For NEW input_required, always try to update the message
         // This handles follow-up questions from the same agent
