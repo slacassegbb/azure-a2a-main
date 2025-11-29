@@ -569,66 +569,56 @@ export function VisualWorkflowDesigner({
       if (!agentName) return null
       
       // CRITICAL: Sequential workflow enforcement
-      // Find which step this agent belongs to and ensure all PREVIOUS steps are completed
-      const eventAgentNormalized = agentName.toLowerCase().trim().replace(/[-_]/g, ' ')
+      // ONLY allow events for the FIRST non-completed step in the workflow
       
-      // Find the step for this agent
-      let eventTargetStep: WorkflowStep | undefined
-      let eventTargetOrder = 999
+      // Sort all workflow steps by order
+      const sortedWorkflowSteps = Array.from(workflowStepsRef.current).sort((a, b) => {
+        const orderA = workflowOrderMapRef.current.get(a.id) ?? a.order ?? 999
+        const orderB = workflowOrderMapRef.current.get(b.id) ?? b.order ?? 999
+        return orderA - orderB
+      })
       
-      for (const step of workflowStepsRef.current) {
-        const stepNameNorm = step.agentName.toLowerCase().trim().replace(/[-_]/g, ' ')
-        const stepIdNorm = step.agentId.toLowerCase().trim().replace(/[-_]/g, ' ')
+      // Find the FIRST non-completed step - this is the ONLY step that should receive events
+      let activeStep: WorkflowStep | undefined
+      for (const step of sortedWorkflowSteps) {
+        const status = stepStatusesRef.current.get(step.id)
+        if (!status || status.status !== "completed") {
+          activeStep = step
+          break
+        }
+      }
+      
+      // If no active step found (all completed), allow any event
+      if (!activeStep) {
+        console.log("[WorkflowTest] ✅ All steps completed, allowing event for:", agentName)
+        // Continue to normal routing below
+      } else {
+        // Check if this event is for the active step OR the host agent
+        const eventAgentNormalized = agentName.toLowerCase().trim().replace(/[-_]/g, ' ')
+        const activeStepNameNorm = activeStep.agentName.toLowerCase().trim().replace(/[-_]/g, ' ')
+        const activeStepIdNorm = activeStep.agentId.toLowerCase().trim().replace(/[-_]/g, ' ')
+        const isHostAgent = agentName.toLowerCase().includes('host')
         
-        if (stepNameNorm === eventAgentNormalized || 
-            stepIdNorm === eventAgentNormalized ||
-            step.agentName === agentName ||
-            step.agentId === agentName) {
-          const order = workflowOrderMapRef.current.get(step.id) || 999
-          if (order < eventTargetOrder) {
-            eventTargetStep = step
-            eventTargetOrder = order
-          }
-        }
-      }
-      
-      // If this is not the host agent and we found a target step, check if we can proceed
-      if (eventTargetStep && !agentName.toLowerCase().includes('host')) {
-        // Check ALL previous steps - they must be COMPLETED
-        for (const [prevStepId, prevOrder] of workflowOrderMapRef.current.entries()) {
-          if (prevOrder < eventTargetOrder) {
-            const prevStatus = stepStatusesRef.current.get(prevStepId)
-            const prevStep = workflowStepsRef.current.find(s => s.id === prevStepId)
-            
-            // If ANY previous step is not completed, BLOCK this event
-            if (!prevStatus || prevStatus.status !== "completed") {
-              console.log("[WorkflowTest] 🛑 BLOCKING event for", agentName, 
-                "- previous step", prevStep?.agentName, "is not completed (status:", prevStatus?.status || "none", ")")
-              return null
-            }
-          }
-        }
-      }
-      
-      // Host agent events - route to the first non-completed step
-      if (agentName.toLowerCase().includes('host')) {
-        // Find first uncompleted step
-        const hostSortedSteps = Array.from(workflowStepsRef.current).sort((a, b) => {
-          const orderA = workflowOrderMapRef.current.get(a.id) || 999
-          const orderB = workflowOrderMapRef.current.get(b.id) || 999
-          return orderA - orderB
-        })
+        const isForActiveStep = 
+          activeStepNameNorm === eventAgentNormalized ||
+          activeStepIdNorm === eventAgentNormalized ||
+          activeStep.agentName === agentName ||
+          activeStep.agentId === agentName ||
+          isHostAgent
         
-        for (const step of hostSortedSteps) {
-          const status = stepStatusesRef.current.get(step.id)
-          if (!status || status.status !== "completed") {
-            console.log("[WorkflowTest] 🎯 Host event routed to first uncompleted step:", step.agentName)
-            return step.id
-          }
+        if (!isForActiveStep) {
+          // This event is for a different step - BLOCK IT
+          console.log("[WorkflowTest] 🛑 BLOCKING event for", agentName, 
+            "- only", activeStep.agentName, "should be active right now")
+          return null
         }
+        
+        // Event is for active step or host - route to active step
+        console.log("[WorkflowTest] ✅ Event for active step:", agentName, "-> step:", activeStep.id)
+        return activeStep.id
       }
       
-      // Proceed with normal routing
+      // Proceed with normal routing (only reached if all steps completed)
       
       // Check if we already have an active step for this agent (sticky assignment)
       const existingActiveStep = activeStepPerAgentRef.current.get(agentName)
