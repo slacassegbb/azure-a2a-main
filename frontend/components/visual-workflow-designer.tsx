@@ -619,9 +619,15 @@ export function VisualWorkflowDesigner({
             return orderA - orderB
           })
           
-          // Find the first uncompleted step
+          // Find the first uncompleted step (but respect waiting status - don't skip past it)
           for (const step of allSteps) {
             const status = stepStatusesRef.current.get(step.id)
+            // If this step is waiting, route here and don't go further
+            if (status?.status === "waiting") {
+              console.log("[WorkflowTest] 🎯 Routing host event to WAITING step:", step.agentName, "(", step.id, ")")
+              activeStepPerAgentRef.current.set(agentName, step.id)
+              return step.id
+            }
             if (!status || status.status !== "completed") {
               console.log("[WorkflowTest] 🎯 Routing host event to:", step.agentName, "(", step.id, ")")
               // Use sticky assignment for host agent events too
@@ -728,8 +734,10 @@ export function VisualWorkflowDesigner({
       
       // CRITICAL FIX: Update ref immediately to prevent race conditions with rapid events
       const currentStatus = stepStatusesRef.current.get(stepId)
+      // Preserve waiting/completed status - don't downgrade
       const newStatus = status?.includes("completed") ? "completed" : 
-                       currentStatus?.status === "completed" ? "completed" : 
+                       currentStatus?.status === "completed" ? "completed" :
+                       currentStatus?.status === "waiting" ? "waiting" : 
                        "working"
       
       // Determine if this status has actual content worth displaying
@@ -766,9 +774,10 @@ export function VisualWorkflowDesigner({
         const newMap = new Map(prev)
         const currentStatus = prev.get(stepId)
         
-        // Don't downgrade from "completed" to "working"
+        // Preserve waiting/completed status - don't downgrade
         const newStatus = status?.includes("completed") ? "completed" : 
-                         currentStatus?.status === "completed" ? "completed" : 
+                         currentStatus?.status === "completed" ? "completed" :
+                         currentStatus?.status === "waiting" ? "waiting" : 
                          "working"
         
         // Same logic: prioritize rich content, preserve if simple status
@@ -826,14 +835,23 @@ export function VisualWorkflowDesigner({
         console.log("[WorkflowTest] ⏸️ Step waiting for input:", stepId, agentName)
         console.log("[WorkflowTest] 📋 Task update data:", JSON.stringify(data, null, 2))
         setWaitingStepId(stepId)
-        // Capture the message - check multiple sources:
+        // Capture the message - check multiple sources (DON'T use state as fallback - it's just "input_required"):
         // 1. data.content (from backend task_updated event)
         // 2. currentStatus?.message (from previous agent_message event)
         // 3. data.message (fallback)
-        // 4. The state itself as last resort
-        const capturedMessage = data.content || currentStatus?.message || data.message || state
-        console.log("[WorkflowTest] 📋 Captured waiting message:", capturedMessage?.substring?.(0, 200) || capturedMessage)
-        setWaitingMessage(capturedMessage)
+        const newCapturedMessage = data.content || currentStatus?.message || data.message || null
+        console.log("[WorkflowTest] 📋 New captured message:", newCapturedMessage?.substring?.(0, 200) || newCapturedMessage)
+        
+        // IMPORTANT: Only update waitingMessage if we have actual content
+        // Don't overwrite a good message with null or empty string
+        setWaitingMessage(prev => {
+          if (newCapturedMessage && newCapturedMessage.length > 0) {
+            return newCapturedMessage
+          }
+          // Keep previous message if new one is empty
+          console.log("[WorkflowTest] 📋 Keeping previous waiting message:", prev?.substring?.(0, 100))
+          return prev
+        })
       } else if (newStatus === "completed" || newStatus === "working") {
         // Clear waiting state when step progresses
         setWaitingStepId(prev => {
@@ -1063,13 +1081,26 @@ export function VisualWorkflowDesigner({
         const currentStatus = stepStatusesRef.current.get(stepId)
         // Only update message if new content is longer (more substantive) than existing
         const shouldUpdateMessage = !currentStatus?.message || messageText.length > currentStatus.message.length
+        // Preserve waiting/completed status - don't downgrade
+        const preservedStatus = currentStatus?.status === "completed" ? "completed" : 
+                               currentStatus?.status === "waiting" ? "waiting" : 
+                               currentStatus?.status || "working"
         const immediateUpdate = new Map(stepStatusesRef.current)
         immediateUpdate.set(stepId, { 
           ...currentStatus,
-          status: currentStatus?.status || "working",
+          status: preservedStatus,
           message: shouldUpdateMessage ? messageText : currentStatus?.message
         })
         stepStatusesRef.current = immediateUpdate
+        
+        // If this step is currently waiting, also update the waiting message
+        setWaitingStepId(currentWaitingId => {
+          if (currentWaitingId === stepId && shouldUpdateMessage) {
+            console.log("[WorkflowTest] 📋 Updating waiting message from message event:", messageText?.substring?.(0, 100))
+            setWaitingMessage(messageText)
+          }
+          return currentWaitingId
+        })
         
         setTestMessages(prev => [...prev, { role: "assistant", content: messageText, agent: rawAgentName }])
         setStepStatuses(prev => {
@@ -1077,9 +1108,12 @@ export function VisualWorkflowDesigner({
           const currentStatus = prev.get(stepId)
           // IMPORTANT: Message alone doesn't mean completed! Keep existing status or set to working
           const shouldUpdate = !currentStatus?.message || messageText.length > currentStatus.message.length
+          const preservedStatus = currentStatus?.status === "completed" ? "completed" : 
+                                 currentStatus?.status === "waiting" ? "waiting" : 
+                                 currentStatus?.status || "working"
           newMap.set(stepId, { 
             ...currentStatus,
-            status: currentStatus?.status || "working",
+            status: preservedStatus,
             message: shouldUpdate ? messageText : currentStatus?.message
           })
           return newMap
@@ -1123,21 +1157,35 @@ export function VisualWorkflowDesigner({
         const currentStatus = stepStatusesRef.current.get(stepId)
         // Only update message if new content is longer (more substantive) than existing
         const shouldUpdateMessage = !currentStatus?.message || fullContent.length > currentStatus.message.length
+        // Preserve waiting/completed status - don't downgrade
+        const preservedStatus = currentStatus?.status === "completed" ? "completed" : 
+                               currentStatus?.status === "waiting" ? "waiting" : "working"
         const immediateUpdate = new Map(stepStatusesRef.current)
         immediateUpdate.set(stepId, { 
           ...currentStatus,
-          status: currentStatus?.status === "completed" ? "completed" : "working",
+          status: preservedStatus,
           message: shouldUpdateMessage ? fullContent : currentStatus?.message
         })
         stepStatusesRef.current = immediateUpdate
+        
+        // If this step is currently waiting, also update the waiting message
+        setWaitingStepId(currentWaitingId => {
+          if (currentWaitingId === stepId && shouldUpdateMessage) {
+            console.log("[WorkflowTest] 📋 Updating waiting message from remote_agent_activity:", fullContent?.substring?.(0, 100))
+            setWaitingMessage(fullContent)
+          }
+          return currentWaitingId
+        })
         
         setStepStatuses(prev => {
           const newMap = new Map(prev)
           const currentStatus = prev.get(stepId)
           const shouldUpdate = !currentStatus?.message || fullContent.length > currentStatus.message.length
+          const preservedStatus = currentStatus?.status === "completed" ? "completed" : 
+                                 currentStatus?.status === "waiting" ? "waiting" : "working"
           newMap.set(stepId, { 
             ...currentStatus,
-            status: currentStatus?.status === "completed" ? "completed" : "working",
+            status: preservedStatus,
             message: shouldUpdate ? fullContent : currentStatus?.message
           })
           return newMap
