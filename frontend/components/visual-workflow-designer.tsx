@@ -733,6 +733,14 @@ export function VisualWorkflowDesigner({
       const { state, agentName } = data
       if (!agentName) return
       
+      // IMPORTANT: Ignore "completed" from host agent - streaming events have correct names
+      // Final batch events from backend have "foundry-host-agent" for all agents which breaks routing
+      const isHostAgent = agentName.toLowerCase().includes('host')
+      if (isHostAgent && state === "completed") {
+        console.log("[WorkflowTest] ⏭️ Ignoring completed event from host agent - relying on streaming events")
+        return
+      }
+      
       const stepId = findStepForAgent(agentName)
       if (!stepId) return
       
