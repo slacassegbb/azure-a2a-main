@@ -136,6 +136,7 @@ export function VisualWorkflowDesigner({
   const stepStatusesRef = useRef<Map<string, { status: string, message?: string, imageUrl?: string, fileName?: string, completedAt?: number }>>(new Map())
   const [waitingStepId, setWaitingStepId] = useState<string | null>(null)
   const [waitingResponse, setWaitingResponse] = useState("")
+  const [waitingMessage, setWaitingMessage] = useState<string | null>(null) // Captured agent message when waiting
   const workflowStepsMapRef = useRef<Map<string, WorkflowStep>>(new Map())
   const imageCache = useRef<Map<string, HTMLImageElement>>(new Map())
   const testTimeoutRef = useRef<NodeJS.Timeout | null>(null)
@@ -824,9 +825,19 @@ export function VisualWorkflowDesigner({
       if (newStatus === "waiting") {
         console.log("[WorkflowTest] ⏸️ Step waiting for input:", stepId, agentName)
         setWaitingStepId(stepId)
+        // Capture the current message as the waiting message
+        const capturedMessage = currentStatus?.message || data.message || null
+        console.log("[WorkflowTest] 📋 Captured waiting message:", capturedMessage?.substring(0, 100))
+        setWaitingMessage(capturedMessage)
       } else if (newStatus === "completed" || newStatus === "working") {
         // Clear waiting state when step progresses
-        setWaitingStepId(prev => prev === stepId ? null : prev)
+        setWaitingStepId(prev => {
+          if (prev === stepId) {
+            setWaitingMessage(null) // Also clear the waiting message
+            return null
+          }
+          return prev
+        })
       }
       
       setStepStatuses(prev => {
@@ -1560,21 +1571,47 @@ export function VisualWorkflowDesigner({
     setHostMessage(null)
     setWaitingStepId(null)
     setWaitingResponse("")
+    setWaitingMessage(null)
   }
   
   // Handle response submission when an agent is waiting for input
   const handleWaitingResponse = async () => {
-    if (!waitingResponse.trim() || !waitingStepId || !workflowConversationId) return
+    if (!waitingResponse.trim() || !waitingStepId || !workflowConversationId) {
+      console.log("[WorkflowTest] ❌ Cannot send response - missing:", {
+        hasResponse: !!waitingResponse.trim(),
+        hasStepId: !!waitingStepId,
+        hasConversationId: !!workflowConversationId
+      })
+      return
+    }
     
     const waitingStep = workflowSteps.find(s => s.id === waitingStepId)
-    console.log("[WorkflowTest] 📨 Sending response to waiting agent:", waitingStep?.agentName)
+    console.log("[WorkflowTest] 📨 Sending response to waiting agent:", waitingStep?.agentName, "conversationId:", workflowConversationId)
     
     // Add user message to test messages
     setTestMessages(prev => [...prev, { role: "user", content: waitingResponse }])
     
-    // Clear the waiting response input
+    // Capture response and clear input immediately
     const responseToSend = waitingResponse
     setWaitingResponse("")
+    
+    // Clear waiting state - the agent will process and either complete or ask again
+    const previousWaitingStepId = waitingStepId
+    setWaitingStepId(null)
+    setWaitingMessage(null)
+    
+    // Update step status back to working while waiting for response
+    setStepStatuses(prev => {
+      const newMap = new Map(prev)
+      const currentStatus = prev.get(previousWaitingStepId)
+      if (currentStatus) {
+        newMap.set(previousWaitingStepId, {
+          ...currentStatus,
+          status: "working"
+        })
+      }
+      return newMap
+    })
     
     // Send the response via API
     try {
@@ -1584,7 +1621,7 @@ export function VisualWorkflowDesigner({
         { root: { kind: 'text', text: responseToSend } }
       ]
       
-      await fetch(`${baseUrl}/messages`, {
+      const response = await fetch(`${baseUrl}/messages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1600,7 +1637,11 @@ export function VisualWorkflowDesigner({
         })
       })
       
-      console.log("[WorkflowTest] ✅ Response sent successfully")
+      if (!response.ok) {
+        console.error("[WorkflowTest] ❌ API error:", response.status, response.statusText)
+      } else {
+        console.log("[WorkflowTest] ✅ Response sent successfully")
+      }
     } catch (err) {
       console.error("[WorkflowTest] ❌ Error sending response:", err)
     }
@@ -3098,6 +3139,8 @@ export function VisualWorkflowDesigner({
               {waitingStepId && isTesting && (() => {
                 const waitingStep = workflowSteps.find(s => s.id === waitingStepId)
                 const waitingStatus = stepStatuses.get(waitingStepId)
+                // Use captured waiting message or fall back to current status message
+                const displayMessage = waitingMessage || waitingStatus?.message
                 return (
                   <div className="mt-3 p-3 bg-orange-900/30 rounded-lg border border-orange-500/50">
                     <div className="flex items-start gap-3">
@@ -3114,9 +3157,9 @@ export function VisualWorkflowDesigner({
                         </div>
                         
                         {/* Show the agent's question/message */}
-                        {waitingStatus?.message && (
-                          <div className="mb-3 p-2 bg-slate-800/50 rounded text-sm text-slate-300 whitespace-pre-wrap max-h-32 overflow-y-auto">
-                            {waitingStatus.message}
+                        {displayMessage && (
+                          <div className="mb-3 p-2 bg-slate-800/50 rounded text-sm text-slate-300 whitespace-pre-wrap max-h-40 overflow-y-auto">
+                            {displayMessage}
                           </div>
                         )}
                         
@@ -3133,6 +3176,7 @@ export function VisualWorkflowDesigner({
                             }}
                             placeholder="Type your response..."
                             className="flex-1 text-sm h-9 bg-slate-800/50 border-orange-500/30 focus:border-orange-500"
+                            autoFocus
                           />
                           <Button
                             onClick={handleWaitingResponse}
