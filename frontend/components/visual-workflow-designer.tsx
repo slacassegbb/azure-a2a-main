@@ -633,7 +633,10 @@ export function VisualWorkflowDesigner({
         }
       }
       
-      // No step waiting - find matching step but check sequential order
+      // No step waiting - find ALL matching steps, then pick the first UNCOMPLETED one
+      // This handles cases where the same agent appears multiple times in workflow
+      const matchingSteps: WorkflowStep[] = []
+      
       for (const step of sortedSteps) {
         const normalizedStepName = step.agentName.toLowerCase().trim().replace(/[-_]/g, ' ')
         const normalizedStepId = step.agentId.toLowerCase().trim().replace(/[-_]/g, ' ')
@@ -643,10 +646,26 @@ export function VisualWorkflowDesigner({
             step.agentName === agentName ||
             step.agentId === agentName ||
             (normalizedEventName.includes('interview') && normalizedStepName.includes('interview')) ||
-            (normalizedEventName.includes('branding') && normalizedStepName.includes('branding'))
+            (normalizedEventName.includes('branding') && normalizedStepName.includes('branding')) ||
+            (normalizedEventName.includes('image') && normalizedStepName.includes('image'))
         
         if (matches) {
-          // Check all previous steps are completed
+          matchingSteps.push(step)
+        }
+      }
+      
+      if (matchingSteps.length > 0) {
+        // Find the first UNCOMPLETED matching step (handles same agent multiple times)
+        for (const step of matchingSteps) {
+          const stepStatus = stepStatusesRef.current.get(step.id)
+          
+          // Skip completed steps - look for the next instance
+          if (stepStatus?.status === "completed") {
+            console.log("[WorkflowTest] ⏭️ Step", step.order, step.agentName, "already completed, checking next instance")
+            continue
+          }
+          
+          // Check all previous steps are completed (sequential enforcement)
           let canActivate = true
           for (const prevStep of sortedSteps) {
             if (prevStep.order >= step.order) break
@@ -658,12 +677,18 @@ export function VisualWorkflowDesigner({
           }
           
           if (canActivate) {
+            console.log("[WorkflowTest] ✅ Routing to step", step.order, step.agentName, "(first uncompleted match)")
             return step.id
           } else {
-            console.log("[WorkflowTest] 🛑 Blocking event for", agentName, "- previous steps not completed")
+            console.log("[WorkflowTest] 🛑 Step", step.order, step.agentName, "- previous steps not completed")
             return null
           }
         }
+        
+        // All matching steps completed - return the last one (for final events)
+        const lastMatch = matchingSteps[matchingSteps.length - 1]
+        console.log("[WorkflowTest] ✅ All instances completed, routing to last:", lastMatch.order, lastMatch.agentName)
+        return lastMatch.id
       }
       
       // Host agent events: route to first non-completed step
