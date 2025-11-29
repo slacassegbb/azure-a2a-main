@@ -566,13 +566,44 @@ export function VisualWorkflowDesigner({
   useEffect(() => {
     console.log("[WorkflowTest] 🎬 Setting up event listeners on mount")
     
+    // Detect actual agent from message content when backend sends "foundry-host-agent"
+    const detectAgentFromContent = (content: string | undefined): string | null => {
+      if (!content) return null
+      const contentLower = content.toLowerCase()
+      
+      // Branding agent signatures
+      if (content.includes('🎨 BRANDING') || contentLower.includes('branding response') || 
+          contentLower.includes('branding strategy') || contentLower.includes('brand guidelines')) {
+        return 'branding'
+      }
+      
+      // Interview agent signatures  
+      if (contentLower.includes('what brings you here') || contentLower.includes('company name') ||
+          contentLower.includes('capture') && contentLower.includes('information') ||
+          contentLower.includes('use case') || contentLower.includes('contact') && contentLower.includes('email')) {
+        return 'interview'
+      }
+      
+      return null
+    }
+    
     // SIMPLE sequential workflow:
     // 1. If a step is waiting for input, ONLY that step can receive events
     // 2. Otherwise, find matching step but only if previous steps are completed
-    const findStepForAgent = (agentName: string): string | null => {
+    const findStepForAgent = (agentName: string, messageContent?: string): string | null => {
       if (!agentName) return null
       
-      const normalizedEventName = agentName.toLowerCase().trim().replace(/[-_]/g, ' ')
+      // If backend sends "host" but we can detect actual agent from content, use that
+      let effectiveAgentName = agentName
+      if (agentName.toLowerCase().includes('host') && messageContent) {
+        const detected = detectAgentFromContent(messageContent)
+        if (detected) {
+          console.log("[WorkflowTest] 🔍 Detected actual agent from content:", detected)
+          effectiveAgentName = detected
+        }
+      }
+      
+      const normalizedEventName = effectiveAgentName.toLowerCase().trim().replace(/[-_]/g, ' ')
       const sortedSteps = Array.from(workflowStepsRef.current).sort((a, b) => a.order - b.order)
       
       // CRITICAL: If a step is waiting for input, ALL events go to that step
@@ -854,7 +885,7 @@ export function VisualWorkflowDesigner({
       })
       
       if (messageText && rawAgentName) {
-        const stepId = findStepForAgent(rawAgentName)
+        const stepId = findStepForAgent(rawAgentName, messageText)
         if (!stepId) {
           console.log("[WorkflowTest] ⚠️ No step found for agent:", rawAgentName, "- message ignored")
           return
@@ -945,10 +976,9 @@ export function VisualWorkflowDesigner({
           return
         }
         
-        const stepId = findStepForAgent(data.agentName)
-        if (!stepId) return
-        
         const fullContent = data.content
+        const stepId = findStepForAgent(data.agentName, fullContent)
+        if (!stepId) return
         console.log("[WorkflowTest] ✨ Setting REMOTE AGENT response for", data.agentName, "step:", stepId, ":", fullContent.substring(0, 100) + "...")
         
         // CRITICAL FIX: Update ref immediately
@@ -1011,10 +1041,9 @@ export function VisualWorkflowDesigner({
       console.log("[WorkflowTest] 🎯 Final response:", data)
       
       if (data.message?.agent && data.message?.content) {
-        const stepId = findStepForAgent(data.message.agent)
-        if (!stepId) return
-        
         const fullContent = data.message.content
+        const stepId = findStepForAgent(data.message.agent, fullContent)
+        if (!stepId) return
         console.log("[WorkflowTest] ✨ Setting final response for", data.message.agent, "step:", stepId, ":", fullContent.substring(0, 100) + "...")
         
         // PROTECT WAITING STATE: If step is waiting for user input, DON'T mark as completed
