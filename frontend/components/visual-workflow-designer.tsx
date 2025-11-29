@@ -647,26 +647,14 @@ export function VisualWorkflowDesigner({
             step.agentName === agentName ||
             step.agentId === agentName
         
-        // Generic fuzzy matching: extract "core" name by removing common prefixes/suffixes
-        // "AI Foundry Image Generator Agent" -> "image generator"
-        // "azurefoundry-image-generator" -> "image generator"
-        if (!matches) {
-          const extractCoreName = (name: string): string => {
-            return name.toLowerCase()
-              .replace(/ai foundry/gi, '')
-              .replace(/azure foundry/gi, '')
-              .replace(/azurefoundry/gi, '')
-              .replace(/foundry/gi, '')
-              .replace(/agent/gi, '')
-              .replace(/[-_]/g, ' ')
-              .replace(/\s+/g, ' ')
-              .trim()
-          }
-          const eventCore = extractCoreName(agentName)
-          const stepCore = extractCoreName(step.agentName)
-          
-          // Match if cores are equal (handles different naming conventions)
-          matches = eventCore === stepCore && eventCore.length > 0
+        // Fuzzy matching: check if one contains the other (substring match)
+        // This handles cases where naming conventions differ slightly
+        // Require min length to avoid false positives on short strings
+        if (!matches && normalizedEventName.length > 3 && normalizedStepName.length > 3) {
+          matches = normalizedStepName.includes(normalizedEventName) ||
+                    normalizedEventName.includes(normalizedStepName) ||
+                    normalizedStepId.includes(normalizedEventName) ||
+                    normalizedEventName.includes(normalizedStepId)
         }
         
         if (matches) {
