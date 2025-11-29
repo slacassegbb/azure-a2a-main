@@ -848,10 +848,12 @@ export function VisualWorkflowDesigner({
       
       // CRITICAL FIX: Update ref immediately
       const currentStatus = stepStatusesRef.current.get(stepId)
+      // PRESERVE waiting status - only completed or new input_required can change it
       const newStatus = state === "completed" ? "completed" : 
                        state === "failed" ? "failed" : 
                        (state === "input_required" || state === "input-required") ? "waiting" :
                        currentStatus?.status === "completed" ? "completed" :
+                       currentStatus?.status === "waiting" ? "waiting" :  // PRESERVE WAITING!
                        "working"
       const immediateUpdate = new Map(stepStatusesRef.current)
       immediateUpdate.set(stepId, {
@@ -898,11 +900,12 @@ export function VisualWorkflowDesigner({
         const newMap = new Map(prev)
         const currentStatus = prev.get(stepId)
         
-        // Don't downgrade from completed
+        // PRESERVE waiting status - only completed or new input_required can change it
         const newStatus = state === "completed" ? "completed" : 
                          state === "failed" ? "failed" : 
                          (state === "input_required" || state === "input-required") ? "waiting" :
                          currentStatus?.status === "completed" ? "completed" :
+                         currentStatus?.status === "waiting" ? "waiting" :  // PRESERVE WAITING!
                          "working"
         
         newMap.set(stepId, {
