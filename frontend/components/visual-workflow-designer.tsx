@@ -746,25 +746,40 @@ export function VisualWorkflowDesigner({
       
       console.log("[WorkflowTest] 📋 State:", state, "-> Status:", newStatus)
       
-      // Update status
+      // Get message content from task update
+      const messageContent = data.content || data.message
+      
+      // Update status AND message
       setStepStatuses(prev => {
         const newMap = new Map(prev)
         const currentStatus = prev.get(stepId)
-        newMap.set(stepId, { ...currentStatus, status: newStatus })
+        const newEntry: { status: string; message?: string } = { 
+          ...currentStatus, 
+          status: newStatus 
+        }
+        // Update message if we have meaningful content
+        if (messageContent && messageContent !== "input_required" && messageContent !== "input-required" && messageContent !== "Task status: working") {
+          newEntry.message = messageContent
+        }
+        newMap.set(stepId, newEntry)
         return newMap
       })
-      stepStatusesRef.current.set(stepId, { 
-        ...stepStatusesRef.current.get(stepId), 
+      const currentRef = stepStatusesRef.current.get(stepId)
+      const newRefEntry: { status: string; message?: string } = { 
+        ...currentRef, 
         status: newStatus 
-      })
+      }
+      if (messageContent && messageContent !== "input_required" && messageContent !== "input-required" && messageContent !== "Task status: working") {
+        newRefEntry.message = messageContent
+      }
+      stepStatusesRef.current.set(stepId, newRefEntry)
       
       // Handle waiting state (input_required)
       if (newStatus === "waiting") {
         setWaitingStepId(stepId)
-        // Get message content
-        const message = data.content || data.message || stepStatusesRef.current.get(stepId)?.message
-        if (message && message !== "input_required" && message !== "input-required") {
-          setWaitingMessage(message)
+        const waitMsg = messageContent || currentRef?.message
+        if (waitMsg && waitMsg !== "input_required" && waitMsg !== "input-required") {
+          setWaitingMessage(waitMsg)
         }
       } else if (newStatus === "completed") {
         // Clear waiting if this step was waiting
