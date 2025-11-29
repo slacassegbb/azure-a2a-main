@@ -870,6 +870,17 @@ export function VisualWorkflowDesigner({
       
       // CRITICAL FIX: Update ref immediately
       const currentStatus = stepStatusesRef.current.get(stepId)
+      
+      // PROTECT WAITING STATE: If step is waiting for user input, 
+      // ONLY input_required can update it. Block "completed" and "working" events.
+      // The user must reply first, then the workflow can proceed.
+      if (currentStatus?.status === "waiting") {
+        if (state !== "input_required" && state !== "input-required") {
+          console.log("[WorkflowTest] 🛡️ PROTECTING waiting state - ignoring", state, "event for", agentName)
+          return // Don't update anything - step is waiting for user input
+        }
+      }
+      
       // PRESERVE waiting status - only completed or new input_required can change it
       const newStatus = state === "completed" ? "completed" : 
                        state === "failed" ? "failed" : 
