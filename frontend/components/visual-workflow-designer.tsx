@@ -11,6 +11,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { useEventHub } from "@/hooks/use-event-hub"
 import { useVoiceLive } from "@/hooks/use-voice-live"
 import { getScenarioById } from "@/lib/voice-scenarios"
+import { useSearchParams } from "next/navigation"
 
 interface WorkflowStep {
   id: string
@@ -48,6 +49,7 @@ interface VisualWorkflowDesignerProps {
   registeredAgents: Agent[]
   onWorkflowGenerated: (workflowText: string) => void
   initialWorkflow?: string
+  conversationId?: string // Optional: use existing conversation from chat panel
 }
 
 const AGENT_COLORS = [
@@ -68,8 +70,22 @@ const HOST_COLOR = "#6366f1"
 export function VisualWorkflowDesigner({ 
   registeredAgents, 
   onWorkflowGenerated,
-  initialWorkflow 
+  initialWorkflow,
+  conversationId: externalConversationId
 }: VisualWorkflowDesignerProps) {
+  // Also read directly from URL as backup
+  const searchParams = useSearchParams()
+  const urlConversationId = searchParams.get('conversationId')
+  
+  // Use the conversation ID from URL (most reliable) or prop or generate new
+  const activeConversationId = urlConversationId || externalConversationId
+  
+  console.log("[VisualWorkflowDesigner] Conversation IDs:", {
+    fromUrl: urlConversationId,
+    fromProp: externalConversationId,
+    active: activeConversationId
+  })
+  
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [workflowSteps, setWorkflowSteps] = useState<WorkflowStep[]>([])
   const workflowStepsRef = useRef<WorkflowStep[]>([])
@@ -114,6 +130,7 @@ export function VisualWorkflowDesigner({
   // Testing state
   const [testInput, setTestInput] = useState("")
   const [isTesting, setIsTesting] = useState(false)
+  const [workflowConversationId, setWorkflowConversationId] = useState<string | null>(null)
   const [testMessages, setTestMessages] = useState<Array<{ role: string, content: string, agent?: string }>>([])
   const [stepStatuses, setStepStatuses] = useState<Map<string, { status: string, message?: string, imageUrl?: string, fileName?: string, completedAt?: number }>>(new Map())
   const stepStatusesRef = useRef<Map<string, { status: string, message?: string, imageUrl?: string, fileName?: string, completedAt?: number }>>(new Map())
@@ -185,7 +202,7 @@ export function VisualWorkflowDesigner({
     foundryProjectUrl: process.env.NEXT_PUBLIC_AZURE_AI_FOUNDRY_PROJECT_ENDPOINT || '',
     model: process.env.NEXT_PUBLIC_VOICE_MODEL || 'gpt-realtime',
     scenario: getScenarioById('host-agent-chat'),
-    onSendToA2A: async (message: string, metadata?: any) => {
+    onSendToA2A: async (message: string, metadata?: any): Promise<string> => {
       // Send message through the test workflow
       try {
         console.log('[Voice Live] Sending message to workflow test:', message)
@@ -209,8 +226,15 @@ export function VisualWorkflowDesigner({
         const currentWorkflowText = generateWorkflowTextFromRefs()
         if (!currentWorkflowText) {
           console.error('[Voice Live] No workflow to test')
-          return 'workflow-test'
+          return ''
         }
+        
+        // Read conversation ID from URL RIGHT NOW (not from cached state)
+        const currentUrl = new URL(window.location.href)
+        const freshConversationId = currentUrl.searchParams.get('conversationId')
+        const newConversationId = freshConversationId || activeConversationId || `workflow-${Date.now()}`
+        setWorkflowConversationId(newConversationId)
+        console.log("[Voice Live] Using conversation ID:", newConversationId, freshConversationId ? "(from URL)" : activeConversationId ? "(from prop)" : "(new)")
         
         setIsTesting(true)
         setTestMessages([{ role: "user", content: message }])
@@ -237,7 +261,7 @@ export function VisualWorkflowDesigner({
           body: JSON.stringify({
             params: {
               messageId,
-              contextId: 'workflow-test',
+              contextId: newConversationId,
               parts: parts,
               role: 'user',
               agentMode: true,
@@ -254,6 +278,9 @@ export function VisualWorkflowDesigner({
         
         console.log('[Voice Live] Message sent successfully')
         
+        // NOTE: URL update moved to when test completes to prevent chat panel from
+        // reloading messages during the workflow test
+        
         // Set timeout
         if (testTimeoutRef.current) {
           clearTimeout(testTimeoutRef.current)
@@ -263,7 +290,7 @@ export function VisualWorkflowDesigner({
           setIsTesting(false)
         }, 600000)
         
-        return 'workflow-test'
+        return newConversationId
       } catch (error) {
         console.error('[Voice Live] Error sending to A2A:', error)
         throw error
@@ -320,6 +347,11 @@ export function VisualWorkflowDesigner({
     
     if (allStepsCompleted) {
       console.log("[WorkflowTest] 🎉 All steps completed! Auto-stopping workflow in 2 seconds...")
+      
+      // NOTE: Don't update URL here - the chat panel is already showing everything live
+      // URL updates cause the chat panel to reload, which creates a jarring "refresh" effect
+      // The conversation is already saved on the backend and the chat panel has the live data
+      
       // Auto-stop after 2 seconds to let user see the completion
       const timeoutId = setTimeout(() => {
         console.log("[WorkflowTest] ✅ Auto-stopping workflow")
@@ -524,10 +556,9 @@ export function VisualWorkflowDesigner({
   }, [workflowSteps, connections])
   
   // Subscribe to event hub for live workflow testing
+  // FIXED: Subscribe on mount, check isTesting inside handlers
   useEffect(() => {
-    if (!isTesting) return
-    
-    console.log("[WorkflowTest] 🎬 Setting up event listeners for testing session")
+    console.log("[WorkflowTest] 🎬 Setting up event listeners on mount")
     
     // Helper to find the FIRST uncompleted step for an agent (sequential workflow!)
     // CRITICAL: Uses sticky assignment - once a step is assigned to an agent, keep using it until completed
@@ -572,7 +603,37 @@ export function VisualWorkflowDesigner({
       })
       
       if (matchingSteps.length === 0) {
-        // Agent not in workflow (e.g., host agent) - this is OK, just ignore
+        // Special handling for host agent - route to next uncompleted step in workflow order
+        // This handles cases where backend sends "foundry-host-agent" instead of individual agent names
+        if (normalizedEventName.includes('host') || normalizedEventName.includes('foundry host')) {
+          console.log("[WorkflowTest] 🔄 Host agent event - routing to next uncompleted step")
+          
+          // Get all steps sorted by workflow order
+          const allSteps = Array.from(workflowStepsRef.current)
+          allSteps.sort((a, b) => {
+            const orderA = workflowOrderMapRef.current.get(a.id) || 999
+            const orderB = workflowOrderMapRef.current.get(b.id) || 999
+            return orderA - orderB
+          })
+          
+          // Find the first uncompleted step
+          for (const step of allSteps) {
+            const status = stepStatusesRef.current.get(step.id)
+            if (!status || status.status !== "completed") {
+              console.log("[WorkflowTest] 🎯 Routing host event to:", step.agentName, "(", step.id, ")")
+              // Use sticky assignment for host agent events too
+              activeStepPerAgentRef.current.set(agentName, step.id)
+              return step.id
+            }
+          }
+          
+          // All steps completed - return the last one
+          if (allSteps.length > 0) {
+            return allSteps[allSteps.length - 1].id
+          }
+        }
+        
+        // Agent not in workflow - this is OK, just ignore
         console.log("[WorkflowTest] Agent", agentName, "not in workflow, ignoring")
         return null
       }
@@ -640,6 +701,25 @@ export function VisualWorkflowDesigner({
       const { agent: agentName, status } = data
       if (!agentName) return
       
+      // Filter out orchestrator planning/status messages from host agent
+      // These shouldn't update step messages - they're coordination status
+      const isOrchestratorStatus = (
+        (agentName === "foundry-host-agent" || agentName === "Host Agent") && (
+          status?.includes("Planning step") ||
+          status?.includes("Initializing") ||
+          status?.includes("Goal achieved") ||
+          status?.includes("Reasoning:") ||
+          status?.includes("Executing:") ||
+          status?.includes("Planning next task") ||
+          status?.startsWith("Task status:")
+        )
+      )
+      
+      if (isOrchestratorStatus) {
+        console.log("[WorkflowTest] ⏭️ Skipping orchestrator status in status_update:", status?.substring(0, 50) + "...")
+        return
+      }
+      
       const stepId = findStepForAgent(agentName)
       if (!stepId) return
       
@@ -648,11 +728,31 @@ export function VisualWorkflowDesigner({
       const newStatus = status?.includes("completed") ? "completed" : 
                        currentStatus?.status === "completed" ? "completed" : 
                        "working"
+      
+      // Determine if this status has actual content worth displaying
+      // Rich content has emojis or is longer than simple status words
+      const isRichContent = status && (
+        status.includes("🖼️") || 
+        status.includes("🎨") || 
+        status.includes("🔍") ||
+        status.includes("SUMMARY") ||
+        status.includes("RESPONSE") ||
+        status.includes("RESULTS") ||
+        status.length > 100
+      )
+      // Simple statuses that shouldn't overwrite rich content
+      const isSimpleStatus = !status || ["working", "completed", "submitted", "failed"].includes(status.toLowerCase())
+      
+      // Use rich content, or keep existing message if new status is simple
+      const newMessage = isRichContent ? status : 
+                        (isSimpleStatus && currentStatus?.message) ? currentStatus.message :
+                        status
+      
       const immediateUpdate = new Map(stepStatusesRef.current)
       immediateUpdate.set(stepId, {
         ...currentStatus,
         status: newStatus,
-        message: currentStatus?.message || status,
+        message: newMessage,
         completedAt: newStatus === "completed" && currentStatus?.status !== "completed" 
           ? Date.now() 
           : currentStatus?.completedAt
@@ -668,10 +768,25 @@ export function VisualWorkflowDesigner({
                          currentStatus?.status === "completed" ? "completed" : 
                          "working"
         
+        // Same logic: prioritize rich content, preserve if simple status
+        const isRichContent = status && (
+          status.includes("🖼️") || 
+          status.includes("🎨") || 
+          status.includes("🔍") ||
+          status.includes("SUMMARY") ||
+          status.includes("RESPONSE") ||
+          status.includes("RESULTS") ||
+          status.length > 100
+        )
+        const isSimpleStatus = !status || ["working", "completed", "submitted", "failed"].includes(status.toLowerCase())
+        const newMessage = isRichContent ? status : 
+                          (isSimpleStatus && currentStatus?.message) ? currentStatus.message :
+                          status
+        
         newMap.set(stepId, { 
           ...currentStatus, // Preserve existing fields like imageUrl
           status: newStatus,
-          message: currentStatus?.message || status,
+          message: newMessage,
           // Add timestamp when transitioning to completed
           completedAt: newStatus === "completed" && currentStatus?.status !== "completed" 
             ? Date.now() 
@@ -730,21 +845,24 @@ export function VisualWorkflowDesigner({
         
         // CRITICAL FIX: Update ref immediately
         const currentStatus = stepStatusesRef.current.get(stepId)
+        // Only update message if new content is longer (more substantive) than existing
+        const shouldUpdateMessage = !currentStatus?.message || content.length > currentStatus.message.length
         const immediateUpdate = new Map(stepStatusesRef.current)
         immediateUpdate.set(stepId, { 
           ...currentStatus,
           status: currentStatus?.status === "completed" ? "completed" : "working",
-          message: content 
+          message: shouldUpdateMessage ? content : currentStatus?.message
         })
         stepStatusesRef.current = immediateUpdate
         
         setStepStatuses(prev => {
           const newMap = new Map(prev)
           const currentStatus = prev.get(stepId)
+          const shouldUpdate = !currentStatus?.message || content.length > currentStatus.message.length
           newMap.set(stepId, { 
             ...currentStatus,
             status: currentStatus?.status === "completed" ? "completed" : "working",
-            message: content 
+            message: shouldUpdate ? content : currentStatus?.message
           })
           return newMap
         })
@@ -855,27 +973,43 @@ export function VisualWorkflowDesigner({
       
       // Try different message formats (matching DAG)
       if (data.content && Array.isArray(data.content)) {
-        const textContent = data.content.find((c: any) => c.type === "text")?.content || ""
-        messageText = textContent
+        // Look for text content in array - check both .content and .text properties
+        const textItem = data.content.find((c: any) => c.type === "text")
+        if (textItem) {
+          messageText = textItem.content || textItem.text || ""
+        }
       } else if (data.message && typeof data.message === "string") {
         messageText = data.message
       } else if (typeof data.content === "string") {
         messageText = data.content
       }
       
+      // Log for debugging what we extracted
+      console.log("[WorkflowTest] 📨 Extracted:", { 
+        messageText: messageText ? messageText.substring(0, 100) : "(empty)", 
+        rawAgentName,
+        contentType: data.content ? (Array.isArray(data.content) ? "array" : typeof data.content) : "none",
+        contentSample: data.content ? JSON.stringify(data.content).substring(0, 200) : "none"
+      })
+      
       if (messageText && rawAgentName) {
         const stepId = findStepForAgent(rawAgentName)
-        if (!stepId) return
+        if (!stepId) {
+          console.log("[WorkflowTest] ⚠️ No step found for agent:", rawAgentName, "- message ignored")
+          return
+        }
         
         console.log("[WorkflowTest] ✨ Setting message for", rawAgentName, "step:", stepId, ":", messageText.substring(0, 100) + "...")
         
         // CRITICAL FIX: Update ref immediately
         const currentStatus = stepStatusesRef.current.get(stepId)
+        // Only update message if new content is longer (more substantive) than existing
+        const shouldUpdateMessage = !currentStatus?.message || messageText.length > currentStatus.message.length
         const immediateUpdate = new Map(stepStatusesRef.current)
         immediateUpdate.set(stepId, { 
           ...currentStatus,
           status: currentStatus?.status || "working",
-          message: messageText 
+          message: shouldUpdateMessage ? messageText : currentStatus?.message
         })
         stepStatusesRef.current = immediateUpdate
         
@@ -884,10 +1018,11 @@ export function VisualWorkflowDesigner({
           const newMap = new Map(prev)
           const currentStatus = prev.get(stepId)
           // IMPORTANT: Message alone doesn't mean completed! Keep existing status or set to working
+          const shouldUpdate = !currentStatus?.message || messageText.length > currentStatus.message.length
           newMap.set(stepId, { 
             ...currentStatus,
             status: currentStatus?.status || "working",
-            message: messageText 
+            message: shouldUpdate ? messageText : currentStatus?.message
           })
           return newMap
         })
@@ -901,6 +1036,25 @@ export function VisualWorkflowDesigner({
       console.log("[WorkflowTest] 🤖 Remote agent activity:", data)
       
       if (data.agentName && data.content) {
+        // Filter out orchestrator planning/status messages from host agent
+        // These are internal coordination messages, not actual agent outputs
+        const isOrchestratorStatus = (
+          data.agentName === "foundry-host-agent" && (
+            data.content.includes("Planning step") ||
+            data.content.includes("Initializing") ||
+            data.content.includes("Goal achieved") ||
+            data.content.includes("Reasoning:") ||
+            data.content.includes("Executing:") ||
+            data.content.includes("Planning next task") ||
+            data.content.startsWith("Task status:")
+          )
+        )
+        
+        if (isOrchestratorStatus) {
+          console.log("[WorkflowTest] ⏭️ Skipping orchestrator status message:", data.content.substring(0, 50) + "...")
+          return
+        }
+        
         const stepId = findStepForAgent(data.agentName)
         if (!stepId) return
         
@@ -909,21 +1063,24 @@ export function VisualWorkflowDesigner({
         
         // CRITICAL FIX: Update ref immediately
         const currentStatus = stepStatusesRef.current.get(stepId)
+        // Only update message if new content is longer (more substantive) than existing
+        const shouldUpdateMessage = !currentStatus?.message || fullContent.length > currentStatus.message.length
         const immediateUpdate = new Map(stepStatusesRef.current)
         immediateUpdate.set(stepId, { 
           ...currentStatus,
           status: currentStatus?.status === "completed" ? "completed" : "working",
-          message: fullContent 
+          message: shouldUpdateMessage ? fullContent : currentStatus?.message
         })
         stepStatusesRef.current = immediateUpdate
         
         setStepStatuses(prev => {
           const newMap = new Map(prev)
           const currentStatus = prev.get(stepId)
+          const shouldUpdate = !currentStatus?.message || fullContent.length > currentStatus.message.length
           newMap.set(stepId, { 
             ...currentStatus,
             status: currentStatus?.status === "completed" ? "completed" : "working",
-            message: fullContent 
+            message: shouldUpdate ? fullContent : currentStatus?.message
           })
           return newMap
         })
@@ -1026,6 +1183,7 @@ export function VisualWorkflowDesigner({
         const currentStatus = stepStatusesRef.current.get(stepId)
         const immediateUpdate = new Map(stepStatusesRef.current)
         immediateUpdate.set(stepId, { 
+          status: currentStatus?.status || "working",
           ...currentStatus,
           imageUrl: isImage ? fileUri : undefined,
           fileName: fileName
@@ -1037,6 +1195,7 @@ export function VisualWorkflowDesigner({
           const currentStatus = prev.get(stepId)
           // IMPORTANT: Don't mark as completed! File upload is just displaying the image.
           newMap.set(stepId, { 
+            status: currentStatus?.status || "working",
             ...currentStatus,
             imageUrl: isImage ? fileUri : undefined,
             fileName: fileName
@@ -1055,21 +1214,24 @@ export function VisualWorkflowDesigner({
         
         // CRITICAL FIX: Update ref immediately
         const currentStatus = stepStatusesRef.current.get(stepId)
+        // Only update message if new content is longer (more substantive) than existing
+        const shouldUpdateMessage = !currentStatus?.message || data.status.length > currentStatus.message.length
         const immediateUpdate = new Map(stepStatusesRef.current)
         immediateUpdate.set(stepId, { 
           ...currentStatus,
           status: currentStatus?.status === "completed" ? "completed" : "working",
-          message: data.status 
+          message: shouldUpdateMessage ? data.status : currentStatus?.message
         })
         stepStatusesRef.current = immediateUpdate
         
         setStepStatuses(prev => {
           const newMap = new Map(prev)
           const currentStatus = prev.get(stepId)
+          const shouldUpdate = !currentStatus?.message || data.status.length > currentStatus.message.length
           newMap.set(stepId, { 
             ...currentStatus,
             status: currentStatus?.status === "completed" ? "completed" : "working",
-            message: data.status 
+            message: shouldUpdate ? data.status : currentStatus?.message
           })
           return newMap
         })
@@ -1133,7 +1295,7 @@ export function VisualWorkflowDesigner({
     subscribe("file", handleFileUploaded)
     subscribe("outgoing_agent_message", handleOutgoingMessage)
     
-    console.log("[WorkflowTest] ✅ All WebSocket listeners registered - subscriptions are now STABLE (no re-runs during testing)")
+    console.log("[WorkflowTest] ✅ All WebSocket listeners registered - subscriptions ALWAYS ACTIVE")
     
     return () => {
       console.log("[WorkflowTest] 🔌 Unsubscribing from WebSocket events")
@@ -1150,12 +1312,11 @@ export function VisualWorkflowDesigner({
       unsubscribe("file", handleFileUploaded)
       unsubscribe("outgoing_agent_message", handleOutgoingMessage)
     }
-    // CRITICAL: Only depend on isTesting
-    // subscribe/unsubscribe are from context and stable enough
-    // All other data (workflowSteps, workflowOrderMap, stepStatuses) accessed via refs
-    // This prevents constant resubscription which causes missed events!
+    // FIXED: Subscribe on mount, not when isTesting changes
+    // This ensures we don't miss events due to race condition between setIsTesting and event arrival
+    // Handlers check isTesting internally if needed
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isTesting])
+  }, [])
 
   // Handle canvas drop
   const handleCanvasDrop = (e: React.DragEvent) => {
@@ -1263,6 +1424,14 @@ export function VisualWorkflowDesigner({
       return
     }
     
+    // Read conversation ID from URL RIGHT NOW (not from cached state)
+    // This ensures we get the latest value the chat panel has set
+    const currentUrl = new URL(window.location.href)
+    const freshConversationId = currentUrl.searchParams.get('conversationId')
+    const newConversationId = freshConversationId || activeConversationId || `conv-${Date.now()}`
+    setWorkflowConversationId(newConversationId)
+    console.log("[WorkflowTest] Using conversation ID:", newConversationId, freshConversationId ? "(from URL)" : activeConversationId ? "(from prop)" : "(new)")
+    
     setIsTesting(true)
     setTestMessages([{ role: "user", content: testInput }])
     setStepStatuses(new Map())
@@ -1287,7 +1456,7 @@ export function VisualWorkflowDesigner({
       
       console.log('[WorkflowTest] Sending message:', {
         messageId,
-        contextId: 'workflow-test',
+        contextId: newConversationId,
         workflow: currentWorkflowText.substring(0, 100) + '...',
         partsCount: parts.length
       })
@@ -1300,7 +1469,7 @@ export function VisualWorkflowDesigner({
         body: JSON.stringify({
           params: {
             messageId,
-            contextId: 'workflow-test',  // Changed from conversationId to contextId
+            contextId: newConversationId,
             parts: parts,
             role: 'user',
             agentMode: true,
@@ -1322,6 +1491,9 @@ export function VisualWorkflowDesigner({
       
       // Successfully sent - response will come through WebSocket events
       console.log('[WorkflowTest] Message sent successfully, waiting for events...')
+      
+      // NOTE: URL update moved to handleFinalResponse to prevent chat panel from
+      // clearing messages during the workflow (the URL change triggers a reload)
       
       // Set a timeout to automatically stop testing after 60 seconds
       if (testTimeoutRef.current) {
@@ -2014,7 +2186,7 @@ export function VisualWorkflowDesigner({
               (stepStatus.completedAt && Date.now() - stepStatus.completedAt < 4000)
             )
             
-            if (shouldShowMessage) {
+            if (shouldShowMessage && stepStatus.message) {
               ctx.save()
               
               ctx.font = "12px system-ui"

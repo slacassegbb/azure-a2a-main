@@ -66,6 +66,11 @@ class WebSocketManager:
         self.max_history = 100
         self.backend_host = "localhost"
         self.backend_port = 12000
+        # Session ID generated at server startup - used to detect backend restarts
+        # Frontend clears file history when session_id changes
+        import uuid
+        self.session_id = str(uuid.uuid4())
+        logger.info(f"WebSocket server session ID: {self.session_id}")
     
     def get_agent_registry(self) -> List[Dict[str, Any]]:
         """Get current agent registry from the backend."""
@@ -150,8 +155,12 @@ class WebSocketManager:
         if not user_data:
             logger.info("Anonymous WebSocket connection established")
         
-        # Send recent history to new client
+        # Send recent history to new client (excluding message-related events)
+        # Message events are loaded via conversation API, replaying them causes duplicates
+        skip_event_types = {'message', 'shared_message', 'shared_inference_ended'}
         for event in self.event_history[-10:]:  # Send last 10 events
+            if event.get('eventType') in skip_event_types:
+                continue
             try:
                 await websocket.send_text(json.dumps(event))
             except:
@@ -184,6 +193,20 @@ class WebSocketManager:
         }
         try:
             await websocket.send_text(json.dumps(auth_status))
+        except:
+            pass
+        
+        # Send session ID - frontend uses this to detect backend restarts and clear file history
+        session_event = {
+            'eventType': 'session_started',
+            'data': {
+                'sessionId': self.session_id
+            },
+            'timestamp': time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+        }
+        try:
+            await websocket.send_text(json.dumps(session_event))
+            logger.info(f"Sent session ID to new client: {self.session_id[:8]}...")
         except:
             pass
         

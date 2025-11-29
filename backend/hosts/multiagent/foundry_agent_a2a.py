@@ -1841,6 +1841,7 @@ Analyze the plan and determine the next step. If you need information that isn't
         try:
             # Import here to avoid circular imports
             from service.websocket_streamer import get_websocket_streamer
+            import datetime
             
             streamer = await get_websocket_streamer()
             if streamer:
@@ -1848,7 +1849,7 @@ Analyze the plan and determine the next step. If you need information that isn't
                     "agentName": agent_name,
                     "toolName": tool_name,
                     "status": status,
-                    "timestamp": __import__('datetime').datetime.utcnow().isoformat()
+                    "timestamp": datetime.datetime.utcnow().isoformat()
                 }
                 
                 if error_message:
@@ -1859,6 +1860,22 @@ Analyze the plan and determine the next step. If you need information that isn't
                     log_debug(f"Streamed tool response: {agent_name} - {tool_name} - {status}")
                 else:
                     log_debug(f"Failed to stream tool response: {agent_name}")
+                
+                # ALSO emit task_updated so the frontend sidebar updates correctly
+                # This is the single source of truth for agent sidebar status
+                task_state = "completed" if status == "success" else "failed"
+                task_updated_data = {
+                    "taskId": str(uuid.uuid4()),
+                    "conversationId": getattr(self, 'default_contextId', str(uuid.uuid4())),
+                    "contextId": getattr(self, 'default_contextId', None),
+                    "state": task_state,
+                    "agentName": agent_name,
+                    "timestamp": datetime.datetime.utcnow().isoformat(),
+                    "content": f"Agent {status}" if not error_message else error_message
+                }
+                print(f"🎯 [SIDEBAR] Emitting task_updated for {agent_name}: state={task_state}")
+                result = await streamer._send_event("task_updated", task_updated_data, None)
+                print(f"🎯 [SIDEBAR] task_updated sent, success={result}")
             else:
                 log_debug(f"WebSocket streamer not available for tool response")
                 
@@ -1897,11 +1914,12 @@ Analyze the plan and determine the next step. If you need information that isn't
     def _default_task_callback(self, event: TaskCallbackArg, agent_card: AgentCard) -> Task:
         """Default task callback optimized for streaming remote agent execution.
         
-        Handles TaskStatusUpdateEvent and TaskArtifactUpdateEvent for granular UI visibility.
-        Enhanced with granular WebSocket streaming for UI visibility.
+        CONSOLIDATED: Uses _emit_task_event as the SINGLE source of truth for all
+        remote agent status updates to prevent duplicate events in the UI.
         """
         agent_name = agent_card.name
         log_debug(f"[STREAMING] Task callback from {agent_name}: {type(event).__name__}")
+        
         # Keep session context task mapping in sync per agent
         try:
             context_id_cb = get_context_id(event, None)
@@ -1919,44 +1937,15 @@ Analyze the plan and determine the next step. If you need information that isn't
             # Non-fatal; continue normal processing
             pass
         
-        # Only emit events for specific meaningful state changes, not every streaming update
-        # This prevents duplicates while maintaining granular visibility
+        # CONSOLIDATED: All events go through _emit_task_event as single emission point
         if hasattr(event, 'kind'):
             event_kind = getattr(event, 'kind', 'unknown')
             log_debug(f"[STREAMING] Event kind from {agent_name}: {event_kind}")
             
-            # Only emit for initial task creation and final completion states
-            if event_kind == 'task':
-                # Initial task creation
-                asyncio.create_task(self._emit_granular_agent_event(agent_name, "task started"))
-            elif event_kind == 'artifact-update':
-                # Final artifact completion
-                status_text = "completed with artifact"
-                if hasattr(event, 'artifact') and event.artifact:
-                    status_text = "artifact generated"
-                asyncio.create_task(self._emit_granular_agent_event(agent_name, status_text))
-            elif event_kind == 'status-update':
-                # Handle status updates - these contain completion/failure states!
-                if hasattr(event, 'status') and event.status and hasattr(event.status, 'state'):
-                    state_value = event.status.state
-                    if hasattr(state_value, 'value'):
-                        state_str = state_value.value
-                    else:
-                        state_str = str(state_value)
-                    
-                    log_debug(f"[STREAMING] Status update from {agent_name}: {state_str}")
-                    
-                    # Emit all meaningful task states for full UI visibility
-                    # This includes all A2A protocol states: submitted, working, input-required, completed, canceled, failed, unknown
-                    if state_str in ['completed', 'failed', 'canceled', 'submitted', 'input-required', 'unknown', 'working']:
-                        log_debug(f"[STREAMING] Emitting task state for {agent_name}: {state_str}")
-                        # Use the _emit_task_event for proper A2A-compliant streaming
-                        self._emit_task_event(event, agent_card)
-                    else:
-                        # Log unrecognized states for debugging
-                        log_debug(f"[STREAMING] Unrecognized task state from {agent_name}: {state_str}")
-                        # Still emit it in case it's a valid state we don't know about
-                        self._emit_task_event(event, agent_card)
+            # All meaningful events use _emit_task_event (SINGLE source of truth)
+            if event_kind in ['task', 'artifact-update', 'status-update']:
+                log_debug(f"[STREAMING] Emitting via _emit_task_event for {agent_name}: {event_kind}")
+                self._emit_task_event(event, agent_card)
             # Skip other intermediate events
         
         # Get or create task for this specific agent
@@ -2124,6 +2113,7 @@ Analyze the plan and determine the next step. If you need information that isn't
                 log_debug(f"Added event to host manager for agent: {agent_card.name}")
             
             # Stream A2A-compliant task events to WebSocket with agent context
+            # CONSOLIDATED: Single event emission point for remote agent status
             log_debug(f"Streaming A2A task event to WebSocket for agent: {agent_card.name}, state: {task_state}")
             try:
                 import asyncio
@@ -2137,6 +2127,16 @@ Analyze the plan and determine the next step. If you need information that isn't
                             log_debug("⚠️ WebSocket streamer not available for task event")
                             return
 
+                        # Extract text content from message parts if available
+                        text_content = ""
+                        if content and hasattr(content, 'parts'):
+                            for part in content.parts:
+                                if hasattr(part, 'root') and hasattr(part.root, 'text'):
+                                    text_content = part.root.text
+                                    break
+
+                        # CONSOLIDATED: Include ALL relevant data in single task_updated event
+                        # This is the ONLY event emitted for remote agent status updates
                         event_data = {
                             "taskId": task_id or str(uuid.uuid4()),
                             "conversationId": contextId or str(uuid.uuid4()),
@@ -2145,6 +2145,8 @@ Analyze the plan and determine the next step. If you need information that isn't
                             "artifactsCount": len(getattr(task, 'artifacts', [])),
                             "agentName": agent_card.name,
                             "timestamp": datetime.datetime.utcnow().isoformat(),
+                            # Include message content so frontend has everything in one event
+                            "content": text_content if text_content else None,
                         }
 
                         event_type = "task_updated"
@@ -2153,29 +2155,18 @@ Analyze the plan and determine the next step. If you need information that isn't
                         elif not hasattr(task, 'kind'):
                             event_type = "task_created"
 
+                        # DEBUG: Log what we're sending to the frontend
+                        print(f"📡 [A2A STREAM] Emitting {event_type} for {agent_card.name}: state={task_state}")
+                        
                         success = await streamer._send_event(event_type, event_data, contextId)
                         if success:
                             log_debug(f"✅ A2A task event streamed: {agent_card.name} -> {task_state}")
                         else:
                             log_debug(f"❌ Failed to stream A2A task event: {agent_card.name} -> {task_state}")
                         
-                        # Extract and emit text content for DAG display when task completes
-                        if task_state == 'completed' and content and hasattr(content, 'parts'):
-                            text_content = ""
-                            for part in content.parts:
-                                if hasattr(part, 'root') and hasattr(part.root, 'text'):
-                                    text_content = part.root.text
-                                    break
-                            
-                            if text_content:
-                                # Emit as remote_agent_activity so it shows in DAG
-                                activity_data = {
-                                    "agentName": agent_card.name,
-                                    "content": text_content,
-                                    "timestamp": datetime.datetime.utcnow().isoformat()
-                                }
-                                await streamer._send_event("remote_agent_activity", activity_data, None)
-                                log_debug(f"✅ Emitted text content for DAG: {agent_card.name} -> {text_content[:100]}...")
+                        # REMOVED: Secondary remote_agent_activity emission
+                        # All data is now included in the task_updated event above
+                        
                     except Exception as e:
                         log_debug(f"❌ Error streaming A2A task event: {e}")
                         import traceback
@@ -3049,104 +3040,84 @@ Answer with just JSON:
             start_time = time.time()
             
             try:
-                # ENHANCED: Use a detailed task callback for streaming execution
-                # to capture granular remote agent activities for UI visibility
+                # SIMPLIFIED: Callback for streaming execution that handles file artifacts
+                # Status events are handled ONLY in _default_task_callback -> _emit_task_event
                 def streaming_task_callback(event, agent_card):
-                    """Enhanced callback for streaming execution that captures detailed agent activities"""
-                    agent_name = agent_card.name
-                    log_debug(f"[STREAMING] Detailed callback from {agent_name}: {type(event).__name__}")
+                    """Callback for streaming execution - handles file artifacts only.
                     
-                    # Emit granular events based on the type of update
-                    if hasattr(event, 'kind'):
-                        event_kind = getattr(event, 'kind', 'unknown')
-                        
-                        if event_kind == 'status-update':
-                            # Extract detailed status information
-                            status_text = "processing"
-                            if hasattr(event, 'status') and event.status:
-                                if hasattr(event.status, 'message') and event.status.message:
-                                    if hasattr(event.status.message, 'parts') and event.status.message.parts:
-                                        # Process ALL parts - don't break early so we catch all image artifacts
-                                        for part in event.status.message.parts:
-                                            # Check for text parts
-                                            if hasattr(part, 'root') and hasattr(part.root, 'text'):
-                                                status_text = part.root.text
-                                                # Continue processing to find image artifacts - don't break!
-                                            # Check for image artifacts in DataPart
-                                            elif hasattr(part, 'root') and hasattr(part.root, 'data') and isinstance(part.root.data, dict):
-                                                artifact_uri = part.root.data.get('artifact-uri')
-                                                if artifact_uri:
-                                                    log_debug(f"Found image artifact in streaming event: {artifact_uri}")
+                    CONSOLIDATED: Status updates are emitted ONLY via _emit_task_event
+                    to prevent duplicate events in the UI.
+                    """
+                    agent_name = agent_card.name
+                    log_debug(f"[STREAMING] Callback from {agent_name}: {type(event).__name__}")
+                    
+                    # Only handle file artifacts here - status events go through _emit_task_event
+                    if hasattr(event, 'kind') and event.kind == 'status-update':
+                        if hasattr(event, 'status') and event.status:
+                            if hasattr(event.status, 'message') and event.status.message:
+                                if hasattr(event.status.message, 'parts') and event.status.message.parts:
+                                    # Process parts to find image artifacts (but NOT emit status events)
+                                    for part in event.status.message.parts:
+                                        # Check for image artifacts in DataPart
+                                        if hasattr(part, 'root') and hasattr(part.root, 'data') and isinstance(part.root.data, dict):
+                                            artifact_uri = part.root.data.get('artifact-uri')
+                                            if artifact_uri:
+                                                log_debug(f"Found image artifact in streaming event: {artifact_uri}")
+                                                # Emit file_uploaded event
+                                                async def emit_file_event(part_data=part.root.data, uri=artifact_uri):
+                                                    try:
+                                                        from service.websocket_streamer import get_websocket_streamer
+                                                        streamer = await get_websocket_streamer()
+                                                        if streamer:
+                                                            file_info = {
+                                                                "file_id": str(uuid.uuid4()),
+                                                                "filename": part_data.get("file-name", "agent-artifact.png"),
+                                                                "uri": uri,
+                                                                "size": part_data.get("file-size", 0),
+                                                                "content_type": "image/png",
+                                                                "source_agent": agent_name,
+                                                                "contextId": get_context_id(event)
+                                                            }
+                                                            await streamer.stream_file_uploaded(file_info, get_context_id(event))
+                                                            log_debug(f"File uploaded event sent for streaming artifact: {file_info['filename']}")
+                                                    except Exception as e:
+                                                        log_debug(f"Error emitting file_uploaded event: {e}")
+                                                asyncio.create_task(emit_file_event())
+                                        # Check for image artifacts in FilePart
+                                        elif hasattr(part, 'root') and hasattr(part.root, 'file'):
+                                            file_obj = part.root.file
+                                            if isinstance(file_obj, FileWithUri):
+                                                file_uri = file_obj.uri
+                                                if file_uri and str(file_uri).startswith(("http://", "https://")):
+                                                    log_debug(f"Found image artifact in streaming event (FilePart): {file_uri}")
+                                                    # Capture values to avoid closure issues
+                                                    file_name = file_obj.name
+                                                    mime_type = file_obj.mimeType if hasattr(file_obj, 'mimeType') else 'image/png'
                                                     # Emit file_uploaded event
-                                                    async def emit_file_event(part_data=part.root.data, uri=artifact_uri):
+                                                    async def emit_file_event_fp():
                                                         try:
                                                             from service.websocket_streamer import get_websocket_streamer
                                                             streamer = await get_websocket_streamer()
                                                             if streamer:
                                                                 file_info = {
                                                                     "file_id": str(uuid.uuid4()),
-                                                                    "filename": part_data.get("file-name", "agent-artifact.png"),
-                                                                    "uri": uri,
-                                                                    "size": part_data.get("file-size", 0),
-                                                                    "content_type": "image/png",
+                                                                    "filename": file_name,
+                                                                    "uri": file_uri,
+                                                                    "size": 0,
+                                                                    "content_type": mime_type,
                                                                     "source_agent": agent_name,
                                                                     "contextId": get_context_id(event)
                                                                 }
                                                                 await streamer.stream_file_uploaded(file_info, get_context_id(event))
-                                                                log_debug(f"File uploaded event sent for streaming artifact: {file_info['filename']}")
+                                                                log_debug(f"File uploaded event sent for streaming FilePart: {file_info['filename']}")
                                                         except Exception as e:
-                                                            log_debug(f"Error emitting file_uploaded event: {e}")
-                                                    asyncio.create_task(emit_file_event())
-                                            # Check for image artifacts in FilePart
-                                            elif hasattr(part, 'root') and hasattr(part.root, 'file'):
-                                                file_obj = part.root.file
-                                                if isinstance(file_obj, FileWithUri):
-                                                    file_uri = file_obj.uri
-                                                    if file_uri and str(file_uri).startswith(("http://", "https://")):
-                                                        log_debug(f"Found image artifact in streaming event (FilePart): {file_uri}")
-                                                        # Capture values to avoid closure issues
-                                                        file_name = file_obj.name
-                                                        mime_type = file_obj.mimeType if hasattr(file_obj, 'mimeType') else 'image/png'
-                                                        # Emit file_uploaded event
-                                                        async def emit_file_event_fp():
-                                                            try:
-                                                                from service.websocket_streamer import get_websocket_streamer
-                                                                streamer = await get_websocket_streamer()
-                                                                if streamer:
-                                                                    file_info = {
-                                                                        "file_id": str(uuid.uuid4()),
-                                                                        "filename": file_name,
-                                                                        "uri": file_uri,
-                                                                        "size": 0,
-                                                                        "content_type": mime_type,
-                                                                        "source_agent": agent_name,
-                                                                        "contextId": get_context_id(event)
-                                                                    }
-                                                                    await streamer.stream_file_uploaded(file_info, get_context_id(event))
-                                                                    log_debug(f"File uploaded event sent for streaming FilePart: {file_info['filename']}")
-                                                            except Exception as e:
-                                                                log_debug(f"Error emitting file_uploaded event for FilePart: {e}")
-                                                        asyncio.create_task(emit_file_event_fp())
-                                elif hasattr(event.status, 'state'):
-                                    state = event.status.state
-                                    if hasattr(state, 'value'):
-                                        state_value = state.value
-                                    else:
-                                        state_value = str(state)
-                                    status_text = f"status: {state_value}"
-                            
-                            # Stream detailed status to UI
-                            asyncio.create_task(self._emit_granular_agent_event(agent_name, status_text))
-                            
-                        elif event_kind == 'artifact-update':
-                            # Agent is generating artifacts
-                            asyncio.create_task(self._emit_granular_agent_event(agent_name, "generating artifact"))
-                        
-                        elif event_kind == 'task':
-                            # Initial task creation
-                            asyncio.create_task(self._emit_granular_agent_event(agent_name, "task started"))
+                                                            log_debug(f"Error emitting file_uploaded event for FilePart: {e}")
+                                                    asyncio.create_task(emit_file_event_fp())
                     
-                    # Call the original callback for task management
+                    # REMOVED: _emit_granular_agent_event calls that caused duplicate events
+                    # Status events are now emitted ONLY via _default_task_callback -> _emit_task_event
+                    
+                    # Call the original callback for task management (which handles status emission)
                     return self._default_task_callback(event, agent_card)
                 
                 # Emit outgoing message event for DAG display (use original message, not contextualized)
@@ -3305,7 +3276,7 @@ Answer with just JSON:
                             id=str(uuid.uuid4()),
                             message=Message(
                                 role='user',
-                                parts=[TextPart(text=contextualized_message)],
+                                parts=[Part(root=TextPart(text=contextualized_message))],
                                 messageId=str(uuid.uuid4()),
                                 contextId=session_context.contextId,
                                 taskId=None,

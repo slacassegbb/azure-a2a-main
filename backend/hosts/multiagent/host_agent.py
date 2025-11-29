@@ -179,7 +179,7 @@ Current agent: {current_agent['active_agent']}
             id=str(uuid.uuid4()),
             message=Message(
                 role='user',
-                parts=[TextPart(text=message)],
+                parts=[Part(root=TextPart(text=message))],
                 messageId=messageId,
                 contextId=contextId,
                 taskId=taskId,

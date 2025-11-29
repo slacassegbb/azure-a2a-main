@@ -7,6 +7,7 @@ import { Separator } from "@/components/ui/separator"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Badge } from "@/components/ui/badge"
 import { Trash2, Download, Eye, ExternalLink } from "lucide-react"
+import { useEventHub } from "@/hooks/use-event-hub"
 
 interface FileRecord {
   id: string
@@ -23,8 +24,39 @@ interface FileHistoryProps {
   onFileSelect?: (file: FileRecord) => void
 }
 
+const SESSION_ID_KEY = 'backendSessionId'
+
 export function FileHistory({ className, onFileSelect }: FileHistoryProps) {
   const [files, setFiles] = useState<FileRecord[]>([])
+  const { subscribe, unsubscribe } = useEventHub()
+
+  // Handle backend session changes - clear file history when backend restarts
+  useEffect(() => {
+    const handleSessionStarted = (data: any) => {
+      const newSessionId = data?.sessionId
+      if (!newSessionId) return
+      
+      const storedSessionId = localStorage.getItem(SESSION_ID_KEY)
+      
+      if (storedSessionId && storedSessionId !== newSessionId) {
+        // Backend restarted - clear file history
+        console.log('[FileHistory] Backend restarted (session changed), clearing file history')
+        console.log('[FileHistory] Old session:', storedSessionId?.slice(0, 8), '-> New session:', newSessionId.slice(0, 8))
+        setFiles([])
+        localStorage.removeItem('uploadedFilesHistory')
+      }
+      
+      // Store the new session ID
+      localStorage.setItem(SESSION_ID_KEY, newSessionId)
+      console.log('[FileHistory] Session ID stored:', newSessionId.slice(0, 8))
+    }
+
+    subscribe('session_started', handleSessionStarted)
+    
+    return () => {
+      unsubscribe('session_started', handleSessionStarted)
+    }
+  }, [subscribe, unsubscribe])
 
   // Load files from localStorage on mount and validate they still exist
   useEffect(() => {

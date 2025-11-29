@@ -16,8 +16,9 @@ import { SimulateAgentRegistration } from "./simulate-agent-registration"
 import { ConnectedUsers } from "./connected-users"
 import { VisualWorkflowDesigner } from "./visual-workflow-designer"
 import { cn } from "@/lib/utils"
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
 import { useEventHub } from "@/contexts/event-hub-context"
+import { useSearchParams } from "next/navigation"
 
 type Agent = {
   name: string
@@ -132,6 +133,9 @@ function hasHumanInteractionSkill(agent: Agent): boolean {
 }
 
 export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, agentMode, onAgentModeChange, enableInterAgentMemory, onInterAgentMemoryChange, workflow: propWorkflow, onWorkflowChange }: Props) {
+  const searchParams = useSearchParams()
+  const currentConversationId = searchParams.get('conversationId') || undefined
+  
   const [expandedAgents, setExpandedAgents] = useState<Set<string>>(new Set())
   const [isSystemPromptDialogOpen, setIsSystemPromptDialogOpen] = useState(false)
   const [currentInstruction, setCurrentInstruction] = useState("")
@@ -155,92 +159,117 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, agentMod
   
   // Use existing EventHub context instead of creating new WebSocket client
   const { subscribe, unsubscribe, isConnected } = useEventHub()
+  
+  // Use ref for registeredAgents to avoid recreating callback on every agent list update
+  const registeredAgentsRef = useRef<Agent[]>(registeredAgents)
+  registeredAgentsRef.current = registeredAgents // Keep ref in sync
 
   // Handle task status updates from WebSocket
+  // FIXED: Prevents out-of-order events from causing backwards state transitions
   const handleTaskUpdate = useCallback((eventData: any) => {
-    // Use the exact structure we tested earlier
     const { taskId, state, contextId, agentName } = eventData
     
-    // For multiple agents, we need agentName to be specified
+    console.log('[AgentNetwork] 📥 task_updated received:', { agentName, state, taskId: taskId?.substring?.(0, 8) })
+    
     let targetAgent = agentName
     
-    // If no specific agent is provided, don't update any agent
     if (!targetAgent) {
       return
     }
     
-    // Verify the agent exists in our registered agents
-    const agentExists = registeredAgents.some(agent => agent.name === targetAgent)
+    // Verify the agent exists in our registered agents (using ref to avoid dependency)
+    const agentExists = registeredAgentsRef.current.some(agent => agent.name === targetAgent)
     if (!agentExists) {
       return
     }
     
-    if (targetAgent && taskId && state) {
-      // Map different states appropriately
-      let mappedState: TaskState = state as TaskState
-      if (state === "created") {
-        mappedState = "working" // Show as working when task is created
+    if (!taskId || !state) {
+      return
+    }
+    
+    // Map A2A task states to our UI states
+    let mappedState: TaskState = "working"
+    const stateStr = String(state).toLowerCase()
+    
+    if (stateStr === "completed" || stateStr === "done" || stateStr === "success" || stateStr === "finished") {
+      mappedState = "completed"
+    } else if (stateStr === "failed" || stateStr === "error" || stateStr === "cancelled") {
+      mappedState = "failed"
+    } else if (stateStr === "submitted" || stateStr === "pending" || stateStr === "queued" || stateStr === "created") {
+      mappedState = "submitted"
+    } else if (stateStr === "working" || stateStr === "running" || stateStr === "in-progress" || stateStr === "in_progress") {
+      mappedState = "working"
+    }
+    
+    setAgentStatuses(prev => {
+      const newStatuses = new Map(prev)
+      const currentStatus = newStatuses.get(targetAgent) || {
+        agentName: targetAgent,
+        connectionStatus: "online" as const,
+        lastSeen: new Date().toISOString()
       }
       
-      setAgentStatuses(prev => {
-        const newStatuses = new Map(prev)
-        const currentStatus = newStatuses.get(targetAgent) || {
-          agentName: targetAgent,
-          connectionStatus: "online" as const,
-          lastSeen: new Date().toISOString()
-        }
-        
-        const updatedStatus = {
-          ...currentStatus,
-          currentTask: {
-            taskId,
-            state: mappedState,
-            contextId: contextId || '',
-            lastUpdate: new Date().toISOString()
-          },
-          lastSeen: new Date().toISOString()
-        }
-        
-        newStatuses.set(targetAgent, updatedStatus)
-        
-        console.log('[AgentNetwork] Updated status for', targetAgent, ':', updatedStatus)
-        
-        // Clear any existing timeout for this agent to prevent race conditions
-        const existingTimeout = statusClearTimeoutsRef.get(targetAgent)
-        if (existingTimeout) {
-          clearTimeout(existingTimeout)
+      // ========================================================================
+      // A2A TaskState Flow Protection: submitted → working → completed/failed
+      // Prevent backwards state transitions due to out-of-order events (race condition)
+      // ========================================================================
+      const currentTaskState = currentStatus.currentTask?.state
+      const isTerminalState = currentTaskState === "completed" || currentTaskState === "failed"
+      const isNewNonTerminalState = mappedState === "working" || mappedState === "submitted"
+      
+      if (isTerminalState && isNewNonTerminalState) {
+        // Ignore stale event - agent already reached terminal state
+        console.log('[AgentNetwork] ⏭️ Ignoring out-of-order event:', currentTaskState, '→', mappedState, 'for', targetAgent)
+        return prev // Don't update
+      }
+      
+      console.log('[AgentNetwork] ✅ State transition:', currentTaskState || 'none', '→', mappedState, 'for', targetAgent)
+      
+      const updatedStatus = {
+        ...currentStatus,
+        currentTask: {
+          taskId,
+          state: mappedState,
+          contextId: contextId || '',
+          lastUpdate: new Date().toISOString()
+        },
+        lastSeen: new Date().toISOString()
+      }
+      
+      newStatuses.set(targetAgent, updatedStatus)
+      
+      // Clear any existing timeout for this agent
+      const existingTimeout = statusClearTimeoutsRef.get(targetAgent)
+      if (existingTimeout) {
+        clearTimeout(existingTimeout)
+        statusClearTimeoutsRef.delete(targetAgent)
+      }
+      
+      // Clear the task after showing completion or failure for 5 seconds
+      if (mappedState === "completed" || mappedState === "failed") {
+        const timeoutId = setTimeout(() => {
+          setAgentStatuses(prev => {
+            const newStatuses = new Map(prev)
+            const currentStatus = newStatuses.get(targetAgent)
+            if (currentStatus && currentStatus.currentTask && 
+                (currentStatus.currentTask.state === "completed" || currentStatus.currentTask.state === "failed")) {
+              newStatuses.set(targetAgent, {
+                ...currentStatus,
+                currentTask: undefined,
+                lastSeen: new Date().toISOString()
+              })
+            }
+            return newStatuses
+          })
           statusClearTimeoutsRef.delete(targetAgent)
-        }
+        }, 5000)
         
-        // Clear the task after showing completion or failure
-        if (mappedState === "completed" || mappedState === "failed") {
-          const timeoutId = setTimeout(() => {
-            setAgentStatuses(prev => {
-              const newStatuses = new Map(prev)
-              const currentStatus = newStatuses.get(targetAgent)
-              if (currentStatus && currentStatus.currentTask && 
-                  (currentStatus.currentTask.state === "completed" || currentStatus.currentTask.state === "failed")) {
-                newStatuses.set(targetAgent, {
-                  ...currentStatus,
-                  currentTask: undefined, // Clear the task
-                  lastSeen: new Date().toISOString()
-                })
-                console.log('[AgentNetwork] Cleared completed/failed task for', targetAgent)
-              }
-              return newStatuses
-            })
-            statusClearTimeoutsRef.delete(targetAgent)
-          }, 5000) // Show "Completed/Failed" for 5 seconds then return to "Online"
-          
-          statusClearTimeoutsRef.set(targetAgent, timeoutId)
-        }
-        
-        return newStatuses
-      })
-    } else {
-      console.warn('[AgentNetwork] Missing required data for task update:', { targetAgent, taskId, state })
-    }
-  }, [registeredAgents])
+        statusClearTimeoutsRef.set(targetAgent, timeoutId)
+      }
+      
+      return newStatuses
+    })
+  }, []) // Empty deps - uses registeredAgentsRef to avoid recreating callback
 
   // Handle agent status updates from WebSocket
   const handleAgentStatusUpdate = useCallback((eventData: any) => {
@@ -268,213 +297,13 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, agentMod
     }
   }, [])
 
-  // Handle status_update events (from ChatPanel)
-  const handleStatusUpdate = useCallback((eventData: any) => {
-    console.log('[AgentNetwork] Status update received:', eventData)
-    
-    const { agent, status, inferenceId } = eventData
-    
-    if (agent && status) {
-      // Verify the agent exists in our registered agents
-      const agentExists = registeredAgents.some(regAgent => regAgent.name === agent)
-      if (!agentExists) {
-        console.warn('[AgentNetwork] Agent from status_update not found in registered agents:', agent)
-        console.log('[AgentNetwork] Available agents:', registeredAgents.map(a => a.name))
-        return
-      }
-      
-      // Map status to TaskState
-      let taskState: TaskState = "working"
-      let shouldClearTask = false
-      
-      if (status.includes("completed") || status.includes("generated") || status.includes("response")) {
-        taskState = "completed"
-        shouldClearTask = true
-      } else if (status.includes("analyzing") || status.includes("processing")) {
-        taskState = "working"
-      } else if (status.includes("failed") || status.includes("error")) {
-        taskState = "failed"
-      }
-      
-      setAgentStatuses(prev => {
-        const newStatuses = new Map(prev)
-        const currentStatus = newStatuses.get(agent) || {
-          agentName: agent,
-          connectionStatus: "online" as const,
-          lastSeen: new Date().toISOString()
-        }
-        
-        newStatuses.set(agent, {
-          ...currentStatus,
-          currentTask: {
-            taskId: inferenceId || "unknown",
-            state: taskState,
-            contextId: inferenceId || "",
-            lastUpdate: new Date().toISOString()
-          },
-          lastSeen: new Date().toISOString()
-        })
-        
-        console.log('[AgentNetwork] Updated status for', agent, 'via status_update:', newStatuses.get(agent))
-        
-        return newStatuses
-      })
-      
-      // Clear any existing timeout for this agent to prevent race conditions
-      const existingTimeout = statusClearTimeoutsRef.get(agent)
-      if (existingTimeout) {
-        clearTimeout(existingTimeout)
-        statusClearTimeoutsRef.delete(agent)
-      }
-      
-      // Clear the task after showing completion or failure (only once per completion/failure)
-      if (shouldClearTask) {
-        const timeoutId = setTimeout(() => {
-          setAgentStatuses(prev => {
-            const newStatuses = new Map(prev)
-            const currentStatus = newStatuses.get(agent)
-            if (currentStatus && currentStatus.currentTask && 
-                (currentStatus.currentTask.state === "completed" || currentStatus.currentTask.state === "failed")) {
-              newStatuses.set(agent, {
-                ...currentStatus,
-                currentTask: undefined, // Clear the task
-                lastSeen: new Date().toISOString()
-              })
-              console.log('[AgentNetwork] Cleared task for', agent, 'after', currentStatus.currentTask.state)
-            }
-            return newStatuses
-          })
-          statusClearTimeoutsRef.delete(agent)
-        }, 5000) // Show "Completed/Failed" for 5 seconds then return to "Online"
-        
-        statusClearTimeoutsRef.set(agent, timeoutId)
-      }
-    } else {
-      console.warn('[AgentNetwork] Missing agent or status in status_update:', { agent, status, inferenceId })
-    }
-  }, [registeredAgents])
+  // REMOVED: handleStatusUpdate was updating agent sidebar status from status_update events
+  // This caused conflicts - agent sidebar should ONLY use task_updated events (single source of truth)
+  // status_update events are for the chat panel's inference steps UI, not the agent sidebar
 
-  // Handle tool_call events 
-  const handleToolCall = useCallback((eventData: any) => {
-    console.log('[AgentNetwork] Tool call received:', eventData)
-    console.log('[AgentNetwork] Tool call data keys:', Object.keys(eventData || {}))
-    
-    // Extract agent information from tool call event
-    // The log shows: agentName is in the keys, so let's extract it correctly
-    const { agent, toolName, targetAgent, arguments: args, toolCallId, agentName } = eventData
-    
-    console.log('[AgentNetwork] Tool call extracted:', { agent, toolName, targetAgent, args, toolCallId, agentName })
-    
-    // Try to identify the agent - it might be in different fields
-    let workingAgent = agentName || agent || targetAgent
-    
-    // If we still don't have an agent, check the args for agent_name
-    if (!workingAgent && args && typeof args === 'object') {
-      workingAgent = args.agent_name || args.agentName || args.target_agent
-    }
-    
-    console.log('[AgentNetwork] Working agent identified:', workingAgent)
-    
-    if (workingAgent) {
-      // Find the agent in our registered agents
-      const agentExists = registeredAgents.some(regAgent => regAgent.name === workingAgent)
-      if (!agentExists) {
-        console.warn('[AgentNetwork] Agent from tool_call not found:', workingAgent)
-        console.log('[AgentNetwork] Available agents:', registeredAgents.map(a => a.name))
-        return
-      }
-      
-      // Set status to working when an agent makes a tool call
-      setAgentStatuses(prev => {
-        const newStatuses = new Map(prev)
-        const currentStatus = newStatuses.get(workingAgent) || {
-          agentName: workingAgent,
-          connectionStatus: "online" as const,
-          lastSeen: new Date().toISOString()
-        }
-        
-        newStatuses.set(workingAgent, {
-          ...currentStatus,
-          currentTask: {
-            taskId: toolCallId || "tool-call",
-            state: "working" as TaskState,
-            contextId: eventData.contextId || "",
-            lastUpdate: new Date().toISOString()
-          },
-          lastSeen: new Date().toISOString()
-        })
-        
-        console.log('[AgentNetwork] Updated status for', workingAgent, 'via tool_call')
-        
-        return newStatuses
-      })
-    } else {
-      console.warn('[AgentNetwork] No agent identified in tool_call event')
-    }
-  }, [registeredAgents])
-
-  // Handle agent_activity events
-  const handleAgentActivity = useCallback((eventData: any) => {
-    console.log('[AgentNetwork] Agent activity received:', eventData)
-    
-    const { agent, activity, status } = eventData
-    
-    if (agent) {
-      // Update agent status based on activity
-      setAgentStatuses(prev => {
-        const newStatuses = new Map(prev)
-        const currentStatus = newStatuses.get(agent) || {
-          agentName: agent,
-          connectionStatus: "online" as const,
-          lastSeen: new Date().toISOString()
-        }
-        
-        newStatuses.set(agent, {
-          ...currentStatus,
-          currentTask: {
-            taskId: "activity",
-            state: "working" as TaskState,
-            contextId: "",
-            lastUpdate: new Date().toISOString()
-          },
-          lastSeen: new Date().toISOString()
-        })
-        
-        return newStatuses
-      })
-    }
-  }, [])
-
-  // Handle inference_step events
-  const handleInferenceStep = useCallback((eventData: any) => {
-    console.log('[AgentNetwork] Inference step received:', eventData)
-    
-    const { agent, step, status } = eventData
-    
-    if (agent) {
-      setAgentStatuses(prev => {
-        const newStatuses = new Map(prev)
-        const currentStatus = newStatuses.get(agent) || {
-          agentName: agent,
-          connectionStatus: "online" as const,
-          lastSeen: new Date().toISOString()
-        }
-        
-        newStatuses.set(agent, {
-          ...currentStatus,
-          currentTask: {
-            taskId: "inference",
-            state: "working" as TaskState,
-            contextId: "",
-            lastUpdate: new Date().toISOString()
-          },
-          lastSeen: new Date().toISOString()
-        })
-        
-        return newStatuses
-      })
-    }
-  }, [])
+  // REMOVED: handleToolCall, handleAgentActivity, handleInferenceStep
+  // These were causing conflicts with task_updated (the single source of truth)
+  // Agent status should ONLY come from task_updated events
 
   // Initialize/update agent statuses - preserve existing task status, update connection status
   useEffect(() => {
@@ -519,45 +348,23 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, agentMod
   // Note: Workflow persistence is now handled by parent ChatLayout component
   // No need to load from localStorage here since parent manages it
 
-  // Subscribe to WebSocket events
+  // Subscribe to WebSocket events - STABLE subscriptions (no churn)
   useEffect(() => {
-    console.log('[AgentNetwork] useEffect triggered - isConnected:', isConnected)
-    
-    if (isConnected) {
-      // Subscribe to the exact events we tested
-      subscribe('task_updated', handleTaskUpdate)
-      subscribe('agent_status_updated', handleAgentStatusUpdate)
-      
-      // Also try subscribing to other possible task-related events
-      subscribe('task_created', handleTaskUpdate)
-      subscribe('task_status_updated', handleTaskUpdate)
-      subscribe('status_update', handleStatusUpdate)
-      
-      // Add more specific agent activity events
-      subscribe('tool_call', handleToolCall)
-      subscribe('agent_activity', handleAgentActivity)
-      subscribe('inference_step', handleInferenceStep)
-      
-      console.log('[AgentNetwork] Subscribed to WebSocket events')
-      console.log('[AgentNetwork] Current agent statuses:', Array.from(agentStatuses.keys()))
-    } else {
-      console.log('[AgentNetwork] Not connected to WebSocket, skipping event subscription')
+    if (!isConnected) {
+      return
     }
+    
+    // SINGLE SOURCE OF TRUTH: task_updated contains all agent status info
+    subscribe('task_updated', handleTaskUpdate)
+    subscribe('agent_status_updated', handleAgentStatusUpdate)
+    
+    console.log('[AgentNetwork] ✅ Subscribed to task_updated, agent_status_updated')
 
     return () => {
-      if (isConnected) {
-        unsubscribe('task_updated', handleTaskUpdate)
-        unsubscribe('agent_status_updated', handleAgentStatusUpdate)
-        unsubscribe('task_created', handleTaskUpdate)
-        unsubscribe('task_status_updated', handleTaskUpdate)
-        unsubscribe('status_update', handleStatusUpdate)
-        unsubscribe('tool_call', handleToolCall)
-        unsubscribe('agent_activity', handleAgentActivity)
-        unsubscribe('inference_step', handleInferenceStep)
-        console.log('[AgentNetwork] Unsubscribed from WebSocket events')
-      }
+      unsubscribe('task_updated', handleTaskUpdate)
+      unsubscribe('agent_status_updated', handleAgentStatusUpdate)
     }
-  }, [isConnected, handleTaskUpdate, handleAgentStatusUpdate, handleStatusUpdate, handleToolCall, handleAgentActivity, handleInferenceStep])
+  }, [isConnected, subscribe, unsubscribe, handleTaskUpdate, handleAgentStatusUpdate])
 
   // Get status indicator for an agent
   const getStatusIndicator = (agentName: string) => {
@@ -942,6 +749,7 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, agentMod
                                   }))}
                                   onWorkflowGenerated={(text) => setEditedWorkflow(text)}
                                   initialWorkflow={editedWorkflow}
+                                  conversationId={currentConversationId}
                                 />
                               </div>
                             </TabsContent>                            

@@ -61,6 +61,11 @@ type Message = {
     mediaType?: string
     storageType?: string
   }[]
+  // Images from DataPart artifacts (loaded from conversation history)
+  images?: {
+    uri: string
+    fileName?: string
+  }[]
 }
 
 const initialMessages: Message[] = [
@@ -637,6 +642,12 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
     
     const autoCreateConversation = async () => {
       // Only auto-create if we're using the default context and not already creating one
+      // Also skip if URL has a conv- or workflow- prefix (set by workflow designer)
+      const hasWorkflowConversation = conversationId.startsWith('conv-') || conversationId.startsWith('workflow-')
+      if (hasWorkflowConversation) {
+        if (DEBUG) console.log('[ChatPanel] Skipping auto-create - workflow conversation detected:', conversationId)
+        return
+      }
       if (conversationId === 'frontend-chat-context' && !isCreatingConversation) {
         try {
           setIsCreatingConversation(true)
@@ -672,16 +683,7 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
     if (DEBUG) console.log('[ChatPanel] Conversation ID changed to:', conversationId)
     if (DEBUG) console.log('[ChatPanel] URL search params:', searchParams.toString())
       
-      // Don't load messages if user is not authenticated
-      if (typeof window !== 'undefined') {
-        const token = sessionStorage.getItem('auth_token')
-        if (!token) {
-          if (DEBUG) console.log('[ChatPanel] User not authenticated, skipping message load')
-          setMessages([])
-          return
-        }
-      }
-      
+      // Load messages for existing conversations (no auth required for message loading)
       if (conversationId && conversationId !== 'frontend-chat-context') {
         try {
           if (DEBUG) console.log("[ChatPanel] Loading conversation:", conversationId)
@@ -696,76 +698,153 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
             }
             
             // Convert API messages to our format
-            const convertedMessages: Message[] = apiMessages.map((msg, index) => ({
-              id: msg.messageId || `api_msg_${index}`,
-              role: (msg.role === 'user' || msg.role === 'assistant' || msg.role === 'agent') ? 
-                    (msg.role === 'agent' ? 'assistant' : msg.role) : 'assistant',
-              content: msg.parts?.map((part: any) => part.text || part.content).join('\n') || '',
-              agent: (msg.role === 'assistant' || msg.role === 'agent') ? 'Assistant' : undefined
-            }))
+            // A2A serializes Part objects flat: { kind: 'text', text: '...' } not { root: { kind: 'text', text: '...' } }
+            if (DEBUG) console.log('[ChatPanel] Converting', apiMessages.length, 'API messages')
+            const convertedMessages: Message[] = apiMessages.map((msg, index) => {
+              // Extract text content from parts - handle A2A format
+              let content = ''
+              let images: { uri: string; fileName?: string }[] = []
+              
+              if (msg.parts && Array.isArray(msg.parts)) {
+                for (const part of msg.parts) {
+                  // A2A flattened format (most common): { kind: 'text', text: '...' }
+                  if (part.kind === 'text' && part.text) {
+                    content += (content ? '\n' : '') + part.text
+                  }
+                  // Nested format (if present): { root: { kind: 'text', text: '...' } }
+                  else if (part.root?.text) {
+                    content += (content ? '\n' : '') + part.root.text
+                  }
+                  else if (part.root?.kind === 'text' && part.root?.text) {
+                    content += (content ? '\n' : '') + part.root.text
+                  }
+                  // Direct text property
+                  else if (part.text) {
+                    content += (content ? '\n' : '') + part.text
+                  }
+                  // Content property
+                  else if (part.content) {
+                    content += (content ? '\n' : '') + part.content
+                  }
+                  // Handle DataPart with image artifacts
+                  else if (part.kind === 'data' && part.data) {
+                    const artifactUri = part.data['artifact-uri']
+                    const fileName = part.data['file-name']
+                    if (artifactUri) {
+                      images.push({ uri: artifactUri, fileName })
+                    }
+                  }
+                  // Nested DataPart format
+                  else if (part.root?.kind === 'data' && part.root?.data) {
+                    const artifactUri = part.root.data['artifact-uri']
+                    const fileName = part.root.data['file-name']
+                    if (artifactUri) {
+                      images.push({ uri: artifactUri, fileName })
+                    }
+                  }
+                }
+              }
+              
+              return {
+                id: msg.messageId || `api_msg_${index}`,
+                role: (msg.role === 'user' || msg.role === 'assistant' || msg.role === 'agent') ? 
+                      (msg.role === 'agent' ? 'assistant' : msg.role) : 'assistant',
+                content: content,
+                images: images.length > 0 ? images : undefined,
+                agent: (msg.role === 'assistant' || msg.role === 'agent') ? 'Assistant' : undefined
+              }
+            })
+            
+            // Load stored workflows from localStorage and inject them
+            try {
+              const storageKey = `workflow_${conversationId}`
+              const storedData = localStorage.getItem(storageKey)
+              if (storedData) {
+                const workflows = JSON.parse(storedData)
+                // Insert workflows at appropriate positions (before assistant messages)
+                const messagesWithWorkflows: Message[] = []
+                let workflowIndex = 0
+                
+                for (let i = 0; i < convertedMessages.length; i++) {
+                  const msg = convertedMessages[i]
+                  
+                  // Insert workflow before assistant responses
+                  if (msg.role === 'assistant' && workflowIndex < workflows.length) {
+                    const workflow = workflows[workflowIndex]
+                    messagesWithWorkflows.push({
+                      id: workflow.id,
+                      role: 'system',
+                      type: 'inference_summary',
+                      steps: workflow.steps
+                    })
+                    workflowIndex++
+                  }
+                  messagesWithWorkflows.push(msg)
+                }
+                
+                setMessages(messagesWithWorkflows.filter(m => m.content || m.images?.length || m.type === 'inference_summary'))
+              } else {
+                setMessages(convertedMessages.filter(m => m.content || m.images?.length))
+              }
+            } catch (err) {
+              console.error('[ChatPanel] Failed to load workflows from localStorage:', err)
+              setMessages(convertedMessages.filter(m => m.content || m.images?.length))
+            }
             
             if (DEBUG) console.log("[ChatPanel] Converted messages:", convertedMessages.length)
             
-            if (convertedMessages.length > 0) {
-              setMessages(convertedMessages)
-            } else {
-              // If no messages found, show initial message only if authenticated
-              if (DEBUG) console.log("[ChatPanel] No messages found")
-              const token = sessionStorage.getItem('auth_token')
-              if (token) {
-                setMessages(initialMessages)
-              } else {
-                setMessages([])
-              }
+            if (convertedMessages.length === 0) {
+              // If no messages found, show initial welcome message
+              if (DEBUG) console.log("[ChatPanel] No messages found, showing welcome")
+              setMessages(initialMessages)
             }
           } else {
             if (DEBUG) console.log("[ChatPanel] No conversation found or no messages")
-            const token = sessionStorage.getItem('auth_token')
-            if (token) {
-              setMessages(initialMessages)
-            } else {
-              setMessages([])
+            // Conversation doesn't exist (maybe backend restarted) - redirect to fresh state
+            if (conversationId && conversationId !== 'frontend-chat-context') {
+              // Clear the stale conversationId from URL and state
+              window.history.replaceState({}, '', '/')
+              setConversationId('')
             }
+            setMessages(initialMessages)
           }
         } catch (error) {
           console.error("[ChatPanel] Failed to load conversation messages:", error)
-          const token = sessionStorage.getItem('auth_token')
-          if (token) {
-            setMessages(initialMessages)
-          } else {
-            setMessages([])
-          }
+          setMessages(initialMessages)
         }
       } else {
-        // New conversation or default - show initial messages only if authenticated
+        // New conversation or default - show initial welcome message
         if (DEBUG) console.log("[ChatPanel] Using default conversation")
-        const token = sessionStorage.getItem('auth_token')
-        if (token) {
-          setMessages(initialMessages)
-        } else {
-          setMessages([])
-        }
+        setMessages(initialMessages)
       }
       
-      // Reset other state
-      setIsInferencing(false)
-      setInferenceSteps([])
-      setProcessedMessageIds(new Set())
+      // Only reset inference state if we're not actively inferencing
+      // This prevents clearing live workflow updates when conversation reloads
+      if (!isInferencing) {
+        setIsInferencing(false)
+        setInferenceSteps([])
+        setProcessedMessageIds(new Set())
+      }
     }
     
     loadConversationMessages()
-  }, [conversationId]) // Only depend on conversationId, not searchParams
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conversationId]) // Only depend on conversationId - isInferencing checked inside
 
   // Real Event Hub listener for backend events - moved inside component
   useEffect(() => {
     // Handle real status updates from A2A backend
+    // CONSOLIDATED: task_updated is now the SINGLE source of truth for remote agent status
     const handleTaskUpdate = (data: any) => {
       console.log("[ChatPanel] Task update received:", data)
-      // A2A TaskEventData has: taskId, conversationId, contextId, state, artifactsCount
+      // A2A TaskEventData has: taskId, conversationId, contextId, state, artifactsCount, agentName, content
       if (data.taskId && data.state) {
         // Use the actual agent name if available, otherwise fall back to generic names
         let agentName = data.agentName || "Host Agent"
-        let status = data.state
+        
+        // PRIORITY: Use content from backend if available (contains actual agent message)
+        // This is the detailed text from the A2A protocol message
+        let status = data.content || data.state
         
         // If this is a new agent we haven't seen before, register it
         if (data.agentName && data.agentName !== "Host Agent" && data.agentName !== "System") {
@@ -776,19 +855,22 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
           })
         }
         
-        if (data.state === "created") {
-          status = "initializing conversation"
-        } else if (data.state === "completed") {
-          status = "response complete"
-        } else if (data.state === "in_progress") {
-          status = "processing request"
-        } else if (data.state === "queued") {
-          status = "request queued"
-        } else if (data.state === "requires_action") {
-          status = "executing tools"
+        // Only map state to friendly text if no content was provided
+        if (!data.content) {
+          if (data.state === "created") {
+            status = "initializing conversation"
+          } else if (data.state === "completed") {
+            status = "response complete"
+          } else if (data.state === "in_progress") {
+            status = "processing request"
+          } else if (data.state === "queued") {
+            status = "request queued"
+          } else if (data.state === "requires_action") {
+            status = "executing tools"
+          }
         }
         
-  emit("status_update", {
+        emit("status_update", {
           inferenceId: data.taskId,
           agent: agentName,
           status: status
@@ -958,6 +1040,7 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
           })
           emit("final_response", {
             inferenceId: data.conversationId || data.messageId,
+            conversationId: data.conversationId || data.contextId,
             message: {
               role: data.role === "user" ? "user" : "assistant",
               content: textContent,
@@ -1229,7 +1312,7 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
       setActiveNode(data.agent)
     }
 
-    const handleFinalResponse = (data: { inferenceId: string; message: Omit<Message, "id"> }) => {
+    const handleFinalResponse = (data: { inferenceId: string; message: Omit<Message, "id">; conversationId?: string }) => {
       console.log("[ChatPanel] Final response received:", data)
       
       const contentKey = data.message.content ?? ""
@@ -1248,23 +1331,54 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
       // Only add messages if they have content
       const messagesToAdd: Message[] = []
       
-      // Only add inference summary once - when we get the final host agent response
-      // This prevents duplicate workflow displays (one at start, one at end)
       const isHostAgent = data.message.agent === "foundry-host-agent" || 
                           data.message.agent === "Host Agent" ||
                           data.message.agent === "System"
-      
-      if (inferenceSteps.length > 0 && isHostAgent) {
+
+      // Use conversationId from the event data if available, otherwise fall back to component state
+      // This ensures workflows from the visual designer are saved to the correct key
+      const effectiveConversationId = data.conversationId || data.inferenceId || conversationId
+
+      // Add inference summary FIRST (so workflow appears BEFORE response)
+      // Only add once when host agent responds (final response) and we have steps to show
+      const summaryId = `summary_${data.inferenceId}`
+      console.log('[ChatPanel] Workflow save check:', {
+        stepsCount: inferenceSteps.length,
+        isHostAgent,
+        summaryId,
+        alreadyProcessed: processedMessageIds.has(summaryId),
+        effectiveConversationId
+      })
+      if (inferenceSteps.length > 0 && isHostAgent && !processedMessageIds.has(summaryId)) {
+        setProcessedMessageIds(prev => new Set([...prev, summaryId]))
+        const stepsCopy = [...inferenceSteps] // Copy steps before they get cleared
         const summaryMessage: Message = {
-          id: `summary_${data.inferenceId}`,
+          id: summaryId,
           role: "system",
           type: "inference_summary",
-          steps: inferenceSteps,
+          steps: stepsCopy,
         }
         messagesToAdd.push(summaryMessage)
+        
+        // Persist workflow to localStorage so it survives page refresh
+        // Store keyed by conversationId with the inference steps and associated message position
+        try {
+          const storageKey = `workflow_${effectiveConversationId}`
+          const existingData = localStorage.getItem(storageKey)
+          const workflows = existingData ? JSON.parse(existingData) : []
+          workflows.push({
+            id: summaryId,
+            steps: stepsCopy,
+            timestamp: Date.now()
+          })
+          localStorage.setItem(storageKey, JSON.stringify(workflows))
+          console.log('[ChatPanel] Workflow persisted to:', storageKey)
+        } catch (err) {
+          console.error('[ChatPanel] Failed to persist workflow to localStorage:', err)
+        }
       }
 
-      // Only add final message if it has content
+      // Add final message AFTER the workflow summary
       if (data.message.content && data.message.content.trim().length > 0) {
         const finalMessage: Message = {
           id: responseId,
@@ -1793,10 +1907,11 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
                 return <InferenceSteps key={`${message.id}-${index}`} steps={message.steps} isInferencing={false} />
               }
               
-              // Skip rendering messages with no content and no attachments
+              // Skip rendering messages with no content, no attachments, and no images
               const hasContent = message.content && message.content.trim().length > 0
               const hasAttachments = message.attachments && message.attachments.length > 0
-              if (!hasContent && !hasAttachments) {
+              const hasImages = message.images && message.images.length > 0
+              if (!hasContent && !hasAttachments && !hasImages) {
                 return null
               }
               
@@ -1831,12 +1946,13 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
                                     href={attachment.uri}
                                     target="_blank"
                                     rel="noopener noreferrer"
-                                    className="block overflow-hidden rounded-lg border border-border bg-background"
+                                    className="block rounded-lg border border-border"
                                   >
                                     <img
                                       src={attachment.uri}
                                       alt={attachment.fileName || "Image attachment"}
-                                      className="w-full h-auto"
+                                      className="w-full h-auto block rounded-t-lg"
+                                      style={{ maxHeight: '500px', objectFit: 'contain', backgroundColor: '#f5f5f5' }}
                                     />
                                     <div className="px-3 py-2 text-xs text-muted-foreground border-t border-border bg-muted/50">
                                       {attachment.fileName || "Image attachment"}
@@ -1913,6 +2029,31 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
                               </a>
                             )
                           })}
+                        </div>
+                      )}
+                      {/* Render images loaded from conversation history (DataPart artifacts) */}
+                      {message.images && message.images.length > 0 && (
+                        <div className="flex flex-col gap-3 mb-3">
+                          {message.images.map((image, imageIndex) => (
+                            <div key={`${message.id}-image-${imageIndex}`} className="flex flex-col gap-2">
+                              <a
+                                href={image.uri}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="block rounded-lg border border-border"
+                              >
+                                <img
+                                  src={image.uri}
+                                  alt={image.fileName || "Generated image"}
+                                  className="w-full h-auto block rounded-t-lg"
+                                  style={{ maxHeight: '500px', objectFit: 'contain', backgroundColor: '#f5f5f5' }}
+                                />
+                                <div className="px-3 py-2 text-xs text-muted-foreground border-t border-border bg-muted/50">
+                                  {image.fileName || "Generated image"}
+                                </div>
+                              </a>
+                            </div>
+                          ))}
                         </div>
                       )}
                       {message.content && message.content.trim().length > 0 && (

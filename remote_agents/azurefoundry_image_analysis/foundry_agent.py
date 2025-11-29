@@ -481,7 +481,9 @@ Always provide thorough, accurate analysis based on visible evidence in the imag
         # Send message with attachments if available (for GPT-4o vision)
         await self.send_message(thread_id, user_message, attachments=attachments)
         client = self._get_client()
+        logger.info(f"🚀 Creating run for thread {thread_id} with agent {self.agent.id}")
         run = client.runs.create(thread_id=thread_id, agent_id=self.agent.id)
+        logger.info(f"📊 Run created: id={run.id}, initial_status={run.status}")
 
         max_iterations = 25
         iterations = 0
@@ -566,11 +568,14 @@ Always provide thorough, accurate analysis based on visible evidence in the imag
             return
 
         # After run is complete, yield the assistant's response(s) with citation formatting
+        logger.info(f"🏁 Run completed with status={run.status} after {iterations} iterations")
         messages = list(client.messages.list(thread_id=thread_id, order=ListSortOrder.ASCENDING))
-        logger.debug(f"Found {len(messages)} messages in thread")
+        logger.info(f"📨 Retrieved {len(messages)} messages from thread")
+        assistant_response_found = False
         for msg in reversed(messages):
-            logger.debug(f"Processing message: role={msg.role}, content_count={len(msg.content) if msg.content else 0}")
+            logger.info(f"📝 Checking message: role={msg.role}, has_content={bool(msg.content)}")
             if msg.role == "assistant" and msg.content:
+                assistant_response_found = True
                 for content_item in msg.content:
                     logger.debug(f"Processing content item: type={type(content_item)}")
                     if hasattr(content_item, 'text'):
@@ -645,8 +650,16 @@ Always provide thorough, accurate analysis based on visible evidence in the imag
                         if '📚 Sources:' in formatted_response:
                             sources_start = formatted_response.find('📚 Sources:')
                             logger.debug(f"Sources section: {formatted_response[sources_start:sources_start+200]}...")
+                        logger.info(f"✅ Yielding assistant response ({len(formatted_response)} chars)")
                         yield formatted_response
                 break
+        
+        # If no assistant response was found, log a warning
+        if not assistant_response_found:
+            logger.warning(f"⚠️ No assistant response found in {len(messages)} messages!")
+            for msg in messages:
+                logger.warning(f"  - Message role={msg.role}, content={bool(msg.content)}")
+            yield "Error: No response received from the image analysis agent"
     
     def _format_response_with_citations(self, text_content: str, citations: List[Dict]) -> str:
         """Format the response text with clickable citations for Gradio UI."""
