@@ -644,6 +644,18 @@ export function VisualWorkflowDesigner({
         }
       }
       
+      // If agent is "host" and no matches found, route to first uncompleted step
+      // This handles cases where backend sends "foundry-host-agent" instead of actual agent name
+      if (matchingSteps.length === 0 && normalizedEventName.includes('host')) {
+        for (const step of sortedSteps) {
+          const stepStatus = stepStatusesRef.current.get(step.id)
+          if (stepStatus?.status !== "completed") {
+            console.log("[WorkflowTest] 🔄 Host agent event -> routing to first uncompleted step:", step.agentName)
+            return step.id
+          }
+        }
+      }
+      
       if (matchingSteps.length > 0) {
         // Find the first UNCOMPLETED matching step (handles same agent multiple times)
         for (const step of matchingSteps) {
