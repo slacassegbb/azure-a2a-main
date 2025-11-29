@@ -566,25 +566,16 @@ export function VisualWorkflowDesigner({
   useEffect(() => {
     console.log("[WorkflowTest] 🎬 Setting up event listeners on mount")
     
-    // Detect actual agent from message content when backend sends "foundry-host-agent"
-    const detectAgentFromContent = (content: string | undefined): string | null => {
-      if (!content) return null
-      const contentLower = content.toLowerCase()
-      
-      // Branding agent signatures
-      if (content.includes('🎨 BRANDING') || contentLower.includes('branding response') || 
-          contentLower.includes('branding strategy') || contentLower.includes('brand guidelines')) {
-        return 'branding'
+    // Helper: Check if two agent names match (using substring matching)
+    const agentNamesMatch = (name1: string | undefined, name2: string | undefined): boolean => {
+      if (!name1 || !name2) return false
+      const n1 = name1.toLowerCase().trim().replace(/[-_]/g, ' ')
+      const n2 = name2.toLowerCase().trim().replace(/[-_]/g, ' ')
+      if (n1 === n2) return true
+      if (n1.length > 3 && n2.length > 3) {
+        return n1.includes(n2) || n2.includes(n1)
       }
-      
-      // Interview agent signatures  
-      if (contentLower.includes('what brings you here') || contentLower.includes('company name') ||
-          contentLower.includes('capture') && contentLower.includes('information') ||
-          contentLower.includes('use case') || contentLower.includes('contact') && contentLower.includes('email')) {
-        return 'interview'
-      }
-      
-      return null
+      return false
     }
     
     // SIMPLE sequential workflow:
@@ -593,15 +584,8 @@ export function VisualWorkflowDesigner({
     const findStepForAgent = (agentName: string, messageContent?: string): string | null => {
       if (!agentName) return null
       
-      // If backend sends "host" but we can detect actual agent from content, use that
-      let effectiveAgentName = agentName
-      if (agentName.toLowerCase().includes('host') && messageContent) {
-        const detected = detectAgentFromContent(messageContent)
-        if (detected) {
-          console.log("[WorkflowTest] 🔍 Detected actual agent from content:", detected)
-          effectiveAgentName = detected
-        }
-      }
+      // Use the provided agent name (no content-based guessing)
+      const effectiveAgentName = agentName
       
       const normalizedEventName = effectiveAgentName.toLowerCase().trim().replace(/[-_]/g, ' ')
       const sortedSteps = Array.from(workflowStepsRef.current).sort((a, b) => a.order - b.order)
@@ -618,11 +602,9 @@ export function VisualWorkflowDesigner({
           const isForWaitingStep = 
             waitingStepNameNorm === normalizedEventName ||
             waitingStepIdNorm === normalizedEventName ||
-            waitingStepData.agentName === agentName ||
-            waitingStepData.agentId === agentName ||
-            normalizedEventName.includes('host') ||
-            (normalizedEventName.includes('interview') && waitingStepNameNorm.includes('interview')) ||
-            (normalizedEventName.includes('branding') && waitingStepNameNorm.includes('branding'))
+            agentNamesMatch(waitingStepData.agentName, agentName) ||
+            agentNamesMatch(waitingStepData.agentId, agentName) ||
+            normalizedEventName.includes('host')
           
           if (isForWaitingStep) {
             return waitingStep
@@ -721,8 +703,9 @@ export function VisualWorkflowDesigner({
       const { agent: agentName, status } = data
       if (!agentName) return
       
-      // Skip orchestrator noise
-      if ((agentName === "foundry-host-agent" || agentName === "Host Agent") && 
+      // Skip orchestrator noise from host agent
+      const isHostAgent = agentName.toLowerCase().includes('host')
+      if (isHostAgent && 
           (status?.includes("Planning") || status?.includes("Initializing") || 
            status?.includes("Goal achieved") || status?.includes("Reasoning:"))) {
         return
@@ -949,10 +932,8 @@ export function VisualWorkflowDesigner({
             const eventAgentLower = rawAgentName?.toLowerCase() || ''
             const waitingAgentLower = waitingStep?.agentName.toLowerCase() || ''
             const isFromWaitingAgent = waitingStep && (
-              waitingStep.agentName === rawAgentName ||
-              waitingStep.agentId === rawAgentName ||
-              eventAgentLower.includes('interview') && waitingAgentLower.includes('interview') ||
-              eventAgentLower.includes('branding') && waitingAgentLower.includes('branding')
+              agentNamesMatch(waitingStep.agentName, rawAgentName) ||
+              agentNamesMatch(waitingStep.agentId, rawAgentName)
             )
             if (isFromWaitingAgent) {
               console.log("[WorkflowTest] 📋 Updating waiting message from message event:", messageText?.substring?.(0, 100))
@@ -992,16 +973,15 @@ export function VisualWorkflowDesigner({
       if (data.agentName && data.content) {
         // Filter out orchestrator planning/status messages from host agent
         // These are internal coordination messages, not actual agent outputs
-        const isOrchestratorStatus = (
-          data.agentName === "foundry-host-agent" && (
-            data.content.includes("Planning step") ||
-            data.content.includes("Initializing") ||
-            data.content.includes("Goal achieved") ||
-            data.content.includes("Reasoning:") ||
-            data.content.includes("Executing:") ||
-            data.content.includes("Planning next task") ||
-            data.content.startsWith("Task status:")
-          )
+        const isHostAgent = data.agentName.toLowerCase().includes('host')
+        const isOrchestratorStatus = isHostAgent && (
+          data.content.includes("Planning step") ||
+          data.content.includes("Initializing") ||
+          data.content.includes("Goal achieved") ||
+          data.content.includes("Reasoning:") ||
+          data.content.includes("Executing:") ||
+          data.content.includes("Planning next task") ||
+          data.content.startsWith("Task status:")
         )
         
         if (isOrchestratorStatus) {
@@ -1033,13 +1013,9 @@ export function VisualWorkflowDesigner({
         setWaitingStepId(currentWaitingId => {
           if (currentWaitingId === stepId && shouldUpdateMessage) {
             const waitingStep = workflowStepsRef.current.find(s => s.id === currentWaitingId)
-            const eventAgentLower = data.agentName?.toLowerCase() || ''
-            const waitingAgentLower = waitingStep?.agentName.toLowerCase() || ''
             const isFromWaitingAgent = waitingStep && (
-              waitingStep.agentName === data.agentName ||
-              waitingStep.agentId === data.agentName ||
-              eventAgentLower.includes('interview') && waitingAgentLower.includes('interview') ||
-              eventAgentLower.includes('branding') && waitingAgentLower.includes('branding')
+              agentNamesMatch(waitingStep.agentName, data.agentName) ||
+              agentNamesMatch(waitingStep.agentId, data.agentName)
             )
             if (isFromWaitingAgent) {
               console.log("[WorkflowTest] 📋 Updating waiting message from remote_agent_activity:", fullContent?.substring?.(0, 100))
@@ -1086,13 +1062,9 @@ export function VisualWorkflowDesigner({
           
           // Only update message if it's from the same agent that's waiting
           const waitingStep = workflowStepsRef.current.find(s => s.id === stepId)
-          const eventAgentLower = data.message.agent?.toLowerCase() || ''
-          const waitingAgentLower = waitingStep?.agentName.toLowerCase() || ''
           const isFromWaitingAgent = waitingStep && (
-            waitingStep.agentName === data.message.agent ||
-            waitingStep.agentId === data.message.agent ||
-            (eventAgentLower.includes('interview') && waitingAgentLower.includes('interview')) ||
-            (eventAgentLower.includes('branding') && waitingAgentLower.includes('branding'))
+            agentNamesMatch(waitingStep.agentName, data.message.agent) ||
+            agentNamesMatch(waitingStep.agentId, data.message.agent)
           )
           
           if (isFromWaitingAgent) {
