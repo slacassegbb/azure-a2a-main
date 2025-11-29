@@ -333,10 +333,19 @@ class FoundryTemplateAgentExecutor(AgentExecutor):
             'i\'ve captured everything',
         ]
         
+        # Check if response still asks a question - if so, NOT complete even with completion phrases
+        question_indicators = ['?', 'what ', 'which ', 'could you', 'can you', 'may i', 'would you']
+        asks_question = any(q in response_lower for q in question_indicators)
+        
         for phrase in completion_phrases:
             if phrase in response_lower:
-                logger.info(f"🏁 Completion signal detected: '{phrase}' - interview complete")
-                return False  # DON'T request more input, complete the task
+                if asks_question:
+                    # Has completion phrase BUT still asks question = NOT complete, needs input
+                    logger.info(f"🔄 Found '{phrase}' but response asks a question - still need input")
+                    return True  # Still needs input
+                else:
+                    logger.info(f"🏁 Completion signal detected: '{phrase}' - interview complete")
+                    return False  # DON'T request more input, complete the task
         
         # Check for structured output sections which indicate wrap-up
         summary_section_indicators = [
