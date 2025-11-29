@@ -605,6 +605,7 @@ class FoundryHostManager(ApplicationManager):
                 streamer = await get_websocket_streamer()
                 if streamer:
                     # Send in A2A MessageEventData format with proper agent attribution
+                    # Use status_agent_name (actual remote agent) not actor_name (host)
                     event_data = {
                         "messageId": get_message_id(msg) or str(uuid.uuid4()),
                         "conversationId": context_id,
@@ -612,7 +613,7 @@ class FoundryHostManager(ApplicationManager):
                         "role": "assistant",
                         "content": [],
                         "direction": "incoming",
-                        "agentName": actor_name,
+                        "agentName": status_agent_name,
                         "timestamp": __import__('datetime').datetime.utcnow().isoformat(),
                     }
 
@@ -690,7 +691,7 @@ class FoundryHostManager(ApplicationManager):
                                 "uri": file_uri,
                                 "size": content_item.get("fileSize", 0),
                                 "content_type": content_item.get("mediaType", "image/png"),
-                                "source_agent": actor_name,
+                                "source_agent": status_agent_name,
                                 "contextId": context_id
                             }
                             await streamer.stream_file_uploaded(file_info, context_id)
@@ -699,7 +700,7 @@ class FoundryHostManager(ApplicationManager):
                             await streamer._send_event(
                                 "remote_agent_activity",
                                 {
-                                    "agentName": actor_name,
+                                    "agentName": status_agent_name,
                                     "content": f"Image available: {content_item['uri']}",
                                     "timestamp": __import__('datetime').datetime.utcnow().isoformat(),
                                 },
