@@ -824,10 +824,15 @@ export function VisualWorkflowDesigner({
       // Track waiting step for input_required state
       if (newStatus === "waiting") {
         console.log("[WorkflowTest] ⏸️ Step waiting for input:", stepId, agentName)
+        console.log("[WorkflowTest] 📋 Task update data:", JSON.stringify(data, null, 2))
         setWaitingStepId(stepId)
-        // Capture the current message as the waiting message
-        const capturedMessage = currentStatus?.message || data.message || null
-        console.log("[WorkflowTest] 📋 Captured waiting message:", capturedMessage?.substring(0, 100))
+        // Capture the message - check multiple sources:
+        // 1. data.content (from backend task_updated event)
+        // 2. currentStatus?.message (from previous agent_message event)
+        // 3. data.message (fallback)
+        // 4. The state itself as last resort
+        const capturedMessage = data.content || currentStatus?.message || data.message || state
+        console.log("[WorkflowTest] 📋 Captured waiting message:", capturedMessage?.substring?.(0, 200) || capturedMessage)
         setWaitingMessage(capturedMessage)
       } else if (newStatus === "completed" || newStatus === "working") {
         // Clear waiting state when step progresses
@@ -881,6 +886,15 @@ export function VisualWorkflowDesigner({
           message: shouldUpdateMessage ? content : currentStatus?.message
         })
         stepStatusesRef.current = immediateUpdate
+        
+        // If this step is currently waiting, update the waiting message too
+        setWaitingStepId(currentWaitingId => {
+          if (currentWaitingId === stepId && shouldUpdateMessage) {
+            console.log("[WorkflowTest] 📋 Updating waiting message from agent_message:", content?.substring?.(0, 100))
+            setWaitingMessage(content)
+          }
+          return currentWaitingId
+        })
         
         setStepStatuses(prev => {
           const newMap = new Map(prev)
