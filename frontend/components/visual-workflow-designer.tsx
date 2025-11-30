@@ -145,6 +145,8 @@ export function VisualWorkflowDesigner({
   const testTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   // Track which step is currently active for each agent (prevents late events from going to wrong step)
   const activeStepPerAgentRef = useRef<Map<string, string>>(new Map())
+  // Track taskId -> stepId mapping for precise routing (each remote agent task has unique taskId)
+  const taskIdToStepRef = useRef<Map<string, string>>(new Map())
   const [hostMessage, setHostMessage] = useState<{ message: string, target: string } | null>(null)
   
   // Event Hub for live updates
@@ -247,6 +249,7 @@ export function VisualWorkflowDesigner({
         setStepStatuses(new Map())
         stepStatusesRef.current = new Map()
         activeStepPerAgentRef.current = new Map() // Clear active step assignments
+        taskIdToStepRef.current = new Map() // Clear taskId mappings
         
         const baseUrl = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
         
@@ -366,6 +369,7 @@ export function VisualWorkflowDesigner({
         setStepStatuses(new Map())
         stepStatusesRef.current = new Map()
         activeStepPerAgentRef.current = new Map()
+        taskIdToStepRef.current = new Map()
         setHostMessage(null)
       }, 2000)
       
@@ -566,13 +570,22 @@ export function VisualWorkflowDesigner({
   useEffect(() => {
     console.log("[WorkflowTest] 🎬 Setting up event listeners on mount")
     
-    // SIMPLE: Find step for agent - EXACT match only, with instance tracking
-    const findStepForAgent = (agentName: string): string | null => {
+    // Find step for agent using taskId (most precise) or agentName fallback
+    const findStepForAgent = (agentName: string, taskId?: string): string | null => {
       if (!agentName) return null
       
       // IGNORE host agent events - they have wrong names and mess up routing
       if (agentName.toLowerCase().includes('host')) {
         return null
+      }
+      
+      // BEST: Use taskId if we already have a mapping for it
+      // This is the most precise way to route - each task instance has a unique ID
+      if (taskId && taskIdToStepRef.current.has(taskId)) {
+        const stepId = taskIdToStepRef.current.get(taskId)!
+        console.log("[WorkflowTest] 🎯 Using taskId mapping:", taskId.substring(0, 8), "-> step", 
+          workflowStepsRef.current.find(s => s.id === stepId)?.order)
+        return stepId
       }
       
       const sortedSteps = Array.from(workflowStepsRef.current).sort((a, b) => a.order - b.order)
@@ -582,24 +595,9 @@ export function VisualWorkflowDesigner({
       if (waitingStep) {
         const waitingStepData = workflowStepsRef.current.find(s => s.id === waitingStep)
         if (waitingStepData && waitingStepData.agentName === agentName) {
+          // Also record taskId -> stepId mapping for future events
+          if (taskId) taskIdToStepRef.current.set(taskId, waitingStep)
           return waitingStep
-        }
-      }
-      
-      // CHECK: Does this agent already have an active step?
-      // This prevents late events from step 1 going to step 4 when same agent is used twice
-      const activeStepId = activeStepPerAgentRef.current.get(agentName)
-      if (activeStepId) {
-        const activeStatus = stepStatusesRef.current.get(activeStepId)
-        if (activeStatus?.status !== "completed") {
-          // Active step is still working - route to it
-          console.log("[WorkflowTest] 🔒 Using active step for", agentName, "-> step", 
-            workflowStepsRef.current.find(s => s.id === activeStepId)?.order)
-          return activeStepId
-        } else {
-          // Active step completed - clear it so we can find the next one
-          console.log("[WorkflowTest] 🔓 Clearing completed active step for", agentName)
-          activeStepPerAgentRef.current.delete(agentName)
         }
       }
       
@@ -612,14 +610,17 @@ export function VisualWorkflowDesigner({
       for (const step of matchingSteps) {
         const status = stepStatusesRef.current.get(step.id)
         if (status?.status !== "completed") {
-          // Mark this step as active for this agent
-          activeStepPerAgentRef.current.set(agentName, step.id)
-          console.log("[WorkflowTest] ✅ Assigned step", step.order, "as active for", agentName)
+          // Record taskId -> stepId mapping so future events for this task go here
+          if (taskId) {
+            taskIdToStepRef.current.set(taskId, step.id)
+            console.log("[WorkflowTest] 📝 Mapped taskId", taskId.substring(0, 8), "-> step", step.order)
+          }
+          console.log("[WorkflowTest] ✅ Routing to step", step.order, step.agentName)
           return step.id
         }
       }
       
-      // All completed? Return last one (but don't mark as active)
+      // All completed? Return last one
       if (matchingSteps.length > 0) {
         return matchingSteps[matchingSteps.length - 1].id
       }
@@ -630,7 +631,7 @@ export function VisualWorkflowDesigner({
     // SIMPLE: status_update just updates status. Let handleTaskUpdate handle state changes.
     const handleStatusUpdate = (data: any) => {
       console.log("[WorkflowTest] ✅ Status update:", data)
-      const { agent: agentName, status } = data
+      const { agent: agentName, status, taskId } = data
       if (!agentName) return
       
       // Skip orchestrator noise from host agent
@@ -641,7 +642,7 @@ export function VisualWorkflowDesigner({
         return
       }
       
-      const stepId = findStepForAgent(agentName)
+      const stepId = findStepForAgent(agentName, taskId)
       if (!stepId) return
       
       // Just update message if it's meaningful content
@@ -662,7 +663,7 @@ export function VisualWorkflowDesigner({
     // SIMPLE: This is the MAIN handler for state changes. Maps backend state to UI status.
     const handleTaskUpdate = (data: any) => {
       console.log("[WorkflowTest] 📋 Task update:", data)
-      const { state, agentName } = data
+      const { state, agentName, taskId } = data
       if (!agentName) return
       
       // IMPORTANT: Ignore "completed" from host agent - streaming events have correct names
@@ -673,7 +674,7 @@ export function VisualWorkflowDesigner({
         return
       }
       
-      const stepId = findStepForAgent(agentName)
+      const stepId = findStepForAgent(agentName, taskId)
       if (!stepId) return
       
       // Map backend state to UI status
@@ -1382,6 +1383,7 @@ export function VisualWorkflowDesigner({
     setStepStatuses(new Map())
     stepStatusesRef.current = new Map()
     activeStepPerAgentRef.current = new Map() // Clear active step assignments
+    taskIdToStepRef.current = new Map() // Clear taskId mappings
     
     console.log("[WorkflowTest] 🚀 Starting test with workflow:", currentWorkflowText)
     
@@ -1478,6 +1480,7 @@ export function VisualWorkflowDesigner({
     setStepStatuses(new Map())
     stepStatusesRef.current = new Map()
     activeStepPerAgentRef.current = new Map() // Clear active step assignments
+    taskIdToStepRef.current = new Map() // Clear taskId mappings
     setHostMessage(null)
     setWaitingStepId(null)
     setWaitingResponse("")
