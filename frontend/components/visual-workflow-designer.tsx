@@ -566,145 +566,56 @@ export function VisualWorkflowDesigner({
   useEffect(() => {
     console.log("[WorkflowTest] 🎬 Setting up event listeners on mount")
     
-    // Helper: Check if two agent names match (using substring matching)
-    const agentNamesMatch = (name1: string | undefined, name2: string | undefined): boolean => {
-      if (!name1 || !name2) return false
-      const n1 = name1.toLowerCase().trim().replace(/[-_]/g, ' ')
-      const n2 = name2.toLowerCase().trim().replace(/[-_]/g, ' ')
-      if (n1 === n2) return true
-      if (n1.length > 3 && n2.length > 3) {
-        return n1.includes(n2) || n2.includes(n1)
-      }
-      return false
-    }
-    
-    // SIMPLE sequential workflow:
-    // 1. If a step is waiting for input, ONLY that step can receive events
-    // 2. Otherwise, find matching step but only if previous steps are completed
-    const findStepForAgent = (agentName: string, messageContent?: string): string | null => {
+    // SIMPLE: Find step for agent - EXACT match only, no fuzzy nonsense
+    const findStepForAgent = (agentName: string): string | null => {
       if (!agentName) return null
       
-      // Use the provided agent name (no content-based guessing)
-      const effectiveAgentName = agentName
-      
-      const normalizedEventName = effectiveAgentName.toLowerCase().trim().replace(/[-_]/g, ' ')
       const sortedSteps = Array.from(workflowStepsRef.current).sort((a, b) => a.order - b.order)
+      const isHostAgent = agentName.toLowerCase().includes('host')
       
-      // CRITICAL: If a step is waiting for input, ALL events go to that step
-      // This prevents step 2 from activating while step 1 has input_required
+      // If a step is waiting for input, route to it (for HITL)
       const waitingStep = waitingStepIdRef.current
       if (waitingStep) {
         const waitingStepData = workflowStepsRef.current.find(s => s.id === waitingStep)
         if (waitingStepData) {
-          // Check if this event is for the waiting step
-          const waitingStepNameNorm = waitingStepData.agentName.toLowerCase().trim().replace(/[-_]/g, ' ')
-          const waitingStepIdNorm = waitingStepData.agentId.toLowerCase().trim().replace(/[-_]/g, ' ')
-          const isForWaitingStep = 
-            waitingStepNameNorm === normalizedEventName ||
-            waitingStepIdNorm === normalizedEventName ||
-            agentNamesMatch(waitingStepData.agentName, agentName) ||
-            agentNamesMatch(waitingStepData.agentId, agentName) ||
-            normalizedEventName.includes('host')
-          
-          if (isForWaitingStep) {
+          // Only route to waiting step if it's from same agent or host
+          if (waitingStepData.agentName === agentName || isHostAgent) {
             return waitingStep
-          } else {
-            console.log("[WorkflowTest] 🛑 Step", waitingStepData.agentName, "is waiting - blocking event for", agentName)
-            return null
           }
         }
       }
       
-      // No step waiting - find ALL matching steps, then pick the first UNCOMPLETED one
-      // This handles cases where the same agent appears multiple times in workflow
-      const matchingSteps: WorkflowStep[] = []
+      // Find matching steps by EXACT name match
+      const matchingSteps = sortedSteps.filter(step => 
+        step.agentName === agentName || step.agentId === agentName
+      )
       
-      for (const step of sortedSteps) {
-        const normalizedStepName = step.agentName.toLowerCase().trim().replace(/[-_]/g, ' ')
-        const normalizedStepId = step.agentId.toLowerCase().trim().replace(/[-_]/g, ' ')
-        
-        // Exact matching first
-        let matches = normalizedStepName === normalizedEventName ||
-            normalizedStepId === normalizedEventName ||
-            step.agentName === agentName ||
-            step.agentId === agentName
-        
-        // Fuzzy matching: check if one contains the other (substring match)
-        // This handles cases where naming conventions differ slightly
-        // Require min length to avoid false positives on short strings
-        if (!matches && normalizedEventName.length > 3 && normalizedStepName.length > 3) {
-          matches = normalizedStepName.includes(normalizedEventName) ||
-                    normalizedEventName.includes(normalizedStepName) ||
-                    normalizedStepId.includes(normalizedEventName) ||
-                    normalizedEventName.includes(normalizedStepId)
-        }
-        
-        if (matches) {
-          matchingSteps.push(step)
-        }
-      }
-      
-      // If agent is "host" and no matches found, route to first uncompleted step
-      // This handles cases where backend sends "foundry-host-agent" instead of actual agent name
-      if (matchingSteps.length === 0 && normalizedEventName.includes('host')) {
-        for (const step of sortedSteps) {
-          const stepStatus = stepStatusesRef.current.get(step.id)
-          if (stepStatus?.status !== "completed") {
-            console.log("[WorkflowTest] 🔄 Host agent event -> routing to first uncompleted step:", step.agentName)
-            return step.id
-          }
-        }
-      }
-      
-      if (matchingSteps.length > 0) {
-        // For same agent appearing multiple times: route to correct instance based on workflow order
-        // Only route to a later instance if PREVIOUS steps in workflow are done
-        for (const step of matchingSteps) {
-          const stepStatus = stepStatusesRef.current.get(step.id)
-          
-          // Skip completed steps - look for the next instance
-          if (stepStatus?.status === "completed") {
-            console.log("[WorkflowTest] ⏭️ Step", step.order, step.agentName, "already completed, checking next instance")
-            continue
-          }
-          
-          // Check if this step can receive events (previous steps should have some activity)
-          // For the first matching step, always allow
-          // For subsequent instances, check if previous step in workflow has started
-          const stepIndex = sortedSteps.findIndex(s => s.id === step.id)
-          if (stepIndex > 0) {
-            const prevStep = sortedSteps[stepIndex - 1]
-            const prevStatus = stepStatusesRef.current.get(prevStep.id)
-            // Only route to this step if previous step has at least started
-            if (!prevStatus || (!prevStatus.status && !prevStatus.message)) {
-              console.log("[WorkflowTest] ⏸️ Step", step.order, step.agentName, "waiting - previous step", prevStep.order, "not started yet")
-              continue
-            }
-          }
-          
-          console.log("[WorkflowTest] ✅ Routing to step", step.order, step.agentName, "(first eligible uncompleted match)")
+      // Route to first uncompleted matching step
+      for (const step of matchingSteps) {
+        const status = stepStatusesRef.current.get(step.id)
+        if (status?.status !== "completed") {
+          console.log("[WorkflowTest] ✅ Routing to step", step.order, step.agentName)
           return step.id
         }
-        
-        // All matching steps completed - return the last one (for final events)
-        const lastMatch = matchingSteps[matchingSteps.length - 1]
-        console.log("[WorkflowTest] ✅ All instances completed, routing to last:", lastMatch.order, lastMatch.agentName)
-        return lastMatch.id
       }
       
-      // Host agent events: route to first non-completed step
-      if (normalizedEventName.includes('host')) {
+      // All completed? Return last one
+      if (matchingSteps.length > 0) {
+        return matchingSteps[matchingSteps.length - 1].id
+      }
+      
+      // Host agent fallback: route to first uncompleted step
+      if (isHostAgent) {
         for (const step of sortedSteps) {
           const status = stepStatusesRef.current.get(step.id)
-          if (!status || status.status !== "completed") {
+          if (status?.status !== "completed") {
+            console.log("[WorkflowTest] 🔄 Host -> step", step.order, step.agentName)
             return step.id
           }
         }
-        if (sortedSteps.length > 0) {
-          return sortedSteps[sortedSteps.length - 1].id
-        }
       }
       
+      console.log("[WorkflowTest] ⚠️ No match for agent:", agentName)
       return null
     }
     
@@ -935,7 +846,7 @@ export function VisualWorkflowDesigner({
       })
       
       if (messageText && rawAgentName) {
-        const stepId = findStepForAgent(rawAgentName, messageText)
+        const stepId = findStepForAgent(rawAgentName)
         if (!stepId) {
           console.log("[WorkflowTest] ⚠️ No step found for agent:", rawAgentName, "- message ignored")
           return
@@ -966,8 +877,8 @@ export function VisualWorkflowDesigner({
             const eventAgentLower = rawAgentName?.toLowerCase() || ''
             const waitingAgentLower = waitingStep?.agentName.toLowerCase() || ''
             const isFromWaitingAgent = waitingStep && (
-              agentNamesMatch(waitingStep.agentName, rawAgentName) ||
-              agentNamesMatch(waitingStep.agentId, rawAgentName)
+              waitingStep.agentName === rawAgentName ||
+              waitingStep.agentId === rawAgentName
             )
             if (isFromWaitingAgent) {
               console.log("[WorkflowTest] 📋 Updating waiting message from message event:", messageText?.substring?.(0, 100))
@@ -1024,7 +935,7 @@ export function VisualWorkflowDesigner({
         }
         
         const fullContent = data.content
-        const stepId = findStepForAgent(data.agentName, fullContent)
+        const stepId = findStepForAgent(data.agentName)
         if (!stepId) return
         console.log("[WorkflowTest] ✨ Setting REMOTE AGENT response for", data.agentName, "step:", stepId, ":", fullContent.substring(0, 100) + "...")
         
@@ -1048,8 +959,8 @@ export function VisualWorkflowDesigner({
           if (currentWaitingId === stepId && shouldUpdateMessage) {
             const waitingStep = workflowStepsRef.current.find(s => s.id === currentWaitingId)
             const isFromWaitingAgent = waitingStep && (
-              agentNamesMatch(waitingStep.agentName, data.agentName) ||
-              agentNamesMatch(waitingStep.agentId, data.agentName)
+              waitingStep.agentName === data.agentName ||
+              waitingStep.agentId === data.agentName
             )
             if (isFromWaitingAgent) {
               console.log("[WorkflowTest] 📋 Updating waiting message from remote_agent_activity:", fullContent?.substring?.(0, 100))
@@ -1085,7 +996,7 @@ export function VisualWorkflowDesigner({
       
       if (data.message?.agent && data.message?.content) {
         const fullContent = data.message.content
-        const stepId = findStepForAgent(data.message.agent, fullContent)
+        const stepId = findStepForAgent(data.message.agent)
         if (!stepId) return
         console.log("[WorkflowTest] ✨ Setting final response for", data.message.agent, "step:", stepId, ":", fullContent.substring(0, 100) + "...")
         
@@ -1097,8 +1008,8 @@ export function VisualWorkflowDesigner({
           // Only update message if it's from the same agent that's waiting
           const waitingStep = workflowStepsRef.current.find(s => s.id === stepId)
           const isFromWaitingAgent = waitingStep && (
-            agentNamesMatch(waitingStep.agentName, data.message.agent) ||
-            agentNamesMatch(waitingStep.agentId, data.message.agent)
+            waitingStep.agentName === data.message.agent ||
+            waitingStep.agentId === data.message.agent
           )
           
           if (isFromWaitingAgent) {
