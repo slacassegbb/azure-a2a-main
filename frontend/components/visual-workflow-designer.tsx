@@ -667,10 +667,18 @@ export function VisualWorkflowDesigner({
       if (!stepId) return
       
       // Map backend state to UI status
-      const newStatus = state === "completed" ? "completed" : 
-                       state === "failed" ? "failed" : 
-                       (state === "input_required" || state === "input-required") ? "waiting" :
-                       "working"
+      const currentStatus = stepStatusesRef.current.get(stepId)?.status
+      let newStatus = state === "completed" ? "completed" : 
+                     state === "failed" ? "failed" : 
+                     (state === "input_required" || state === "input-required") ? "waiting" :
+                     "working"
+      
+      // CRITICAL: Can only mark completed if step was working first
+      // This prevents out-of-order events from prematurely completing a step
+      if (newStatus === "completed" && currentStatus !== "working" && currentStatus !== "waiting") {
+        console.log(`[WorkflowTest] ⛔ Blocking premature completion - step status is "${currentStatus}", not working`)
+        return
+      }
       
       console.log("[WorkflowTest] 📋 State:", state, "-> Status:", newStatus)
       
@@ -1036,13 +1044,18 @@ export function VisualWorkflowDesigner({
           return // Don't proceed with completion logic
         }
         
-        // Step is NOT waiting - proceed with completion
+        // Step is NOT waiting - proceed with completion ONLY if step was working
+        if (currentStatus?.status !== "working") {
+          console.log(`[WorkflowTest] ⛔ Blocking final_response completion - step status is "${currentStatus?.status}", not working`)
+          return
+        }
+        
         const immediateUpdate = new Map(stepStatusesRef.current)
         immediateUpdate.set(stepId, { 
           ...currentStatus,
           status: "completed",
           message: fullContent,
-          completedAt: currentStatus?.status !== "completed" ? Date.now() : currentStatus?.completedAt
+          completedAt: Date.now()
         })
         stepStatusesRef.current = immediateUpdate
         
