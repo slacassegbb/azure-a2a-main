@@ -802,9 +802,8 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
             if (DEBUG) console.log("[ChatPanel] No conversation found or no messages")
             // Conversation doesn't exist (maybe backend restarted) - redirect to fresh state
             if (conversationId && conversationId !== 'frontend-chat-context') {
-              // Clear the stale conversationId from URL and state
+              // Clear the stale conversationId from URL (conversationId will recalculate on next render)
               window.history.replaceState({}, '', '/')
-              setConversationId('')
             }
             setMessages(initialMessages)
           }
