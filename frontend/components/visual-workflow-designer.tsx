@@ -574,7 +574,7 @@ export function VisualWorkflowDesigner({
   useEffect(() => {
     console.log("[WorkflowTest] 🎬 Setting up event listeners on mount")
     
-    // Find step by: 1) taskId mapping, 2) agent name + first unassigned
+    // Find step by: 1) taskId, 2) active step for agent, 3) first unassigned
     const findStepForAgent = (agentName: string, taskId?: string): string | null => {
       if (!agentName) return null
       
@@ -582,28 +582,33 @@ export function VisualWorkflowDesigner({
       const lower = agentName.toLowerCase()
       if (lower.includes('host') || lower.includes('orchestrator')) return null
       
-      // 1) TaskId mapping (most reliable)
+      // 1) TaskId mapping
       if (taskId && taskIdToStepRef.current.has(taskId)) {
         return taskIdToStepRef.current.get(taskId)!
       }
       
-      const sortedSteps = Array.from(workflowStepsRef.current).sort((a, b) => a.order - b.order)
+      // 2) Active step for this agent (for events without taskId)
+      const activeStep = activeStepPerAgentRef.current.get(agentName)
+      if (activeStep) {
+        if (taskId) taskIdToStepRef.current.set(taskId, activeStep)
+        return activeStep
+      }
       
-      // 2) Find first UNASSIGNED step matching agent name
+      // 3) Find first unassigned step matching agent name
+      const sortedSteps = Array.from(workflowStepsRef.current).sort((a, b) => a.order - b.order)
       for (const step of sortedSteps) {
         if (step.agentName !== agentName && step.agentId !== agentName) continue
         
-        // Check if step is already assigned to another task
         if (!assignedStepsRef.current.has(step.id)) {
-          // Mark as assigned
           assignedStepsRef.current.add(step.id)
+          activeStepPerAgentRef.current.set(agentName, step.id)
           if (taskId) taskIdToStepRef.current.set(taskId, step.id)
           console.log(`[Route] Assigning step ${step.order} to "${agentName}"`)
           return step.id
         }
       }
       
-      // 3) All assigned - return last matching (for late events)
+      // 4) All assigned - return last matching
       const matching = sortedSteps.filter(s => s.agentName === agentName || s.agentId === agentName)
       return matching.length > 0 ? matching[matching.length - 1].id : null
     }
@@ -712,6 +717,11 @@ export function VisualWorkflowDesigner({
         // Clear waiting if this step was waiting
         setWaitingStepId(prev => prev === stepId ? null : prev)
         setWaitingMessage(prev => waitingStepIdRef.current === stepId ? null : prev)
+        // Clear active step for this agent so next step can become active
+        if (activeStepPerAgentRef.current.get(agentName) === stepId) {
+          activeStepPerAgentRef.current.delete(agentName)
+          console.log(`[Route] Cleared active step for "${agentName}" - step completed`)
+        }
       }
     }
     
