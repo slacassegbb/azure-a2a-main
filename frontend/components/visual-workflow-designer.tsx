@@ -572,10 +572,13 @@ export function VisualWorkflowDesigner({
       
       // IGNORE host agent events - they have wrong names and mess up routing
       if (agentName.toLowerCase().includes('host')) {
+        console.log("[WorkflowTest] 🚫 Ignoring host agent event:", agentName)
         return null
       }
       
       const sortedSteps = Array.from(workflowStepsRef.current).sort((a, b) => a.order - b.order)
+      console.log("[WorkflowTest] 🔍 Looking for agent:", agentName)
+      console.log("[WorkflowTest] 📊 Steps:", sortedSteps.map(s => ({ order: s.order, name: s.agentName, status: stepStatusesRef.current.get(s.id)?.status })))
       
       // If a step is waiting for input, route to it (for HITL)
       const waitingStep = waitingStepIdRef.current
@@ -590,6 +593,7 @@ export function VisualWorkflowDesigner({
       const matchingSteps = sortedSteps.filter(step => 
         step.agentName === agentName || step.agentId === agentName
       )
+      console.log("[WorkflowTest] 🎯 Matching steps:", matchingSteps.length)
       
       // Route to first uncompleted matching step
       for (const step of matchingSteps) {
@@ -602,9 +606,11 @@ export function VisualWorkflowDesigner({
       
       // All completed? Return last one
       if (matchingSteps.length > 0) {
+        console.log("[WorkflowTest] ⚠️ All matching steps completed, using last:", matchingSteps[matchingSteps.length - 1].agentName)
         return matchingSteps[matchingSteps.length - 1].id
       }
       
+      console.log("[WorkflowTest] ❌ No matching step found for:", agentName)
       return null
     }
     
