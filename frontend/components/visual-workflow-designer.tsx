@@ -657,7 +657,8 @@ export function VisualWorkflowDesigner({
       }
       
       if (matchingSteps.length > 0) {
-        // Find the first UNCOMPLETED matching step (handles same agent multiple times)
+        // For same agent appearing multiple times: route to correct instance based on workflow order
+        // Only route to a later instance if PREVIOUS steps in workflow are done
         for (const step of matchingSteps) {
           const stepStatus = stepStatusesRef.current.get(step.id)
           
@@ -667,9 +668,21 @@ export function VisualWorkflowDesigner({
             continue
           }
           
-          // Route to first uncompleted matching step - no blocking!
-          // Backend handles orchestration, frontend just displays
-          console.log("[WorkflowTest] ✅ Routing to step", step.order, step.agentName, "(first uncompleted match)")
+          // Check if this step can receive events (previous steps should have some activity)
+          // For the first matching step, always allow
+          // For subsequent instances, check if previous step in workflow has started
+          const stepIndex = sortedSteps.findIndex(s => s.id === step.id)
+          if (stepIndex > 0) {
+            const prevStep = sortedSteps[stepIndex - 1]
+            const prevStatus = stepStatusesRef.current.get(prevStep.id)
+            // Only route to this step if previous step has at least started
+            if (!prevStatus || (!prevStatus.status && !prevStatus.message)) {
+              console.log("[WorkflowTest] ⏸️ Step", step.order, step.agentName, "waiting - previous step", prevStep.order, "not started yet")
+              continue
+            }
+          }
+          
+          console.log("[WorkflowTest] ✅ Routing to step", step.order, step.agentName, "(first eligible uncompleted match)")
           return step.id
         }
         
