@@ -730,10 +730,10 @@ export function VisualWorkflowDesigner({
     // SIMPLE: Just update message for the step
     const handleAgentMessage = (data: any) => {
       console.log("[WorkflowTest] 💬 Agent message:", data)
-      const { agentName, content } = data
+      const { agentName, content, taskId } = data
       if (!agentName || !content) return
       
-      const stepId = findStepForAgent(agentName)
+      const stepId = findStepForAgent(agentName, taskId)
       if (!stepId) return
       
       // Update message
@@ -763,7 +763,7 @@ export function VisualWorkflowDesigner({
     // SIMPLE: Show tool activity
     const handleToolCall = (data: any) => {
       if (!data.agentName || !data.toolName) return
-      const stepId = findStepForAgent(data.agentName)
+      const stepId = findStepForAgent(data.agentName, data.taskId)
       if (!stepId) return
       
       setStepStatuses(prev => {
@@ -778,7 +778,7 @@ export function VisualWorkflowDesigner({
     
     const handleToolResponse = (data: any) => {
       if (!data.agentName || !data.toolName) return
-      const stepId = findStepForAgent(data.agentName)
+      const stepId = findStepForAgent(data.agentName, data.taskId)
       if (!stepId) return
       
       setStepStatuses(prev => {
@@ -796,7 +796,7 @@ export function VisualWorkflowDesigner({
       console.log("[WorkflowTest] 🔄 Agent activity:", data)
       
       if (data.agentName && data.activity) {
-        const stepId = findStepForAgent(data.agentName)
+        const stepId = findStepForAgent(data.agentName, data.taskId)
         if (!stepId) return
         
         // CRITICAL FIX: Update ref immediately
@@ -855,7 +855,7 @@ export function VisualWorkflowDesigner({
       })
       
       if (messageText && rawAgentName) {
-        const stepId = findStepForAgent(rawAgentName)
+        const stepId = findStepForAgent(rawAgentName, data.taskId)
         if (!stepId) {
           console.log("[WorkflowTest] ⚠️ No step found for agent:", rawAgentName, "- message ignored")
           return
@@ -944,7 +944,7 @@ export function VisualWorkflowDesigner({
         }
         
         const fullContent = data.content
-        const stepId = findStepForAgent(data.agentName)
+        const stepId = findStepForAgent(data.agentName, data.taskId)
         if (!stepId) return
         console.log("[WorkflowTest] ✨ Setting REMOTE AGENT response for", data.agentName, "step:", stepId, ":", fullContent.substring(0, 100) + "...")
         
@@ -1005,7 +1005,7 @@ export function VisualWorkflowDesigner({
       
       if (data.message?.agent && data.message?.content) {
         const fullContent = data.message.content
-        const stepId = findStepForAgent(data.message.agent)
+        const stepId = findStepForAgent(data.message.agent, data.taskId || data.message?.taskId)
         if (!stepId) return
         console.log("[WorkflowTest] ✨ Setting final response for", data.message.agent, "step:", stepId, ":", fullContent.substring(0, 100) + "...")
         
@@ -1119,7 +1119,7 @@ export function VisualWorkflowDesigner({
         
         console.log("[WorkflowTest] 📄 File from agent:", sourceAgent, "| URI:", fileUri, "| Type:", contentType)
         
-        const stepId = findStepForAgent(sourceAgent)
+        const stepId = findStepForAgent(sourceAgent, data.taskId || data.fileInfo?.taskId)
         if (!stepId) return
         
         const isImage = contentType.startsWith("image/")
@@ -1155,7 +1155,7 @@ export function VisualWorkflowDesigner({
       console.log("[WorkflowTest] 🧠 Inference step:", data)
       
       if (data.agent && data.status) {
-        const stepId = findStepForAgent(data.agent)
+        const stepId = findStepForAgent(data.agent, data.taskId)
         if (!stepId) return
         
         // CRITICAL FIX: Update ref immediately
