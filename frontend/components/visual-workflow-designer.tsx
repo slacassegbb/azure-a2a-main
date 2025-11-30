@@ -147,6 +147,8 @@ export function VisualWorkflowDesigner({
   const activeStepPerAgentRef = useRef<Map<string, string>>(new Map())
   // Track taskId -> stepId mapping for precise routing (each remote agent task has unique taskId)
   const taskIdToStepRef = useRef<Map<string, string>>(new Map())
+  // Track which steps have been assigned (separate from status which can be corrupted by out-of-order events)
+  const assignedStepsRef = useRef<Set<string>>(new Set())
   const [hostMessage, setHostMessage] = useState<{ message: string, target: string } | null>(null)
   
   // Event Hub for live updates
@@ -248,8 +250,9 @@ export function VisualWorkflowDesigner({
         setTestMessages([{ role: "user", content: message }])
         setStepStatuses(new Map())
         stepStatusesRef.current = new Map()
-        activeStepPerAgentRef.current = new Map() // Clear active step assignments
-        taskIdToStepRef.current = new Map() // Clear taskId mappings
+        activeStepPerAgentRef.current = new Map()
+        taskIdToStepRef.current = new Map()
+        assignedStepsRef.current = new Set()
         
         const baseUrl = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
         
@@ -370,6 +373,7 @@ export function VisualWorkflowDesigner({
         stepStatusesRef.current = new Map()
         activeStepPerAgentRef.current = new Map()
         taskIdToStepRef.current = new Map()
+        assignedStepsRef.current = new Set()
         setHostMessage(null)
       }, 2000)
       
@@ -570,7 +574,7 @@ export function VisualWorkflowDesigner({
   useEffect(() => {
     console.log("[WorkflowTest] 🎬 Setting up event listeners on mount")
     
-    // Find step by: 1) taskId mapping, 2) agent name + step position
+    // Find step by: 1) taskId mapping, 2) agent name + first unassigned
     const findStepForAgent = (agentName: string, taskId?: string): string | null => {
       if (!agentName) return null
       
@@ -578,43 +582,30 @@ export function VisualWorkflowDesigner({
       const lower = agentName.toLowerCase()
       if (lower.includes('host') || lower.includes('orchestrator')) return null
       
-      // 1) TaskId mapping
+      // 1) TaskId mapping (most reliable)
       if (taskId && taskIdToStepRef.current.has(taskId)) {
-        const stepId = taskIdToStepRef.current.get(taskId)!
-        console.log(`[Route] taskId ${taskId?.slice(0,8)} → cached step`)
-        return stepId
+        return taskIdToStepRef.current.get(taskId)!
       }
       
       const sortedSteps = Array.from(workflowStepsRef.current).sort((a, b) => a.order - b.order)
       
-      // Log what we're looking for
-      console.log(`[Route] Looking for "${agentName}" in steps:`, sortedSteps.map(s => ({
-        order: s.order,
-        name: s.agentName,
-        status: stepStatusesRef.current.get(s.id)?.status || 'none'
-      })))
-      
-      // 2) Find first uncompleted step matching agent name
+      // 2) Find first UNASSIGNED step matching agent name
       for (const step of sortedSteps) {
         if (step.agentName !== agentName && step.agentId !== agentName) continue
         
-        const status = stepStatusesRef.current.get(step.id)
-        if (status?.status !== "completed") {
+        // Check if step is already assigned to another task
+        if (!assignedStepsRef.current.has(step.id)) {
+          // Mark as assigned
+          assignedStepsRef.current.add(step.id)
           if (taskId) taskIdToStepRef.current.set(taskId, step.id)
-          console.log(`[Route] → Step ${step.order} (${step.agentName})`)
+          console.log(`[Route] Assigning step ${step.order} to "${agentName}"`)
           return step.id
         }
       }
       
-      // 3) All matching completed - return last
+      // 3) All assigned - return last matching (for late events)
       const matching = sortedSteps.filter(s => s.agentName === agentName || s.agentId === agentName)
-      if (matching.length > 0) {
-        console.log(`[Route] All completed, using last: Step ${matching[matching.length-1].order}`)
-        return matching[matching.length - 1].id
-      }
-      
-      console.log(`[Route] No match found for "${agentName}"`)
-      return null
+      return matching.length > 0 ? matching[matching.length - 1].id : null
     }
     
     // SIMPLE: status_update just updates status. Let handleTaskUpdate handle state changes.
@@ -1384,8 +1375,9 @@ export function VisualWorkflowDesigner({
     setTestMessages([{ role: "user", content: testInput }])
     setStepStatuses(new Map())
     stepStatusesRef.current = new Map()
-    activeStepPerAgentRef.current = new Map() // Clear active step assignments
-    taskIdToStepRef.current = new Map() // Clear taskId mappings
+    activeStepPerAgentRef.current = new Map()
+    taskIdToStepRef.current = new Map()
+    assignedStepsRef.current = new Set()
     
     console.log("[WorkflowTest] 🚀 Starting test with workflow:", currentWorkflowText)
     
@@ -1481,8 +1473,9 @@ export function VisualWorkflowDesigner({
     setTestMessages([])
     setStepStatuses(new Map())
     stepStatusesRef.current = new Map()
-    activeStepPerAgentRef.current = new Map() // Clear active step assignments
-    taskIdToStepRef.current = new Map() // Clear taskId mappings
+    activeStepPerAgentRef.current = new Map()
+    taskIdToStepRef.current = new Map()
+    assignedStepsRef.current = new Set()
     setHostMessage(null)
     setWaitingStepId(null)
     setWaitingResponse("")
