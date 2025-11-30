@@ -570,36 +570,33 @@ export function VisualWorkflowDesigner({
   useEffect(() => {
     console.log("[WorkflowTest] 🎬 Setting up event listeners on mount")
     
-    // SIMPLE: Find step for agent - taskId mapping or first uncompleted
+    // Find step by: 1) taskId mapping, 2) agent name + first uncompleted
     const findStepForAgent = (agentName: string, taskId?: string): string | null => {
       if (!agentName) return null
       
-      // Ignore host/orchestrator events
-      const lowerName = agentName.toLowerCase()
-      if (lowerName.includes('host') || lowerName.includes('orchestrator')) {
-        return null
-      }
+      // Ignore host/orchestrator
+      const lower = agentName.toLowerCase()
+      if (lower.includes('host') || lower.includes('orchestrator')) return null
       
-      // If we have a taskId mapping, use it (most reliable)
+      // 1) TaskId mapping (most precise)
       if (taskId && taskIdToStepRef.current.has(taskId)) {
         return taskIdToStepRef.current.get(taskId)!
       }
       
       const sortedSteps = Array.from(workflowStepsRef.current).sort((a, b) => a.order - b.order)
       
-      // Find first uncompleted step matching this agent
+      // 2) Find first uncompleted step that matches this agent name
       for (const step of sortedSteps) {
         if (step.agentName !== agentName && step.agentId !== agentName) continue
         
         const status = stepStatusesRef.current.get(step.id)
         if (status?.status !== "completed") {
-          // Save mapping for future events with this taskId
           if (taskId) taskIdToStepRef.current.set(taskId, step.id)
           return step.id
         }
       }
       
-      // All completed - return last matching step
+      // 3) All matching steps completed - return last one
       const matching = sortedSteps.filter(s => s.agentName === agentName || s.agentId === agentName)
       return matching.length > 0 ? matching[matching.length - 1].id : null
     }
