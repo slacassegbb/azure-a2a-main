@@ -570,628 +570,282 @@ export function VisualWorkflowDesigner({
   }, [workflowSteps, connections])
   
   // Subscribe to event hub for live workflow testing
-  // FIXED: Subscribe on mount, check isTesting inside handlers
+  // CLEAN IMPLEMENTATION: Simple, direct event handling
   useEffect(() => {
-    console.log("[WorkflowTest] 🎬 Setting up event listeners on mount")
     
-    // Find step by: 1) taskId, 2) active step for agent, 3) first unassigned
-    const findStepForAgent = (agentName: string, taskId?: string): string | null => {
+    // SIMPLE: Find the first step for this agent that isn't completed yet
+    const findStepForAgent = (agentName: string): string | null => {
       if (!agentName) return null
       
-      // Ignore host/orchestrator
-      const lower = agentName.toLowerCase()
-      if (lower.includes('host') || lower.includes('orchestrator')) return null
+      const steps = Array.from(workflowStepsRef.current).sort((a, b) => a.order - b.order)
       
-      // 1) TaskId mapping
-      if (taskId && taskIdToStepRef.current.has(taskId)) {
-        return taskIdToStepRef.current.get(taskId)!
-      }
-      
-      // 2) Active step for this agent (for events without taskId)
-      const activeStep = activeStepPerAgentRef.current.get(agentName)
-      if (activeStep) {
-        if (taskId) taskIdToStepRef.current.set(taskId, activeStep)
-        return activeStep
-      }
-      
-      // 3) Find first unassigned step matching agent name
-      const sortedSteps = Array.from(workflowStepsRef.current).sort((a, b) => a.order - b.order)
-      for (const step of sortedSteps) {
+      for (const step of steps) {
+        // Match by agentName or agentId
         if (step.agentName !== agentName && step.agentId !== agentName) continue
         
-        if (!assignedStepsRef.current.has(step.id)) {
-          assignedStepsRef.current.add(step.id)
-          activeStepPerAgentRef.current.set(agentName, step.id)
-          if (taskId) taskIdToStepRef.current.set(taskId, step.id)
-          console.log(`[Route] Assigning step ${step.order} to "${agentName}"`)
+        // Return first step that isn't completed
+        const status = stepStatusesRef.current.get(step.id)
+        if (!status || status.status !== "completed") {
           return step.id
         }
       }
       
-      // 4) All assigned - return last matching
-      const matching = sortedSteps.filter(s => s.agentName === agentName || s.agentId === agentName)
+      // All steps for this agent are completed - return the last one (for late messages)
+      const matching = steps.filter(s => s.agentName === agentName || s.agentId === agentName)
       return matching.length > 0 ? matching[matching.length - 1].id : null
     }
     
-    // SIMPLE: status_update just updates status. Let handleTaskUpdate handle state changes.
-    const handleStatusUpdate = (data: any) => {
-      console.log("[WorkflowTest] ✅ Status update:", data)
-      const { agent: agentName, status, taskId } = data
-      if (!agentName) return
-      
-      // Skip orchestrator noise from host agent
-      const isHostAgent = agentName.toLowerCase().includes('host')
-      if (isHostAgent && 
-          (status?.includes("Planning") || status?.includes("Initializing") || 
-           status?.includes("Goal achieved") || status?.includes("Reasoning:"))) {
-        return
-      }
-      
-      const stepId = findStepForAgent(agentName, taskId)
-      if (!stepId) return
-      
-      // Just update message if it's meaningful content
-      if (status && status.length > 50) {
-        setStepStatuses(prev => {
-          const newMap = new Map(prev)
-          const currentStatus = prev.get(stepId)
-          newMap.set(stepId, { 
-            ...currentStatus,
-            status: currentStatus?.status || "working",
-            message: status
-          })
-          return newMap
-        })
-      }
-    }
-    
-    // SIMPLE: This is the MAIN handler for state changes. Maps backend state to UI status.
-    const handleTaskUpdate = (data: any) => {
-      console.log("[WorkflowTest] 📋 Task update:", data)
-      const { state, agentName, taskId } = data
-      if (!agentName) return
-      
-      // IMPORTANT: Ignore "completed" from host agent - streaming events have correct names
-      // Final batch events from backend have "foundry-host-agent" for all agents which breaks routing
-      const isHostAgent = agentName.toLowerCase().includes('host')
-      if (isHostAgent && state === "completed") {
-        console.log("[WorkflowTest] ⏭️ Ignoring completed event from host agent - relying on streaming events")
-        return
-      }
-      
-      const stepId = findStepForAgent(agentName, taskId)
-      if (!stepId) return
-      
-      // Map backend state to UI status
-      const currentStatus = stepStatusesRef.current.get(stepId)?.status
-      let newStatus = state === "completed" ? "completed" : 
-                     state === "failed" ? "failed" : 
-                     (state === "input_required" || state === "input-required") ? "waiting" :
-                     "working"
-      
-      // CRITICAL: Can only mark completed if step was working first
-      // This prevents out-of-order events from prematurely completing a step
-      if (newStatus === "completed" && currentStatus !== "working" && currentStatus !== "waiting") {
-        console.log(`[WorkflowTest] ⛔ Blocking premature completion - step status is "${currentStatus}", not working`)
-        return
-      }
-      
-      console.log("[WorkflowTest] 📋 State:", state, "-> Status:", newStatus)
-      
-      // Get message content from task update
-      const messageContent = data.content || data.message
-      
-      // Update status AND message
+    // Helper to update step status and message
+    const updateStep = (stepId: string, status: string, message?: string) => {
+      const newEntry = { status, message }
+      stepStatusesRef.current.set(stepId, newEntry)
       setStepStatuses(prev => {
         const newMap = new Map(prev)
-        const currentStatus = prev.get(stepId)
-        const newEntry: { status: string; message?: string } = { 
-          ...currentStatus, 
-          status: newStatus 
-        }
-        // Update message if we have meaningful content
-        if (messageContent && messageContent !== "input_required" && messageContent !== "input-required" && messageContent !== "Task status: working") {
-          newEntry.message = messageContent
-        }
         newMap.set(stepId, newEntry)
         return newMap
       })
-      const currentRef = stepStatusesRef.current.get(stepId)
-      const newRefEntry: { status: string; message?: string } = { 
-        ...currentRef, 
-        status: newStatus 
-      }
-      if (messageContent && messageContent !== "input_required" && messageContent !== "input-required" && messageContent !== "Task status: working") {
-        newRefEntry.message = messageContent
-      }
-      stepStatusesRef.current.set(stepId, newRefEntry)
+    }
+    
+    // Handle status updates (agent: field instead of agentName)
+    const handleStatusUpdate = (data: any) => {
+      const agentName = data.agent || data.agentName
+      const status = data.status
+      if (!agentName || !status) return
       
-      // Handle waiting state (input_required)
-      if (newStatus === "waiting") {
-        setWaitingStepId(stepId)
-        const waitMsg = messageContent || currentRef?.message
-        if (waitMsg && waitMsg !== "input_required" && waitMsg !== "input-required") {
-          setWaitingMessage(waitMsg)
-        }
-      } else if (newStatus === "completed") {
-        // Clear waiting if this step was waiting
-        setWaitingStepId(prev => prev === stepId ? null : prev)
-        setWaitingMessage(prev => waitingStepIdRef.current === stepId ? null : prev)
-        // Clear active step for this agent so next step can become active
-        if (activeStepPerAgentRef.current.get(agentName) === stepId) {
-          activeStepPerAgentRef.current.delete(agentName)
-          console.log(`[Route] Cleared active step for "${agentName}" - step completed`)
-        }
+      const stepId = findStepForAgent(agentName)
+      if (!stepId) return
+      
+      // Only update message if it's meaningful content (not orchestration noise)
+      if (status.length > 30 && !status.includes("Planning") && !status.includes("Initializing")) {
+        const current = stepStatusesRef.current.get(stepId)
+        updateStep(stepId, current?.status || "working", status)
       }
     }
     
-    // SIMPLE: Just update message for the step
-    const handleAgentMessage = (data: any) => {
-      console.log("[WorkflowTest] 💬 Agent message:", data)
-      const { agentName, content, taskId } = data
-      if (!agentName || !content) return
+    // Main handler: task_updated events contain state changes
+    const handleTaskUpdate = (data: any) => {
+      const { state, agentName, content, message } = data
+      if (!agentName) return
       
-      const stepId = findStepForAgent(agentName, taskId)
+      const stepId = findStepForAgent(agentName)
       if (!stepId) return
       
-      // Update message
-      setStepStatuses(prev => {
-        const newMap = new Map(prev)
-        const currentStatus = prev.get(stepId)
-        newMap.set(stepId, { 
-          ...currentStatus,
-          status: currentStatus?.status || "working",
-          message: content
-        })
-        return newMap
-      })
-      const existingStatus = stepStatusesRef.current.get(stepId)
-      stepStatusesRef.current.set(stepId, { 
-        status: existingStatus?.status || "working",
-        ...existingStatus, 
-        message: content 
-      })
+      // Map state to UI status
+      const newStatus = state === "completed" ? "completed" : 
+                       state === "failed" ? "failed" : 
+                       (state === "input_required" || state === "input-required") ? "waiting" :
+                       "working"
       
-      // If step is waiting, also update the waiting message
+      const messageContent = content || message
+      updateStep(stepId, newStatus, messageContent)
+      
+      // Handle waiting state
+      if (newStatus === "waiting") {
+        setWaitingStepId(stepId)
+        if (messageContent) setWaitingMessage(messageContent)
+      } else if (newStatus === "completed") {
+        setWaitingStepId(prev => prev === stepId ? null : prev)
+      }
+    }
+    
+    // Agent messages - just update the message content
+    const handleAgentMessage = (data: any) => {
+      const { agentName, content } = data
+      if (!agentName || !content) return
+      
+      const stepId = findStepForAgent(agentName)
+      if (!stepId) return
+      
+      const current = stepStatusesRef.current.get(stepId)
+      updateStep(stepId, current?.status || "working", content)
+      
       if (waitingStepIdRef.current === stepId) {
         setWaitingMessage(content)
       }
     }
     
-    // SIMPLE: Show tool activity
+    // Tool calls - show activity
     const handleToolCall = (data: any) => {
-      if (!data.agentName || !data.toolName) return
-      const stepId = findStepForAgent(data.agentName, data.taskId)
+      const { agentName, toolName } = data
+      if (!agentName || !toolName) return
+      
+      const stepId = findStepForAgent(agentName)
       if (!stepId) return
       
-      setStepStatuses(prev => {
-        const newMap = new Map(prev)
-        const cs = prev.get(stepId)
-        if (cs?.status !== "waiting" && cs?.status !== "completed") {
-          newMap.set(stepId, { ...cs, status: "working", message: `🛠️ ${data.toolName}` })
-        }
-        return newMap
-      })
-    }
-    
-    const handleToolResponse = (data: any) => {
-      if (!data.agentName || !data.toolName) return
-      const stepId = findStepForAgent(data.agentName, data.taskId)
-      if (!stepId) return
-      
-      setStepStatuses(prev => {
-        const newMap = new Map(prev)
-        const cs = prev.get(stepId)
-        if (cs?.status !== "waiting" && cs?.status !== "completed") {
-          const msg = data.status === "success" ? `✅ ${data.toolName}` : `❌ ${data.toolName}`
-          newMap.set(stepId, { ...cs, status: "working", message: msg })
-        }
-        return newMap
-      })
-    }
-    
-    const handleAgentActivity = (data: any) => {
-      console.log("[WorkflowTest] 🔄 Agent activity:", data)
-      
-      if (data.agentName && data.activity) {
-        const stepId = findStepForAgent(data.agentName, data.taskId)
-        if (!stepId) return
-        
-        // CRITICAL FIX: Update ref immediately
-        const currentStatus = stepStatusesRef.current.get(stepId)
-        // Preserve waiting/completed status
-        const preservedStatus = currentStatus?.status === "completed" ? "completed" : 
-                               currentStatus?.status === "waiting" ? "waiting" : "working"
-        const immediateUpdate = new Map(stepStatusesRef.current)
-        immediateUpdate.set(stepId, { 
-          ...currentStatus,
-          status: preservedStatus,
-          message: data.activity 
-        })
-        stepStatusesRef.current = immediateUpdate
-        
-        setStepStatuses(prev => {
-          const newMap = new Map(prev)
-          const currentStatus = prev.get(stepId)
-          const preservedStatus = currentStatus?.status === "completed" ? "completed" : 
-                                 currentStatus?.status === "waiting" ? "waiting" : "working"
-          newMap.set(stepId, { 
-            ...currentStatus,
-            status: preservedStatus,
-            message: data.activity 
-          })
-          return newMap
-        })
+      const current = stepStatusesRef.current.get(stepId)
+      if (current?.status !== "completed" && current?.status !== "waiting") {
+        updateStep(stepId, "working", `🛠️ ${toolName}`)
       }
     }
     
+    const handleToolResponse = (data: any) => {
+      const { agentName, toolName, status } = data
+      if (!agentName || !toolName) return
+      
+      const stepId = findStepForAgent(agentName)
+      if (!stepId) return
+      
+      const current = stepStatusesRef.current.get(stepId)
+      if (current?.status !== "completed" && current?.status !== "waiting") {
+        const msg = status === "success" ? `✅ ${toolName}` : `❌ ${toolName}`
+        updateStep(stepId, "working", msg)
+      }
+    }
+    
+    // Agent activity - update message while preserving status
+    const handleAgentActivity = (data: any) => {
+      const { agentName, activity } = data
+      if (!agentName || !activity) return
+      
+      const stepId = findStepForAgent(agentName)
+      if (!stepId) return
+      
+      const current = stepStatusesRef.current.get(stepId)
+      // Don't change status if completed or waiting
+      const preservedStatus = (current?.status === "completed" || current?.status === "waiting") 
+        ? current.status : "working"
+      updateStep(stepId, preservedStatus, activity)
+    }
+    
+    // Message events - extract content and update step
     const handleMessage = (data: any) => {
-      console.log("[WorkflowTest] 📨 Message event:", data)
+      const agentName = data.agentName || data.agent || data.from
+      if (!agentName) return
       
+      // Extract message text from various formats
       let messageText = ""
-      let rawAgentName = data.agentName || data.agent || data.from
-      
-      // Try different message formats (matching DAG)
       if (data.content && Array.isArray(data.content)) {
-        // Look for text content in array - check both .content and .text properties
         const textItem = data.content.find((c: any) => c.type === "text")
-        if (textItem) {
-          messageText = textItem.content || textItem.text || ""
-        }
-      } else if (data.message && typeof data.message === "string") {
+        messageText = textItem?.content || textItem?.text || ""
+      } else if (typeof data.message === "string") {
         messageText = data.message
       } else if (typeof data.content === "string") {
         messageText = data.content
       }
       
-      // Log for debugging what we extracted
-      console.log("[WorkflowTest] 📨 Extracted:", { 
-        messageText: messageText ? messageText.substring(0, 100) : "(empty)", 
-        rawAgentName,
-        contentType: data.content ? (Array.isArray(data.content) ? "array" : typeof data.content) : "none",
-        contentSample: data.content ? JSON.stringify(data.content).substring(0, 200) : "none"
-      })
+      if (!messageText) return
       
-      if (messageText && rawAgentName) {
-        const stepId = findStepForAgent(rawAgentName, data.taskId)
-        if (!stepId) {
-          console.log("[WorkflowTest] ⚠️ No step found for agent:", rawAgentName, "- message ignored")
-          return
+      const stepId = findStepForAgent(agentName)
+      if (!stepId) return
+      
+      const current = stepStatusesRef.current.get(stepId)
+      // Only update if new message is longer (more content)
+      if (!current?.message || messageText.length > current.message.length) {
+        const preservedStatus = (current?.status === "completed" || current?.status === "waiting") 
+          ? current.status : "working"
+        updateStep(stepId, preservedStatus, messageText)
+        
+        if (waitingStepIdRef.current === stepId) {
+          setWaitingMessage(messageText)
         }
-        
-        console.log("[WorkflowTest] ✨ Setting message for", rawAgentName, "step:", stepId, ":", messageText.substring(0, 100) + "...")
-        
-        // CRITICAL FIX: Update ref immediately
-        const currentStatus = stepStatusesRef.current.get(stepId)
-        // Only update message if new content is longer (more substantive) than existing
-        const shouldUpdateMessage = !currentStatus?.message || messageText.length > currentStatus.message.length
-        // Preserve waiting/completed status - don't downgrade
-        const preservedStatus = currentStatus?.status === "completed" ? "completed" : 
-                               currentStatus?.status === "waiting" ? "waiting" : 
-                               currentStatus?.status || "working"
-        const immediateUpdate = new Map(stepStatusesRef.current)
-        immediateUpdate.set(stepId, { 
-          ...currentStatus,
-          status: preservedStatus,
-          message: shouldUpdateMessage ? messageText : currentStatus?.message
-        })
-        stepStatusesRef.current = immediateUpdate
-        
-        // If this step is currently waiting, only update message if from same agent
-        setWaitingStepId(currentWaitingId => {
-          if (currentWaitingId === stepId && shouldUpdateMessage) {
-            const waitingStep = workflowStepsRef.current.find(s => s.id === currentWaitingId)
-            const eventAgentLower = rawAgentName?.toLowerCase() || ''
-            const waitingAgentLower = waitingStep?.agentName.toLowerCase() || ''
-            const isFromWaitingAgent = waitingStep && (
-              waitingStep.agentName === rawAgentName ||
-              waitingStep.agentId === rawAgentName
-            )
-            if (isFromWaitingAgent) {
-              console.log("[WorkflowTest] 📋 Updating waiting message from message event:", messageText?.substring?.(0, 100))
-              setWaitingMessage(messageText)
-            } else {
-              console.log("[WorkflowTest] 🛡️ NOT updating waiting message from message - different agent:", rawAgentName, "vs", waitingStep?.agentName)
-            }
-          }
-          return currentWaitingId
-        })
-        
-        setTestMessages(prev => [...prev, { role: "assistant", content: messageText, agent: rawAgentName }])
-        setStepStatuses(prev => {
-          const newMap = new Map(prev)
-          const currentStatus = prev.get(stepId)
-          // IMPORTANT: Message alone doesn't mean completed! Keep existing status or set to working
-          const shouldUpdate = !currentStatus?.message || messageText.length > currentStatus.message.length
-          const preservedStatus = currentStatus?.status === "completed" ? "completed" : 
-                                 currentStatus?.status === "waiting" ? "waiting" : 
-                                 currentStatus?.status || "working"
-          newMap.set(stepId, { 
-            ...currentStatus,
-            status: preservedStatus,
-            message: shouldUpdate ? messageText : currentStatus?.message
-          })
-          return newMap
-        })
-      } else {
-        console.log("[WorkflowTest] ⚠️ Could not extract message or agent from event")
       }
+      
+      setTestMessages(prev => [...prev, { role: "assistant", content: messageText, agent: agentName }])
     }
     
-    // Handle remote agent activity (matching DAG)
+    // Remote agent activity - update step with content
     const handleRemoteAgentActivity = (data: any) => {
-      console.log("[WorkflowTest] 🤖 Remote agent activity:", data)
+      const { agentName, content } = data
+      if (!agentName || !content) return
       
-      if (data.agentName && data.content) {
-        // Filter out orchestrator planning/status messages from host agent
-        // These are internal coordination messages, not actual agent outputs
-        const isHostAgent = data.agentName.toLowerCase().includes('host')
-        const isOrchestratorStatus = isHostAgent && (
-          data.content.includes("Planning step") ||
-          data.content.includes("Initializing") ||
-          data.content.includes("Goal achieved") ||
-          data.content.includes("Reasoning:") ||
-          data.content.includes("Executing:") ||
-          data.content.includes("Planning next task") ||
-          data.content.startsWith("Task status:")
-        )
+      const stepId = findStepForAgent(agentName)
+      if (!stepId) return
+      
+      const current = stepStatusesRef.current.get(stepId)
+      // Only update if new message is longer
+      if (!current?.message || content.length > current.message.length) {
+        const preservedStatus = (current?.status === "completed" || current?.status === "waiting") 
+          ? current.status : "working"
+        updateStep(stepId, preservedStatus, content)
         
-        if (isOrchestratorStatus) {
-          console.log("[WorkflowTest] ⏭️ Skipping orchestrator status message:", data.content.substring(0, 50) + "...")
-          return
+        if (waitingStepIdRef.current === stepId) {
+          setWaitingMessage(content)
         }
-        
-        const fullContent = data.content
-        const stepId = findStepForAgent(data.agentName, data.taskId)
-        if (!stepId) return
-        console.log("[WorkflowTest] ✨ Setting REMOTE AGENT response for", data.agentName, "step:", stepId, ":", fullContent.substring(0, 100) + "...")
-        
-        // CRITICAL FIX: Update ref immediately
-        const currentStatus = stepStatusesRef.current.get(stepId)
-        // Only update message if new content is longer (more substantive) than existing
-        const shouldUpdateMessage = !currentStatus?.message || fullContent.length > currentStatus.message.length
-        // Preserve waiting/completed status - don't downgrade
-        const preservedStatus = currentStatus?.status === "completed" ? "completed" : 
-                               currentStatus?.status === "waiting" ? "waiting" : "working"
-        const immediateUpdate = new Map(stepStatusesRef.current)
-        immediateUpdate.set(stepId, { 
-          ...currentStatus,
-          status: preservedStatus,
-          message: shouldUpdateMessage ? fullContent : currentStatus?.message
-        })
-        stepStatusesRef.current = immediateUpdate
-        
-        // If this step is currently waiting, only update message if from same agent
-        setWaitingStepId(currentWaitingId => {
-          if (currentWaitingId === stepId && shouldUpdateMessage) {
-            const waitingStep = workflowStepsRef.current.find(s => s.id === currentWaitingId)
-            const isFromWaitingAgent = waitingStep && (
-              waitingStep.agentName === data.agentName ||
-              waitingStep.agentId === data.agentName
-            )
-            if (isFromWaitingAgent) {
-              console.log("[WorkflowTest] 📋 Updating waiting message from remote_agent_activity:", fullContent?.substring?.(0, 100))
-              setWaitingMessage(fullContent)
-            } else {
-              console.log("[WorkflowTest] 🛡️ NOT updating waiting message from remote activity - different agent:", data.agentName, "vs", waitingStep?.agentName)
-            }
-          }
-          return currentWaitingId
-        })
-        
-        setStepStatuses(prev => {
-          const newMap = new Map(prev)
-          const currentStatus = prev.get(stepId)
-          const shouldUpdate = !currentStatus?.message || fullContent.length > currentStatus.message.length
-          const preservedStatus = currentStatus?.status === "completed" ? "completed" : 
-                                 currentStatus?.status === "waiting" ? "waiting" : "working"
-          newMap.set(stepId, { 
-            ...currentStatus,
-            status: preservedStatus,
-            message: shouldUpdate ? fullContent : currentStatus?.message
-          })
-          return newMap
-        })
-      } else {
-        console.log("[WorkflowTest] ⚠️ Missing agentName or content in remote agent activity")
       }
     }
     
-    // Handle final response (matching DAG)
+    // Final response - mark step as completed with full content
     const handleFinalResponse = (data: any) => {
-      console.log("[WorkflowTest] 🎯 Final response:", data)
+      if (!data.message?.agent || !data.message?.content) return
       
-      if (data.message?.agent && data.message?.content) {
-        const fullContent = data.message.content
-        const stepId = findStepForAgent(data.message.agent, data.taskId || data.message?.taskId)
-        if (!stepId) return
-        console.log("[WorkflowTest] ✨ Setting final response for", data.message.agent, "step:", stepId, ":", fullContent.substring(0, 100) + "...")
-        
-        // PROTECT WAITING STATE: If step is waiting for user input, DON'T mark as completed
-        const currentStatus = stepStatusesRef.current.get(stepId)
-        if (currentStatus?.status === "waiting") {
-          console.log("[WorkflowTest] 🛡️ PROTECTING waiting state in final_response - step is waiting for user input, NOT completing")
-          
-          // Only update message if it's from the same agent that's waiting
-          const waitingStep = workflowStepsRef.current.find(s => s.id === stepId)
-          const isFromWaitingAgent = waitingStep && (
-            waitingStep.agentName === data.message.agent ||
-            waitingStep.agentId === data.message.agent
-          )
-          
-          if (isFromWaitingAgent) {
-            // Just update the message, don't change status
-            const immediateUpdate = new Map(stepStatusesRef.current)
-            immediateUpdate.set(stepId, { 
-              ...currentStatus,
-              message: fullContent  // Update message but keep waiting status
-            })
-            stepStatusesRef.current = immediateUpdate
-            
-            // Also update the waiting message display
-            setWaitingMessage(fullContent)
-            
-            setStepStatuses(prev => {
-              const newMap = new Map(prev)
-              const cs = prev.get(stepId)
-              if (cs) {
-                newMap.set(stepId, { ...cs, message: fullContent })
-              }
-              return newMap
-            })
-          } else {
-            console.log("[WorkflowTest] 🛡️ NOT updating waiting message in final_response - different agent:", data.message.agent, "vs", waitingStep?.agentName)
-          }
-          return // Don't proceed with completion logic
-        }
-        
-        // Step is NOT waiting - proceed with completion ONLY if step was working
-        if (currentStatus?.status !== "working") {
-          console.log(`[WorkflowTest] ⛔ Blocking final_response completion - step status is "${currentStatus?.status}", not working`)
-          return
-        }
-        
-        const immediateUpdate = new Map(stepStatusesRef.current)
-        immediateUpdate.set(stepId, { 
-          ...currentStatus,
-          status: "completed",
-          message: fullContent,
-          completedAt: Date.now()
-        })
-        stepStatusesRef.current = immediateUpdate
-        
-        // Check if this is the last step in the workflow
-        const stepOrder = workflowOrderMapRef.current.get(stepId)
-        const maxOrder = Math.max(...Array.from(workflowOrderMapRef.current.values()))
-        const isLastStep = stepOrder === maxOrder
-        
-        if (isLastStep) {
-          console.log("[WorkflowTest] 🎉 Last step completed! Auto-stopping workflow in 2 seconds...")
-          // Auto-stop after 2 seconds to let user see the completion
-          setTimeout(() => {
-            console.log("[WorkflowTest] ✅ Auto-stopping workflow")
-            handleStopTest()
-          }, 2000)
-        }
-        
-        setTestMessages(prev => [...prev, { role: "assistant", content: fullContent, agent: data.message.agent }])
-        setStepStatuses(prev => {
-          const newMap = new Map(prev)
-          const currentStatus = prev.get(stepId)
-          // Final response DOES mark as completed
-          newMap.set(stepId, { 
-            ...currentStatus,
-            status: "completed",
-            message: fullContent,
-            // Add timestamp when completing
-            completedAt: currentStatus?.status !== "completed" ? Date.now() : currentStatus?.completedAt
-          })
-          return newMap
-        })
-        
-        // Inject into Voice Live if connected
-        if (voiceLive.isConnected && voiceLiveCallMapRef.current.size > 0) {
-          const voiceCallIds = Array.from(voiceLiveCallMapRef.current.entries())
-          console.log('[Voice Live] 💬 Injecting final response for call:', voiceCallIds[0])
-          
-          if (voiceCallIds.length > 0) {
-            const [messageId, callId] = voiceCallIds[0]
-            
-            voiceLive.injectNetworkResponse({
-              call_id: callId,
-              message: fullContent,
-              status: 'completed'
-            })
-            
-            // Remove from map
-            voiceLiveCallMapRef.current.delete(messageId)
-            console.log('[Voice Live] ✅ Final response injected successfully')
-          }
+      const agentName = data.message.agent
+      const content = data.message.content
+      
+      const stepId = findStepForAgent(agentName)
+      if (!stepId) return
+      
+      const current = stepStatusesRef.current.get(stepId)
+      
+      // If waiting for input, just update message but keep waiting
+      if (current?.status === "waiting") {
+        updateStep(stepId, "waiting", content)
+        setWaitingMessage(content)
+        return
+      }
+      
+      // Mark as completed
+      updateStep(stepId, "completed", content)
+      setTestMessages(prev => [...prev, { role: "assistant", content, agent: agentName }])
+      
+      // Check if this is the last step - auto-stop workflow
+      const stepOrder = workflowOrderMapRef.current.get(stepId)
+      const maxOrder = Math.max(...Array.from(workflowOrderMapRef.current.values()))
+      if (stepOrder === maxOrder) {
+        setTimeout(() => handleStopTest(), 2000)
+      }
+      
+      // Voice Live integration
+      if (voiceLive.isConnected && voiceLiveCallMapRef.current.size > 0) {
+        const entries = Array.from(voiceLiveCallMapRef.current.entries())
+        if (entries.length > 0) {
+          const [messageId, callId] = entries[0]
+          voiceLive.injectNetworkResponse({ call_id: callId, message: content, status: 'completed' })
+          voiceLiveCallMapRef.current.delete(messageId)
         }
       }
     }
     
+    // File uploaded - attach to step
     const handleFileUploaded = (data: any) => {
-      console.log("[WorkflowTest] 📎 File uploaded event:", data)
+      if (!data.fileInfo?.source_agent || !data.fileInfo?.uri) return
       
-      if (data.fileInfo && data.fileInfo.source_agent && data.fileInfo.uri) {
-        const sourceAgent = data.fileInfo.source_agent
-        const fileUri = data.fileInfo.uri
-        const fileName = data.fileInfo.filename || "unknown"
-        const contentType = data.fileInfo.content_type || ""
-        
-        console.log("[WorkflowTest] 📄 File from agent:", sourceAgent, "| URI:", fileUri, "| Type:", contentType)
-        
-        const stepId = findStepForAgent(sourceAgent, data.taskId || data.fileInfo?.taskId)
-        if (!stepId) return
-        
-        const isImage = contentType.startsWith("image/")
-        console.log("[WorkflowTest] 🖼️ Setting", isImage ? "image" : "file", "for step:", stepId)
-        
-        // CRITICAL FIX: Update ref immediately
-        const currentStatus = stepStatusesRef.current.get(stepId)
-        const immediateUpdate = new Map(stepStatusesRef.current)
-        immediateUpdate.set(stepId, { 
-          status: currentStatus?.status || "working",
-          ...currentStatus,
-          imageUrl: isImage ? fileUri : undefined,
-          fileName: fileName
-        })
-        stepStatusesRef.current = immediateUpdate
-        
-        setStepStatuses(prev => {
-          const newMap = new Map(prev)
-          const currentStatus = prev.get(stepId)
-          // IMPORTANT: Don't mark as completed! File upload is just displaying the image.
-          newMap.set(stepId, { 
-            status: currentStatus?.status || "working",
-            ...currentStatus,
-            imageUrl: isImage ? fileUri : undefined,
-            fileName: fileName
-          })
-          return newMap
-        })
+      const agentName = data.fileInfo.source_agent
+      const stepId = findStepForAgent(agentName)
+      if (!stepId) return
+      
+      const isImage = data.fileInfo.content_type?.startsWith("image/")
+      const current = stepStatusesRef.current.get(stepId)
+      
+      const newEntry = {
+        ...current,
+        status: current?.status || "working",
+        imageUrl: isImage ? data.fileInfo.uri : current?.imageUrl,
+        fileName: data.fileInfo.filename
       }
+      stepStatusesRef.current.set(stepId, newEntry)
+      setStepStatuses(prev => {
+        const newMap = new Map(prev)
+        newMap.set(stepId, newEntry)
+        return newMap
+      })
     }
     
+    // Inference step - update status message
     const handleInferenceStep = (data: any) => {
-      console.log("[WorkflowTest] 🧠 Inference step:", data)
+      if (!data.agent || !data.status) return
       
-      if (data.agent && data.status) {
-        const stepId = findStepForAgent(data.agent, data.taskId)
-        if (!stepId) return
-        
-        // CRITICAL FIX: Update ref immediately
-        const currentStatus = stepStatusesRef.current.get(stepId)
-        // Only update message if new content is longer (more substantive) than existing
-        const shouldUpdateMessage = !currentStatus?.message || data.status.length > currentStatus.message.length
-        const immediateUpdate = new Map(stepStatusesRef.current)
-        immediateUpdate.set(stepId, { 
-          ...currentStatus,
-          status: currentStatus?.status === "completed" ? "completed" : "working",
-          message: shouldUpdateMessage ? data.status : currentStatus?.message
-        })
-        stepStatusesRef.current = immediateUpdate
-        
-        setStepStatuses(prev => {
-          const newMap = new Map(prev)
-          const currentStatus = prev.get(stepId)
-          const shouldUpdate = !currentStatus?.message || data.status.length > currentStatus.message.length
-          newMap.set(stepId, { 
-            ...currentStatus,
-            status: currentStatus?.status === "completed" ? "completed" : "working",
-            message: shouldUpdate ? data.status : currentStatus?.message
-          })
-          return newMap
-        })
+      const stepId = findStepForAgent(data.agent)
+      if (!stepId) return
+      
+      const current = stepStatusesRef.current.get(stepId)
+      if (current?.status !== "completed") {
+        updateStep(stepId, "working", data.status)
       }
     }
     
+    // Outgoing message - show host agent activity
     const handleOutgoingMessage = (data: any) => {
-      console.log("[WorkflowTest] 📤 Outgoing message:", data)
-      
       if (data.targetAgent && data.message) {
-        console.log("[WorkflowTest] 📨 Setting host message to", data.targetAgent)
         
         // Set the host message
         setHostMessage({
@@ -1210,27 +864,18 @@ export function VisualWorkflowDesigner({
           })
         }, 8000)
         
-        // Inject into Voice Live if connected
+        // Voice Live integration
         if (voiceLive.isConnected && voiceLiveCallMapRef.current.size > 0) {
-          const voiceCallIds = Array.from(voiceLiveCallMapRef.current.entries())
-          console.log('[Voice Live] 📤 Injecting outgoing message for call:', voiceCallIds[0])
-          
-          if (voiceCallIds.length > 0) {
-            const [messageId, callId] = voiceCallIds[0]
-            
-            voiceLive.injectNetworkResponse({
-              call_id: callId,
-              message: data.message,
-              status: 'in_progress'  // Mark as in_progress, not completed yet
-            })
-            
-            console.log('[Voice Live] ✅ Outgoing message injected successfully')
+          const entries = Array.from(voiceLiveCallMapRef.current.entries())
+          if (entries.length > 0) {
+            const [, callId] = entries[0]
+            voiceLive.injectNetworkResponse({ call_id: callId, message: data.message, status: 'in_progress' })
           }
         }
       }
     }
     
-    // Subscribe to ALL events (matching agent-network-dag.tsx)
+    // Subscribe to events
     subscribe("status_update", handleStatusUpdate)
     subscribe("task_updated", handleTaskUpdate)
     subscribe("agent_message", handleAgentMessage)
@@ -1244,10 +889,7 @@ export function VisualWorkflowDesigner({
     subscribe("file", handleFileUploaded)
     subscribe("outgoing_agent_message", handleOutgoingMessage)
     
-    console.log("[WorkflowTest] ✅ All WebSocket listeners registered - subscriptions ALWAYS ACTIVE")
-    
     return () => {
-      console.log("[WorkflowTest] 🔌 Unsubscribing from WebSocket events")
       unsubscribe("status_update", handleStatusUpdate)
       unsubscribe("task_updated", handleTaskUpdate)
       unsubscribe("agent_message", handleAgentMessage)
