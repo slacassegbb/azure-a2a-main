@@ -168,6 +168,7 @@ export function VisualWorkflowDesigner({
   const [hostMessages, setHostMessages] = useState<Array<{ message: string, target: string, timestamp: number, agentColor?: string, isHost?: boolean }>>([])
   const orchestrationSidebarRef = useRef<HTMLDivElement>(null)
   const [showOrchestrationSidebar, setShowOrchestrationSidebar] = useState(true)
+  const [hostTokenUsage, setHostTokenUsage] = useState<{ prompt_tokens: number, completion_tokens: number, total_tokens: number } | null>(null)
   
   // Toggle message visibility for a step
   const toggleStepMessages = (stepId: string) => {
@@ -288,6 +289,7 @@ export function VisualWorkflowDesigner({
         activeStepPerAgentRef.current = new Map()
         taskIdToStepRef.current = new Map()
         assignedStepsRef.current = new Set()
+        setHostTokenUsage(null)  // Reset host tokens for new workflow
         
         const baseUrl = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
         
@@ -1059,6 +1061,14 @@ export function VisualWorkflowDesigner({
       }
     }
     
+    // Host agent token usage
+    const handleHostTokenUsage = (data: any) => {
+      if (data.tokenUsage) {
+        console.log("[VD] Host token usage received:", data.tokenUsage)
+        setHostTokenUsage(data.tokenUsage)
+      }
+    }
+    
     // Subscribe to events
     subscribe("status_update", handleStatusUpdate)
     subscribe("task_updated", handleTaskUpdate)
@@ -1072,6 +1082,7 @@ export function VisualWorkflowDesigner({
     subscribe("inference_step", handleInferenceStep)
     subscribe("file_uploaded", handleFileUploaded)
     subscribe("outgoing_agent_message", handleOutgoingMessage)
+    subscribe("host_token_usage", handleHostTokenUsage)
     
     return () => {
       unsubscribe("status_update", handleStatusUpdate)
@@ -1086,6 +1097,7 @@ export function VisualWorkflowDesigner({
       unsubscribe("inference_step", handleInferenceStep)
       unsubscribe("file_uploaded", handleFileUploaded)
       unsubscribe("outgoing_agent_message", handleOutgoingMessage)
+      unsubscribe("host_token_usage", handleHostTokenUsage)
     }
     // FIXED: Subscribe on mount, not when isTesting changes
     // This ensures we don't miss events due to race condition between setIsTesting and event arrival
@@ -1214,6 +1226,7 @@ export function VisualWorkflowDesigner({
     activeStepPerAgentRef.current = new Map()
     taskIdToStepRef.current = new Map()
     assignedStepsRef.current = new Set()
+    setHostTokenUsage(null)  // Reset host tokens for new workflow
     
     console.log("[WorkflowTest] 🚀 Starting test with workflow:", currentWorkflowText)
     
@@ -3083,13 +3096,13 @@ export function VisualWorkflowDesigner({
           {/* Workflow Analytics */}
           {(() => {
             // Calculate totals from all step statuses
-            let totalTokens = 0
+            let agentTokens = 0
             let totalTime = 0
             let completedAgents = 0
             
             stepStatuses.forEach((status) => {
               if (status.tokenUsage?.total_tokens) {
-                totalTokens += status.tokenUsage.total_tokens
+                agentTokens += status.tokenUsage.total_tokens
               }
               if (status.duration) {
                 totalTime += status.duration
@@ -3098,6 +3111,10 @@ export function VisualWorkflowDesigner({
                 completedAgents++
               }
             })
+            
+            // Add host agent tokens
+            const hostTokens = hostTokenUsage?.total_tokens || 0
+            const totalTokens = agentTokens + hostTokens
             
             const formatTokens = (tokens: number) => {
               if (tokens >= 1000000) return `${(tokens / 1000000).toFixed(1)}M`
@@ -3125,14 +3142,46 @@ export function VisualWorkflowDesigner({
                 {/* Divider */}
                 <div className="w-px h-10 bg-slate-700"></div>
                 
-                {/* Total Tokens */}
+                {/* Agent Tokens */}
                 <div className="flex items-center gap-2">
                   <div className="flex items-center justify-center w-8 h-8 rounded-full bg-amber-500/20 border border-amber-500/30">
-                    <span className="text-amber-400">🎟️</span>
+                    <span className="text-amber-400">🤖</span>
                   </div>
                   <div>
-                    <div className="text-xs text-slate-500 uppercase tracking-wide">Total Tokens</div>
+                    <div className="text-xs text-slate-500 uppercase tracking-wide">Agent Tokens</div>
                     <div className="text-lg font-bold text-amber-400">
+                      {agentTokens > 0 ? formatTokens(agentTokens) : "—"}
+                    </div>
+                  </div>
+                </div>
+                
+                {/* Divider */}
+                <div className="w-px h-10 bg-slate-700"></div>
+                
+                {/* Host Tokens */}
+                <div className="flex items-center gap-2">
+                  <div className="flex items-center justify-center w-8 h-8 rounded-full bg-cyan-500/20 border border-cyan-500/30">
+                    <span className="text-cyan-400">🧠</span>
+                  </div>
+                  <div>
+                    <div className="text-xs text-slate-500 uppercase tracking-wide">Host Tokens</div>
+                    <div className="text-lg font-bold text-cyan-400">
+                      {hostTokens > 0 ? formatTokens(hostTokens) : "—"}
+                    </div>
+                  </div>
+                </div>
+                
+                {/* Divider */}
+                <div className="w-px h-10 bg-slate-700"></div>
+                
+                {/* Total Tokens */}
+                <div className="flex items-center gap-2">
+                  <div className="flex items-center justify-center w-8 h-8 rounded-full bg-rose-500/20 border border-rose-500/30">
+                    <span className="text-rose-400">Σ</span>
+                  </div>
+                  <div>
+                    <div className="text-xs text-slate-500 uppercase tracking-wide">Total</div>
+                    <div className="text-lg font-bold text-rose-400">
                       {hasData ? formatTokens(totalTokens) : "—"}
                     </div>
                   </div>

@@ -269,6 +269,7 @@ class FoundryHostAgent2:
         self.default_contextId = str(uuid.uuid4())
         self._agent_tasks: Dict[str, Optional[Task]] = {}
         self.agent_token_usage: Dict[str, dict] = {}  # Store token usage per agent
+        self.host_token_usage: Dict[str, int] = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}  # Host agent tokens
         
         self.enable_task_evaluation = enable_task_evaluation
         self._active_conversations: Dict[str, str] = {}
@@ -1210,6 +1211,14 @@ class FoundryHostAgent2:
             
             parsed = completion.choices[0].message.parsed
             print(f"🤖 [Agent Mode] Got structured response: {parsed.model_dump_json()[:200]}...")
+            
+            # Extract token usage from orchestration call
+            if hasattr(completion, 'usage') and completion.usage:
+                self.host_token_usage["prompt_tokens"] += completion.usage.prompt_tokens or 0
+                self.host_token_usage["completion_tokens"] += completion.usage.completion_tokens or 0
+                self.host_token_usage["total_tokens"] += completion.usage.total_tokens or 0
+                print(f"🎟️ [Host Agent] Orchestration tokens: +{completion.usage.total_tokens} (total: {self.host_token_usage['total_tokens']})")
+            
             return parsed
                     
         except Exception as e:
@@ -1252,6 +1261,10 @@ class FoundryHostAgent2:
         """
         log_debug(f"🎯 [Agent Mode] Starting orchestration loop for goal: {user_message[:100]}...")
         log_debug(f"📋 [Agent Mode] Workflow parameter received: {workflow[:100] if workflow else 'None'}")
+        
+        # Reset host token usage for this workflow
+        self.host_token_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        
         await self._emit_status_event("Initializing Agent Mode orchestration...", context_id)
         
         # Handle conversation continuity - distinguish new goals from follow-up clarifications
@@ -1716,6 +1729,29 @@ Analyze the plan and determine the next step. If you need information that isn't
         
         # Generate final response from all outputs
         print(f"🎬 [Agent Mode] Orchestration complete. {len(all_task_outputs)} task outputs collected")
+        print(f"🎟️ [Host Agent] Final token usage: {self.host_token_usage}")
+        
+        # Emit host token usage to frontend
+        try:
+            from service.websocket_streamer import get_websocket_streamer
+            import asyncio
+            
+            async def emit_host_tokens():
+                streamer = await get_websocket_streamer()
+                if streamer:
+                    event_data = {
+                        "agentName": "foundry-host-agent",
+                        "tokenUsage": self.host_token_usage,
+                        "state": "completed",
+                        "timestamp": __import__('datetime').datetime.utcnow().isoformat()
+                    }
+                    await streamer._send_event("host_token_usage", event_data, context_id)
+                    print(f"📡 [Host Agent] Emitted token usage to frontend: {self.host_token_usage['total_tokens']} tokens")
+            
+            asyncio.create_task(emit_host_tokens())
+        except Exception as e:
+            print(f"⚠️ [Host Agent] Error emitting token usage: {e}")
+        
         return all_task_outputs
 
     async def get_current_root_instruction(self) -> str:
@@ -5084,6 +5120,14 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
                     
                     # Get final response from thread
                     if run['status'] == 'completed':
+                        # Extract token usage from synthesis run
+                        if 'usage' in run and run['usage']:
+                            usage = run['usage']
+                            self.host_token_usage["prompt_tokens"] += usage.get('prompt_tokens', 0) or 0
+                            self.host_token_usage["completion_tokens"] += usage.get('completion_tokens', 0) or 0
+                            self.host_token_usage["total_tokens"] += usage.get('total_tokens', 0) or 0
+                            print(f"🎟️ [Host Agent] Synthesis tokens: +{usage.get('total_tokens', 0)} (total: {self.host_token_usage['total_tokens']})")
+                        
                         messages = await self._http_list_messages(thread_id, limit=1)
                         if messages:
                             log_foundry_debug(f"Retrieved {len(messages)} message(s) from synthesis thread")
