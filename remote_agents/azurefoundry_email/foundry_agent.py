@@ -176,26 +176,21 @@ class FoundryEmailAgent:
     def _get_agent_instructions(self) -> str:
         """Get the agent instructions for email composition and sending."""
         return f"""
-You are an Email Communications Specialist. Your job is to help users compose and send professional emails.
+You are an Email Communications Specialist. Your job is to compose and send professional emails IMMEDIATELY without asking for confirmation.
 
 ## HOW THIS WORKS
 
-When a user wants to send an email, follow these steps:
+When you receive information about an email to send, you must:
 
-1. **Gather Information**: Ask for or identify:
+1. **Extract the Information**:
    - Recipient email address
-   - Subject line (or suggest one based on context)
-   - Email content/message
+   - Subject line (create one based on context if not provided)
+   - The FULL content/report to include in the email body
    - Any CC recipients (optional)
 
-2. **Compose the Email**: Write a professional email with:
-   - Proper greeting
-   - Clear, well-structured body
-   - Professional closing
+2. **Compose and SEND IMMEDIATELY**: Create a professional email and output it in the EMAIL_TO_SEND format right away. DO NOT ask for confirmation or approval.
 
-3. **Get Confirmation**: Show the user the complete email and ask for approval
-
-4. **Provide Send Command**: Once approved, output the email in this EXACT format so it can be sent:
+3. **Output Format**: ALWAYS output the email in this EXACT format:
 
 ```EMAIL_TO_SEND
 TO: recipient@example.com
@@ -209,35 +204,44 @@ BODY:
 
 The system will automatically detect this format and send the email.
 
-## IMPORTANT GUIDELINES
+## CRITICAL RULES
 
-- Always confirm before providing the EMAIL_TO_SEND block
-- Use HTML formatting in the body for professional appearance
-- Be helpful with composing content if the user is unsure what to say
-- Ask clarifying questions if needed
-- Keep emails professional but adapt tone to context
+- **NEVER** ask "Would you like me to send this?" or "Do you want any changes?"
+- **NEVER** show a draft and wait for approval
+- **ALWAYS** output the EMAIL_TO_SEND block immediately when you have the required info
+- If you have recipient + subject/topic + content, SEND IT immediately
+- **INCLUDE THE FULL REPORT/CONTENT IN THE EMAIL BODY** - do NOT say "attached" or "see attachment" since we don't support attachments
+- Use HTML formatting in the body for professional appearance (<p>, <h2>, <ul>, <li>, <strong>, etc.)
+- Create professional, well-structured emails automatically
 
-## EXAMPLE INTERACTION
+## EXAMPLE
 
-User: "Send an email to john@example.com about the meeting tomorrow"
+User: "Send this report to simon@company.com: [Report Title] Executive Summary... Key Findings... Recommendations..."
 
-You: "I'll help you send that email. Here's what I'll send:
+You: "I'll send that email now.
 
-**To:** john@example.com
-**Subject:** Meeting Tomorrow
-
-**Body:**
-Hi John,
-
-I wanted to reach out regarding our meeting scheduled for tomorrow.
-
-[I need a bit more context - what would you like to say about the meeting? For example:
-- Confirming the meeting
-- Rescheduling
-- Sharing an agenda
-- Something else?]
-
-Let me know and I'll compose the full email for you."
+```EMAIL_TO_SEND
+TO: simon@company.com
+SUBJECT: Your AI Consultation Report
+CC: 
+BODY:
+<html>
+<p>Dear Simon,</p>
+<p>Thank you for your time during our AI consultation. Please find your personalized report below:</p>
+<h2>Report Title</h2>
+<h3>Executive Summary</h3>
+<p>...</p>
+<h3>Key Findings</h3>
+<ul>
+<li>Finding 1</li>
+<li>Finding 2</li>
+</ul>
+<h3>Recommendations</h3>
+<p>...</p>
+<p>If you have any questions, please don't hesitate to reach out.</p>
+<p>Best regards</p>
+</html>
+```END_EMAIL"
 
 Current date: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}
 """
@@ -309,15 +313,18 @@ Current date: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}
                         text_content = content_item.text.value
                         
                         # Check if there's an email to send
-                        email_result = self._try_send_email(text_content)
+                        email_result, clean_content = self._try_send_email(text_content)
                         if email_result:
-                            text_content += f"\n\n{email_result}"
-                        
-                        yield text_content
+                            # Show clean summary instead of raw EMAIL_TO_SEND block
+                            yield f"{clean_content}\n\n{email_result}"
+                        else:
+                            yield text_content
                 break
     
-    def _try_send_email(self, response_text: str) -> Optional[str]:
-        """Check if the response contains an email to send and send it."""
+    def _try_send_email(self, response_text: str) -> tuple[Optional[str], str]:
+        """Check if the response contains an email to send and send it.
+        Returns: (result_message, cleaned_content)
+        """
         import re
         
         # Look for the EMAIL_TO_SEND block
@@ -325,7 +332,7 @@ Current date: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}
         match = re.search(pattern, response_text, re.DOTALL)
         
         if not match:
-            return None
+            return None, response_text
         
         email_block = match.group(1)
         
@@ -336,12 +343,23 @@ Current date: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}
         body_match = re.search(r'^BODY:\s*\n(.+)', email_block, re.DOTALL | re.MULTILINE)
         
         if not to_match or not subject_match or not body_match:
-            return "⚠️ Could not parse email format"
+            return "⚠️ Could not parse email format", response_text
         
         to = to_match.group(1).strip()
         subject = subject_match.group(1).strip()
         cc = cc_match.group(1).strip() if cc_match else ""
         body = body_match.group(1).strip()
+        
+        # Create a clean summary - strip HTML tags for readable display
+        import html
+        body_clean = re.sub(r'<[^>]+>', ' ', body)  # Remove HTML tags
+        body_clean = html.unescape(body_clean)  # Decode HTML entities
+        body_clean = re.sub(r' +', ' ', body_clean)  # Normalize spaces
+        body_clean = re.sub(r'\n\s*\n', '\n\n', body_clean.strip())  # Clean up newlines
+        
+        clean_summary = f"📧 **Email Sent**\n\n**To:** {to}\n**Subject:** {subject}\n\n{body_clean}"
+        if cc and cc.lower() != "body:" and "@" in cc:
+            clean_summary = f"📧 **Email Sent**\n\n**To:** {to}\n**CC:** {cc}\n**Subject:** {subject}\n\n{body_clean}"
         
         # Send the email
         try:
@@ -354,12 +372,12 @@ Current date: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}
                 result = send_email(to=to, subject=subject, body=body)
             
             if result["success"]:
-                return f"✅ {result['message']}"
+                return f"✅ {result['message']}", clean_summary
             else:
-                return f"❌ {result['message']}"
+                return f"❌ {result['message']}", clean_summary
         except Exception as e:
             logger.error(f"Failed to send email: {e}")
-            return f"❌ Failed to send email: {str(e)}"
+            return f"❌ Failed to send email: {str(e)}", clean_summary
     
     async def _handle_tool_calls(self, run: ThreadRun, thread_id: str):
         """Handle tool calls during agent execution."""
