@@ -742,12 +742,6 @@ export function VisualWorkflowDesigner({
       const agentName = data.agentName || data.agent || data.from
       if (!agentName) return
       
-      const stepId = findStepForAgent(agentName)
-      if (!stepId) return
-      
-      const current = stepStatusesRef.current.get(stepId)
-      const currentStatus = current?.status || "working"
-      
       // Extract message text and images from content array
       let messageText = ""
       let hasImages = false
@@ -756,18 +750,52 @@ export function VisualWorkflowDesigner({
         const textItem = data.content.find((c: any) => c.type === "text")
         messageText = textItem?.content || textItem?.text || ""
         
-        // Extract images from content array (same as main chat)
+        // Extract images (will handle later if we have a stepId)
         const imageContents = data.content.filter((c: any) => c.type === "image")
         if (imageContents.length > 0) {
           hasImages = true
-          imageContents.forEach((img: any) => {
-            updateStep(stepId, currentStatus, undefined, img.uri, img.fileName || "image")
-          })
         }
       } else if (typeof data.message === "string") {
         messageText = data.message
       } else if (typeof data.content === "string") {
         messageText = data.content
+      }
+      
+      // Check if this is a foundry-host-agent orchestration message
+      if (agentName.toLowerCase().includes('host') || agentName.toLowerCase().includes('foundry-host-agent')) {
+        // Display in bottom right corner
+        if (messageText) {
+          setHostMessage({
+            message: messageText,
+            target: "Orchestrator"
+          })
+          
+          // Clear after 3 seconds (same as bubbles)
+          setTimeout(() => {
+            setHostMessage(prev => {
+              if (prev?.message === messageText) {
+                return null
+              }
+              return prev
+            })
+          }, 3000)
+        }
+        return
+      }
+      
+      // For remote agents, find the corresponding workflow step
+      const stepId = findStepForAgent(agentName)
+      if (!stepId) return
+      
+      const current = stepStatusesRef.current.get(stepId)
+      const currentStatus = current?.status || "working"
+      
+      // Handle images if we found a step
+      if (hasImages && data.content && Array.isArray(data.content)) {
+        const imageContents = data.content.filter((c: any) => c.type === "image")
+        imageContents.forEach((img: any) => {
+          updateStep(stepId, currentStatus, undefined, img.uri, img.fileName || "image")
+        })
       }
       
       // Add text message as a separate bubble
@@ -882,7 +910,7 @@ export function VisualWorkflowDesigner({
           target: data.targetAgent
         })
         
-        // Clear host message after 8 seconds
+        // Clear host message after 3 seconds (same as bubbles)
         setTimeout(() => {
           setHostMessage(prev => {
             // Only clear if it's the same message
@@ -891,7 +919,7 @@ export function VisualWorkflowDesigner({
             }
             return prev
           })
-        }, 8000)
+        }, 3000)
         
         // Voice Live integration
         if (voiceLive.isConnected && voiceLiveCallMapRef.current.size > 0) {
