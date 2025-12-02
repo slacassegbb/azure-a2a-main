@@ -2039,6 +2039,45 @@ export function VisualWorkflowDesigner({
               // Show all messages stacked
               let currentY = y - 120 // Start position above agent
               
+              // Draw collapse button first (above all messages)
+              const collapseButtonSize = 28
+              const collapseButtonX = x - collapseButtonSize / 2
+              const collapseButtonY = currentY - collapseButtonSize
+              
+              ctx.save()
+              
+              // Draw collapse button background
+              ctx.fillStyle = "rgba(30, 41, 59, 0.95)"
+              ctx.strokeStyle = step.agentColor
+              ctx.lineWidth = 2
+              ctx.shadowColor = "rgba(0, 0, 0, 0.3)"
+              ctx.shadowBlur = 4
+              
+              ctx.beginPath()
+              ctx.roundRect(collapseButtonX, collapseButtonY, collapseButtonSize, collapseButtonSize, 6)
+              ctx.fill()
+              ctx.stroke()
+              ctx.shadowBlur = 0
+              
+              // Draw "-" icon
+              ctx.strokeStyle = step.agentColor
+              ctx.lineWidth = 2
+              ctx.lineCap = "round"
+              
+              const centerX = collapseButtonX + collapseButtonSize / 2
+              const centerY = collapseButtonY + collapseButtonSize / 2
+              const iconSize = 12
+              
+              ctx.beginPath()
+              ctx.moveTo(centerX - iconSize / 2, centerY)
+              ctx.lineTo(centerX + iconSize / 2, centerY)
+              ctx.stroke()
+              
+              ctx.restore()
+              
+              // Move current Y up past the button
+              currentY = collapseButtonY - 10
+              
               // Display each message as a separate bubble, stacking upward
               for (let msgIndex = stepStatus.messages.length - 1; msgIndex >= 0; msgIndex--) {
                 const msg = stepStatus.messages[msgIndex]
@@ -2276,16 +2315,31 @@ export function VisualWorkflowDesigner({
       // Check if clicking on message expand/collapse button (highest priority)
       for (const step of workflowStepsRef.current) {
         const stepStatus = stepStatusesRef.current.get(step.id)
-        if (stepStatus && stepStatus.messages && stepStatus.messages.length > 0 && stepStatus.messagesCollapsed) {
-          const buttonSize = 32
-          const buttonX = step.x - buttonSize / 2
-          const buttonY = step.y - 120
-          
-          if (canvasX >= buttonX && canvasX <= buttonX + buttonSize &&
-              canvasY >= buttonY && canvasY <= buttonY + buttonSize) {
-            // Clicked on the expand button
-            toggleStepMessages(step.id)
-            return
+        if (stepStatus && stepStatus.messages && stepStatus.messages.length > 0) {
+          if (stepStatus.messagesCollapsed) {
+            // Check for expand button click
+            const buttonSize = 32
+            const buttonX = step.x - buttonSize / 2
+            const buttonY = step.y - 120
+            
+            if (canvasX >= buttonX && canvasX <= buttonX + buttonSize &&
+                canvasY >= buttonY && canvasY <= buttonY + buttonSize) {
+              // Clicked on the expand button
+              toggleStepMessages(step.id)
+              return
+            }
+          } else {
+            // Check for collapse button click
+            const buttonSize = 28
+            const buttonX = step.x - buttonSize / 2
+            const buttonY = step.y - 120 - buttonSize
+            
+            if (canvasX >= buttonX && canvasX <= buttonX + buttonSize &&
+                canvasY >= buttonY && canvasY <= buttonY + buttonSize) {
+              // Clicked on the collapse button
+              toggleStepMessages(step.id)
+              return
+            }
           }
         }
       }
