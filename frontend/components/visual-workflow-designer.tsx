@@ -3,7 +3,7 @@
 import type React from "react"
 import { useEffect, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
-import { X, Plus, Trash2, Download, Upload, Library, X as CloseIcon, Send, Loader2, PlayCircle, StopCircle, Phone, PhoneOff, Mic, MicOff } from "lucide-react"
+import { X, Plus, Trash2, Download, Upload, Library, X as CloseIcon, Send, Loader2, PlayCircle, StopCircle, Phone, PhoneOff, Mic, MicOff, ChevronLeft, ChevronRight } from "lucide-react"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { WorkflowCatalog } from "./workflow-catalog"
 import { Input } from "@/components/ui/input"
@@ -159,6 +159,7 @@ export function VisualWorkflowDesigner({
   const assignedStepsRef = useRef<Set<string>>(new Set())
   const [hostMessages, setHostMessages] = useState<Array<{ message: string, target: string, timestamp: number }>>([])
   const orchestrationSidebarRef = useRef<HTMLDivElement>(null)
+  const [showOrchestrationSidebar, setShowOrchestrationSidebar] = useState(true)
   
   // Event Hub for live updates
   const { subscribe, unsubscribe, emit } = useEventHub()
@@ -2817,15 +2818,24 @@ export function VisualWorkflowDesigner({
           </div>
         </div>
 
-        {/* Orchestration Sidebar - Always visible when messages exist */}
-        {hostMessages.length > 0 && (
+        {/* Orchestration Sidebar - Collapsible */}
+        {hostMessages.length > 0 && showOrchestrationSidebar && (
           <div className="w-80 flex flex-col bg-slate-900 rounded-lg border border-slate-700 overflow-hidden">
-            <div className="p-3 border-b border-slate-700 bg-slate-800/50">
-              <h3 className="text-sm font-semibold text-indigo-400 flex items-center gap-2">
-                <div className="h-2 w-2 rounded-full bg-indigo-400 animate-pulse"></div>
-                Orchestrator Activity
-              </h3>
-              <p className="text-xs text-slate-400 mt-1">Real-time workflow planning</p>
+            <div className="p-3 border-b border-slate-700 bg-slate-800/50 flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-semibold text-indigo-400 flex items-center gap-2">
+                  <div className="h-2 w-2 rounded-full bg-indigo-400 animate-pulse"></div>
+                  Orchestrator Activity
+                </h3>
+                <p className="text-xs text-slate-400 mt-1">Real-time workflow planning</p>
+              </div>
+              <button
+                onClick={() => setShowOrchestrationSidebar(false)}
+                className="text-slate-400 hover:text-slate-200 transition-colors"
+                title="Hide orchestration sidebar"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </button>
             </div>
             
             <div 
@@ -2858,14 +2868,57 @@ export function VisualWorkflowDesigner({
         {/* Workflow Catalog Sidebar */}
         {showCatalog && (
           <div className="w-80 flex flex-col">
-            <WorkflowCatalog
-              onLoadWorkflow={loadWorkflow}
-              onSaveWorkflow={() => setShowSaveDialog(true)}
-              currentWorkflowSteps={workflowSteps.length}
-              refreshTrigger={catalogRefreshTrigger}
-            />
+            <div className="bg-slate-900 rounded-lg border border-slate-700 overflow-hidden h-full flex flex-col">
+              <div className="p-3 border-b border-slate-700 bg-slate-800/50 flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-slate-200">Workflow Templates</h3>
+                <button
+                  onClick={() => setShowCatalog(false)}
+                  className="text-slate-400 hover:text-slate-200 transition-colors"
+                  title="Hide workflow templates"
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </button>
+              </div>
+              <div className="flex-1 overflow-hidden">
+                <WorkflowCatalog
+                  onLoadWorkflow={loadWorkflow}
+                  onSaveWorkflow={() => setShowSaveDialog(true)}
+                  currentWorkflowSteps={workflowSteps.length}
+                  refreshTrigger={catalogRefreshTrigger}
+                />
+              </div>
+            </div>
           </div>
         )}
+
+        {/* Floating toggle buttons for collapsed sidebars */}
+        <div className="fixed right-4 top-20 flex flex-col gap-2 z-10">
+          {!showCatalog && (
+            <button
+              onClick={() => setShowCatalog(true)}
+              className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg border border-slate-600 shadow-lg transition-all hover:scale-105"
+              title="Show workflow templates"
+            >
+              <div className="flex items-center gap-2">
+                <ChevronLeft className="h-4 w-4" />
+                <span className="text-xs font-medium">Templates</span>
+              </div>
+            </button>
+          )}
+          {hostMessages.length > 0 && !showOrchestrationSidebar && (
+            <button
+              onClick={() => setShowOrchestrationSidebar(true)}
+              className="p-2 bg-indigo-900/80 hover:bg-indigo-800 text-indigo-200 rounded-lg border border-indigo-600 shadow-lg transition-all hover:scale-105"
+              title="Show orchestration activity"
+            >
+              <div className="flex items-center gap-2">
+                <ChevronLeft className="h-4 w-4" />
+                <span className="text-xs font-medium">Orchestrator</span>
+                <div className="h-2 w-2 rounded-full bg-indigo-400 animate-pulse"></div>
+              </div>
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Generated Workflow Preview - Collapsible */}
