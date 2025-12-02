@@ -136,12 +136,14 @@ export function VisualWorkflowDesigner({
     status: string, 
     messages: Array<{ text?: string, imageUrl?: string, fileName?: string, timestamp: number }>,
     completedAt?: number,
+    startTime?: number,
     messagesCollapsed?: boolean
   }>>(new Map())
   const stepStatusesRef = useRef<Map<string, { 
     status: string, 
     messages: Array<{ text?: string, imageUrl?: string, fileName?: string, timestamp: number }>,
     completedAt?: number,
+    startTime?: number,
     messagesCollapsed?: boolean
   }>>(new Map())
   const [waitingStepId, setWaitingStepId] = useState<string | null>(null)
@@ -639,6 +641,11 @@ export function VisualWorkflowDesigner({
         })
       }
       
+      // Track start time when agent starts working
+      const startTime = status === "working" && !current?.startTime 
+        ? Date.now() 
+        : current?.startTime
+      
       // Auto-collapse messages when agent completes
       const shouldCollapse = status === "completed" && messages.length > 0
       
@@ -646,6 +653,7 @@ export function VisualWorkflowDesigner({
         status, 
         messages,
         completedAt: status === "completed" ? Date.now() : current?.completedAt,
+        startTime,
         messagesCollapsed: shouldCollapse ? true : current?.messagesCollapsed
       }
       stepStatusesRef.current.set(stepId, newEntry)
@@ -1973,6 +1981,21 @@ export function VisualWorkflowDesigner({
         
         ctx.fillText(step.agentName, x, y + nameYOffset)
         ctx.shadowBlur = 0
+        
+        // Display duration if agent is completed
+        {
+          const stepStatusForDuration = stepStatuses.get(step.id)
+          if (stepStatusForDuration && stepStatusForDuration.status === "completed" && stepStatusForDuration.startTime && stepStatusForDuration.completedAt) {
+            const durationMs = stepStatusForDuration.completedAt - stepStatusForDuration.startTime
+            const durationSec = (durationMs / 1000).toFixed(1)
+            const durationText = `⏱️ ${durationSec}s`
+            
+            ctx.font = "10px system-ui"
+            ctx.fillStyle = "#94a3b8"
+            ctx.textAlign = "center"
+            ctx.fillText(durationText, x, y + nameYOffset + 15)
+          }
+        }
         
         // Draw description below agent name (editable) - wrap text to multiple lines
         const descYOffset = nameYOffset + 25
