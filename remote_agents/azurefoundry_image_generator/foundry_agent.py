@@ -93,6 +93,7 @@ class FoundryImageGeneratorAgent:
         self._blob_service_client: Optional[BlobServiceClient] = None
         self._latest_artifacts: List[Dict[str, Any]] = []
         self._pending_file_refs_by_thread: Dict[str, List[Dict[str, Any]]] = {}
+        self.last_token_usage: Optional[Dict[str, int]] = None  # Store token usage from last run
 
     def _get_blob_service_client(self) -> Optional[BlobServiceClient]:
         """Return a BlobServiceClient if Azure storage is configured and forced."""
@@ -607,6 +608,17 @@ Always validate the prompt for safety before invoking the tool.
         if iterations >= max_iterations:
             yield "Error: Request timed out"
             return
+
+        # Extract token usage from completed run
+        if hasattr(run, 'usage') and run.usage:
+            self.last_token_usage = {
+                'prompt_tokens': getattr(run.usage, 'prompt_tokens', 0),
+                'completion_tokens': getattr(run.usage, 'completion_tokens', 0),
+                'total_tokens': getattr(run.usage, 'total_tokens', 0)
+            }
+            logger.debug(f"💰 Token usage: {self.last_token_usage}")
+        else:
+            self.last_token_usage = None
 
         # After run is complete, yield the assistant's response(s) with citation formatting
         messages = list(client.messages.list(thread_id=thread_id, order=ListSortOrder.ASCENDING))

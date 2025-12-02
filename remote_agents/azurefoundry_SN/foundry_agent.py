@@ -79,6 +79,7 @@ class FoundrySNAgent:
         self._file_search_tool = None  # Cache the file search tool
         self._agents_client = None  # Cache the agents client
         self._project_client = None  # Cache the project client
+        self.last_token_usage: Optional[Dict[str, int]] = None  # Store token usage from last run
         
     def _get_client(self) -> AgentsClient:
         """Get a cached AgentsClient instance to reduce API calls."""
@@ -805,6 +806,17 @@ For all other requests, handle them yourself. Do NOT escalate unless the user cl
         if iterations >= max_iterations:
             yield "Error: Request timed out"
             return
+
+        # Extract token usage from completed run
+        if hasattr(run, 'usage') and run.usage:
+            self.last_token_usage = {
+                'prompt_tokens': getattr(run.usage, 'prompt_tokens', 0),
+                'completion_tokens': getattr(run.usage, 'completion_tokens', 0),
+                'total_tokens': getattr(run.usage, 'total_tokens', 0)
+            }
+            logger.debug(f"💰 Token usage: {self.last_token_usage}")
+        else:
+            self.last_token_usage = None
 
         # After run is complete, yield the assistant's response(s) with citation formatting
         messages = list(client.messages.list(thread_id=thread_id, order=ListSortOrder.ASCENDING))
