@@ -761,15 +761,22 @@ export function VisualWorkflowDesigner({
         messageText = data.content
       }
       
+      console.log(`[VD handleMessage] agentName="${agentName}", messageText="${messageText?.substring(0, 50)}..."`)
+      
       // Check if this is a foundry-host-agent orchestration message
       if (agentName.toLowerCase().includes('host') || agentName.toLowerCase().includes('foundry-host-agent')) {
+        console.log(`[VD] 📤 HOST MESSAGE: "${messageText?.substring(0, 100)}"`)
         // Display in bottom right corner - add to stack
         if (messageText) {
-          setHostMessages(prev => [...prev, {
-            message: messageText,
-            target: "Orchestrator",
-            timestamp: Date.now()
-          }])
+          setHostMessages(prev => {
+            const newMessages = [...prev, {
+              message: messageText,
+              target: "Orchestrator",
+              timestamp: Date.now()
+            }]
+            console.log(`[VD] Host messages count: ${newMessages.length}`)
+            return newMessages
+          })
         }
         return
       }
@@ -801,10 +808,28 @@ export function VisualWorkflowDesigner({
       }
     }
     
-    // Remote agent activity - update step with content
+    // Remote agent activity - update step with content OR show host messages
     const handleRemoteAgentActivity = (data: any) => {
       const { agentName, content } = data
       if (!agentName || !content) return
+      
+      console.log(`[VD handleRemoteAgentActivity] agentName="${agentName}", content="${content?.substring(0, 50)}..."`)
+      
+      // Check if this is a foundry-host-agent orchestration message
+      if (agentName.toLowerCase().includes('host') || agentName.toLowerCase().includes('foundry-host-agent')) {
+        console.log(`[VD] 📤 HOST ACTIVITY: "${content?.substring(0, 100)}"`)
+        // Display in bottom right corner - add to stack
+        setHostMessages(prev => {
+          const newMessages = [...prev, {
+            message: content,
+            target: "Orchestrator",
+            timestamp: Date.now()
+          }]
+          console.log(`[VD] Host messages count: ${newMessages.length}`)
+          return newMessages
+        })
+        return
+      }
       
       const stepId = findStepForAgent(agentName)
       if (!stepId) return
@@ -2135,6 +2160,7 @@ export function VisualWorkflowDesigner({
         const now = Date.now()
         const MESSAGE_DISPLAY_TIME = 3000 // 3 seconds
         const recentHostMessages = hostMessages.filter(msg => now - msg.timestamp < MESSAGE_DISPLAY_TIME)
+        console.log(`[VD Render] Total host messages: ${hostMessages.length}, Recent: ${recentHostMessages.length}`)
         
         if (recentHostMessages.length > 0) {
           ctx.save()
