@@ -2089,7 +2089,7 @@ export function VisualWorkflowDesigner({
             // Show a "+" button to expand messages
             const buttonSize = 32
             const buttonX = x - buttonSize / 2
-            const buttonY = y - 55
+            const buttonY = y - 60
               
               ctx.save()
               
@@ -2134,7 +2134,7 @@ export function VisualWorkflowDesigner({
               ctx.restore()
             } else {
               // Show all messages stacked
-              let currentY = y - 70 // Start position above agent
+              let currentY = y - 60 // Start position above agent
               
               // Draw collapse button first (above all messages)
               const collapseButtonSize = 28
@@ -2417,7 +2417,7 @@ export function VisualWorkflowDesigner({
             // Check for expand button click
             const buttonSize = 32
             const buttonX = step.x - buttonSize / 2
-            const buttonY = step.y - 55
+            const buttonY = step.y - 60
             
             if (canvasX >= buttonX && canvasX <= buttonX + buttonSize &&
                 canvasY >= buttonY && canvasY <= buttonY + buttonSize) {
@@ -2429,7 +2429,7 @@ export function VisualWorkflowDesigner({
             // Check for collapse button click
             const buttonSize = 28
             const buttonX = step.x - buttonSize / 2
-            const buttonY = step.y - 70 - buttonSize
+            const buttonY = step.y - 60 - buttonSize
             
             if (canvasX >= buttonX && canvasX <= buttonX + buttonSize &&
                 canvasY >= buttonY && canvasY <= buttonY + buttonSize) {
