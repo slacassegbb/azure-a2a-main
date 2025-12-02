@@ -2092,7 +2092,7 @@ export function VisualWorkflowDesigner({
             // Show a "+" button to expand messages
             const buttonSize = 32
             const buttonX = x - buttonSize / 2
-            const buttonY = y - 60
+            const buttonY = y - 80
               
               ctx.save()
               
@@ -2140,7 +2140,7 @@ export function VisualWorkflowDesigner({
               // Draw collapse button at same position as expand button
               const collapseButtonSize = 28
               const collapseButtonX = x - collapseButtonSize / 2
-              const collapseButtonY = y - 60
+              const collapseButtonY = y - 80
               
               ctx.save()
               
@@ -2418,7 +2418,7 @@ export function VisualWorkflowDesigner({
             // Check for expand button click
             const buttonSize = 32
             const buttonX = step.x - buttonSize / 2
-            const buttonY = step.y - 60
+            const buttonY = step.y - 80
             
             if (canvasX >= buttonX && canvasX <= buttonX + buttonSize &&
                 canvasY >= buttonY && canvasY <= buttonY + buttonSize) {
@@ -2430,7 +2430,7 @@ export function VisualWorkflowDesigner({
             // Check for collapse button click
             const buttonSize = 28
             const buttonX = step.x - buttonSize / 2
-            const buttonY = step.y - 60
+            const buttonY = step.y - 80
             
             if (canvasX >= buttonX && canvasX <= buttonX + buttonSize &&
                 canvasY >= buttonY && canvasY <= buttonY + buttonSize) {
