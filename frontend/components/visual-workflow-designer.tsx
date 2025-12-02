@@ -3080,9 +3080,100 @@ export function VisualWorkflowDesigner({
             />
           </div>
 
-          <div className="text-xs text-slate-500">
-            <span className="font-medium">Tips:</span> Drag agents to reposition • Click description to edit (Enter to save, Esc to cancel) • Click arrow to connect • Click red X to delete • Drag canvas to pan • Scroll to zoom
-          </div>
+          {/* Workflow Analytics */}
+          {(() => {
+            // Calculate totals from all step statuses
+            let totalTokens = 0
+            let totalTime = 0
+            let completedAgents = 0
+            
+            stepStatuses.forEach((status) => {
+              if (status.tokenUsage?.total_tokens) {
+                totalTokens += status.tokenUsage.total_tokens
+              }
+              if (status.duration) {
+                totalTime += status.duration
+              }
+              if (status.status === "completed") {
+                completedAgents++
+              }
+            })
+            
+            const formatTokens = (tokens: number) => {
+              if (tokens >= 1000000) return `${(tokens / 1000000).toFixed(1)}M`
+              if (tokens >= 1000) return `${(tokens / 1000).toFixed(1)}K`
+              return tokens.toString()
+            }
+            
+            const hasData = totalTokens > 0 || totalTime > 0
+            
+            return (
+              <div className="flex items-center gap-6 px-4 py-2 bg-slate-800/50 rounded-lg border border-slate-700/50">
+                {/* Total Time */}
+                <div className="flex items-center gap-2">
+                  <div className="flex items-center justify-center w-8 h-8 rounded-full bg-emerald-500/20 border border-emerald-500/30">
+                    <span className="text-emerald-400">⏱️</span>
+                  </div>
+                  <div>
+                    <div className="text-xs text-slate-500 uppercase tracking-wide">Total Time</div>
+                    <div className="text-lg font-bold text-emerald-400">
+                      {hasData ? `${totalTime.toFixed(1)}s` : "—"}
+                    </div>
+                  </div>
+                </div>
+                
+                {/* Divider */}
+                <div className="w-px h-10 bg-slate-700"></div>
+                
+                {/* Total Tokens */}
+                <div className="flex items-center gap-2">
+                  <div className="flex items-center justify-center w-8 h-8 rounded-full bg-amber-500/20 border border-amber-500/30">
+                    <span className="text-amber-400">🎟️</span>
+                  </div>
+                  <div>
+                    <div className="text-xs text-slate-500 uppercase tracking-wide">Total Tokens</div>
+                    <div className="text-lg font-bold text-amber-400">
+                      {hasData ? formatTokens(totalTokens) : "—"}
+                    </div>
+                  </div>
+                </div>
+                
+                {/* Divider */}
+                <div className="w-px h-10 bg-slate-700"></div>
+                
+                {/* Agents Completed */}
+                <div className="flex items-center gap-2">
+                  <div className="flex items-center justify-center w-8 h-8 rounded-full bg-indigo-500/20 border border-indigo-500/30">
+                    <span className="text-indigo-400">✓</span>
+                  </div>
+                  <div>
+                    <div className="text-xs text-slate-500 uppercase tracking-wide">Agents</div>
+                    <div className="text-lg font-bold text-indigo-400">
+                      {completedAgents > 0 ? `${completedAgents}/${workflowSteps.length}` : `0/${workflowSteps.length}`}
+                    </div>
+                  </div>
+                </div>
+                
+                {/* Avg per Agent */}
+                {completedAgents > 0 && (
+                  <>
+                    <div className="w-px h-10 bg-slate-700"></div>
+                    <div className="flex items-center gap-2">
+                      <div className="flex items-center justify-center w-8 h-8 rounded-full bg-purple-500/20 border border-purple-500/30">
+                        <span className="text-purple-400">📊</span>
+                      </div>
+                      <div>
+                        <div className="text-xs text-slate-500 uppercase tracking-wide">Avg/Agent</div>
+                        <div className="text-lg font-bold text-purple-400">
+                          {(totalTime / completedAgents).toFixed(1)}s
+                        </div>
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+            )
+          })()}
         </div>
 
         {/* Orchestration Sidebar - Collapsible */}
