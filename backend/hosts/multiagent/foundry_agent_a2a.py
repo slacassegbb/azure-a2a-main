@@ -6554,8 +6554,12 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
 
             return text_content
         elif hasattr(part, 'root') and part.root.kind == 'data':
-            print(f"DataPart data: {part.root.data} (type: {type(part.root.data)})")
-            return part.root.data
+            data = part.root.data
+            # Skip token_usage DataParts - already extracted earlier, not for main chat
+            if isinstance(data, dict) and data.get('type') == 'token_usage':
+                return None
+            print(f"DataPart data: {data} (type: {type(data)})")
+            return data
         elif hasattr(part, 'root') and part.root.kind == 'file':
             # A2A protocol compliant file handling with enterprise security
             file_id = part.root.file.name

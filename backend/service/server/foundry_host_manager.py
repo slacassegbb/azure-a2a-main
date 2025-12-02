@@ -566,15 +566,6 @@ class FoundryHostManager(ApplicationManager):
 
         for resp_index, resp in enumerate(responses):
             log_debug(f"Response {resp_index}: type={type(resp)}, is_dict={isinstance(resp, dict)}")
-            
-            # Skip token_usage responses - they're only for Visual Designer, not main chat
-            if isinstance(resp, dict) and resp.get("type") == "token_usage":
-                log_debug(f"Skipping token_usage dict response (not for main chat)")
-                continue
-            if isinstance(resp, DataPart) and isinstance(resp.data, dict) and resp.data.get("type") == "token_usage":
-                log_debug(f"Skipping token_usage DataPart response (not for main chat)")
-                continue
-            
             if isinstance(resp, dict):
                 log_debug(f"Response {resp_index} dict keys: {list(resp.keys())}")
                 log_debug(f"Response {resp_index} has artifact-uri: {'artifact-uri' in resp}")
@@ -641,21 +632,10 @@ class FoundryHostManager(ApplicationManager):
                         image_parts = []
                         for part in msg.parts:
                             log_debug(f"Processing part: {type(part)}, has root: {hasattr(part, 'root')}")
-                            
-                            # Handle both wrapped (Part with .root) and unwrapped (raw TextPart/DataPart) parts
-                            if hasattr(part, 'root'):
-                                root = part.root
-                            else:
-                                root = part  # Part is already the actual type (TextPart, DataPart, etc.)
-                            
+                            root = part.root if hasattr(part, 'root') else part
                             if isinstance(root, TextPart):
                                 text_parts.append(root.text)
                             elif isinstance(root, DataPart) and isinstance(root.data, dict):
-                                # Skip token_usage DataParts - they're for Visual Designer only, not main chat
-                                if root.data.get("type") == "token_usage":
-                                    log_debug(f"Skipping token_usage DataPart (not for main chat display)")
-                                    continue
-                                    
                                 artifact_uri = root.data.get("artifact-uri")
                                 log_debug(f"Found DataPart with dict, has artifact-uri: {bool(artifact_uri)}")
                                 if artifact_uri:
@@ -670,7 +650,8 @@ class FoundryHostManager(ApplicationManager):
                                         "status": root.data.get("status"),
                                         "sourceUrl": root.data.get("source-url"),
                                     })
-                                else:
+                                elif root.data.get("type") != "token_usage":
+                                    # Only add non-token_usage DataParts as text
                                     text_parts.append(json.dumps(root.data))
                         if text_parts:
                             event_data["content"].append({
