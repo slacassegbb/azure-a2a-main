@@ -158,6 +158,7 @@ export function VisualWorkflowDesigner({
   // Track which steps have been assigned (separate from status which can be corrupted by out-of-order events)
   const assignedStepsRef = useRef<Set<string>>(new Set())
   const [hostMessages, setHostMessages] = useState<Array<{ message: string, target: string, timestamp: number }>>([])
+  const orchestrationSidebarRef = useRef<HTMLDivElement>(null)
   
   // Event Hub for live updates
   const { subscribe, unsubscribe, emit } = useEventHub()
@@ -2155,91 +2156,7 @@ export function VisualWorkflowDesigner({
         ctx.setLineDash([])
       }
       
-      // Host agent messages in bottom right corner - stack them up
-      if (hostMessages.length > 0) {
-        const now = Date.now()
-        const MESSAGE_DISPLAY_TIME = 3000 // 3 seconds
-        const recentHostMessages = hostMessages.filter(msg => now - msg.timestamp < MESSAGE_DISPLAY_TIME)
-        console.log(`[VD Render] Total host messages: ${hostMessages.length}, Recent: ${recentHostMessages.length}`)
-        
-        if (recentHostMessages.length > 0) {
-          ctx.save()
-          
-          const messageMaxWidth = 300
-          const padding = 12
-          const lineHeight = 16
-          const labelHeight = 22
-          const boxSpacing = 10
-          
-          let currentY = rect.height - 20 // Start from bottom
-          
-          // Draw each message from bottom to top
-          for (let msgIndex = recentHostMessages.length - 1; msgIndex >= 0; msgIndex--) {
-            const hostMsg = recentHostMessages[msgIndex]
-            
-            // Word wrap the message
-            ctx.font = "13px system-ui"
-            const words = hostMsg.message.split(' ')
-            const lines: string[] = []
-            let currentLine = words[0] || ''
-            
-            for (let i = 1; i < words.length; i++) {
-              const testLine = currentLine + ' ' + words[i]
-              const metrics = ctx.measureText(testLine)
-              if (metrics.width > messageMaxWidth && currentLine.length > 0) {
-                lines.push(currentLine)
-                currentLine = words[i]
-              } else {
-                currentLine = testLine
-              }
-            }
-            lines.push(currentLine)
-            
-            // Limit to 6 lines per message
-            const displayLines = lines.slice(0, 6)
-            if (lines.length > 6) {
-              displayLines[5] = displayLines[5].substring(0, 40) + '...'
-            }
-            
-            const boxHeight = displayLines.length * lineHeight + padding * 2 + labelHeight
-            const boxWidth = messageMaxWidth + padding * 2
-            
-            // Position box
-            const boxX = rect.width - boxWidth - 20
-            const boxY = currentY - boxHeight
-            
-            // Draw message box with host color
-            const gradient = ctx.createLinearGradient(boxX, boxY, boxX, boxY + boxHeight)
-            gradient.addColorStop(0, 'rgba(30, 41, 59, 0.95)')
-            gradient.addColorStop(1, 'rgba(15, 23, 42, 0.95)')
-            ctx.fillStyle = gradient
-            ctx.fillRect(boxX, boxY, boxWidth, boxHeight)
-            
-            // Border with host color
-            ctx.strokeStyle = HOST_COLOR
-            ctx.lineWidth = 2
-            ctx.strokeRect(boxX, boxY, boxWidth, boxHeight)
-            
-            // Label
-            ctx.fillStyle = HOST_COLOR
-            ctx.font = "bold 12px system-ui"
-            ctx.textAlign = "left"
-            ctx.fillText(`📤 ${hostMsg.target}`, boxX + padding, boxY + padding + 12)
-            
-            // Message text
-            ctx.fillStyle = "rgba(255, 255, 255, 0.95)"
-            ctx.font = "13px system-ui"
-            displayLines.forEach((line, i) => {
-              ctx.fillText(line, boxX + padding, boxY + padding + labelHeight + 4 + i * lineHeight)
-            })
-            
-            // Move up for next message
-            currentY = boxY - boxSpacing
-          }
-          
-          ctx.restore()
-        }
-      }
+      // Orchestration sidebar will be rendered separately in JSX, not on canvas
     }
 
     let animationFrameId = requestAnimationFrame(function animate() {
@@ -2261,6 +2178,13 @@ export function VisualWorkflowDesigner({
       setShowCursor(true)
     }
   }, [editingStepId])
+
+  // Auto-scroll orchestration sidebar to bottom when new messages arrive
+  useEffect(() => {
+    if (orchestrationSidebarRef.current) {
+      orchestrationSidebarRef.current.scrollTop = orchestrationSidebarRef.current.scrollHeight
+    }
+  }, [hostMessages])
 
   // Mouse handlers for pan and agent dragging
   useEffect(() => {
@@ -2892,6 +2816,44 @@ export function VisualWorkflowDesigner({
             <span className="font-medium">Tips:</span> Drag agents to reposition • Click description to edit (Enter to save, Esc to cancel) • Click arrow to connect • Click red X to delete • Drag canvas to pan • Scroll to zoom
           </div>
         </div>
+
+        {/* Orchestration Sidebar - Always visible when messages exist */}
+        {hostMessages.length > 0 && (
+          <div className="w-80 flex flex-col bg-slate-900 rounded-lg border border-slate-700 overflow-hidden">
+            <div className="p-3 border-b border-slate-700 bg-slate-800/50">
+              <h3 className="text-sm font-semibold text-indigo-400 flex items-center gap-2">
+                <div className="h-2 w-2 rounded-full bg-indigo-400 animate-pulse"></div>
+                Orchestrator Activity
+              </h3>
+              <p className="text-xs text-slate-400 mt-1">Real-time workflow planning</p>
+            </div>
+            
+            <div 
+              ref={orchestrationSidebarRef}
+              className="flex-1 overflow-y-auto p-3 space-y-2 max-h-[600px] scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent"
+            >
+              {hostMessages.map((msg, idx) => (
+                <div 
+                  key={idx} 
+                  className="p-3 bg-slate-800/50 rounded-lg border border-slate-700/50 hover:border-indigo-500/50 transition-colors"
+                >
+                  <div className="flex items-center gap-2 mb-2">
+                    <div className="h-1.5 w-1.5 rounded-full bg-indigo-400"></div>
+                    <span className="text-xs font-semibold text-indigo-400">
+                      {msg.target}
+                    </span>
+                    <span className="text-xs text-slate-500 ml-auto">
+                      {new Date(msg.timestamp).toLocaleTimeString()}
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-300 leading-relaxed whitespace-pre-wrap">
+                    {msg.message}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Workflow Catalog Sidebar */}
         {showCatalog && (
