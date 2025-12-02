@@ -1078,5 +1078,121 @@
         ]
       }
     ]
+  },
+  {
+    "name": "AI Foundry Reporter Agent",
+    "description": "A professional report creation agent powered by Azure AI Foundry. Creates executive summaries, technical analyses, project status reports, and custom reports with structured templates.",
+    "version": "1.0.0",
+    "url": "http://localhost:9032/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "executive_summary_report",
+        "name": "Executive Summary Report",
+        "description": "Creates high-level executive summary reports for leadership and stakeholders with key findings, recommendations, and next steps.",
+        "examples": [
+          "Create an executive summary about our Q4 performance",
+          "Generate a leadership report on the new product launch",
+          "Write an executive overview of the market analysis"
+        ],
+        "tags": [
+          "report",
+          "executive",
+          "summary",
+          "leadership",
+          "stakeholder"
+        ]
+      },
+      {
+        "id": "technical_analysis_report",
+        "name": "Technical Analysis Report",
+        "description": "Creates detailed technical analysis reports with metrics, data, risk assessments, and technical recommendations.",
+        "examples": [
+          "Create a technical analysis of our system architecture",
+          "Generate a technical report on the API performance issues",
+          "Write a detailed analysis of the security vulnerabilities"
+        ],
+        "tags": [
+          "report",
+          "technical",
+          "analysis",
+          "metrics",
+          "engineering"
+        ]
+      },
+      {
+        "id": "project_status_report",
+        "name": "Project Status Report",
+        "description": "Creates project status reports with progress updates, milestones, issues, blockers, and outlook.",
+        "examples": [
+          "Create a project status report for the migration project",
+          "Generate a weekly status update for the development team",
+          "Write a progress report on the implementation phase"
+        ],
+        "tags": [
+          "report",
+          "project",
+          "status",
+          "progress",
+          "milestone"
+        ]
+      },
+      {
+        "id": "custom_report",
+        "name": "Custom Report",
+        "description": "Creates custom reports with user-defined sections and structure for any topic or purpose.",
+        "examples": [
+          "Create a report on AI trends in healthcare with custom sections",
+          "Generate a competitive analysis report",
+          "Write a research summary report on renewable energy"
+        ],
+        "tags": [
+          "report",
+          "custom",
+          "flexible",
+          "document"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Email Agent",
+    "description": "A conversational assistant that helps you communicate via email. Describe what you want to say and to whom, and I'll help compose and send the message.",
+    "version": "1.0.0",
+    "url": "http://localhost:9029/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "email_communication",
+        "name": "Email Communication",
+        "description": "A conversational assistant that helps compose and send professional emails. Just describe what you want to communicate and who should receive it.",
+        "examples": [
+          "I need to ask John for a project update",
+          "Help me write a message to the client about the deadline",
+          "I want to follow up with the team about the meeting"
+        ],
+        "tags": [
+          "communication",
+          "writing",
+          "messaging"
+        ]
+      }
+    ]
   }
 ]
