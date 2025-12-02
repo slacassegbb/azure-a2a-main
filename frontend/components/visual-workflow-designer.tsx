@@ -159,7 +159,7 @@ export function VisualWorkflowDesigner({
   const taskIdToStepRef = useRef<Map<string, string>>(new Map())
   // Track which steps have been assigned (separate from status which can be corrupted by out-of-order events)
   const assignedStepsRef = useRef<Set<string>>(new Set())
-  const [hostMessages, setHostMessages] = useState<Array<{ message: string, target: string, timestamp: number }>>([])
+  const [hostMessages, setHostMessages] = useState<Array<{ message: string, target: string, timestamp: number, agentColor?: string, isHost?: boolean }>>([])
   const orchestrationSidebarRef = useRef<HTMLDivElement>(null)
   const [showOrchestrationSidebar, setShowOrchestrationSidebar] = useState(true)
   
@@ -791,13 +791,15 @@ export function VisualWorkflowDesigner({
       // Check if this is a foundry-host-agent orchestration message
       if (agentName.toLowerCase().includes('host') || agentName.toLowerCase().includes('foundry-host-agent')) {
         console.log(`[VD] 📤 HOST MESSAGE: "${messageText?.substring(0, 100)}"`)
-        // Display in bottom right corner - add to stack
+        // Display in sidebar
         if (messageText) {
           setHostMessages(prev => {
             const newMessages = [...prev, {
               message: messageText,
               target: "Orchestrator",
-              timestamp: Date.now()
+              timestamp: Date.now(),
+              agentColor: "#6366f1",
+              isHost: true
             }]
             console.log(`[VD] Host messages count: ${newMessages.length}`)
             return newMessages
@@ -813,6 +815,10 @@ export function VisualWorkflowDesigner({
       const current = stepStatusesRef.current.get(stepId)
       const currentStatus = current?.status || "working"
       
+      // Get agent color from workflow steps
+      const agentStep = workflowStepsRef.current.find(s => s.id === stepId)
+      const agentColor = agentStep?.agentColor || "#6366f1"
+      
       // Handle images if we found a step
       if (hasImages && data.content && Array.isArray(data.content)) {
         const imageContents = data.content.filter((c: any) => c.type === "image")
@@ -824,6 +830,15 @@ export function VisualWorkflowDesigner({
       // Add text message as a separate bubble
       if (messageText) {
         updateStep(stepId, currentStatus, messageText)
+        
+        // Also add to orchestration sidebar
+        setHostMessages(prev => [...prev, {
+          message: messageText,
+          target: agentName,
+          timestamp: Date.now(),
+          agentColor: agentColor,
+          isHost: false
+        }])
         
         if (waitingStepIdRef.current === stepId) {
           setWaitingMessage(messageText)
@@ -843,12 +858,14 @@ export function VisualWorkflowDesigner({
       // Check if this is a foundry-host-agent orchestration message
       if (agentName.toLowerCase().includes('host') || agentName.toLowerCase().includes('foundry-host-agent')) {
         console.log(`[VD] 📤 HOST ACTIVITY: "${content?.substring(0, 100)}"`)
-        // Display in bottom right corner - add to stack
+        // Display in sidebar
         setHostMessages(prev => {
           const newMessages = [...prev, {
             message: content,
             target: "Orchestrator",
-            timestamp: Date.now()
+            timestamp: Date.now(),
+            agentColor: "#6366f1",
+            isHost: true
           }]
           console.log(`[VD] Host messages count: ${newMessages.length}`)
           return newMessages
@@ -864,6 +881,18 @@ export function VisualWorkflowDesigner({
       const preservedStatus = (current?.status === "completed" || current?.status === "waiting") 
         ? current.status : "working"
       updateStep(stepId, preservedStatus, content)
+      
+      // Get agent color and add to sidebar
+      const agentStep = workflowStepsRef.current.find(s => s.id === stepId)
+      const agentColor = agentStep?.agentColor || "#6366f1"
+      
+      setHostMessages(prev => [...prev, {
+        message: content,
+        target: agentName,
+        timestamp: Date.now(),
+        agentColor: agentColor,
+        isHost: false
+      }])
       
       if (waitingStepIdRef.current === stepId) {
         setWaitingMessage(content)
@@ -2963,9 +2992,9 @@ export function VisualWorkflowDesigner({
               <div>
                 <h3 className="text-sm font-semibold text-indigo-400 flex items-center gap-2">
                   <div className="h-2 w-2 rounded-full bg-indigo-400 animate-pulse"></div>
-                  Orchestrator Activity
+                  Workflow Activity
                 </h3>
-                <p className="text-xs text-slate-400 mt-1">Real-time workflow planning</p>
+                <p className="text-xs text-slate-400 mt-1">All agent messages & orchestration</p>
               </div>
               <button
                 onClick={() => setShowOrchestrationSidebar(false)}
@@ -2980,25 +3009,40 @@ export function VisualWorkflowDesigner({
               ref={orchestrationSidebarRef}
               className="flex-1 overflow-y-auto p-3 space-y-2 max-h-[600px] scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent"
             >
-              {hostMessages.map((msg, idx) => (
-                <div 
-                  key={idx} 
-                  className="p-3 bg-slate-800/50 rounded-lg border border-slate-700/50 hover:border-indigo-500/50 transition-colors"
-                >
-                  <div className="flex items-center gap-2 mb-2">
-                    <div className="h-1.5 w-1.5 rounded-full bg-indigo-400"></div>
-                    <span className="text-xs font-semibold text-indigo-400">
-                      {msg.target}
-                    </span>
-                    <span className="text-xs text-slate-500 ml-auto">
-                      {new Date(msg.timestamp).toLocaleTimeString()}
-                    </span>
+              {hostMessages.map((msg, idx) => {
+                const messageColor = msg.agentColor || "#6366f1"
+                const isHost = msg.isHost !== false // Default to true for backwards compatibility
+                
+                return (
+                  <div 
+                    key={idx} 
+                    className="p-3 bg-slate-800/50 rounded-lg border border-slate-700/50 hover:border-opacity-100 transition-colors"
+                    style={{ 
+                      borderColor: `${messageColor}40`,
+                      '--hover-border': messageColor 
+                    } as any}
+                  >
+                    <div className="flex items-center gap-2 mb-2">
+                      <div 
+                        className="h-1.5 w-1.5 rounded-full"
+                        style={{ backgroundColor: messageColor }}
+                      ></div>
+                      <span 
+                        className="text-xs font-semibold"
+                        style={{ color: messageColor }}
+                      >
+                        {isHost ? "🎯 " : "🤖 "}{msg.target}
+                      </span>
+                      <span className="text-xs text-slate-500 ml-auto">
+                        {new Date(msg.timestamp).toLocaleTimeString()}
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-300 leading-relaxed whitespace-pre-wrap">
+                      {msg.message}
+                    </p>
                   </div>
-                  <p className="text-xs text-slate-300 leading-relaxed whitespace-pre-wrap">
-                    {msg.message}
-                  </p>
-                </div>
-              ))}
+                )
+              })}
             </div>
           </div>
         )}
@@ -3047,11 +3091,11 @@ export function VisualWorkflowDesigner({
             <button
               onClick={() => setShowOrchestrationSidebar(true)}
               className="p-2 bg-indigo-900/80 hover:bg-indigo-800 text-indigo-200 rounded-lg border border-indigo-600 shadow-lg transition-all hover:scale-105"
-              title="Show orchestration activity"
+              title="Show workflow activity"
             >
               <div className="flex items-center gap-2">
                 <ChevronLeft className="h-4 w-4" />
-                <span className="text-xs font-medium">Orchestrator</span>
+                <span className="text-xs font-medium">Activity</span>
                 <div className="h-2 w-2 rounded-full bg-indigo-400 animate-pulse"></div>
               </div>
             </button>
