@@ -669,6 +669,17 @@ export function VisualWorkflowDesigner({
       if (status.length > 30 && !status.includes("Planning") && !status.includes("Initializing")) {
         const current = stepStatusesRef.current.get(stepId)
         updateStep(stepId, current?.status || "working", status)
+        
+        // Add to sidebar
+        const agentStep = workflowStepsRef.current.find(s => s.id === stepId)
+        const agentColor = agentStep?.agentColor || "#6366f1"
+        setHostMessages(prev => [...prev, {
+          message: status,
+          target: agentName,
+          timestamp: Date.now(),
+          agentColor: agentColor,
+          isHost: false
+        }])
       }
     }
     
@@ -714,6 +725,17 @@ export function VisualWorkflowDesigner({
       const current = stepStatusesRef.current.get(stepId)
       updateStep(stepId, current?.status || "working", content)
       
+      // Add to sidebar
+      const agentStep = workflowStepsRef.current.find(s => s.id === stepId)
+      const agentColor = agentStep?.agentColor || "#6366f1"
+      setHostMessages(prev => [...prev, {
+        message: content,
+        target: agentName,
+        timestamp: Date.now(),
+        agentColor: agentColor,
+        isHost: false
+      }])
+      
       if (waitingStepIdRef.current === stepId) {
         setWaitingMessage(content)
       }
@@ -729,7 +751,19 @@ export function VisualWorkflowDesigner({
       
       const current = stepStatusesRef.current.get(stepId)
       if (current?.status !== "completed" && current?.status !== "waiting") {
-        updateStep(stepId, "working", `🛠️ ${toolName}`)
+        const toolMessage = `🛠️ ${toolName}`
+        updateStep(stepId, "working", toolMessage)
+        
+        // Add to sidebar
+        const agentStep = workflowStepsRef.current.find(s => s.id === stepId)
+        const agentColor = agentStep?.agentColor || "#6366f1"
+        setHostMessages(prev => [...prev, {
+          message: toolMessage,
+          target: agentName,
+          timestamp: Date.now(),
+          agentColor: agentColor,
+          isHost: false
+        }])
       }
     }
     
@@ -754,6 +788,17 @@ export function VisualWorkflowDesigner({
       
       const stepId = findStepForAgent(agentName)
       if (!stepId) return
+      
+      // Add to sidebar
+      const agentStep = workflowStepsRef.current.find(s => s.id === stepId)
+      const agentColor = agentStep?.agentColor || "#6366f1"
+      setHostMessages(prev => [...prev, {
+        message: activity,
+        target: agentName,
+        timestamp: Date.now(),
+        agentColor: agentColor,
+        isHost: false
+      }])
       
       const current = stepStatusesRef.current.get(stepId)
       // Don't change status if completed or waiting
