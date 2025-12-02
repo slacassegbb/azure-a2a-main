@@ -268,6 +268,7 @@ class FoundryHostAgent2:
         self.threads: Dict[str, str] = {}
         self.default_contextId = str(uuid.uuid4())
         self._agent_tasks: Dict[str, Optional[Task]] = {}
+        self.agent_token_usage: Dict[str, dict] = {}  # Store token usage per agent
         
         self.enable_task_evaluation = enable_task_evaluation
         self._active_conversations: Dict[str, str] = {}
@@ -2189,6 +2190,10 @@ Analyze the plan and determine the next step. If you need information that isn't
                             # Include message content so frontend has everything in one event
                             "content": text_content if text_content else None,
                         }
+                        
+                        # Add token usage if available for this agent
+                        if agent_card.name in self.agent_token_usage:
+                            event_data["tokenUsage"] = self.agent_token_usage[agent_card.name]
 
                         event_type = "task_updated"
                         if hasattr(task, 'kind') and task.kind == 'status-update':
@@ -3273,6 +3278,20 @@ Answer with just JSON:
                         print(f"  • task.artifacts count: {len(task.artifacts)}")
                         for idx, art in enumerate(task.artifacts):
                             print(f"  • artifact[{idx}].parts count: {len(art.parts) if art.parts else 0}")
+                    
+                    # Extract token usage from message parts before converting
+                    if task.status.message and task.status.message.parts:
+                        for part in task.status.message.parts:
+                            if hasattr(part, 'root') and hasattr(part.root, 'kind') and part.root.kind == 'data':
+                                data = getattr(part.root, 'data', {})
+                                if isinstance(data, dict) and data.get('type') == 'token_usage':
+                                    self.agent_token_usage[agent_name] = {
+                                        'prompt_tokens': data.get('prompt_tokens', 0),
+                                        'completion_tokens': data.get('completion_tokens', 0),
+                                        'total_tokens': data.get('total_tokens', 0)
+                                    }
+                                    print(f"💰 [TASK] Extracted token usage for {agent_name}: {self.agent_token_usage[agent_name]}")
+                                    break
                     
                     if task.status.message:
                         response_parts.extend(

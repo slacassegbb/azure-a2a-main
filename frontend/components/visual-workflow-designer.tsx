@@ -137,14 +137,18 @@ export function VisualWorkflowDesigner({
     messages: Array<{ text?: string, imageUrl?: string, fileName?: string, timestamp: number }>,
     completedAt?: number,
     startTime?: number,
-    messagesCollapsed?: boolean
+    messagesCollapsed?: boolean,
+    duration?: number,
+    tokenUsage?: { prompt_tokens: number, completion_tokens: number, total_tokens: number }
   }>>(new Map())
   const stepStatusesRef = useRef<Map<string, { 
     status: string, 
     messages: Array<{ text?: string, imageUrl?: string, fileName?: string, timestamp: number }>,
     completedAt?: number,
     startTime?: number,
-    messagesCollapsed?: boolean
+    messagesCollapsed?: boolean,
+    duration?: number,
+    tokenUsage?: { prompt_tokens: number, completion_tokens: number, total_tokens: number }
   }>>(new Map())
   const [waitingStepId, setWaitingStepId] = useState<string | null>(null)
   const waitingStepIdRef = useRef<string | null>(null)
@@ -627,7 +631,14 @@ export function VisualWorkflowDesigner({
     }
 
     // Helper to update step status and add a new message bubble
-    const updateStep = (stepId: string, status: string, newMessage?: string, imageUrl?: string, fileName?: string) => {
+    const updateStep = (
+      stepId: string, 
+      status: string, 
+      newMessage?: string, 
+      imageUrl?: string, 
+      fileName?: string,
+      tokenUsage?: { prompt_tokens: number, completion_tokens: number, total_tokens: number }
+    ) => {
       const current = stepStatusesRef.current.get(stepId)
       const messages = current?.messages || []
       
@@ -646,6 +657,11 @@ export function VisualWorkflowDesigner({
         ? Date.now() 
         : current?.startTime
       
+      // Calculate duration when agent completes
+      const duration = status === "completed" && startTime
+        ? (Date.now() - startTime) / 1000
+        : current?.duration
+      
       // Auto-collapse messages when agent completes
       const shouldCollapse = status === "completed" && messages.length > 0
       
@@ -654,7 +670,9 @@ export function VisualWorkflowDesigner({
         messages,
         completedAt: status === "completed" ? Date.now() : current?.completedAt,
         startTime,
-        messagesCollapsed: shouldCollapse ? true : current?.messagesCollapsed
+        messagesCollapsed: shouldCollapse ? true : current?.messagesCollapsed,
+        duration,
+        tokenUsage: tokenUsage || current?.tokenUsage  // Preserve or update token usage
       }
       stepStatusesRef.current.set(stepId, newEntry)
       setStepStatuses(prev => {
@@ -693,7 +711,7 @@ export function VisualWorkflowDesigner({
     
     // Main handler: task_updated events contain state changes
     const handleTaskUpdate = (data: any) => {
-      const { state, agentName, content, message } = data
+      const { state, agentName, content, message, tokenUsage } = data
       if (!agentName) return
       
       const stepId = findStepForAgent(agentName)
@@ -707,10 +725,10 @@ export function VisualWorkflowDesigner({
       
       const messageContent = content || message
       if (messageContent) {
-        updateStep(stepId, newStatus, messageContent)
+        updateStep(stepId, newStatus, messageContent, undefined, undefined, tokenUsage)
       } else {
-        // Just update status if no message
-        updateStep(stepId, newStatus)
+        // Just update status if no message, but include tokenUsage if available
+        updateStep(stepId, newStatus, undefined, undefined, undefined, tokenUsage)
       }
       
       // Handle waiting state
@@ -1984,17 +2002,34 @@ export function VisualWorkflowDesigner({
         // Display duration beside agent name (right side) if completed
         {
           const stepStatusForDuration = stepStatuses.get(step.id)
-          if (stepStatusForDuration && stepStatusForDuration.status === "completed" && stepStatusForDuration.startTime && stepStatusForDuration.completedAt) {
-            const durationMs = stepStatusForDuration.completedAt - stepStatusForDuration.startTime
-            const durationSec = (durationMs / 1000).toFixed(1)
-            const durationText = `⏱️ ${durationSec}s`
-            
+          if (stepStatusForDuration && stepStatusForDuration.status === "completed") {
             const nameWidth = ctx.measureText(step.agentName).width
+            let rightOffset = nameWidth / 2 + 8
             
-            ctx.font = "10px system-ui"
-            ctx.fillStyle = "#94a3b8"
-            ctx.textAlign = "left"
-            ctx.fillText(durationText, x + nameWidth / 2 + 8, y + nameYOffset)
+            // Display duration if available
+            if (stepStatusForDuration.startTime && stepStatusForDuration.completedAt) {
+              const durationMs = stepStatusForDuration.completedAt - stepStatusForDuration.startTime
+              const durationSec = (durationMs / 1000).toFixed(1)
+              const durationText = `⏱️ ${durationSec}s`
+              
+              ctx.font = "10px system-ui"
+              ctx.fillStyle = "#94a3b8"
+              ctx.textAlign = "left"
+              ctx.fillText(durationText, x + rightOffset, y + nameYOffset)
+              
+              rightOffset += ctx.measureText(durationText).width + 8
+            }
+            
+            // Display token usage if available
+            if (stepStatusForDuration.tokenUsage) {
+              const tokens = stepStatusForDuration.tokenUsage.total_tokens
+              const tokensText = `🎟️ ${tokens.toLocaleString()}`
+              
+              ctx.font = "10px system-ui"
+              ctx.fillStyle = "#94a3b8"
+              ctx.textAlign = "left"
+              ctx.fillText(tokensText, x + rightOffset, y + nameYOffset)
+            }
           }
         }
         
