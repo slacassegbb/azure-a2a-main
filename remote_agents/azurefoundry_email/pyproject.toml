@@ -15,4 +15,5 @@ dependencies = [
     "starlette>=0.35.0",
     "httpx>=0.25.0",
     "gradio>=4.0.0",
+    "fpdf2>=2.7.0",
 ]

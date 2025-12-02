@@ -53,7 +53,13 @@ def get_email_credentials():
     }
 
 
-def send_email(to: str, subject: str, body: str, content_type: str = "HTML") -> dict:
+def send_email(
+    to: str, 
+    subject: str, 
+    body: str, 
+    content_type: str = "HTML",
+    attachments: list = None
+) -> dict:
     """
     Send an email using Microsoft Graph API with application permissions.
     
@@ -62,10 +68,15 @@ def send_email(to: str, subject: str, body: str, content_type: str = "HTML") -> 
         subject: Email subject line
         body: Email body content (HTML or plain text)
         content_type: "HTML" or "Text" (default: "HTML")
+        attachments: Optional list of attachment dicts with keys:
+                     - 'path': file path to attach
+                     - 'name': optional display name (defaults to filename)
     
     Returns:
         dict with 'success' (bool) and 'message' (str)
     """
+    import base64
+    
     credentials = get_email_credentials()
     
     # Validate credentials with helpful error messages
@@ -98,17 +109,48 @@ def send_email(to: str, subject: str, body: str, content_type: str = "HTML") -> 
         # Prepare the Graph API request
         url = f"https://graph.microsoft.com/v1.0/users/{credentials['sender_email']}/sendMail"
         
-        payload = {
-            "message": {
-                "subject": subject,
-                "body": {
-                    "contentType": content_type,
-                    "content": body,
-                },
-                "toRecipients": [
-                    {"emailAddress": {"address": to}}
-                ],
+        message = {
+            "subject": subject,
+            "body": {
+                "contentType": content_type,
+                "content": body,
             },
+            "toRecipients": [
+                {"emailAddress": {"address": to}}
+            ],
+        }
+        
+        # Add attachments if provided
+        if attachments:
+            message["attachments"] = []
+            for attachment in attachments:
+                file_path = attachment.get("path")
+                if file_path and os.path.exists(file_path):
+                    with open(file_path, "rb") as f:
+                        file_content = base64.b64encode(f.read()).decode("utf-8")
+                    
+                    file_name = attachment.get("name") or os.path.basename(file_path)
+                    
+                    # Determine content type
+                    if file_path.endswith(".pdf"):
+                        content_type_attach = "application/pdf"
+                    elif file_path.endswith(".png"):
+                        content_type_attach = "image/png"
+                    elif file_path.endswith(".jpg") or file_path.endswith(".jpeg"):
+                        content_type_attach = "image/jpeg"
+                    else:
+                        content_type_attach = "application/octet-stream"
+                    
+                    message["attachments"].append({
+                        "@odata.type": "#microsoft.graph.fileAttachment",
+                        "name": file_name,
+                        "contentType": content_type_attach,
+                        "contentBytes": file_content,
+                    })
+                    logger.info(f"Added attachment: {file_name}")
+        
+        payload = {
+            "message": message,
             "saveToSentItems": True,
         }
         
@@ -119,7 +161,7 @@ def send_email(to: str, subject: str, body: str, content_type: str = "HTML") -> 
                 "Content-Type": "application/json",
             },
             json=payload,
-            timeout=30,
+            timeout=60,  # Longer timeout for attachments
         )
         
         if response.status_code >= 300:
@@ -127,8 +169,9 @@ def send_email(to: str, subject: str, body: str, content_type: str = "HTML") -> 
             logger.error(error_msg)
             return {"success": False, "message": error_msg}
         
-        logger.info(f"Email sent successfully to {to}")
-        return {"success": True, "message": f"Email sent successfully to {to}"}
+        attachment_info = f" with {len(attachments)} attachment(s)" if attachments else ""
+        logger.info(f"Email sent successfully to {to}{attachment_info}")
+        return {"success": True, "message": f"Email sent successfully to {to}{attachment_info}"}
         
     except Exception as e:
         error_msg = f"Failed to send email: {str(e)}"
@@ -141,7 +184,8 @@ def send_email_with_cc(
     subject: str, 
     body: str, 
     cc: list = None,
-    content_type: str = "HTML"
+    content_type: str = "HTML",
+    attachments: list = None
 ) -> dict:
     """
     Send an email with CC recipients using Microsoft Graph API.
@@ -152,10 +196,15 @@ def send_email_with_cc(
         body: Email body content (HTML or plain text)
         cc: List of CC email addresses (optional)
         content_type: "HTML" or "Text" (default: "HTML")
+        attachments: Optional list of attachment dicts with keys:
+                     - 'path': file path to attach
+                     - 'name': optional display name (defaults to filename)
     
     Returns:
         dict with 'success' (bool) and 'message' (str)
     """
+    import base64
+    
     credentials = get_email_credentials()
     
     # Validate credentials
@@ -193,6 +242,31 @@ def send_email_with_cc(
                 {"emailAddress": {"address": email}} for email in cc if "@" in email
             ]
         
+        # Add attachments if provided
+        if attachments:
+            message["attachments"] = []
+            for attachment in attachments:
+                file_path = attachment.get("path")
+                if file_path and os.path.exists(file_path):
+                    with open(file_path, "rb") as f:
+                        file_content = base64.b64encode(f.read()).decode("utf-8")
+                    
+                    file_name = attachment.get("name") or os.path.basename(file_path)
+                    
+                    if file_path.endswith(".pdf"):
+                        content_type_attach = "application/pdf"
+                    elif file_path.endswith(".png"):
+                        content_type_attach = "image/png"
+                    else:
+                        content_type_attach = "application/octet-stream"
+                    
+                    message["attachments"].append({
+                        "@odata.type": "#microsoft.graph.fileAttachment",
+                        "name": file_name,
+                        "contentType": content_type_attach,
+                        "contentBytes": file_content,
+                    })
+        
         payload = {
             "message": message,
             "saveToSentItems": True,
@@ -205,7 +279,7 @@ def send_email_with_cc(
                 "Content-Type": "application/json",
             },
             json=payload,
-            timeout=30,
+            timeout=60,
         )
         
         if response.status_code >= 300:
@@ -214,8 +288,9 @@ def send_email_with_cc(
             return {"success": False, "message": error_msg}
         
         cc_info = f" (CC: {', '.join(cc)})" if cc else ""
-        logger.info(f"Email sent successfully to {to}{cc_info}")
-        return {"success": True, "message": f"Email sent successfully to {to}{cc_info}"}
+        attachment_info = f" with {len(attachments)} attachment(s)" if attachments else ""
+        logger.info(f"Email sent successfully to {to}{cc_info}{attachment_info}")
+        return {"success": True, "message": f"Email sent successfully to {to}{cc_info}{attachment_info}"}
         
     except Exception as e:
         error_msg = f"Failed to send email: {str(e)}"

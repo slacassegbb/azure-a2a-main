@@ -210,9 +210,8 @@ The system will automatically detect this format and send the email.
 - **NEVER** show a draft and wait for approval
 - **ALWAYS** output the EMAIL_TO_SEND block immediately when you have the required info
 - If you have recipient + subject/topic + content, SEND IT immediately
-- **INCLUDE THE FULL REPORT/CONTENT IN THE EMAIL BODY** - do NOT say "attached" or "see attachment" since we don't support attachments
-- Use HTML formatting in the body for professional appearance (<p>, <h2>, <ul>, <li>, <strong>, etc.)
-- Create professional, well-structured emails automatically
+- **INCLUDE THE FULL REPORT IN THE BODY** - the system will use it to generate the PDF, then automatically shorten the email body
+- Use HTML formatting for professional appearance (<p>, <h2>, <ul>, <li>, <strong>, etc.)
 
 ## EXAMPLE
 
@@ -227,21 +226,20 @@ CC:
 BODY:
 <html>
 <p>Dear Simon,</p>
-<p>Thank you for your time during our AI consultation. Please find your personalized report below:</p>
 <h2>Report Title</h2>
 <h3>Executive Summary</h3>
-<p>...</p>
+<p>Your executive summary content here...</p>
 <h3>Key Findings</h3>
 <ul>
 <li>Finding 1</li>
 <li>Finding 2</li>
 </ul>
 <h3>Recommendations</h3>
-<p>...</p>
-<p>If you have any questions, please don't hesitate to reach out.</p>
-<p>Best regards</p>
+<p>Your recommendations here...</p>
 </html>
 ```END_EMAIL"
+
+(The system will automatically generate a branded PDF from the full report and send a short email body referencing the attachment)
 
 Current date: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}
 """
@@ -357,19 +355,79 @@ Current date: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}
         body_clean = re.sub(r' +', ' ', body_clean)  # Normalize spaces
         body_clean = re.sub(r'\n\s*\n', '\n\n', body_clean.strip())  # Clean up newlines
         
-        clean_summary = f"📧 **Email Sent**\n\n**To:** {to}\n**Subject:** {subject}\n\n{body_clean}"
+        # Check if this looks like a report (for PDF generation)
+        is_report = any(keyword in body.lower() or keyword in subject.lower() 
+                       for keyword in ['report', 'summary', 'analysis', 'findings', 'recommendations'])
+        
+        # Try to generate PDF if it's a report
+        pdf_path = None
+        pdf_generated = False
+        email_body = body  # Default to full body
+        
+        if is_report:
+            try:
+                from pdf_generator import generate_report_pdf, is_pdf_available
+                if is_pdf_available():
+                    # Extract recipient name from email or body
+                    recipient_name = ""
+                    name_match = re.search(r'Dear\s+(\w+)', body, re.IGNORECASE)
+                    if name_match:
+                        recipient_name = name_match.group(1)
+                    
+                    # Generate PDF from FULL body content
+                    pdf_path = generate_report_pdf(
+                        report_content=body,
+                        recipient_name=recipient_name,
+                        recipient_email=to,
+                    )
+                    pdf_generated = True
+                    logger.info(f"Generated PDF report: {pdf_path}")
+                    
+                    # Create a SHORT email body since full report is in PDF
+                    greeting = f"Dear {recipient_name}," if recipient_name else "Hello,"
+                    email_body = f"""<html>
+<p>{greeting}</p>
+<p>Thank you for your time during our consultation.</p>
+<p><strong>Please find your personalized report attached as a PDF.</strong></p>
+<p>The attached document contains our detailed analysis and recommendations tailored to your needs.</p>
+<p>If you have any questions, please don't hesitate to reach out.</p>
+<p>Best regards,<br><strong>Cay Digital Team</strong></p>
+</html>"""
+            except ImportError as e:
+                logger.warning(f"PDF generation not available: {e}")
+            except Exception as e:
+                logger.warning(f"Failed to generate PDF: {e}")
+        
+        # Build clean summary
+        clean_summary = f"📧 **Email Sent**\n\n**To:** {to}\n**Subject:** {subject}"
         if cc and cc.lower() != "body:" and "@" in cc:
-            clean_summary = f"📧 **Email Sent**\n\n**To:** {to}\n**CC:** {cc}\n**Subject:** {subject}\n\n{body_clean}"
+            clean_summary += f"\n**CC:** {cc}"
+        if pdf_generated:
+            clean_summary += f"\n**📎 Attachment:** Cay Digital Report (PDF)"
+        clean_summary += f"\n\n{body_clean}"
         
         # Send the email
         try:
             from email_config import send_email, send_email_with_cc
             
+            # Prepare attachments if PDF was generated
+            attachments = None
+            if pdf_path:
+                attachments = [{"path": pdf_path, "name": f"Cay_Digital_Report_{subject[:30].replace(' ', '_')}.pdf"}]
+            
             if cc and "@" in cc:
                 cc_list = [e.strip() for e in cc.split(",") if "@" in e]
-                result = send_email_with_cc(to=to, subject=subject, body=body, cc=cc_list)
+                result = send_email_with_cc(to=to, subject=subject, body=email_body, cc=cc_list, attachments=attachments)
             else:
-                result = send_email(to=to, subject=subject, body=body)
+                result = send_email(to=to, subject=subject, body=email_body, attachments=attachments)
+            
+            # Clean up temp PDF file
+            if pdf_path:
+                try:
+                    import os
+                    os.remove(pdf_path)
+                except:
+                    pass
             
             if result["success"]:
                 return f"✅ {result['message']}", clean_summary
