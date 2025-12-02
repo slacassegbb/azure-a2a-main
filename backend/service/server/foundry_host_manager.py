@@ -566,6 +566,15 @@ class FoundryHostManager(ApplicationManager):
 
         for resp_index, resp in enumerate(responses):
             log_debug(f"Response {resp_index}: type={type(resp)}, is_dict={isinstance(resp, dict)}")
+            
+            # Skip token_usage responses - they're only for Visual Designer, not main chat
+            if isinstance(resp, dict) and resp.get("type") == "token_usage":
+                log_debug(f"Skipping token_usage dict response (not for main chat)")
+                continue
+            if isinstance(resp, DataPart) and isinstance(resp.data, dict) and resp.data.get("type") == "token_usage":
+                log_debug(f"Skipping token_usage DataPart response (not for main chat)")
+                continue
+            
             if isinstance(resp, dict):
                 log_debug(f"Response {resp_index} dict keys: {list(resp.keys())}")
                 log_debug(f"Response {resp_index} has artifact-uri: {'artifact-uri' in resp}")
@@ -632,7 +641,13 @@ class FoundryHostManager(ApplicationManager):
                         image_parts = []
                         for part in msg.parts:
                             log_debug(f"Processing part: {type(part)}, has root: {hasattr(part, 'root')}")
-                            root = part.root
+                            
+                            # Handle both wrapped (Part with .root) and unwrapped (raw TextPart/DataPart) parts
+                            if hasattr(part, 'root'):
+                                root = part.root
+                            else:
+                                root = part  # Part is already the actual type (TextPart, DataPart, etc.)
+                            
                             if isinstance(root, TextPart):
                                 text_parts.append(root.text)
                             elif isinstance(root, DataPart) and isinstance(root.data, dict):
