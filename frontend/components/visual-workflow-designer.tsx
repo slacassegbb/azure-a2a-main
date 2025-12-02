@@ -1980,9 +1980,8 @@ export function VisualWorkflowDesigner({
         }
         
         ctx.fillText(step.agentName, x, y + nameYOffset)
-        ctx.shadowBlur = 0
         
-        // Display duration if agent is completed
+        // Display duration beside agent name (right side) if completed
         {
           const stepStatusForDuration = stepStatuses.get(step.id)
           if (stepStatusForDuration && stepStatusForDuration.status === "completed" && stepStatusForDuration.startTime && stepStatusForDuration.completedAt) {
@@ -1990,12 +1989,16 @@ export function VisualWorkflowDesigner({
             const durationSec = (durationMs / 1000).toFixed(1)
             const durationText = `⏱️ ${durationSec}s`
             
+            const nameWidth = ctx.measureText(step.agentName).width
+            
             ctx.font = "10px system-ui"
             ctx.fillStyle = "#94a3b8"
-            ctx.textAlign = "center"
-            ctx.fillText(durationText, x, y + nameYOffset + 15)
+            ctx.textAlign = "left"
+            ctx.fillText(durationText, x + nameWidth / 2 + 8, y + nameYOffset)
           }
         }
+        
+        ctx.shadowBlur = 0
         
         // Draw description below agent name (editable) - wrap text to multiple lines
         const descYOffset = nameYOffset + 25
@@ -2134,12 +2137,10 @@ export function VisualWorkflowDesigner({
               ctx.restore()
             } else {
               // Show all messages stacked
-              let currentY = y - 60 // Start position above agent
-              
-              // Draw collapse button first (above all messages)
+              // Draw collapse button at same position as expand button
               const collapseButtonSize = 28
               const collapseButtonX = x - collapseButtonSize / 2
-              const collapseButtonY = currentY - collapseButtonSize
+              const collapseButtonY = y - 60
               
               ctx.save()
               
@@ -2172,8 +2173,8 @@ export function VisualWorkflowDesigner({
               
               ctx.restore()
               
-              // Move current Y up past the button
-              currentY = collapseButtonY - 10
+              // Start messages above the collapse button
+              let currentY = collapseButtonY - 10
               
               // Display each message as a separate bubble, stacking upward
               for (let msgIndex = stepStatus.messages.length - 1; msgIndex >= 0; msgIndex--) {
@@ -2429,7 +2430,7 @@ export function VisualWorkflowDesigner({
             // Check for collapse button click
             const buttonSize = 28
             const buttonX = step.x - buttonSize / 2
-            const buttonY = step.y - 60 - buttonSize
+            const buttonY = step.y - 60
             
             if (canvasX >= buttonX && canvasX <= buttonX + buttonSize &&
                 canvasY >= buttonY && canvasY <= buttonY + buttonSize) {
