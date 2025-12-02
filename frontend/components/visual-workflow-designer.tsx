@@ -132,8 +132,16 @@ export function VisualWorkflowDesigner({
   const [isTesting, setIsTesting] = useState(false)
   const [workflowConversationId, setWorkflowConversationId] = useState<string | null>(null)
   const [testMessages, setTestMessages] = useState<Array<{ role: string, content: string, agent?: string }>>([])
-  const [stepStatuses, setStepStatuses] = useState<Map<string, { status: string, message?: string, imageUrl?: string, fileName?: string, completedAt?: number }>>(new Map())
-  const stepStatusesRef = useRef<Map<string, { status: string, message?: string, imageUrl?: string, fileName?: string, completedAt?: number }>>(new Map())
+  const [stepStatuses, setStepStatuses] = useState<Map<string, { 
+    status: string, 
+    messages: Array<{ text?: string, imageUrl?: string, fileName?: string, timestamp: number }>,
+    completedAt?: number 
+  }>>(new Map())
+  const stepStatusesRef = useRef<Map<string, { 
+    status: string, 
+    messages: Array<{ text?: string, imageUrl?: string, fileName?: string, timestamp: number }>,
+    completedAt?: number 
+  }>>(new Map())
   const [waitingStepId, setWaitingStepId] = useState<string | null>(null)
   const waitingStepIdRef = useRef<string | null>(null)
   // Keep ref in sync with state
@@ -595,19 +603,24 @@ export function VisualWorkflowDesigner({
       return matching.length > 0 ? matching[matching.length - 1].id : null
     }
     
-    // Helper to update step status and message - ALWAYS append messages
-    const updateStep = (stepId: string, status: string, newMessage?: string) => {
+    // Helper to update step status and add a new message bubble
+    const updateStep = (stepId: string, status: string, newMessage?: string, imageUrl?: string, fileName?: string) => {
       const current = stepStatusesRef.current.get(stepId)
-      // Append new messages instead of replacing
-      const message = current?.message && newMessage 
-        ? `${current.message}\n\n${newMessage}` 
-        : newMessage || current?.message
+      const messages = current?.messages || []
+      
+      // Add new message to the array if provided
+      if (newMessage || imageUrl) {
+        messages.push({
+          text: newMessage,
+          imageUrl,
+          fileName,
+          timestamp: Date.now()
+        })
+      }
       
       const newEntry = { 
         status, 
-        message,
-        imageUrl: current?.imageUrl,
-        fileName: current?.fileName,
+        messages,
         completedAt: status === "completed" ? Date.now() : current?.completedAt
       }
       stepStatusesRef.current.set(stepId, newEntry)
@@ -653,8 +666,7 @@ export function VisualWorkflowDesigner({
         updateStep(stepId, newStatus, messageContent)
       } else {
         // Just update status if no message
-        const current = stepStatusesRef.current.get(stepId)
-        updateStep(stepId, newStatus, current?.message)
+        updateStep(stepId, newStatus)
       }
       
       // Handle waiting state
@@ -730,8 +742,16 @@ export function VisualWorkflowDesigner({
       const agentName = data.agentName || data.agent || data.from
       if (!agentName) return
       
+      const stepId = findStepForAgent(agentName)
+      if (!stepId) return
+      
+      const current = stepStatusesRef.current.get(stepId)
+      const currentStatus = current?.status || "working"
+      
       // Extract message text and images from content array
       let messageText = ""
+      let hasImages = false
+      
       if (data.content && Array.isArray(data.content)) {
         const textItem = data.content.find((c: any) => c.type === "text")
         messageText = textItem?.content || textItem?.text || ""
@@ -739,24 +759,10 @@ export function VisualWorkflowDesigner({
         // Extract images from content array (same as main chat)
         const imageContents = data.content.filter((c: any) => c.type === "image")
         if (imageContents.length > 0) {
-          const stepId = findStepForAgent(agentName)
-          if (stepId) {
-            imageContents.forEach((img: any) => {
-              const current = stepStatusesRef.current.get(stepId)
-              const newEntry = {
-                ...current,
-                status: current?.status || "working",
-                imageUrl: img.uri,
-                fileName: img.fileName || "image"
-              }
-              stepStatusesRef.current.set(stepId, newEntry)
-              setStepStatuses(prev => {
-                const newMap = new Map(prev)
-                newMap.set(stepId, newEntry)
-                return newMap
-              })
-            })
-          }
+          hasImages = true
+          imageContents.forEach((img: any) => {
+            updateStep(stepId, currentStatus, undefined, img.uri, img.fileName || "image")
+          })
         }
       } else if (typeof data.message === "string") {
         messageText = data.message
@@ -764,19 +770,16 @@ export function VisualWorkflowDesigner({
         messageText = data.content
       }
       
-      if (!messageText) return
-      
-      const stepId = findStepForAgent(agentName)
-      if (!stepId) return
-      
-      const current = stepStatusesRef.current.get(stepId)
-      updateStep(stepId, current?.status || "working", messageText)
-      
-      if (waitingStepIdRef.current === stepId) {
-        setWaitingMessage(messageText)
+      // Add text message as a separate bubble
+      if (messageText) {
+        updateStep(stepId, currentStatus, messageText)
+        
+        if (waitingStepIdRef.current === stepId) {
+          setWaitingMessage(messageText)
+        }
+        
+        setTestMessages(prev => [...prev, { role: "assistant", content: messageText, agent: agentName }])
       }
-      
-      setTestMessages(prev => [...prev, { role: "assistant", content: messageText, agent: agentName }])
     }
     
     // Remote agent activity - update step with content
@@ -788,15 +791,13 @@ export function VisualWorkflowDesigner({
       if (!stepId) return
       
       const current = stepStatusesRef.current.get(stepId)
-      // Only update if new message is longer
-      if (!current?.message || content.length > current.message.length) {
-        const preservedStatus = (current?.status === "completed" || current?.status === "waiting") 
-          ? current.status : "working"
-        updateStep(stepId, preservedStatus, content)
-        
-        if (waitingStepIdRef.current === stepId) {
-          setWaitingMessage(content)
-        }
+      // Always append new messages
+      const preservedStatus = (current?.status === "completed" || current?.status === "waiting") 
+        ? current.status : "working"
+      updateStep(stepId, preservedStatus, content)
+      
+      if (waitingStepIdRef.current === stepId) {
+        setWaitingMessage(content)
       }
     }
     
@@ -852,18 +853,10 @@ export function VisualWorkflowDesigner({
       const isImage = data.fileInfo.content_type?.startsWith("image/")
       const current = stepStatusesRef.current.get(stepId)
       
-      const newEntry = {
-        ...current,
-        status: current?.status || "working",
-        imageUrl: isImage ? data.fileInfo.uri : current?.imageUrl,
-        fileName: data.fileInfo.filename
+      // Add image/file as a new message bubble
+      if (isImage) {
+        updateStep(stepId, current?.status || "working", undefined, data.fileInfo.uri, data.fileInfo.filename)
       }
-      stepStatusesRef.current.set(stepId, newEntry)
-      setStepStatuses(prev => {
-        const newMap = new Map(prev)
-        newMap.set(stepId, newEntry)
-        return newMap
-      })
     }
     
     // Inference step - update status message
@@ -1202,12 +1195,17 @@ export function VisualWorkflowDesigner({
       setStepStatuses(prev => {
         const newMap = new Map(prev)
         const currentStatus = prev.get(currentWaitingStepId)
-        newMap.set(currentWaitingStepId, { ...currentStatus, status: "working" })
+        newMap.set(currentWaitingStepId, { 
+          status: "working",
+          messages: currentStatus?.messages || [],
+          completedAt: currentStatus?.completedAt
+        })
         return newMap
       })
       stepStatusesRef.current.set(currentWaitingStepId, { 
-        ...stepStatusesRef.current.get(currentWaitingStepId), 
-        status: "working" 
+        status: "working",
+        messages: stepStatusesRef.current.get(currentWaitingStepId)?.messages || [],
+        completedAt: stepStatusesRef.current.get(currentWaitingStepId)?.completedAt
       })
     }
     
@@ -1927,18 +1925,92 @@ export function VisualWorkflowDesigner({
         // Use step ID to get the correct status (handles duplicate agents)
         {
           const stepStatus = stepStatuses.get(step.id)
-          if (stepStatus) {
+          if (stepStatus && stepStatus.messages && stepStatus.messages.length > 0) {
             const messageMaxWidth = 250
+            const now = Date.now()
+            const MESSAGE_DISPLAY_TIME = 3000 // 3 seconds
             
-            // Current response display (above the agent)
-            // Always show messages if they exist
-            if (stepStatus.message) {
-              ctx.save()
+            // Filter messages to only show recent ones (within 3 seconds)
+            const recentMessages = stepStatus.messages.filter(msg => now - msg.timestamp < MESSAGE_DISPLAY_TIME)
+            
+            if (recentMessages.length > 0) {
+              let currentY = y - 120 // Start position above agent
               
-              ctx.font = "12px system-ui"
-              const words = stepStatus.message.split(' ')
-              const lines: string[] = []
-              let currentLine = words[0]
+              // Display each message as a separate bubble, stacking upward
+              for (let msgIndex = recentMessages.length - 1; msgIndex >= 0; msgIndex--) {
+                const msg = recentMessages[msgIndex]
+                
+                // Handle image messages
+                if (msg.imageUrl) {
+                  const imageUrl = msg.imageUrl
+                  const imageSize = 120
+                  const imageX = x - imageSize / 2
+                  const imageY = currentY - imageSize - 10
+                  
+                  ctx.save()
+                  
+                  // Draw image background
+                  ctx.shadowColor = "rgba(0, 0, 0, 0.3)"
+                  ctx.shadowBlur = 4
+                  ctx.fillStyle = "#1e293b"
+                  ctx.strokeStyle = step.agentColor
+                  ctx.lineWidth = 3
+                  
+                  ctx.beginPath()
+                  ctx.roundRect(imageX - 4, imageY - 4, imageSize + 8, imageSize + 8, 8)
+                  ctx.fill()
+                  ctx.stroke()
+                  ctx.shadowBlur = 0
+                  
+                  // Load and draw image
+                  let img = imageCache.current.get(imageUrl)
+                  if (!img) {
+                    img = new Image()
+                    const imgRef = img
+                    imgRef.onload = () => {
+                      imageCache.current.set(imageUrl, imgRef)
+                    }
+                    imgRef.onerror = () => {
+                      imageCache.current.delete(imageUrl)
+                    }
+                    imgRef.src = imageUrl
+                    imageCache.current.set(imageUrl, imgRef)
+                  }
+                  
+                  if (img && img.complete && img.naturalWidth > 0) {
+                    ctx.save()
+                    ctx.beginPath()
+                    ctx.roundRect(imageX, imageY, imageSize, imageSize, 4)
+                    ctx.clip()
+                    ctx.drawImage(img, imageX, imageY, imageSize, imageSize)
+                    ctx.restore()
+                  } else {
+                    ctx.fillStyle = "#475569"
+                    ctx.font = "12px system-ui"
+                    ctx.textAlign = "center"
+                    ctx.fillText("Loading...", x, imageY + imageSize / 2)
+                  }
+                  
+                  // Draw filename
+                  ctx.fillStyle = step.agentColor
+                  ctx.font = "600 10px system-ui"
+                  ctx.textAlign = "center"
+                  ctx.fillText(`🖼️ ${msg.fileName || 'Image'}`, x, imageY - 10)
+                  
+                  ctx.restore()
+                  
+                  // Move up for next message
+                  currentY = imageY - 20
+                }
+                
+                // Handle text messages
+                if (msg.text) {
+                  ctx.save()
+                  
+                  ctx.font = "12px system-ui"
+                  const words = msg.text.split(' ')
+                  const lines: string[] = []
+                  let currentLine = words[0]
               
               for (let i = 1; i < words.length; i++) {
                 const testLine = currentLine + ' ' + words[i]
@@ -1957,15 +2029,15 @@ export function VisualWorkflowDesigner({
                 displayLines[9] = displayLines[9].substring(0, 30) + '...'
               }
               
-              const lineHeight = 15
-              const padding = 10
-              const boxWidth = messageMaxWidth + padding * 2
-              const labelSpace = 20
-              const boxHeight = displayLines.length * lineHeight + padding * 2 + labelSpace
-              
-              // Position ABOVE the agent (centered)
-              const responseX = x - boxWidth / 2
-              const responseY = y - 120 // Position above agent
+                  const lineHeight = 15
+                  const padding = 10
+                  const boxWidth = messageMaxWidth + padding * 2
+                  const labelSpace = 20
+                  const boxHeight = displayLines.length * lineHeight + padding * 2 + labelSpace
+                  
+                  // Position centered above current Y
+                  const responseX = x - boxWidth / 2
+                  const responseY = currentY - boxHeight / 2
               
               // Draw response box (matching DAG gradient style)
               const boxGradient = ctx.createLinearGradient(
@@ -1999,93 +2071,30 @@ export function VisualWorkflowDesigner({
               ctx.fillStyle = step.agentColor
               ctx.font = "600 10px system-ui"
               ctx.textAlign = "left"
-              ctx.fillText(`📥 From ${step.agentName}`, responseX + padding, responseY - boxHeight / 2 + padding + 8)
-              
-              // Draw message text
-              ctx.fillStyle = "#e2e8f0"
-              ctx.font = "12px system-ui"
-              ctx.textAlign = "left"
-              
-              for (let i = 0; i < displayLines.length; i++) {
-                ctx.fillText(
-                  displayLines[i],
-                  responseX + padding,
-                  responseY - boxHeight / 2 + padding + 28 + i * lineHeight
-                )
-              }
-              
-              ctx.restore()
-              
-              // Display image below message (matching DAG style)
-              if (stepStatus.imageUrl) {
-                const imageUrl = stepStatus.imageUrl
-                const imageSize = 120
-                const fileDisplayY = responseY + boxHeight / 2 + 20
-                const fileDisplayCenterX = responseX + boxWidth / 2
-                const imageX = fileDisplayCenterX - imageSize / 2
-                const imageY = fileDisplayY
-                
-                ctx.save()
-                
-                // Draw image background (matching DAG style)
-                ctx.shadowColor = "rgba(0, 0, 0, 0.3)"
-                ctx.shadowBlur = 4
-                ctx.fillStyle = "#1e293b"
-                ctx.strokeStyle = step.agentColor
-                ctx.lineWidth = 3
-                
-                ctx.beginPath()
-                ctx.roundRect(imageX - 4, imageY - 4, imageSize + 8, imageSize + 8, 8)
-                ctx.fill()
-                ctx.stroke()
-                ctx.shadowBlur = 0
-                
-                // Load and draw image using cache (matching DAG)
-                let img = imageCache.current.get(imageUrl)
-                if (!img) {
-                  img = new Image()
-                  const imgRef = img
-                  imgRef.onload = () => {
-                    console.log("[VisualWorkflowDesigner] ✅ Image loaded:", imageUrl)
-                    imageCache.current.set(imageUrl, imgRef)
-                  }
-                  imgRef.onerror = () => {
-                    console.error('[VisualWorkflowDesigner] ❌ Failed to load image:', imageUrl)
-                    imageCache.current.delete(imageUrl)
-                  }
-                  imgRef.src = imageUrl
-                  imageCache.current.set(imageUrl, imgRef)
-                }
-                
-                if (img && img.complete && img.naturalWidth > 0) {
-                  ctx.save()
-                  ctx.beginPath()
-                  ctx.roundRect(imageX, imageY, imageSize, imageSize, 4)
-                  ctx.clip()
-                  ctx.drawImage(img, imageX, imageY, imageSize, imageSize)
-                  ctx.restore()
-                } else {
-                  // Show loading indicator (matching DAG)
-                  ctx.fillStyle = "#475569"
-                  ctx.font = "12px system-ui"
-                  ctx.textAlign = "center"
-                  ctx.fillText("Loading...", fileDisplayCenterX, imageY + imageSize / 2)
-                }
-                
-                // Draw filename below image (matching DAG)
-                if (stepStatus.fileName) {
-                  ctx.fillStyle = "#94a3b8"
+                  // Add "From [Agent Name]" label
+                  ctx.fillStyle = step.agentColor
                   ctx.font = "600 10px system-ui"
-                  ctx.textAlign = "center"
-                  const filenameY = imageY + imageSize + 18
-                  let displayName = stepStatus.fileName
-                  if (displayName.length > 20) {
-                    displayName = displayName.substring(0, 17) + "..."
+                  ctx.textAlign = "left"
+                  ctx.fillText(`📥 From ${step.agentName}`, responseX + padding, responseY - boxHeight / 2 + padding + 8)
+                  
+                  // Draw message text
+                  ctx.fillStyle = "#e2e8f0"
+                  ctx.font = "12px system-ui"
+                  ctx.textAlign = "left"
+                  
+                  for (let i = 0; i < displayLines.length; i++) {
+                    ctx.fillText(
+                      displayLines[i],
+                      responseX + padding,
+                      responseY - boxHeight / 2 + padding + 28 + i * lineHeight
+                    )
                   }
-                  ctx.fillText(`📎 ${displayName}`, fileDisplayCenterX, filenameY)
+                  
+                  ctx.restore()
+                  
+                  // Move up for next message
+                  currentY = responseY - boxHeight / 2 - 20
                 }
-                
-                ctx.restore()
               }
             }
           }
@@ -2749,7 +2758,10 @@ export function VisualWorkflowDesigner({
                 const waitingStep = workflowSteps.find(s => s.id === waitingStepId)
                 const waitingStatus = stepStatuses.get(waitingStepId)
                 // Use captured waiting message or fall back to current status message
-                const displayMessage = waitingMessage || waitingStatus?.message
+                const lastMessage = waitingStatus?.messages && waitingStatus.messages.length > 0 
+                  ? waitingStatus.messages[waitingStatus.messages.length - 1].text 
+                  : undefined
+                const displayMessage = waitingMessage || lastMessage
                 return (
                   <div className="mt-3 p-3 bg-orange-900/30 rounded-lg border border-orange-500/50">
                     <div className="flex items-start gap-3">
