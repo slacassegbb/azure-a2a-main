@@ -2015,15 +2015,19 @@ Analyze the plan and determine the next step. If you need information that isn't
             log_debug(f"[STREAMING] Error in task callback context tracking: {e}")
             pass
         
-        # CONSOLIDATED: All events go through _emit_task_event as single emission point
+        # CONSOLIDATED: Only status-update and artifact-update events should update the UI
+        # 'task' events are for internal task creation/tracking, not UI status updates
+        # Emitting 'task' events was causing late "working" events to overwrite "completed" status
         if hasattr(event, 'kind'):
             event_kind = getattr(event, 'kind', 'unknown')
             log_debug(f"[STREAMING] Event kind from {agent_name}: {event_kind}")
             
-            # All meaningful events use _emit_task_event (SINGLE source of truth)
-            if event_kind in ['task', 'artifact-update', 'status-update']:
+            # Only emit status-update and artifact-update to UI (NOT 'task' events)
+            if event_kind in ['artifact-update', 'status-update']:
                 log_debug(f"[STREAMING] Emitting via _emit_task_event for {agent_name}: {event_kind}")
                 self._emit_task_event(event, agent_card)
+            elif event_kind == 'task':
+                log_debug(f"[STREAMING] Skipping UI emit for 'task' event from {agent_name} (internal tracking only)")
             # Skip other intermediate events
         
         # Get or create task for this specific agent
@@ -3256,6 +3260,30 @@ Answer with just JSON:
                 # Truncate very long messages for DAG display
                 if len(clean_message) > 500:
                     clean_message = clean_message[:497] + "..."
+                
+                # IMPORTANT: Emit "working" status BEFORE any other events
+                # This tells the frontend a new task is starting for this agent,
+                # so it can advance to the next step before activity messages arrive
+                async def emit_working_status():
+                    try:
+                        from service.websocket_streamer import get_websocket_streamer
+                        streamer = await get_websocket_streamer()
+                        if streamer:
+                            event_data = {
+                                "taskId": taskId or str(uuid.uuid4()),
+                                "conversationId": contextId,
+                                "contextId": contextId,
+                                "state": "working",
+                                "agentName": agent_name,
+                                "artifactsCount": 0,
+                                "timestamp": __import__('datetime').datetime.utcnow().isoformat(),
+                            }
+                            await streamer._send_event("task_updated", event_data, contextId)
+                            log_debug(f"📡 Emitted working status for {agent_name} BEFORE calling agent")
+                    except Exception as e:
+                        log_debug(f"Error emitting pre-call working status: {e}")
+                
+                await emit_working_status()
                 
                 asyncio.create_task(self._emit_outgoing_message_event(agent_name, clean_message, contextId))
                 
