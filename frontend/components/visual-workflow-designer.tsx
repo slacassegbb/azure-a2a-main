@@ -159,12 +159,9 @@ export function VisualWorkflowDesigner({
   const workflowStepsMapRef = useRef<Map<string, WorkflowStep>>(new Map())
   const imageCache = useRef<Map<string, HTMLImageElement>>(new Map())
   const testTimeoutRef = useRef<NodeJS.Timeout | null>(null)
-  // Track which step is currently active for each agent (prevents late events from going to wrong step)
-  const activeStepPerAgentRef = useRef<Map<string, string>>(new Map())
-  // Track taskId -> stepId mapping for precise routing (each remote agent task has unique taskId)
-  const taskIdToStepRef = useRef<Map<string, string>>(new Map())
-  // Track which steps have been assigned (separate from status which can be corrupted by out-of-order events)
-  const assignedStepsRef = useRef<Set<string>>(new Set())
+  // Track which step ID is currently active for each agent name
+  // When agent "X" has multiple steps, this tracks which step ID is currently receiving events
+  const agentStepIndexRef = useRef<Map<string, string>>(new Map())
   const [hostMessages, setHostMessages] = useState<Array<{ message: string, target: string, timestamp: number, agentColor?: string, isHost?: boolean }>>([])
   const orchestrationSidebarRef = useRef<HTMLDivElement>(null)
   const [showOrchestrationSidebar, setShowOrchestrationSidebar] = useState(true)
@@ -286,9 +283,7 @@ export function VisualWorkflowDesigner({
         setTestMessages([{ role: "user", content: message }])
         setStepStatuses(new Map())
         stepStatusesRef.current = new Map()
-        activeStepPerAgentRef.current = new Map()
-        taskIdToStepRef.current = new Map()
-        assignedStepsRef.current = new Set()
+        agentStepIndexRef.current = new Map()  // Reset agent step counters
         setHostTokenUsage(null)  // Reset host tokens for new workflow
         
         const baseUrl = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
@@ -606,26 +601,44 @@ export function VisualWorkflowDesigner({
   // CLEAN IMPLEMENTATION: Simple, direct event handling
   useEffect(() => {
     
-    // SIMPLE: Find the first step for this agent that isn't completed yet
-    const findStepForAgent = (agentName: string): string | null => {
+    // SIMPLE: Find the correct step for this agent
+    // Track the CURRENT ACTIVE step per agent
+    // Optional: pass isNewTaskStart=true when this is a "working"/"submitted" event to trigger advance
+    const findStepForAgent = (agentName: string, isNewTaskStart: boolean = false): string | null => {
       if (!agentName) return null
       
       const steps = Array.from(workflowStepsRef.current).sort((a, b) => a.order - b.order)
+      const matchingSteps = steps.filter(s => s.agentName === agentName || s.agentId === agentName)
       
-      for (const step of steps) {
-        // Match by agentName or agentId
-        if (step.agentName !== agentName && step.agentId !== agentName) continue
-        
-        // Return first step that isn't completed
-        const status = stepStatusesRef.current.get(step.id)
-        if (!status || status.status !== "completed") {
-          return step.id
+      if (matchingSteps.length === 0) return null
+      
+      // Check if we have an active step for this agent
+      const activeStepId = agentStepIndexRef.current.get(agentName)
+      
+      if (activeStepId) {
+        const activeIndex = matchingSteps.findIndex(s => s.id === activeStepId)
+        if (activeIndex >= 0) {
+          const activeStatus = stepStatusesRef.current.get(activeStepId)
+          
+          // ONLY advance when a new task is starting (working/submitted status event)
+          // AND the current step is completed.
+          // This prevents late messages from step 1 being routed to step 4.
+          // Messages always go to the current active step (even if completed).
+          if (isNewTaskStart && activeStatus?.status === "completed" && activeIndex < matchingSteps.length - 1) {
+            const nextStepId = matchingSteps[activeIndex + 1].id
+            agentStepIndexRef.current.set(agentName, nextStepId)
+            return nextStepId
+          }
+          
+          // Otherwise return the current active step
+          return activeStepId
         }
       }
       
-      // All steps for this agent are completed - return the last one (for late messages)
-      const matching = steps.filter(s => s.agentName === agentName || s.agentId === agentName)
-      return matching.length > 0 ? matching[matching.length - 1].id : null
+      // No active step yet - set and return the first matching step
+      const firstStepId = matchingSteps[0].id
+      agentStepIndexRef.current.set(agentName, firstStepId)
+      return firstStepId
     }
 
     // Helper to update step status and add a new message bubble
@@ -660,15 +673,15 @@ export function VisualWorkflowDesigner({
         ? (Date.now() - startTime) / 1000
         : current?.duration
       
-      // Auto-collapse messages when agent completes
-      const shouldCollapse = status === "completed" && messages.length > 0
+      // Keep messages expanded initially when completing - will collapse after delay
+      const isNewlyCompleted = status === "completed" && current?.status !== "completed"
       
       const newEntry = { 
         status, 
         messages,
         completedAt: status === "completed" ? Date.now() : current?.completedAt,
         startTime,
-        messagesCollapsed: shouldCollapse ? true : current?.messagesCollapsed,
+        messagesCollapsed: current?.messagesCollapsed || false, // Don't immediately collapse
         duration,
         tokenUsage: tokenUsage || current?.tokenUsage  // Preserve or update token usage
       }
@@ -678,6 +691,22 @@ export function VisualWorkflowDesigner({
         newMap.set(stepId, newEntry)
         return newMap
       })
+      
+      // Auto-collapse messages 2 seconds after agent completes (so user can see output)
+      if (isNewlyCompleted && messages.length > 0) {
+        setTimeout(() => {
+          const currentEntry = stepStatusesRef.current.get(stepId)
+          if (currentEntry) {
+            const collapsedEntry = { ...currentEntry, messagesCollapsed: true }
+            stepStatusesRef.current.set(stepId, collapsedEntry)
+            setStepStatuses(prev => {
+              const newMap = new Map(prev)
+              newMap.set(stepId, collapsedEntry)
+              return newMap
+            })
+          }
+        }, 2000)
+      }
     }
     
     // Handle status updates (agent: field instead of agentName)
@@ -712,14 +741,23 @@ export function VisualWorkflowDesigner({
       const { state, agentName, content, message, tokenUsage } = data
       if (!agentName) return
       
-      const stepId = findStepForAgent(agentName)
-      if (!stepId) return
-      
       // Map state to status
       const newStatus = state === "completed" ? "completed" : 
                        state === "failed" ? "failed" : 
                        (state === "input_required" || state === "input-required") ? "waiting" :
                        "working"
+      
+      // When a new task starts (working/submitted), check if we should advance to next step
+      const isNewTaskStart = (state === "working" || state === "submitted")
+      const stepId = findStepForAgent(agentName, isNewTaskStart)
+      if (!stepId) return
+      
+      // IMPORTANT: Don't let late "working" events revert a "completed" status
+      const currentStatus = stepStatusesRef.current.get(stepId)?.status
+      if (currentStatus === "completed" && newStatus === "working") {
+        return
+      }
+      
       
       const messageContent = content || message
       if (messageContent) {
@@ -735,6 +773,8 @@ export function VisualWorkflowDesigner({
         if (messageContent) setWaitingMessage(messageContent)
       } else if (newStatus === "completed") {
         setWaitingStepId(prev => prev === stepId ? null : prev)
+        // DON'T advance here - late messages still need to go to this step
+        // The advance happens in findStepForAgent when the NEXT step starts
       }
     }
     
@@ -825,8 +865,8 @@ export function VisualWorkflowDesigner({
       }])
       
       const current = stepStatusesRef.current.get(stepId)
-      // Don't change status if completed or waiting
-      const preservedStatus = (current?.status === "completed" || current?.status === "waiting") 
+      // IMPORTANT: Preserve completed/waiting/failed status - don't let late messages revert them
+      const preservedStatus = (current?.status === "completed" || current?.status === "waiting" || current?.status === "failed") 
         ? current.status : "working"
       updateStep(stepId, preservedStatus, activity)
     }
@@ -946,8 +986,8 @@ export function VisualWorkflowDesigner({
       if (!stepId) return
       
       const current = stepStatusesRef.current.get(stepId)
-      // Always append new messages
-      const preservedStatus = (current?.status === "completed" || current?.status === "waiting") 
+      // IMPORTANT: Preserve completed/waiting status - don't let late messages revert them
+      const preservedStatus = (current?.status === "completed" || current?.status === "waiting" || current?.status === "failed") 
         ? current.status : "working"
       updateStep(stepId, preservedStatus, content)
       
@@ -1223,9 +1263,7 @@ export function VisualWorkflowDesigner({
     setTestMessages([{ role: "user", content: testInput }])
     setStepStatuses(new Map())
     stepStatusesRef.current = new Map()
-    activeStepPerAgentRef.current = new Map()
-    taskIdToStepRef.current = new Map()
-    assignedStepsRef.current = new Set()
+    agentStepIndexRef.current = new Map()  // Reset agent step counters
     setHostTokenUsage(null)  // Reset host tokens for new workflow
     
     console.log("[WorkflowTest] 🚀 Starting test with workflow:", currentWorkflowText)
@@ -1322,9 +1360,7 @@ export function VisualWorkflowDesigner({
     setTestMessages([])
     setStepStatuses(new Map())
     stepStatusesRef.current = new Map()
-    activeStepPerAgentRef.current = new Map()
-    taskIdToStepRef.current = new Map()
-    assignedStepsRef.current = new Set()
+    agentStepIndexRef.current = new Map()  // Reset agent step counters
     setHostMessages([])
     setWaitingStepId(null)
     setWaitingResponse("")

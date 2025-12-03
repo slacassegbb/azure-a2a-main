@@ -95,3 +95,4 @@ Emails are sent with HTML formatting for:
 - Sender authentication uses Azure AD
 - All communications are encrypted in transit
 
+
