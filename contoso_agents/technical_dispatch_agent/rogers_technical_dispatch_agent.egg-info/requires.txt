@@ -1,0 +1,14 @@
+a2a-sdk[http-server]>=0.2.6
+azure-ai-agents>=1.1.0b2
+azure-ai-projects>=1.0.0b12
+azure-identity>=1.19.0
+click>=8.1.0
+python-dotenv>=1.0.0
+starlette>=0.41.0
+uvicorn>=0.34.0
+httpx>=0.28.1
+gradio>=4.0.0
+
+[dev]
+pytest>=7.0.0
+pytest-asyncio>=0.21.0

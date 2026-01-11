@@ -1,0 +1,260 @@
+{
+  "internet_plans": [
+    {
+      "customer_id": "CUST001",
+      "plan_id": "PLAN-IGNITE-1000",
+      "plan_name": "Contoso Ignite 1 Gig",
+      "download_speed": "1000 Mbps",
+      "upload_speed": "30 Mbps",
+      "data_limit": "unlimited",
+      "monthly_cost": 114.99,
+      "contract_type": "2-year contract",
+      "contract_start": "2024-01-15",
+      "contract_end": "2026-01-15",
+      "included_features": [
+        "Unlimited data",
+        "Contoso Ignite TV bundle eligible",
+        "Wi-Fi modem included",
+        "No overage fees"
+      ],
+      "billing_cycle_start": "2025-11-01",
+      "billing_cycle_end": "2025-11-30",
+      "current_usage_gb": 847.3,
+      "usage_percentage": "N/A - Unlimited",
+      "billing_status": {
+        "last_3_bills_paid": true,
+        "last_payment_date": "2025-10-28",
+        "last_payment_amount": 114.99,
+        "current_balance": 0.00,
+        "payment_history": [
+          {"date": "2025-10-28", "amount": 114.99, "status": "paid"},
+          {"date": "2025-09-28", "amount": 114.99, "status": "paid"},
+          {"date": "2025-08-28", "amount": 114.99, "status": "paid"}
+        ]
+      },
+      "access_status": "active",
+      "notes": "Customer in good standing with unlimited plan"
+    },
+    {
+      "customer_id": "CUST002",
+      "plan_id": "PLAN-IGNITE-500",
+      "plan_name": "Contoso Ignite 500",
+      "download_speed": "500 Mbps",
+      "upload_speed": "20 Mbps",
+      "data_limit": "unlimited",
+      "monthly_cost": 94.99,
+      "contract_type": "month-to-month",
+      "contract_start": "2023-06-10",
+      "contract_end": "N/A",
+      "included_features": [
+        "Unlimited data",
+        "Wi-Fi modem included",
+        "No overage fees"
+      ],
+      "billing_cycle_start": "2025-11-01",
+      "billing_cycle_end": "2025-11-30",
+      "current_usage_gb": 423.8,
+      "usage_percentage": "N/A - Unlimited",
+      "billing_status": {
+        "last_3_bills_paid": true,
+        "last_payment_date": "2025-10-25",
+        "last_payment_amount": 94.99,
+        "current_balance": 0.00,
+        "payment_history": [
+          {"date": "2025-10-25", "amount": 94.99, "status": "paid"},
+          {"date": "2025-09-25", "amount": 94.99, "status": "paid"},
+          {"date": "2025-08-25", "amount": 94.99, "status": "paid"}
+        ]
+      },
+      "access_status": "active",
+      "notes": "Customer in good standing with unlimited plan"
+    },
+    {
+      "customer_id": "CUST003",
+      "plan_id": "PLAN-BASIC-150",
+      "plan_name": "Contoso Internet 150",
+      "download_speed": "150 Mbps",
+      "upload_speed": "15 Mbps",
+      "data_limit": "unlimited",
+      "monthly_cost": 74.99,
+      "contract_type": "1-year contract",
+      "contract_start": "2024-08-20",
+      "contract_end": "2025-08-20",
+      "included_features": [
+        "Unlimited data",
+        "Wi-Fi modem included"
+      ],
+      "billing_cycle_start": "2025-11-01",
+      "billing_cycle_end": "2025-11-30",
+      "current_usage_gb": 289.5,
+      "usage_percentage": "N/A - Unlimited",
+      "billing_status": {
+        "last_3_bills_paid": true,
+        "last_payment_date": "2025-10-30",
+        "last_payment_amount": 74.99,
+        "current_balance": 0.00,
+        "payment_history": [
+          {"date": "2025-10-30", "amount": 74.99, "status": "paid"},
+          {"date": "2025-09-30", "amount": 74.99, "status": "paid"},
+          {"date": "2025-08-30", "amount": 74.99, "status": "paid"}
+        ]
+      },
+      "access_status": "active",
+      "notes": "Customer in good standing with unlimited plan"
+    },
+    {
+      "customer_id": "CUST004",
+      "plan_id": "PLAN-FLEX-300",
+      "plan_name": "Contoso Flex 300 (Limited Data)",
+      "download_speed": "300 Mbps",
+      "upload_speed": "20 Mbps",
+      "data_limit": "500 GB",
+      "monthly_cost": 64.99,
+      "overage_rate": "2.00 per GB",
+      "contract_type": "month-to-month",
+      "contract_start": "2024-03-12",
+      "contract_end": "N/A",
+      "included_features": [
+        "500 GB monthly data",
+        "Wi-Fi modem included",
+        "$2/GB overage fees apply"
+      ],
+      "billing_cycle_start": "2025-11-01",
+      "billing_cycle_end": "2025-11-30",
+      "billing_cycle_renews_in_days": 3,
+      "current_usage_gb": 520.0,
+      "data_limit_gb": 500,
+      "overage_gb": 20.0,
+      "overage_charges": 40.00,
+      "usage_percentage": "104% - EXCEEDED",
+      "billing_status": {
+        "last_3_bills_paid": true,
+        "last_payment_date": "2025-10-27",
+        "last_payment_amount": 64.99,
+        "current_balance": 0.00,
+        "estimated_next_bill": 104.99,
+        "payment_history": [
+          {"date": "2025-10-27", "amount": 64.99, "status": "paid"},
+          {"date": "2025-09-27", "amount": 64.99, "status": "paid"},
+          {"date": "2025-08-27", "amount": 64.99, "status": "paid"}
+        ]
+      },
+      "access_status": "active",
+      "data_limit_exceeded": true,
+      "notes": "⚠️ CUSTOMER HAS EXCEEDED DATA LIMIT BY 20GB. Overage charges will apply on next bill. Billing cycle renews in 3 days. Customer may experience throttled speeds until renewal."
+    },
+    {
+      "customer_id": "CUST005",
+      "plan_id": "PLAN-IGNITE-750",
+      "plan_name": "Contoso Ignite 750",
+      "download_speed": "750 Mbps",
+      "upload_speed": "25 Mbps",
+      "data_limit": "unlimited",
+      "monthly_cost": 104.99,
+      "contract_type": "2-year contract",
+      "contract_start": "2024-05-01",
+      "contract_end": "2026-05-01",
+      "included_features": [
+        "Unlimited data",
+        "Contoso Ignite TV bundle eligible",
+        "Wi-Fi modem included",
+        "No overage fees"
+      ],
+      "billing_cycle_start": "2025-11-01",
+      "billing_cycle_end": "2025-11-30",
+      "current_usage_gb": 1243.7,
+      "usage_percentage": "N/A - Unlimited",
+      "billing_status": {
+        "last_3_bills_paid": true,
+        "last_payment_date": "2025-10-29",
+        "last_payment_amount": 104.99,
+        "current_balance": 0.00,
+        "payment_history": [
+          {"date": "2025-10-29", "amount": 104.99, "status": "paid"},
+          {"date": "2025-09-29", "amount": 104.99, "status": "paid"},
+          {"date": "2025-08-29", "amount": 104.99, "status": "paid"}
+        ]
+      },
+      "access_status": "active",
+      "notes": "Customer in good standing with unlimited plan"
+    },
+    {
+      "customer_id": "CUST006",
+      "plan_id": "PLAN-IGNITE-500",
+      "plan_name": "Contoso Ignite 500",
+      "download_speed": "500 Mbps",
+      "upload_speed": "20 Mbps",
+      "data_limit": "unlimited",
+      "monthly_cost": 94.99,
+      "contract_type": "2-year contract",
+      "contract_start": "2023-11-15",
+      "contract_end": "2025-11-15",
+      "included_features": [
+        "Unlimited data",
+        "Wi-Fi modem included",
+        "No overage fees"
+      ],
+      "billing_cycle_start": "2025-11-01",
+      "billing_cycle_end": "2025-11-30",
+      "current_usage_gb": 567.2,
+      "usage_percentage": "N/A - Unlimited",
+      "billing_status": {
+        "last_3_bills_paid": true,
+        "last_payment_date": "2025-10-26",
+        "last_payment_amount": 94.99,
+        "current_balance": 0.00,
+        "payment_history": [
+          {"date": "2025-10-26", "amount": 94.99, "status": "paid"},
+          {"date": "2025-09-26", "amount": 94.99, "status": "paid"},
+          {"date": "2025-08-26", "amount": 94.99, "status": "paid"}
+        ]
+      },
+      "access_status": "active",
+      "notes": "Customer in good standing with unlimited plan"
+    },
+    {
+      "customer_id": "CUST005",
+      "plan_id": "PLAN-IGNITE-500",
+      "plan_name": "Contoso Ignite 500",
+      "download_speed": "500 Mbps",
+      "upload_speed": "20 Mbps",
+      "data_limit": "unlimited",
+      "monthly_cost": 94.99,
+      "contract_type": "2-year contract",
+      "contract_start": "2024-03-20",
+      "contract_end": "2026-03-20",
+      "included_features": [
+        "Unlimited data",
+        "Wi-Fi modem included",
+        "No overage fees"
+      ],
+      "billing_cycle_start": "2025-11-01",
+      "billing_cycle_end": "2025-11-30",
+      "current_usage_gb": 423.8,
+      "usage_percentage": "N/A - Unlimited",
+      "billing_status": {
+        "last_3_bills_paid": true,
+        "last_payment_date": "2025-10-30",
+        "last_payment_amount": 94.99,
+        "current_balance": 0.00,
+        "payment_history": [
+          {"date": "2025-10-30", "amount": 94.99, "status": "paid"},
+          {"date": "2025-09-30", "amount": 94.99, "status": "paid"},
+          {"date": "2025-08-30", "amount": 94.99, "status": "paid"}
+        ]
+      },
+      "access_status": "active",
+      "notes": "Customer in good standing with unlimited plan"
+    }
+  ],
+  "plan_comparison": {
+    "unlimited_plans": ["PLAN-IGNITE-1000", "PLAN-IGNITE-750", "PLAN-IGNITE-500", "PLAN-BASIC-150"],
+    "limited_data_plans": ["PLAN-FLEX-300"],
+    "typical_usage_ranges": {
+      "light_user": "0-200 GB/month",
+      "moderate_user": "200-500 GB/month",
+      "heavy_user": "500-1000 GB/month",
+      "power_user": "1000+ GB/month"
+    }
+  }
+}

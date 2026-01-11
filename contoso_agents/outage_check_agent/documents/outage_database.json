@@ -1,0 +1,146 @@
+{
+  "local_outages": [
+    {
+      "outage_id": "OUT-LOCAL-001",
+      "customer_id": "CUST001",
+      "address": "123 King Street West, Toronto, ON M5V2T6",
+      "postal_code": "M5V2T6",
+      "outage_type": "local",
+      "status": "active",
+      "reported_time": "2025-11-03T08:30:00Z",
+      "estimated_resolution": "2025-11-03T14:00:00Z",
+      "affected_services": ["internet", "tv"],
+      "cause": "Fiber cable damage from construction work",
+      "technicians_dispatched": true,
+      "affected_customers_count": 45,
+      "updates": [
+        {
+          "timestamp": "2025-11-03T08:30:00Z",
+          "message": "Outage detected in downtown Toronto area"
+        },
+        {
+          "timestamp": "2025-11-03T10:00:00Z",
+          "message": "Technicians on site, fiber cable repair in progress"
+        }
+      ]
+    },
+    {
+      "outage_id": "OUT-LOCAL-002",
+      "customer_id": "CUST003",
+      "address": "1259 Twin Oaks Dell, Mississauga, ON L5H3J7",
+      "postal_code": "L5H3J7",
+      "outage_type": "local",
+      "status": "active",
+      "reported_time": "2025-11-03T09:15:00Z",
+      "estimated_resolution": "2025-11-03T15:30:00Z",
+      "affected_services": ["internet"],
+      "cause": "Equipment failure at local distribution hub",
+      "technicians_dispatched": true,
+      "affected_customers_count": 30,
+      "updates": [
+        {
+          "timestamp": "2025-11-03T09:15:00Z",
+          "message": "Outage reported in Mississauga area"
+        },
+        {
+          "timestamp": "2025-11-03T11:45:00Z",
+          "message": "Replacement equipment en route to site"
+        }
+      ]
+    }
+  ],
+  "regional_outages": [
+    {
+      "outage_id": "OUT-REG-001",
+      "region": "Toronto Central",
+      "outage_type": "regional",
+      "status": "active",
+      "reported_time": "2025-11-03T06:00:00Z",
+      "estimated_resolution": "2025-11-03T18:00:00Z",
+      "affected_services": ["internet", "tv", "phone"],
+      "cause": "Major power outage affecting central office equipment",
+      "technicians_dispatched": true,
+      "affected_customers_count": 1250,
+      "affected_postal_codes": ["M5V", "M5H", "M5J", "M5E"],
+      "updates": [
+        {
+          "timestamp": "2025-11-03T06:00:00Z",
+          "message": "Regional outage detected in Toronto Central due to power issues"
+        },
+        {
+          "timestamp": "2025-11-03T08:30:00Z",
+          "message": "Backup generators deployed, partial service restoration in progress"
+        },
+        {
+          "timestamp": "2025-11-03T11:00:00Z",
+          "message": "50% of customers have service restored, continuing work"
+        }
+      ]
+    },
+    {
+      "outage_id": "OUT-REG-002",
+      "region": "Peel Region",
+      "outage_type": "regional",
+      "status": "monitoring",
+      "reported_time": "2025-11-03T05:30:00Z",
+      "estimated_resolution": "2025-11-03T12:00:00Z",
+      "affected_services": ["internet"],
+      "cause": "Intermittent connectivity issues due to upstream provider maintenance",
+      "technicians_dispatched": false,
+      "affected_customers_count": 850,
+      "affected_postal_codes": ["L5B", "L5C", "L6A", "L6R"],
+      "updates": [
+        {
+          "timestamp": "2025-11-03T05:30:00Z",
+          "message": "Intermittent connectivity issues reported in Peel Region"
+        },
+        {
+          "timestamp": "2025-11-03T07:00:00Z",
+          "message": "Working with upstream provider to resolve maintenance-related issues"
+        },
+        {
+          "timestamp": "2025-11-03T10:30:00Z",
+          "message": "Service stability improving, continuing to monitor"
+        }
+      ]
+    }
+  ],
+  "customer_outage_status": {
+    "CUST001": {
+      "has_local_outage": true,
+      "has_regional_outage": true,
+      "local_outage_id": "OUT-LOCAL-001",
+      "regional_outage_id": "OUT-REG-001"
+    },
+    "CUST002": {
+      "has_local_outage": false,
+      "has_regional_outage": false,
+      "local_outage_id": null,
+      "regional_outage_id": null
+    },
+    "CUST003": {
+      "has_local_outage": true,
+      "has_regional_outage": true,
+      "local_outage_id": "OUT-LOCAL-002",
+      "regional_outage_id": "OUT-REG-002"
+    },
+    "CUST004": {
+      "has_local_outage": false,
+      "has_regional_outage": true,
+      "local_outage_id": null,
+      "regional_outage_id": "OUT-REG-002"
+    },
+    "CUST005": {
+      "has_local_outage": false,
+      "has_regional_outage": false,
+      "local_outage_id": null,
+      "regional_outage_id": null
+    },
+    "CUST006": {
+      "has_local_outage": false,
+      "has_regional_outage": false,
+      "local_outage_id": null,
+      "regional_outage_id": null
+    }
+  }
+}
