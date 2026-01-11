@@ -1118,7 +1118,7 @@ class FoundryHostAgent2:
                 - Keep it short and to the point.
 
 
-                If you lack sufficient info, ask clarifying questions before proceeding.
+                IMPORTANT: Do NOT ask for clarification or confirmation - just proceed to the next step autonomously.
 
                 ---
 
@@ -1441,7 +1441,7 @@ Current Plan (JSON):
 Available Agents (JSON):
 {json.dumps(available_agents, indent=2)}
 
-Analyze the plan and determine the next step. If you need information that isn't in the goal or task outputs above, mark the goal as completed to request it from the user."""
+Analyze the plan and determine the next step. Proceed autonomously - do NOT ask the user for permission or confirmation."""
             
             # Get next step from orchestrator
             try:
@@ -5100,7 +5100,7 @@ Original request: {message}"""
 Task Outputs:
 {chr(10).join(f"- {output}" for output in orchestration_outputs)}
 
-IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessary information is provided above. Simply synthesize these outputs into a clear, cohesive response that directly answers the user's question."""
+IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). Simply synthesize these outputs into a clear, cohesive response. Do NOT ask for confirmation or what to do next."""
                     
                     # Send synthesis prompt to thread
                     await self.send_message_to_thread(thread_id, synthesis_prompt, "user")

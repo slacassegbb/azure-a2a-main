@@ -237,8 +237,8 @@
     ]
   },
   {
-    "name": "ServiceNow, Web & Knowledge Agent",
-    "description": "An intelligent agent specialized in ServiceNow management, Bank system actions, web search, and file/knowledge/document search.",
+    "name": "Salesforce CRM Agent",
+    "description": "An intelligent Salesforce agent with full CRM data access, metadata management, and Apex development capabilities.",
     "version": "1.0.0",
     "url": "http://localhost:8000/",
     "defaultInputModes": [
@@ -252,84 +252,79 @@
     },
     "skills": [
       {
-        "id": "salesforce_management",
-        "name": "ServiceNow Management",
-        "description": "Create, search, and manage ServiceNow incidents, users, and knowledge base articles. Simulates ServiceNow actions with realistic synthetic data.",
+        "id": "salesforce_data_query",
+        "name": "Salesforce Data Query & Search",
+        "description": "Query and search Salesforce data using SOQL and SOSL. Execute aggregate queries (COUNT, SUM, AVG), search across multiple objects, and retrieve detailed records.",
         "examples": [
-          "Create a new ServiceNow incident",
-          "Search for incidents assigned to a user",
-          "Update incident status",
-          "List ServiceNow users",
-          "Search ServiceNow knowledge base"
+          "Show me all accounts in the technology industry",
+          "How many opportunities are in the pipeline?",
+          "What is the average deal size this quarter?"
         ],
         "tags": [
-          "servicenow",
-          "incident",
-          "it",
-          "support"
-        ]
-      },
-      {
-        "id": "bank_actions",
-        "name": "Bank Actions",
-        "description": "Simulate any action on the Bank system (block/unblock card, check balance, report fraud, create disputes, issue refunds, etc.) and return synthetic responses.",
-        "examples": [
-          "Block a credit card",
-          "Unblock a credit card",
-          "Check account balance",
-          "Report a fraudulent transaction",
-          "Create a dispute for a transaction",
-          "Issue a refund for a transaction",
-          "Check transaction details"
-        ],
-        "tags": [
-          "banking",
-          "finance",
-          "card",
-          "dispute",
-          "refund"
-        ]
-      },
-      {
-        "id": "web_search",
-        "name": "Web Search",
-        "description": "Search the web for current information using Bing or other integrated search tools.",
-        "examples": [
-          "Find the latest news about a company",
-          "Search for troubleshooting steps online",
-          "Get current weather information"
-        ],
-        "tags": [
-          "web",
+          "salesforce",
+          "soql",
+          "sosl",
+          "query",
           "search",
-          "bing",
-          "internet"
+          "data"
         ]
       },
       {
-        "id": "file_knowledge_search",
-        "name": "File & Knowledge Search",
-        "description": "Search through uploaded documents, files, and knowledge bases for specific information.",
+        "id": "salesforce_data_management",
+        "name": "Salesforce Data Management",
+        "description": "Create, update, and delete Salesforce records including Accounts, Contacts, Leads, Opportunities, and Cases using DML operations.",
         "examples": [
-          "Search uploaded PDF for a keyword",
-          "Find information in a user manual",
-          "Extract data from a document"
+          "Create a new contact named John Smith at Acme Corp",
+          "Update the opportunity status to Closed Won",
+          "Create a new account for TechCorp Inc"
         ],
         "tags": [
-          "file",
-          "document",
-          "knowledge",
-          "search"
+          "salesforce",
+          "crm",
+          "create",
+          "update",
+          "delete",
+          "dml"
+        ]
+      },
+      {
+        "id": "salesforce_metadata",
+        "name": "Salesforce Metadata Management",
+        "description": "Describe Salesforce objects, create custom objects and fields, manage field-level security permissions.",
+        "examples": [
+          "What fields does the Account object have?",
+          "Create a new custom field on the Lead object"
+        ],
+        "tags": [
+          "salesforce",
+          "metadata",
+          "fields",
+          "objects",
+          "permissions"
+        ]
+      },
+      {
+        "id": "salesforce_development",
+        "name": "Salesforce Apex Development",
+        "description": "Read and write Apex classes and triggers, execute anonymous Apex code, manage debug logs.",
+        "examples": [
+          "Show me the code for the AccountTrigger",
+          "Enable debug logs for user admin@example.com"
+        ],
+        "tags": [
+          "salesforce",
+          "apex",
+          "code",
+          "triggers",
+          "development"
         ]
       },
       {
         "id": "human_interaction",
         "name": "Human Expert Escalation",
-        "description": "Escalate complex issues to human experts or facilitate human-in-the-loop interactions when automated responses are insufficient.",
+        "description": "Escalate complex issues to human experts when needed.",
         "examples": [
-          "Escalate this issue to a human expert",
           "I need to speak with a person",
-          "Request human assistance for complex decision",
           "Connect me with a human agent"
         ],
         "tags": [
@@ -1013,8 +1008,8 @@
     ]
   },
   {
-    "name": "AI Consulting Interview Agent",
-    "description": "A lead capture agent that efficiently gathers contact information (name, email, company) and use case details from potential customers. Outputs structured lead data for downstream agents to generate personalized reports and send follow-up emails.",
+    "name": "Sora 2 Video Generator",
+    "description": "Generate stunning AI videos from text prompts using Azure OpenAI's Sora 2 model. Create cinematic scenes, product demos, animations, and creative visual content with natural language descriptions. Supports 4-12 second videos in landscape or portrait format.",
     "version": "1.0.0",
     "url": "http://localhost:9028/",
     "defaultInputModes": [
@@ -1028,53 +1023,89 @@
     },
     "skills": [
       {
-        "id": "lead_capture",
-        "name": "Lead Information Capture",
-        "description": "Capture essential lead information including name, email, company, and use case. Designed to efficiently gather contact details for follow-up with personalized reports.",
+        "id": "video_generation",
+        "name": "AI Video Generation",
+        "description": "Generate high-quality AI videos from text prompts using Azure OpenAI's Sora 2 model. Create cinematic scenes, animations, and visual content with natural language descriptions.",
         "examples": [
-          "I want to learn more about AI solutions for my business",
-          "Can you help me understand what AI could do for my company?",
-          "We need to automate some of our business processes",
-          "Tell me about your AI consulting services"
+          "Generate a video of a golden retriever running through a sunlit meadow at sunset",
+          "Create a cinematic shot of waves crashing on a rocky coastline at dawn",
+          "Make a video of a futuristic city with flying cars at night"
         ],
         "tags": [
-          "lead",
-          "capture",
-          "contact",
-          "email",
-          "qualification"
+          "video",
+          "sora",
+          "generation",
+          "ai",
+          "creative",
+          "multimedia"
         ]
       },
       {
-        "id": "use_case_discovery",
-        "name": "Use Case Discovery",
-        "description": "Quickly understand what the customer wants to accomplish with AI so we can provide relevant recommendations in a follow-up report.",
+        "id": "video_from_image",
+        "name": "Image-to-Video Generation",
+        "description": "Transform static images into dynamic videos. Provide a reference image and describe the motion or animation you want to create.",
         "examples": [
-          "I need help with customer service automation",
-          "We want to use AI for document processing",
-          "Looking to implement RAG for our knowledge base"
+          "Animate this landscape image with gentle wind blowing through the trees",
+          "Turn this portrait into a video where the person slowly smiles",
+          "Make the water in this photo start flowing naturally"
         ],
         "tags": [
-          "discovery",
-          "use-case",
-          "requirements",
-          "ai-needs"
+          "video",
+          "image",
+          "animation",
+          "transform",
+          "sora"
         ]
       },
       {
-        "id": "contact_collection",
-        "name": "Contact Information Collection",
-        "description": "Gather contact details (name, email) to send personalized AI consultation reports and recommendations.",
+        "id": "video_to_video",
+        "name": "Video-to-Video Generation",
+        "description": "Transform existing videos using AI. Upload a reference video and describe the transformation you want - change styles, atmospheres, or subjects while maintaining motion and structure.",
         "examples": [
-          "Sure, my email is...",
-          "You can reach me at...",
-          "Send the report to..."
+          "Transform this daytime scene into a moonlit nighttime video",
+          "Convert this video into an animated cartoon style",
+          "Change this urban scene to a post-apocalyptic landscape"
         ],
         "tags": [
-          "contact",
-          "email",
-          "follow-up",
-          "report"
+          "video",
+          "transform",
+          "sora",
+          "style-transfer",
+          "reference"
+        ]
+      },
+      {
+        "id": "video_remix",
+        "name": "Video Remix",
+        "description": "Modify specific aspects of previously generated Sora 2 videos while preserving core elements like scene transitions and visual layout. Make targeted adjustments to color palettes, lighting, or style.",
+        "examples": [
+          "Shift the color palette to warm sunset tones",
+          "Change the lighting to dramatic noir style",
+          "Transform the season from summer to winter"
+        ],
+        "tags": [
+          "video",
+          "remix",
+          "edit",
+          "modify",
+          "sora"
+        ]
+      },
+      {
+        "id": "video_prompt_assistance",
+        "name": "Video Prompt Crafting",
+        "description": "Help craft effective prompts for video generation. Get advice on describing scenes, camera movements, lighting, and style for optimal results.",
+        "examples": [
+          "How do I describe a tracking shot in my video prompt?",
+          "What details should I include for a cinematic video?",
+          "Help me write a prompt for a product showcase video"
+        ],
+        "tags": [
+          "prompt",
+          "assistance",
+          "help",
+          "creative",
+          "writing"
         ]
       }
     ]
