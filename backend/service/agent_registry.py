@@ -60,12 +60,16 @@ class AgentRegistry:
             agent: Agent configuration dictionary
             
         Returns:
-            True if agent was added, False if agent with same name already exists
+            True if agent was added, False if agent with same name or URL already exists
         """
         agents = self._load_registry()
         
         # Check if agent with same name already exists
         if any(a.get('name') == agent.get('name') for a in agents):
+            return False
+        
+        # Check if agent with same URL already exists
+        if any(a.get('url') == agent.get('url') for a in agents):
             return False
         
         # Validate required fields
@@ -117,6 +121,50 @@ class AgentRegistry:
                 return True
         
         return False
+    
+    def update_or_add_agent(self, agent: Dict[str, Any]) -> bool:
+        """Update an existing agent or add as new if it doesn't exist.
+        
+        Checks by name first, then by URL to find existing agent.
+        
+        Args:
+            agent: Agent configuration dictionary
+            
+        Returns:
+            True if operation succeeded, False otherwise
+        """
+        agents = self._load_registry()
+        
+        # Validate required fields
+        if not self._validate_agent(agent):
+            raise ValueError("Invalid agent configuration")
+        
+        existing_index = None
+        agent_name = agent.get('name')
+        agent_url = agent.get('url')
+        
+        # First, check by name (primary identifier)
+        for i, a in enumerate(agents):
+            if a.get('name') == agent_name:
+                existing_index = i
+                break
+        
+        # If not found by name, check by URL
+        if existing_index is None:
+            for i, a in enumerate(agents):
+                if a.get('url') == agent_url:
+                    existing_index = i
+                    break
+        
+        if existing_index is not None:
+            # Update existing agent
+            agents[existing_index] = agent
+        else:
+            # Add new agent
+            agents.append(agent)
+        
+        self._save_registry(agents)
+        return True
     
     def remove_agent(self, name: str) -> bool:
         """Remove an agent from the registry.

@@ -71,14 +71,14 @@
       "email": "david@example.com",
       "password_hash": "0f14089313b20c1723ec1d660b0aaa4f473cf5b321cd370f2d48b7bcf9a7b234",
       "name": "David Miller",
-      "role": "Customer",
-      "description": "Gold Loyalty Customer",
+      "role": "Marketing Manager",
+      "description": "Content Creator",
       "skills": [
         "Professional"
       ],
       "color": "#e32400",
       "created_at": "2025-09-16T11:43:52.075871Z",
-      "last_login": "2025-10-23T19:47:35.346918Z"
+      "last_login": "2025-11-20T20:42:33.983435Z"
     },
     {
       "user_id": "user_6",

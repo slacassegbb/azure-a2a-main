@@ -44,20 +44,25 @@ Reference: https://learn.microsoft.com/en-us/answers/questions/2237624/getting-r
 import os
 import time
 import datetime
+from datetime import timedelta
 import asyncio
 import logging
 import json
 import uuid
 import httpx
 import io
+from pathlib import Path
 from typing import Optional, Dict, List, Tuple, Any
 from PIL import Image
+from openai import OpenAI
 
 from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 from azure.ai.agents import AgentsClient
 from azure.ai.agents.models import Agent, ThreadMessage, ThreadRun, AgentThread, ToolOutput, BingGroundingTool, ListSortOrder, FilePurpose, FileSearchTool, RequiredMcpToolCall, ToolApproval
 from azure.ai.projects import AIProjectClient
 from azure.identity import DefaultAzureCredential
+from azure.storage.blob import BlobServiceClient, generate_blob_sas, BlobSasPermissions
+from azure.core.credentials import AzureNamedKeyCredential, AzureSasCredential
 import glob
 
 logger = logging.getLogger(__name__)
@@ -96,6 +101,8 @@ class FoundryTemplateAgent:
         self._file_search_tool = None  # Cache the file search tool
         self._agents_client = None  # Cache the agents client
         self._project_client = None  # Cache the project client
+        self._blob_service_client: Optional[BlobServiceClient] = None
+        self._latest_artifacts: List[Dict[str, Any]] = []  # Track generated artifacts for A2A
         
     def _get_client(self) -> AgentsClient:
         """Get a cached AgentsClient instance to reduce API calls."""
@@ -114,6 +121,127 @@ class FoundryTemplateAgent:
                 credential=self.credential,
             )
         return self._project_client
+
+    def _get_blob_service_client(self) -> Optional[BlobServiceClient]:
+        """Return a BlobServiceClient if Azure storage is configured and forced."""
+        force_blob = os.getenv("FORCE_AZURE_BLOB", "false").lower() == "true"
+        if not force_blob:
+            return None
+        if self._blob_service_client is not None:
+            return self._blob_service_client
+
+        conn_str = os.getenv("AZURE_STORAGE_CONNECTION_STRING")
+        if not conn_str:
+            raise RuntimeError("Missing AZURE_STORAGE_CONNECTION_STRING for blob uploads")
+
+        try:
+            self._blob_service_client = BlobServiceClient.from_connection_string(
+                conn_str
+            )
+            logger.info("BlobServiceClient initialized successfully.")
+            return self._blob_service_client
+        except Exception as e:
+            logger.error(f"Failed to initialize BlobServiceClient: {e}")
+            return None
+
+    def _upload_to_blob(self, file_path: Path) -> Optional[str]:
+        """Upload the given file to Azure Blob Storage and return the blob URL with SAS token."""
+        blob_client = self._get_blob_service_client()
+        if not blob_client:
+            return None
+
+        container_name = os.getenv("AZURE_BLOB_CONTAINER", "a2a-files")
+
+        try:
+            file_size = file_path.stat().st_size
+        except FileNotFoundError:
+            logger.error(f"File not found for blob upload: {file_path}")
+            return None
+
+        blob_name = f"video-generator/{uuid.uuid4().hex}/{file_path.name}"
+        try:
+            container_client = blob_client.get_container_client(container_name)
+            if not container_client.exists():
+                container_client.create_container()
+            with open(file_path, "rb") as data:
+                container_client.upload_blob(name=blob_name, data=data, overwrite=True)
+
+            sas_duration_minutes = int(
+                os.getenv("AZURE_BLOB_SAS_DURATION_MINUTES", str(24 * 60))
+            )
+
+            sas_token: Optional[str] = None
+
+            service_client = self._blob_service_client
+
+            if service_client is not None:
+                credential = getattr(service_client, "credential", None)
+                account_key_value: Optional[str] = None
+
+                if isinstance(credential, AzureNamedKeyCredential):
+                    account_key_value = credential.key
+                elif isinstance(credential, AzureSasCredential):
+                    sas_token = credential.signature.lstrip("?")
+                elif hasattr(credential, "account_key"):
+                    account_key_value = getattr(credential, "account_key")
+                elif hasattr(credential, "key"):
+                    account_key_value = getattr(credential, "key")
+
+                if callable(account_key_value):
+                    account_key_value = account_key_value()
+                if isinstance(account_key_value, bytes):
+                    account_key_value = account_key_value.decode()
+
+                if account_key_value:
+                    try:
+                        sas_token = generate_blob_sas(
+                            account_name=service_client.account_name,
+                            container_name=container_name,
+                            blob_name=blob_name,
+                            account_key=account_key_value,
+                            permission=BlobSasPermissions(read=True),
+                            expiry=datetime.datetime.utcnow() + timedelta(minutes=sas_duration_minutes),
+                            protocol="https",
+                            version="2023-11-03",
+                        )
+                    except Exception as sas_error:
+                        logger.error(f"Failed to generate SAS URL with shared key: {sas_error}")
+
+            if sas_token is None and self._blob_service_client is not None:
+                try:
+                    delegation_key = self._blob_service_client.get_user_delegation_key(
+                        key_start_time=datetime.datetime.utcnow() - timedelta(minutes=5),
+                        key_expiry_time=datetime.datetime.utcnow() + timedelta(minutes=sas_duration_minutes),
+                    )
+                    sas_token = generate_blob_sas(
+                        account_name=self._blob_service_client.account_name,
+                        container_name=container_name,
+                        blob_name=blob_name,
+                        user_delegation_key=delegation_key,
+                        permission=BlobSasPermissions(read=True),
+                        expiry=datetime.datetime.utcnow() + timedelta(minutes=sas_duration_minutes),
+                        protocol="https",
+                        version="2023-11-03",
+                    )
+                except Exception as delegation_error:
+                    logger.warning(f"Failed to generate SAS URL with user delegation key: {delegation_error}")
+
+            blob_url = f"https://{service_client.account_name}.blob.core.windows.net/{container_name}/{blob_name}"
+            if sas_token:
+                blob_url = f"{blob_url}?{sas_token}"
+
+            logger.info(f"✅ Uploaded video to blob: {blob_url[:100]}...")
+            return blob_url
+
+        except Exception as e:
+            logger.error(f"Blob upload failed: {e}")
+            return None
+
+    def pop_latest_artifacts(self) -> List[Dict[str, Any]]:
+        """Pop and return the latest artifacts (for A2A integration)."""
+        artifacts = self._latest_artifacts.copy()
+        self._latest_artifacts.clear()
+        return artifacts
     
     async def _setup_file_search(self, files_directory: str = "documents") -> Optional[FileSearchTool]:
         """Upload files from local directory and create vector store for file search - ONCE per class."""
@@ -259,40 +387,29 @@ class FoundryTemplateAgent:
     def _get_sora_auth(self) -> Tuple[str, str]:
         """
         Get the Sora 2 API base URL and authentication token.
-        Uses the Azure OpenAI endpoint with Entra ID authentication.
+        Uses the Azure Cognitive Services endpoint with Entra ID authentication.
         
         Returns:
             Tuple of (base_url, auth_token)
         """
-        # Sora 2 uses Azure OpenAI endpoint format (*.openai.azure.com), 
-        # NOT the AI Foundry project endpoint (*.services.ai.azure.com)
-        # Check for dedicated AZURE_OPENAI_ENDPOINT env var, otherwise derive from project endpoint
+        # Sora uses Azure Cognitive Services endpoint format (*.cognitiveservices.azure.com)
+        # Set AZURE_OPENAI_ENDPOINT to your Sora endpoint
+        # e.g., https://simon-miaxownu-eastus2.cognitiveservices.azure.com
         sora_endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
         
         if not sora_endpoint:
-            # Try to derive from the Foundry project endpoint
-            # e.g., agent-workshop-dqfb.services.ai.azure.com -> agent-workshop-dqfb.openai.azure.com
-            foundry_endpoint = self.endpoint
-            if "services.ai.azure.com" in foundry_endpoint:
-                # Extract the resource name from the Foundry endpoint
-                import re
-                match = re.search(r'https://([^.]+)\.services\.ai\.azure\.com', foundry_endpoint)
-                if match:
-                    resource_name = match.group(1)
-                    sora_endpoint = f"https://{resource_name}.openai.azure.com"
-                    logger.info(f"Derived Azure OpenAI endpoint from Foundry: {sora_endpoint}")
-                else:
-                    raise ValueError("Could not derive Azure OpenAI endpoint. Please set AZURE_OPENAI_ENDPOINT environment variable.")
-            else:
-                raise ValueError("AZURE_OPENAI_ENDPOINT environment variable is required for Sora 2 video generation.")
+            raise ValueError(
+                "AZURE_OPENAI_ENDPOINT environment variable is required for Sora video generation.\n"
+                "Set it to your Azure Cognitive Services endpoint, e.g.:\n"
+                "AZURE_OPENAI_ENDPOINT=https://your-resource.cognitiveservices.azure.com"
+            )
         
         # Ensure endpoint ends without trailing slash
         if sora_endpoint.endswith('/'):
             sora_endpoint = sora_endpoint.rstrip('/')
         
-        # Create token provider for Azure OpenAI authentication
-        # Azure OpenAI uses https://cognitiveservices.azure.com/.default as the audience
-        logger.info(f"Creating token provider for Sora 2 with endpoint: {sora_endpoint}")
+        # Create token provider for Azure Cognitive Services authentication
+        logger.info(f"Creating token provider for Sora with endpoint: {sora_endpoint}")
         token_provider = get_bearer_token_provider(
             self.credential, 
             "https://cognitiveservices.azure.com/.default"
@@ -302,7 +419,7 @@ class FoundryTemplateAgent:
         token = token_provider()
         logger.info(f"Token obtained, length: {len(token)}, starts with: {token[:20]}...")
         
-        # Base URL for OpenAI v1 API (no api-version needed for v1)
+        # Base URL for Sora API (api-version added in _sora_api_request)
         base_url = f"{sora_endpoint}/openai/v1"
         
         return base_url, token
@@ -356,11 +473,11 @@ class FoundryTemplateAgent:
         timeout: float = 120.0
     ) -> Dict[str, Any]:
         """
-        Make a request to the Sora 2 API.
+        Make a request to the Sora API.
         
         Args:
             method: HTTP method (GET, POST, etc.)
-            path: API path (e.g., "/videos")
+            path: API path (e.g., "/video/generations/jobs")
             json_data: JSON body for POST requests
             files: Files for multipart form upload
             timeout: Request timeout in seconds
@@ -370,8 +487,9 @@ class FoundryTemplateAgent:
         """
         base_url, token = self._get_sora_auth()
         
-        # Construct full URL (v1 API doesn't require api-version)
-        url = f"{base_url}{path}"
+        # Construct full URL with api-version query parameter
+        separator = "&" if "?" in path else "?"
+        url = f"{base_url}{path}{separator}api-version=preview"
         
         headers = {
             "Authorization": f"Bearer {token}",
@@ -408,29 +526,64 @@ class FoundryTemplateAgent:
             
             return response.json()
     
-    async def _download_video_content(self, video_id: str) -> bytes:
+    async def _download_video_content(self, generation_id: str) -> bytes:
         """
-        Download video content from Sora 2 API.
+        Download video content from Sora API using raw HTTP request.
         
         Args:
-            video_id: The video ID to download
+            generation_id: The generation ID (e.g., gen_xxx)
             
         Returns:
             Video content as bytes
         """
-        base_url, token = self._get_sora_auth()
+        sora_endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
+        if not sora_endpoint:
+            raise ValueError("AZURE_OPENAI_ENDPOINT environment variable is required")
         
-        url = f"{base_url}/videos/{video_id}/content"
-        params = {"variant": "video"}
+        if sora_endpoint.endswith('/'):
+            sora_endpoint = sora_endpoint.rstrip('/')
+        
+        # Create token provider for authentication
+        token_provider = get_bearer_token_provider(
+            self.credential, 
+            "https://cognitiveservices.azure.com/.default"
+        )
+        token = token_provider()
+        
+        # Correct Azure Sora download URL format from documentation:
+        # /openai/v1/video/generations/{generation_id}/content/video?api-version=preview
+        url = f"{sora_endpoint}/openai/v1/video/generations/{generation_id}/content/video?api-version=preview"
         
         headers = {
             "Authorization": f"Bearer {token}",
         }
         
-        logger.info(f"Downloading video from: {url}")
+        logger.info(f"Downloading from: {url}")
         
         async with httpx.AsyncClient(timeout=300.0) as client:
-            response = await client.get(url, params=params, headers=headers)
+            response = await client.get(url, headers=headers)
+            
+            if response.status_code >= 400:
+                logger.error(f"Download error: {response.status_code} - {response.text}")
+                response.raise_for_status()
+            
+            logger.info(f"✅ Downloaded {len(response.content)} bytes")
+            return response.content
+
+    async def _download_from_url(self, url: str) -> bytes:
+        """
+        Download video content from a direct URL.
+        
+        Args:
+            url: Direct download URL for the video
+            
+        Returns:
+            Video content as bytes
+        """
+        logger.info(f"Downloading video from URL: {url}")
+        
+        async with httpx.AsyncClient(timeout=300.0) as client:
+            response = await client.get(url)
             
             if response.status_code >= 400:
                 logger.error(f"Download error: {response.status_code} - {response.text}")
@@ -476,32 +629,40 @@ class FoundryTemplateAgent:
                 # Resize image to match video dimensions (Sora 2 requirement)
                 resized_image_data = self._resize_image_for_video(input_reference_path, size)
                 
+                # Parse size string to width and height
+                width, height = map(int, size.split("x"))
+                
                 # For image-to-video, use multipart form upload with resized image
                 files = {
                     "input_reference": ("reference_image.png", resized_image_data, "image/png")
                 }
                 form_data = {
-                    "model": "sora-2",
+                    "model": "sora",
                     "prompt": prompt,
-                    "size": size,
-                    "seconds": str(seconds),
+                    "width": str(width),
+                    "height": str(height),
+                    "n_seconds": str(seconds),
                 }
                 
                 # Create the video generation job with multipart form
-                logger.info("Submitting video generation request to Sora 2 (with reference image)...")
-                video_response = await self._sora_api_request("POST", "/videos", json_data=form_data, files=files)
+                logger.info("Submitting video generation request to Sora (with reference image)...")
+                video_response = await self._sora_api_request("POST", "/video/generations/jobs", json_data=form_data, files=files)
             else:
+                # Parse size string to width and height
+                width, height = map(int, size.split("x"))
+                
                 # Text-to-video: use JSON body
                 create_body = {
-                    "model": "sora-2",
+                    "model": "sora",
                     "prompt": prompt,
-                    "size": size,
-                    "seconds": str(seconds),
+                    "width": width,
+                    "height": height,
+                    "n_seconds": seconds,
                 }
                 
                 # Create the video generation job
                 logger.info("Submitting video generation request to Sora 2...")
-                video_response = await self._sora_api_request("POST", "/videos", json_data=create_body)
+                video_response = await self._sora_api_request("POST", "/video/generations/jobs", json_data=create_body)
             
             video_id = video_response.get("id")
             video_status = video_response.get("status")
@@ -513,7 +674,7 @@ class FoundryTemplateAgent:
             poll_count = 0
             max_polls = 90  # Maximum 30 minutes (90 * 20 seconds)
             
-            while video_status not in ["completed", "failed", "cancelled"]:
+            while video_status not in ["completed", "succeeded", "failed", "cancelled"]:
                 poll_count += 1
                 logger.info(f"Status: {video_status}. Waiting 20 seconds... (Poll {poll_count}/{max_polls})")
                 
@@ -523,14 +684,15 @@ class FoundryTemplateAgent:
                 await asyncio.sleep(20)
                 
                 # Retrieve the latest status
-                video_response = await self._sora_api_request("GET", f"/videos/{video_id}")
+                video_response = await self._sora_api_request("GET", f"/video/generations/jobs/{video_id}")
                 video_status = video_response.get("status")
             
             # Check final status
-            if video_status == "completed":
+            if video_status in ["completed", "succeeded"]:
                 logger.info("="*60)
                 logger.info("🎉 VIDEO GENERATION COMPLETED!")
                 logger.info(f"📹 VIDEO ID: {video_id}")
+                logger.info(f"📄 Full response: {video_response}")
                 logger.info("="*60)
                 
                 # Generate filename with video_id for easy reference
@@ -540,15 +702,50 @@ class FoundryTemplateAgent:
                 output_filename = f"sora_{timestamp}_{short_vid}.mp4"
                 output_path = os.path.join(output_dir, output_filename)
                 
-                # Download the video
+                # Get the generation ID from the response (needed for download)
+                generations = video_response.get("generations", [])
+                if not generations:
+                    raise ValueError("No generations found in response")
+                
+                generation_id = generations[0].get("id")
+                logger.info(f"📥 Task ID: {video_id}, Generation ID: {generation_id}")
+                
+                # Download using the generation ID (gen_xxx format)
                 logger.info(f"Downloading video to: {output_path}")
-                video_content = await self._download_video_content(video_id)
-                with open(output_path, "wb") as f:
+                video_content = await self._download_video_content(generation_id)
+                saved_path = Path(output_path)
+                with open(saved_path, "wb") as f:
                     f.write(video_content)
                 
                 logger.info(f"✅ Video saved successfully: {output_path}")
                 logger.info(f"💡 To remix this video, use Video ID: {video_id}")
-                return output_path, f"✅ Video generated successfully!\n\n**Video ID (for remix):** `{video_id}`\n**Duration:** {seconds} seconds\n**Resolution:** {size}\n**Saved to:** {output_path}\n\n💡 *Copy the Video ID above to use with the Remix feature!*"
+                
+                # Upload to blob storage and create artifact for A2A
+                blob_url = self._upload_to_blob(saved_path)
+                response_text = f"✅ Video generated successfully!\n\n**Video ID (for remix):** `{video_id}`\n**Duration:** {seconds} seconds\n**Resolution:** {size}"
+                
+                if blob_url:
+                    artifact_record: Dict[str, Any] = {
+                        "artifact-uri": blob_url,
+                        "file-name": saved_path.name,
+                        "mime": "video/mp4",
+                        "storage-type": "azure_blob",
+                        "status": "stored",
+                        "provider": "sora",
+                        "model": "sora",
+                        "video_id": video_id,
+                        "generation_id": generation_id,
+                        "local-path": str(saved_path),
+                        "file-size": len(video_content),
+                    }
+                    self._latest_artifacts.append(artifact_record)
+                    logger.info(f"🎬 Created video artifact: {saved_path.name}, blob_url={blob_url[:80]}...")
+                    response_text += f"\n**Video URL:** [View Video]({blob_url})"
+                else:
+                    response_text += f"\n**Saved to:** {output_path}"
+                
+                response_text += "\n\n💡 *Copy the Video ID above to use with the Remix feature!*"
+                return output_path, response_text
             
             elif video_status == "failed":
                 error_msg = video_response.get('error', 'Unknown error')
@@ -602,32 +799,40 @@ class FoundryTemplateAgent:
                 yield f"🔄 Resizing image to match video dimensions ({size})..."
                 resized_image_data = self._resize_image_for_video(input_reference_path, size)
                 
+                # Parse size string to width and height
+                width, height = map(int, size.split("x"))
+                
                 # For image-to-video, use multipart form upload with resized image
                 files = {
                     "input_reference": ("reference_image.png", resized_image_data, "image/png")
                 }
                 form_data = {
-                    "model": "sora-2",
+                    "model": "sora",
                     "prompt": prompt,
-                    "size": size,
-                    "seconds": str(seconds),
+                    "width": str(width),
+                    "height": str(height),
+                    "n_seconds": str(seconds),
                 }
                 
                 # Create the video generation job with multipart form
-                yield "📤 Submitting video generation request to Sora 2 (with reference image)..."
-                video_response = await self._sora_api_request("POST", "/videos", json_data=form_data, files=files)
+                yield "📤 Submitting video generation request to Sora (with reference image)..."
+                video_response = await self._sora_api_request("POST", "/video/generations/jobs", json_data=form_data, files=files)
             else:
+                # Parse size string to width and height
+                width, height = map(int, size.split("x"))
+                
                 # Text-to-video: use JSON body
                 create_body = {
-                    "model": "sora-2",
+                    "model": "sora",
                     "prompt": prompt,
-                    "size": size,
-                    "seconds": str(seconds),
+                    "width": width,
+                    "height": height,
+                    "n_seconds": seconds,
                 }
                 
                 # Create the video generation job
-                yield "📤 Submitting video generation request to Sora 2..."
-                video_response = await self._sora_api_request("POST", "/videos", json_data=create_body)
+                yield "📤 Submitting video generation request to Sora..."
+                video_response = await self._sora_api_request("POST", "/video/generations/jobs", json_data=create_body)
             
             video_id = video_response.get("id")
             video_status = video_response.get("status")
@@ -638,7 +843,7 @@ class FoundryTemplateAgent:
             poll_count = 0
             max_polls = 90  # Maximum 30 minutes
             
-            while video_status not in ["completed", "failed", "cancelled"]:
+            while video_status not in ["completed", "succeeded", "failed", "cancelled"]:
                 poll_count += 1
                 
                 # Yield progress update every few polls
@@ -651,17 +856,25 @@ class FoundryTemplateAgent:
                     return
                 
                 await asyncio.sleep(20)
-                video_response = await self._sora_api_request("GET", f"/videos/{video_id}")
+                video_response = await self._sora_api_request("GET", f"/video/generations/jobs/{video_id}")
                 video_status = video_response.get("status")
             
             # Check final status
-            if video_status == "completed":
+            if video_status in ["completed", "succeeded"]:
                 logger.info("="*60)
                 logger.info("🎉 VIDEO GENERATION COMPLETED!")
                 logger.info(f"📹 VIDEO ID: {video_id}")
                 logger.info("="*60)
                 
                 yield "🎉 **Video generation completed!** Downloading..."
+                
+                # Get generation ID for download
+                generations = video_response.get("generations", [])
+                if not generations:
+                    yield "❌ No generations found in response"
+                    return
+                generation_id = generations[0].get("id")
+                logger.info(f"📥 Task ID: {video_id}, Generation ID: {generation_id}")
                 
                 # Generate filename with video_id for easy reference
                 timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -670,15 +883,41 @@ class FoundryTemplateAgent:
                 output_filename = f"sora_{timestamp}_{short_vid}.mp4"
                 output_path = os.path.join(output_dir, output_filename)
                 
-                # Download the video
-                video_content = await self._download_video_content(video_id)
-                with open(output_path, "wb") as f:
+                # Download the video using generation_id
+                video_content = await self._download_video_content(generation_id)
+                saved_path = Path(output_path)
+                with open(saved_path, "wb") as f:
                     f.write(video_content)
                 
                 logger.info(f"✅ Video saved successfully: {output_path}")
                 logger.info(f"💡 To remix this video, use Video ID: {video_id}")
                 
-                yield f"✅ **Video saved successfully!**\n\n**Video ID (for remix):** `{video_id}`\n**Duration:** {seconds} seconds\n**Resolution:** {size}\n**File:** {output_path}\n\n💡 *Copy the Video ID above to use with the Remix feature!*\n\n[VIDEO_PATH:{output_path}]"
+                # Upload to blob storage and create artifact for A2A
+                blob_url = self._upload_to_blob(saved_path)
+                response_text = f"✅ **Video saved successfully!**\n\n**Video ID (for remix):** `{video_id}`\n**Duration:** {seconds} seconds\n**Resolution:** {size}"
+                
+                if blob_url:
+                    artifact_record: Dict[str, Any] = {
+                        "artifact-uri": blob_url,
+                        "file-name": saved_path.name,
+                        "mime": "video/mp4",
+                        "storage-type": "azure_blob",
+                        "status": "stored",
+                        "provider": "sora",
+                        "model": "sora",
+                        "video_id": video_id,
+                        "generation_id": generation_id,
+                        "local-path": str(saved_path),
+                        "file-size": len(video_content),
+                    }
+                    self._latest_artifacts.append(artifact_record)
+                    logger.info(f"🎬 Created video artifact: {saved_path.name}, blob_url={blob_url[:80]}...")
+                    response_text += f"\n**Video URL:** [View Video]({blob_url})"
+                else:
+                    response_text += f"\n**File:** {output_path}"
+                
+                response_text += "\n\n💡 *Copy the Video ID above to use with the Remix feature!*"
+                yield response_text
             
             elif video_status == "failed":
                 error_msg = video_response.get('error', 'Unknown error')
@@ -728,7 +967,7 @@ class FoundryTemplateAgent:
             logger.info("Submitting remix request to Sora 2...")
             logger.info(f"Endpoint: /videos/{video_id}/remix")
             logger.info(f"Request body: {remix_body}")
-            video_response = await self._sora_api_request("POST", f"/videos/{video_id}/remix", json_data=remix_body)
+            video_response = await self._sora_api_request("POST", f"/video/generations/jobs/{video_id}/remix", json_data=remix_body)
             
             new_video_id = video_response.get("id")
             video_status = video_response.get("status")
@@ -740,7 +979,7 @@ class FoundryTemplateAgent:
             poll_count = 0
             max_polls = 90
             
-            while video_status not in ["completed", "failed", "cancelled"]:
+            while video_status not in ["completed", "succeeded", "failed", "cancelled"]:
                 poll_count += 1
                 logger.info(f"Status: {video_status}. Waiting 20 seconds... (Poll {poll_count}/{max_polls})")
                 
@@ -748,19 +987,26 @@ class FoundryTemplateAgent:
                     return "", f"Video remix timed out after {max_polls * 20} seconds"
                 
                 await asyncio.sleep(20)
-                video_response = await self._sora_api_request("GET", f"/videos/{new_video_id}")
+                video_response = await self._sora_api_request("GET", f"/video/generations/jobs/{new_video_id}")
                 video_status = video_response.get("status")
                 
                 # Log full response when status changes from in_progress
-                if video_status in ["completed", "failed", "cancelled"]:
+                if video_status in ["completed", "succeeded", "failed", "cancelled"]:
                     logger.info(f"Final response: {video_response}")
             
-            if video_status == "completed":
+            if video_status in ["completed", "succeeded"]:
                 logger.info("="*60)
                 logger.info("🎉 VIDEO REMIX COMPLETED!")
                 logger.info(f"📹 ORIGINAL VIDEO ID: {video_id}")
                 logger.info(f"📹 NEW REMIX VIDEO ID: {new_video_id}")
                 logger.info("="*60)
+                
+                # Get generation ID for download
+                generations = video_response.get("generations", [])
+                if not generations:
+                    return "", "❌ No generations found in remix response"
+                generation_id = generations[0].get("id")
+                logger.info(f"📥 Task ID: {new_video_id}, Generation ID: {generation_id}")
                 
                 timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
                 # Extract short video id (last 8 chars) for filename
@@ -769,13 +1015,41 @@ class FoundryTemplateAgent:
                 output_path = os.path.join(output_dir, output_filename)
                 
                 logger.info(f"Downloading remixed video to: {output_path}")
-                video_content = await self._download_video_content(new_video_id)
-                with open(output_path, "wb") as f:
+                video_content = await self._download_video_content(generation_id)
+                saved_path = Path(output_path)
+                with open(saved_path, "wb") as f:
                     f.write(video_content)
                 
                 logger.info(f"✅ Remixed video saved: {output_path}")
                 logger.info(f"💡 To remix again, use Video ID: {new_video_id}")
-                return output_path, f"✅ Video remixed successfully!\n\n**Original Video ID:** `{video_id}`\n**New Remix Video ID (for further remix):** `{new_video_id}`\n**Saved to:** {output_path}\n\n💡 *You can use the New Remix Video ID to create another remix!*"
+                
+                # Upload to blob storage and create artifact for A2A
+                blob_url = self._upload_to_blob(saved_path)
+                response_text = f"✅ Video remixed successfully!\n\n**Original Video ID:** `{video_id}`\n**New Remix Video ID (for further remix):** `{new_video_id}`"
+                
+                if blob_url:
+                    artifact_record: Dict[str, Any] = {
+                        "artifact-uri": blob_url,
+                        "file-name": saved_path.name,
+                        "mime": "video/mp4",
+                        "storage-type": "azure_blob",
+                        "status": "stored",
+                        "provider": "sora",
+                        "model": "sora",
+                        "video_id": new_video_id,
+                        "generation_id": generation_id,
+                        "original_video_id": video_id,
+                        "local-path": str(saved_path),
+                        "file-size": len(video_content),
+                    }
+                    self._latest_artifacts.append(artifact_record)
+                    logger.info(f"🎬 Created remix artifact: {saved_path.name}, blob_url={blob_url[:80]}...")
+                    response_text += f"\n**Video URL:** [View Video]({blob_url})"
+                else:
+                    response_text += f"\n**Saved to:** {output_path}"
+                
+                response_text += "\n\n💡 *You can use the New Remix Video ID to create another remix!*"
+                return output_path, response_text
             
             elif video_status == "failed":
                 error_obj = video_response.get('error', {})
@@ -829,19 +1103,23 @@ class FoundryTemplateAgent:
             with open(input_video_path, "rb") as video_file:
                 video_data = video_file.read()
             
+            # Parse size string to width and height
+            width, height = map(int, size.split("x"))
+            
             # For video-to-video, use multipart form upload
             files = {
                 "input_reference": (os.path.basename(input_video_path), video_data, "video/mp4")
             }
             form_data = {
-                "model": "sora-2",
+                "model": "sora",
                 "prompt": prompt,
-                "size": size,
-                "seconds": str(seconds),
+                "width": str(width),
+                "height": str(height),
+                "n_seconds": str(seconds),
             }
             
-            logger.info("Submitting video-to-video request to Sora 2...")
-            video_response = await self._sora_api_request("POST", "/videos", json_data=form_data, files=files)
+            logger.info("Submitting video-to-video request to Sora...")
+            video_response = await self._sora_api_request("POST", "/video/generations/jobs", json_data=form_data, files=files)
             
             video_id = video_response.get("id")
             video_status = video_response.get("status")
@@ -853,7 +1131,7 @@ class FoundryTemplateAgent:
             poll_count = 0
             max_polls = 90
             
-            while video_status not in ["completed", "failed", "cancelled"]:
+            while video_status not in ["completed", "succeeded", "failed", "cancelled"]:
                 poll_count += 1
                 logger.info(f"Status: {video_status}. Waiting 20 seconds... (Poll {poll_count}/{max_polls})")
                 
@@ -861,11 +1139,18 @@ class FoundryTemplateAgent:
                     return "", f"Video generation timed out after {max_polls * 20} seconds"
                 
                 await asyncio.sleep(20)
-                video_response = await self._sora_api_request("GET", f"/videos/{video_id}")
+                video_response = await self._sora_api_request("GET", f"/video/generations/jobs/{video_id}")
                 video_status = video_response.get("status")
             
-            if video_status == "completed":
+            if video_status in ["completed", "succeeded"]:
                 logger.info("Video-to-video completed!")
+                
+                # Get generation ID for download
+                generations = video_response.get("generations", [])
+                if not generations:
+                    return "", "❌ No generations found in v2v response"
+                generation_id = generations[0].get("id")
+                logger.info(f"📥 Task ID: {video_id}, Generation ID: {generation_id}")
                 
                 timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
                 unique_id = str(uuid.uuid4())[:8]
@@ -873,12 +1158,38 @@ class FoundryTemplateAgent:
                 output_path = os.path.join(output_dir, output_filename)
                 
                 logger.info(f"Downloading video to: {output_path}")
-                video_content = await self._download_video_content(video_id)
-                with open(output_path, "wb") as f:
+                video_content = await self._download_video_content(generation_id)
+                saved_path = Path(output_path)
+                with open(saved_path, "wb") as f:
                     f.write(video_content)
                 
                 logger.info(f"Video saved: {output_path}")
-                return output_path, f"✅ Video-to-video completed!\n\n**Video ID:** {video_id}\n**Duration:** {seconds} seconds\n**Resolution:** {size}\n**Saved to:** {output_path}"
+                
+                # Upload to blob storage and create artifact for A2A
+                blob_url = self._upload_to_blob(saved_path)
+                response_text = f"✅ Video-to-video completed!\n\n**Video ID:** {video_id}\n**Duration:** {seconds} seconds\n**Resolution:** {size}"
+                
+                if blob_url:
+                    artifact_record: Dict[str, Any] = {
+                        "artifact-uri": blob_url,
+                        "file-name": saved_path.name,
+                        "mime": "video/mp4",
+                        "storage-type": "azure_blob",
+                        "status": "stored",
+                        "provider": "sora",
+                        "model": "sora",
+                        "video_id": video_id,
+                        "generation_id": generation_id,
+                        "local-path": str(saved_path),
+                        "file-size": len(video_content),
+                    }
+                    self._latest_artifacts.append(artifact_record)
+                    logger.info(f"🎬 Created v2v artifact: {saved_path.name}, blob_url={blob_url[:80]}...")
+                    response_text += f"\n**Video URL:** [View Video]({blob_url})"
+                else:
+                    response_text += f"\n**Saved to:** {output_path}"
+                
+                return output_path, response_text
             
             elif video_status == "failed":
                 error_msg = video_response.get('error', 'Unknown error')

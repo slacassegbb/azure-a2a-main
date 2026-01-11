@@ -171,6 +171,13 @@ class SessionContext(BaseModel):
     last_host_turn_text: Optional[str] = Field(default=None)
     last_host_turn_agent: Optional[str] = Field(default=None)
     host_turn_history: List[Dict[str, str]] = Field(default_factory=list)
+    # Human-in-the-loop tracking: which agent is waiting for user input
+    pending_input_agent: Optional[str] = Field(default=None, description="Agent name waiting for input_required response")
+    pending_input_task_id: Optional[str] = Field(default=None, description="Task ID of the pending input_required task")
+    # Workflow state for pausing/resuming on input_required
+    pending_workflow: Optional[str] = Field(default=None, description="Workflow definition to resume after HITL completes")
+    pending_workflow_outputs: List[str] = Field(default_factory=list, description="Task outputs collected before HITL pause")
+    pending_workflow_user_message: Optional[str] = Field(default=None, description="Original user message for workflow")
 
 
 # Agent Mode Orchestration Models
@@ -261,6 +268,8 @@ class FoundryHostAgent2:
         self.threads: Dict[str, str] = {}
         self.default_contextId = str(uuid.uuid4())
         self._agent_tasks: Dict[str, Optional[Task]] = {}
+        self.agent_token_usage: Dict[str, dict] = {}  # Store token usage per agent
+        self.host_token_usage: Dict[str, int] = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}  # Host agent tokens
         
         self.enable_task_evaluation = enable_task_evaluation
         self._active_conversations: Dict[str, str] = {}
@@ -395,10 +404,18 @@ class FoundryHostAgent2:
             card_dict = self._agent_card_to_dict(card)
             
             existing_index = None
+            # First, check by name (primary identifier)
             for i, existing_agent in enumerate(registry):
-                if existing_agent.get("url") == card.url:
+                if existing_agent.get("name") == card.name:
                     existing_index = i
                     break
+            
+            # If not found by name, check by URL (for backward compatibility)
+            if existing_index is None:
+                for i, existing_agent in enumerate(registry):
+                    if existing_agent.get("url") == card.url:
+                        existing_index = i
+                        break
             
             if existing_index is not None:
                 registry[existing_index] = card_dict
@@ -1101,7 +1118,7 @@ class FoundryHostAgent2:
                 - Keep it short and to the point.
 
 
-                If you lack sufficient info, ask clarifying questions before proceeding.
+                IMPORTANT: Do NOT ask for clarification or confirmation - just proceed to the next step autonomously.
 
                 ---
 
@@ -1194,6 +1211,14 @@ class FoundryHostAgent2:
             
             parsed = completion.choices[0].message.parsed
             print(f"🤖 [Agent Mode] Got structured response: {parsed.model_dump_json()[:200]}...")
+            
+            # Extract token usage from orchestration call
+            if hasattr(completion, 'usage') and completion.usage:
+                self.host_token_usage["prompt_tokens"] += completion.usage.prompt_tokens or 0
+                self.host_token_usage["completion_tokens"] += completion.usage.completion_tokens or 0
+                self.host_token_usage["total_tokens"] += completion.usage.total_tokens or 0
+                print(f"🎟️ [Host Agent] Orchestration tokens: +{completion.usage.total_tokens} (total: {self.host_token_usage['total_tokens']})")
+            
             return parsed
                     
         except Exception as e:
@@ -1236,24 +1261,36 @@ class FoundryHostAgent2:
         """
         log_debug(f"🎯 [Agent Mode] Starting orchestration loop for goal: {user_message[:100]}...")
         log_debug(f"📋 [Agent Mode] Workflow parameter received: {workflow[:100] if workflow else 'None'}")
+        
+        # Reset host token usage for this workflow
+        self.host_token_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        
         await self._emit_status_event("Initializing Agent Mode orchestration...", context_id)
         
         # Handle conversation continuity - distinguish new goals from follow-up clarifications
-        if context_id in self._active_conversations:
-            # User is providing additional information for an existing goal
+        # FIXED: Don't treat workflow iterations as follow-ups - they should continue in one loop
+        if context_id in self._active_conversations and not workflow:
+            # User is providing additional information for an existing goal (only for non-workflow mode)
             original_goal = self._active_conversations[context_id]
             goal_text = f"{original_goal}\n\n[Additional Information Provided]: {user_message}"
             print(f"🔄 [Agent Mode] Follow-up detected - appending to original goal")
         else:
-            # Fresh conversation - establish new goal
+            # Fresh conversation OR workflow mode - establish goal
             goal_text = user_message
-            self._active_conversations[context_id] = user_message
-            print(f"🆕 [Agent Mode] New conversation started")
+            if context_id not in self._active_conversations:
+                self._active_conversations[context_id] = user_message
+                print(f"🆕 [Agent Mode] New conversation started")
+            else:
+                print(f"🔄 [Agent Mode] Continuing workflow - NOT treating as follow-up")
+        
+        # Use the class method for extracting clean text from A2A response objects
+        extract_text_from_response = self._extract_text_from_response
         
         # Initialize execution plan with empty task list
         plan = AgentModePlan(goal=goal_text, goal_status="incomplete")
         iteration = 0
         max_iterations = 20  # Safety limit to prevent infinite loops
+        workflow_step_count = 0  # Will be set if workflow is provided
         
         # Accumulate outputs from all completed tasks
         all_task_outputs = []
@@ -1335,17 +1372,27 @@ Do NOT skip steps. Do NOT mark goal as completed until ALL workflow steps are do
         
         # Add workflow-specific completion logic if workflow is present
         if workflow and workflow.strip():
-            system_prompt += """
+            # Count the workflow steps to make it explicit
+            workflow_step_count = len([line for line in workflow.strip().split('\n') if line.strip() and (line.strip()[0].isdigit() or line.strip().startswith('-'))])
+            print(f"📊 [Agent Mode] Detected {workflow_step_count} steps in workflow")
+            log_debug(f"📊 [Agent Mode] Workflow step count: {workflow_step_count}")
+            
+            system_prompt += f"""
 
 ### 🚨 CRITICAL: WHEN TO STOP (WORKFLOW MODE)
-- A WORKFLOW IS ACTIVE - You MUST complete ALL workflow steps before marking goal as "completed"
-- Compare completed tasks against the workflow steps above
-- If ANY workflow step is missing or incomplete, goal_status MUST be "incomplete"
-- ONLY mark goal_status="completed" when:
-  1. EVERY workflow step has a corresponding completed task, AND
-  2. All completed tasks succeeded, OR
-  3. Agents explicitly asked for user input and are waiting for a response
-- Do NOT assume "one task is enough" - check the workflow step count and verify all are done!"""
+- A WORKFLOW IS ACTIVE with **{workflow_step_count} MANDATORY STEPS** - You MUST complete ALL {workflow_step_count} workflow steps before marking goal as "completed"
+- **STEP COUNTING**: The workflow has EXACTLY {workflow_step_count} steps. Count your completed tasks carefully!
+- **VERIFICATION CHECKLIST**:
+  1. Count the number of workflow steps above (should be {workflow_step_count})
+  2. Count the number of successfully completed tasks in your plan
+  3. Match each workflow step to a completed task
+  4. If completed tasks < {workflow_step_count}, goal_status MUST be "incomplete"
+- **COMPLETION CRITERIA** - Mark goal_status="completed" ONLY when:
+  1. You have AT LEAST {workflow_step_count} successfully completed tasks, AND
+  2. Each workflow step has been addressed by a completed task, AND
+  3. All completed tasks succeeded (or agents are waiting for user input)
+- **WARNING**: Do NOT mark as completed after only 1, 2, or 3 steps if the workflow has {workflow_step_count} steps!
+- If ANY workflow step is missing or incomplete, goal_status MUST be "incomplete" and you must create the next task"""
         else:
             system_prompt += """
 
@@ -1394,7 +1441,7 @@ Current Plan (JSON):
 Available Agents (JSON):
 {json.dumps(available_agents, indent=2)}
 
-Analyze the plan and determine the next step. If you need information that isn't in the goal or task outputs above, mark the goal as completed to request it from the user."""
+Analyze the plan and determine the next step. Proceed autonomously - do NOT ask the user for permission or confirmation."""
             
             # Get next step from orchestrator
             try:
@@ -1441,7 +1488,12 @@ Analyze the plan and determine the next step. If you need information that isn't
                 print(f"{'='*80}\n")
                 
                 if next_step.goal_status == "completed":
-                    log_info(f"✅ [Agent Mode] Goal completed after {iteration} iterations!")
+                    completed_tasks_count = len([t for t in plan.tasks if t.state == "completed"])
+                    log_info(f"✅ [Agent Mode] Goal marked as completed after {iteration} iterations")
+                    log_info(f"📊 [Agent Mode] Completed tasks: {completed_tasks_count} / Expected workflow steps: {workflow_step_count if workflow and workflow.strip() else 'N/A'}")
+                    if workflow and workflow.strip() and completed_tasks_count < workflow_step_count:
+                        print(f"⚠️  [Agent Mode] WARNING: Only {completed_tasks_count} tasks completed but workflow has {workflow_step_count} steps!")
+                        print(f"⚠️  [Agent Mode] LLM reasoning: {next_step.reasoning}")
                     await self._emit_status_event("Goal achieved! Generating final response...", context_id)
                     break
                 
@@ -1478,16 +1530,19 @@ Analyze the plan and determine the next step. If you need information that isn't
                         if recommended_agent and recommended_agent in self.cards:
                             log_debug(f"🚀 [Agent Mode] Calling agent: {recommended_agent}")
                             
-                            # File deduplication for image editing workflows ONLY
-                            # For editing workflows (base/mask/overlay), keep only the latest version of each role
-                            # For generation workflows, keep ALL artifacts (they're different results, not iterations)
+                            # File deduplication for agent mode workflows
+                            # Keep only the most recent files to prevent accumulation across workflow iterations
                             if hasattr(session_context, '_latest_processed_parts') and len(session_context._latest_processed_parts) > 1:
                                 from collections import defaultdict
                                 old_count = len(session_context._latest_processed_parts)
                                 
+                                # Maximum number of generated files to keep (most recent N)
+                                # This prevents accumulation when workflows have many iterations
+                                MAX_GENERATED_FILES = 3
+                                
                                 # Separate artifacts with editing roles (base/mask/overlay) from generated outputs
                                 editing_roles = defaultdict(lambda: None)  # For base/mask/overlay - keep latest only
-                                generated_artifacts = []  # For generated images/files - keep ALL
+                                generated_artifacts = []  # For generated images/files - keep only most recent N
                                 
                                 for part in reversed(session_context._latest_processed_parts):  # reversed = most recent first
                                     role = None
@@ -1502,18 +1557,19 @@ Analyze the plan and determine the next step. If you need information that isn't
                                         if role not in editing_roles:
                                             editing_roles[role] = part
                                     else:
-                                        # Keep ALL generated artifacts (no role or other roles)
-                                        # These are different outputs, not iterations of the same file
-                                        generated_artifacts.append(part)
+                                        # Keep only the most recent N generated artifacts to prevent accumulation
+                                        # This prevents passing 17+ files to agents like Image Analysis
+                                        if len(generated_artifacts) < MAX_GENERATED_FILES:
+                                            generated_artifacts.append(part)
                                 
-                                # Combine: editing roles (deduplicated) + ALL generated artifacts  
+                                # Combine: editing roles (deduplicated) + most recent N generated artifacts  
                                 # Keep generated_artifacts in newest-first order (from reversed iteration)
                                 # This ensures the LATEST generated image is FIRST, so it's used as base for next edit
                                 deduplicated_parts = list(editing_roles.values()) + generated_artifacts
                                 session_context._latest_processed_parts = deduplicated_parts
                                 print(f"📎 [Agent Mode] File management: {old_count} files → {len(deduplicated_parts)} files")
                                 print(f"   • Editing roles (deduplicated): {len(editing_roles)} (base/mask/overlay)")
-                                print(f"   • Generated artifacts (all kept, newest first): {len(generated_artifacts)}")
+                                print(f"   • Generated artifacts (kept {len(generated_artifacts)} most recent, max {MAX_GENERATED_FILES})")
                             
                             # Create dummy tool context for send_message
                             dummy_context = DummyToolContext(session_context, self._azure_blob_client)
@@ -1530,6 +1586,29 @@ Analyze the plan and determine the next step. If you need information that isn't
                             # Extract state information from A2A Task protocol response
                             if responses and len(responses) > 0:
                                 response_obj = responses[0] if isinstance(responses, list) else responses
+                                
+                                # WORKFLOW PAUSE: Check if agent returned input_required
+                                # This is detected via session_context.pending_input_agent being set
+                                if session_context.pending_input_agent:
+                                    log_info(f"⏸️ [Agent Mode] Agent '{recommended_agent}' returned input_required - PAUSING WORKFLOW")
+                                    task.state = "input_required"
+                                    
+                                    # Collect any output from the agent's question (properly extract text)
+                                    output_text = extract_text_from_response(response_obj)
+                                    if output_text:
+                                        all_task_outputs.append(output_text)
+                                    
+                                    # Store workflow state for resumption after HITL
+                                    session_context.pending_workflow = workflow
+                                    session_context.pending_workflow_outputs = all_task_outputs.copy()
+                                    session_context.pending_workflow_user_message = user_message
+                                    
+                                    log_info(f"⏸️ [Agent Mode] Workflow paused. Collected {len(all_task_outputs)} outputs so far.")
+                                    log_info(f"⏸️ [Agent Mode] Waiting for user response to '{recommended_agent}'")
+                                    await self._emit_status_event(f"Waiting for your response to continue...", context_id)
+                                    
+                                    # Return current outputs - workflow will resume after HITL
+                                    return all_task_outputs
                                 
                                 # A2A Task response includes detailed state and artifacts
                                 if isinstance(response_obj, Task):
@@ -1585,10 +1664,11 @@ Analyze the plan and determine the next step. If you need information that isn't
                                         else:
                                             all_task_outputs.append(output_text)
                                 else:
-                                    # Simple string response (legacy format)
+                                    # Simple string response (legacy format) - extract text properly
                                     task.state = "completed"
-                                    task.output = {"result": str(response_obj)}
-                                    all_task_outputs.append(str(response_obj))
+                                    output_text = extract_text_from_response(response_obj)
+                                    task.output = {"result": output_text}
+                                    all_task_outputs.append(output_text)
                                     log_info(f"✅ [Agent Mode] Task completed successfully")
                             else:
                                 # No response indicates communication failure
@@ -1649,6 +1729,29 @@ Analyze the plan and determine the next step. If you need information that isn't
         
         # Generate final response from all outputs
         print(f"🎬 [Agent Mode] Orchestration complete. {len(all_task_outputs)} task outputs collected")
+        print(f"🎟️ [Host Agent] Final token usage: {self.host_token_usage}")
+        
+        # Emit host token usage to frontend
+        try:
+            from service.websocket_streamer import get_websocket_streamer
+            import asyncio
+            
+            async def emit_host_tokens():
+                streamer = await get_websocket_streamer()
+                if streamer:
+                    event_data = {
+                        "agentName": "foundry-host-agent",
+                        "tokenUsage": self.host_token_usage,
+                        "state": "completed",
+                        "timestamp": __import__('datetime').datetime.utcnow().isoformat()
+                    }
+                    await streamer._send_event("host_token_usage", event_data, context_id)
+                    print(f"📡 [Host Agent] Emitted token usage to frontend: {self.host_token_usage['total_tokens']} tokens")
+            
+            asyncio.create_task(emit_host_tokens())
+        except Exception as e:
+            print(f"⚠️ [Host Agent] Error emitting token usage: {e}")
+        
         return all_task_outputs
 
     async def get_current_root_instruction(self) -> str:
@@ -1791,9 +1894,16 @@ Analyze the plan and determine the next step. If you need information that isn't
                     "contextId": context_id
                 }
                 
+                print(f"📤 [OUTGOING MESSAGE EVENT] Emitting to frontend:")
+                print(f"   • Target Agent: {target_agent_name}")
+                print(f"   • Message: {message[:100]}..." if len(message) > 100 else f"   • Message: {message}")
+                print(f"   • Context ID: {context_id}")
+                
                 await streamer._send_event("outgoing_agent_message", event_data, context_id)
+                print(f"✅ [OUTGOING MESSAGE EVENT] Emitted successfully")
                 
         except Exception as e:
+            print(f"❌ [OUTGOING MESSAGE EVENT] Error: {e}")
             log_debug(f"Error emitting outgoing message event: {e}")
             pass
 
@@ -1802,6 +1912,7 @@ Analyze the plan and determine the next step. If you need information that isn't
         try:
             # Import here to avoid circular imports
             from service.websocket_streamer import get_websocket_streamer
+            import datetime
             
             streamer = await get_websocket_streamer()
             if streamer:
@@ -1809,7 +1920,7 @@ Analyze the plan and determine the next step. If you need information that isn't
                     "agentName": agent_name,
                     "toolName": tool_name,
                     "status": status,
-                    "timestamp": __import__('datetime').datetime.utcnow().isoformat()
+                    "timestamp": datetime.datetime.utcnow().isoformat()
                 }
                 
                 if error_message:
@@ -1820,6 +1931,22 @@ Analyze the plan and determine the next step. If you need information that isn't
                     log_debug(f"Streamed tool response: {agent_name} - {tool_name} - {status}")
                 else:
                     log_debug(f"Failed to stream tool response: {agent_name}")
+                
+                # ALSO emit task_updated so the frontend sidebar updates correctly
+                # This is the single source of truth for agent sidebar status
+                task_state = "completed" if status == "success" else "failed"
+                task_updated_data = {
+                    "taskId": str(uuid.uuid4()),
+                    "conversationId": getattr(self, 'default_contextId', str(uuid.uuid4())),
+                    "contextId": getattr(self, 'default_contextId', None),
+                    "state": task_state,
+                    "agentName": agent_name,
+                    "timestamp": datetime.datetime.utcnow().isoformat(),
+                    "content": f"Agent {status}" if not error_message else error_message
+                }
+                print(f"🎯 [SIDEBAR] Emitting task_updated for {agent_name}: state={task_state}")
+                result = await streamer._send_event("task_updated", task_updated_data, None)
+                print(f"🎯 [SIDEBAR] task_updated sent, success={result}")
             else:
                 log_debug(f"WebSocket streamer not available for tool response")
                 
@@ -1858,11 +1985,12 @@ Analyze the plan and determine the next step. If you need information that isn't
     def _default_task_callback(self, event: TaskCallbackArg, agent_card: AgentCard) -> Task:
         """Default task callback optimized for streaming remote agent execution.
         
-        Handles TaskStatusUpdateEvent and TaskArtifactUpdateEvent for granular UI visibility.
-        Enhanced with granular WebSocket streaming for UI visibility.
+        CONSOLIDATED: Uses _emit_task_event as the SINGLE source of truth for all
+        remote agent status updates to prevent duplicate events in the UI.
         """
         agent_name = agent_card.name
         log_debug(f"[STREAMING] Task callback from {agent_name}: {type(event).__name__}")
+        
         # Keep session context task mapping in sync per agent
         try:
             context_id_cb = get_context_id(event, None)
@@ -1876,48 +2004,30 @@ Analyze the plan and determine the next step. If you need information that isn't
                     if state_obj is not None:
                         state_str = state_obj.value if hasattr(state_obj, 'value') else str(state_obj)
                         session_ctx.agent_task_states[agent_name] = state_str
-        except Exception as _:
+                        
+                        # HUMAN-IN-THE-LOOP: Track input_required state from remote agents
+                        if state_str == 'input_required' or state_str == 'input-required':
+                            session_ctx.pending_input_agent = agent_name
+                            session_ctx.pending_input_task_id = task_id_cb
+                            log_info(f"🔄 [HITL] Callback detected input_required from '{agent_name}', setting pending_input_agent (task_id: {task_id_cb})")
+        except Exception as e:
             # Non-fatal; continue normal processing
+            log_debug(f"[STREAMING] Error in task callback context tracking: {e}")
             pass
         
-        # Only emit events for specific meaningful state changes, not every streaming update
-        # This prevents duplicates while maintaining granular visibility
+        # CONSOLIDATED: Only status-update and artifact-update events should update the UI
+        # 'task' events are for internal task creation/tracking, not UI status updates
+        # Emitting 'task' events was causing late "working" events to overwrite "completed" status
         if hasattr(event, 'kind'):
             event_kind = getattr(event, 'kind', 'unknown')
             log_debug(f"[STREAMING] Event kind from {agent_name}: {event_kind}")
             
-            # Only emit for initial task creation and final completion states
-            if event_kind == 'task':
-                # Initial task creation
-                asyncio.create_task(self._emit_granular_agent_event(agent_name, "task started"))
-            elif event_kind == 'artifact-update':
-                # Final artifact completion
-                status_text = "completed with artifact"
-                if hasattr(event, 'artifact') and event.artifact:
-                    status_text = "artifact generated"
-                asyncio.create_task(self._emit_granular_agent_event(agent_name, status_text))
-            elif event_kind == 'status-update':
-                # Handle status updates - these contain completion/failure states!
-                if hasattr(event, 'status') and event.status and hasattr(event.status, 'state'):
-                    state_value = event.status.state
-                    if hasattr(state_value, 'value'):
-                        state_str = state_value.value
-                    else:
-                        state_str = str(state_value)
-                    
-                    log_debug(f"[STREAMING] Status update from {agent_name}: {state_str}")
-                    
-                    # Emit all meaningful task states for full UI visibility
-                    # This includes all A2A protocol states: submitted, working, input-required, completed, canceled, failed, unknown
-                    if state_str in ['completed', 'failed', 'canceled', 'submitted', 'input-required', 'unknown', 'working']:
-                        log_debug(f"[STREAMING] Emitting task state for {agent_name}: {state_str}")
-                        # Use the _emit_task_event for proper A2A-compliant streaming
-                        self._emit_task_event(event, agent_card)
-                    else:
-                        # Log unrecognized states for debugging
-                        log_debug(f"[STREAMING] Unrecognized task state from {agent_name}: {state_str}")
-                        # Still emit it in case it's a valid state we don't know about
-                        self._emit_task_event(event, agent_card)
+            # Only emit status-update and artifact-update to UI (NOT 'task' events)
+            if event_kind in ['artifact-update', 'status-update']:
+                log_debug(f"[STREAMING] Emitting via _emit_task_event for {agent_name}: {event_kind}")
+                self._emit_task_event(event, agent_card)
+            elif event_kind == 'task':
+                log_debug(f"[STREAMING] Skipping UI emit for 'task' event from {agent_name} (internal tracking only)")
             # Skip other intermediate events
         
         # Get or create task for this specific agent
@@ -2085,6 +2195,7 @@ Analyze the plan and determine the next step. If you need information that isn't
                 log_debug(f"Added event to host manager for agent: {agent_card.name}")
             
             # Stream A2A-compliant task events to WebSocket with agent context
+            # CONSOLIDATED: Single event emission point for remote agent status
             log_debug(f"Streaming A2A task event to WebSocket for agent: {agent_card.name}, state: {task_state}")
             try:
                 import asyncio
@@ -2098,6 +2209,16 @@ Analyze the plan and determine the next step. If you need information that isn't
                             log_debug("⚠️ WebSocket streamer not available for task event")
                             return
 
+                        # Extract text content from message parts if available
+                        text_content = ""
+                        if content and hasattr(content, 'parts'):
+                            for part in content.parts:
+                                if hasattr(part, 'root') and hasattr(part.root, 'text'):
+                                    text_content = part.root.text
+                                    break
+
+                        # CONSOLIDATED: Include ALL relevant data in single task_updated event
+                        # This is the ONLY event emitted for remote agent status updates
                         event_data = {
                             "taskId": task_id or str(uuid.uuid4()),
                             "conversationId": contextId or str(uuid.uuid4()),
@@ -2106,7 +2227,13 @@ Analyze the plan and determine the next step. If you need information that isn't
                             "artifactsCount": len(getattr(task, 'artifacts', [])),
                             "agentName": agent_card.name,
                             "timestamp": datetime.datetime.utcnow().isoformat(),
+                            # Include message content so frontend has everything in one event
+                            "content": text_content if text_content else None,
                         }
+                        
+                        # Add token usage if available for this agent
+                        if agent_card.name in self.agent_token_usage:
+                            event_data["tokenUsage"] = self.agent_token_usage[agent_card.name]
 
                         event_type = "task_updated"
                         if hasattr(task, 'kind') and task.kind == 'status-update':
@@ -2114,29 +2241,18 @@ Analyze the plan and determine the next step. If you need information that isn't
                         elif not hasattr(task, 'kind'):
                             event_type = "task_created"
 
+                        # DEBUG: Log what we're sending to the frontend
+                        print(f"📡 [A2A STREAM] Emitting {event_type} for {agent_card.name}: state={task_state}")
+                        
                         success = await streamer._send_event(event_type, event_data, contextId)
                         if success:
                             log_debug(f"✅ A2A task event streamed: {agent_card.name} -> {task_state}")
                         else:
                             log_debug(f"❌ Failed to stream A2A task event: {agent_card.name} -> {task_state}")
                         
-                        # Extract and emit text content for DAG display when task completes
-                        if task_state == 'completed' and content and hasattr(content, 'parts'):
-                            text_content = ""
-                            for part in content.parts:
-                                if hasattr(part, 'root') and hasattr(part.root, 'text'):
-                                    text_content = part.root.text
-                                    break
-                            
-                            if text_content:
-                                # Emit as remote_agent_activity so it shows in DAG
-                                activity_data = {
-                                    "agentName": agent_card.name,
-                                    "content": text_content,
-                                    "timestamp": datetime.datetime.utcnow().isoformat()
-                                }
-                                await streamer._send_event("remote_agent_activity", activity_data, None)
-                                log_debug(f"✅ Emitted text content for DAG: {agent_card.name} -> {text_content[:100]}...")
+                        # REMOVED: Secondary remote_agent_activity emission
+                        # All data is now included in the task_updated event above
+                        
                     except Exception as e:
                         log_debug(f"❌ Error streaming A2A task event: {e}")
                         import traceback
@@ -2315,6 +2431,50 @@ Analyze the plan and determine the next step. If you need information that isn't
         except Exception as e:
             log_foundry_debug(f"⚠️ Error extracting message content: {e}")
             return ""
+
+    @staticmethod
+    def _extract_text_from_response(obj) -> str:
+        """Extract clean text from various A2A response types.
+        
+        Handles Part, TextPart, DataPart objects and avoids ugly Python repr output.
+        """
+        if obj is None:
+            return ""
+        if isinstance(obj, str):
+            return obj
+        # Handle Part objects with root
+        if hasattr(obj, 'root'):
+            root = obj.root
+            if hasattr(root, 'text'):
+                return root.text
+            if hasattr(root, 'kind') and root.kind == 'text' and hasattr(root, 'text'):
+                return root.text
+            if hasattr(root, 'data'):
+                return str(root.data)
+        # Handle TextPart/DataPart directly
+        if hasattr(obj, 'kind'):
+            if obj.kind == 'text' and hasattr(obj, 'text'):
+                return obj.text
+            if obj.kind == 'data' and hasattr(obj, 'data'):
+                return str(obj.data)
+        # Handle dict
+        if isinstance(obj, dict):
+            if 'text' in obj:
+                return obj['text']
+            return str(obj)
+        # Handle list - extract text from each item
+        if isinstance(obj, list):
+            texts = [FoundryHostAgent2._extract_text_from_response(item) for item in obj]
+            return "\n".join(t for t in texts if t)
+        # Fallback - but avoid ugly repr
+        result = str(obj)
+        # If it looks like a Python repr, try to extract the text
+        if result.startswith("kind='text'") and "text='" in result:
+            import re
+            match = re.search(r"text='([^']*)'", result)
+            if match:
+                return match.group(1).replace("\\n", "\n")
+        return result
 
     def get_session_context(self, context_id: str) -> SessionContext:
         if context_id not in self.session_contexts:
@@ -3010,104 +3170,84 @@ Answer with just JSON:
             start_time = time.time()
             
             try:
-                # ENHANCED: Use a detailed task callback for streaming execution
-                # to capture granular remote agent activities for UI visibility
+                # SIMPLIFIED: Callback for streaming execution that handles file artifacts
+                # Status events are handled ONLY in _default_task_callback -> _emit_task_event
                 def streaming_task_callback(event, agent_card):
-                    """Enhanced callback for streaming execution that captures detailed agent activities"""
-                    agent_name = agent_card.name
-                    log_debug(f"[STREAMING] Detailed callback from {agent_name}: {type(event).__name__}")
+                    """Callback for streaming execution - handles file artifacts only.
                     
-                    # Emit granular events based on the type of update
-                    if hasattr(event, 'kind'):
-                        event_kind = getattr(event, 'kind', 'unknown')
-                        
-                        if event_kind == 'status-update':
-                            # Extract detailed status information
-                            status_text = "processing"
-                            if hasattr(event, 'status') and event.status:
-                                if hasattr(event.status, 'message') and event.status.message:
-                                    if hasattr(event.status.message, 'parts') and event.status.message.parts:
-                                        # Process ALL parts - don't break early so we catch all image artifacts
-                                        for part in event.status.message.parts:
-                                            # Check for text parts
-                                            if hasattr(part, 'root') and hasattr(part.root, 'text'):
-                                                status_text = part.root.text
-                                                # Continue processing to find image artifacts - don't break!
-                                            # Check for image artifacts in DataPart
-                                            elif hasattr(part, 'root') and hasattr(part.root, 'data') and isinstance(part.root.data, dict):
-                                                artifact_uri = part.root.data.get('artifact-uri')
-                                                if artifact_uri:
-                                                    log_debug(f"Found image artifact in streaming event: {artifact_uri}")
+                    CONSOLIDATED: Status updates are emitted ONLY via _emit_task_event
+                    to prevent duplicate events in the UI.
+                    """
+                    agent_name = agent_card.name
+                    log_debug(f"[STREAMING] Callback from {agent_name}: {type(event).__name__}")
+                    
+                    # Only handle file artifacts here - status events go through _emit_task_event
+                    if hasattr(event, 'kind') and event.kind == 'status-update':
+                        if hasattr(event, 'status') and event.status:
+                            if hasattr(event.status, 'message') and event.status.message:
+                                if hasattr(event.status.message, 'parts') and event.status.message.parts:
+                                    # Process parts to find image artifacts (but NOT emit status events)
+                                    for part in event.status.message.parts:
+                                        # Check for image artifacts in DataPart
+                                        if hasattr(part, 'root') and hasattr(part.root, 'data') and isinstance(part.root.data, dict):
+                                            artifact_uri = part.root.data.get('artifact-uri')
+                                            if artifact_uri:
+                                                log_debug(f"Found image artifact in streaming event: {artifact_uri}")
+                                                # Emit file_uploaded event
+                                                async def emit_file_event(part_data=part.root.data, uri=artifact_uri):
+                                                    try:
+                                                        from service.websocket_streamer import get_websocket_streamer
+                                                        streamer = await get_websocket_streamer()
+                                                        if streamer:
+                                                            file_info = {
+                                                                "file_id": str(uuid.uuid4()),
+                                                                "filename": part_data.get("file-name", "agent-artifact.png"),
+                                                                "uri": uri,
+                                                                "size": part_data.get("file-size", 0),
+                                                                "content_type": "image/png",
+                                                                "source_agent": agent_name,
+                                                                "contextId": get_context_id(event)
+                                                            }
+                                                            await streamer.stream_file_uploaded(file_info, get_context_id(event))
+                                                            log_debug(f"File uploaded event sent for streaming artifact: {file_info['filename']}")
+                                                    except Exception as e:
+                                                        log_debug(f"Error emitting file_uploaded event: {e}")
+                                                asyncio.create_task(emit_file_event())
+                                        # Check for image artifacts in FilePart
+                                        elif hasattr(part, 'root') and hasattr(part.root, 'file'):
+                                            file_obj = part.root.file
+                                            if isinstance(file_obj, FileWithUri):
+                                                file_uri = file_obj.uri
+                                                if file_uri and str(file_uri).startswith(("http://", "https://")):
+                                                    log_debug(f"Found image artifact in streaming event (FilePart): {file_uri}")
+                                                    # Capture values to avoid closure issues
+                                                    file_name = file_obj.name
+                                                    mime_type = file_obj.mimeType if hasattr(file_obj, 'mimeType') else 'image/png'
                                                     # Emit file_uploaded event
-                                                    async def emit_file_event(part_data=part.root.data, uri=artifact_uri):
+                                                    async def emit_file_event_fp():
                                                         try:
                                                             from service.websocket_streamer import get_websocket_streamer
                                                             streamer = await get_websocket_streamer()
                                                             if streamer:
                                                                 file_info = {
                                                                     "file_id": str(uuid.uuid4()),
-                                                                    "filename": part_data.get("file-name", "agent-artifact.png"),
-                                                                    "uri": uri,
-                                                                    "size": part_data.get("file-size", 0),
-                                                                    "content_type": "image/png",
+                                                                    "filename": file_name,
+                                                                    "uri": file_uri,
+                                                                    "size": 0,
+                                                                    "content_type": mime_type,
                                                                     "source_agent": agent_name,
                                                                     "contextId": get_context_id(event)
                                                                 }
                                                                 await streamer.stream_file_uploaded(file_info, get_context_id(event))
-                                                                log_debug(f"File uploaded event sent for streaming artifact: {file_info['filename']}")
+                                                                log_debug(f"File uploaded event sent for streaming FilePart: {file_info['filename']}")
                                                         except Exception as e:
-                                                            log_debug(f"Error emitting file_uploaded event: {e}")
-                                                    asyncio.create_task(emit_file_event())
-                                            # Check for image artifacts in FilePart
-                                            elif hasattr(part, 'root') and hasattr(part.root, 'file'):
-                                                file_obj = part.root.file
-                                                if isinstance(file_obj, FileWithUri):
-                                                    file_uri = file_obj.uri
-                                                    if file_uri and str(file_uri).startswith(("http://", "https://")):
-                                                        log_debug(f"Found image artifact in streaming event (FilePart): {file_uri}")
-                                                        # Capture values to avoid closure issues
-                                                        file_name = file_obj.name
-                                                        mime_type = file_obj.mimeType if hasattr(file_obj, 'mimeType') else 'image/png'
-                                                        # Emit file_uploaded event
-                                                        async def emit_file_event_fp():
-                                                            try:
-                                                                from service.websocket_streamer import get_websocket_streamer
-                                                                streamer = await get_websocket_streamer()
-                                                                if streamer:
-                                                                    file_info = {
-                                                                        "file_id": str(uuid.uuid4()),
-                                                                        "filename": file_name,
-                                                                        "uri": file_uri,
-                                                                        "size": 0,
-                                                                        "content_type": mime_type,
-                                                                        "source_agent": agent_name,
-                                                                        "contextId": get_context_id(event)
-                                                                    }
-                                                                    await streamer.stream_file_uploaded(file_info, get_context_id(event))
-                                                                    log_debug(f"File uploaded event sent for streaming FilePart: {file_info['filename']}")
-                                                            except Exception as e:
-                                                                log_debug(f"Error emitting file_uploaded event for FilePart: {e}")
-                                                        asyncio.create_task(emit_file_event_fp())
-                                elif hasattr(event.status, 'state'):
-                                    state = event.status.state
-                                    if hasattr(state, 'value'):
-                                        state_value = state.value
-                                    else:
-                                        state_value = str(state)
-                                    status_text = f"status: {state_value}"
-                            
-                            # Stream detailed status to UI
-                            asyncio.create_task(self._emit_granular_agent_event(agent_name, status_text))
-                            
-                        elif event_kind == 'artifact-update':
-                            # Agent is generating artifacts
-                            asyncio.create_task(self._emit_granular_agent_event(agent_name, "generating artifact"))
-                        
-                        elif event_kind == 'task':
-                            # Initial task creation
-                            asyncio.create_task(self._emit_granular_agent_event(agent_name, "task started"))
+                                                            log_debug(f"Error emitting file_uploaded event for FilePart: {e}")
+                                                    asyncio.create_task(emit_file_event_fp())
                     
-                    # Call the original callback for task management
+                    # REMOVED: _emit_granular_agent_event calls that caused duplicate events
+                    # Status events are now emitted ONLY via _default_task_callback -> _emit_task_event
+                    
+                    # Call the original callback for task management (which handles status emission)
                     return self._default_task_callback(event, agent_card)
                 
                 # Emit outgoing message event for DAG display (use original message, not contextualized)
@@ -3120,6 +3260,30 @@ Answer with just JSON:
                 # Truncate very long messages for DAG display
                 if len(clean_message) > 500:
                     clean_message = clean_message[:497] + "..."
+                
+                # IMPORTANT: Emit "working" status BEFORE any other events
+                # This tells the frontend a new task is starting for this agent,
+                # so it can advance to the next step before activity messages arrive
+                async def emit_working_status():
+                    try:
+                        from service.websocket_streamer import get_websocket_streamer
+                        streamer = await get_websocket_streamer()
+                        if streamer:
+                            event_data = {
+                                "taskId": taskId or str(uuid.uuid4()),
+                                "conversationId": contextId,
+                                "contextId": contextId,
+                                "state": "working",
+                                "agentName": agent_name,
+                                "artifactsCount": 0,
+                                "timestamp": __import__('datetime').datetime.utcnow().isoformat(),
+                            }
+                            await streamer._send_event("task_updated", event_data, contextId)
+                            log_debug(f"📡 Emitted working status for {agent_name} BEFORE calling agent")
+                    except Exception as e:
+                        log_debug(f"Error emitting pre-call working status: {e}")
+                
+                await emit_working_status()
                 
                 asyncio.create_task(self._emit_outgoing_message_event(agent_name, clean_message, contextId))
                 
@@ -3178,6 +3342,20 @@ Answer with just JSON:
                         print(f"  • task.artifacts count: {len(task.artifacts)}")
                         for idx, art in enumerate(task.artifacts):
                             print(f"  • artifact[{idx}].parts count: {len(art.parts) if art.parts else 0}")
+                    
+                    # Extract token usage from message parts before converting
+                    if task.status.message and task.status.message.parts:
+                        for part in task.status.message.parts:
+                            if hasattr(part, 'root') and hasattr(part.root, 'kind') and part.root.kind == 'data':
+                                data = getattr(part.root, 'data', {})
+                                if isinstance(data, dict) and data.get('type') == 'token_usage':
+                                    self.agent_token_usage[agent_name] = {
+                                        'prompt_tokens': data.get('prompt_tokens', 0),
+                                        'completion_tokens': data.get('completion_tokens', 0),
+                                        'total_tokens': data.get('total_tokens', 0)
+                                    }
+                                    print(f"💰 [TASK] Extracted token usage for {agent_name}: {self.agent_token_usage[agent_name]}")
+                                    break
                     
                     if task.status.message:
                         response_parts.extend(
@@ -3266,7 +3444,7 @@ Answer with just JSON:
                             id=str(uuid.uuid4()),
                             message=Message(
                                 role='user',
-                                parts=[TextPart(text=contextualized_message)],
+                                parts=[Part(root=TextPart(text=contextualized_message))],
                                 messageId=str(uuid.uuid4()),
                                 contextId=session_context.contextId,
                                 taskId=None,
@@ -3476,6 +3654,12 @@ Answer with just JSON:
                         tool_context.actions.skip_summarization = False
                         tool_context.actions.escalate = False
 
+                    # Clear any pending input_required state since this agent completed successfully
+                    if session_context.pending_input_agent == agent_name:
+                        log_info(f"🔄 [HITL] Clearing pending input state for completed agent '{agent_name}'")
+                        session_context.pending_input_agent = None
+                        session_context.pending_input_task_id = None
+
                     self._reset_retry_count(session_context)
                     
                     if self.enable_task_evaluation:
@@ -3636,6 +3820,11 @@ Original request: {message}"""
                     })
                     tool_context.actions.skip_summarization = True
                     tool_context.actions.escalate = True
+                    
+                    # Track which agent is waiting for input so we can route follow-up messages
+                    session_context.pending_input_agent = agent_name
+                    session_context.pending_input_task_id = task.id
+                    log_info(f"🔄 [HITL] Agent '{agent_name}' set to input_required, awaiting user response (task_id: {task.id})")
                     
                     # For input_required, provide the status message if available
                     if task.status.message:
@@ -4346,7 +4535,7 @@ Original request: {message}"""
                     text = response
                 else:
                     text = json.dumps(response, ensure_ascii=False)
-                text_part = TextPart(kind="text", text=text)
+                text_part = TextPart(text=text)  # Don't pass kind - it's inferred from the class
                 part = Part(root=text_part)
                 response_parts.append(part)
                 print(f"✅ Step 3.{i+1}: Created Part successfully")
@@ -4513,6 +4702,92 @@ Original request: {message}"""
             session_context.agent_mode = agent_mode
             session_context.enable_inter_agent_memory = enable_inter_agent_memory
             log_foundry_debug(f"Agent mode set to: {agent_mode}, Inter-agent memory: {enable_inter_agent_memory}")
+            
+            # HUMAN-IN-THE-LOOP: Check if an agent is waiting for input_required response
+            # If so, route this message directly to that agent instead of normal orchestration
+            if session_context.pending_input_agent:
+                pending_agent = session_context.pending_input_agent
+                pending_task_id = session_context.pending_input_task_id
+                pending_workflow = session_context.pending_workflow
+                pending_workflow_outputs = session_context.pending_workflow_outputs or []
+                
+                log_info(f"🔄 [HITL] Found pending input_required agent: '{pending_agent}' (task_id: {pending_task_id})")
+                log_info(f"🔄 [HITL] Routing user response directly to waiting agent instead of orchestration")
+                if pending_workflow:
+                    log_info(f"🔄 [HITL] Workflow will resume after agent completes ({len(pending_workflow_outputs)} outputs collected)")
+                
+                # Clear the pending state before routing
+                session_context.pending_input_agent = None
+                session_context.pending_input_task_id = None
+                
+                # Extract user message from parts
+                hitl_user_message = ""
+                for part in message_parts:
+                    if hasattr(part, 'root') and part.root.kind == 'text':
+                        hitl_user_message = part.root.text
+                        break
+                
+                # Route directly to the waiting agent
+                try:
+                    tool_context = DummyToolContext(session_context, self._azure_blob_client)
+                    hitl_response = await self.send_message(
+                        agent_name=pending_agent,
+                        message=hitl_user_message,
+                        tool_context=tool_context,
+                        suppress_streaming=False
+                    )
+                    log_info(f"🔄 [HITL] Response from agent '{pending_agent}': {str(hitl_response)[:200]}...")
+                    
+                    # Helper to extract clean text from responses
+                    def clean_response(resp):
+                        if isinstance(resp, list):
+                            return [self._extract_text_from_response(r) for r in resp]
+                        return [self._extract_text_from_response(resp)]
+                    
+                    # Check if agent is STILL requesting input (multi-turn HITL)
+                    if session_context.pending_input_agent:
+                        log_info(f"🔄 [HITL] Agent still requires more input - staying paused")
+                        # Keep the pending workflow state for next turn
+                        return clean_response(hitl_response)
+                    
+                    # Agent completed! Check if we need to resume a paused workflow
+                    if pending_workflow:
+                        log_info(f"▶️ [HITL] Agent completed - RESUMING WORKFLOW")
+                        
+                        # Add this agent's response to the collected outputs (properly extract text)
+                        hitl_outputs = clean_response(hitl_response)
+                        all_outputs = pending_workflow_outputs + hitl_outputs
+                        
+                        # Clear workflow pause state
+                        session_context.pending_workflow = None
+                        session_context.pending_workflow_outputs = []
+                        session_context.pending_workflow_user_message = None
+                        
+                        log_info(f"▶️ [HITL] Resuming workflow with {len(all_outputs)} total outputs")
+                        
+                        # Continue the workflow from where we left off
+                        # The orchestrator will pick up from the next step
+                        remaining_outputs = await self._agent_mode_orchestration_loop(
+                            user_message="Continue the workflow. The previous step has completed.",
+                            context_id=context_id,
+                            session_context=session_context,
+                            event_logger=event_logger,
+                            workflow=pending_workflow
+                        )
+                        
+                        # Clean any remaining outputs too
+                        clean_remaining = []
+                        for out in remaining_outputs:
+                            clean_remaining.append(self._extract_text_from_response(out))
+                        
+                        return all_outputs + clean_remaining
+                    
+                    return clean_response(hitl_response)
+                except Exception as e:
+                    log_error(f"🔄 [HITL] Error routing to pending agent '{pending_agent}': {e}")
+                    # Fall through to normal processing if routing fails
+                    import traceback
+                    traceback.print_exc()
             # Reset any cached parts from prior turns so we don't resend stale attachments
             if hasattr(session_context, "_latest_processed_parts"):
                 file_count_before = len(session_context._latest_processed_parts)
@@ -4825,7 +5100,7 @@ Original request: {message}"""
 Task Outputs:
 {chr(10).join(f"- {output}" for output in orchestration_outputs)}
 
-IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessary information is provided above. Simply synthesize these outputs into a clear, cohesive response that directly answers the user's question."""
+IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). Simply synthesize these outputs into a clear, cohesive response. Do NOT ask for confirmation or what to do next."""
                     
                     # Send synthesis prompt to thread
                     await self.send_message_to_thread(thread_id, synthesis_prompt, "user")
@@ -4873,6 +5148,14 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
                     
                     # Get final response from thread
                     if run['status'] == 'completed':
+                        # Extract token usage from synthesis run
+                        if 'usage' in run and run['usage']:
+                            usage = run['usage']
+                            self.host_token_usage["prompt_tokens"] += usage.get('prompt_tokens', 0) or 0
+                            self.host_token_usage["completion_tokens"] += usage.get('completion_tokens', 0) or 0
+                            self.host_token_usage["total_tokens"] += usage.get('total_tokens', 0) or 0
+                            print(f"🎟️ [Host Agent] Synthesis tokens: +{usage.get('total_tokens', 0)} (total: {self.host_token_usage['total_tokens']})")
+                        
                         messages = await self._http_list_messages(thread_id, limit=1)
                         if messages:
                             log_foundry_debug(f"Retrieved {len(messages)} message(s) from synthesis thread")
@@ -5729,11 +6012,11 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
                     # Stream granular tool call to WebSocket for thinking box visibility
                     asyncio.create_task(self._emit_tool_call_event(agent_name, "send_message", arguments))
                     
-                    # Log tool call event
+                    # Log tool call event - use agent_name as actor so frontend can attribute correctly
                     if event_logger:
                         event_logger({
                             "id": str(uuid.uuid4()),
-                            "actor": "foundry-host-agent",
+                            "actor": agent_name,  # Use actual agent name, not host
                             "args": arguments,
                             "name": function_name,
                             "type": "tool_call"
@@ -5777,11 +6060,11 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
                             # Stream tool success to WebSocket
                             asyncio.create_task(self._emit_tool_response_event(agent_name, "send_message", "success", None))
                         
-                        # Log tool result event
+                        # Log tool result event - use agent_name as actor so frontend can attribute correctly
                         if event_logger:
                             event_logger({
                                 "id": str(uuid.uuid4()),
-                                "actor": "foundry-host-agent",
+                                "actor": agent_name,  # Use actual agent name, not host
                                 "name": "send_message",
                                 "type": "tool_result",
                                 "output": output
@@ -6343,8 +6626,12 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
 
             return text_content
         elif hasattr(part, 'root') and part.root.kind == 'data':
-            print(f"DataPart data: {part.root.data} (type: {type(part.root.data)})")
-            return part.root.data
+            data = part.root.data
+            # Skip token_usage DataParts - already extracted earlier, not for main chat
+            if isinstance(data, dict) and data.get('type') == 'token_usage':
+                return None
+            print(f"DataPart data: {data} (type: {type(data)})")
+            return data
         elif hasattr(part, 'root') and part.root.kind == 'file':
             # A2A protocol compliant file handling with enterprise security
             file_id = part.root.file.name

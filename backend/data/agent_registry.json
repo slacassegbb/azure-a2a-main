@@ -237,8 +237,8 @@
     ]
   },
   {
-    "name": "ServiceNow, Web & Knowledge Agent",
-    "description": "An intelligent agent specialized in ServiceNow management, Bank system actions, web search, and file/knowledge/document search.",
+    "name": "Salesforce CRM Agent",
+    "description": "An intelligent Salesforce agent with full CRM data access, metadata management, and Apex development capabilities.",
     "version": "1.0.0",
     "url": "http://localhost:8000/",
     "defaultInputModes": [
@@ -252,84 +252,79 @@
     },
     "skills": [
       {
-        "id": "salesforce_management",
-        "name": "ServiceNow Management",
-        "description": "Create, search, and manage ServiceNow incidents, users, and knowledge base articles. Simulates ServiceNow actions with realistic synthetic data.",
+        "id": "salesforce_data_query",
+        "name": "Salesforce Data Query & Search",
+        "description": "Query and search Salesforce data using SOQL and SOSL. Execute aggregate queries (COUNT, SUM, AVG), search across multiple objects, and retrieve detailed records.",
         "examples": [
-          "Create a new ServiceNow incident",
-          "Search for incidents assigned to a user",
-          "Update incident status",
-          "List ServiceNow users",
-          "Search ServiceNow knowledge base"
+          "Show me all accounts in the technology industry",
+          "How many opportunities are in the pipeline?",
+          "What is the average deal size this quarter?"
         ],
         "tags": [
-          "servicenow",
-          "incident",
-          "it",
-          "support"
-        ]
-      },
-      {
-        "id": "bank_actions",
-        "name": "Bank Actions",
-        "description": "Simulate any action on the Bank system (block/unblock card, check balance, report fraud, create disputes, issue refunds, etc.) and return synthetic responses.",
-        "examples": [
-          "Block a credit card",
-          "Unblock a credit card",
-          "Check account balance",
-          "Report a fraudulent transaction",
-          "Create a dispute for a transaction",
-          "Issue a refund for a transaction",
-          "Check transaction details"
-        ],
-        "tags": [
-          "banking",
-          "finance",
-          "card",
-          "dispute",
-          "refund"
-        ]
-      },
-      {
-        "id": "web_search",
-        "name": "Web Search",
-        "description": "Search the web for current information using Bing or other integrated search tools.",
-        "examples": [
-          "Find the latest news about a company",
-          "Search for troubleshooting steps online",
-          "Get current weather information"
-        ],
-        "tags": [
-          "web",
+          "salesforce",
+          "soql",
+          "sosl",
+          "query",
           "search",
-          "bing",
-          "internet"
+          "data"
         ]
       },
       {
-        "id": "file_knowledge_search",
-        "name": "File & Knowledge Search",
-        "description": "Search through uploaded documents, files, and knowledge bases for specific information.",
+        "id": "salesforce_data_management",
+        "name": "Salesforce Data Management",
+        "description": "Create, update, and delete Salesforce records including Accounts, Contacts, Leads, Opportunities, and Cases using DML operations.",
         "examples": [
-          "Search uploaded PDF for a keyword",
-          "Find information in a user manual",
-          "Extract data from a document"
+          "Create a new contact named John Smith at Acme Corp",
+          "Update the opportunity status to Closed Won",
+          "Create a new account for TechCorp Inc"
         ],
         "tags": [
-          "file",
-          "document",
-          "knowledge",
-          "search"
+          "salesforce",
+          "crm",
+          "create",
+          "update",
+          "delete",
+          "dml"
+        ]
+      },
+      {
+        "id": "salesforce_metadata",
+        "name": "Salesforce Metadata Management",
+        "description": "Describe Salesforce objects, create custom objects and fields, manage field-level security permissions.",
+        "examples": [
+          "What fields does the Account object have?",
+          "Create a new custom field on the Lead object"
+        ],
+        "tags": [
+          "salesforce",
+          "metadata",
+          "fields",
+          "objects",
+          "permissions"
+        ]
+      },
+      {
+        "id": "salesforce_development",
+        "name": "Salesforce Apex Development",
+        "description": "Read and write Apex classes and triggers, execute anonymous Apex code, manage debug logs.",
+        "examples": [
+          "Show me the code for the AccountTrigger",
+          "Enable debug logs for user admin@example.com"
+        ],
+        "tags": [
+          "salesforce",
+          "apex",
+          "code",
+          "triggers",
+          "development"
         ]
       },
       {
         "id": "human_interaction",
         "name": "Human Expert Escalation",
-        "description": "Escalate complex issues to human experts or facilitate human-in-the-loop interactions when automated responses are insufficient.",
+        "description": "Escalate complex issues to human experts when needed.",
         "examples": [
-          "Escalate this issue to a human expert",
           "I need to speak with a person",
-          "Request human assistance for complex decision",
           "Connect me with a human agent"
         ],
         "tags": [
@@ -1008,6 +1003,225 @@
           "qa",
           "compliance",
           "feedback"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Sora 2 Video Generator",
+    "description": "Generate stunning AI videos from text prompts using Azure OpenAI's Sora 2 model. Create cinematic scenes, product demos, animations, and creative visual content with natural language descriptions. Supports 4-12 second videos in landscape or portrait format.",
+    "version": "1.0.0",
+    "url": "http://localhost:9028/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "video_generation",
+        "name": "AI Video Generation",
+        "description": "Generate high-quality AI videos from text prompts using Azure OpenAI's Sora 2 model. Create cinematic scenes, animations, and visual content with natural language descriptions.",
+        "examples": [
+          "Generate a video of a golden retriever running through a sunlit meadow at sunset",
+          "Create a cinematic shot of waves crashing on a rocky coastline at dawn",
+          "Make a video of a futuristic city with flying cars at night"
+        ],
+        "tags": [
+          "video",
+          "sora",
+          "generation",
+          "ai",
+          "creative",
+          "multimedia"
+        ]
+      },
+      {
+        "id": "video_from_image",
+        "name": "Image-to-Video Generation",
+        "description": "Transform static images into dynamic videos. Provide a reference image and describe the motion or animation you want to create.",
+        "examples": [
+          "Animate this landscape image with gentle wind blowing through the trees",
+          "Turn this portrait into a video where the person slowly smiles",
+          "Make the water in this photo start flowing naturally"
+        ],
+        "tags": [
+          "video",
+          "image",
+          "animation",
+          "transform",
+          "sora"
+        ]
+      },
+      {
+        "id": "video_to_video",
+        "name": "Video-to-Video Generation",
+        "description": "Transform existing videos using AI. Upload a reference video and describe the transformation you want - change styles, atmospheres, or subjects while maintaining motion and structure.",
+        "examples": [
+          "Transform this daytime scene into a moonlit nighttime video",
+          "Convert this video into an animated cartoon style",
+          "Change this urban scene to a post-apocalyptic landscape"
+        ],
+        "tags": [
+          "video",
+          "transform",
+          "sora",
+          "style-transfer",
+          "reference"
+        ]
+      },
+      {
+        "id": "video_remix",
+        "name": "Video Remix",
+        "description": "Modify specific aspects of previously generated Sora 2 videos while preserving core elements like scene transitions and visual layout. Make targeted adjustments to color palettes, lighting, or style.",
+        "examples": [
+          "Shift the color palette to warm sunset tones",
+          "Change the lighting to dramatic noir style",
+          "Transform the season from summer to winter"
+        ],
+        "tags": [
+          "video",
+          "remix",
+          "edit",
+          "modify",
+          "sora"
+        ]
+      },
+      {
+        "id": "video_prompt_assistance",
+        "name": "Video Prompt Crafting",
+        "description": "Help craft effective prompts for video generation. Get advice on describing scenes, camera movements, lighting, and style for optimal results.",
+        "examples": [
+          "How do I describe a tracking shot in my video prompt?",
+          "What details should I include for a cinematic video?",
+          "Help me write a prompt for a product showcase video"
+        ],
+        "tags": [
+          "prompt",
+          "assistance",
+          "help",
+          "creative",
+          "writing"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "AI Foundry Reporter Agent",
+    "description": "A professional report creation agent powered by Azure AI Foundry. Creates executive summaries, technical analyses, project status reports, and custom reports with structured templates.",
+    "version": "1.0.0",
+    "url": "http://localhost:9032/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "executive_summary_report",
+        "name": "Executive Summary Report",
+        "description": "Creates high-level executive summary reports for leadership and stakeholders with key findings, recommendations, and next steps.",
+        "examples": [
+          "Create an executive summary about our Q4 performance",
+          "Generate a leadership report on the new product launch",
+          "Write an executive overview of the market analysis"
+        ],
+        "tags": [
+          "report",
+          "executive",
+          "summary",
+          "leadership",
+          "stakeholder"
+        ]
+      },
+      {
+        "id": "technical_analysis_report",
+        "name": "Technical Analysis Report",
+        "description": "Creates detailed technical analysis reports with metrics, data, risk assessments, and technical recommendations.",
+        "examples": [
+          "Create a technical analysis of our system architecture",
+          "Generate a technical report on the API performance issues",
+          "Write a detailed analysis of the security vulnerabilities"
+        ],
+        "tags": [
+          "report",
+          "technical",
+          "analysis",
+          "metrics",
+          "engineering"
+        ]
+      },
+      {
+        "id": "project_status_report",
+        "name": "Project Status Report",
+        "description": "Creates project status reports with progress updates, milestones, issues, blockers, and outlook.",
+        "examples": [
+          "Create a project status report for the migration project",
+          "Generate a weekly status update for the development team",
+          "Write a progress report on the implementation phase"
+        ],
+        "tags": [
+          "report",
+          "project",
+          "status",
+          "progress",
+          "milestone"
+        ]
+      },
+      {
+        "id": "custom_report",
+        "name": "Custom Report",
+        "description": "Creates custom reports with user-defined sections and structure for any topic or purpose.",
+        "examples": [
+          "Create a report on AI trends in healthcare with custom sections",
+          "Generate a competitive analysis report",
+          "Write a research summary report on renewable energy"
+        ],
+        "tags": [
+          "report",
+          "custom",
+          "flexible",
+          "document"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Email Agent",
+    "description": "A conversational assistant that helps you communicate via email. Describe what you want to say and to whom, and I'll help compose and send the message.",
+    "version": "1.0.0",
+    "url": "http://localhost:9029/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "email_communication",
+        "name": "Email Communication",
+        "description": "A conversational assistant that helps compose and send professional emails. Just describe what you want to communicate and who should receive it.",
+        "examples": [
+          "I need to ask John for a project update",
+          "Help me write a message to the client about the deadline",
+          "I want to follow up with the team about the meeting"
+        ],
+        "tags": [
+          "communication",
+          "writing",
+          "messaging"
         ]
       }
     ]

@@ -21,17 +21,17 @@ export function ChatLayout() {
   const DEBUG = process.env.NEXT_PUBLIC_DEBUG_LOGS === 'true'
   const [isLeftSidebarCollapsed, setLeftSidebarCollapsed] = useState(false)
   const [isRightSidebarCollapsed, setRightSidebarCollapsed] = useState(false)
-  const [agentMode, setAgentMode] = useState(false)
+  const [agentMode, setAgentMode] = useState(false)  // Always starts OFF
   const [enableInterAgentMemory, setEnableInterAgentMemory] = useState(true)
   const [workflow, setWorkflow] = useState(() => {
-    // Load workflow from localStorage on mount
+    // Only persist workflow text (not agent mode toggle)
     if (typeof window !== 'undefined') {
       return localStorage.getItem('agent-mode-workflow') || ""
     }
     return ""
   })
 
-  // Sync workflow changes to localStorage
+  // Only save workflow to localStorage (not agent mode toggle)
   useEffect(() => {
     if (typeof window !== 'undefined') {
       if (workflow) {
@@ -137,10 +137,10 @@ export function ChatLayout() {
     const handleFileUploaded = (data: any) => {
       if (DEBUG) console.log("[ChatLayout] File uploaded:", data)
       
-      // Add file to File History
+      // Add file to File History (deduplication is handled in FileHistory component)
       if (data?.fileInfo && (window as any).addFileToHistory) {
         (window as any).addFileToHistory(data.fileInfo)
-        console.log("[ChatLayout] Added file to history:", data.fileInfo.filename)
+        if (DEBUG) console.log("[ChatLayout] Sent file to history:", data.fileInfo.filename)
       }
     }
 

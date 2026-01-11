@@ -269,6 +269,10 @@ const AgentNetworkDagComponent = ({ nodes, links, activeNodeId }: AgentNetworkDa
             } else if (status?.includes("failed") || status?.includes("error")) {
               newStatus = "failed"
               taskState = "failed"
+            } else if (status?.includes("input_required") || status?.includes("input-required")) {
+              newStatus = "idle"
+              taskState = "input-required"
+              shouldGlow = true // Keep glowing to indicate waiting for input
             } else if (status?.includes("processing") || status?.includes("analyzing") || status?.includes("executing")) {
               newStatus = "working"
               taskState = "working"

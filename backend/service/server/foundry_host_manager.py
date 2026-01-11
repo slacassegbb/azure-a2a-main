@@ -14,7 +14,7 @@ if str(BACKEND_ROOT) not in sys.path:
 
 from log_config import log_debug, log_info, log_success, log_error
 
-from a2a.types import AgentCard, Message, Task, TextPart, DataPart, TaskStatus, TaskState, FilePart, FileWithUri, FileWithBytes
+from a2a.types import AgentCard, Message, Task, TextPart, DataPart, TaskStatus, TaskState, FilePart, FileWithUri, FileWithBytes, Part
 from hosts.multiagent.foundry_agent_a2a import FoundryHostAgent2
 from service.server.application_manager import ApplicationManager
 from service.types import Conversation, Event
@@ -138,8 +138,58 @@ class FoundryHostManager(ApplicationManager):
         elif isinstance(resp, dict) and ('artifact-uri' in resp or 'artifact-id' in resp):
             log_debug(f"Processing as artifact dict - wrapping in DataPart")
             log_debug(f"Artifact URI: {resp.get('artifact-uri', '')[:150]}")
-            from a2a.types import DataPart
-            parts.append(DataPart(data=resp))
+            parts.append(Part(root=DataPart(data=resp)))
+            return Message(
+                role='agent',
+                parts=parts,
+                contextId=context_id,
+                taskId=task_id,
+                messageId=str(uuid.uuid4()),
+            )
+        # Handle A2A Part object directly (e.g., from HITL flow)
+        elif hasattr(resp, 'root') and hasattr(resp.root, 'kind'):
+            root = resp.root
+            kind = root.kind
+            log_debug(f"Processing as A2A Part object with kind: {kind}")
+            if kind == 'text':
+                text_content = getattr(root, 'text', '')
+                log_debug(f"Part text: {text_content[:200]}...")
+                parts.append(Part(root=TextPart(text=text_content)))
+            elif kind == 'data':
+                data_content = getattr(root, 'data', {})
+                log_debug(f"Part data: {data_content}")
+                parts.append(Part(root=DataPart(data=data_content)))
+            elif kind == 'file':
+                log_debug(f"Part file: {getattr(root, 'file', None)}")
+                parts.append(Part(root=FilePart(file=getattr(root, 'file', None))))
+            else:
+                log_debug(f"Unknown Part kind: {kind}")
+                parts.append(Part(root=TextPart(text=str(root))))
+            return Message(
+                role='agent',
+                parts=parts,
+                contextId=context_id,
+                taskId=task_id,
+                messageId=str(uuid.uuid4()),
+            )
+        # Handle TextPart, DataPart, FilePart directly (unwrapped from Part)
+        elif hasattr(resp, 'kind'):
+            kind = resp.kind
+            log_debug(f"Processing as raw A2A type with kind: {kind}")
+            if kind == 'text':
+                text_content = getattr(resp, 'text', '')
+                log_debug(f"TextPart text: {text_content[:200]}...")
+                parts.append(Part(root=TextPart(text=text_content)))
+            elif kind == 'data':
+                data_content = getattr(resp, 'data', {})
+                log_debug(f"DataPart data: {data_content}")
+                parts.append(Part(root=DataPart(data=data_content)))
+            elif kind == 'file':
+                log_debug(f"FilePart file: {getattr(resp, 'file', None)}")
+                parts.append(Part(root=FilePart(file=getattr(resp, 'file', None))))
+            else:
+                log_debug(f"Unknown raw kind: {kind}")
+                parts.append(Part(root=TextPart(text=str(resp))))
             return Message(
                 role='agent',
                 parts=parts,
@@ -156,19 +206,17 @@ class FoundryHostManager(ApplicationManager):
                 if kind == 'text':
                     text_content = getattr(root, 'text', str(root))
                     log_debug(f"Text part: {text_content[:200]}...")
-                    parts.append(TextPart(text=text_content))
+                    parts.append(Part(root=TextPart(text=text_content)))
                 elif kind == 'data':
-                    from a2a.types import DataPart
                     data_content = getattr(root, 'data', {})
                     log_debug(f"Data part: {data_content}")
-                    parts.append(DataPart(data=data_content))
+                    parts.append(Part(root=DataPart(data=data_content)))
                 elif kind == 'file':
-                    from a2a.types import FilePart
                     log_debug(f"File part: {getattr(root, 'file', None)}")
-                    parts.append(FilePart(file=getattr(root, 'file', None)))
+                    parts.append(Part(root=FilePart(file=getattr(root, 'file', None))))
                 else:
                     log_debug(f"Unknown part kind: {kind}, content: {str(root)[:200]}...")
-                    parts.append(TextPart(text=str(root)))
+                    parts.append(Part(root=TextPart(text=str(root))))
             return Message(
                 role=getattr(resp, 'role', 'agent'),
                 parts=parts,
@@ -176,12 +224,22 @@ class FoundryHostManager(ApplicationManager):
                 taskId=task_id,
                 messageId=str(uuid.uuid4()),
             )
-        else:
-            # Fallback: treat as plain text
-            log_debug(f"Processing as plain text: {str(resp)[:200]}...")
+        elif isinstance(resp, str):
+            # Plain string response
+            log_debug(f"Processing as plain string: {resp[:200]}...")
             return Message(
                 role='agent',
-                parts=[TextPart(text=str(resp))],
+                parts=[Part(root=TextPart(text=resp))],
+                contextId=context_id,
+                taskId=task_id,
+                messageId=str(uuid.uuid4()),
+            )
+        else:
+            # Fallback: treat as plain text but warn
+            log_debug(f"WARNING: Unknown response type {type(resp)}, stringifying: {str(resp)[:200]}...")
+            return Message(
+                role='agent',
+                parts=[Part(root=TextPart(text=str(resp)))],
                 contextId=context_id,
                 taskId=task_id,
                 messageId=str(uuid.uuid4()),
@@ -192,15 +250,13 @@ class FoundryHostManager(ApplicationManager):
             log_debug(f"Item {i}: {item}")
             if item['kind'] == 'text':
                 log_debug(f"Text item: {item['text'][:200]}...")
-                parts.append(TextPart(text=item['text']))
+                parts.append(Part(root=TextPart(text=item['text'])))
             elif item['kind'] == 'data':
-                from a2a.types import DataPart
                 log_debug(f"Data item: {item['data']}")
-                parts.append(DataPart(data=item['data']))
+                parts.append(Part(root=DataPart(data=item['data'])))
             elif item['kind'] == 'file':
-                from a2a.types import FilePart
                 log_debug(f"File item: {item['file']}")
-                parts.append(FilePart(file=item['file']))
+                parts.append(Part(root=FilePart(file=item['file'])))
         return Message(
             role='agent',
             parts=parts,
@@ -457,21 +513,23 @@ class FoundryHostManager(ApplicationManager):
             if message_id in self._pending_message_ids:
                 self._pending_message_ids.remove(message_id)
             return []
-        # Build mapping of agent names from tool call events for debugging only
-        # (no longer used for attribution since foundry responses should always be 
-        # attributed to foundry-host-agent, not individual agents)
+        # Build mapping of agent names from tool call events
+        # These are used for status_agent_name to send correct task_updated events to frontend
+        print(f"📋 [TOOL_EVENTS] Processing {len(tool_call_events)} tool call events")
+        for i, te in enumerate(tool_call_events):
+            print(f"📋 [TOOL_EVENT {i}] actor={te.actor}, id={te.id}")
+        
         agent_names_from_tools = []
         for tool_event in tool_call_events:
-            # Extract agent_name from send_message tool calls
-            if 'TOOL CALL: send_message' in tool_event.content.parts[0].root.text:
-                # Try to extract agent_name from the text
-                import re
-                m = re.search(r"'agent_name': '([^']+)'", tool_event.content.parts[0].root.text)
-                if m:
-                    agent_names_from_tools.append(m.group(1))
-                    log_debug(f"Found agent name in tool call: {m.group(1)}")
+            # The actor field contains the agent name (set in event_logger when it's a send_message)
+            # Only include if it's not the host agent itself
+            if tool_event.actor and tool_event.actor not in ['host_agent', 'foundry-host-agent']:
+                if tool_event.actor not in agent_names_from_tools:  # Avoid duplicates
+                    agent_names_from_tools.append(tool_event.actor)
+                    log_debug(f"Found agent name from tool event actor: {tool_event.actor}")
         
-        log_debug(f"Agent names from tool calls (for debug only): {agent_names_from_tools}")
+        log_debug(f"Agent names from tool calls: {agent_names_from_tools}")
+        print(f"🎯 [SIDEBAR FIX] Found {len(agent_names_from_tools)} agent names from tool calls: {agent_names_from_tools}")
         log_debug(f"Number of responses: {len(responses)}")
         log_debug(f"All foundry responses will be attributed to foundry-host-agent")
         
@@ -529,8 +587,8 @@ class FoundryHostManager(ApplicationManager):
                 if resp_index < len(agent_names_from_tools)
                 else actor_name
             )
-            log_debug(f"Using correct foundry host agent name for response {resp_index}: {actor_name}")
-            log_debug(f"Prevented incorrect attribution to individual agents: {agent_names_from_tools}")
+            print(f"🎯 [SIDEBAR] Response {resp_index}: status_agent_name={status_agent_name} (from list: {agent_names_from_tools})")
+            log_debug(f"Using agent name for response {resp_index}: {status_agent_name}")
             
             self.add_event(Event(
                 id=str(uuid.uuid4()),
@@ -547,6 +605,7 @@ class FoundryHostManager(ApplicationManager):
                 streamer = await get_websocket_streamer()
                 if streamer:
                     # Send in A2A MessageEventData format with proper agent attribution
+                    # Use status_agent_name (actual remote agent) not actor_name (host)
                     event_data = {
                         "messageId": get_message_id(msg) or str(uuid.uuid4()),
                         "conversationId": context_id,
@@ -554,7 +613,7 @@ class FoundryHostManager(ApplicationManager):
                         "role": "assistant",
                         "content": [],
                         "direction": "incoming",
-                        "agentName": actor_name,
+                        "agentName": status_agent_name,
                         "timestamp": __import__('datetime').datetime.utcnow().isoformat(),
                     }
 
@@ -573,7 +632,7 @@ class FoundryHostManager(ApplicationManager):
                         image_parts = []
                         for part in msg.parts:
                             log_debug(f"Processing part: {type(part)}, has root: {hasattr(part, 'root')}")
-                            root = part.root
+                            root = part.root if hasattr(part, 'root') else part
                             if isinstance(root, TextPart):
                                 text_parts.append(root.text)
                             elif isinstance(root, DataPart) and isinstance(root.data, dict):
@@ -591,7 +650,8 @@ class FoundryHostManager(ApplicationManager):
                                         "status": root.data.get("status"),
                                         "sourceUrl": root.data.get("source-url"),
                                     })
-                                else:
+                                elif root.data.get("type") != "token_usage":
+                                    # Only add non-token_usage DataParts as text
                                     text_parts.append(json.dumps(root.data))
                         if text_parts:
                             event_data["content"].append({
@@ -632,7 +692,7 @@ class FoundryHostManager(ApplicationManager):
                                 "uri": file_uri,
                                 "size": content_item.get("fileSize", 0),
                                 "content_type": content_item.get("mediaType", "image/png"),
-                                "source_agent": actor_name,
+                                "source_agent": status_agent_name,
                                 "contextId": context_id
                             }
                             await streamer.stream_file_uploaded(file_info, context_id)
@@ -641,7 +701,7 @@ class FoundryHostManager(ApplicationManager):
                             await streamer._send_event(
                                 "remote_agent_activity",
                                 {
-                                    "agentName": actor_name,
+                                    "agentName": status_agent_name,
                                     "content": f"Image available: {content_item['uri']}",
                                     "timestamp": __import__('datetime').datetime.utcnow().isoformat(),
                                 },
@@ -669,6 +729,18 @@ class FoundryHostManager(ApplicationManager):
                 state = TaskState.canceled
             elif "failed" in resp_lower or "error" in resp_lower:
                 state = TaskState.failed
+            
+            # HUMAN-IN-THE-LOOP: Check if a remote agent set input_required state
+            # This is tracked in the session context's pending_input_agent field
+            try:
+                session_ctx = self._host_agent.get_session_context(context_id)
+                if session_ctx and session_ctx.pending_input_agent:
+                    log_debug(f"🔄 [HITL] Detected pending_input_agent: {session_ctx.pending_input_agent}, overriding state to input_required")
+                    state = TaskState.input_required
+                    # Use the pending agent name for accurate status attribution
+                    status_agent_name = session_ctx.pending_input_agent
+            except Exception as e:
+                log_debug(f"Error checking pending_input_agent: {e}")
             task.status.state = state
             task.status.message = msg
             self.update_task(task)
@@ -698,17 +770,9 @@ class FoundryHostManager(ApplicationManager):
         if message_id in self._pending_message_ids:
             self._pending_message_ids.remove(message_id)
 
-        # Ensure agents that issued tool calls but did not receive a direct response still transition to completed
-        remaining_agents = [
-            agent_name for agent_name in agent_names_from_tools
-            if agent_name not in completed_agents
-        ]
-        for leftover_agent in remaining_agents:
-            log_debug(f"Emitting completion status for agent without direct response: {leftover_agent}")
-            try:
-                asyncio.create_task(stream_task_status_update(leftover_agent, TaskState.completed))
-            except Exception as e:
-                log_debug(f"Error scheduling fallback status update for {leftover_agent}: {e}")
+        # NOTE: We only emit task_updated events for agents that actually participated
+        # in this workflow. The A2A protocol handles completion events properly.
+        # Do NOT emit "completed" for all registered agents - that's wrong!
 
         return responses
 

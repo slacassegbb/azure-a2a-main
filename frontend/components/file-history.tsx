@@ -1,12 +1,13 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Badge } from "@/components/ui/badge"
 import { Trash2, Download, Eye, ExternalLink } from "lucide-react"
+import { useEventHub } from "@/hooks/use-event-hub"
 
 interface FileRecord {
   id: string
@@ -23,15 +24,39 @@ interface FileHistoryProps {
   onFileSelect?: (file: FileRecord) => void
 }
 
+const SESSION_ID_KEY = 'backendSessionId'
+
 export function FileHistory({ className, onFileSelect }: FileHistoryProps) {
   const [files, setFiles] = useState<FileRecord[]>([])
+  const { subscribe, unsubscribe } = useEventHub()
 
-  // Clear file history on component mount (startup)
+  // Handle backend session changes - clear file history when backend restarts
   useEffect(() => {
-    console.log('[FileHistory] Component mounted, clearing file history from previous session')
-    setFiles([])
-    localStorage.removeItem('uploadedFilesHistory')
-  }, []) // Empty dependency array means this runs only on mount
+    const handleSessionStarted = (data: any) => {
+      const newSessionId = data?.sessionId
+      if (!newSessionId) return
+      
+      const storedSessionId = localStorage.getItem(SESSION_ID_KEY)
+      
+      if (storedSessionId && storedSessionId !== newSessionId) {
+        // Backend restarted - clear file history
+        console.log('[FileHistory] Backend restarted (session changed), clearing file history')
+        console.log('[FileHistory] Old session:', storedSessionId?.slice(0, 8), '-> New session:', newSessionId.slice(0, 8))
+        setFiles([])
+        localStorage.removeItem('uploadedFilesHistory')
+      }
+      
+      // Store the new session ID
+      localStorage.setItem(SESSION_ID_KEY, newSessionId)
+      console.log('[FileHistory] Session ID stored:', newSessionId.slice(0, 8))
+    }
+
+    subscribe('session_started', handleSessionStarted)
+    
+    return () => {
+      unsubscribe('session_started', handleSessionStarted)
+    }
+  }, [subscribe, unsubscribe])
 
   // Load files from localStorage on mount and validate they still exist
   useEffect(() => {
@@ -43,10 +68,34 @@ export function FileHistory({ className, onFileSelect }: FileHistoryProps) {
           uploadedAt: new Date(file.uploadedAt)
         }))
         
-        // Validate files still exist on backend (optional - could be expensive)
-        // For now, just load them and let the WebSocket disconnect handler clear them
-        setFiles(parsedFiles)
-        console.log('[FileHistory] Loaded', parsedFiles.length, 'files from localStorage')
+        // Deduplicate loaded files by filename only (keep most recent)
+        const seenFiles = new Map<string, FileRecord>()
+        const deduplicatedFiles: FileRecord[] = []
+        
+        for (const file of parsedFiles) {
+          const key = file.filename
+          
+          // Only keep the most recent version of each filename
+          if (!seenFiles.has(key)) {
+            seenFiles.set(key, file)
+            deduplicatedFiles.push(file)
+          } else {
+            // If we've seen this filename before, keep the newer one
+            const existing = seenFiles.get(key)!
+            if (file.uploadedAt > existing.uploadedAt) {
+              // Replace with newer file
+              const index = deduplicatedFiles.indexOf(existing)
+              deduplicatedFiles[index] = file
+              seenFiles.set(key, file)
+              console.log('[FileHistory] Replaced older duplicate:', file.filename)
+            } else {
+              console.log('[FileHistory] Removed duplicate from localStorage:', file.filename)
+            }
+          }
+        }
+        
+        setFiles(deduplicatedFiles)
+        console.log('[FileHistory] Loaded', deduplicatedFiles.length, 'unique files from localStorage (removed', parsedFiles.length - deduplicatedFiles.length, 'duplicates)')
       } catch (error) {
         console.error('Error loading file history:', error)
         // Clear corrupted data
@@ -61,7 +110,8 @@ export function FileHistory({ className, onFileSelect }: FileHistoryProps) {
   }, [files])
 
   // Function to add a new file to history (will be called from parent)
-  const addFileToHistory = (fileData: any) => {
+  // Use useCallback to prevent recreating the function on every render
+  const addFileToHistory = useCallback((fileData: any) => {
     const fileRecord: FileRecord = {
       id: fileData.file_id || Date.now().toString(),
       filename: fileData.filename,
@@ -72,13 +122,31 @@ export function FileHistory({ className, onFileSelect }: FileHistoryProps) {
       uri: fileData.uri || ''
     }
 
-    setFiles(prev => [fileRecord, ...prev].slice(0, 50)) // Keep last 50 files
-  }
+    // Deduplicate by filename only - replace if same filename exists
+    setFiles(prev => {
+      // Check if file with same filename already exists
+      const existingIndex = prev.findIndex(f => f.filename === fileRecord.filename)
+      
+      if (existingIndex !== -1) {
+        // Replace existing file with new version (more recent upload)
+        console.log('[FileHistory] Replacing existing file:', fileRecord.filename)
+        const updated = [...prev]
+        updated[existingIndex] = fileRecord
+        // Move it to the front (most recent)
+        updated.splice(existingIndex, 1)
+        return [fileRecord, ...updated].slice(0, 50)
+      }
+      
+      // Add new file and keep last 50
+      console.log('[FileHistory] Adding new file:', fileRecord.filename)
+      return [fileRecord, ...prev].slice(0, 50)
+    })
+  }, []) // Empty deps - setFiles is stable
 
   // Expose the function globally so chat-panel can call it
   useEffect(() => {
     (window as any).addFileToHistory = addFileToHistory
-  }, [])
+  }, [addFileToHistory])
 
   const removeFile = (fileId: string) => {
     setFiles(prev => prev.filter(file => file.id !== fileId))

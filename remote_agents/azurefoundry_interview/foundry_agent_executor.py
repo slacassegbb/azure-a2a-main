@@ -1,0 +1,566 @@
+"""
+Azure AI Foundry A2A Agent Template - Executor
+===============================================
+
+This executor handles A2A protocol integration for your custom agent.
+Typically you won't need to modify this file unless you want to add custom
+file handling or change execution behavior.
+"""
+import asyncio
+import logging
+import base64
+import os
+import tempfile
+import time
+from typing import Optional, Dict, List
+
+from foundry_agent import FoundryTemplateAgent
+
+from a2a.server.agent_execution import AgentExecutor
+from a2a.server.agent_execution.context import RequestContext
+from a2a.server.events.event_queue import EventQueue
+from a2a.server.tasks import TaskUpdater
+from a2a.types import AgentCard, DataPart, FilePart, FileWithBytes, FileWithUri, Message, Part, TaskState, TextPart
+from a2a.utils.message import new_agent_text_message
+
+logger = logging.getLogger(__name__)
+# Set to INFO to hide verbose debug logs (can be changed to DEBUG for troubleshooting)
+logger.setLevel(logging.INFO)
+
+
+class FoundryTemplateAgentExecutor(AgentExecutor):
+    """
+    An AgentExecutor template for Azure AI Foundry-based agents.
+    This handles A2A protocol integration, file handling, and streaming responses.
+    Customize the agent behavior in foundry_agent.py, not here.
+    """
+
+    # Class-level shared agent instance to avoid multiple agent creations
+    _shared_foundry_agent: Optional[FoundryTemplateAgent] = None
+    _agent_lock = asyncio.Lock()
+    _last_request_time: float = 0
+    _min_request_interval: float = 5.0  # Increase to 5 seconds minimum between requests
+    _request_semaphore = asyncio.Semaphore(1)  # Max 1 concurrent request
+    _api_call_count: int = 0
+    _api_call_window_start: float = 0
+    _max_api_calls_per_minute: int = 15  # Much more conservative - 15 calls per minute
+    _startup_complete: bool = False
+
+    @classmethod
+    async def get_shared_agent(cls) -> Optional[FoundryTemplateAgent]:
+        """Get the shared agent that was initialized at startup (if available)."""
+        async with cls._agent_lock:
+            return cls._shared_foundry_agent
+    
+    @classmethod
+    async def initialize_at_startup(cls) -> None:
+        """Initialize the shared agent at startup instead of on first request."""
+        async with cls._agent_lock:
+            if not cls._shared_foundry_agent:
+                logger.info("🚀 Initializing Foundry agent at startup...")
+                try:
+                    cls._shared_foundry_agent = FoundryTemplateAgent()
+                    await cls._shared_foundry_agent.create_agent()
+                    cls._startup_complete = True
+                    logger.info("✅ Foundry agent startup initialization completed successfully")
+                except Exception as e:
+                    logger.error(f"❌ Failed to initialize agent at startup: {e}")
+                    cls._shared_foundry_agent = None
+                    cls._startup_complete = False
+                    raise
+
+    def __init__(self, card: AgentCard):
+        self._active_threads: Dict[str, str] = {}  # context_id -> thread_id mapping
+        self._waiting_for_input: Dict[str, str] = {}
+        self._pending_updaters: Dict[str, TaskUpdater] = {}
+        self._input_events: Dict[str, asyncio.Event] = {}
+        self._last_received_files: List[Dict[str, str]] = []
+
+    async def _get_or_create_agent(self) -> FoundryTemplateAgent:
+        """Get the shared Foundry Branding agent (with fallback to lazy creation)."""
+        async with FoundryTemplateAgentExecutor._agent_lock:
+            if not FoundryTemplateAgentExecutor._shared_foundry_agent:
+                if FoundryTemplateAgentExecutor._startup_complete:
+                    # Startup was supposed to happen but failed
+                    raise RuntimeError("Branding agent startup initialization failed - agent not available")
+
+                # Fallback to lazy creation if startup wasn't called
+                logger.warning("⚠️ Branding agent not initialized at startup, falling back to lazy creation...")
+                FoundryTemplateAgentExecutor._shared_foundry_agent = FoundryTemplateAgent()
+                await FoundryTemplateAgentExecutor._shared_foundry_agent.create_agent()
+                logger.info("Fallback branding agent creation completed")
+            return FoundryTemplateAgentExecutor._shared_foundry_agent
+
+    async def _get_or_create_thread(
+        self,
+        context_id: str,
+        agent: Optional[FoundryTemplateAgent] = None
+    ) -> str:
+        if agent is None:
+            agent = await self._get_or_create_agent()
+        # Reuse thread if it exists for this context_id
+        if context_id in self._active_threads:
+            return self._active_threads[context_id]
+        # Otherwise, create a new thread and store it
+        thread = await agent.create_thread()
+        thread_id = thread.id
+        self._active_threads[context_id] = thread_id
+        return thread_id
+
+
+
+    async def _process_request(
+        self,
+        message_parts: List[Part],
+        context_id: str,
+        task_updater: TaskUpdater,
+    ) -> None:
+        received_files: List[Dict[str, str]] = []
+        if message_parts:
+            for part in message_parts:
+                if hasattr(part, "root"):
+                    root_part = part.root
+
+                    if isinstance(root_part, FilePart):
+                        file_obj = root_part.file
+                        if isinstance(file_obj, FileWithUri):
+                            received_files.append({
+                                "name": getattr(file_obj, "name", "unknown"),
+                                "uri": getattr(file_obj, "uri", ""),
+                                "mime": getattr(file_obj, "mimeType", ""),
+                            })
+                        elif isinstance(file_obj, FileWithBytes):
+                            received_files.append({
+                                "name": getattr(file_obj, "name", "unknown"),
+                                "uri": "",
+                                "mime": getattr(file_obj, "mimeType", ""),
+                                "bytes": len(getattr(file_obj, "bytes", b""))
+                            })
+
+                    elif isinstance(root_part, DataPart):
+                        data = getattr(root_part, "data", None)
+                        if isinstance(data, dict) and data.get("artifact-uri"):
+                            received_files.append({
+                                "name": data.get("file-name", "unknown"),
+                                "uri": data.get("artifact-uri", ""),
+                                "mime": data.get("mime", ""),
+                            })
+
+        if received_files:
+            self._last_received_files = received_files
+            print("[Branding Executor] Received file references:")
+            for file_meta in received_files:
+                print(f"  • name={file_meta.get('name')} uri={file_meta.get('uri')} mime={file_meta.get('mime')}")
+            logger.info("📎 Received file references in A2A message", extra={"files": received_files, "context_id": context_id})
+        else:
+            logger.info("📎 No file references received in A2A message for context %s", context_id)
+        try:
+            user_message = self._convert_parts_to_text(message_parts)
+            if user_message:
+                preview = user_message if len(user_message) <= 2000 else user_message[:2000] + "..."
+                logger.info(
+                    "🧾 A2A conversation payload (%d chars) for context %s:\n%s",
+                    len(user_message),
+                    context_id,
+                    preview,
+                )
+            else:
+                logger.info("🧾 Received empty A2A conversation payload for context %s", context_id)
+            agent = await self._get_or_create_agent()
+            thread_id = await self._get_or_create_thread(context_id, agent)
+            
+            # Use streaming to show tool calls in real-time
+            responses = []
+            tools_called = []
+            seen_tools = set()
+            
+            async for event in agent.run_conversation_stream(thread_id, user_message):
+                # Check if this is a tool call event from remote agent
+                if event.startswith("🛠️ Remote agent executing:"):
+                    tool_description = event.replace("🛠️ Remote agent executing: ", "").strip()
+                    if tool_description not in seen_tools:
+                        seen_tools.add(tool_description)
+                        tools_called.append(tool_description)
+                        # Emit tool call in real-time
+                        tool_event_msg = new_agent_text_message(
+                            f"🛠️ Remote agent executing: {tool_description}", context_id=context_id
+                        )
+                        await task_updater.update_status(
+                            TaskState.working,
+                            message=tool_event_msg
+                        )
+                # Check if this is a processing message
+                elif event.startswith("🤖") or event.startswith("🧠") or event.startswith("🔍") or event.startswith("📝"):
+                    # Emit processing message in real-time
+                    processing_msg = new_agent_text_message(
+                        event, context_id=context_id
+                    )
+                    await task_updater.update_status(
+                        TaskState.working,
+                        message=processing_msg
+                    )
+                # Check if this is an error
+                elif event.startswith("Error:"):
+                    await task_updater.failed(
+                        message=new_agent_text_message(event, context_id=context_id)
+                    )
+                    return
+
+                # Otherwise, treat as a regular response
+                else:
+                    responses.append(event)
+            
+            # Emit the final response
+            if responses:
+                final_response = responses[-1]
+                # Log a preview of the response (first 500 chars)
+                response_preview = final_response[:500] + "..." if len(final_response) > 500 else final_response
+                logger.info(f"📤 Agent response ({len(final_response)} chars): {response_preview}")
+                
+                # Check if the agent is asking a question and needs input
+                # This enables the interview agent to probe for more information
+                needs_input = self._should_request_input(final_response)
+                
+                if needs_input:
+                    logger.info("🔄 Agent is requesting additional input from user")
+                    await task_updater.update_status(
+                        TaskState.input_required,
+                        message=new_agent_text_message(final_response, context_id=context_id)
+                    )
+                    # Give the event queue a moment to flush the input_required status
+                    # before the task completes to avoid SSE streaming cleanup race condition
+                    await asyncio.sleep(0.1)
+                else:
+                    # Build message parts with text and optional token usage
+                    message_parts = [TextPart(text=final_response)]
+                    
+                    # Add token usage if available
+                    if hasattr(agent, 'last_token_usage') and agent.last_token_usage:
+                        import uuid
+                        message_parts.append(DataPart(data={
+                            'type': 'token_usage',
+                            **agent.last_token_usage
+                        }))
+                        logger.info(f"💰 Including token usage in response: {agent.last_token_usage}")
+                    
+                    await task_updater.complete(
+                        message=Message(
+                            role="agent",
+                            messageId=str(uuid.uuid4()),
+                            parts=message_parts,
+                            contextId=context_id
+                        )
+                    )
+            else:
+                logger.warning("⚠️ No response generated by agent")
+                
+                # Build message parts (even for error case)
+                import uuid
+                message_parts = [TextPart(text="No response generated")]
+                
+                # Add token usage even if no response (in case run consumed tokens)
+                if hasattr(agent, 'last_token_usage') and agent.last_token_usage:
+                    message_parts.append(DataPart(data={
+                        'type': 'token_usage',
+                        **agent.last_token_usage
+                    }))
+                    logger.info(f"💰 Including token usage in response: {agent.last_token_usage}")
+                
+                await task_updater.complete(
+                    message=Message(
+                        role="agent",
+                        messageId=str(uuid.uuid4()),
+                        parts=message_parts,
+                        contextId=context_id
+                    )
+                )
+                    
+        except Exception as e:
+            await task_updater.failed(
+                message=new_agent_text_message(f"Error: {e}", context_id=context_id)
+            )
+
+    def _should_request_input(self, response: str) -> bool:
+        """
+        Determine if the agent response indicates it needs more input from the user.
+        
+        This is a key feature for interview agents - they can ask questions and wait
+        for user responses before proceeding.
+        
+        IMPORTANT: Check for completion signals FIRST to avoid infinite interview loops.
+        The agent should complete when it has gathered sufficient information and is
+        providing a summary or next steps.
+        
+        Returns:
+            bool: True if the agent is asking a question that requires user input
+        """
+        if not response:
+            return False
+        
+        # Trim whitespace for analysis
+        response_lower = response.lower().strip()
+        
+        # =====================================================================
+        # COMPLETION DETECTION - Check these FIRST to break the interview loop
+        # =====================================================================
+        
+        # Check for structured lead capture format (highest priority)
+        # This indicates the agent has captured all required lead info
+        lead_capture_indicators = [
+            '## lead captured',
+            '**contact information:**',
+            'i\'ve captured everything i need',
+            'i\'ve got everything i need',
+            'i have everything i need',
+            'send it to',  # "send it to [email]"
+            'send the report to',
+            'will send it to your email',
+        ]
+        
+        for indicator in lead_capture_indicators:
+            if indicator in response_lower:
+                logger.info(f"🏁 Lead capture complete: '{indicator}' - interview done")
+                return False  # Complete the task
+        
+        # Check if response contains email format (indicates contact was captured)
+        import re
+        if re.search(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', response):
+            # Response mentions an email address - likely confirming contact info
+            if any(phrase in response_lower for phrase in ['send', 'report', 'reach you', 'contact']):
+                logger.info(f"🏁 Email captured with send intent - interview complete")
+                return False
+        
+        # Strong completion signals - these indicate the interview is DONE
+        completion_phrases = [
+            # Summary/wrap-up indicators
+            'based on what you\'ve told me',
+            'based on what you\'ve shared',
+            'based on our conversation',
+            'based on everything you\'ve shared',
+            'here\'s what i understood',
+            'here is what i understood',
+            'here\'s what i\'ve learned',
+            'here is what i\'ve learned',
+            
+            # Lead captured indicators
+            'i\'ll have our team prepare',
+            'our team will prepare',
+            'prepare a personalized report',
+            'personalized report with recommendations',
+            
+            # Qualified lead indicators
+            'i believe we can help',
+            'we can definitely help',
+            'this sounds like a great fit',
+            
+            # Next steps / handoff indicators
+            'our team will reach out',
+            'our specialist will contact',
+            'we\'ll be in touch',
+            'will send you',
+            'send you a report',
+            
+            # Thank you / closing indicators
+            'thank you for sharing',
+            'thanks for sharing',
+            'i appreciate you taking the time',
+            'i have everything i need',
+            'i\'ve captured everything',
+        ]
+        
+        # Check if response still asks a question - if so, NOT complete even with completion phrases
+        question_indicators = ['?', 'what ', 'which ', 'could you', 'can you', 'may i', 'would you']
+        asks_question = any(q in response_lower for q in question_indicators)
+        
+        for phrase in completion_phrases:
+            if phrase in response_lower:
+                if asks_question:
+                    # Has completion phrase BUT still asks question = NOT complete, needs input
+                    logger.info(f"🔄 Found '{phrase}' but response asks a question - still need input")
+                    return True  # Still needs input
+                else:
+                    logger.info(f"🏁 Completion signal detected: '{phrase}' - interview complete")
+                    return False  # DON'T request more input, complete the task
+        
+        # Check for structured output sections which indicate wrap-up
+        summary_section_indicators = [
+            '## lead captured',
+            '## summary',
+            '## next steps',
+            '**here\'s what i understood:**',
+            '**contact information:**',
+            '**company:**',
+        ]
+        
+        for indicator in summary_section_indicators:
+            if indicator in response_lower:
+                logger.info(f"🏁 Summary section detected: '{indicator}' - interview complete")
+                return False
+        
+        # =====================================================================
+        # INPUT REQUEST DETECTION - Only check if no completion signals found
+        # =====================================================================
+        
+        # Strong indicators that we need input (question marks at end of sentences)
+        if '?' in response:
+            # Check if there's a question in the last part of the response
+            # Split by newlines and check last few lines
+            lines = [l.strip() for l in response.split('\n') if l.strip()]
+            if lines:
+                last_lines = ' '.join(lines[-3:])  # Check last 3 lines
+                if '?' in last_lines:
+                    return True
+        
+        # Check for explicit input request phrases
+        input_request_phrases = [
+            'could you tell me',
+            'can you tell me',
+            'can you share',
+            'could you share',
+            'please tell me',
+            'please share',
+            'i\'d like to know',
+            'i\'d like to understand',
+            'help me understand',
+            'can you describe',
+            'could you describe',
+            'can you explain',
+            'could you explain',
+            'what would you',
+            'what do you',
+            'how would you',
+            'how do you',
+            'what is your',
+            'what are your',
+            'tell me about',
+            'tell me more about',
+        ]
+        
+        for phrase in input_request_phrases:
+            if phrase in response_lower:
+                return True
+        
+        return False
+
+    def _convert_parts_to_text(self, parts: List[Part]) -> str:
+        """Convert message parts to plain text, saving any files locally."""
+        texts: List[str] = []
+        for part in parts:
+            p = part.root
+            if isinstance(p, TextPart):
+                texts.append(p.text)
+            elif isinstance(p, DataPart):
+                if isinstance(p.data, dict):
+                    uri = p.data.get("artifact-uri")
+                    file_name = p.data.get("file-name", "file")
+                    if uri:
+                        texts.append(f"[File reference: {file_name} at {uri}]")
+                    else:
+                        texts.append(str(p.data))
+                else:
+                    texts.append(str(p.data))
+            elif isinstance(p.file, FileWithUri):
+                texts.append(f"[File at {p.file.uri}]")
+            elif isinstance(p.file, FileWithBytes):
+                try:
+                    data = base64.b64decode(p.file.bytes)
+                    fname = p.file.name or "file"
+                    path = os.path.join(tempfile.gettempdir(), fname)
+                    with open(path, 'wb') as f:
+                        f.write(data)
+                    texts.append(f"[Saved {fname} to {path}]")
+                except Exception as ex:
+                    texts.append(f"[Error saving file: {ex}]")
+        return " ".join(texts)
+
+    async def execute(
+        self,
+        context: RequestContext,
+        event_queue: EventQueue,
+    ):
+        logger.info(f"Executing request for context {context.context_id}")
+        
+        # CRITICAL: Apply rate limiting at the execute level to control between different user requests
+        async with FoundryTemplateAgentExecutor._request_semaphore:
+            # Check API call rate limiting
+            current_time = time.time()
+            
+            # Reset the window if it's been more than a minute
+            if current_time - FoundryTemplateAgentExecutor._api_call_window_start > 60:
+                FoundryTemplateAgentExecutor._api_call_count = 0
+                FoundryTemplateAgentExecutor._api_call_window_start = current_time
+            
+            # Check if we're approaching the API limit
+            if FoundryTemplateAgentExecutor._api_call_count >= FoundryTemplateAgentExecutor._max_api_calls_per_minute:
+                wait_time = 60 - (current_time - FoundryTemplateAgentExecutor._api_call_window_start)
+                if wait_time > 0:
+                    logger.warning(f"API rate limit protection: waiting {wait_time:.1f}s to reset window")
+                    await asyncio.sleep(wait_time)
+                    # Reset counters
+                    FoundryTemplateAgentExecutor._api_call_count = 0
+                    FoundryTemplateAgentExecutor._api_call_window_start = time.time()
+            
+            # Enforce minimum interval between requests - THIS IS THE KEY FIX
+            time_since_last = current_time - FoundryTemplateAgentExecutor._last_request_time
+            if time_since_last < FoundryTemplateAgentExecutor._min_request_interval:
+                sleep_time = FoundryTemplateAgentExecutor._min_request_interval - time_since_last
+                logger.warning(f"🚦 RATE LIMITING: Waiting {sleep_time:.2f}s between user requests (last request was {time_since_last:.2f}s ago)")
+                await asyncio.sleep(sleep_time)
+            
+            FoundryTemplateAgentExecutor._last_request_time = time.time()
+            
+            # Now proceed with the actual request processing
+            updater = TaskUpdater(event_queue, context.task_id, context.context_id)
+            if not context.current_task:
+                await updater.submit()
+            await updater.start_work()
+            await self._process_request(
+                context.message.parts if context.message else [],
+                context.context_id,
+                updater,
+            )
+            logger.info(f"Completed execution for {context.context_id}")
+
+    async def cancel(self, context: RequestContext, event_queue: EventQueue):
+        logger.info(f"Cancelling context {context.context_id}")
+        if context.context_id in self._input_events:
+            self._input_events[context.context_id].set()
+        updater = TaskUpdater(event_queue, context.task_id, context.context_id)
+        await updater.failed(
+            message=new_agent_text_message("Task cancelled", context_id=context.context_id)
+        )
+
+    async def cleanup(self):
+        self._active_threads.clear()
+        self._waiting_for_input.clear()
+        self._pending_updaters.clear()
+        self._input_events.clear()
+        logger.info("Executor cleaned up")
+
+
+def create_foundry_agent_executor(card: AgentCard) -> FoundryTemplateAgentExecutor:
+    return FoundryTemplateAgentExecutor(card)
+
+
+async def initialize_foundry_template_agents_at_startup():
+    """
+    Convenience function to initialize shared agent resources at application startup.
+    Call this once during your application's startup phase.
+
+    Example usage in your main application:
+
+    ```python
+    # In your main startup code (e.g., main.py or app initialization)
+    import asyncio
+    from foundry_agent_executor import initialize_foundry_template_agents_at_startup
+
+    async def startup():
+        print("🚀 Starting agent application...")
+        await initialize_foundry_template_agents_at_startup()
+        print("✅ Agent initialization complete, ready to handle requests")
+
+    # Run at startup
+    asyncio.run(startup())
+    ```
+    """
+    await FoundryTemplateAgentExecutor.initialize_at_startup()
