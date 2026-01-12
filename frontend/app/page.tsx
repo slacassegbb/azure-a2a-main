@@ -1,10 +1,20 @@
 import { ChatLayout } from "@/components/chat-layout"
+import { Suspense } from "react"
+
+function Loading() {
+  return (
+    <div className="h-screen flex items-center justify-center">
+      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+    </div>
+  )
+}
 
 export default function Home() {
-  // Using a div here to ensure it fills the full height of the viewport.
   return (
     <div className="h-screen">
-      <ChatLayout />
+      <Suspense fallback={<Loading />}>
+        <ChatLayout />
+      </Suspense>
     </div>
   )
 }
