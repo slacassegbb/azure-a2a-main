@@ -117,7 +117,8 @@ class WebSocketStreamer:
         """
         try:
             # Create HTTP client for sending events
-            self.http_client = httpx.AsyncClient(timeout=5.0)
+            # Increased timeout to 30s to handle message events that may take longer to broadcast
+            self.http_client = httpx.AsyncClient(timeout=30.0)
             
             # Test connection to WebSocket server with retries
             health_url = f"{self.websocket_url}/health"
@@ -208,13 +209,18 @@ class WebSocketStreamer:
                 logger.info(f"✅ Event {event_type} sent successfully to {client_count} WebSocket clients")
                 return True
             else:
-                logger.error(f"❌ Failed to send {event_type} event: HTTP {response.status_code}")
-                log_debug(f"❌ Failed to send {event_type} event: HTTP {response.status_code}")
+                response_text = response.text[:500] if hasattr(response, 'text') else 'No response text'
+                logger.error(f"❌ Failed to send {event_type} event: HTTP {response.status_code}, Response: {response_text}")
+                log_debug(f"❌ Failed to send {event_type} event: HTTP {response.status_code}, Response: {response_text}")
                 return False
                 
         except Exception as e:
+            import traceback
+            error_details = traceback.format_exc()
             logger.error(f"❌ Error sending {event_type} event: {e}")
+            logger.error(f"Full traceback: {error_details}")
             log_debug(f"❌ Error sending {event_type} event: {e}")
+            log_debug(f"Full traceback: {error_details}")
             return False
 
     # === Message Events ===

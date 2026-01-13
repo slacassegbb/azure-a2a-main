@@ -92,13 +92,13 @@ endif
 # ============================================================
 
 docker_backend:
-	@echo "🐳 Building and running backend..."
-	cd backend && docker build -t a2a-backend -f Dockerfile ..
-	docker run -d --name a2a-backend -p 12000:12000 -p 8080:8080 --env-file .env a2a-backend
+	@echo "🐳 Building and running backend for linux/amd64..."
+	docker buildx build --platform linux/amd64 -t a2a-backend -f backend/Dockerfile --load .
+	docker run -d --name a2a-backend -p 12000:12000 -p 8080:8080 --env-file backend/.env a2a-backend
 
 docker_frontend:
-	@echo "🐳 Building and running frontend..."
-	cd frontend && docker build -t a2a-frontend .
+	@echo "🐳 Building and running frontend for linux/amd64..."
+	docker buildx build --platform linux/amd64 -t a2a-frontend -f frontend/Dockerfile --load ./frontend
 	docker run -d --name a2a-frontend -p 3000:3000 a2a-frontend
 
 docker_agent:
@@ -114,9 +114,9 @@ endif
 
 # Build all Docker images
 docker_build_all:
-	@echo "🐳 Building all Docker images..."
-	docker build -t a2a-backend -f backend/Dockerfile .
-	cd frontend && docker build -t a2a-frontend .
+	@echo "🐳 Building all Docker images for linux/amd64..."
+	docker buildx build --platform linux/amd64 -t a2a-backend -f backend/Dockerfile --load .
+	docker buildx build --platform linux/amd64 -t a2a-frontend -f frontend/Dockerfile --load ./frontend
 	@echo "✅ All images built"
 
 # Start with docker-compose (frontend)

@@ -22,10 +22,13 @@ RUN npm ci
 # Copy source code
 COPY . .
 
-# Hardcoded environment variables for build
-ENV NEXT_PUBLIC_A2A_API_URL="http://localhost:12000"
-ENV NEXT_PUBLIC_WEBSOCKET_URL="ws://localhost:8080/events"
-ENV NEXT_PUBLIC_DEV_MODE="false"
+# Build-time environment variables (can be overridden with --build-arg)
+ARG NEXT_PUBLIC_A2A_API_URL="http://localhost:12000"
+ARG NEXT_PUBLIC_WEBSOCKET_URL="ws://localhost:8080/events"
+ARG NEXT_PUBLIC_DEV_MODE="false"
+ENV NEXT_PUBLIC_A2A_API_URL=$NEXT_PUBLIC_A2A_API_URL
+ENV NEXT_PUBLIC_WEBSOCKET_URL=$NEXT_PUBLIC_WEBSOCKET_URL
+ENV NEXT_PUBLIC_DEV_MODE=$NEXT_PUBLIC_DEV_MODE
 ENV NEXT_TELEMETRY_DISABLED=1
 
 # Build the application

@@ -62,13 +62,13 @@ import uvicorn
 import uuid
 import mimetypes
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, UploadFile, File, Request, HTTPException, Depends
+from fastapi import FastAPI, UploadFile, File, Request, HTTPException, Depends, WebSocket, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import JSONResponse
 from service.server.server import ConversationServer
 from service.websocket_streamer import get_websocket_streamer, cleanup_websocket_streamer
-from service.websocket_server import start_websocket_server, stop_websocket_server, set_auth_service
+from service.websocket_server import set_auth_service
 from service.agent_registry import get_registry
 from pydantic import BaseModel
 from datetime import datetime, timedelta, UTC
@@ -397,19 +397,9 @@ async def lifespan(app: FastAPI):
     # Start HTTP client
     httpx_client_wrapper.start()
     
-    # Start WebSocket server for UI communication
-    try:
-        start_websocket_server(host="localhost", port=8080)
-        print("[INFO] WebSocket server started successfully on ws://localhost:8080")
-        
-        # Give the WebSocket server a moment to start listening
-        import asyncio
-        await asyncio.sleep(2)
-        
-    except Exception as e:
-        print(f"[ERROR] Failed to start WebSocket server: {e}")
-        import traceback
-        print(f"[ERROR] WebSocket server traceback: {traceback.format_exc()}")
+    # WebSocket endpoint is now mounted directly on the main app (see below)
+    # No need for a separate server on port 8080
+    print("[INFO] WebSocket endpoint available at /events on the main API port")
     
     # Initialize WebSocket streamer with error handling
     try:
@@ -440,7 +430,6 @@ async def lifespan(app: FastAPI):
     print("[INFO] Shutting down A2A Backend API...")
     await httpx_client_wrapper.stop()
     await cleanup_websocket_streamer()
-    stop_websocket_server()
     print("[INFO] A2A Backend API shutdown complete")
 
 
@@ -645,7 +634,11 @@ def main():
             from log_config import log_debug
             import httpx
             # Clean up the URL to avoid double slashes
-            base_url = f"http://{agent_url}" if not agent_url.startswith('http') else agent_url
+            # Default to https:// for Azure Container Apps (localhost uses http://)
+            if not agent_url.startswith('http'):
+                base_url = f"https://{agent_url}" if not agent_url.startswith('localhost') else f"http://{agent_url}"
+            else:
+                base_url = agent_url
             # Remove trailing slash and add /health
             health_url = base_url.rstrip('/') + '/health'
             log_debug(f"Health check: agent_url='{agent_url}' -> health_url='{health_url}'")

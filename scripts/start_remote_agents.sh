@@ -74,10 +74,10 @@ start_agent_docker() {
         return 1
     fi
     
-    echo "🐳 Starting $agent_name in Docker on port $port..."
+    echo "🐳 Starting $agent_name in Docker on port $port (linux/amd64)..."
     cd "$agent_dir"
     
-    docker build -t "a2a-$agent_name" .
+    docker buildx build --platform linux/amd64 -t "a2a-$agent_name" --load .
     docker run -d \
         --name "a2a-$agent_name" \
         -p "$port:$port" \

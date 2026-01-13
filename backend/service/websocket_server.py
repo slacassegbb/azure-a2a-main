@@ -7,11 +7,16 @@ to stream events to the UI in real-time.
 import asyncio
 import json
 import logging
+import os
 import threading
 import time
 import requests
 import sys
+import urllib3
 from pathlib import Path
+
+# Disable SSL warnings for Azure Container Apps internal communication
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 from typing import Dict, Any, Set, List, Optional
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query
 from fastapi.responses import JSONResponse
@@ -64,8 +69,10 @@ class WebSocketManager:
         self.authenticated_connections: Dict[WebSocket, AuthenticatedConnection] = {}
         self.event_history: List[Dict[str, Any]] = []
         self.max_history = 100
-        self.backend_host = "localhost"
-        self.backend_port = 12000
+        # Backend URL for fetching agent registry
+        # In Azure Container Apps, use internal service discovery or full URL
+        self.backend_host = os.getenv("BACKEND_HOST", "localhost")
+        self.backend_port = int(os.getenv("BACKEND_PORT", "12000"))
         # Session ID generated at server startup - used to detect backend restarts
         # Frontend clears file history when session_id changes
         import uuid
@@ -80,7 +87,15 @@ class WebSocketManager:
         for attempt in range(max_retries + 1):
             try:
                 # Try to get agents from the backend's agent registry
-                response = requests.get(f"http://{self.backend_host}:{self.backend_port}/agents", timeout=20)
+                # Use https for port 443 (Azure Container Apps public endpoint)
+                if self.backend_port == 443:
+                    backend_url = f"https://{self.backend_host}/agents"
+                else:
+                    backend_url = f"http://{self.backend_host}:{self.backend_port}/agents"
+                
+                logger.info(f"Fetching agent registry from: {backend_url}")
+                # Disable SSL verification for Azure Container Apps internal communication
+                response = requests.get(backend_url, timeout=20, verify=False)
                 
                 if response.status_code == 200:
                     agents_data = response.json()
@@ -640,23 +655,27 @@ class WebSocketServerThread:
     def _schedule_agent_sync(self):
         """Schedule periodic agent registry sync."""
         log_websocket_debug(f"_schedule_agent_sync() called, running={self.running}")
+        logger.info(f"⏰ Scheduler called (running={self.running}, sync_in_progress={self.sync_in_progress})")
         
         if not self.running:
+            logger.warning("⚠️ Scheduler called but server not running, stopping sync")
             log_websocket_debug("Not running, returning early from _schedule_agent_sync")
             return
         
         # Check if sync is already in progress
         if self.sync_in_progress:
+            logger.info("ℹ️ Sync already in progress, skipping this cycle but rescheduling next")
             log_websocket_debug("Sync already in progress, skipping this cycle")
             # Still schedule the next sync
             log_websocket_debug(f"Creating timer for next sync in {self.sync_interval} seconds")
             self.sync_timer = threading.Timer(self.sync_interval, self._schedule_agent_sync)
             self.sync_timer.daemon = True
             self.sync_timer.start()
+            logger.info(f"✅ Next sync scheduled in {self.sync_interval}s (skipped current)")
             log_websocket_debug("Timer started successfully")
             return
             
-        logger.info(f"Scheduling agent sync (every {self.sync_interval} seconds)")
+        logger.info(f"🚀 Starting new sync cycle (interval: {self.sync_interval}s)")
         log_websocket_debug("About to start sync thread")
         
         # Run sync in background thread
@@ -668,6 +687,7 @@ class WebSocketServerThread:
         self.sync_timer = threading.Timer(self.sync_interval, self._schedule_agent_sync)
         self.sync_timer.daemon = True
         self.sync_timer.start()
+        logger.info(f"✅ Next sync scheduled in {self.sync_interval}s")
         log_websocket_debug("Timer started successfully")
     
     def _run_sync(self):
@@ -711,14 +731,19 @@ class WebSocketServerThread:
     
     async def _sync_agent_registry(self):
         """Sync agent registry to all connected clients."""
+        sync_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+        logger.info(f"🔄 Starting agent registry sync at {sync_time}")
+        
         try:
+            logger.info("  📡 Fetching agent list from backend...")
             agents = websocket_manager.get_agent_registry()
+            logger.info(f"  ✅ Retrieved {len(agents)} agents from registry")
             log_websocket_debug(f"Retrieved {len(agents)} agents from registry")
             
             if agents:
                 # Log agent statuses for debugging
-                agent_statuses = [(agent['name'], agent['status']) for agent in agents]
-                logger.info(f"Agent statuses: {agent_statuses}")
+                agent_statuses = [(agent.get('name', 'unknown'), agent.get('status', 'unknown')) for agent in agents]
+                logger.info(f"  📊 Agent statuses: {agent_statuses}")
                 
                 # Send full registry sync
                 registry_event = {
@@ -726,16 +751,31 @@ class WebSocketServerThread:
                     'data': {
                         'agents': agents
                     },
-                    'timestamp': time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+                    'timestamp': sync_time
+                }
+                logger.info(f"  📤 Broadcasting to WebSocket clients...")
+                client_count = await websocket_manager.broadcast_event(registry_event)
+                logger.info(f"  ✅ Synced {len(agents)} agents to {client_count} clients")
+                log_websocket_debug(f"Sent registry sync to {client_count} clients")
+            else:
+                logger.info("  ℹ️  No agents to sync, broadcasting empty list...")
+                registry_event = {
+                    'eventType': 'agent_registry_sync',
+                    'data': {
+                        'agents': []
+                    },
+                    'timestamp': sync_time
                 }
                 client_count = await websocket_manager.broadcast_event(registry_event)
-                if client_count > 0:
-                    logger.info(f"Synced agent registry ({len(agents)} agents) to {client_count} clients")
-                    log_websocket_debug(f"Sent registry sync to {client_count} clients")
+                logger.info(f"  ✅ Synced 0 agents to {client_count} clients")
+                
+            logger.info(f"✅ Sync completed successfully at {sync_time}")
+                
         except Exception as e:
-            logger.error(f"Failed to sync agent registry: {e}")
+            logger.error(f"❌ Failed to sync agent registry: {e}")
             log_websocket_debug(f"Sync failed: {e}")
             import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
             log_websocket_debug(f"Traceback: {traceback.format_exc()}")
     
     def _run_server(self):

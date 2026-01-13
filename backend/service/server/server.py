@@ -280,6 +280,15 @@ class ConversationServer:
         
         # Transform the message data to handle frontend format
         transformed_params = self._transform_message_data(message_data['params'])
+        
+        # Add required fields if missing
+        if 'messageId' not in transformed_params:
+            import uuid
+            transformed_params['messageId'] = str(uuid.uuid4())
+        if 'role' not in transformed_params:
+            from a2a.types import Role
+            transformed_params['role'] = Role.user
+        
         message = Message(**transformed_params)
         log_debug(f"Message created with {len(message.parts)} parts: {[type(p).__name__ for p in message.parts]}")
         message = self.manager.sanitize_message(message)
@@ -407,12 +416,18 @@ class ConversationServer:
                     
                     # Trigger immediate WebSocket sync to update UI in real-time
                     try:
-                        websocket_server = get_websocket_server()
-                        if websocket_server:
-                            websocket_server.trigger_immediate_sync()
-                            log_debug("🔔 Triggered immediate agent registry sync for UI update")
-                        else:
-                            log_debug("⚠️ WebSocket server not available for immediate sync")
+                        import os
+                        import httpx
+                        websocket_url = os.environ.get("WEBSOCKET_SERVER_URL", "http://localhost:8080")
+                        sync_url = f"{websocket_url}/agents/sync"
+                        log_debug(f"🔔 Triggering immediate sync via HTTP POST to: {sync_url}")
+                        
+                        async with httpx.AsyncClient(timeout=5.0, verify=False) as client:
+                            response = await client.post(sync_url)
+                            if response.status_code == 200:
+                                log_debug("✅ Immediate agent registry sync triggered successfully")
+                            else:
+                                log_debug(f"⚠️ Sync trigger returned status {response.status_code}")
                     except Exception as sync_error:
                         log_debug(f"⚠️ Failed to trigger immediate sync: {sync_error}")
                     
@@ -555,12 +570,18 @@ class ConversationServer:
                     
                     # Trigger immediate WebSocket sync to update UI in real-time
                     try:
-                        websocket_server = get_websocket_server()
-                        if websocket_server:
-                            websocket_server.trigger_immediate_sync()
-                            print(f"[DEBUG] 🔔 Triggered immediate agent registry sync for UI update")
-                        else:
-                            print(f"[DEBUG] ⚠️ WebSocket server not available for immediate sync")
+                        import os
+                        import httpx
+                        websocket_url = os.environ.get("WEBSOCKET_SERVER_URL", "http://localhost:8080")
+                        sync_url = f"{websocket_url}/agents/sync"
+                        print(f"[DEBUG] 🔔 Triggering immediate sync via HTTP POST to: {sync_url}")
+                        
+                        async with httpx.AsyncClient(timeout=5.0, verify=False) as client:
+                            response = await client.post(sync_url)
+                            if response.status_code == 200:
+                                print(f"[DEBUG] ✅ Immediate agent registry sync triggered successfully")
+                            else:
+                                print(f"[DEBUG] ⚠️ Sync trigger returned status {response.status_code}")
                     except Exception as sync_error:
                         print(f"[DEBUG] ⚠️ Failed to trigger immediate sync: {sync_error}")
                     

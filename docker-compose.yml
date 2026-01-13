@@ -4,6 +4,7 @@ services:
   # ============================================================================
   
   backend:
+    platform: linux/amd64
     build:
       context: .
       dockerfile: backend/Dockerfile
@@ -41,6 +42,7 @@ services:
       start_period: 60s
 
   frontend:
+    platform: linux/amd64
     build:
       context: ./frontend
       dockerfile: Dockerfile
@@ -77,6 +79,7 @@ services:
   
   # Example: Fraud Detection Agent
   # fraud-agent:
+  #   platform: linux/amd64
   #   build:
   #     context: ./remote_agents/azurefoundry_fraud
   #     dockerfile: Dockerfile
@@ -99,6 +102,7 @@ services:
 
   # Example: Classification Agent
   # classification-agent:
+  #   platform: linux/amd64
   #   build:
   #     context: ./remote_agents/azurefoundry_classification
   #     dockerfile: Dockerfile
