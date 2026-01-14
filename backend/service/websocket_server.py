@@ -453,6 +453,41 @@ class WebSocketManager:
         logger.info(f"Broadcasted {event_type} event to {sent_count} clients (global)")
         return sent_count
     
+    async def smart_broadcast(self, event_data: Dict[str, Any]) -> int:
+        """Smart broadcast that auto-detects tenant from event data.
+        
+        Looks for contextId or conversationId in event data to extract tenant.
+        Falls back to global broadcast if no tenant info found.
+        
+        Args:
+            event_data: Event data to broadcast
+            
+        Returns:
+            Number of clients that received the event
+        """
+        # Try to extract tenant from various fields in the event
+        context_id = None
+        data = event_data.get('data', {})
+        
+        # Check common fields that might contain contextId
+        context_id = (
+            event_data.get('contextId') or
+            event_data.get('context_id') or
+            data.get('contextId') or
+            data.get('context_id') or
+            data.get('conversationId') or
+            data.get('conversation_id')
+        )
+        
+        if context_id:
+            tenant_id = get_tenant_from_context(context_id)
+            # Only use tenant broadcast if we have connections for this tenant
+            if tenant_id in self.tenant_connections:
+                return await self.broadcast_to_tenant(event_data, tenant_id)
+        
+        # Fall back to global broadcast
+        return await self.broadcast_event(event_data)
+    
     def get_status(self) -> Dict[str, Any]:
         """Get server status."""
         return {
@@ -542,7 +577,7 @@ def create_websocket_app() -> FastAPI:
                 await websocket.send_text(json.dumps(error_event))
         
         elif message_type == "shared_message":
-            # Handle shared message that should be broadcast to all clients
+            # Handle shared message that should be broadcast to tenant's clients
             message_data = message.get("message", {})
             
             # Create the event to broadcast
@@ -553,8 +588,13 @@ def create_websocket_app() -> FastAPI:
                 }
             }
             
-            # Broadcast to all clients (including sender)
-            await websocket_manager.broadcast_event(shared_event)
+            # Use smart_broadcast to auto-detect tenant from conversationId
+            # The sender's tenant is tracked via their WebSocket connection
+            sender_tenant = websocket_manager.connection_tenants.get(websocket)
+            if sender_tenant:
+                await websocket_manager.broadcast_to_tenant(shared_event, sender_tenant)
+            else:
+                await websocket_manager.broadcast_event(shared_event)
             logger.info(f"Shared message broadcasted: {message_data.get('content', '')[:50]}...")
         
         elif message_type == "shared_inference_started":
@@ -567,8 +607,12 @@ def create_websocket_app() -> FastAPI:
                 "data": inference_data
             }
             
-            # Broadcast to all clients (including sender)
-            await websocket_manager.broadcast_event(inference_event)
+            # Broadcast to sender's tenant only
+            sender_tenant = websocket_manager.connection_tenants.get(websocket)
+            if sender_tenant:
+                await websocket_manager.broadcast_to_tenant(inference_event, sender_tenant)
+            else:
+                await websocket_manager.broadcast_event(inference_event)
             logger.info(f"Shared inference started broadcasted for conversation: {inference_data.get('conversationId')}")
         
         elif message_type == "shared_inference_ended":
@@ -581,8 +625,12 @@ def create_websocket_app() -> FastAPI:
                 "data": inference_data
             }
             
-            # Broadcast to all clients (including sender)
-            await websocket_manager.broadcast_event(inference_event)
+            # Broadcast to sender's tenant only
+            sender_tenant = websocket_manager.connection_tenants.get(websocket)
+            if sender_tenant:
+                await websocket_manager.broadcast_to_tenant(inference_event, sender_tenant)
+            else:
+                await websocket_manager.broadcast_event(inference_event)
             logger.info(f"Shared inference ended broadcasted for conversation: {inference_data.get('conversationId')}")
         
         elif message_type == "ping":
@@ -594,9 +642,12 @@ def create_websocket_app() -> FastAPI:
     
     @app.post("/events")
     async def post_event(event_data: Dict[str, Any]):
-        """HTTP endpoint for posting events to WebSocket clients."""
+        """HTTP endpoint for posting events to WebSocket clients.
+        
+        Uses smart_broadcast to auto-detect tenant from contextId in event data.
+        """
         try:
-            client_count = await websocket_manager.broadcast_event(event_data)
+            client_count = await websocket_manager.smart_broadcast(event_data)
             return JSONResponse({
                 "success": True,
                 "clientCount": client_count,
@@ -934,6 +985,10 @@ class WebSocketServerThread:
     async def broadcast_event(self, event_data: Dict[str, Any]) -> int:
         """Broadcast an event to all connected clients."""
         return await websocket_manager.broadcast_event(event_data)
+    
+    async def smart_broadcast(self, event_data: Dict[str, Any]) -> int:
+        """Smart broadcast that auto-detects tenant from event data."""
+        return await websocket_manager.smart_broadcast(event_data)
     
     def get_status(self) -> Dict[str, Any]:
         """Get server status."""
