@@ -318,6 +318,32 @@ class FoundryHostAgent2:
         if self._create_agent_at_startup:
             loop.create_task(self._create_agent_at_startup_task())
 
+    async def set_session_agents(self, session_agents: List[Dict[str, Any]]):
+        """Set the available agents for this session/request.
+        
+        This clears existing agents and sets only the provided session agents.
+        Called before processing each request to ensure session isolation.
+        
+        Args:
+            session_agents: List of agent dicts with url, name, description, skills, etc.
+        """
+        # Clear existing agents
+        self.cards.clear()
+        self.remote_agent_connections.clear()
+        self.agents = ''
+        
+        # Register each session agent
+        for agent_data in session_agents:
+            agent_url = agent_data.get('url')
+            if agent_url:
+                try:
+                    await self.retrieve_card(agent_url)
+                    log_debug(f"✅ Session agent registered: {agent_data.get('name', agent_url)}")
+                except Exception as e:
+                    log_debug(f"⚠️ Failed to register session agent {agent_url}: {e}")
+        
+        log_debug(f"📋 Session now has {len(self.cards)} agents: {list(self.cards.keys())}")
+
     def _find_agent_registry_path(self) -> Path:
         """Resolve the agent registry path within the backend/data directory."""
         backend_root = Path(__file__).resolve().parents[2]
