@@ -353,13 +353,13 @@ class WebSocketManager:
                 "contextId": status_event.get("context_id")
             }
             
-            # Broadcast to tenant if contextId present, otherwise all clients
+            # Broadcast to tenant if contextId present, skip if no context (multi-tenant isolation)
             context_id = status_event.get("context_id")
             if context_id:
                 tenant_id = get_tenant_from_context(context_id)
                 await self.broadcast_to_tenant(event_data, tenant_id)
             else:
-                await self.broadcast_event(event_data)
+                logger.debug(f"Skipping agent status broadcast - no context_id provided (multi-tenant isolation)")
             print(f"[WEBSOCKET] Emitted agent status update: {status_event.get('agent_name')} -> {status_event.get('status')}")
             
         except Exception as e:
@@ -390,8 +390,8 @@ class WebSocketManager:
         tenant_websockets = self.tenant_connections.get(tenant_id, set())
         
         if not tenant_websockets:
-            logger.debug(f"No connections for tenant {tenant_id[:20]}..., falling back to global broadcast")
-            return await self.broadcast_event(event_data)
+            logger.debug(f"No connections for tenant {tenant_id[:20]}..., skipping broadcast (no fallback)")
+            return 0
         
         # Broadcast only to tenant's connections
         message = json.dumps(event_data)
@@ -457,7 +457,7 @@ class WebSocketManager:
         """Smart broadcast that auto-detects tenant from event data.
         
         Looks for contextId or conversationId in event data to extract tenant.
-        Falls back to global broadcast if no tenant info found.
+        Skips broadcast if no tenant info found (multi-tenant isolation).
         
         Args:
             event_data: Event data to broadcast
@@ -485,8 +485,9 @@ class WebSocketManager:
             if tenant_id in self.tenant_connections:
                 return await self.broadcast_to_tenant(event_data, tenant_id)
         
-        # Fall back to global broadcast
-        return await self.broadcast_event(event_data)
+        # No tenant found - skip broadcast (multi-tenant isolation, no global fallback)
+        logger.debug(f"Skipping smart_broadcast - no valid tenant found (multi-tenant isolation)")
+        return 0
     
     def get_status(self) -> Dict[str, Any]:
         """Get server status."""
@@ -594,7 +595,7 @@ def create_websocket_app() -> FastAPI:
             if sender_tenant:
                 await websocket_manager.broadcast_to_tenant(shared_event, sender_tenant)
             else:
-                await websocket_manager.broadcast_event(shared_event)
+                logger.debug(f"Skipping shared_message broadcast - no tenant found (multi-tenant isolation)")
             logger.info(f"Shared message broadcasted: {message_data.get('content', '')[:50]}...")
         
         elif message_type == "shared_inference_started":
@@ -612,7 +613,7 @@ def create_websocket_app() -> FastAPI:
             if sender_tenant:
                 await websocket_manager.broadcast_to_tenant(inference_event, sender_tenant)
             else:
-                await websocket_manager.broadcast_event(inference_event)
+                logger.debug(f"Skipping shared_inference_started broadcast - no tenant found (multi-tenant isolation)")
             logger.info(f"Shared inference started broadcasted for conversation: {inference_data.get('conversationId')}")
         
         elif message_type == "shared_inference_ended":
@@ -630,7 +631,7 @@ def create_websocket_app() -> FastAPI:
             if sender_tenant:
                 await websocket_manager.broadcast_to_tenant(inference_event, sender_tenant)
             else:
-                await websocket_manager.broadcast_event(inference_event)
+                logger.debug(f"Skipping shared_inference_ended broadcast - no tenant found (multi-tenant isolation)")
             logger.info(f"Shared inference ended broadcasted for conversation: {inference_data.get('conversationId')}")
         
         elif message_type == "ping":
