@@ -47,10 +47,8 @@ ENV NODE_ENV=production
 ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
 
-# Hardcoded runtime environment variables
-ENV NEXT_PUBLIC_A2A_API_URL="http://localhost:12000"
-ENV NEXT_PUBLIC_WEBSOCKET_URL="ws://localhost:8080/events"
-ENV NEXT_PUBLIC_DEV_MODE="false"
+# Note: NEXT_PUBLIC_* variables are baked into the build at build-time
+# They are NOT needed at runtime and setting them here has no effect
 
 # Copy production dependencies
 COPY --from=deps --chown=nextjs:nodejs /app/node_modules ./node_modules
