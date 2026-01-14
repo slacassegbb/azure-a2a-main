@@ -1360,18 +1360,19 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
       const effectiveConversationId = data.conversationId || data.inferenceId || conversationId
 
       // Add inference summary FIRST (so workflow appears BEFORE response)
-      // Only add once when host agent responds (final response) and we have steps to show
+      // Show workflow whenever we have steps, regardless of which agent responds
       // Use timestamp to ensure uniqueness - each inference should get its own workflow display
       const summaryId = `summary_${data.inferenceId}_${Date.now()}`
       console.log('[ChatPanel] Workflow save check:', {
         stepsCount: inferenceSteps.length,
         isHostAgent,
+        agentName: data.message.agent,
         summaryId,
         inferenceId: data.inferenceId,
         effectiveConversationId
       })
-      if (inferenceSteps.length > 0 && isHostAgent) {
-        // Don't check processedMessageIds - each inference should show its workflow
+      if (inferenceSteps.length > 0) {
+        // Show workflow for ANY agent response when we have steps
         setProcessedMessageIds(prev => new Set([...prev, summaryId]))
         const stepsCopy = [...inferenceSteps] // Copy steps before they get cleared
         const summaryMessage: Message = {
@@ -1449,8 +1450,9 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
         })
       }
       
-      // Only clear inference steps when host agent responds (final response)
-      if (isHostAgent) {
+      // Clear inference steps after final response (for any agent)
+      // This ensures the workflow is captured before clearing
+      if (messagesToAdd.length > 0) {
         setIsInferencing(false)
         setInferenceSteps([])
         setActiveNode(null)
