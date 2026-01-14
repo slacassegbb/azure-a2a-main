@@ -1548,7 +1548,8 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                     # Stream task creation event
                     await self._emit_granular_agent_event(
                         agent_name=recommended_agent or "orchestrator",
-                        status_text=f"Task created: {task_desc}"
+                        status_text=f"Task created: {task_desc}",
+                        context_id=context_id
                     )
                     
                     # Execute the task by delegating to the selected remote agent
@@ -1877,7 +1878,7 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
             # Don't let streaming errors break the callback
             pass
 
-    async def _emit_tool_call_event(self, agent_name: str, tool_name: str, arguments: dict):
+    async def _emit_tool_call_event(self, agent_name: str, tool_name: str, arguments: dict, context_id: str = None):
         """Emit tool call event to WebSocket for granular UI visibility."""
         try:
             # Import here to avoid circular imports
@@ -1889,10 +1890,11 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                     "agentName": agent_name,
                     "toolName": tool_name,
                     "arguments": arguments,
-                    "timestamp": __import__('datetime').datetime.utcnow().isoformat()
+                    "timestamp": __import__('datetime').datetime.utcnow().isoformat(),
+                    "contextId": context_id
                 }
                 
-                success = await streamer._send_event("tool_call", event_data, None)
+                success = await streamer._send_event("tool_call", event_data, context_id)
                 if success:
                     log_debug(f"Streamed tool call: {agent_name} - {tool_name}")
                 else:
@@ -1933,7 +1935,7 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
             log_debug(f"Error emitting outgoing message event: {e}")
             pass
 
-    async def _emit_tool_response_event(self, agent_name: str, tool_name: str, status: str, error_message: str = None):
+    async def _emit_tool_response_event(self, agent_name: str, tool_name: str, status: str, error_message: str = None, context_id: str = None):
         """Emit tool response event to WebSocket for granular UI visibility."""
         try:
             # Import here to avoid circular imports
@@ -1946,13 +1948,14 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                     "agentName": agent_name,
                     "toolName": tool_name,
                     "status": status,
-                    "timestamp": datetime.datetime.utcnow().isoformat()
+                    "timestamp": datetime.datetime.utcnow().isoformat(),
+                    "contextId": context_id
                 }
                 
                 if error_message:
                     event_data["error"] = error_message
                 
-                success = await streamer._send_event("tool_response", event_data, None)
+                success = await streamer._send_event("tool_response", event_data, context_id)
                 if success:
                     log_debug(f"Streamed tool response: {agent_name} - {tool_name} - {status}")
                 else:
@@ -1963,15 +1966,15 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                 task_state = "completed" if status == "success" else "failed"
                 task_updated_data = {
                     "taskId": str(uuid.uuid4()),
-                    "conversationId": getattr(self, 'default_contextId', str(uuid.uuid4())),
-                    "contextId": getattr(self, 'default_contextId', None),
+                    "conversationId": context_id or getattr(self, 'default_contextId', str(uuid.uuid4())),
+                    "contextId": context_id or getattr(self, 'default_contextId', None),
                     "state": task_state,
                     "agentName": agent_name,
                     "timestamp": datetime.datetime.utcnow().isoformat(),
                     "content": f"Agent {status}" if not error_message else error_message
                 }
                 print(f"🎯 [SIDEBAR] Emitting task_updated for {agent_name}: state={task_state}")
-                result = await streamer._send_event("task_updated", task_updated_data, None)
+                result = await streamer._send_event("task_updated", task_updated_data, context_id)
                 print(f"🎯 [SIDEBAR] task_updated sent, success={result}")
             else:
                 log_debug(f"WebSocket streamer not available for tool response")
@@ -1980,7 +1983,7 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
             log_debug(f"Error emitting tool response event: {e}")
             pass
 
-    async def _emit_granular_agent_event(self, agent_name: str, status_text: str):
+    async def _emit_granular_agent_event(self, agent_name: str, status_text: str, context_id: str = None):
         """Emit granular agent activity event to WebSocket for thinking box visibility."""
         try:
             # Import here to avoid circular imports
@@ -1991,11 +1994,12 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                 event_data = {
                     "agentName": agent_name,
                     "content": status_text,
-                    "timestamp": __import__('datetime').datetime.utcnow().isoformat()
+                    "timestamp": __import__('datetime').datetime.utcnow().isoformat(),
+                    "contextId": context_id
                 }
                 
                 # Use the remote_agent_activity event type for granular visibility
-                success = await streamer._send_event("remote_agent_activity", event_data, None)
+                success = await streamer._send_event("remote_agent_activity", event_data, context_id)
                 if success:
                     log_debug(f"Streamed remote agent activity: {agent_name} - {status_text}")
                 else:
@@ -3107,7 +3111,7 @@ Answer with just JSON:
                 if cool_until and cool_until > now_ts:
                     wait_s = min(60, max(0, int(cool_until - now_ts)))
                     if wait_s > 0:
-                        asyncio.create_task(self._emit_granular_agent_event(agent_name, f"throttled; waiting {wait_s}s"))
+                        asyncio.create_task(self._emit_granular_agent_event(agent_name, f"throttled; waiting {wait_s}s", session_context.contextId))
                         await asyncio.sleep(wait_s)
             except Exception:
                 pass
@@ -3460,7 +3464,7 @@ Answer with just JSON:
                         session_context.agent_task_states[agent_name] = 'failed'
                         session_context.agent_cooldowns[agent_name] = time.time() + retry_after
                         try:
-                            asyncio.create_task(self._emit_granular_agent_event(agent_name, f"rate limited; retrying in {retry_after}s (attempt {retry_attempt}/{max_rate_limit_retries})"))
+                            asyncio.create_task(self._emit_granular_agent_event(agent_name, f"rate limited; retrying in {retry_after}s (attempt {retry_attempt}/{max_rate_limit_retries})", session_context.contextId))
                         except Exception:
                             pass
 
@@ -6036,7 +6040,7 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). Simply synt
                     })
                     
                     # Stream granular tool call to WebSocket for thinking box visibility
-                    asyncio.create_task(self._emit_tool_call_event(agent_name, "send_message", arguments))
+                    asyncio.create_task(self._emit_tool_call_event(agent_name, "send_message", arguments, context_id))
                     
                     # Log tool call event - use agent_name as actor so frontend can attribute correctly
                     if event_logger:
@@ -6075,7 +6079,7 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). Simply synt
                                 "error": str(result)
                             })
                             # Stream tool failure to WebSocket
-                            asyncio.create_task(self._emit_tool_response_event(agent_name, "send_message", "failed", str(result)))
+                            asyncio.create_task(self._emit_tool_response_event(agent_name, "send_message", "failed", str(result), context_id))
                         else:
                             output = result
                             self._add_status_message_to_conversation(f"✅ Agent call to {agent_name} completed", context_id)
@@ -6084,7 +6088,7 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). Simply synt
                                 "output_type": type(output).__name__
                             })
                             # Stream tool success to WebSocket
-                            asyncio.create_task(self._emit_tool_response_event(agent_name, "send_message", "success", None))
+                            asyncio.create_task(self._emit_tool_response_event(agent_name, "send_message", "success", None, context_id))
                         
                         # Log tool result event - use agent_name as actor so frontend can attribute correctly
                         if event_logger:
@@ -6163,7 +6167,7 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). Simply synt
                 })
                 
                 # Stream tool call to WebSocket for thinking box visibility
-                await self._emit_tool_call_event("foundry-host-agent", function_name, arguments)
+                await self._emit_tool_call_event("foundry-host-agent", function_name, arguments, context_id)
                 
                 # Log tool call event and add span event
                 if event_logger:
@@ -6183,7 +6187,7 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). Simply synt
                         "agent_names": [agent.get("name", "unknown") for agent in output] if output else []
                     })
                     # Stream tool success to WebSocket
-                    await self._emit_tool_response_event("foundry-host-agent", function_name, "success")
+                    await self._emit_tool_response_event("foundry-host-agent", function_name, "success", None, context_id)
                 else:
                     output = {"error": f"Unknown function: {function_name}"}
                     self._add_status_message_to_conversation(f"❌ Unknown tool: {function_name}", context_id)
@@ -6192,7 +6196,7 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). Simply synt
                         "available_functions": ["list_remote_agents", "send_message"]
                     })
                     # Stream tool failure to WebSocket
-                    await self._emit_tool_response_event("foundry-host-agent", function_name, "failed", f"Unknown function: {function_name}")
+                    await self._emit_tool_response_event("foundry-host-agent", function_name, "failed", f"Unknown function: {function_name}", context_id)
                 
                 # Log tool result event
                 if event_logger:
@@ -7051,12 +7055,12 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). Simply synt
     def _add_status_message_to_conversation(self, status_text: str, contextId: str):
         """Add a status message directly to the conversation for immediate UI display."""
         # Use WebSocket streaming for real-time status updates
-        asyncio.create_task(self._emit_granular_agent_event("foundry-host-agent", status_text))
+        asyncio.create_task(self._emit_granular_agent_event("foundry-host-agent", status_text, contextId))
 
     async def _emit_status_event(self, status_text: str, context_id: str):
         """Emit status event to WebSocket for real-time frontend updates."""
         # Use WebSocket streaming for real-time status updates
-        await self._emit_granular_agent_event("foundry-host-agent", status_text)
+        await self._emit_granular_agent_event("foundry-host-agent", status_text, context_id)
 
     @staticmethod
     def _normalize_function_response_text(raw_response: Any) -> Any:
