@@ -6,6 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge"
 import { useToast } from "@/hooks/use-toast"
 import { useEventHub } from "@/hooks/use-event-hub"
+import { getOrCreateSessionId } from "@/lib/session"
 import { 
   Bot, 
   Play, 
@@ -17,7 +18,9 @@ import {
   Shield,
   Database,
   RefreshCw,
-  UserPlus
+  UserPlus,
+  Check,
+  X
 } from "lucide-react"
 import {
   Dialog,
@@ -41,8 +44,10 @@ export function AgentCatalog() {
   const [registeringAgent, setRegisteringAgent] = useState<string | null>(null)
   const [expandedAgents, setExpandedAgents] = useState<Set<string>>(new Set())
   const [catalogAgents, setCatalogAgents] = useState<any[]>([])
+  const [sessionAgentUrls, setSessionAgentUrls] = useState<Set<string>>(new Set()) // Track session-enabled agents
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const sessionId = getOrCreateSessionId() // Get or create session ID
 
     // Function to check agent health status via backend proxy
   const checkAgentHealth = async (url: string): Promise<boolean> => {
@@ -103,21 +108,35 @@ export function AgentCatalog() {
       setLoading(true)
       setError(null)
       const baseUrl = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
-      const response = await fetch(`${baseUrl}/api/agents`)
       
-      if (!response.ok) {
-        throw new Error(`Failed to fetch agents: ${response.status}`)
+      // Fetch catalog agents and session agents in parallel
+      const [catalogResponse, sessionResponse] = await Promise.all([
+        fetch(`${baseUrl}/agents/catalog`),
+        fetch(`${baseUrl}/agents/session/registered?sessionId=${encodeURIComponent(sessionId)}`)
+      ])
+      
+      if (!catalogResponse.ok) {
+        throw new Error(`Failed to fetch agents: ${catalogResponse.status}`)
       }
       
-      const data = await response.json()
-      const agents = data.agents || data // Handle both wrapped and unwrapped responses
+      const catalogData = await catalogResponse.json()
+      const agents = catalogData.agents || []
+      
+      // Parse session agents to get enabled URLs
+      let enabledUrls = new Set<string>()
+      if (sessionResponse.ok) {
+        const sessionData = await sessionResponse.json()
+        const sessionAgents = sessionData.agents || []
+        enabledUrls = new Set(sessionAgents.map((a: any) => a.url?.replace(/\/$/, '') || ''))
+      }
+      setSessionAgentUrls(enabledUrls)
       
       // Transform registry data to match UI expectations
       const transformedAgents = agents.map((agent: any, index: number) => ({
         id: agent.name.toLowerCase().replace(/\s+/g, '-'),
         name: agent.name,
         description: agent.description,
-        status: "Checking...", // Initial status while checking health
+        status: agent.status === 'online' ? "Online" : agent.status === 'offline' ? "Offline" : "Checking...",
         version: agent.version,
         endpoint: agent.url,
         organization: "Registry Agent", // Default organization
@@ -127,15 +146,11 @@ export function AgentCatalog() {
         capabilities: agent.capabilities,
         skills: agent.skills,
         defaultInputModes: agent.defaultInputModes,
-        defaultOutputModes: agent.defaultOutputModes
+        defaultOutputModes: agent.defaultOutputModes,
+        isEnabled: enabledUrls.has(agent.url?.replace(/\/$/, '') || '') // Track if enabled for session
       }))
       
-      // Set initial agents with "Checking..." status
       setCatalogAgents(transformedAgents)
-      
-      // Check health status for all agents
-      const agentsWithHealthStatus = await checkAllAgentsHealth(transformedAgents)
-      setCatalogAgents(agentsWithHealthStatus)
     } catch (err) {
       console.error('Error fetching agents:', err)
       setError(err instanceof Error ? err.message : 'Failed to load agents')
@@ -247,6 +262,79 @@ export function AgentCatalog() {
     }
   }
 
+  // Toggle agent enabled/disabled for this session
+  const handleToggleSessionAgent = async (agent: any) => {
+    const isCurrentlyEnabled = sessionAgentUrls.has(agent.endpoint?.replace(/\/$/, '') || '')
+    const endpoint = isCurrentlyEnabled ? 'unregister' : 'register'
+    const actionWord = isCurrentlyEnabled ? 'Disabling' : 'Enabling'
+    const pastWord = isCurrentlyEnabled ? 'disabled' : 'enabled'
+    
+    try {
+      setRegisteringAgent(agent.name)
+      
+      toast({
+        title: `${actionWord} Agent...`,
+        description: `${actionWord} ${agent.name} for your session`,
+      })
+      
+      const baseUrl = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
+      const response = await fetch(`${baseUrl}/agents/session/${endpoint}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ 
+          sessionId, 
+          agentUrl: agent.endpoint 
+        }),
+      })
+
+      const result = await response.json()
+
+      if (response.ok && result.success) {
+        // Update local state
+        const newUrls = new Set(sessionAgentUrls)
+        const normalizedUrl = agent.endpoint?.replace(/\/$/, '') || ''
+        
+        if (isCurrentlyEnabled) {
+          newUrls.delete(normalizedUrl)
+        } else {
+          newUrls.add(normalizedUrl)
+        }
+        setSessionAgentUrls(newUrls)
+        
+        // Update agent in list
+        setCatalogAgents(prev => prev.map(a => 
+          a.id === agent.id ? { ...a, isEnabled: !isCurrentlyEnabled } : a
+        ))
+        
+        toast({
+          title: `Agent ${pastWord}`,
+          description: `${agent.name} is now ${pastWord} for your session`,
+        })
+        
+        // Emit event for other components to update
+        emit('agentSessionUpdated', { agentUrl: agent.endpoint, enabled: !isCurrentlyEnabled })
+      } else {
+        toast({
+          title: "Error",
+          description: result.error || `Failed to ${endpoint} agent`,
+          variant: "destructive",
+        })
+      }
+    } catch (error) {
+      console.error(`[Agent Catalog] Error ${endpoint}ing agent:`, error)
+      toast({
+        title: "Error",
+        description: `Failed to ${endpoint} agent`,
+        variant: "destructive"
+      })
+    } finally {
+      setRegisteringAgent(null)
+    }
+  }
+
+  // Legacy: Register agent to global catalog (if not already in catalog)
   const handleRegisterAgent = async (agent: any) => {
     try {
       // Set loading state for this specific agent
@@ -372,32 +460,37 @@ export function AgentCatalog() {
                         </div>
                       </div>
                       <div className="ml-2 flex gap-2" onClick={(e) => e.stopPropagation()}>
-                        {agent.status === "Online" && (
-                          <Button
-                            onClick={() => handleRegisterAgent(agent)}
-                            disabled={registeringAgent === agent.name}
-                            size="sm"
-                            variant="outline"
-                            className="h-7 px-2 text-xs"
-                          >
-                            {registeringAgent === agent.name ? (
-                              <>
-                                <RefreshCw className="h-3 w-3 mr-1 animate-spin" />
-                                Registering...
-                              </>
-                            ) : (
-                              <>
-                                <UserPlus className="h-3 w-3 mr-1" />
-                                Register
-                              </>
-                            )}
-                          </Button>
-                        )}
+                        {/* Enable/Disable agent for this session */}
+                        <Button
+                          onClick={() => handleToggleSessionAgent(agent)}
+                          disabled={registeringAgent === agent.name || agent.status === "Offline"}
+                          size="sm"
+                          variant={agent.isEnabled ? "default" : "outline"}
+                          className={`h-7 px-2 text-xs ${agent.isEnabled ? 'bg-green-600 hover:bg-green-700' : ''}`}
+                        >
+                          {registeringAgent === agent.name ? (
+                            <>
+                              <RefreshCw className="h-3 w-3 mr-1 animate-spin" />
+                              ...
+                            </>
+                          ) : agent.isEnabled ? (
+                            <>
+                              <Check className="h-3 w-3 mr-1" />
+                              Enabled
+                            </>
+                          ) : (
+                            <>
+                              <UserPlus className="h-3 w-3 mr-1" />
+                              Enable
+                            </>
+                          )}
+                        </Button>
                         <Button
                           onClick={() => handleStartAgent(agent)}
-                          disabled={isStarting || isOffline}
+                          disabled={isStarting || isOffline || !agent.isEnabled}
                           size="sm"
                           className="h-7 px-2 text-xs"
+                          title={!agent.isEnabled ? "Enable this agent first" : ""}
                         >
                           <Play className="h-3 w-3 mr-1" />
                           {isStarting ? "Starting..." : "Start"}
