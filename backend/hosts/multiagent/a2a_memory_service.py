@@ -152,7 +152,8 @@ class A2AMemoryService:
         # Define fields for A2A protocol data
         fields = [
             SimpleField(name="id", type=SearchFieldDataType.String, key=True),
-            SimpleField(name="agent_name", type=SearchFieldDataType.String),
+            SimpleField(name="session_id", type=SearchFieldDataType.String, filterable=True),  # Tenant isolation
+            SimpleField(name="agent_name", type=SearchFieldDataType.String, filterable=True),
             SimpleField(name="processing_time_seconds", type=SearchFieldDataType.Double),
             SimpleField(name="timestamp", type=SearchFieldDataType.DateTimeOffset),
             
@@ -197,9 +198,17 @@ class A2AMemoryService:
             return False
 
     def _is_index_compatible(self, index: SearchIndex) -> bool:
-        """Validate that an existing index matches the configured vector settings."""
+        """Validate that an existing index matches the configured settings including session_id field."""
         try:
+            has_session_id = False
+            has_valid_vector = False
+            
             for field in index.fields:
+                # Check for session_id field (required for multi-tenancy)
+                if field.name == "session_id":
+                    has_session_id = True
+                
+                # Check vector field configuration
                 if field.name == "interaction_vector":
                     current_dim = getattr(field, "vector_search_dimensions", None)
                     current_profile = getattr(field, "vector_search_profile_name", None)
@@ -213,9 +222,17 @@ class A2AMemoryService:
                             f"Existing vector profile {current_profile} != expected {vector_profile_name}"
                         )
                         return False
-                    return True
-            log_memory_debug("interaction_vector field missing in index definition.")
-            return False
+                    has_valid_vector = True
+            
+            if not has_session_id:
+                log_memory_debug("session_id field missing in index - recreating for multi-tenancy support")
+                return False
+            
+            if not has_valid_vector:
+                log_memory_debug("interaction_vector field missing in index definition.")
+                return False
+            
+            return True
         except Exception as e:
             log_memory_debug(f"Failed to validate existing index: {e}")
             return False
@@ -265,13 +282,24 @@ class A2AMemoryService:
             log_memory_debug(f"Traceback: {traceback.format_exc()}")
             return []
 
-    async def store_interaction(self, interaction_data: Dict[str, Any]) -> bool:
-        """Store A2A protocol payloads in the search index"""
+    async def store_interaction(self, interaction_data: Dict[str, Any], session_id: str = None) -> bool:
+        """Store A2A protocol payloads in the search index with tenant isolation.
+        
+        Args:
+            interaction_data: Dict containing agent_name, outbound_payload, inbound_payload, etc.
+            session_id: Required for multi-tenancy. The session/tenant identifier.
+        """
         if not self._enabled:
             log_memory_debug("Memory service disabled - skipping store_interaction")
             return True  # Return success to avoid breaking the flow
+        
+        # Validate session_id for multi-tenancy
+        if not session_id:
+            log_memory_debug("⚠️ No session_id provided - memory will not be stored (multi-tenancy required)")
+            return False
             
         log_memory_debug("store_interaction called")
+        log_memory_debug(f"Session ID: {session_id}")
         log_memory_debug(f"Agent name: {interaction_data.get('agent_name', 'unknown')}")
         
         if not self.search_client:
@@ -310,9 +338,10 @@ class A2AMemoryService:
                 return False
 
             log_memory_debug("Preparing document for indexing...")
-            # Prepare document for indexing
+            # Prepare document for indexing with session_id for tenant isolation
             document = {
                 "id": interaction_data.get('interaction_id', str(uuid.uuid4())),
+                "session_id": session_id,  # Tenant isolation field
                 "agent_name": interaction_data.get('agent_name', ''),
                 "processing_time_seconds": interaction_data.get('processing_time_seconds', 0.0),
                 "timestamp": interaction_data.get('timestamp', datetime.utcnow().isoformat() + 'Z'),
@@ -323,12 +352,12 @@ class A2AMemoryService:
                 "interaction_vector": embedding
             }
             
-            log_memory_debug(f"Document prepared with ID: {document['id']}")
+            log_memory_debug(f"Document prepared with ID: {document['id']} for session: {session_id}")
             log_memory_debug("About to upload to search index...")
 
             # Upload to search index
             self.search_client.upload_documents([document])
-            log_success(f"Successfully stored A2A payloads {document['id']}")
+            log_success(f"Successfully stored A2A payloads {document['id']} for session {session_id}")
             return True
 
         except Exception as e:
@@ -337,13 +366,26 @@ class A2AMemoryService:
 
     async def search_similar_interactions(
         self, 
-        query: str, 
+        query: str,
+        session_id: str = None,
         filters: Optional[Dict[str, Any]] = None,
         top_k: int = 5
     ) -> List[Dict[str, Any]]:
-        """Search for similar interactions using semantic search"""
+        """Search for similar interactions using semantic search with tenant isolation.
+        
+        Args:
+            query: The search query text
+            session_id: Required for multi-tenancy. Only returns results for this session.
+            filters: Additional filters (e.g., agent_name)
+            top_k: Number of results to return
+        """
         if not self._enabled:
             log_memory_debug("Memory service disabled - returning empty results")
+            return []
+        
+        # Validate session_id for multi-tenancy
+        if not session_id:
+            log_memory_debug("⚠️ No session_id provided - returning empty results (multi-tenancy required)")
             return []
             
         if not self.search_client:
@@ -362,18 +404,19 @@ class A2AMemoryService:
                 )
                 return []
 
-            # Build filter expression
-            filter_expr = None
+            # Build filter expression - ALWAYS include session_id for tenant isolation
+            filter_parts = [f"session_id eq '{session_id}'"]
+            
+            # Add any additional filters
             if filters:
-                filter_parts = []
                 for key, value in filters.items():
                     if isinstance(value, bool):
                         filter_parts.append(f"{key} eq {str(value).lower()}")
                     elif isinstance(value, str):
                         filter_parts.append(f"{key} eq '{value}'")
-                
-                if filter_parts:
-                    filter_expr = " and ".join(filter_parts)
+            
+            filter_expr = " and ".join(filter_parts)
+            log_memory_debug(f"Searching with filter: {filter_expr}")
 
             # Vector search
             vector_queries = [{
@@ -386,7 +429,7 @@ class A2AMemoryService:
             results = self.search_client.search(
                 search_text="*",
                 select=[
-                    "id", "agent_name", "outbound_payload", "inbound_payload", 
+                    "id", "session_id", "agent_name", "outbound_payload", "inbound_payload", 
                     "processing_time_seconds", "timestamp"
                 ],
                 vector_queries=vector_queries,
@@ -400,16 +443,30 @@ class A2AMemoryService:
             log_memory_debug(f"Error searching interactions: {str(e)}")
             return []
 
-    def get_agent_interactions(self, agent_name: str, limit: int = 10) -> List[Dict[str, Any]]:
-        """Get recent interactions for a specific agent"""
+    def get_agent_interactions(self, agent_name: str, session_id: str = None, limit: int = 10) -> List[Dict[str, Any]]:
+        """Get recent interactions for a specific agent with tenant isolation.
+        
+        Args:
+            agent_name: The agent to get interactions for
+            session_id: Required for multi-tenancy. Only returns results for this session.
+            limit: Maximum number of results to return
+        """
         if not self.search_client:
+            return []
+        
+        # Validate session_id for multi-tenancy
+        if not session_id:
+            log_memory_debug("⚠️ No session_id provided - returning empty results (multi-tenancy required)")
             return []
 
         try:
+            # Build filter with both session_id and agent_name for tenant isolation
+            filter_expr = f"session_id eq '{session_id}' and agent_name eq '{agent_name}'"
+            
             results = self.search_client.search(
                 search_text="*",
-                filter=f"agent_name eq '{agent_name}'",
-                select=["outbound_payload", "inbound_payload", "processing_time_seconds", "timestamp"],
+                filter=filter_expr,
+                select=["session_id", "outbound_payload", "inbound_payload", "processing_time_seconds", "timestamp"],
                 order_by=["timestamp desc"],
                 top=limit
             )
@@ -420,40 +477,53 @@ class A2AMemoryService:
             log_memory_debug(f"Error getting agent interactions: {str(e)}")
             return []
 
-    def clear_all_interactions(self) -> bool:
-        """Clear all interactions from the search index"""
+    def clear_all_interactions(self, session_id: str = None) -> bool:
+        """Clear interactions from the search index with optional tenant isolation.
+        
+        Args:
+            session_id: If provided, only clears interactions for this session.
+                       If None, clears ALL interactions (admin operation).
+        """
         if not self._enabled:
             log_memory_debug("Memory service disabled - skipping clear_all_interactions")
             return True  # Return success to avoid breaking the flow
-            
-        log_memory_debug(f"Clearing all interactions from index {self.index_name}")
+        
+        scope = f"session {session_id}" if session_id else "ALL sessions (global)"
+        log_memory_debug(f"Clearing interactions from index {self.index_name} for {scope}")
         
         if not self.search_client:
             log_memory_debug("Search client not initialized")
             return False
         
         try:
-            # Get all documents
-            results = self.search_client.search(search_text="*", select=["id"])
+            # Build filter for session-scoped clearing
+            filter_expr = f"session_id eq '{session_id}'" if session_id else None
             
-            # Collect all document IDs
+            # Get documents (filtered by session if provided)
+            results = self.search_client.search(
+                search_text="*", 
+                select=["id"],
+                filter=filter_expr
+            )
+            
+            # Collect document IDs
             doc_ids = []
             for result in results:
                 doc_ids.append(result["id"])
             
             if not doc_ids:
-                log_memory_debug("No documents found to delete")
+                log_memory_debug(f"No documents found to delete for {scope}")
                 return True
             
-            # Delete all documents
-            log_memory_debug(f"Deleting {len(doc_ids)} documents from index")
+            # Delete documents
+            log_memory_debug(f"Deleting {len(doc_ids)} documents from index for {scope}")
             delete_actions = [{"@search.action": "delete", "id": doc_id} for doc_id in doc_ids]
             
             upload_result = self.search_client.upload_documents(documents=delete_actions)
             
             # Check results
             success_count = sum(1 for result in upload_result if result.succeeded)
-            log_success(f"Successfully deleted {success_count}/{len(doc_ids)} documents")
+            log_success(f"Successfully deleted {success_count}/{len(doc_ids)} documents for {scope}")
             
             return success_count == len(doc_ids)
             
@@ -464,4 +534,4 @@ class A2AMemoryService:
             return False
 
 # Create singleton instance
-a2a_memory_service = A2AMemoryService() 
+a2a_memory_service = A2AMemoryService()
