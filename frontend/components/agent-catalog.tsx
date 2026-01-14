@@ -312,8 +312,21 @@ export function AgentCatalog() {
           description: `${agent.name} is now ${pastWord} for your session`,
         })
         
-        // Emit event for other components to update
-        emit('agentSessionUpdated', { agentUrl: agent.endpoint, enabled: !isCurrentlyEnabled })
+        // Emit event for other components to update - include full agent data
+        console.log('[Agent Catalog] Emitting agentSessionUpdated:', { agentUrl: agent.endpoint, enabled: !isCurrentlyEnabled, agent })
+        emit('agentSessionUpdated', { 
+          agentUrl: agent.endpoint, 
+          enabled: !isCurrentlyEnabled,
+          agent: {
+            name: agent.name,
+            description: agent.description,
+            url: agent.endpoint,
+            status: agent.status,
+            version: agent.version,
+            capabilities: agent.capabilities,
+            skills: agent.skills
+          }
+        })
       } else {
         toast({
           title: "Error",

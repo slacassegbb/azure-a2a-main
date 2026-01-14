@@ -104,51 +104,12 @@ export function ChatLayout() {
       }
     }
 
-    // Handle registry sync events from WebSocket
+    // Handle registry sync events from WebSocket - this is for the CATALOG, not the sidebar
+    // The sidebar now shows only session-enabled agents, not all agents from registry sync
     const handleAgentRegistrySync = (data: any) => {
-      if (DEBUG) console.log("[ChatLayout] Received agent registry sync")
-      if (data.agents && Array.isArray(data.agents)) {
-        const transformedAgents = data.agents.map((agent: any) => ({
-          id: agent.name.toLowerCase().replace(/\s+/g, '-'),
-          name: agent.name,
-          description: agent.description,
-          status: agent.status || "online",
-          version: agent.version,
-          endpoint: agent.url,
-          organization: "Registry Agent",
-          capabilities: agent.capabilities,
-          skills: agent.skills,
-          defaultInputModes: agent.defaultInputModes,
-          defaultOutputModes: agent.defaultOutputModes,
-          avatar: '/placeholder.svg?height=32&width=32'
-        }))
-        
-        setRegisteredAgents(transformedAgents)
-        if (DEBUG) console.log("[ChatLayout] Updated sidebar with", transformedAgents.length, "agents from registry sync")
-        
-        // Update DAG nodes - keep User and Host Agent, add registered agents
-        setDagNodes(prev => {
-          const coreNodes = prev.filter(node => node.group === "user" || node.group === "host")
-          const newAgentNodes = transformedAgents.map((agent: any) => ({ 
-            id: agent.name, 
-            group: "agent" 
-          }))
-          return [...coreNodes, ...newAgentNodes]
-        })
-        
-        // Update DAG links - connect Host Agent to all registered agents
-        setDagLinks(prev => {
-          const coreLinks = prev.filter(link => 
-            (link.source === "User" && link.target === "Host Agent") ||
-            (link.source === "Host Agent" && link.target === "User")
-          )
-          const agentLinks = transformedAgents.map((agent: any) => ({
-            source: "Host Agent",
-            target: agent.name
-          }))
-          return [...coreLinks, ...agentLinks]
-        })
-      }
+      if (DEBUG) console.log("[ChatLayout] Received agent registry sync (catalog update, not sidebar)")
+      // This event is now used to update the catalog, not the sidebar
+      // The sidebar is populated from session agents only
     }    // Handle other Event Hub events for logging/debugging
     const handleMessage = (data: any) => {
       if (DEBUG) console.log("[ChatLayout] Message event")
@@ -187,44 +148,44 @@ export function ChatLayout() {
     }
 
     // Handle agent session updates (enable/disable from catalog)
-    const handleAgentSessionUpdated = async (data: any) => {
-      if (DEBUG) console.log("[ChatLayout] Agent session updated:", data)
-      const { agentUrl, enabled } = data
+    const handleAgentSessionUpdated = (data: any) => {
+      console.log("[ChatLayout] Agent session updated:", data)
+      const { agentUrl, enabled, agent } = data
       
-      if (enabled) {
-        // Fetch fresh session agents to get the newly enabled agent's full info
-        try {
-          const response = await fetch(`/api/agents/session/registered?sessionId=${encodeURIComponent(sessionId)}`)
-          if (response.ok) {
-            const result = await response.json()
-            if (result.agents && Array.isArray(result.agents)) {
-              const transformedAgents = result.agents.map((agent: any) => ({
-                id: agent.name.toLowerCase().replace(/\s+/g, '-'),
-                name: agent.name,
-                description: agent.description,
-                status: agent.status || "online",
-                version: agent.version,
-                endpoint: agent.url,
-                organization: "Registry Agent",
-                capabilities: agent.capabilities,
-                skills: agent.skills,
-                defaultInputModes: agent.defaultInputModes,
-                defaultOutputModes: agent.defaultOutputModes,
-                avatar: '/placeholder.svg?height=32&width=32'
-              }))
-              setRegisteredAgents(transformedAgents)
-              if (DEBUG) console.log("[ChatLayout] Updated sidebar with", transformedAgents.length, "session agents")
-            }
-          }
-        } catch (error) {
-          console.error("[ChatLayout] Error fetching session agents after enable:", error)
+      if (enabled && agent) {
+        // Add agent directly from the event data
+        const newAgent = {
+          id: agent.name.toLowerCase().replace(/\s+/g, '-'),
+          name: agent.name,
+          description: agent.description,
+          status: agent.status || "online",
+          version: agent.version,
+          endpoint: agent.url,
+          organization: "Registry Agent",
+          capabilities: agent.capabilities,
+          skills: agent.skills,
+          avatar: '/placeholder.svg?height=32&width=32'
         }
-      } else {
+        
+        setRegisteredAgents(prev => {
+          // Check if already exists
+          const exists = prev.some(a => a.endpoint?.replace(/\/$/, '') === agent.url?.replace(/\/$/, ''))
+          if (exists) {
+            console.log("[ChatLayout] Agent already in sidebar:", agent.name)
+            return prev
+          }
+          console.log("[ChatLayout] Adding agent to sidebar:", agent.name)
+          return [...prev, newAgent]
+        })
+      } else if (!enabled) {
         // Remove agent from sidebar by URL
-        setRegisteredAgents(prev => prev.filter(a => 
-          a.endpoint?.replace(/\/$/, '') !== agentUrl?.replace(/\/$/, '')
-        ))
-        if (DEBUG) console.log("[ChatLayout] Removed agent from sidebar:", agentUrl)
+        setRegisteredAgents(prev => {
+          const filtered = prev.filter(a => 
+            a.endpoint?.replace(/\/$/, '') !== agentUrl?.replace(/\/$/, '')
+          )
+          console.log("[ChatLayout] Removed agent from sidebar, remaining:", filtered.length)
+          return filtered
+        })
       }
     }
 
@@ -255,7 +216,7 @@ export function ChatLayout() {
       unsubscribe("agentSessionUpdated", handleAgentSessionUpdated)
       if (DEBUG) console.log("[ChatLayout] Unsubscribed from Event Hub events")
     }
-  }, [subscribe, unsubscribe, emit, sessionId, DEBUG])
+  }, [subscribe, unsubscribe, emit, DEBUG])
 
   return (
     <div className="h-full w-full">
