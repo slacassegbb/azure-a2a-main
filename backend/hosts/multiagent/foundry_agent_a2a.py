@@ -65,6 +65,9 @@ from .remote_agent_connection import RemoteAgentConnections, TaskUpdateCallback,
 from .a2a_memory_service import a2a_memory_service
 from .a2a_document_processor import a2a_document_processor
 from pydantic import BaseModel, Field
+
+# Tenant utilities for multi-tenancy support
+from backend.utils.tenant import get_tenant_from_context
 import time
 
 # Load environment configuration from project root
@@ -2622,18 +2625,29 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
             traceback.print_exc()
             raise
 
-    async def _search_relevant_memory(self, query: str, agent_name: str = None, top_k: int = 5) -> List[Dict[str, Any]]:
-        """Search for relevant memory interactions to provide context to remote agents"""
+    async def _search_relevant_memory(self, query: str, context_id: str, agent_name: str = None, top_k: int = 5) -> List[Dict[str, Any]]:
+        """Search for relevant memory interactions to provide context to remote agents.
+        
+        Args:
+            query: The search query
+            context_id: The context ID for tenant-scoped search
+            agent_name: Optional agent name to filter by
+            top_k: Number of results to return
+        """
         
         try:
+            # Extract session_id for tenant isolation
+            session_id = get_tenant_from_context(context_id)
+            
             # Build filters if agent name is specified
             filters = {}
             if agent_name:
                 filters["agent_name"] = agent_name
             
-            # Search for similar interactions
+            # Search for similar interactions (tenant-scoped)
             memory_results = await a2a_memory_service.search_similar_interactions(
                 query=query,
+                session_id=session_id,
                 filters=filters,
                 top_k=top_k
             )
@@ -2643,10 +2657,19 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
         except Exception as e:
             return []
 
-    def clear_memory_index(self) -> bool:
-        """Clear all stored interactions from the memory index"""
+    def clear_memory_index(self, context_id: str = None) -> bool:
+        """Clear stored interactions from the memory index.
+        
+        Args:
+            context_id: If provided, only clear interactions for this session.
+                       If None, clears ALL interactions (admin use only).
+        """
         try:
-            success = a2a_memory_service.clear_all_interactions()
+            session_id = None
+            if context_id:
+                session_id = get_tenant_from_context(context_id)
+            
+            success = a2a_memory_service.clear_all_interactions(session_id=session_id)
             if success:
                 return success
             else:
@@ -3426,7 +3449,8 @@ Answer with just JSON:
                         inbound_response=response,
                         agent_name=agent_name,
                         processing_time=time.time() - start_time,
-                        span=span
+                        span=span,
+                        context_id=contextId
                     ))
                     
                     return response_parts
@@ -3557,7 +3581,8 @@ Answer with just JSON:
                     inbound_response=response,
                     agent_name=agent_name,
                     processing_time=time.time() - start_time,
-                    span=span
+                    span=span,
+                    context_id=contextId
                 ))
                 
                 return result
@@ -3947,7 +3972,8 @@ Original request: {message}"""
                     inbound_response=response,
                     agent_name=agent_name,
                     processing_time=time.time() - start_time,
-                    span=span
+                    span=span,
+                    context_id=contextId
                 )
                 
                 return response_parts
@@ -4038,7 +4064,8 @@ Original request: {message}"""
                     inbound_response=response,
                     agent_name=agent_name,
                     processing_time=time.time() - start_time,
-                    span=span
+                    span=span,
+                    context_id=contextId
                 )
                 
                 return result
@@ -4057,7 +4084,8 @@ Original request: {message}"""
                     inbound_response=response,
                     agent_name=agent_name,
                     processing_time=time.time() - start_time,
-                    span=span
+                    span=span,
+                    context_id=contextId
                 )
                 
                 return result
@@ -4075,7 +4103,8 @@ Original request: {message}"""
                     inbound_response=response,
                     agent_name=agent_name,
                     processing_time=time.time() - start_time,
-                    span=span
+                    span=span,
+                    context_id=contextId
                 )
                 
                 return result
@@ -4093,7 +4122,8 @@ Original request: {message}"""
                     inbound_response=response,
                     agent_name=agent_name,
                     processing_time=time.time() - start_time,
-                    span=span
+                    span=span,
+                    context_id=contextId
                 )
                 
                 return result
@@ -4119,7 +4149,8 @@ Original request: {message}"""
                     inbound_response=response,
                     agent_name=agent_name,
                     processing_time=time.time() - start_time,
-                    span=span
+                    span=span,
+                    context_id=contextId
                 )
                 
                 return response
@@ -4191,6 +4222,7 @@ Original request: {message}"""
             log_debug(f"About to call _search_relevant_memory...")
             memory_results = await self._search_relevant_memory(
                 query=message,
+                context_id=session_context.contextId,
                 agent_name=None,  # Search across all interactions for maximum relevance
                 top_k=5  # Get top 5 most relevant pieces of context
             )
@@ -4387,7 +4419,8 @@ Original request: {message}"""
         inbound_response: Any,
         agent_name: str,
         processing_time: float,
-        span: Any
+        span: Any,
+        context_id: str = None
     ):
         """Background task for storing A2A interactions without blocking parallel execution"""
         try:
@@ -4396,7 +4429,8 @@ Original request: {message}"""
                 inbound_response=inbound_response,
                 agent_name=agent_name,
                 processing_time=processing_time,
-                span=span
+                span=span,
+                context_id=context_id
             )
         except Exception as e:
             print(f"❌ Background A2A interaction storage failed for {agent_name}: {e}")
@@ -4408,7 +4442,8 @@ Original request: {message}"""
         inbound_response: Any,
         agent_name: str,
         processing_time: float,
-        span: Any
+        span: Any,
+        context_id: str = None
     ):
         """
         Persist agent-to-agent interactions to memory service for future semantic search.
@@ -4433,9 +4468,17 @@ Original request: {message}"""
             agent_name: Name of the agent that processed the request
             processing_time: How long the agent took to respond (for performance tracking)
             span: OpenTelemetry span for distributed tracing
+            context_id: Context ID for tenant isolation (required for multi-tenancy)
         """
         """Store complete A2A protocol payloads"""
         try:
+            # Extract session_id for tenant isolation
+            session_id = get_tenant_from_context(context_id) if context_id else None
+            
+            if not session_id:
+                log_debug(f"[A2A Memory] Warning: No session_id available, skipping interaction storage for tenant isolation")
+                return
+            
             # Prepare interaction data with complete A2A payloads
             interaction_data = {
                 "interaction_id": str(uuid.uuid4()),
@@ -4450,12 +4493,12 @@ Original request: {message}"""
                 "inbound_payload": inbound_response.model_dump() if hasattr(inbound_response, 'model_dump') else str(inbound_response)
             }
             
-            # Store in memory service
-            success = await a2a_memory_service.store_interaction(interaction_data)
+            # Store in memory service with session_id for tenant isolation
+            success = await a2a_memory_service.store_interaction(interaction_data, session_id=session_id)
             
             if success:
-                log_debug(f"[A2A Memory] Stored A2A payloads for {agent_name}")
-                span.add_event("memory_stored", {"agent_name": agent_name})
+                log_debug(f"[A2A Memory] Stored A2A payloads for {agent_name} (session: {session_id})")
+                span.add_event("memory_stored", {"agent_name": agent_name, "session_id": session_id})
             else:
                 log_debug(f"[A2A Memory] Failed to store A2A payloads for {agent_name}")
                 span.add_event("memory_store_failed", {"agent_name": agent_name})
@@ -4596,6 +4639,13 @@ Original request: {message}"""
             # Store the User→Host A2A interaction using real A2A objects
             log_debug(f"📝 Step 6: Storing User→Host interaction in memory...")
             
+            # Extract session_id for tenant isolation
+            session_id = get_tenant_from_context(context_id) if context_id else None
+            
+            if not session_id:
+                log_debug(f"[A2A Memory] Warning: No session_id available, skipping user-host interaction storage for tenant isolation")
+                return
+            
             # Create interaction data structure like the working Host→Remote Agent code
             interaction_data = {
                 "interaction_id": str(uuid.uuid4()),
@@ -4606,11 +4656,11 @@ Original request: {message}"""
                 "inbound_payload": inbound_dict
             }
             
-            # Store in memory service
-            success = await a2a_memory_service.store_interaction(interaction_data)
+            # Store in memory service with session_id for tenant isolation
+            success = await a2a_memory_service.store_interaction(interaction_data, session_id=session_id)
             
             if success:
-                print(f"✅ Step 6: User→Host interaction stored successfully")
+                print(f"✅ Step 6: User→Host interaction stored successfully (session: {session_id})")
                 log_success(f"🎉 User→Host A2A interaction now available for semantic search")
             else:
                 print(f"❌ Step 6: Failed to store User→Host interaction")
@@ -6901,7 +6951,13 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). Simply synt
             # Process the file content and store in A2A memory service
             try:
                 print(f"FILE DEBUG: Calling document processor for {file_id}")
-                processing_result = await a2a_document_processor.process_file_part(part.root.file, artifact_info)
+                # Extract session_id for tenant isolation
+                session_id = get_tenant_from_context(context_id) if context_id else None
+                processing_result = await a2a_document_processor.process_file_part(
+                    part.root.file, 
+                    artifact_info,
+                    session_id=session_id
+                )
                 
                 if processing_result and isinstance(processing_result, dict) and processing_result.get("success"):
                     content = processing_result.get("content", "")

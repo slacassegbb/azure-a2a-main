@@ -396,10 +396,15 @@ def process_file(file_path):
         return ""
 
 # A2A Integration Function
-async def process_file_part(file_part, artifact_info=None):
+async def process_file_part(file_part, artifact_info=None, session_id: str = None):
     """
     Process a file part from A2A and store the extracted content in A2A memory service.
     This is the main entry point called by the host agent.
+    
+    Args:
+        file_part: The file part from A2A message
+        artifact_info: Optional artifact metadata
+        session_id: Session ID for tenant isolation (required for multi-tenancy)
     """
     try:
         # Extract file information
@@ -507,9 +512,12 @@ async def process_file_part(file_part, artifact_info=None):
         }
         
         # Store the interaction in A2A memory service
-        await a2a_memory_service.store_interaction(interaction_data)
+        if session_id:
+            await a2a_memory_service.store_interaction(interaction_data, session_id=session_id)
+            print(f"[A2ADocumentProcessor] Successfully processed and stored: {filename} (session: {session_id})")
+        else:
+            print(f"[A2ADocumentProcessor] Warning: No session_id, skipping memory storage for {filename}")
         
-        print(f"[A2ADocumentProcessor] Successfully processed and stored: {filename}")
         print(f"[A2ADocumentProcessor] Content length: {len(processed_content)} characters")
         
         # Return both success status AND the extracted content for immediate use
@@ -530,9 +538,9 @@ async def process_file_part(file_part, artifact_info=None):
 class A2ADocumentProcessor:
     """A2A Document Processor using the user's proven working implementation"""
     
-    async def process_file_part(self, file_part, artifact_info=None):
+    async def process_file_part(self, file_part, artifact_info=None, session_id: str = None):
         """Process file part - delegates to the main function"""
-        processed_content = await process_file_part(file_part, artifact_info)
+        processed_content = await process_file_part(file_part, artifact_info, session_id=session_id)
         return _strip_markdown_fences(processed_content)
 
 
