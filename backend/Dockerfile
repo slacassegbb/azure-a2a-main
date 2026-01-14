@@ -16,8 +16,8 @@ RUN apt-get update \
     && curl -sL https://aka.ms/InstallAzureCLIDeb | bash \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy .env from root (build context is azure-a2a-main directory)
-COPY .env ./.env
+# Create empty .env file (CI/CD uses Azure Container Apps env vars instead)
+RUN touch .env
 
 # Copy requirements file from backend directory
 COPY backend/requirements.txt ./
