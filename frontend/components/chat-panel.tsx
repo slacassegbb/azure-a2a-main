@@ -1872,7 +1872,7 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
     <div className="flex flex-col h-full overflow-hidden">
       <header className="p-4 border-b flex-shrink-0">
         <div className="flex items-center">
-          <h2 className="text-xl font-bold">A2A Multi-Agent Host Orchestrator</h2>
+          <h2 className="text-xl font-bold">A2A Host Orchestrator</h2>
           <div className="ml-auto flex items-center gap-2">
             <Dialog>
               <DialogTrigger asChild>

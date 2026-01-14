@@ -9,7 +9,7 @@ import { EventHubProvider } from "@/contexts/event-hub-context"
 const inter = Inter({ subsets: ["latin"], variable: "--font-sans" })
 
 export const metadata: Metadata = {
-  title: "A2A Multi-Agent Host Orchestrator",
+  title: "A2A Host Orchestrator",
   description: "A comprehensive AI chat interface demo.",
     generator: 'v0.dev'
 }
