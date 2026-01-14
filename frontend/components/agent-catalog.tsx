@@ -107,12 +107,11 @@ export function AgentCatalog() {
     try {
       setLoading(true)
       setError(null)
-      const baseUrl = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
       
-      // Fetch catalog agents and session agents in parallel
+      // Fetch catalog agents and session agents in parallel using Next.js API routes
       const [catalogResponse, sessionResponse] = await Promise.all([
-        fetch(`${baseUrl}/agents/catalog`),
-        fetch(`${baseUrl}/agents/session/registered?sessionId=${encodeURIComponent(sessionId)}`)
+        fetch(`/api/agents/catalog`),
+        fetch(`/api/agents/session/registered?sessionId=${encodeURIComponent(sessionId)}`)
       ])
       
       if (!catalogResponse.ok) {
@@ -277,8 +276,8 @@ export function AgentCatalog() {
         description: `${actionWord} ${agent.name} for your session`,
       })
       
-      const baseUrl = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
-      const response = await fetch(`${baseUrl}/agents/session/${endpoint}`, {
+      // Use Next.js API routes to proxy to backend
+      const response = await fetch(`/api/agents/session/${endpoint}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
