@@ -19,6 +19,16 @@ from hosts.multiagent.foundry_agent_a2a import FoundryHostAgent2
 from service.server.application_manager import ApplicationManager
 from service.types import Conversation, Event
 from utils.agent_card import get_agent_card
+from service.agent_registry import get_session_registry
+
+# Tenant separator used in contextId format: sessionId::conversationId
+TENANT_SEPARATOR = '::'
+
+def parse_session_from_context(context_id: str) -> str:
+    """Extract session_id from contextId (format: sessionId::conversationId)"""
+    if context_id and TENANT_SEPARATOR in context_id:
+        return context_id.split(TENANT_SEPARATOR, 1)[0]
+    return ''
 
 
 def get_context_id(obj: Any, default: str = None) -> str:
@@ -500,6 +510,17 @@ class FoundryHostManager(ApplicationManager):
                     log_debug(f"Error setting up tool response streaming: {e}")
                     # Don't let WebSocket errors break the main flow
                     pass
+        
+        # Set session-specific agents before processing
+        session_id = parse_session_from_context(context_id)
+        if session_id:
+            session_registry = get_session_registry()
+            session_agents = session_registry.get_session_agents(session_id)
+            log_debug(f"📋 Setting {len(session_agents)} session agents for session {session_id[:12]}...")
+            await self._host_agent.set_session_agents(session_agents)
+        else:
+            log_debug("⚠️ No session ID found in context, host agent will have no agents")
+        
         # Pass the entire message with all parts (including files) to the host agent
         user_text = message.parts[0].root.text if message.parts and message.parts[0].root.kind == 'text' else ""
         log_debug(f"About to call run_conversation_with_parts with message parts: {len(message.parts)} parts, agent_mode: {agent_mode}, enable_inter_agent_memory: {enable_inter_agent_memory}, workflow: {workflow[:50] if workflow else None}")
