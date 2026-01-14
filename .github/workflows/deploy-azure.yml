@@ -1,0 +1,164 @@
+name: Deploy to Azure Container Apps
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'frontend/**'
+      - 'backend/**'
+      - '.github/workflows/deploy-azure.yml'
+  workflow_dispatch:  # Allow manual trigger
+
+env:
+  REGISTRY: a2awestuslab.azurecr.io
+  RESOURCE_GROUP: rg-a2a-prod
+  LOCATION: westus2
+
+jobs:
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      frontend: ${{ steps.changes.outputs.frontend }}
+      backend: ${{ steps.changes.outputs.backend }}
+      websocket: ${{ steps.changes.outputs.backend }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      
+      - uses: dorny/paths-filter@v2
+        id: changes
+        with:
+          filters: |
+            frontend:
+              - 'frontend/**'
+            backend:
+              - 'backend/**'
+
+  deploy-frontend:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.frontend == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+      
+      - name: Login to ACR
+        run: |
+          az acr login --name a2awestuslab
+      
+      - name: Build and Push Frontend
+        run: |
+          docker build -t ${{ env.REGISTRY }}/frontend:${{ github.sha }} \
+                       -t ${{ env.REGISTRY }}/frontend:latest \
+                       ./frontend
+          docker push ${{ env.REGISTRY }}/frontend:${{ github.sha }}
+          docker push ${{ env.REGISTRY }}/frontend:latest
+      
+      - name: Deploy to Container App
+        run: |
+          az containerapp update \
+            --name frontend-uami \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --image ${{ env.REGISTRY }}/frontend:${{ github.sha }}
+      
+      - name: Verify Deployment
+        run: |
+          echo "✅ Frontend deployed successfully!"
+          echo "🌐 URL: https://frontend-uami.ambitioussky-6c709152.westus2.azurecontainerapps.io"
+
+  deploy-backend:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.backend == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+      
+      - name: Login to ACR
+        run: |
+          az acr login --name a2awestuslab
+      
+      - name: Build and Push Backend
+        run: |
+          docker build -t ${{ env.REGISTRY }}/backend:${{ github.sha }} \
+                       -t ${{ env.REGISTRY }}/backend:latest \
+                       ./backend
+          docker push ${{ env.REGISTRY }}/backend:${{ github.sha }}
+          docker push ${{ env.REGISTRY }}/backend:latest
+      
+      - name: Deploy to Container App
+        run: |
+          az containerapp update \
+            --name backend-uami \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --image ${{ env.REGISTRY }}/backend:${{ github.sha }}
+      
+      - name: Verify Deployment
+        run: |
+          echo "✅ Backend deployed successfully!"
+          echo "🌐 URL: https://backend-uami.ambitioussky-6c709152.westus2.azurecontainerapps.io"
+
+  deploy-websocket:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.websocket == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+      
+      - name: Login to ACR
+        run: |
+          az acr login --name a2awestuslab
+      
+      - name: Build and Push WebSocket
+        run: |
+          docker build -f backend/Dockerfile.websocket \
+                       -t ${{ env.REGISTRY }}/websocket:${{ github.sha }} \
+                       -t ${{ env.REGISTRY }}/websocket:latest \
+                       ./backend
+          docker push ${{ env.REGISTRY }}/websocket:${{ github.sha }}
+          docker push ${{ env.REGISTRY }}/websocket:latest
+      
+      - name: Deploy to Container App
+        run: |
+          az containerapp update \
+            --name websocket-uami \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --image ${{ env.REGISTRY }}/websocket:${{ github.sha }}
+      
+      - name: Verify Deployment
+        run: |
+          echo "✅ WebSocket deployed successfully!"
+          echo "🌐 URL: https://websocket-uami.ambitioussky-6c709152.westus2.azurecontainerapps.io"
+
+  notify-complete:
+    needs: [deploy-frontend, deploy-backend, deploy-websocket]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deployment Summary
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "🚀 DEPLOYMENT COMPLETE"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+          echo "📍 Production URLs:"
+          echo "  Frontend:  https://frontend-uami.ambitioussky-6c709152.westus2.azurecontainerapps.io"
+          echo "  Backend:   https://backend-uami.ambitioussky-6c709152.westus2.azurecontainerapps.io"
+          echo "  WebSocket: https://websocket-uami.ambitioussky-6c709152.westus2.azurecontainerapps.io"
+          echo ""
+          echo "🎯 Test your changes now!"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
