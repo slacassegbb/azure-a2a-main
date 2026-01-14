@@ -107,13 +107,27 @@ export class WebSocketClient {
           warnDebug('[WebSocket] Health probe setup error (ignored):', probeErr);
         }
         
-        // Build WebSocket URL with authentication token if available
+        // Build WebSocket URL with authentication token and tenant ID if available
         let wsUrl = this.config.url;
         if (typeof window !== 'undefined') {
+          const params: string[] = [];
+          
+          // Add authentication token if available
           const token = sessionStorage.getItem('auth_token');
           if (token) {
+            params.push(`token=${encodeURIComponent(token)}`);
+          }
+          
+          // Add tenant ID (session ID) for multi-tenancy isolation
+          const { getOrCreateSessionId } = await import('./session');
+          const tenantId = getOrCreateSessionId();
+          if (tenantId) {
+            params.push(`tenantId=${encodeURIComponent(tenantId)}`);
+          }
+          
+          if (params.length > 0) {
             const separator = wsUrl.includes('?') ? '&' : '?';
-            wsUrl = `${wsUrl}${separator}token=${encodeURIComponent(token)}`;
+            wsUrl = `${wsUrl}${separator}${params.join('&')}`;
           }
         }
         

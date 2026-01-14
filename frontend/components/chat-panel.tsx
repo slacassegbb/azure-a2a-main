@@ -20,6 +20,7 @@ import remarkGfm from "remark-gfm"
 import rehypeHighlight from "rehype-highlight"
 import { useSearchParams, useRouter } from "next/navigation"
 import { getConversation, updateConversationTitle, createConversation, notifyConversationCreated, type Message as APIMessage } from "@/lib/conversation-api"
+import { createContextId, getOrCreateSessionId } from "@/lib/session"
 
 // Helper function to generate conversation title from first message
 const generateTitleFromMessage = (message: string): string => {
@@ -458,6 +459,10 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
   const router = useRouter()
   const conversationId = searchParams.get('conversationId') || 'frontend-chat-context'
   
+  // Create tenant-aware contextId for A2A protocol
+  // Format: sessionId::conversationId - enables multi-tenant isolation
+  const contextId = useMemo(() => createContextId(conversationId), [conversationId])
+  
   // Voice recording hook
   const voiceRecording = useVoiceRecording()
   
@@ -521,7 +526,7 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
           body: JSON.stringify({
             params: {
               messageId,
-              contextId: conversationId,
+              contextId: contextId,  // Use tenant-aware contextId
               role: 'user',
               parts: [{ root: { kind: 'text', text: message } }],
               agentMode: currentAgentMode,
@@ -537,7 +542,7 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
         }
 
         console.log('[Voice Live] Message sent to backend successfully')
-        return conversationId
+        return contextId  // Return tenant-aware contextId
       } catch (error) {
         console.error('[Voice Live] Error sending to A2A:', error)
         throw error
@@ -1837,7 +1842,7 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
         body: JSON.stringify({
           params: {
             messageId: userMessage.id,
-            contextId: actualConversationId,
+            contextId: createContextId(actualConversationId),  // Use tenant-aware contextId
             role: 'user',
             parts: parts,
             agentMode: agentMode,  // Include agent mode in message params

@@ -29,6 +29,7 @@ if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
 from log_config import log_websocket_debug, log_info, log_error, log_warning
+from utils.tenant import get_tenant_from_context, is_tenant_aware_context
 
 logger = logging.getLogger(__name__)
 
@@ -62,12 +63,18 @@ class AuthenticatedConnection:
 
 
 class WebSocketManager:
-    """Manages WebSocket connections and event broadcasting."""
+    """Manages WebSocket connections and event broadcasting with tenant isolation."""
     
     def __init__(self):
         self.active_connections: Set[WebSocket] = set()
         self.authenticated_connections: Dict[WebSocket, AuthenticatedConnection] = {}
+        # Tenant isolation: Map tenant_id -> set of WebSocket connections
+        self.tenant_connections: Dict[str, Set[WebSocket]] = {}
+        # Map WebSocket -> tenant_id for reverse lookup
+        self.connection_tenants: Dict[WebSocket, str] = {}
         self.event_history: List[Dict[str, Any]] = []
+        # Tenant-scoped event history
+        self.tenant_event_history: Dict[str, List[Dict[str, Any]]] = {}
         self.max_history = 100
         # Backend URL for fetching agent registry
         # In Azure Container Apps, use internal service discovery or full URL
@@ -141,10 +148,53 @@ class WebSocketManager:
         log_websocket_debug("Returning empty agent list after all retry attempts failed")
         return []
     
-    async def connect(self, websocket: WebSocket, token: Optional[str] = None):
-        """Accept a new WebSocket connection with optional authentication."""
+    def register_tenant_connection(self, websocket: WebSocket, tenant_id: str):
+        """Register a WebSocket connection for a specific tenant.
+        
+        Args:
+            websocket: The WebSocket connection
+            tenant_id: The tenant identifier
+        """
+        # Add to tenant connections set
+        if tenant_id not in self.tenant_connections:
+            self.tenant_connections[tenant_id] = set()
+        self.tenant_connections[tenant_id].add(websocket)
+        
+        # Track reverse mapping
+        self.connection_tenants[websocket] = tenant_id
+        
+        logger.info(f"Registered connection for tenant: {tenant_id[:20]}... (total tenant connections: {len(self.tenant_connections[tenant_id])})")
+    
+    def unregister_tenant_connection(self, websocket: WebSocket):
+        """Unregister a WebSocket connection from its tenant.
+        
+        Args:
+            websocket: The WebSocket connection to unregister
+        """
+        tenant_id = self.connection_tenants.pop(websocket, None)
+        if tenant_id and tenant_id in self.tenant_connections:
+            self.tenant_connections[tenant_id].discard(websocket)
+            # Clean up empty tenant sets
+            if not self.tenant_connections[tenant_id]:
+                del self.tenant_connections[tenant_id]
+                # Also clean up tenant event history
+                self.tenant_event_history.pop(tenant_id, None)
+            logger.info(f"Unregistered connection for tenant: {tenant_id[:20]}...")
+    
+    async def connect(self, websocket: WebSocket, token: Optional[str] = None, tenant_id: Optional[str] = None):
+        """Accept a new WebSocket connection with optional authentication and tenant.
+        
+        Args:
+            websocket: The WebSocket connection
+            token: Optional authentication token
+            tenant_id: Optional tenant identifier for multi-tenancy isolation
+        """
         await websocket.accept()
         self.active_connections.add(websocket)
+        
+        # Register tenant connection if tenant_id provided
+        if tenant_id:
+            self.register_tenant_connection(websocket, tenant_id)
         
         # Handle authentication if token provided
         user_data = None
@@ -233,6 +283,9 @@ class WebSocketManager:
         """Remove a WebSocket connection."""
         self.active_connections.discard(websocket)
         
+        # Unregister from tenant connections
+        self.unregister_tenant_connection(websocket)
+        
         # Remove from authenticated connections if present
         if websocket in self.authenticated_connections:
             auth_conn = self.authenticated_connections.pop(websocket)
@@ -249,7 +302,8 @@ class WebSocketManager:
         
         total_connections = len(self.active_connections)
         authenticated_connections = len(self.authenticated_connections)
-        logger.info(f"WebSocket client disconnected. Total: {total_connections}, Authenticated: {authenticated_connections}")
+        tenant_count = len(self.tenant_connections)
+        logger.info(f"WebSocket client disconnected. Total: {total_connections}, Authenticated: {authenticated_connections}, Tenants: {tenant_count}")
     
     def get_connection_info(self, websocket: WebSocket) -> Optional[AuthenticatedConnection]:
         """Get connection info for a websocket."""
@@ -299,15 +353,69 @@ class WebSocketManager:
                 "contextId": status_event.get("context_id")
             }
             
-            # Broadcast to all connected clients
-            await self.broadcast_event(event_data)
+            # Broadcast to tenant if contextId present, otherwise all clients
+            context_id = status_event.get("context_id")
+            if context_id:
+                tenant_id = get_tenant_from_context(context_id)
+                await self.broadcast_to_tenant(event_data, tenant_id)
+            else:
+                await self.broadcast_event(event_data)
             print(f"[WEBSOCKET] Emitted agent status update: {status_event.get('agent_name')} -> {status_event.get('status')}")
             
         except Exception as e:
             logger.error(f"Failed to emit agent status update: {e}")
     
+    async def broadcast_to_tenant(self, event_data: Dict[str, Any], tenant_id: str) -> int:
+        """Broadcast an event only to connections belonging to a specific tenant.
+        
+        Args:
+            event_data: Event data to broadcast
+            tenant_id: The tenant to broadcast to
+            
+        Returns:
+            Number of clients that received the event
+        """
+        # Add timestamp if not present
+        if 'timestamp' not in event_data:
+            event_data['timestamp'] = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+        
+        # Store in tenant-specific history
+        if tenant_id not in self.tenant_event_history:
+            self.tenant_event_history[tenant_id] = []
+        self.tenant_event_history[tenant_id].append(event_data)
+        if len(self.tenant_event_history[tenant_id]) > self.max_history:
+            self.tenant_event_history[tenant_id].pop(0)
+        
+        # Get connections for this tenant
+        tenant_websockets = self.tenant_connections.get(tenant_id, set())
+        
+        if not tenant_websockets:
+            logger.debug(f"No connections for tenant {tenant_id[:20]}..., falling back to global broadcast")
+            return await self.broadcast_event(event_data)
+        
+        # Broadcast only to tenant's connections
+        message = json.dumps(event_data)
+        disconnected_clients = set()
+        sent_count = 0
+        
+        for websocket in tenant_websockets.copy():
+            try:
+                await websocket.send_text(message)
+                sent_count += 1
+            except Exception as e:
+                logger.warning(f"Failed to send to WebSocket client: {e}")
+                disconnected_clients.add(websocket)
+        
+        # Remove disconnected clients
+        for websocket in disconnected_clients:
+            self.disconnect(websocket)
+        
+        event_type = event_data.get('eventType', 'unknown')
+        logger.info(f"Broadcasted {event_type} event to {sent_count} clients for tenant {tenant_id[:20]}...")
+        return sent_count
+    
     async def broadcast_event(self, event_data: Dict[str, Any]) -> int:
-        """Broadcast an event to all connected clients.
+        """Broadcast an event to all connected clients (global broadcast).
         
         Args:
             event_data: Event data to broadcast
@@ -342,7 +450,7 @@ class WebSocketManager:
             self.disconnect(websocket)
         
         event_type = event_data.get('eventType', 'unknown')
-        logger.info(f"Broadcasted {event_type} event to {sent_count} clients")
+        logger.info(f"Broadcasted {event_type} event to {sent_count} clients (global)")
         return sent_count
     
     def get_status(self) -> Dict[str, Any]:
@@ -350,6 +458,8 @@ class WebSocketManager:
         return {
             "status": "healthy",
             "active_connections": len(self.active_connections),
+            "authenticated_connections": len(self.authenticated_connections),
+            "tenant_count": len(self.tenant_connections),
             "event_history_count": len(self.event_history),
             "max_history": self.max_history
         }
@@ -364,11 +474,20 @@ def create_websocket_app() -> FastAPI:
     app = FastAPI(title="A2A WebSocket Server", version="1.0.0")
     
     @app.websocket("/events")
-    async def websocket_endpoint(websocket: WebSocket, token: Optional[str] = Query(None)):
-        """WebSocket endpoint for real-time event streaming with optional authentication."""
-        logger.info(f"[WebSocket] New connection attempt from {websocket.client}")
+    async def websocket_endpoint(
+        websocket: WebSocket, 
+        token: Optional[str] = Query(None),
+        tenant_id: Optional[str] = Query(None, alias="tenantId")
+    ):
+        """WebSocket endpoint for real-time event streaming with optional authentication and tenant isolation.
         
-        await websocket_manager.connect(websocket, token)
+        Query Parameters:
+            token: Optional JWT authentication token
+            tenantId: Optional tenant identifier for multi-tenancy isolation
+        """
+        logger.info(f"[WebSocket] New connection attempt from {websocket.client}, tenant: {tenant_id[:20] if tenant_id else 'none'}...")
+        
+        await websocket_manager.connect(websocket, token, tenant_id)
         logger.info(f"[WebSocket] Client connected successfully: {websocket.client}")
         
         try:

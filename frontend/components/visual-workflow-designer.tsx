@@ -12,6 +12,7 @@ import { useEventHub } from "@/hooks/use-event-hub"
 import { useVoiceLive } from "@/hooks/use-voice-live"
 import { getScenarioById } from "@/lib/voice-scenarios"
 import { useSearchParams } from "next/navigation"
+import { createContextId } from "@/lib/session"
 
 interface WorkflowStep {
   id: string
@@ -305,7 +306,7 @@ export function VisualWorkflowDesigner({
           body: JSON.stringify({
             params: {
               messageId,
-              contextId: newConversationId,
+              contextId: createContextId(newConversationId),  // Use tenant-aware contextId
               parts: parts,
               role: 'user',
               agentMode: true,
@@ -1284,7 +1285,7 @@ export function VisualWorkflowDesigner({
       
       console.log('[WorkflowTest] Sending message:', {
         messageId,
-        contextId: newConversationId,
+        contextId: createContextId(newConversationId),
         workflow: currentWorkflowText.substring(0, 100) + '...',
         partsCount: parts.length
       })
@@ -1297,7 +1298,7 @@ export function VisualWorkflowDesigner({
         body: JSON.stringify({
           params: {
             messageId,
-            contextId: newConversationId,
+            contextId: createContextId(newConversationId),  // Use tenant-aware contextId
             parts: parts,
             role: 'user',
             agentMode: true,
@@ -1325,7 +1326,7 @@ export function VisualWorkflowDesigner({
         role: "user",
         content: testInput,
         conversationId: newConversationId,
-        contextId: newConversationId,
+        contextId: createContextId(newConversationId),  // Use tenant-aware contextId
         timestamp: new Date().toISOString()
       })
       
@@ -1426,7 +1427,7 @@ export function VisualWorkflowDesigner({
       
       console.log('[WorkflowTest] Sending reply:', {
         messageId,
-        contextId: workflowConversationId,
+        contextId: createContextId(workflowConversationId),
         workflow: generatedWorkflowText?.substring(0, 100) + '...'
       })
       
@@ -1436,7 +1437,7 @@ export function VisualWorkflowDesigner({
         body: JSON.stringify({
           params: {
             messageId,
-            contextId: workflowConversationId,
+            contextId: createContextId(workflowConversationId),  // Use tenant-aware contextId
             parts: parts,
             role: 'user',
             agentMode: true,
@@ -1457,7 +1458,7 @@ export function VisualWorkflowDesigner({
           role: "user",
           content: responseToSend,
           conversationId: workflowConversationId,
-          contextId: workflowConversationId,
+          contextId: createContextId(workflowConversationId),  // Use tenant-aware contextId
           timestamp: new Date().toISOString()
         })
       }
