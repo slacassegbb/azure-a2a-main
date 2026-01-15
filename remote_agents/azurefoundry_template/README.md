@@ -15,6 +15,7 @@ This template provides all the boilerplate code needed to build your own special
 - ✅ **Self-Registration** – Automatically registers with the host agent on startup
 - ✅ **Streaming Support** – Real-time response streaming for better UX
 - ✅ **Clean Logging** – Production-ready logging with configurable verbosity
+- ✅ **Centralized Configuration** – All agent identity settings in one file (`agent_config.py`)
 
 ---
 
@@ -28,12 +29,21 @@ This template provides all the boilerplate code needed to build your own special
    cd remote_agents/my_custom_agent
    ```
 
-2. **Create your `.env` file** from the template:
+2. **Customize your agent identity** in `agent_config.py`:
+   ```python
+   # Update these values to match your agent's purpose
+   AGENT_NAME = "My Custom Agent"
+   AGENT_ID = "my-custom-agent"
+   AGENT_DESCRIPTION = "Description of what your agent does"
+   # ... and more settings
+   ```
+
+3. **Create your `.env` file** from the template:
    ```bash
    cp .env.example .env
    ```
 
-3. **Configure your Azure credentials** in `.env`:
+4. **Configure your Azure credentials** in `.env`:
    ```bash
    # Required: Azure AI Foundry
    AZURE_AI_FOUNDRY_PROJECT_ENDPOINT=https://your-project.cognitiveservices.azure.com/
@@ -47,7 +57,7 @@ This template provides all the boilerplate code needed to build your own special
    HOST_AGENT_URL=http://localhost:12000
    ```
 
-4. **Install dependencies**:
+5. **Install dependencies**:
    ```bash
    python3 -m venv .venv
    source .venv/bin/activate  # Windows: .venv\Scripts\activate
@@ -83,13 +93,107 @@ Your agent will automatically index these documents and use them to ground its r
 
 ### Step 3: Customize Your Agent
 
-#### 3.1 Define Your Agent's Personality (`foundry_agent.py`)
+#### 3.1 Update Agent Identity (`agent_config.py`)
 
-Open `foundry_agent.py` and find the `_get_agent_instructions()` method (line 248). Replace the template instructions with your agent's specific role and behavior:
+**All customization is now centralized in `agent_config.py`** - update this single file to configure your agent's entire identity and behavior:
 
 ```python
-def _get_agent_instructions(self) -> str:
-    return f"""
+# ============================================================================
+# Agent Identity
+# ============================================================================
+
+AGENT_NAME = "My Custom Agent"  # Human-readable name
+AGENT_ID = "my-custom-agent"    # Technical ID (lowercase, no spaces)
+AGENT_DESCRIPTION = "What your agent does"
+AGENT_VERSION = "1.0.0"
+
+# ============================================================================
+# UI Customization
+# ============================================================================
+
+UI_TITLE = "My Custom Agent"
+UI_HEADING = "🤖 My Custom Agent"
+UI_LOGO_PATH = "static/a2a.png"  # Replace with your logo
+
+# Chat interface description
+UI_CHAT_DESCRIPTION = "Ask me about [your domain]"
+
+# Main UI description (supports markdown)
+UI_MARKDOWN_DESCRIPTION = """
+**What I can help with:**
+- [Capability 1]
+- [Capability 2]
+- [Capability 3]
+
+### My Expertise
+- [Domain 1]
+- [Domain 2]
+"""
+
+# ============================================================================
+# Model Configuration
+# ============================================================================
+
+MODEL_DEPLOYMENT_NAME = "gpt-4o"  # Azure OpenAI deployment name
+
+# ============================================================================
+# Network Configuration
+# ============================================================================
+
+DEFAULT_A2A_PORT = 9020  # A2A server port
+DEFAULT_UI_PORT = 9120   # Gradio UI port
+
+# ============================================================================
+# Vector Store Configuration
+# ============================================================================
+
+VECTOR_STORE_NAME = "my_agent_vectorstore"
+
+# ============================================================================
+# Agent Skills Definition
+# ============================================================================
+
+AGENT_SKILLS = [
+    {
+        'id': 'troubleshooting',
+        'name': 'Technical Troubleshooting',
+        'description': "Diagnose and resolve technical issues",
+        'tags': ['support', 'troubleshooting', 'technical'],
+        'examples': [
+            'Why is my account login failing?',
+            'How do I reset my password?',
+        ],
+    },
+    # Add more skills as needed
+]
+
+# ============================================================================
+# Agent Card Configuration
+# ============================================================================
+
+AGENT_INPUT_MODES = ['text']
+AGENT_OUTPUT_MODES = ['text']
+AGENT_CAPABILITIES = {"streaming": True}
+```
+
+These settings automatically update:
+- Agent registration card with all metadata
+- Agent skills shown in catalog
+- Gradio UI title, heading, and descriptions
+- Azure AI Foundry agent name and model
+- Default ports (can still be overridden by environment variables)
+- Health check endpoints
+- Startup messages
+- All user-facing text
+
+---
+
+#### 3.2 Define Your Agent's Personality (`agent_instructions.prompty`)
+
+The agent's behavior is defined in `agent_instructions.prompty`. Edit the system prompt section to customize your agent's role:
+
+```
+system:
 You are a [YOUR ROLE] specialist powered by Azure AI Foundry.
 
 ## Core Responsibilities
@@ -104,12 +208,11 @@ You are a [YOUR ROLE] specialist powered by Azure AI Foundry.
 - [Add your specific guidelines]
 - [Define your response style]
 
-Current date and time: {datetime.datetime.now().isoformat()}
-"""
+Current date and time: {{current_datetime}}
 ```
 
 **Example**: For a customer support agent:
-```python
+```
 You are a Customer Support Specialist powered by Azure AI Foundry.
 
 ## Core Responsibilities
@@ -125,32 +228,62 @@ You are a Customer Support Specialist powered by Azure AI Foundry.
 - Cite specific documentation when providing instructions
 - If unsure, acknowledge limitations and offer to escalate
 
-Current date and time: {datetime.datetime.now().isoformat()}
-"""
+Current date and time: {{current_datetime}}
 ```
 
 ---
 
-#### 3.2 Define Your Agent's Skills (`__main__.py`)
+#### 3.3 Define Your Agent's Skills (`__main__.py`)
 
 Open `__main__.py` and find the `_build_agent_skills()` function (line 94). Replace the example skill with your agent's actual capabilities:
 
+---
+
+#### 3.3 Define Your Agent's Skills (`agent_config.py`)
+
+Agent skills are now defined in `agent_config.py` as the `AGENT_SKILLS` list. Each skill is a dictionary with the following fields:
+
 ```python
-def _build_agent_skills() -> List[AgentSkill]:
-    return [
-        AgentSkill(
-            id='your_skill_id',
-            name='Your Skill Name',
-            description="What this skill does and when to use it",
-            tags=['tag1', 'tag2', 'tag3'],
-            examples=[
-                'Example query 1 that demonstrates this skill',
-                'Example query 2 that shows another use case',
-                'Example query 3 for additional context',
-            ],
-        ),
-        # Add more skills as needed
-    ]
+AGENT_SKILLS = [
+    {
+        'id': 'your_skill_id',
+        'name': 'Your Skill Name',
+        'description': "What this skill does and when to use it",
+        'tags': ['tag1', 'tag2', 'tag3'],
+        'examples': [
+            'Example query 1',
+            'Example query 2',
+            'Example query 3',
+        ],
+    },
+    # Add more skills as needed
+]
+```
+
+**Example**: For a customer support agent:
+```python
+AGENT_SKILLS = [
+    {
+        'id': 'troubleshooting',
+        'name': 'Technical Troubleshooting',
+        'description': "Diagnose and resolve technical issues",
+        'tags': ['support', 'troubleshooting', 'technical'],
+        'examples': [
+            'Why is my account login failing?',
+            'How do I reset my password?',
+        ],
+    },
+    {
+        'id': 'product_information',
+        'name': 'Product Information',
+        'description': "Provide accurate product details",
+        'tags': ['product', 'features', 'information'],
+        'examples': [
+            'What features are in the Pro plan?',
+            'Does it integrate with Salesforce?',
+        ],
+    },
+]
 ```
 
 **Example**: For a customer support agent:
@@ -160,23 +293,11 @@ def _build_agent_skills() -> List[AgentSkill]:
         AgentSkill(
             id='troubleshooting',
             name='Technical Troubleshooting',
-            description="Diagnose and resolve technical issues by searching knowledge base and providing step-by-step solutions",
+            description="Diagnose and resolve technical issues",
             tags=['support', 'troubleshooting', 'technical'],
             examples=[
                 'Why is my account login failing?',
                 'How do I reset my password?',
-                'The app crashes when I try to export data',
-            ],
-        ),
-        AgentSkill(
-            id='product_information',
-            name='Product Information',
-            description="Provide accurate information about product features, pricing, and capabilities",
-            tags=['product', 'features', 'information'],
-            examples=[
-                'What features are included in the Pro plan?',
-                'Does your product integrate with Salesforce?',
-                'What are the system requirements?',
             ],
         ),
     ]
@@ -184,76 +305,19 @@ def _build_agent_skills() -> List[AgentSkill]:
 
 ---
 
-#### 3.3 Update Your Agent Card (`__main__.py`)
+### Step 4: Update Port Configuration (Optional)
 
-In `__main__.py`, find the `_create_agent_card()` function (line 133). This is the **single place** where your agent's identity is defined:
+If you're running multiple agents, ensure each uses a unique port.
 
+**Option 1: In `agent_config.py` (Recommended)**:
 ```python
-def _create_agent_card(host: str, port: int) -> AgentCard:
-    """Define your agent's identity here - used throughout the application."""
-    skills = _build_agent_skills()
-    resolved_host_for_url = host if host != "0.0.0.0" else DEFAULT_HOST
-    
-    return AgentCard(
-        name='My Custom Agent Name',  # ⚠️ Change this
-        description="Brief description of what your agent does and what domain it covers",  # ⚠️ Change this
-        url=resolve_agent_url(resolved_host_for_url, port),
-        version='1.0.0',  # Update when you make changes
-        defaultInputModes=['text'],
-        defaultOutputModes=['text'],
-        capabilities={"streaming": True},
-        skills=skills,
-    )
+DEFAULT_A2A_PORT = 9025  # Choose an available port
+DEFAULT_UI_PORT = 9125
 ```
 
-
----
-
-#### 3.4 Update Gradio UI (Optional)
-
-If you're using the `--ui` flag to run the Gradio interface, customize these sections in `__main__.py`:
-
-**Update the UI title and description** (line 350):
-```python
-with gr.Blocks(theme=gr.themes.Ocean(), title="My Custom Agent") as demo:
-    gr.Markdown(f"""
-    ## 🤖 My Custom Agent
-    
-    **What it does:**
-    - [Describe your agent's primary function]
-    - [List key capabilities]
-    """)
-    
-    # ...
-    
-    gr.ChatInterface(
-        _ui_process,
-        title="",
-        description="Your agent's tagline or brief description",
-    )
-```
-
----
-
-### Step 4: Update Port Configuration
-
-If you're running multiple agents, ensure each uses a unique port. Update in `__main__.py` OR set in `.env`:
-
-**Option 1: In `.env` (Recommended)**:
+**Option 2: In `.env` (Overrides config)**:
 ```bash
-A2A_PORT=9025  # Choose an available port
-```
-
-**Option 2: In `__main__.py`** (line 48):
-```python
-def _resolve_default_port() -> int:
-    raw_port = _normalize_env_value(os.getenv('A2A_PORT'))
-    if raw_port:
-        try:
-            return int(raw_port)
-        except ValueError:
-            logger.warning("Invalid A2A_PORT value '%s'; defaulting to 9025", raw_port)
-    return 9025  # ⚠️ Change default port here
+A2A_PORT=9025
 ```
 
 ---
@@ -299,23 +363,22 @@ Access the UI at: `http://localhost:9120`
 
 ## 🔧 Advanced Customization
 
-### Adding Custom File Handling
-
-If you need to process uploaded files differently, modify the `execute()` method in `foundry_agent_executor.py` (line 264).
-
 ### Changing the Model
 
-By default, agents use `gpt-4o`. To use a different model, update in `foundry_agent.py` (line 231):
+To use a different Azure OpenAI model, update in `agent_config.py`:
 
 ```python
-self.agent = project_client.agents.create_agent(
-    model="gpt-4o",  # Change to your model deployment name
-    name="foundry-template-agent",
-    instructions=self._get_agent_instructions(),
-    tools=tools,
-    tool_resources=tool_resources
-)
+MODEL_DEPLOYMENT_NAME = "gpt-4"  # or gpt-35-turbo, etc.
 ```
+
+Or override via environment variable in `.env`:
+```bash
+AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME=gpt-4
+```
+
+### Adding Custom File Handling
+
+If you need to process uploaded files differently, modify the `execute()` method in `foundry_agent_executor.py`.
 
 ### Disabling Bing Search
 
