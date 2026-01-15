@@ -131,6 +131,12 @@ $azureEmbeddingsDeployment = Read-Host "Azure Embeddings Deployment Name"
 $azureEmbeddingsKey = Read-Host "Azure Embeddings Key"
 
 Write-Host ""
+Write-Host "🔍 Azure Search (Memory Service) Configuration" -ForegroundColor Cyan
+$azureSearchEndpoint = Read-Host "Azure Search Service Endpoint"
+$azureSearchKey = Read-Host "Azure Search Admin Key"
+$azureSearchIndex = Read-Host "Azure Search Index Name (e.g., microsoft-results)"
+
+Write-Host ""
 
 # Generate timestamp for image tags
 $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
@@ -258,6 +264,9 @@ if ($backendExists) {
             "AZURE_OPENAI_EMBEDDINGS_ENDPOINT=$azureEmbeddingsEndpoint" `
             "AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT=$azureEmbeddingsDeployment" `
             "AZURE_OPENAI_EMBEDDINGS_KEY=$azureEmbeddingsKey" `
+            "AZURE_SEARCH_SERVICE_ENDPOINT=$azureSearchEndpoint" `
+            "AZURE_SEARCH_ADMIN_KEY=$azureSearchKey" `
+            "AZURE_SEARCH_INDEX_NAME=$azureSearchIndex" `
             "A2A_HOST=FOUNDRY" `
             "VERBOSE_LOGGING=true" `
         --output none
@@ -286,6 +295,9 @@ if ($backendExists) {
             "AZURE_OPENAI_EMBEDDINGS_ENDPOINT=$azureEmbeddingsEndpoint" `
             "AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT=$azureEmbeddingsDeployment" `
             "AZURE_OPENAI_EMBEDDINGS_KEY=$azureEmbeddingsKey" `
+            "AZURE_SEARCH_SERVICE_ENDPOINT=$azureSearchEndpoint" `
+            "AZURE_SEARCH_ADMIN_KEY=$azureSearchKey" `
+            "AZURE_SEARCH_INDEX_NAME=$azureSearchIndex" `
             "A2A_HOST=FOUNDRY" `
             "VERBOSE_LOGGING=true" `
         --output none

@@ -67,7 +67,7 @@ from .a2a_document_processor import a2a_document_processor
 from pydantic import BaseModel, Field
 
 # Tenant utilities for multi-tenancy support
-from backend.utils.tenant import get_tenant_from_context
+from utils.tenant import get_tenant_from_context
 import time
 
 # Load environment configuration from project root
