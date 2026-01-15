@@ -183,6 +183,10 @@ if [ -f ".env" ]; then
     DEFAULT_EMBEDDINGS_ENDPOINT=$(grep "AZURE_OPENAI_EMBEDDINGS_ENDPOINT" .env | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
     DEFAULT_EMBEDDINGS_DEPLOYMENT=$(grep "AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT" .env | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
     DEFAULT_EMBEDDINGS_KEY=$(grep "AZURE_OPENAI_EMBEDDINGS_KEY" .env | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
+    # Azure Search (Memory Service) configuration
+    DEFAULT_SEARCH_ENDPOINT=$(grep "AZURE_SEARCH_SERVICE_ENDPOINT" .env | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
+    DEFAULT_SEARCH_ADMIN_KEY=$(grep "AZURE_SEARCH_ADMIN_KEY" .env | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
+    DEFAULT_SEARCH_INDEX_NAME=$(grep "AZURE_SEARCH_INDEX_NAME" .env | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
 fi
 
 read -p "Azure AI Foundry Project Endpoint [$DEFAULT_AI_ENDPOINT]: " AZURE_AI_ENDPOINT
@@ -210,6 +214,19 @@ AZURE_EMBEDDINGS_DEPLOYMENT=${AZURE_EMBEDDINGS_DEPLOYMENT:-$DEFAULT_EMBEDDINGS_D
 read -s -p "Azure Embeddings Key: " AZURE_EMBEDDINGS_KEY
 AZURE_EMBEDDINGS_KEY=${AZURE_EMBEDDINGS_KEY:-$DEFAULT_EMBEDDINGS_KEY}
 echo ""
+
+# Azure Search (Memory Service) configuration
+echo ""
+echo -e "${CYAN}🔍 Azure Search (Memory Service) Configuration${NC}"
+read -p "Azure Search Service Endpoint [$DEFAULT_SEARCH_ENDPOINT]: " AZURE_SEARCH_ENDPOINT
+AZURE_SEARCH_ENDPOINT=${AZURE_SEARCH_ENDPOINT:-$DEFAULT_SEARCH_ENDPOINT}
+
+read -s -p "Azure Search Admin Key: " AZURE_SEARCH_KEY
+AZURE_SEARCH_KEY=${AZURE_SEARCH_KEY:-$DEFAULT_SEARCH_ADMIN_KEY}
+echo ""
+
+read -p "Azure Search Index Name [$DEFAULT_SEARCH_INDEX_NAME]: " AZURE_SEARCH_INDEX
+AZURE_SEARCH_INDEX=${AZURE_SEARCH_INDEX:-$DEFAULT_SEARCH_INDEX_NAME}
 
 echo ""
 
@@ -339,6 +356,9 @@ if [ -n "$BACKEND_EXISTS" ]; then
             "AZURE_OPENAI_EMBEDDINGS_ENDPOINT=$AZURE_EMBEDDINGS_ENDPOINT" \
             "AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT=$AZURE_EMBEDDINGS_DEPLOYMENT" \
             "AZURE_OPENAI_EMBEDDINGS_KEY=$AZURE_EMBEDDINGS_KEY" \
+            "AZURE_SEARCH_SERVICE_ENDPOINT=$AZURE_SEARCH_ENDPOINT" \
+            "AZURE_SEARCH_ADMIN_KEY=$AZURE_SEARCH_KEY" \
+            "AZURE_SEARCH_INDEX_NAME=$AZURE_SEARCH_INDEX" \
             "A2A_HOST=FOUNDRY" \
             "VERBOSE_LOGGING=true" \
         --output none
@@ -367,6 +387,9 @@ else
             "AZURE_OPENAI_EMBEDDINGS_ENDPOINT=$AZURE_EMBEDDINGS_ENDPOINT" \
             "AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT=$AZURE_EMBEDDINGS_DEPLOYMENT" \
             "AZURE_OPENAI_EMBEDDINGS_KEY=$AZURE_EMBEDDINGS_KEY" \
+            "AZURE_SEARCH_SERVICE_ENDPOINT=$AZURE_SEARCH_ENDPOINT" \
+            "AZURE_SEARCH_ADMIN_KEY=$AZURE_SEARCH_KEY" \
+            "AZURE_SEARCH_INDEX_NAME=$AZURE_SEARCH_INDEX" \
             "A2A_HOST=FOUNDRY" \
             "VERBOSE_LOGGING=true" \
         --output none
