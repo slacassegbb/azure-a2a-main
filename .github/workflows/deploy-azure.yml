@@ -1,5 +1,19 @@
 name: Deploy to Azure Container Apps
 
+# Required GitHub Secrets:
+# - AZURE_CREDENTIALS: Azure Service Principal credentials for authentication
+# - AZURE_AI_FOUNDRY_PROJECT_ENDPOINT: Azure AI Foundry project endpoint
+# - AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME: Model deployment name (e.g., gpt-4o)
+# - AZURE_OPENAI_GPT_API_BASE: Azure OpenAI API base URL
+# - AZURE_OPENAI_GPT_API_KEY: Azure OpenAI API key
+# - AZURE_OPENAI_GPT_DEPLOYMENT: OpenAI deployment name
+# - AZURE_OPENAI_EMBEDDINGS_ENDPOINT: Embeddings endpoint URL
+# - AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT: Embeddings deployment name
+# - AZURE_OPENAI_EMBEDDINGS_KEY: Embeddings API key
+# - AZURE_SEARCH_SERVICE_ENDPOINT: Azure Search service endpoint (for memory service)
+# - AZURE_SEARCH_ADMIN_KEY: Azure Search admin key
+# - AZURE_SEARCH_INDEX_NAME: Azure Search index name (e.g., microsoft-results)
+
 on:
   push:
     branches: [ main, feature/multi-tenancy ]
@@ -105,7 +119,22 @@ jobs:
           az containerapp update \
             --name backend-uami \
             --resource-group ${{ env.RESOURCE_GROUP }} \
-            --image ${{ env.REGISTRY }}/backend:${{ github.sha }}
+            --image ${{ env.REGISTRY }}/backend:${{ github.sha }} \
+            --set-env-vars \
+              "AZURE_AI_FOUNDRY_PROJECT_ENDPOINT=${{ secrets.AZURE_AI_FOUNDRY_PROJECT_ENDPOINT }}" \
+              "AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME=${{ secrets.AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME }}" \
+              "AZURE_OPENAI_GPT_API_BASE=${{ secrets.AZURE_OPENAI_GPT_API_BASE }}" \
+              "AZURE_OPENAI_GPT_API_KEY=${{ secrets.AZURE_OPENAI_GPT_API_KEY }}" \
+              "AZURE_OPENAI_GPT_DEPLOYMENT=${{ secrets.AZURE_OPENAI_GPT_DEPLOYMENT }}" \
+              "AZURE_OPENAI_EMBEDDINGS_ENDPOINT=${{ secrets.AZURE_OPENAI_EMBEDDINGS_ENDPOINT }}" \
+              "AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT=${{ secrets.AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT }}" \
+              "AZURE_OPENAI_EMBEDDINGS_KEY=${{ secrets.AZURE_OPENAI_EMBEDDINGS_KEY }}" \
+              "AZURE_SEARCH_SERVICE_ENDPOINT=${{ secrets.AZURE_SEARCH_SERVICE_ENDPOINT }}" \
+              "AZURE_SEARCH_ADMIN_KEY=${{ secrets.AZURE_SEARCH_ADMIN_KEY }}" \
+              "AZURE_SEARCH_INDEX_NAME=${{ secrets.AZURE_SEARCH_INDEX_NAME }}" \
+              "WEBSOCKET_SERVER_URL=https://websocket-uami.ambitioussky-6c709152.westus2.azurecontainerapps.io" \
+              "A2A_HOST=FOUNDRY" \
+              "VERBOSE_LOGGING=true"
       
       - name: Verify Deployment
         run: |
