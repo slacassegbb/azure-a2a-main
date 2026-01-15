@@ -55,6 +55,8 @@ from azure.ai.projects import AIProjectClient
 from azure.identity import DefaultAzureCredential
 import glob
 
+from agent_config import AGENT_ID, VECTOR_STORE_NAME, AGENT_FULL_TITLE, MODEL_DEPLOYMENT_NAME
+
 logger = logging.getLogger(__name__)
 
 
@@ -157,7 +159,7 @@ class FoundryTemplateAgent:
                 logger.info("Creating shared vector store with uploaded files...")
                 FoundryTemplateAgent._shared_vector_store = project_client.agents.vector_stores.create_and_poll(
                     file_ids=file_ids, 
-                    name="agent_template_vectorstore"
+                    name=VECTOR_STORE_NAME
                 )
                 logger.info(f"Created shared vector store: {FoundryTemplateAgent._shared_vector_store.id}")
                 
@@ -225,19 +227,22 @@ class FoundryTemplateAgent:
             logger.info("Added file search capability")
         
         # Use context manager and create agent with all tools
+        # Get model from environment or use default from config
+        model = os.environ.get("AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME", MODEL_DEPLOYMENT_NAME)
+        
         with project_client:
             if tool_resources:
                 self.agent = project_client.agents.create_agent(
-                    model="gpt-4o",
-                    name="foundry-template-agent",
+                    model=model,
+                    name=AGENT_ID,
                     instructions=self._get_agent_instructions(),
                     tools=tools,
                     tool_resources=tool_resources
                 )
             else:
                 self.agent = project_client.agents.create_agent(
-                    model="gpt-4o",
-                    name="foundry-template-agent",
+                    model=model,
+                    name=AGENT_ID,
                     instructions=self._get_agent_instructions(),
                     tools=tools
                 )
@@ -247,65 +252,50 @@ class FoundryTemplateAgent:
     
     def _get_agent_instructions(self) -> str:
         """
-        ⚠️ CUSTOMIZATION REQUIRED ⚠️
-        
-        Define your agent's personality, role, and behavior here.
-        This is the system prompt that determines how your agent responds.
+        Load agent instructions from prompty file.
         
         The agent will have access to:
         - Documents in the 'documents/' folder via file search
         - Optional Bing web search (if configured in Azure AI Foundry)
         - Current date/time context
         """
-        return f"""
-╔══════════════════════════════════════════════════════════════════════════════╗
-║  CUSTOMIZE THIS SECTION: Define your agent's role and behavior               ║
-╚══════════════════════════════════════════════════════════════════════════════╝
-
-You are a helpful AI assistant powered by Azure AI Foundry.
-
-INSTRUCTIONS:
-Replace this generic prompt with your agent's specific role, responsibilities,
-and personality. Consider defining:
-
-1. WHO the agent is (role/persona)
-2. WHAT the agent does (core responsibilities)
-3. HOW the agent should respond (tone, style, formatting)
-4. WHEN to use uploaded documents (file search guidance)
-5. ANY special rules or constraints
-
-EXAMPLE TEMPLATE:
-═══════════════════════════════════════════════════════════════════════════════
-
-You are a [ROLE] specialist powered by Azure AI Foundry.
-
-## Core Responsibilities
-
-1. **[Responsibility 1]** – [Description]
-2. **[Responsibility 2]** – [Description]
-3. **[Responsibility 3]** – [Description]
-
-## Operating Guidelines
-
-- Always consult documents in the `documents/` folder via file search for grounded responses
-- Keep outputs organized and professional
-- Cite sources when referencing uploaded documents
-- [Add your specific guidelines here]
-
-## Response Format
-
-When responding, structure your output as:
-
-**Analysis**: [Your analysis here]
-**Recommendations**: [Your recommendations here]
-**Sources**: [Cite documents you referenced]
-
-═══════════════════════════════════════════════════════════════════════════════
-
+        prompty_path = os.path.join(os.path.dirname(__file__), "agent_instructions.prompty")
+        
+        try:
+            with open(prompty_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+                
+            # Replace placeholders from environment and config
+            model_deployment = os.environ.get("AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME", "gpt-4o")
+            content = content.replace('{{model_deployment_name}}', model_deployment)
+            content = content.replace('{{agent_title}}', AGENT_FULL_TITLE)
+                
+            # Extract the system prompt section (after the YAML frontmatter)
+            if '---' in content:
+                parts = content.split('---', 2)
+                if len(parts) >= 3:
+                    # Get everything after the second '---'
+                    prompt = parts[2].strip()
+                    # Replace the placeholder with actual datetime
+                    prompt = prompt.replace('{{current_datetime}}', datetime.datetime.now().isoformat())
+                    return prompt
+                    
+            # Fallback if prompty format is not as expected
+            logger.warning("Could not parse prompty file, using content as-is")
+            return content.replace('{{current_datetime}}', datetime.datetime.now().isoformat())
+            
+        except FileNotFoundError:
+            logger.error(f"Prompty file not found: {prompty_path}")
+            # Return a basic fallback prompt
+            return f"""You are a helpful AI assistant powered by Azure AI Foundry.
+            
 Current date and time: {datetime.datetime.now().isoformat()}
-
-Remember: The documents you have access to are located in the 'documents/' folder.
-Use file search to ground your responses in the provided knowledge base.
+"""
+        except Exception as e:
+            logger.error(f"Error loading prompty file: {e}")
+            return f"""You are a helpful AI assistant powered by Azure AI Foundry.
+            
+Current date and time: {datetime.datetime.now().isoformat()}
 """
     
 

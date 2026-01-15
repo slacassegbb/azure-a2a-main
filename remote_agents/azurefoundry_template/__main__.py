@@ -22,6 +22,13 @@ from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.tasks import InMemoryTaskStore
 from a2a.types import AgentCard, AgentSkill
 
+from agent_config import (
+    AGENT_NAME, AGENT_DESCRIPTION, AGENT_VERSION,
+    UI_TITLE, UI_HEADING, UI_LOGO_PATH, UI_CHAT_DESCRIPTION, UI_MARKDOWN_DESCRIPTION,
+    DEFAULT_A2A_PORT, DEFAULT_UI_PORT,
+    AGENT_SKILLS, AGENT_INPUT_MODES, AGENT_OUTPUT_MODES, AGENT_CAPABILITIES
+)
+
 load_dotenv()
 
 # Configure logging - hide verbose Azure SDK logs
@@ -51,8 +58,8 @@ def _resolve_default_port() -> int:
         try:
             return int(raw_port)
         except ValueError:
-            logger.warning("Invalid A2A_PORT value '%s'; defaulting to 9020", raw_port)
-    return 9020
+            logger.warning("Invalid A2A_PORT value '%s'; defaulting to %d", raw_port, DEFAULT_A2A_PORT)
+    return DEFAULT_A2A_PORT
 
 
 def resolve_agent_url(bind_host: str, bind_port: int) -> str:
@@ -80,10 +87,9 @@ except ImportError:
         return ""
     SELF_REGISTRATION_AVAILABLE = False
 
-# ⚠️ CUSTOMIZATION: Update these default ports to avoid conflicts with other agents
+# Default host and port (can be overridden by environment variables)
 DEFAULT_HOST = _resolve_default_host()
-DEFAULT_PORT = _resolve_default_port()  # Default: 9020 (set in A2A_PORT env var)
-DEFAULT_UI_PORT = 9120  # Default UI port for Gradio interface
+DEFAULT_PORT = _resolve_default_port()  # From agent_config.py or A2A_PORT env var
 
 HOST_AGENT_URL = _normalize_env_value(get_host_agent_url())
 
@@ -93,61 +99,31 @@ agent_executor_instance = None
 
 def _build_agent_skills() -> List[AgentSkill]:
     """
-    ⚠️ CUSTOMIZATION REQUIRED ⚠️
+    Build agent skills from centralized configuration.
     
-    Define your agent's skills/capabilities here. These appear in the agent catalog
-    and help users understand what your agent can do.
-    
-    Each skill should have:
-    - id: unique identifier (snake_case)
-    - name: display name
-    - description: what the skill does
-    - tags: searchable keywords
-    - examples: sample queries that demonstrate the skill
+    Skills are defined in agent_config.py as AGENT_SKILLS.
+    This function converts them to AgentSkill objects.
     """
-    return [
-        # EXAMPLE SKILL - Replace with your own skills
-        AgentSkill(
-            id='example_skill_1',
-            name='Example Skill',
-            description="This is a template skill. Replace this with your agent's actual capabilities based on your domain knowledge and uploaded documents.",
-            tags=['example', 'template', 'customize'],
-            examples=[
-                'Example query 1 - replace with real use case',
-                'Example query 2 - replace with real use case',
-                'Example query 3 - replace with real use case',
-            ],
-        ),
-        # ADD MORE SKILLS HERE
-        # Copy the AgentSkill block above and customize for each capability
-        # AgentSkill(
-        #     id='your_skill_id',
-        #     name='Your Skill Name',
-        #     description="What this skill does",
-        #     tags=['tag1', 'tag2'],
-        #     examples=['Example 1', 'Example 2'],
-        # ),
-    ]
+    return [AgentSkill(**skill) for skill in AGENT_SKILLS]
 
 
 def _create_agent_card(host: str, port: int) -> AgentCard:
     """
-    ⚠️ CUSTOMIZATION REQUIRED ⚠️
+    Create agent card from centralized configuration.
     
-    Define your agent's identity here - this is used throughout the application.
-    Update the name, description, and version to match your agent.
+    All settings come from agent_config.py - no customization needed here.
     """
     skills = _build_agent_skills()
     resolved_host_for_url = host if host != "0.0.0.0" else DEFAULT_HOST
     
     return AgentCard(
-        name='AI Foundry Template Agent',  # ⚠️ CHANGE THIS to your agent's name
-        description="A template agent powered by Azure AI Foundry. Customize this description to explain what your agent does and what domain knowledge it has access to.",  # ⚠️ CHANGE THIS
+        name=AGENT_NAME,
+        description=AGENT_DESCRIPTION,
         url=resolve_agent_url(resolved_host_for_url, port),
-        version='1.0.0',  # Update when you make significant changes
-        defaultInputModes=['text'],
-        defaultOutputModes=['text'],
-        capabilities={"streaming": True},
+        version=AGENT_VERSION,
+        defaultInputModes=AGENT_INPUT_MODES,
+        defaultOutputModes=AGENT_OUTPUT_MODES,
+        capabilities=AGENT_CAPABILITIES,
         skills=skills,
     )
 
@@ -178,7 +154,7 @@ def create_a2a_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
     
     # Add health check endpoint
     async def health_check(_: Request) -> PlainTextResponse:
-        return PlainTextResponse('AI Foundry Template Agent is running!')  # ⚠️ CUSTOMIZATION: Update agent name
+        return PlainTextResponse(f'{AGENT_NAME} is running!')
     
     routes.append(
         Route(
@@ -196,7 +172,7 @@ def create_a2a_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
 
 def run_a2a_server_in_thread(host: str, port: int):
     """Run A2A server in a separate thread."""
-    print(f"Starting AI Foundry Template Agent A2A server on {host}:{port}...")
+    print(f"Starting {AGENT_NAME} A2A server on {host}:{port}...")
     app = create_a2a_server(host, port)
     uvicorn.run(app, host=host, port=port, log_level="info")
 
@@ -300,7 +276,7 @@ async def get_foundry_response(
 
 async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_port: int = DEFAULT_PORT):
     """Launch Gradio UI and A2A server simultaneously for the template agent."""
-    print("Starting AI Foundry Template Agent with both UI and A2A server...")
+    print(f"Starting {AGENT_NAME} with both UI and A2A server...")
     
     # Verify required environment variables
     required_env_vars = [
@@ -348,9 +324,9 @@ async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_p
     a2a_display_url = resolve_agent_url(display_host, a2a_port).rstrip('/')
 
     # ⚠️ CUSTOMIZATION: Update the Gradio UI title, icon, and description
-    with gr.Blocks(theme=gr.themes.Ocean(), title="AI Foundry Template Agent") as demo:
+    with gr.Blocks(theme=gr.themes.Ocean(), title=UI_TITLE) as demo:
         gr.Image(
-            "static/a2a.png",  # ⚠️ CUSTOMIZATION: Replace with your own logo
+            UI_LOGO_PATH,
             width=100,
             height=100,
             scale=0,
@@ -360,22 +336,12 @@ async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_p
             show_fullscreen_button=False,
         )
         gr.Markdown(f"""
-        ## 🤖 AI Foundry Template Agent
+        ## {UI_HEADING}
 
         **Direct UI Access:** {ui_display_url}  
         **A2A API Access:** {a2a_display_url}
 
-        **⚠️ CUSTOMIZATION REQUIRED:**  
-        Replace this description with your agent's actual capabilities and purpose.
-
-        **What it does:**
-        - [Describe your agent's primary function]
-        - [What domain knowledge does it have?]
-        - [What documents ground its responses?]
-
-        ### Core Capabilities
-        - [List your agent's skills here - see _build_agent_skills() above]
-        - [Add more capabilities as needed]
+        {UI_MARKDOWN_DESCRIPTION}
         """)
 
         # Add a status display that refreshes automatically
@@ -405,9 +371,10 @@ async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_p
         """, visible=False)
 
         async def _ui_process(message, history):
-            if foundry_agent_executor._last_received_files:
+            global agent_executor_instance
+            if agent_executor_instance and hasattr(agent_executor_instance, '_last_received_files') and agent_executor_instance._last_received_files:
                 print("[Template UI] Latest file references from host agent:")
-                for file_info in foundry_agent_executor._last_received_files:
+                for file_info in agent_executor_instance._last_received_files:
                     print(
                         f"  • name={file_info.get('name')} uri={file_info.get('uri')} mime={file_info.get('mime')}"
                     )
@@ -420,23 +387,22 @@ async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_p
                 return chunks[0]
             return chunks
 
-        # ⚠️ CUSTOMIZATION: Update the chat interface description
         gr.ChatInterface(
             _ui_process,
             title="",
-            description="Ask me questions related to my domain knowledge. Replace this with your agent's description.",
+            description=UI_CHAT_DESCRIPTION,
         )
 
-    print(f"Launching AI Foundry Template Agent Gradio interface on {host}:{ui_port}...")
+    print(f"Launching {AGENT_NAME} Gradio interface on {host}:{ui_port}...")
     demo.queue().launch(
         server_name=host,
         server_port=ui_port,
     )
-    print("AI Foundry Template Agent Gradio application has been shut down.")
+    print(f"{AGENT_NAME} Gradio application has been shut down.")
 
 
 def main(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
-    """Launch A2A server mode for the Azure Foundry template agent with startup initialization."""
+    """Launch A2A server mode for the agent with startup initialization."""
     # Verify required environment variables
     required_env_vars = [
         'AZURE_AI_FOUNDRY_PROJECT_ENDPOINT',
@@ -474,8 +440,8 @@ def main(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
 @click.option('--ui', is_flag=True, help='Launch Gradio UI (also runs A2A server)')
 @click.option('--ui-port', 'ui_port', default=DEFAULT_UI_PORT, help='Port for Gradio UI (only used with --ui flag)')
 def cli(host: str, port: int, ui: bool, ui_port: int):
-    """
-    AI Foundry Template Agent - run as an A2A server or with Gradio UI + A2A server.
+    f"""
+    {AGENT_NAME} - run as an A2A server or with Gradio UI + A2A server.
     
     ⚠️ CUSTOMIZATION: Update this help text to describe your agent.
     """
