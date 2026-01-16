@@ -552,6 +552,7 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
   })
   
   const [messages, setMessages] = useState<Message[]>([])
+  const [isLoadingMessages, setIsLoadingMessages] = useState(true) // Add loading state
   const [input, setInput] = useState("")
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const messagesContainerRef = useRef<HTMLDivElement>(null)
@@ -648,6 +649,7 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
   // Reset messages when conversation ID changes (new chat)
   useEffect(() => {
     const loadConversationMessages = async () => {
+    setIsLoadingMessages(true) // Start loading
     if (DEBUG) console.log('[ChatPanel] Conversation ID changed to:', conversationId)
     if (DEBUG) console.log('[ChatPanel] URL search params:', searchParams.toString())
       
@@ -792,6 +794,8 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
         setInferenceSteps([])
         setProcessedMessageIds(new Set())
       }
+      
+      setIsLoadingMessages(false) // Done loading
     }
     
     loadConversationMessages()
@@ -2164,17 +2168,17 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
       )}
       
       {/* Layout for empty state - centered welcome message and input */}
-      {messages.length === 0 && (
-        <div className="flex-1 flex flex-col items-center justify-center">
-          <div className="w-full max-w-4xl px-4 space-y-8">
+      {!isLoadingMessages && messages.length === 0 && (
+        <div className="flex-1 flex flex-col items-center justify-center px-4 -mt-20">
+          <div className="w-full max-w-4xl space-y-12">
             <h1 className="text-4xl font-semibold text-center">What can I help with?</h1>
-            {/* Chat input will be rendered below in the shared section */}
+            {/* Input rendered in shared section below will appear here visually */}
           </div>
         </div>
       )}
       
-      {/* Chat input area - shared for both layouts */}
-      <div className={`${messages.length === 0 ? 'absolute bottom-0 left-0 right-0 pb-20' : 'flex-shrink-0'}`}>
+      {/* Chat input area - positioned differently based on state */}
+      <div className={`${!isLoadingMessages && messages.length === 0 ? 'absolute bottom-1/3 left-0 right-0 flex items-center justify-center' : 'flex-shrink-0'}`}>
         <div className="px-4 pb-4 pt-2">
           {/* File upload previews */}
           {uploadedFiles.length > 0 && (
@@ -2365,7 +2369,7 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
                 }
               }}
               placeholder="Type your message... (Use @ to mention users or agents)"
-              className="pl-12 pr-32 min-h-12 max-h-32 resize-none overflow-y-auto border-none focus-visible:ring-0 focus-visible:ring-offset-0 bg-transparent rounded-3xl px-4 py-3"
+              className="pl-14 pr-32 min-h-12 max-h-32 resize-none overflow-y-auto border-none focus-visible:ring-0 focus-visible:ring-offset-0 bg-transparent rounded-3xl py-3"
               disabled={isInferencing}
               rows={1}
               style={{ height: '48px' }} // min-h-12 = 48px
@@ -2431,11 +2435,11 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
               <Button 
                 variant="ghost" 
                 size="icon"
-                className="h-9 w-9 rounded-full hover:bg-muted"
+                className="h-9 w-9 rounded-full bg-muted hover:bg-muted/80"
                 disabled={isInferencing}
                 onClick={handlePaperclipClick}
               >
-                <Plus size={20} className="text-muted-foreground" />
+                <Plus size={20} className="text-foreground" />
               </Button>
             </div>
             

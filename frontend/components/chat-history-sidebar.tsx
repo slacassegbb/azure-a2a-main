@@ -186,7 +186,7 @@ export function ChatHistorySidebar({ isCollapsed, onToggle }: Props) {
 
   return (
     <TooltipProvider delayDuration={0}>
-      <div className={cn("flex h-full flex-col bg-background transition-all duration-300")}>
+      <div className={cn("flex h-full flex-col transition-all duration-300")}>
         <div className="flex h-16 items-center justify-between p-2">
           <div className="flex items-center gap-2 min-w-0 flex-1">
             {!isCollapsed && (

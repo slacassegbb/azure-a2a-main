@@ -240,17 +240,17 @@ export function ChatLayout() {
   }, [subscribe, unsubscribe, emit])
 
   return (
-    <div className="h-full w-full">
+    <div className="h-full w-full bg-background">
       <PanelGroup direction="horizontal">
         {/* Left Sidebar */}
         <Panel defaultSize={20} minSize={15} maxSize={30}>
-          <div className="flex flex-col h-full">
+          <div className="flex flex-col h-full bg-muted/20">
             <ChatHistorySidebar
               isCollapsed={isLeftSidebarCollapsed}
               onToggle={() => setLeftSidebarCollapsed(!isLeftSidebarCollapsed)}
             />
             {!isLeftSidebarCollapsed && (
-              <div className="border-t">
+              <div className="mt-2">
                 <Collapsible open={isFileHistoryOpen} onOpenChange={setFileHistoryOpen}>
                   <CollapsibleTrigger asChild>
                     <Button 
@@ -279,11 +279,11 @@ export function ChatLayout() {
           </div>
         </Panel>
         
-        <PanelResizeHandle className="w-2 bg-border hover:bg-accent transition-colors" />
+        <PanelResizeHandle className="w-px bg-border/30 hover:bg-accent/50 transition-colors" />
         
         {/* Main Chat Area */}
         <Panel defaultSize={60} minSize={40}>
-          <div className="flex flex-col min-w-0 border-x h-full">
+          <div className="flex flex-col min-w-0 h-full">
             <ChatPanel 
               dagNodes={dagNodes} 
               dagLinks={dagLinks} 
@@ -298,10 +298,11 @@ export function ChatLayout() {
           </div>
         </Panel>
         
-        <PanelResizeHandle className="w-2 bg-border hover:bg-accent transition-colors" />
+        <PanelResizeHandle className="w-px bg-border/30 hover:bg-accent/50 transition-colors" />
         
         {/* Right Sidebar - Agent Network */}
         <Panel defaultSize={20} minSize={15} maxSize={35}>
+          <div className="h-full bg-muted/20">
           <AgentNetwork
             registeredAgents={registeredAgents}
             isCollapsed={isRightSidebarCollapsed}
@@ -316,6 +317,7 @@ export function ChatLayout() {
             dagLinks={dagLinks}
             activeNode={activeNode}
           />
+          </div>
         </Panel>
       </PanelGroup>
     </div>

@@ -575,7 +575,7 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, agentMod
 
   return (
     <TooltipProvider delayDuration={0}>
-      <div className={cn("flex h-full flex-col bg-background transition-all duration-300")}>
+      <div className={cn("flex h-full flex-col transition-all duration-300")}>
         <div className="flex h-16 items-center justify-between p-2">
           {!isCollapsed && <span className="font-semibold text-lg ml-2">Network</span>}
           <Button variant="ghost" size="icon" className="h-9 w-9" onClick={onToggle}>
