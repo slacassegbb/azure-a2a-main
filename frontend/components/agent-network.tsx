@@ -1016,7 +1016,7 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, agentMod
                             <Button
                               variant="ghost"
                               size="sm"
-                              className="h-7 w-7 p-0 hover:bg-destructive/10 hover:text-destructive"
+                              className="h-7 w-7 p-0 hover:bg-primary/10 hover:text-primary"
                               onClick={(e) => {
                                 e.stopPropagation()
                                 handleRemoveAgent(agentName)

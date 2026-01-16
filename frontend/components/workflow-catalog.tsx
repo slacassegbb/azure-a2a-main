@@ -295,7 +295,7 @@ export function WorkflowCatalog({ onLoadWorkflow, onSaveWorkflow, currentWorkflo
                       variant="ghost"
                       size="sm"
                       onClick={() => handleDeleteCustomWorkflow(workflow.id)}
-                      className="h-6 w-6 p-0 text-slate-400 hover:text-red-400"
+                      className="h-6 w-6 p-0 text-slate-400 hover:text-primary hover:bg-primary/10"
                     >
                       <Trash2 className="h-3 w-3" />
                     </Button>

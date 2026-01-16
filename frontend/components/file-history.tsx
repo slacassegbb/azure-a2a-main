@@ -295,7 +295,7 @@ export function FileHistory({ className, onFileSelect }: FileHistoryProps) {
                           {onFileSelect && (
                             <button
                               onClick={() => onFileSelect(file)}
-                              className="p-1 hover:bg-gray-200 rounded text-muted-foreground hover:text-foreground"
+                              className="p-1 hover:bg-primary/10 rounded text-muted-foreground hover:text-primary"
                               title="View file"
                             >
                               <Eye size={12} />
@@ -303,7 +303,7 @@ export function FileHistory({ className, onFileSelect }: FileHistoryProps) {
                           )}
                           <button
                             onClick={() => removeFile(file.id)}
-                            className="p-1 hover:bg-gray-200 rounded text-muted-foreground hover:text-destructive"
+                            className="p-1 hover:bg-primary/10 rounded text-muted-foreground hover:text-primary"
                             title="Remove from history"
                           >
                             <Trash2 size={12} />
