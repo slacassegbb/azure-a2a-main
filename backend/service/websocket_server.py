@@ -286,7 +286,7 @@ class WebSocketManager:
         authenticated_connections = len(self.authenticated_connections)
         logger.info(f"WebSocket client connected. Total: {total_connections}, Authenticated: {authenticated_connections}")
     
-    def disconnect(self, websocket: WebSocket):
+    async def disconnect(self, websocket: WebSocket):
         """Remove a WebSocket connection."""
         self.active_connections.discard(websocket)
         
@@ -300,10 +300,11 @@ class WebSocketManager:
             # Remove user from active users list in auth service
             if auth_service:
                 auth_service.remove_active_user(auth_conn.user_data)
+                logger.info(f"[WebSocket Auth] Removed user from active list: {auth_conn.username}")
                 
                 # Broadcast user disconnected event to all clients
-                import asyncio
-                asyncio.create_task(self.broadcast_user_list_update())
+                await self.broadcast_user_list_update()
+                logger.info(f"[WebSocket Auth] Broadcasted user_list_update after disconnect")
             
             logger.info(f"Authenticated user {auth_conn.username} disconnected")
         
@@ -547,10 +548,10 @@ def create_websocket_app() -> FastAPI:
                     
         except WebSocketDisconnect:
             logger.info(f"[WebSocket] Client disconnected: {websocket.client}")
-            websocket_manager.disconnect(websocket)
+            await websocket_manager.disconnect(websocket)
         except Exception as e:
             logger.error(f"WebSocket error: {e}")
-            websocket_manager.disconnect(websocket)
+            await websocket_manager.disconnect(websocket)
     
     async def handle_websocket_message(websocket: WebSocket, message: Dict[str, Any]):
         """Handle incoming WebSocket messages from clients."""
