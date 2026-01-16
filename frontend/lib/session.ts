@@ -33,8 +33,8 @@ export function getOrCreateSessionId(): string {
     return generateSessionId();
   }
   
-  // Check if user is logged in (JWT token in localStorage)
-  const token = localStorage.getItem('auth_token');
+  // Check if user is logged in (JWT token in sessionStorage)
+  const token = sessionStorage.getItem('auth_token');
   if (token) {
     try {
       // Decode JWT to get user_id (JWT format: header.payload.signature)
@@ -85,8 +85,10 @@ export function clearSession(): void {
   }
   localStorage.removeItem(SESSION_STORAGE_KEY);
   localStorage.removeItem(SESSION_CREATED_KEY);
-  // Also clear auth token if present
+  // Also clear auth token if present (check both storage locations)
   localStorage.removeItem('auth_token');
+  sessionStorage.removeItem('auth_token');
+  sessionStorage.removeItem('user_info');
   console.log('[Session] Session and auth cleared');
 }
 
