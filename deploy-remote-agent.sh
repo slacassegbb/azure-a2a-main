@@ -126,10 +126,13 @@ echo ""
 # Generate timestamp for versioning
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 
+# Convert agent name to lowercase for Docker image tag
+AGENT_NAME_LOWER=$(echo "$AGENT_NAME" | tr '[:upper:]' '[:lower:]')
+
 # Build the image for linux/amd64
 echo -e "${CYAN}🔨 Building Docker image for linux/amd64...${NC}"
-IMAGE_NAME="$ACR_NAME.azurecr.io/a2a-$AGENT_NAME:$TIMESTAMP"
-IMAGE_LATEST="$ACR_NAME.azurecr.io/a2a-$AGENT_NAME:latest"
+IMAGE_NAME="$ACR_NAME.azurecr.io/a2a-$AGENT_NAME_LOWER:$TIMESTAMP"
+IMAGE_LATEST="$ACR_NAME.azurecr.io/a2a-$AGENT_NAME_LOWER:latest"
 
 docker buildx build --platform linux/amd64 \
     -f "$AGENT_PATH/Dockerfile" \
