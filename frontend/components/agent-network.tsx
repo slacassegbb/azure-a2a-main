@@ -812,14 +812,14 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, agentMod
                   <CollapsibleTrigger asChild>
                     <Button 
                       variant="ghost" 
-                      className="flex items-center gap-2 mb-2 px-1 w-full justify-start hover:bg-transparent"
+                      className="flex items-center gap-2 mb-2 px-1 hover:bg-transparent"
                     >
                       <Users className="h-4 w-4 text-muted-foreground" />
                       <span className="text-sm font-medium text-muted-foreground">Connected Users</span>
                       {isConnectedUsersOpen ? (
-                        <ChevronDown className="h-4 w-4 text-muted-foreground ml-auto" />
+                        <ChevronDown className="h-4 w-4 text-muted-foreground" />
                       ) : (
-                        <ChevronRight className="h-4 w-4 text-muted-foreground ml-auto" />
+                        <ChevronRight className="h-4 w-4 text-muted-foreground" />
                       )}
                     </Button>
                   </CollapsibleTrigger>
