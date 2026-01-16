@@ -1165,9 +1165,34 @@ class FoundryHostAgent2:
                 - Always show which agents you used and summarize their work.  
                 - Be friendly, helpful, and professional."""
 
-    def list_remote_agents(self):
+    def list_remote_agents(self, context_id: Optional[str] = None):
+        """
+        List available remote agents, filtered by session if context_id is provided.
+        If context_id is provided, only returns agents that are enabled for the session.
+        """
         agents = []
+        
+        # Extract session_id from context_id (format: "user_X::conversation_id")
+        session_id = None
+        if context_id and "::" in context_id:
+            session_id = context_id.split("::")[0]
+        
+        # Get session-enabled agents if we have a session_id
+        session_agent_urls = set()
+        if session_id:
+            from service.agent_registry import get_session_registry
+            session_registry = get_session_registry()
+            session_agents = session_registry.get_session_agents(session_id)
+            session_agent_urls = {agent.get('url') for agent in session_agents if agent.get('url')}
+        
         for card in self.cards.values():
+            # Filter by session if session_id is provided
+            # card.url is the agent's endpoint URL
+            if session_id and hasattr(card, 'url') and card.url:
+                # Only include agents that are enabled for this session
+                if card.url not in session_agent_urls:
+                    continue
+            
             agent_info = {
                 'name': card.name,
                 'description': card.description
@@ -6230,7 +6255,7 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). Simply synt
                     })
                 
                 if function_name == "list_remote_agents":
-                    output = self.list_remote_agents()
+                    output = self.list_remote_agents(context_id=context_id)
                     self._add_status_message_to_conversation(f"✅ Tool {function_name} completed", context_id)
                     span.add_event("agents_listed", {
                         "available_agents_count": len(output),
