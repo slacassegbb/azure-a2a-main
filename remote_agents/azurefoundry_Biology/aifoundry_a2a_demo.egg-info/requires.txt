@@ -1,0 +1,9 @@
+a2a-sdk[http-server]>=0.2.6
+azure-ai-projects==1.0.0b12
+azure-identity>=1.23.0
+uvicorn>=0.34.2
+click>=8.0.0
+python-dotenv>=1.0.0
+starlette>=0.35.0
+httpx>=0.25.0
+gradio>=4.0.0

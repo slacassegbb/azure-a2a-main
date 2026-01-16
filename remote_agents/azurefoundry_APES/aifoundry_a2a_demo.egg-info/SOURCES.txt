@@ -1,0 +1,12 @@
+README.md
+__main__.py
+foundry_agent.py
+foundry_agent_executor.py
+pyproject.toml
+aifoundry_a2a_demo.egg-info/PKG-INFO
+aifoundry_a2a_demo.egg-info/SOURCES.txt
+aifoundry_a2a_demo.egg-info/dependency_links.txt
+aifoundry_a2a_demo.egg-info/requires.txt
+aifoundry_a2a_demo.egg-info/top_level.txt
+utils/__init__.py
+utils/self_registration.py
