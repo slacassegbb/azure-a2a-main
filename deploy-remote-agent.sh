@@ -104,8 +104,11 @@ echo -e "${CYAN}🔑 Azure AI Foundry Configuration${NC}"
 echo -e "${YELLOW}Enter the following values (press Enter to use .env file):${NC}"
 echo ""
 
-# Try to read from .env file as defaults
-if [ -f ".env" ]; then
+# Try to read from .env file as defaults (check agent directory first)
+if [ -f "$AGENT_PATH/.env" ]; then
+    DEFAULT_AI_ENDPOINT=$(grep "AZURE_AI_FOUNDRY_PROJECT_ENDPOINT" "$AGENT_PATH/.env" | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
+    DEFAULT_AI_MODEL=$(grep "AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME" "$AGENT_PATH/.env" | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
+elif [ -f ".env" ]; then
     DEFAULT_AI_ENDPOINT=$(grep "AZURE_AI_FOUNDRY_PROJECT_ENDPOINT" .env | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
     DEFAULT_AI_MODEL=$(grep "AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME" .env | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
 fi
@@ -228,7 +231,7 @@ else
         --memory 1.0Gi \
         --env-vars \
             "A2A_PORT=$PORT" \
-            "A2A_HOST=$BACKEND_URL" \
+            "A2A_HOST=0.0.0.0" \
             "AZURE_AI_FOUNDRY_PROJECT_ENDPOINT=$AZURE_AI_ENDPOINT" \
             "AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME=$AZURE_AI_MODEL_DEPLOYMENT" \
             "AZURE_CLIENT_ID=$MANAGED_IDENTITY_CLIENT_ID" \
