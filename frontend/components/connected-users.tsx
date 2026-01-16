@@ -59,9 +59,19 @@ export function ConnectedUsers() {
     // Refresh every 30 seconds as fallback (in case WebSocket fails)
     const interval = setInterval(fetchActiveUsers, 30000)
     
+    // Fetch active users when page becomes visible again (handles tab switching)
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        console.log("[ConnectedUsers] Page became visible, refreshing user list")
+        fetchActiveUsers()
+      }
+    }
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    
     return () => {
       clearInterval(interval)
       unsubscribe("user_list_update", handleUserListUpdate)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
     }
   }, [subscribe, unsubscribe, fetchActiveUsers, handleUserListUpdate])
 
