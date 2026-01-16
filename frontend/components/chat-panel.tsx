@@ -2526,7 +2526,7 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
           
           {/* Helper text below input */}
           <div className="text-center mt-2">
-            <p className="text-sm text-muted-foreground">
+            <p className="text-sm text-foreground">
               Use the Agent Catalog to add agents to your team
             </p>
           </div>
