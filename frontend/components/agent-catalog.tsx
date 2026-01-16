@@ -481,7 +481,7 @@ export function AgentCatalog() {
                               onClick={() => handleDisableAgent(agent)}
                               size="sm"
                               variant="outline"
-                              className="h-7 px-2 text-xs text-red-600 border-red-200 hover:bg-red-50"
+                              className="h-7 px-2 text-xs text-primary border-primary/20 hover:bg-primary/10"
                             >
                               <X className="h-3 w-3 mr-1" />
                               Disable

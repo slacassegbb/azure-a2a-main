@@ -2224,7 +2224,7 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
                     </div>
                     <button
                       onClick={() => setUploadedFiles(prev => prev.filter((_, i) => i !== index))}
-                      className="text-gray-500 hover:text-gray-700 flex-shrink-0 w-5 h-5 flex items-center justify-center rounded-full hover:bg-gray-200"
+                      className="text-gray-500 hover:text-primary flex-shrink-0 w-5 h-5 flex items-center justify-center rounded-full hover:bg-primary/10"
                       title="Remove file"
                     >
                       ×
@@ -2435,7 +2435,7 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
               <Button 
                 variant="ghost" 
                 size="icon"
-                className="h-9 w-9 rounded-full bg-muted hover:bg-muted/80"
+                className="h-9 w-9 rounded-full bg-muted hover:bg-primary/20"
                 disabled={isInferencing}
                 onClick={handlePaperclipClick}
               >
@@ -2448,7 +2448,7 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
               <Button 
                 variant="ghost" 
                 size="icon"
-                className={`h-9 w-9 rounded-full hover:bg-muted ${voiceRecording.isRecording ? 'bg-red-100 text-red-600 hover:bg-red-200' : ''}`}
+                className={`h-9 w-9 rounded-full ${voiceRecording.isRecording ? 'bg-red-100 text-red-600 hover:bg-red-200' : 'hover:bg-primary/20'}`}
                 disabled={isInferencing || voiceRecording.isProcessing}
                 onClick={handleMicClick}
                 title={voiceRecording.isRecording ? 
@@ -2461,12 +2461,12 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
               <Button 
                 variant="ghost" 
                 size="icon"
-                className={`h-9 w-9 rounded-full hover:bg-muted ${
+                className={`h-9 w-9 rounded-full ${
                   voiceLive.isConnected 
                     ? 'bg-green-100 text-green-600 hover:bg-green-200' 
                     : voiceLive.error 
                     ? 'bg-red-100 text-red-600' 
-                    : ''
+                    : 'hover:bg-primary/20'
                 }`}
                 disabled={isInferencing}
                 onClick={voiceLive.isConnected ? voiceLive.stopVoiceConversation : voiceLive.startVoiceConversation}
