@@ -2169,8 +2169,8 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
       
       {/* Layout for empty state - centered welcome message and input */}
       {!isLoadingMessages && messages.length === 0 && (
-        <div className="flex-1 flex flex-col items-center justify-center px-4 -mt-20">
-          <div className="w-full max-w-4xl space-y-12">
+        <div className="flex-1 flex flex-col items-center justify-center px-4">
+          <div className="w-full max-w-4xl space-y-4">
             <h1 className="text-4xl font-semibold text-center">What can I help with?</h1>
             {/* Input rendered in shared section below will appear here visually */}
           </div>
@@ -2178,7 +2178,7 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
       )}
       
       {/* Chat input area - positioned differently based on state */}
-      <div className={`${!isLoadingMessages && messages.length === 0 ? 'absolute bottom-1/3 left-0 right-0 flex items-center justify-center' : 'flex-shrink-0'}`}>
+      <div className={`${!isLoadingMessages && messages.length === 0 ? 'absolute top-1/2 left-0 right-0 flex items-center justify-center mt-4' : 'flex-shrink-0'}`}>
         <div className={`px-4 pb-4 pt-2 ${!isLoadingMessages && messages.length === 0 ? 'w-full max-w-4xl' : 'w-full'}`}>
           {/* File upload previews */}
           {uploadedFiles.length > 0 && (
