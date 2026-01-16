@@ -245,7 +245,7 @@ export function FileHistory({ className, onFileSelect }: FileHistoryProps) {
                   
                   return (
                     <div key={file.id}>
-                      <div className="flex items-start gap-2 p-2 rounded-md hover:bg-gray-50 transition-colors">
+                      <div className="flex items-start gap-2 p-2 rounded-md hover:bg-primary/10 transition-colors">
                         {/* Show thumbnail for images, icon for other files */}
                         {isImage && file.uri ? (
                           <div className="flex-shrink-0 w-10 h-10 rounded overflow-hidden border border-gray-200 bg-gray-100">
@@ -270,7 +270,7 @@ export function FileHistory({ className, onFileSelect }: FileHistoryProps) {
                                 href={file.uri}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="text-xs font-medium truncate hover:underline hover:text-blue-600 flex items-center gap-1 group"
+                                className="text-xs font-medium truncate hover:underline hover:text-primary flex items-center gap-1 group"
                                 title={`${file.originalName} - Click to open in new tab`}
                               >
                                 <span className="truncate">{file.originalName}</span>
