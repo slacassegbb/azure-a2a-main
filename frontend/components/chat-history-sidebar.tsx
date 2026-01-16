@@ -188,8 +188,15 @@ export function ChatHistorySidebar({ isCollapsed, onToggle }: Props) {
     <TooltipProvider delayDuration={0}>
       <div className={cn("flex h-full flex-col transition-all duration-300")}>
         <div className="flex h-16 items-center justify-between p-2">
-          <div className="flex items-center gap-2 min-w-0 flex-1">
-            <Bot className="h-8 w-8 text-primary" />
+          <div className="flex items-center gap-3 min-w-0 flex-1">
+            <Bot className="h-8 w-8 text-primary flex-shrink-0" />
+            {!isCollapsed && (
+              <img 
+                src="/a2a_logo.png" 
+                alt="A2A Logo" 
+                className="h-6 object-contain"
+              />
+            )}
           </div>
           <div className="flex items-center gap-2">
             {currentUser ? (
