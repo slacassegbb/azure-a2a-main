@@ -149,6 +149,10 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, agentMod
   const [isLoading, setIsLoading] = useState(false)
   const [isClearingMemory, setIsClearingMemory] = useState(false)
   
+  // Collapsible section states
+  const [isConnectedUsersOpen, setIsConnectedUsersOpen] = useState(true)
+  const [isRemoteAgentsOpen, setIsRemoteAgentsOpen] = useState(true)
+  
   // Workflow state - use prop if provided, otherwise local state
   const [isWorkflowDialogOpen, setIsWorkflowDialogOpen] = useState(false)
   const [localWorkflow, setLocalWorkflow] = useState("")
@@ -803,49 +807,74 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, agentMod
           <div className="flex flex-col gap-2 p-2">
             {/* Connected Users Section */}
             {!isCollapsed && (
-              <div className="mb-4">
-                <div className="flex items-center gap-2 mb-2 px-1">
-                  <Users className="h-4 w-4 text-muted-foreground" />
-                  <span className="text-sm font-medium text-muted-foreground">Connected Users</span>
+              <Collapsible open={isConnectedUsersOpen} onOpenChange={setIsConnectedUsersOpen}>
+                <div className="mb-4">
+                  <CollapsibleTrigger asChild>
+                    <Button 
+                      variant="ghost" 
+                      className="flex items-center gap-2 mb-2 px-1 w-full justify-start hover:bg-transparent"
+                    >
+                      <Users className="h-4 w-4 text-muted-foreground" />
+                      <span className="text-sm font-medium text-muted-foreground">Connected Users</span>
+                      {isConnectedUsersOpen ? (
+                        <ChevronDown className="h-4 w-4 text-muted-foreground ml-auto" />
+                      ) : (
+                        <ChevronRight className="h-4 w-4 text-muted-foreground ml-auto" />
+                      )}
+                    </Button>
+                  </CollapsibleTrigger>
+                  <CollapsibleContent>
+                    <ConnectedUsers />
+                  </CollapsibleContent>
                 </div>
-                <ConnectedUsers />
-              </div>
+              </Collapsible>
             )}
             
             {/* Agent Mode Toggle - Removed standalone card, now part of Host Agent */}
             
             {/* Remote Agents Section */}
             {!isCollapsed && (
-              <div className="mb-2">
-                <div className="flex items-center justify-between mb-2 px-1">
-                  <div className="flex items-center gap-2">
-                    <Bot className="h-4 w-4 text-muted-foreground" />
-                    <span className="text-sm font-medium text-muted-foreground">Remote Agents</span>
-                  </div>
-                  <Dialog>
-                    <DialogTrigger asChild>
-                      <Button variant="ghost" size="icon" className="h-6 w-6">
-                        <Network className="h-3.5 w-3.5" />
+              <Collapsible open={isRemoteAgentsOpen} onOpenChange={setIsRemoteAgentsOpen}>
+                <div className="mb-2">
+                  <div className="flex items-center justify-between mb-2 px-1">
+                    <CollapsibleTrigger asChild>
+                      <Button 
+                        variant="ghost" 
+                        className="flex items-center gap-2 p-0 hover:bg-transparent"
+                      >
+                        <Bot className="h-4 w-4 text-muted-foreground" />
+                        <span className="text-sm font-medium text-muted-foreground">Remote Agents</span>
+                        {isRemoteAgentsOpen ? (
+                          <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                        ) : (
+                          <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                        )}
                       </Button>
-                    </DialogTrigger>
-                    <DialogContent className="max-w-4xl max-h-[85vh]">
-                      <DialogHeader>
-                        <DialogTitle>Agent Network DAG</DialogTitle>
-                      </DialogHeader>
-                      <div className="h-[600px] w-full">
-                        <AgentNetworkDag 
-                          nodes={dagNodes} 
-                          links={dagLinks}
-                          activeNodeId={activeNode}
-                          key="agent-network-dag-stable"
-                        />
-                      </div>
-                    </DialogContent>
-                  </Dialog>
+                    </CollapsibleTrigger>
+                    <Dialog>
+                      <DialogTrigger asChild>
+                        <Button variant="ghost" size="icon" className="h-6 w-6">
+                          <Network className="h-3.5 w-3.5" />
+                        </Button>
+                      </DialogTrigger>
+                      <DialogContent className="max-w-4xl max-h-[85vh]">
+                        <DialogHeader>
+                          <DialogTitle>Agent Network DAG</DialogTitle>
+                        </DialogHeader>
+                        <div className="h-[600px] w-full">
+                          <AgentNetworkDag 
+                            nodes={dagNodes} 
+                            links={dagLinks}
+                            activeNodeId={activeNode}
+                            key="agent-network-dag-stable"
+                          />
+                        </div>
+                      </DialogContent>
+                    </Dialog>
+                  </div>
                 </div>
-              </div>
-            )}
-            
+                
+                <CollapsibleContent>
             {/* The list of agents is rendered with rich detail from the registry. */}
             {registeredAgents.map((agent, index) => {
               // Ensure agent has required properties
@@ -1197,6 +1226,9 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, agentMod
                 </Card>
               );
             })}
+                </CollapsibleContent>
+              </Collapsible>
+            )}
           </div>
         </div>
         

@@ -189,19 +189,7 @@ export function ChatHistorySidebar({ isCollapsed, onToggle }: Props) {
       <div className={cn("flex h-full flex-col transition-all duration-300")}>
         <div className="flex h-16 items-center justify-between p-2">
           <div className="flex items-center gap-2 min-w-0 flex-1">
-            {!isCollapsed && (
-              <div className="flex items-center gap-2">
-                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary">
-                  <Bot className="h-6 w-6 text-primary-foreground" />
-                </div>
-                <span className="text-lg font-semibold">A2A</span>
-              </div>
-            )}
-            {isCollapsed && (
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary">
-                <Bot className="h-6 w-6 text-primary-foreground" />
-              </div>
-            )}
+            <Bot className="h-8 w-8 text-primary" />
           </div>
           <div className="flex items-center gap-2">
             {currentUser ? (
