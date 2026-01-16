@@ -513,13 +513,18 @@ class FoundryHostManager(ApplicationManager):
         
         # Set session-specific agents before processing
         session_id = parse_session_from_context(context_id)
+        print(f"🟢 [MANAGER] Parsed session_id: {session_id}")
         if session_id:
             session_registry = get_session_registry()
             session_agents = session_registry.get_session_agents(session_id)
-            log_debug(f"📋 Setting {len(session_agents)} session agents for session {session_id[:12]}...")
+            print(f"� [MANAGER] Retrieved {len(session_agents)} agents from session registry for {session_id[:12]}")
+            for idx, agent in enumerate(session_agents):
+                print(f"🟢 [MANAGER]   Agent {idx+1}: {agent.get('name')} - {agent.get('url')}")
+            print(f"🟢 [MANAGER] Calling set_session_agents...")
             await self._host_agent.set_session_agents(session_agents)
+            print(f"🟢 [MANAGER] After set_session_agents, host has {len(self._host_agent.cards)} agents")
         else:
-            log_debug("⚠️ No session ID found in context, host agent will have no agents")
+            print("⚠️ [MANAGER] No session ID found in context, host agent will have no agents")
         
         # Pass the entire message with all parts (including files) to the host agent
         user_text = message.parts[0].root.text if message.parts and message.parts[0].root.kind == 'text' else ""

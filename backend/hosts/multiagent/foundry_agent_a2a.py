@@ -330,6 +330,8 @@ class FoundryHostAgent2:
         Args:
             session_agents: List of agent dicts with url, name, description, skills, etc.
         """
+        print(f"🔵 [SET_SESSION_AGENTS] Starting with {len(session_agents)} agents to register")
+        
         # Clear existing agents
         self.cards.clear()
         self.remote_agent_connections.clear()
@@ -338,14 +340,20 @@ class FoundryHostAgent2:
         # Register each session agent
         for agent_data in session_agents:
             agent_url = agent_data.get('url')
+            agent_name = agent_data.get('name', 'Unknown')
+            print(f"🔵 [SET_SESSION_AGENTS] Processing agent: {agent_name}")
+            print(f"🔵 [SET_SESSION_AGENTS] Agent URL: {agent_url}")
             if agent_url:
                 try:
+                    print(f"🔵 [SET_SESSION_AGENTS] Calling retrieve_card for {agent_name}...")
                     await self.retrieve_card(agent_url)
-                    log_debug(f"✅ Session agent registered: {agent_data.get('name', agent_url)}")
+                    print(f"✅ [SET_SESSION_AGENTS] Session agent registered: {agent_name}")
                 except Exception as e:
-                    log_debug(f"⚠️ Failed to register session agent {agent_url}: {e}")
+                    print(f"⚠️ [SET_SESSION_AGENTS] Failed to register session agent {agent_url}: {e}")
+                    import traceback
+                    print(f"⚠️ [SET_SESSION_AGENTS] Traceback: {traceback.format_exc()}")
         
-        log_debug(f"📋 Session now has {len(self.cards)} agents: {list(self.cards.keys())}")
+        print(f"📋 [SET_SESSION_AGENTS] Session now has {len(self.cards)} agents: {list(self.cards.keys())}")
 
     def _find_agent_registry_path(self) -> Path:
         """Resolve the agent registry path within the backend/data directory."""
