@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react"
 import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
-import { MessageSquarePlus, PanelLeftClose, PanelLeftOpen, Trash2, LogOut } from "lucide-react"
+import { MessageSquarePlus, PanelLeftClose, PanelLeftOpen, Trash2, LogOut, Bot } from "lucide-react"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { cn } from "@/lib/utils"
 import { listConversations, createConversation, deleteConversation, listMessages, notifyConversationCreated, type Conversation } from "@/lib/conversation-api"
@@ -189,6 +189,19 @@ export function ChatHistorySidebar({ isCollapsed, onToggle }: Props) {
       <div className={cn("flex h-full flex-col bg-background transition-all duration-300")}>
         <div className="flex h-16 items-center justify-between p-2">
           <div className="flex items-center gap-2 min-w-0 flex-1">
+            {!isCollapsed && (
+              <div className="flex items-center gap-2">
+                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary">
+                  <Bot className="h-6 w-6 text-primary-foreground" />
+                </div>
+                <span className="text-lg font-semibold">A2A</span>
+              </div>
+            )}
+            {isCollapsed && (
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary">
+                <Bot className="h-6 w-6 text-primary-foreground" />
+              </div>
+            )}
           </div>
           <div className="flex items-center gap-2">
             {currentUser ? (
