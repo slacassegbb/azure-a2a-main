@@ -48,6 +48,27 @@ export function ChatLayout() {
     }
   }, [workflow])
 
+  // Check if there are files in history on mount and auto-open if there are
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const sessionId = localStorage.getItem('session-id')
+      if (sessionId) {
+        const storageKey = `file-history-${sessionId}`
+        const savedFiles = localStorage.getItem(storageKey)
+        if (savedFiles) {
+          try {
+            const parsedFiles = JSON.parse(savedFiles)
+            if (parsedFiles.length > 0) {
+              setFileHistoryOpen(true)
+            }
+          } catch (e) {
+            // Ignore parse errors
+          }
+        }
+      }
+    }
+  }, [])
+
   // This state represents the Host Agent's knowledge of registered agents.
   // It starts empty and gets populated by the WebSocket agent registry sync.
   const [registeredAgents, setRegisteredAgents] = useState<any[]>([])
@@ -203,6 +224,9 @@ export function ChatLayout() {
       if (data?.fileInfo && (window as any).addFileToHistory) {
         (window as any).addFileToHistory(data.fileInfo)
         if (DEBUG) console.log("[ChatLayout] Sent file to history:", data.fileInfo.filename)
+        
+        // Auto-expand file history when a file is added
+        setFileHistoryOpen(true)
       }
     }
 

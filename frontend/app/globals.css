@@ -23,8 +23,8 @@
     --secondary-foreground: 210 20% 22%;
     --muted: 210 20% 96%;
     --muted-foreground: 210 10% 45%;
-    --accent: 5 84% 48%; /* Citibank Red */
-    --accent-foreground: 0 0% 98%;
+    --accent: 208 100% 95%; /* Light Blue Accent */
+    --accent-foreground: 208 100% 30%;
     --destructive: 5 84% 48%;
     --destructive-foreground: 0 0% 98%;
     --border: 210 20% 88%;
@@ -53,8 +53,8 @@
     --secondary-foreground: 0 0% 98%;
     --muted: 210 20% 15%;
     --muted-foreground: 210 10% 65%;
-    --accent: 5 80% 65%; /* Lighter Citibank Red */
-    --accent-foreground: 210 20% 10%;
+    --accent: 208 90% 20%; /* Dark Blue Accent */
+    --accent-foreground: 208 90% 65%;
     --destructive: 5 80% 65%;
     --destructive-foreground: 210 20% 10%;
     --border: 210 20% 20%;
