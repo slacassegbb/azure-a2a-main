@@ -16,7 +16,7 @@ name: Deploy to Azure Container Apps
 
 on:
   push:
-    branches: [ main, feature/multi-tenancy ]
+    branches: [ main, feature/multi-tenancy, benjamin-highschool ]
     paths:
       - 'frontend/**'
       - 'backend/**'
