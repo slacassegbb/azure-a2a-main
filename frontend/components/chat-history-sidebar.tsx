@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react"
 import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
-import { MessageSquarePlus, PanelLeftClose, PanelLeftOpen, Trash2, LogOut, Bot } from "lucide-react"
+import { MessageSquarePlus, PanelLeftClose, PanelLeftOpen, Trash2, LogOut } from "lucide-react"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { cn } from "@/lib/utils"
 import { listConversations, createConversation, deleteConversation, listMessages, notifyConversationCreated, type Conversation } from "@/lib/conversation-api"
@@ -189,12 +189,11 @@ export function ChatHistorySidebar({ isCollapsed, onToggle }: Props) {
       <div className={cn("flex h-full flex-col transition-all duration-300")}>
         <div className="flex h-16 items-center justify-between p-2">
           <div className="flex items-center gap-3 min-w-0 flex-1">
-            <Bot className="h-8 w-8 text-primary flex-shrink-0" />
             {!isCollapsed && (
               <img 
                 src="/a2a_logo.png" 
                 alt="A2A Logo" 
-                className="h-6 object-contain"
+                className="h-8 object-contain"
               />
             )}
           </div>
