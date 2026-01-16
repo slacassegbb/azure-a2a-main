@@ -1902,11 +1902,11 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
                       <Bot size={18} className="text-blue-600" />
                     </div>
                   )}
-                  <div className={`flex flex-col ${message.role === "user" ? "items-end" : "items-start"}`}>
+                  <div className={`flex flex-col ${message.role === "user" ? "items-start" : "items-start"}`}>
                     {message.role === "user" && message.username && (
                       <p className="text-xs text-muted-foreground mb-1">{message.username}</p>
                     )}
-                    <div className={`flex gap-3 ${message.role === "user" ? "flex-row-reverse" : ""}`}>
+                    <div className="flex gap-3">
                       <div
                         className={`rounded-lg p-3 max-w-md ${message.role === "user" ? "bg-slate-700 text-white" : "bg-muted"
                           }`}
