@@ -21,7 +21,9 @@ function generateSessionId(): string {
 
 /**
  * Get or create a session ID for the current browser session.
- * The session ID persists in localStorage across page refreshes.
+ * 
+ * For logged-in users: Uses user_id as session (data syncs across devices)
+ * For anonymous users: Uses browser-based session ID (isolated per browser)
  * 
  * @returns The session ID (tenant identifier)
  */
@@ -31,13 +33,31 @@ export function getOrCreateSessionId(): string {
     return generateSessionId();
   }
   
+  // Check if user is logged in (JWT token in localStorage)
+  const token = localStorage.getItem('auth_token');
+  if (token) {
+    try {
+      // Decode JWT to get user_id (JWT format: header.payload.signature)
+      const payload = JSON.parse(atob(token.split('.')[1]));
+      if (payload.user_id) {
+        // Use user_id as session for logged-in users
+        const userSessionId = `user_${payload.user_id}`;
+        console.log('[Session] Using user-based session:', userSessionId);
+        return userSessionId;
+      }
+    } catch (error) {
+      console.warn('[Session] Failed to decode JWT, falling back to anonymous session:', error);
+    }
+  }
+  
+  // Fall back to anonymous browser-based session
   let sessionId = localStorage.getItem(SESSION_STORAGE_KEY);
   
   if (!sessionId) {
     sessionId = generateSessionId();
     localStorage.setItem(SESSION_STORAGE_KEY, sessionId);
     localStorage.setItem(SESSION_CREATED_KEY, new Date().toISOString());
-    console.log('[Session] Created new session:', sessionId);
+    console.log('[Session] Created new anonymous session:', sessionId);
   }
   
   return sessionId;
@@ -57,6 +77,7 @@ export function getCurrentSessionId(): string | null {
 
 /**
  * Clear the current session (useful for logout or reset)
+ * Call this when user logs out to ensure they get a fresh anonymous session
  */
 export function clearSession(): void {
   if (typeof window === 'undefined') {
@@ -64,7 +85,9 @@ export function clearSession(): void {
   }
   localStorage.removeItem(SESSION_STORAGE_KEY);
   localStorage.removeItem(SESSION_CREATED_KEY);
-  console.log('[Session] Session cleared');
+  // Also clear auth token if present
+  localStorage.removeItem('auth_token');
+  console.log('[Session] Session and auth cleared');
 }
 
 /**
