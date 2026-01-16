@@ -199,26 +199,33 @@ class WebSocketManager:
         # Handle authentication if token provided
         user_data = None
         if token and auth_service:
+            logger.info(f"[WebSocket Auth] Token received, attempting verification...")
             user_data = auth_service.verify_token(token)
             if user_data:
+                logger.info(f"[WebSocket Auth] Token verified successfully for user_id: {user_data.get('user_id')}")
                 auth_conn = AuthenticatedConnection(websocket, user_data)
                 self.authenticated_connections[websocket] = auth_conn
                 
                 # Add user to active users list in auth service
                 if auth_service:
                     auth_service.add_active_user(user_data)
-                    logger.info(f"Added user to active list: {auth_conn.username}")
+                    logger.info(f"[WebSocket Auth] Added user to active list: {auth_conn.username}")
                     
                     # Broadcast user connected event to all clients
                     await self.broadcast_user_list_update()
+                    logger.info(f"[WebSocket Auth] Broadcasted user_list_update event")
                 else:
-                    logger.warning("Auth service not available - cannot track active user")
-                logger.info(f"Authenticated WebSocket connection for user: {auth_conn.username} ({auth_conn.email})")
+                    logger.warning("[WebSocket Auth] Auth service not available - cannot track active user")
+                logger.info(f"[WebSocket Auth] Authenticated connection established for user: {auth_conn.username} ({auth_conn.email})")
             else:
-                logger.warning("Invalid token provided for WebSocket connection")
+                logger.warning(f"[WebSocket Auth] Invalid or expired token provided")
+        elif token and not auth_service:
+            logger.warning(f"[WebSocket Auth] Token provided but auth_service is None!")
+        elif not token:
+            logger.info("[WebSocket Auth] No token provided - anonymous connection")
         
         if not user_data:
-            logger.info("Anonymous WebSocket connection established")
+            logger.info("[WebSocket Auth] Established anonymous WebSocket connection")
         
         # Send recent history to new client (excluding message-related events)
         # Message events are loaded via conversation API, replaying them causes duplicates

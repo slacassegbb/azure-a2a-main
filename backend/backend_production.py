@@ -270,9 +270,14 @@ class AuthService:
     def verify_token(self, token: str) -> Optional[Dict[str, Any]]:
         """Verify and decode a JWT token - always reads from JSON file."""
         try:
+            print(f"[AuthService] Verifying token...")
             payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
             email: str = payload.get("sub")
+            user_id: str = payload.get("user_id")
+            print(f"[AuthService] Token decoded - email: {email}, user_id: {user_id}")
+            
             if email is None:
+                print(f"[AuthService] Token verification failed: no email in payload")
                 return None
                 
             # Always reload users from file to get latest data
@@ -281,8 +286,10 @@ class AuthService:
             # Check if user still exists
             user = self.users.get(email)
             if user is None:
+                print(f"[AuthService] Token verification failed: user {email} not found in users database")
                 return None
-                
+            
+            print(f"[AuthService] Token verified successfully for user: {email}")
             return {
                 "user_id": payload.get("user_id"),
                 "email": email,
