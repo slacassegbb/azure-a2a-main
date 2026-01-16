@@ -23,11 +23,15 @@ export interface Message {
 }
 
 /**
- * List all conversations
+ * List all conversations for the current session
  */
 export async function listConversations(): Promise<Conversation[]> {
   try {
-    console.log('[ConversationAPI] Calling listConversations endpoint...')
+    // Import session management
+    const { getOrCreateSessionId } = await import('./session')
+    const sessionId = getOrCreateSessionId()
+    
+    console.log('[ConversationAPI] Calling listConversations endpoint for session:', sessionId)
     const response = await fetch(`${API_BASE_URL}/conversation/list`, {
       method: 'POST',
       headers: {
@@ -36,6 +40,9 @@ export async function listConversations(): Promise<Conversation[]> {
       body: JSON.stringify({
         jsonrpc: '2.0',
         method: 'conversation/list',
+        params: {
+          sessionId: sessionId
+        },
         id: `req_${Date.now()}`
       })
     })

@@ -26,6 +26,7 @@ if str(backend_dir) not in sys.path:
 from log_config import log_debug
 
 from service.types import (
+    Conversation,
     CreateConversationResponse,
     GetEventResponse,
     ListAgentResponse,
@@ -375,8 +376,41 @@ class ConversationServer:
             result=self.manager.get_pending_messages()
         )
 
-    def _list_conversation(self):
-        return ListConversationResponse(result=self.manager.conversations)
+    async def _list_conversation(self, request: Request):
+        """List conversations, optionally filtered by session ID.
+        
+        Request body can include:
+        - sessionId: Filter conversations for this session (tenant isolation)
+        """
+        try:
+            message_data = await request.json()
+            session_id = message_data.get('params', {}).get('sessionId') if isinstance(message_data.get('params'), dict) else None
+            
+            all_conversations = self.manager.conversations
+            
+            # If sessionId is provided, filter conversations for that session
+            if session_id:
+                filtered_conversations = []
+                for conv in all_conversations:
+                    # contextId format: sessionId::conversationId
+                    if conv.conversation_id.startswith(f"{session_id}::"):
+                        # Create a copy with just the conversationId part (remove session prefix)
+                        conv_copy = Conversation(
+                            conversation_id=conv.conversation_id.split('::', 1)[1] if '::' in conv.conversation_id else conv.conversation_id,
+                            name=conv.name,
+                            is_active=conv.is_active,
+                            task_ids=conv.task_ids,
+                            messages=conv.messages
+                        )
+                        filtered_conversations.append(conv_copy)
+                
+                return ListConversationResponse(result=filtered_conversations)
+            
+            # No session filter - return all conversations
+            return ListConversationResponse(result=all_conversations)
+        except Exception as e:
+            log_debug(f"Error in _list_conversation: {e}")
+            return ListConversationResponse(result=self.manager.conversations)
 
     def _get_events(self):
         return GetEventResponse(result=self.manager.events)
