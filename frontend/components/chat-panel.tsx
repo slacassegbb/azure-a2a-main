@@ -1026,9 +1026,12 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
             role: data.role,
             agentName: agentName
           })
+          
+          // Emit final_response for internal processing - this is converted from message event
           emit("final_response", {
             inferenceId: data.conversationId || data.messageId,
             conversationId: data.conversationId || data.contextId,
+            messageId: data.messageId, // Pass through the backend's unique messageId
             message: {
               role: data.role === "user" ? "user" : "assistant",
               content: textContent,
@@ -1306,6 +1309,10 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
       // Use messageId from backend if available, otherwise generate unique ID based on timestamp
       // Don't use content in the key since same content can be sent multiple times
       const responseId = data.messageId || `response_${data.inferenceId}_${Date.now()}`
+      
+      console.log("[ChatPanel] Response ID:", responseId)
+      console.log("[ChatPanel] Already processed?", processedMessageIds.has(responseId))
+      console.log("[ChatPanel] Current processed IDs:", Array.from(processedMessageIds))
       
       // Check if we've already processed this exact message
       if (processedMessageIds.has(responseId)) {
