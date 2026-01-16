@@ -1,12 +1,12 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { AgentNetwork } from "@/components/agent-network"
 import { ChatPanel } from "@/components/chat-panel"
 import { FileHistory } from "@/components/file-history"
 import { useEventHub } from "@/hooks/use-event-hub"
 import { ChatHistorySidebar } from "./chat-history-sidebar"
-import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels"
+import { Panel, PanelGroup, PanelResizeHandle, ImperativePanelHandle } from "react-resizable-panels"
 import { getOrCreateSessionId } from "@/lib/session"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Button } from "@/components/ui/button"
@@ -29,6 +29,11 @@ export function ChatLayout() {
   const [agentMode, setAgentMode] = useState(false)  // Always starts OFF
   const [enableInterAgentMemory, setEnableInterAgentMemory] = useState(true)
   const [activeNode, setActiveNode] = useState<string | null>(null)
+  
+  // Panel refs for programmatic collapse/expand
+  const leftPanelRef = useRef<ImperativePanelHandle>(null)
+  const rightPanelRef = useRef<ImperativePanelHandle>(null)
+  
   const [workflow, setWorkflow] = useState(() => {
     // Only persist workflow text (not agent mode toggle)
     if (typeof window !== 'undefined') {
@@ -73,6 +78,27 @@ export function ChatLayout() {
   // It starts empty and gets populated by the WebSocket agent registry sync.
   const [registeredAgents, setRegisteredAgents] = useState<any[]>([])
   const [connectedUsers, setConnectedUsers] = useState<any[]>([])
+  
+  // Toggle handlers for sidebar collapse
+  const handleLeftSidebarToggle = () => {
+    if (leftPanelRef.current) {
+      if (isLeftSidebarCollapsed) {
+        leftPanelRef.current.expand()
+      } else {
+        leftPanelRef.current.collapse()
+      }
+    }
+  }
+  
+  const handleRightSidebarToggle = () => {
+    if (rightPanelRef.current) {
+      if (isRightSidebarCollapsed) {
+        rightPanelRef.current.expand()
+      } else {
+        rightPanelRef.current.collapse()
+      }
+    }
+  }
   const [dagNodes, setDagNodes] = useState(() => [
     ...initialDagNodes,
   ])
@@ -267,11 +293,20 @@ export function ChatLayout() {
     <div className="h-full w-full bg-background">
       <PanelGroup direction="horizontal">
         {/* Left Sidebar */}
-        <Panel defaultSize={20} minSize={15} maxSize={30}>
+        <Panel 
+          ref={leftPanelRef}
+          defaultSize={20} 
+          minSize={2}
+          maxSize={30}
+          collapsible={true}
+          collapsedSize={2}
+          onCollapse={() => setLeftSidebarCollapsed(true)}
+          onExpand={() => setLeftSidebarCollapsed(false)}
+        >
           <div className="flex flex-col h-full bg-muted/20">
             <ChatHistorySidebar
               isCollapsed={isLeftSidebarCollapsed}
-              onToggle={() => setLeftSidebarCollapsed(!isLeftSidebarCollapsed)}
+              onToggle={handleLeftSidebarToggle}
             />
             {!isLeftSidebarCollapsed && (
               <div className="mt-2">
@@ -325,12 +360,21 @@ export function ChatLayout() {
         <PanelResizeHandle className="w-px bg-border/30 hover:bg-accent/50 transition-colors" />
         
         {/* Right Sidebar - Agent Network */}
-        <Panel defaultSize={20} minSize={15} maxSize={35}>
+        <Panel 
+          ref={rightPanelRef}
+          defaultSize={20} 
+          minSize={2}
+          maxSize={35}
+          collapsible={true}
+          collapsedSize={2}
+          onCollapse={() => setRightSidebarCollapsed(true)}
+          onExpand={() => setRightSidebarCollapsed(false)}
+        >
           <div className="h-full bg-muted/20">
           <AgentNetwork
             registeredAgents={registeredAgents}
             isCollapsed={isRightSidebarCollapsed}
-            onToggle={() => setRightSidebarCollapsed(!isRightSidebarCollapsed)}
+            onToggle={handleRightSidebarToggle}
             agentMode={agentMode}
             onAgentModeChange={setAgentMode}
             enableInterAgentMemory={enableInterAgentMemory}
