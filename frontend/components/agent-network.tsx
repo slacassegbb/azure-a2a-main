@@ -580,15 +580,29 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, agentMod
   return (
     <TooltipProvider delayDuration={0}>
       <div className={cn("flex h-full flex-col transition-all duration-300")}>
-        <div className="flex h-16 items-center justify-between p-2">
-          {!isCollapsed && <span className="font-semibold text-lg ml-2">Network</span>}
-          <Button variant="ghost" size="icon" className="h-9 w-9" onClick={onToggle}>
-            {isCollapsed ? <PanelRightOpen size={20} /> : <PanelRightClose size={20} />}
-          </Button>
-        </div>
+        {isCollapsed ? (
+          // Collapsed state - minimal vertical layout
+          <div className="flex flex-col items-center justify-start h-full py-2">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button variant="ghost" size="icon" className="h-9 w-9" onClick={onToggle}>
+                  <PanelRightOpen size={20} />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="left">Expand Sidebar</TooltipContent>
+            </Tooltip>
+          </div>
+        ) : (
+          // Expanded state - full layout
+          <>
+            <div className="flex h-16 items-center justify-between p-2">
+              <span className="font-semibold text-lg ml-2">Network</span>
+              <Button variant="ghost" size="icon" className="h-9 w-9" onClick={onToggle}>
+                <PanelRightClose size={20} />
+              </Button>
+            </div>
 
-        {!isCollapsed && (
-          <div className="p-2">
+            <div className="p-2">
             <Card>
               <CardHeader className="p-2 pt-0 md:p-4">
                 <div className="flex items-center justify-between">
@@ -801,13 +815,11 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, agentMod
               </CardContent>
             </Card>
           </div>
-        )}
 
         <div className="flex-1 overflow-y-auto">
           <div className="flex flex-col gap-2 p-2">
             {/* Connected Users Section */}
-            {!isCollapsed && (
-              <Collapsible open={isConnectedUsersOpen} onOpenChange={setIsConnectedUsersOpen}>
+            <Collapsible open={isConnectedUsersOpen} onOpenChange={setIsConnectedUsersOpen}>
                 <div className="mb-4">
                   <CollapsibleTrigger asChild>
                     <Button 
@@ -828,13 +840,11 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, agentMod
                   </CollapsibleContent>
                 </div>
               </Collapsible>
-            )}
             
             {/* Agent Mode Toggle - Removed standalone card, now part of Host Agent */}
             
             {/* Remote Agents Section */}
-            {!isCollapsed && (
-              <Collapsible open={isRemoteAgentsOpen} onOpenChange={setIsRemoteAgentsOpen}>
+            <Collapsible open={isRemoteAgentsOpen} onOpenChange={setIsRemoteAgentsOpen}>
                 <div className="mb-2">
                   <div className="flex items-center justify-between mb-2 px-1">
                     <CollapsibleTrigger asChild>
@@ -1228,15 +1238,14 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, agentMod
             })}
                 </CollapsibleContent>
               </Collapsible>
-            )}
           </div>
         </div>
         
         {/* Agent Registration Buttons - Always at bottom */}
-        {!isCollapsed && (
-          <div className="p-2 border-t">
-            <SimulateAgentRegistration />
-          </div>
+        <div className="p-2">
+          <SimulateAgentRegistration />
+        </div>
+          </>
         )}
       </div>
     </TooltipProvider>
