@@ -187,119 +187,126 @@ export function ChatHistorySidebar({ isCollapsed, onToggle }: Props) {
   return (
     <TooltipProvider delayDuration={0}>
       <div className={cn("flex h-full flex-col transition-all duration-300")}>
-        <div className="flex h-16 items-center justify-between p-2">
-          <div className="flex items-center gap-3 min-w-0 flex-1">
-            {!isCollapsed && (
-              <img 
-                src="/a2a_logo.png" 
-                alt="A2A Logo" 
-                className="h-8 object-contain"
-              />
-            )}
+        {isCollapsed ? (
+          // Collapsed state - minimal vertical layout
+          <div className="flex flex-col items-center justify-start h-full py-2">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button variant="ghost" size="icon" className="h-9 w-9" onClick={onToggle}>
+                  <PanelLeftOpen size={20} />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="right">Expand Sidebar</TooltipContent>
+            </Tooltip>
           </div>
-          <div className="flex items-center gap-2">
-            {currentUser ? (
-              <>
-                {!isCollapsed && (
-                  <span className="text-sm font-medium text-foreground truncate max-w-[100px]">
-                    {currentUser.name}
-                  </span>
-                )}
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button variant="ghost" size="icon" className="h-9 w-9" onClick={handleLogout}>
-                      <LogOut size={20} />
-                      <span className="sr-only">Logout</span>
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom">Logout {currentUser.name}</TooltipContent>
-                </Tooltip>
-              </>
-            ) : (
-              <LoginDialog 
-                onLogin={(email, password) => {
-                  // Handle login logic here when implemented
-                  console.log("Login successful for:", email)
-                }} 
-              />
-            )}
-            <Button variant="ghost" size="icon" className="h-9 w-9" onClick={onToggle}>
-              {isCollapsed ? <PanelLeftOpen size={20} /> : <PanelLeftClose size={20} />}
-            </Button>
-          </div>
-        </div>
-        
-        {error && !isCollapsed && (
-          <div className="p-2 text-sm text-red-500">
-            {error}
-          </div>
-        )}
-        
-        {/* New Chat Button - Always at top */}
-        {!isCollapsed && (
-          <div className="p-2 pt-0">
-            <Button 
-              className="w-full" 
-              variant="outline"
-              onClick={handleNewChat}
-            >
-              <MessageSquarePlus size={16} className="mr-2" />
-              New Chat
-            </Button>
-          </div>
-        )}
-        
-        {/* Chat History Label */}
-        {!isCollapsed && (
-          <div className="px-2 pb-2">
-            <span className="text-sm font-medium text-muted-foreground">Chat History</span>
-          </div>
-        )}
-        
-        <div className="flex-1 overflow-y-auto">
-          {isLoading && !isCollapsed && (
-            <div className="p-2 text-sm text-muted-foreground">
-              Loading conversations...
-            </div>
-          )}
-          
-          <ul className="flex flex-col gap-1 p-2">
-            {conversations.map((convo, index) => {
-              // Provide fallback for empty names
-              const displayName = convo.name?.trim() || `Conversation ${index + 1}`
-              const conversationId = convo.conversation_id
-              
-              return (
-                <li key={conversationId}>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <div className="group relative">
-                        <Button
-                          variant={currentConversationId === conversationId ? "secondary" : "ghost"}
-                          className="h-9 w-full justify-start gap-2 pr-8"
-                          onClick={() => handleConversationClick(conversationId)}
-                        >
-                          <span className={cn("truncate", isCollapsed && "sr-only")}>{displayName}</span>
+        ) : (
+          // Expanded state - full layout
+          <>
+            <div className="flex h-16 items-center justify-between p-2">
+              <div className="flex items-center gap-3 min-w-0 flex-1">
+                <img 
+                  src="/a2a_logo.png" 
+                  alt="A2A Logo" 
+                  className="h-8 object-contain"
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                {currentUser ? (
+                  <>
+                    <span className="text-sm font-medium text-foreground truncate max-w-[100px]">
+                      {currentUser.name}
+                    </span>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button variant="ghost" size="icon" className="h-9 w-9" onClick={handleLogout}>
+                          <LogOut size={20} />
+                          <span className="sr-only">Logout</span>
                         </Button>
-                        {!isCollapsed && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="absolute right-1 top-1/2 -translate-y-1/2 h-6 w-6 opacity-0 group-hover:opacity-100 hover:bg-primary/10 hover:text-primary"
-                            onClick={(e) => handleDeleteConversation(conversationId, e)}
-                          >
-                            <Trash2 size={14} />
-                          </Button>
-                        )}
-                      </div>
-                    </TooltipTrigger>
-                    {isCollapsed && <TooltipContent side="right">{displayName}</TooltipContent>}
-                  </Tooltip>
-                </li>
-              )
-            })}
-          </ul>
-        </div>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom">Logout {currentUser.name}</TooltipContent>
+                    </Tooltip>
+                  </>
+                ) : (
+                  <LoginDialog 
+                    onLogin={(email, password) => {
+                      // Handle login logic here when implemented
+                      console.log("Login successful for:", email)
+                    }} 
+                  />
+                )}
+                <Button variant="ghost" size="icon" className="h-9 w-9" onClick={onToggle}>
+                  <PanelLeftClose size={20} />
+                </Button>
+              </div>
+            </div>
+            
+            {error && (
+              <div className="p-2 text-sm text-red-500">
+                {error}
+              </div>
+            )}
+            
+            {/* New Chat Button - Always at top */}
+            <div className="p-2 pt-0">
+              <Button 
+                className="w-full" 
+                variant="outline"
+                onClick={handleNewChat}
+              >
+                <MessageSquarePlus size={16} className="mr-2" />
+                New Chat
+              </Button>
+            </div>
+            
+            {/* Chat History Label */}
+            <div className="px-2 pb-2">
+              <span className="text-sm font-medium text-muted-foreground">Chat History</span>
+            </div>
+            
+            <div className="flex-1 overflow-y-auto">
+              {isLoading && (
+                <div className="p-2 text-sm text-muted-foreground">
+                  Loading conversations...
+                </div>
+              )}
+              
+              <ul className="flex flex-col gap-1 p-2">
+                {conversations.map((convo, index) => {
+                  // Provide fallback for empty names
+                  const displayName = convo.name?.trim() || `Conversation ${index + 1}`
+                  const conversationId = convo.conversation_id
+                  
+                  return (
+                    <li key={conversationId}>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <div className="group relative">
+                            <Button
+                              variant={currentConversationId === conversationId ? "secondary" : "ghost"}
+                              className="h-9 w-full justify-start gap-2 pr-8"
+                              onClick={() => handleConversationClick(conversationId)}
+                            >
+                              <span className="truncate">{displayName}</span>
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="absolute right-1 top-1/2 -translate-y-1/2 h-6 w-6 opacity-0 group-hover:opacity-100 hover:bg-primary/10 hover:text-primary"
+                              onClick={(e) => handleDeleteConversation(conversationId, e)}
+                            >
+                              <Trash2 size={14} />
+                            </Button>
+                          </div>
+                        </TooltipTrigger>
+                        <TooltipContent side="right">{displayName}</TooltipContent>
+                      </Tooltip>
+                    </li>
+                  )
+                })}
+              </ul>
+            </div>
+          </>
+        )}
       </div>
     </TooltipProvider>
   )
