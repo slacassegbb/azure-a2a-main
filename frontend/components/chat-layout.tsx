@@ -8,6 +8,9 @@ import { useEventHub } from "@/hooks/use-event-hub"
 import { ChatHistorySidebar } from "./chat-history-sidebar"
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels"
 import { getOrCreateSessionId } from "@/lib/session"
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
+import { Button } from "@/components/ui/button"
+import { ChevronDown, ChevronRight, FileText } from "lucide-react"
 
 const initialDagNodes = [
   { id: "User", group: "user" },
@@ -22,8 +25,10 @@ export function ChatLayout() {
   const DEBUG = process.env.NEXT_PUBLIC_DEBUG_LOGS === 'true'
   const [isLeftSidebarCollapsed, setLeftSidebarCollapsed] = useState(false)
   const [isRightSidebarCollapsed, setRightSidebarCollapsed] = useState(false)
+  const [isFileHistoryOpen, setFileHistoryOpen] = useState(false) // Closed by default
   const [agentMode, setAgentMode] = useState(false)  // Always starts OFF
   const [enableInterAgentMemory, setEnableInterAgentMemory] = useState(true)
+  const [activeNode, setActiveNode] = useState<string | null>(null)
   const [workflow, setWorkflow] = useState(() => {
     // Only persist workflow text (not agent mode toggle)
     if (typeof window !== 'undefined') {
@@ -245,8 +250,30 @@ export function ChatLayout() {
               onToggle={() => setLeftSidebarCollapsed(!isLeftSidebarCollapsed)}
             />
             {!isLeftSidebarCollapsed && (
-              <div className="p-2 space-y-2">
-                <FileHistory />
+              <div className="border-t">
+                <Collapsible open={isFileHistoryOpen} onOpenChange={setFileHistoryOpen}>
+                  <CollapsibleTrigger asChild>
+                    <Button 
+                      variant="ghost" 
+                      className="w-full justify-between px-4 py-3 h-auto font-medium text-sm"
+                    >
+                      <div className="flex items-center gap-2">
+                        <FileText className="h-4 w-4" />
+                        <span>File History</span>
+                      </div>
+                      {isFileHistoryOpen ? (
+                        <ChevronDown className="h-4 w-4" />
+                      ) : (
+                        <ChevronRight className="h-4 w-4" />
+                      )}
+                    </Button>
+                  </CollapsibleTrigger>
+                  <CollapsibleContent>
+                    <div className="p-2">
+                      <FileHistory />
+                    </div>
+                  </CollapsibleContent>
+                </Collapsible>
               </div>
             )}
           </div>
@@ -265,6 +292,8 @@ export function ChatLayout() {
               workflow={workflow}
               registeredAgents={registeredAgents}
               connectedUsers={connectedUsers}
+              activeNode={activeNode}
+              setActiveNode={setActiveNode}
             />
           </div>
         </Panel>
@@ -283,6 +312,9 @@ export function ChatLayout() {
             onInterAgentMemoryChange={setEnableInterAgentMemory}
             workflow={workflow}
             onWorkflowChange={setWorkflow}
+            dagNodes={dagNodes}
+            dagLinks={dagLinks}
+            activeNode={activeNode}
           />
         </Panel>
       </PanelGroup>

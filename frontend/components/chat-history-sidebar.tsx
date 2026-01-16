@@ -229,6 +229,20 @@ export function ChatHistorySidebar({ isCollapsed, onToggle }: Props) {
           </div>
         )}
         
+        {/* New Chat Button - Always at top */}
+        {!isCollapsed && (
+          <div className="p-2 pt-0">
+            <Button 
+              className="w-full" 
+              variant="outline"
+              onClick={handleNewChat}
+            >
+              <MessageSquarePlus size={16} className="mr-2" />
+              New Chat
+            </Button>
+          </div>
+        )}
+        
         <div className="flex-1 overflow-y-auto">
           {isLoading && !isCollapsed && (
             <div className="p-2 text-sm text-muted-foreground">
@@ -272,16 +286,6 @@ export function ChatHistorySidebar({ isCollapsed, onToggle }: Props) {
               )
             })}
           </ul>
-        </div>
-        <div className="p-2">
-          <Button 
-            className="w-full bg-transparent" 
-            variant="outline"
-            onClick={handleNewChat}
-          >
-            <MessageSquarePlus size={16} className={cn(!isCollapsed && "mr-2")} />
-            {!isCollapsed && "New Chat"}
-          </Button>
         </div>
       </div>
     </TooltipProvider>

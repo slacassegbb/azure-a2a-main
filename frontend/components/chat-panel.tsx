@@ -6,10 +6,9 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
-import { Paperclip, Mic, MicOff, Send, Bot, User, Network, Paintbrush, Copy, ThumbsUp, ThumbsDown, Loader2, Phone, PhoneOff } from "lucide-react"
+import { Paperclip, Mic, MicOff, Send, Bot, User, Paintbrush, Copy, ThumbsUp, ThumbsDown, Loader2, Phone, PhoneOff } from "lucide-react"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
-import { AgentNetworkDag } from "./agent-network-dag"
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { useEventHub } from "@/hooks/use-event-hub"
 import { useVoiceRecording } from "@/hooks/use-voice-recording"
 import { useVoiceLive } from "@/hooks/use-voice-live"
@@ -447,9 +446,11 @@ type ChatPanelProps = {
   workflow?: string
   registeredAgents?: any[]
   connectedUsers?: any[]
+  activeNode?: string | null
+  setActiveNode?: (node: string | null) => void
 }
 
-export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemory, workflow, registeredAgents = [], connectedUsers = [] }: ChatPanelProps) {
+export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemory, workflow, registeredAgents = [], connectedUsers = [], activeNode: externalActiveNode, setActiveNode: externalSetActiveNode }: ChatPanelProps) {
   const DEBUG = process.env.NEXT_PUBLIC_DEBUG_LOGS === 'true'
   // Use the shared Event Hub hook so we subscribe to the same client as the rest of the app
   const { subscribe, unsubscribe, emit, sendMessage, isConnected } = useEventHub()
@@ -556,7 +557,10 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
   const messagesContainerRef = useRef<HTMLDivElement>(null)
   const [isInferencing, setIsInferencing] = useState(false)
   const [inferenceSteps, setInferenceSteps] = useState<{ agent: string; status: string; imageUrl?: string; imageName?: string }[]>([])
-  const [activeNode, setActiveNode] = useState<string | null>(null)
+  const [localActiveNode, setLocalActiveNode] = useState<string | null>(null)
+  // Use external activeNode if provided, otherwise use local state
+  const activeNode = externalActiveNode !== undefined ? externalActiveNode : localActiveNode
+  const setActiveNode = externalSetActiveNode || setLocalActiveNode
   const [processedMessageIds, setProcessedMessageIds] = useState<Set<string>>(new Set())
   const [uploadedFiles, setUploadedFiles] = useState<any[]>([])
   const [refineTarget, setRefineTarget] = useState<any | null>(null)
@@ -1850,33 +1854,6 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
-      <header className="p-4 border-b flex-shrink-0">
-        <div className="flex items-center">
-          <h2 className="text-xl font-bold">A2A Host Orchestrator</h2>
-          <div className="ml-auto flex items-center gap-2">
-            <Dialog>
-              <DialogTrigger asChild>
-                <Button variant="outline" size="icon" className="bg-transparent">
-                  <Network size={20} />
-                </Button>
-              </DialogTrigger>
-              <DialogContent className="max-w-4xl max-h-[85vh]">
-                <DialogHeader>
-                  <DialogTitle>Agent Network DAG</DialogTitle>
-                </DialogHeader>
-                <div className="h-[600px] w-full">
-                  <AgentNetworkDag 
-                    nodes={dagNodes} 
-                    links={dagLinks} 
-                    activeNodeId={activeNode}
-                    key="agent-network-dag-stable"
-                  />
-                </div>
-              </DialogContent>
-            </Dialog>
-          </div>
-        </div>
-      </header>
       <div className="flex-1 overflow-hidden relative">
         {/* Drag and drop overlay */}
         {isDragOver && (

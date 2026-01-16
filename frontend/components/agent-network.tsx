@@ -15,6 +15,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { SimulateAgentRegistration } from "./simulate-agent-registration"
 import { ConnectedUsers } from "./connected-users"
 import { VisualWorkflowDesigner } from "./visual-workflow-designer"
+import { AgentNetworkDag } from "./agent-network-dag"
 import { cn } from "@/lib/utils"
 import { useState, useEffect, useCallback, useRef } from "react"
 import { useEventHub } from "@/contexts/event-hub-context"
@@ -84,6 +85,9 @@ type Props = {
   onInterAgentMemoryChange: (enabled: boolean) => void
   workflow?: string
   onWorkflowChange?: (workflow: string) => void
+  dagNodes?: any[]
+  dagLinks?: any[]
+  activeNode?: string | null
 }
 
 // Store persistent color assignments for agents
@@ -132,7 +136,7 @@ function hasHumanInteractionSkill(agent: Agent): boolean {
   return agent.skills?.some(skill => skill.id === 'human_interaction') ?? false
 }
 
-export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, agentMode, onAgentModeChange, enableInterAgentMemory, onInterAgentMemoryChange, workflow: propWorkflow, onWorkflowChange }: Props) {
+export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, agentMode, onAgentModeChange, enableInterAgentMemory, onInterAgentMemoryChange, workflow: propWorkflow, onWorkflowChange, dagNodes = [], dagLinks = [], activeNode = null }: Props) {
   const searchParams = useSearchParams()
   const currentConversationId = searchParams.get('conversationId') || undefined
   
@@ -641,9 +645,7 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, agentMod
               </CardHeader>
               <CardContent className="p-2 pt-0 md:p-4 md:pt-0">
                 <div className="space-y-3">
-                  <p className="text-xs text-muted-foreground">Oversees agent network.</p>
-                  
-                  {/* Inter-Agent Memory Toggle */}
+                  {/* Inter-Agent Memory Toggle with Clear Button */}
                   <div className="flex items-center justify-between py-2">
                     <div className="flex items-center gap-2">
                       <Database className="h-4 w-4 text-muted-foreground" />
@@ -651,23 +653,24 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, agentMod
                         Inter-Agent Memory
                       </Label>
                     </div>
-                    <Switch 
-                      id="inter-agent-memory"
-                      checked={enableInterAgentMemory} 
-                      onCheckedChange={onInterAgentMemoryChange}
-                    />
+                    <div className="flex items-center gap-2">
+                      <Button 
+                        variant="ghost" 
+                        size="icon"
+                        className="h-8 w-8"
+                        onClick={clearMemory}
+                        disabled={isClearingMemory}
+                        title={isClearingMemory ? "Clearing..." : "Clear Memory"}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                      <Switch 
+                        id="inter-agent-memory"
+                        checked={enableInterAgentMemory} 
+                        onCheckedChange={onInterAgentMemoryChange}
+                      />
+                    </div>
                   </div>
-                  
-                  <Button 
-                    variant="outline" 
-                    size="sm" 
-                    onClick={clearMemory}
-                    disabled={isClearingMemory}
-                    className="w-full"
-                  >
-                    <Trash2 className="h-4 w-4 mr-2" />
-                    {isClearingMemory ? "Clearing..." : "Clear Memory"}
-                  </Button>
                   
                   {/* Agent Mode Toggle */}
                   <div className="pt-3 border-t mt-3 space-y-3">
@@ -684,11 +687,6 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, agentMod
                         onCheckedChange={onAgentModeChange}
                       />
                     </div>
-                    <p className="text-xs text-muted-foreground">
-                      {agentMode 
-                        ? "Using sequential agent-to-agent orchestration mode" 
-                        : "Using parallel multi-agent orchestration mode"}
-                    </p>
                     
                     {/* Workflow Button - Only show when Agent Mode is enabled */}
                     {agentMode && (
@@ -807,9 +805,31 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, agentMod
             {/* Remote Agents Section */}
             {!isCollapsed && (
               <div className="mb-2">
-                <div className="flex items-center gap-2 mb-2 px-1">
-                  <Network className="h-4 w-4 text-muted-foreground" />
-                  <span className="text-sm font-medium text-muted-foreground">Remote Agents</span>
+                <div className="flex items-center justify-between mb-2 px-1">
+                  <div className="flex items-center gap-2">
+                    <Bot className="h-4 w-4 text-muted-foreground" />
+                    <span className="text-sm font-medium text-muted-foreground">Remote Agents</span>
+                  </div>
+                  <Dialog>
+                    <DialogTrigger asChild>
+                      <Button variant="ghost" size="icon" className="h-6 w-6">
+                        <Network className="h-3.5 w-3.5" />
+                      </Button>
+                    </DialogTrigger>
+                    <DialogContent className="max-w-4xl max-h-[85vh]">
+                      <DialogHeader>
+                        <DialogTitle>Agent Network DAG</DialogTitle>
+                      </DialogHeader>
+                      <div className="h-[600px] w-full">
+                        <AgentNetworkDag 
+                          nodes={dagNodes} 
+                          links={dagLinks}
+                          activeNodeId={activeNode}
+                          key="agent-network-dag-stable"
+                        />
+                      </div>
+                    </DialogContent>
+                  </Dialog>
                 </div>
               </div>
             )}
@@ -1166,13 +1186,14 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, agentMod
               );
             })}
           </div>
-          
-          {!isCollapsed && (
-            <div className="p-2">
-              <SimulateAgentRegistration />
-            </div>
-          )}
         </div>
+        
+        {/* Agent Registration Buttons - Always at bottom */}
+        {!isCollapsed && (
+          <div className="p-2 border-t">
+            <SimulateAgentRegistration />
+          </div>
+        )}
       </div>
     </TooltipProvider>
   )
