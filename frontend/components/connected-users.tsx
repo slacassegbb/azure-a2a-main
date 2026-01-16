@@ -23,7 +23,7 @@ type ConnectedUser = {
 export function ConnectedUsers() {
   const [users, setUsers] = useState<ConnectedUser[]>([])
   const [expandedUsers, setExpandedUsers] = useState<Set<string>>(new Set())
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(false) // Changed to false - we rely on WebSocket
   const { subscribe, unsubscribe } = useEventHub()
 
   const fetchActiveUsers = useCallback(async () => {
@@ -56,29 +56,20 @@ export function ConnectedUsers() {
   }, [])
 
   useEffect(() => {
-    fetchActiveUsers()
+    // Don't fetch on mount - wait for WebSocket to send initial user_list_update
+    // This avoids querying the backend API's separate AuthService instance
     
-    // Subscribe to real-time user list updates
+    // Subscribe to real-time user list updates (source of truth)
     subscribe("user_list_update", handleUserListUpdate)
     
-    // Refresh every 30 seconds as fallback (in case WebSocket fails)
-    const interval = setInterval(fetchActiveUsers, 30000)
-    
-    // Fetch active users when page becomes visible again (handles tab switching)
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
-        console.log("[ConnectedUsers] Page became visible, refreshing user list")
-        fetchActiveUsers()
-      }
-    }
-    document.addEventListener('visibilitychange', handleVisibilityChange)
+    // Note: Removed polling and Page Visibility API calls
+    // The WebSocket server is the authoritative source for active users
+    // It broadcasts updates when users connect/disconnect
     
     return () => {
-      clearInterval(interval)
       unsubscribe("user_list_update", handleUserListUpdate)
-      document.removeEventListener('visibilitychange', handleVisibilityChange)
     }
-  }, [subscribe, unsubscribe, fetchActiveUsers, handleUserListUpdate])
+  }, [subscribe, unsubscribe, handleUserListUpdate])
 
   const toggleUser = (userId: string) => {
     const newExpanded = new Set(expandedUsers)
