@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -26,7 +26,7 @@ export function ConnectedUsers() {
   const [loading, setLoading] = useState(true)
   const { subscribe, unsubscribe } = useEventHub()
 
-  const fetchActiveUsers = async () => {
+  const fetchActiveUsers = useCallback(async () => {
     try {
       const baseUrl = process.env.NEXT_PUBLIC_A2A_API_URL || "http://localhost:12000"
       const response = await fetch(`${baseUrl}/api/auth/active-users`)
@@ -40,15 +40,15 @@ export function ConnectedUsers() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
 
   // Handle real-time user list updates from WebSocket
-  const handleUserListUpdate = (eventData: any) => {
+  const handleUserListUpdate = useCallback((eventData: any) => {
     console.log("[ConnectedUsers] Real-time user list update:", eventData)
     if (eventData.data?.active_users) {
       setUsers(eventData.data.active_users)
     }
-  }
+  }, [])
 
   useEffect(() => {
     fetchActiveUsers()
@@ -63,7 +63,7 @@ export function ConnectedUsers() {
       clearInterval(interval)
       unsubscribe("user_list_update", handleUserListUpdate)
     }
-  }, [subscribe, unsubscribe])
+  }, [subscribe, unsubscribe, fetchActiveUsers, handleUserListUpdate])
 
   const toggleUser = (userId: string) => {
     const newExpanded = new Set(expandedUsers)
