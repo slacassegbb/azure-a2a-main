@@ -102,7 +102,7 @@ export function SimulateAgentRegistration() {
     <div className="space-y-2">
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogTrigger asChild>
-          <Button className="w-full">
+          <Button variant="outline" className="w-full">
             <Plus className="mr-2 h-4 w-4" />
             Register New Agent
           </Button>
@@ -153,7 +153,7 @@ export function SimulateAgentRegistration() {
 
       <Dialog open={catalogOpen} onOpenChange={setCatalogOpen}>
         <DialogTrigger asChild>
-          <Button variant="outline" className="w-full">
+          <Button className="w-full">
             <Store className="mr-2 h-4 w-4" />
             Agent Catalog
           </Button>
