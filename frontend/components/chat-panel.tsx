@@ -43,6 +43,38 @@ const getAvatarStyles = (hexColor: string = "#6B7280") => {
   return { bgColor, iconColor }
 }
 
+// Typing animation component for welcome message
+function TypingWelcomeMessage({ text }: { text: string }) {
+  const [displayedText, setDisplayedText] = useState("")
+  const [currentIndex, setCurrentIndex] = useState(0)
+
+  useEffect(() => {
+    // Reset when component mounts
+    setDisplayedText("")
+    setCurrentIndex(0)
+  }, [])
+
+  useEffect(() => {
+    if (currentIndex < text.length) {
+      const timeout = setTimeout(() => {
+        setDisplayedText(prev => prev + text[currentIndex])
+        setCurrentIndex(prev => prev + 1)
+      }, 50) // Adjust speed here (50ms per character)
+
+      return () => clearTimeout(timeout)
+    }
+  }, [currentIndex, text])
+
+  return (
+    <h1 className="text-4xl font-semibold text-center">
+      {displayedText}
+      {currentIndex < text.length && (
+        <span className="animate-pulse">|</span>
+      )}
+    </h1>
+  )
+}
+
 type Message = {
   id: string
   role: "user" | "assistant" | "system"
@@ -2171,7 +2203,7 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
       {!isLoadingMessages && messages.length === 0 && (
         <div className="flex-1 flex flex-col items-center justify-center px-4">
           <div className="w-full max-w-4xl space-y-8">
-            <h1 className="text-4xl font-semibold text-center">What can I help with?</h1>
+            <TypingWelcomeMessage text="What can I help with?" />
             {/* Input rendered in shared section below will appear here visually */}
           </div>
         </div>
