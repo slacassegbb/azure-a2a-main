@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
-import { Paperclip, Mic, MicOff, Send, Bot, User, Paintbrush, Copy, ThumbsUp, ThumbsDown, Loader2, Phone, PhoneOff } from "lucide-react"
+import { Paperclip, Mic, MicOff, Send, Bot, User, Paintbrush, Copy, ThumbsUp, ThumbsDown, Loader2, Phone, PhoneOff, Plus } from "lucide-react"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { useEventHub } from "@/hooks/use-event-hub"
@@ -1860,30 +1860,31 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
   }
 
   return (
-    <div className="flex flex-col h-full overflow-hidden">
-      {/* Only show scrollable messages area if there are messages */}
+    <div className="flex flex-col h-full overflow-hidden relative">
+      {/* Layout for when there are messages - normal chat */}
       {messages.length > 0 && (
-        <div className="flex-1 overflow-hidden relative">
-          {/* Drag and drop overlay */}
-          {isDragOver && (
-            <div className="absolute inset-0 bg-blue-50/90 border-2 border-dashed border-blue-300 z-50 flex items-center justify-center pointer-events-none">
-              <div className="text-center">
-                <div className="text-blue-600 text-xl mb-2">📁</div>
-                <div className="text-blue-700 font-medium">Drop files here to upload</div>
-                <div className="text-blue-600 text-sm">Files will be added to your message</div>
+        <>
+          <div className="flex-1 overflow-hidden relative">
+            {/* Drag and drop overlay */}
+            {isDragOver && (
+              <div className="absolute inset-0 bg-blue-50/90 border-2 border-dashed border-blue-300 z-50 flex items-center justify-center pointer-events-none">
+                <div className="text-center">
+                  <div className="text-blue-600 text-xl mb-2">📁</div>
+                  <div className="text-blue-700 font-medium">Drop files here to upload</div>
+                  <div className="text-blue-600 text-sm">Files will be added to your message</div>
+                </div>
               </div>
-            </div>
-          )}
-          <div 
-            ref={messagesContainerRef}
-            className={`h-full overflow-y-auto ${isDragOver ? '[&_*]:pointer-events-none' : ''}`}
-            data-chat-drop-zone
-            onDragOver={handleDragOver}
-            onDragEnter={handleDragEnter}
-            onDragLeave={handleDragLeave}
-            onDrop={handleDrop}
-          >
-            <div className="flex flex-col gap-4 p-4">
+            )}
+            <div 
+              ref={messagesContainerRef}
+              className={`h-full overflow-y-auto ${isDragOver ? '[&_*]:pointer-events-none' : ''}`}
+              data-chat-drop-zone
+              onDragOver={handleDragOver}
+              onDragEnter={handleDragEnter}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+            >
+              <div className="flex flex-col gap-4 p-4">
             {messages.map((message, index) => {
               if (message.type === "inference_summary") {
                 // Only render if there are actual steps
@@ -2156,19 +2157,24 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
           </div>
         </div>
       </div>
+          <div className="flex-shrink-0">
+            {/* Chat input area will be rendered below */}
+          </div>
+        </>
       )}
       
-      {/* Empty state with centered input */}
+      {/* Layout for empty state - centered welcome message and input */}
       {messages.length === 0 && (
-        <div className="flex-1 flex items-center justify-center">
-          <div className="w-full max-w-4xl px-4">
-            <h1 className="text-4xl font-semibold text-center mb-12">What can I help with?</h1>
+        <div className="flex-1 flex flex-col items-center justify-center">
+          <div className="w-full max-w-4xl px-4 space-y-8">
+            <h1 className="text-4xl font-semibold text-center">What can I help with?</h1>
+            {/* Chat input will be rendered below in the shared section */}
           </div>
         </div>
       )}
       
-      {/* Chat input area - always at bottom when there are messages, centered when empty */}
-      <div className={`flex-shrink-0 ${messages.length === 0 ? '' : ''}`}>
+      {/* Chat input area - shared for both layouts */}
+      <div className={`${messages.length === 0 ? 'absolute bottom-0 left-0 right-0 pb-20' : 'flex-shrink-0'}`}>
         <div className="px-4 pb-4 pt-2">
           {/* File upload previews */}
           {uploadedFiles.length > 0 && (
@@ -2275,7 +2281,7 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
           )}
           
           <div className="relative max-w-4xl mx-auto">
-            <div className="relative bg-background border border-border rounded-2xl shadow-lg transition-all duration-200 hover:shadow-xl">
+            <div className="relative bg-muted/30 rounded-3xl transition-all duration-200">
             <Textarea
               ref={textareaRef}
               value={input}
@@ -2359,7 +2365,7 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
                 }
               }}
               placeholder="Type your message... (Use @ to mention users or agents)"
-              className="pr-24 min-h-12 max-h-32 resize-none overflow-y-auto border-none focus-visible:ring-0 focus-visible:ring-offset-0 bg-transparent rounded-2xl px-4 py-3"
+              className="pl-12 pr-32 min-h-12 max-h-32 resize-none overflow-y-auto border-none focus-visible:ring-0 focus-visible:ring-offset-0 bg-transparent rounded-3xl px-4 py-3"
               disabled={isInferencing}
               rows={1}
               style={{ height: '48px' }} // min-h-12 = 48px
@@ -2412,7 +2418,8 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
               </div>
             )}
             
-            <div className="absolute top-1/2 right-3 -translate-y-1/2 flex items-center gap-1">
+            {/* Left side - Attachment button */}
+            <div className="absolute top-1/2 left-3 -translate-y-1/2 flex items-center">
               <input
                 ref={fileInputRef}
                 type="file"
@@ -2424,16 +2431,20 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
               <Button 
                 variant="ghost" 
                 size="icon"
-                className="h-9 w-9 rounded-lg hover:bg-accent"
+                className="h-9 w-9 rounded-full hover:bg-muted"
                 disabled={isInferencing}
                 onClick={handlePaperclipClick}
               >
-                <Paperclip size={18} />
+                <Plus size={20} className="text-muted-foreground" />
               </Button>
+            </div>
+            
+            {/* Right side - Action buttons */}
+            <div className="absolute top-1/2 right-2 -translate-y-1/2 flex items-center gap-1">
               <Button 
                 variant="ghost" 
                 size="icon"
-                className={`h-9 w-9 rounded-lg hover:bg-accent ${voiceRecording.isRecording ? 'bg-red-100 text-red-600 hover:bg-red-200' : ''}`}
+                className={`h-9 w-9 rounded-full hover:bg-muted ${voiceRecording.isRecording ? 'bg-red-100 text-red-600 hover:bg-red-200' : ''}`}
                 disabled={isInferencing || voiceRecording.isProcessing}
                 onClick={handleMicClick}
                 title={voiceRecording.isRecording ? 
@@ -2441,12 +2452,12 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
                   voiceRecording.isProcessing ? 'Processing...' : 'Record voice message'
                 }
               >
-                {voiceRecording.isRecording ? <MicOff size={18} /> : <Mic size={18} />}
+                {voiceRecording.isRecording ? <MicOff size={20} className="text-muted-foreground" /> : <Mic size={20} className="text-muted-foreground" />}
               </Button>
               <Button 
                 variant="ghost" 
                 size="icon"
-                className={`h-9 w-9 rounded-lg hover:bg-accent ${
+                className={`h-9 w-9 rounded-full hover:bg-muted ${
                   voiceLive.isConnected 
                     ? 'bg-green-100 text-green-600 hover:bg-green-200' 
                     : voiceLive.error 
@@ -2463,15 +2474,15 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
                     : 'Start voice conversation'
                 }
               >
-                {voiceLive.isConnected ? <PhoneOff size={18} /> : <Phone size={18} />}
+                {voiceLive.isConnected ? <PhoneOff size={20} className="text-muted-foreground" /> : <Phone size={20} className="text-muted-foreground" />}
               </Button>
               <Button 
                 onClick={handleSend} 
                 disabled={isInferencing || (!input.trim() && !refineTarget)}
-                className="h-9 w-9 rounded-lg"
+                className="h-9 w-9 rounded-full bg-primary hover:bg-primary/90 disabled:bg-muted disabled:text-muted-foreground"
                 size="icon"
               >
-                <Send size={18} />
+                <Send size={18} className="text-primary-foreground" />
               </Button>
             </div>
             </div>
