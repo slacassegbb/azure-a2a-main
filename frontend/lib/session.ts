@@ -40,10 +40,9 @@ export function getOrCreateSessionId(): string {
       // Decode JWT to get user_id (JWT format: header.payload.signature)
       const payload = JSON.parse(atob(token.split('.')[1]));
       if (payload.user_id) {
-        // Use user_id as session for logged-in users
-        const userSessionId = `user_${payload.user_id}`;
-        console.log('[Session] Using user-based session:', userSessionId);
-        return userSessionId;
+        // Use user_id as session for logged-in users (already has "user_" prefix from backend)
+        console.log('[Session] Using user-based session:', payload.user_id);
+        return payload.user_id;
       }
     } catch (error) {
       console.warn('[Session] Failed to decode JWT, falling back to anonymous session:', error);
