@@ -1895,10 +1895,10 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
               return (
                 <div
                   key={`${message.id}-${index}`}
-                  className={`flex gap-3 ${message.role === "user" ? "justify-end" : ""}`}
+                  className={`flex gap-3 items-start ${message.role === "user" ? "justify-end" : ""}`}
                 >
                   {message.role === "assistant" && (
-                    <div className="h-8 w-8 flex-shrink-0 bg-blue-100 rounded-full flex items-center justify-center mt-6">
+                    <div className="h-8 w-8 flex-shrink-0 bg-blue-100 rounded-full flex items-center justify-center">
                       <Bot size={18} className="text-blue-600" />
                     </div>
                   )}
@@ -2131,7 +2131,7 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
                     const { bgColor, iconColor } = getAvatarStyles(message.userColor)
                     return (
                       <div 
-                        className="h-8 w-8 flex-shrink-0 rounded-full flex items-center justify-center mt-6"
+                        className="h-8 w-8 flex-shrink-0 rounded-full flex items-center justify-center"
                         style={{ backgroundColor: bgColor }}
                       >
                         <User size={18} style={{ color: iconColor }} />
