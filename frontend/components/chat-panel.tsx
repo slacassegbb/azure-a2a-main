@@ -2154,8 +2154,8 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
           </div>
         </div>
       </div>
-      <div className="border-t flex-shrink-0">
-        <div className="p-4">
+      <div className="flex-shrink-0">
+        <div className="px-4 pb-4 pt-2">
           {/* File upload previews */}
           {uploadedFiles.length > 0 && (
             <div className="mb-2 flex flex-wrap gap-2">
@@ -2260,7 +2260,8 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
             </div>
           )}
           
-          <div className="relative">
+          <div className="relative max-w-4xl mx-auto">
+            <div className="relative bg-background border border-border rounded-2xl shadow-lg transition-all duration-200 hover:shadow-xl">
             <Textarea
               ref={textareaRef}
               value={input}
@@ -2344,7 +2345,7 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
                 }
               }}
               placeholder="Type your message... (Use @ to mention users or agents)"
-              className="pr-24 min-h-12 max-h-32 resize-none overflow-y-auto"
+              className="pr-24 min-h-12 max-h-32 resize-none overflow-y-auto border-none focus-visible:ring-0 focus-visible:ring-offset-0 bg-transparent rounded-2xl px-4 py-3"
               disabled={isInferencing}
               rows={1}
               style={{ height: '48px' }} // min-h-12 = 48px
@@ -2397,7 +2398,7 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
               </div>
             )}
             
-            <div className="absolute top-1/2 right-2 -translate-y-1/2 flex items-center gap-1">
+            <div className="absolute top-1/2 right-3 -translate-y-1/2 flex items-center gap-1">
               <input
                 ref={fileInputRef}
                 type="file"
@@ -2408,7 +2409,8 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
               />
               <Button 
                 variant="ghost" 
-                size="icon" 
+                size="icon"
+                className="h-9 w-9 rounded-lg hover:bg-accent"
                 disabled={isInferencing}
                 onClick={handlePaperclipClick}
               >
@@ -2416,10 +2418,10 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
               </Button>
               <Button 
                 variant="ghost" 
-                size="icon" 
+                size="icon"
+                className={`h-9 w-9 rounded-lg hover:bg-accent ${voiceRecording.isRecording ? 'bg-red-100 text-red-600 hover:bg-red-200' : ''}`}
                 disabled={isInferencing || voiceRecording.isProcessing}
                 onClick={handleMicClick}
-                className={`${voiceRecording.isRecording ? 'bg-red-100 text-red-600 hover:bg-red-200' : ''}`}
                 title={voiceRecording.isRecording ? 
                   `Recording... ${voiceRecording.duration}s` : 
                   voiceRecording.isProcessing ? 'Processing...' : 'Record voice message'
@@ -2429,16 +2431,16 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
               </Button>
               <Button 
                 variant="ghost" 
-                size="icon" 
-                disabled={isInferencing}
-                onClick={voiceLive.isConnected ? voiceLive.stopVoiceConversation : voiceLive.startVoiceConversation}
-                className={`${
+                size="icon"
+                className={`h-9 w-9 rounded-lg hover:bg-accent ${
                   voiceLive.isConnected 
                     ? 'bg-green-100 text-green-600 hover:bg-green-200' 
                     : voiceLive.error 
                     ? 'bg-red-100 text-red-600' 
                     : ''
                 }`}
+                disabled={isInferencing}
+                onClick={voiceLive.isConnected ? voiceLive.stopVoiceConversation : voiceLive.startVoiceConversation}
                 title={
                   voiceLive.isConnected 
                     ? 'End voice conversation' 
@@ -2449,9 +2451,15 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
               >
                 {voiceLive.isConnected ? <PhoneOff size={18} /> : <Phone size={18} />}
               </Button>
-              <Button onClick={handleSend} disabled={isInferencing || (!input.trim() && !refineTarget)}>
+              <Button 
+                onClick={handleSend} 
+                disabled={isInferencing || (!input.trim() && !refineTarget)}
+                className="h-9 w-9 rounded-lg"
+                size="icon"
+              >
                 <Send size={18} />
               </Button>
+            </div>
             </div>
           </div>
         </div>
