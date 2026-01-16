@@ -342,8 +342,9 @@ class WebSocketManager:
                     },
                     "timestamp": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
                 }
-                await self.broadcast_event(event_data)
-                logger.info(f"Broadcasted user list update: {len(active_users)} active users")
+                sent_count = await self.broadcast_event(event_data)
+                logger.info(f"[WebSocket] Broadcasted user_list_update to {sent_count} clients: {len(active_users)} active users")
+                logger.info(f"[WebSocket] Active user IDs: {[u.get('user_id') for u in active_users]}")
         except Exception as e:
             logger.error(f"Failed to broadcast user list update: {e}")
     
@@ -416,7 +417,7 @@ class WebSocketManager:
         
         # Remove disconnected clients
         for websocket in disconnected_clients:
-            self.disconnect(websocket)
+            await self.disconnect(websocket)
         
         event_type = event_data.get('eventType', 'unknown')
         logger.info(f"Broadcasted {event_type} event to {sent_count} clients for tenant {tenant_id[:20]}...")
@@ -455,7 +456,7 @@ class WebSocketManager:
         
         # Remove disconnected clients
         for websocket in disconnected_clients:
-            self.disconnect(websocket)
+            await self.disconnect(websocket)
         
         event_type = event_data.get('eventType', 'unknown')
         logger.info(f"Broadcasted {event_type} event to {sent_count} clients (global)")
