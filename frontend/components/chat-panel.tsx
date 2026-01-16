@@ -1321,7 +1321,13 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
 
       // Use conversationId from the event data if available, otherwise fall back to component state
       // This ensures workflows from the visual designer are saved to the correct key
-      const effectiveConversationId = data.conversationId || data.inferenceId || conversationId
+      let effectiveConversationId = data.conversationId || data.inferenceId || conversationId
+      
+      // Extract just the conversationId part if it includes session prefix (sessionId::conversationId)
+      // This ensures localStorage keys match between save and load
+      if (effectiveConversationId && effectiveConversationId.includes('::')) {
+        effectiveConversationId = effectiveConversationId.split('::')[1]
+      }
 
       // Add inference summary FIRST (so workflow appears BEFORE response)
       // Show workflow whenever we have steps, regardless of which agent responds
