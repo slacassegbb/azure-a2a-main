@@ -1300,12 +1300,12 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
       setActiveNode(data.agent)
     }
 
-    const handleFinalResponse = (data: { inferenceId: string; message: Omit<Message, "id">; conversationId?: string }) => {
+    const handleFinalResponse = (data: { inferenceId: string; message: Omit<Message, "id">; conversationId?: string; messageId?: string }) => {
       console.log("[ChatPanel] Final response received:", data)
       
-      const contentKey = data.message.content ?? ""
-      const agentKey = data.message.agent ?? "assistant"
-      const responseId = `response_${data.inferenceId}_${agentKey}_${contentKey}`
+      // Use messageId from backend if available, otherwise generate unique ID based on timestamp
+      // Don't use content in the key since same content can be sent multiple times
+      const responseId = data.messageId || `response_${data.inferenceId}_${Date.now()}`
       
       // Check if we've already processed this exact message
       if (processedMessageIds.has(responseId)) {
