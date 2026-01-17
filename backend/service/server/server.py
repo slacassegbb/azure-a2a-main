@@ -434,21 +434,20 @@ class ConversationServer:
             # If session_id is provided, construct the full contextId
             full_conversation_id = f"{session_id}::{conversation_id}" if session_id else conversation_id
             
-            # Find and remove the conversation
-            conversations = self.manager.conversations
-            conversation_found = False
+            # Find and remove the conversation using list comprehension to avoid index issues
+            original_count = len(self.manager.conversations)
+            self.manager.conversations = [
+                conv for conv in self.manager.conversations 
+                if conv.conversation_id != full_conversation_id and conv.conversation_id != conversation_id
+            ]
             
-            for i, conv in enumerate(conversations):
-                if conv.conversation_id == full_conversation_id or conv.conversation_id == conversation_id:
-                    conversations.pop(i)
-                    conversation_found = True
-                    log_debug(f"✅ Deleted conversation: {conversation_id}")
-                    break
+            conversation_found = len(self.manager.conversations) < original_count
             
             if not conversation_found:
                 log_debug(f"⚠️ Conversation not found: {conversation_id}")
                 return {"success": False, "error": "Conversation not found"}
             
+            log_debug(f"✅ Deleted conversation: {conversation_id}")
             return {"success": True}
         except Exception as e:
             log_debug(f"Error in _delete_conversation: {e}")
