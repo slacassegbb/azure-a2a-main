@@ -416,41 +416,33 @@ class ConversationServer:
             return ListConversationResponse(result=self.manager.conversations)
 
     async def _delete_conversation(self, request: Request):
-        """Delete a conversation by ID.
-        
-        Request body should include:
-        - conversationId: The ID of the conversation to delete
-        - sessionId: Optional session ID for tenant isolation
-        """
+        """Delete a conversation by ID."""
         try:
             message_data = await request.json()
             params = message_data.get('params', {})
             conversation_id = params.get('conversationId')
-            session_id = params.get('sessionId')
             
             if not conversation_id:
                 return {"success": False, "error": "conversationId required"}
             
-            # If session_id is provided, construct the full contextId
-            full_conversation_id = f"{session_id}::{conversation_id}" if session_id else conversation_id
+            log_debug(f"🗑️  Deleting conversation: {conversation_id}")
+            log_debug(f"🗑️  Conversations before: {[c.conversation_id for c in self.manager.conversations]}")
             
-            # Find and remove the conversation using list comprehension to avoid index issues
-            original_count = len(self.manager.conversations)
+            # Simple: just filter out this conversation ID
+            original_length = len(self.manager.conversations)
             self.manager.conversations = [
-                conv for conv in self.manager.conversations 
-                if conv.conversation_id != full_conversation_id and conv.conversation_id != conversation_id
+                c for c in self.manager.conversations 
+                if c.conversation_id != conversation_id
             ]
             
-            conversation_found = len(self.manager.conversations) < original_count
-            
-            if not conversation_found:
-                log_debug(f"⚠️ Conversation not found: {conversation_id}")
+            if len(self.manager.conversations) == original_length:
+                log_debug(f"⚠️  Conversation {conversation_id} not found")
                 return {"success": False, "error": "Conversation not found"}
             
-            log_debug(f"✅ Deleted conversation: {conversation_id}")
+            log_debug(f"✅  Deleted! Conversations after: {[c.conversation_id for c in self.manager.conversations]}")
             return {"success": True}
         except Exception as e:
-            log_debug(f"Error in _delete_conversation: {e}")
+            log_debug(f"❌  Error deleting conversation: {e}")
             return {"success": False, "error": str(e)}
 
     def _get_events(self):
