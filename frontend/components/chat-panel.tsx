@@ -1893,7 +1893,7 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
     <TooltipProvider delayDuration={300}>
       <div className="flex flex-col h-full overflow-hidden relative">
       {/* Layout for when there are messages - normal chat */}
-      {messages.length > 0 && (
+      {(messages.length > 0 || isInferencing) && (
         <>
           <div className="flex-1 overflow-hidden relative">
             {/* Drag and drop overlay */}
@@ -2205,8 +2205,8 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
       )}
       
       {/* Chat input area - positioned differently based on state */}
-      <div className={`${!isLoadingMessages && messages.length === 0 ? 'absolute top-1/2 left-0 right-0 flex items-center justify-center mt-8' : 'flex-shrink-0'}`}>
-        <div className={`px-4 pb-4 pt-2 ${!isLoadingMessages && messages.length === 0 ? 'w-full max-w-4xl' : 'w-full'}`}>
+      <div className={`${!isLoadingMessages && messages.length === 0 && !isInferencing ? 'absolute top-1/2 left-0 right-0 flex items-center justify-center mt-8' : 'flex-shrink-0'}`}>
+        <div className={`px-4 pb-4 pt-2 ${!isLoadingMessages && messages.length === 0 && !isInferencing ? 'w-full max-w-4xl' : 'w-full'}`}>
           {/* File upload previews */}
           {uploadedFiles.length > 0 && (
             <div className="mb-2 flex flex-wrap gap-2">
