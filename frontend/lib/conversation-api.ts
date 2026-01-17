@@ -4,6 +4,8 @@
  * This provides TypeScript functions to interact with the A2A conversation endpoints
  */
 
+import { getOrCreateSessionId } from './session'
+
 const API_BASE_URL = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
 
 export interface Conversation {
@@ -166,9 +168,41 @@ export async function listMessages(conversationId: string): Promise<Message[]> {
  * Delete a conversation (if implemented on backend)
  */
 export async function deleteConversation(conversationId: string): Promise<boolean> {
-  // Note: This endpoint might not exist yet, but we can add it later
-  console.log('[ConversationAPI] Delete conversation not implemented yet:', conversationId)
-  return false
+  try {
+    const baseUrl = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
+    const sessionId = getOrCreateSessionId()
+    
+    const response = await fetch(`${baseUrl}/conversation/delete`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        params: {
+          conversationId,
+          sessionId
+        }
+      })
+    })
+    
+    if (!response.ok) {
+      console.error('[ConversationAPI] Failed to delete conversation:', response.statusText)
+      return false
+    }
+    
+    const result = await response.json()
+    
+    if (result.success) {
+      console.log('[ConversationAPI] Successfully deleted conversation:', conversationId)
+      return true
+    } else {
+      console.error('[ConversationAPI] Delete conversation failed:', result.error)
+      return false
+    }
+  } catch (error) {
+    console.error('[ConversationAPI] Error deleting conversation:', error)
+    return false
+  }
 }
 
 /**
