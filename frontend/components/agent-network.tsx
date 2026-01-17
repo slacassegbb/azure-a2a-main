@@ -611,16 +611,21 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, agentMod
                     <CardTitle className="text-base">Host Agent</CardTitle>
                   </div>
                   <Dialog open={isSystemPromptDialogOpen} onOpenChange={setIsSystemPromptDialogOpen}>
-                    <DialogTrigger asChild>
-                      <Button 
-                        variant="ghost" 
-                        size="sm" 
-                        onClick={openSystemPromptDialog}
-                        disabled={isLoading}
-                      >
-                        <Settings className="h-4 w-4" />
-                      </Button>
-                    </DialogTrigger>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <DialogTrigger asChild>
+                          <Button 
+                            variant="ghost" 
+                            size="sm" 
+                            onClick={openSystemPromptDialog}
+                            disabled={isLoading}
+                          >
+                            <Settings className="h-4 w-4" />
+                          </Button>
+                        </DialogTrigger>
+                      </TooltipTrigger>
+                      <TooltipContent side="left">Edit system prompt</TooltipContent>
+                    </Tooltip>
                     <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
                       <DialogHeader>
                         <DialogTitle>Edit System Prompt</DialogTitle>
@@ -684,16 +689,22 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, agentMod
                       </Label>
                     </div>
                     <div className="flex items-center gap-2">
-                      <Button 
-                        variant="ghost" 
-                        size="icon"
-                        className="h-8 w-8"
-                        onClick={clearMemory}
-                        disabled={isClearingMemory}
-                        title={isClearingMemory ? "Clearing..." : "Clear Memory"}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button 
+                            variant="ghost" 
+                            size="icon"
+                            className="h-8 w-8"
+                            onClick={clearMemory}
+                            disabled={isClearingMemory}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent side="left">
+                          {isClearingMemory ? "Clearing..." : "Clear host orchestrator memory"}
+                        </TooltipContent>
+                      </Tooltip>
                       <Switch 
                         id="inter-agent-memory"
                         checked={enableInterAgentMemory} 
@@ -862,11 +873,16 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, agentMod
                       </Button>
                     </CollapsibleTrigger>
                     <Dialog>
-                      <DialogTrigger asChild>
-                        <Button variant="ghost" size="icon" className="h-6 w-6">
-                          <Network className="h-3.5 w-3.5" />
-                        </Button>
-                      </DialogTrigger>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <DialogTrigger asChild>
+                            <Button variant="ghost" size="icon" className="h-6 w-6">
+                              <Network className="h-3.5 w-3.5" />
+                            </Button>
+                          </DialogTrigger>
+                        </TooltipTrigger>
+                        <TooltipContent side="left">View agent network diagram</TooltipContent>
+                      </Tooltip>
                       <DialogContent className="max-w-4xl max-h-[85vh]">
                         <DialogHeader>
                           <DialogTitle>Agent Network DAG</DialogTitle>

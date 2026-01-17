@@ -278,28 +278,23 @@ export function ChatHistorySidebar({ isCollapsed, onToggle }: Props) {
                   
                   return (
                     <li key={conversationId}>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <div className="group relative">
-                            <Button
-                              variant={currentConversationId === conversationId ? "secondary" : "ghost"}
-                              className="h-9 w-full justify-start gap-2 pr-8"
-                              onClick={() => handleConversationClick(conversationId)}
-                            >
-                              <span className="truncate">{displayName}</span>
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="absolute right-1 top-1/2 -translate-y-1/2 h-6 w-6 opacity-0 group-hover:opacity-100 hover:bg-primary/10 hover:text-primary"
-                              onClick={(e) => handleDeleteConversation(conversationId, e)}
-                            >
-                              <Trash2 size={14} />
-                            </Button>
-                          </div>
-                        </TooltipTrigger>
-                        <TooltipContent side="right">{displayName}</TooltipContent>
-                      </Tooltip>
+                      <div className="group relative">
+                        <Button
+                          variant={currentConversationId === conversationId ? "secondary" : "ghost"}
+                          className="h-9 w-full justify-start gap-2 pr-8"
+                          onClick={() => handleConversationClick(conversationId)}
+                        >
+                          <span className="truncate">{displayName}</span>
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="absolute right-1 top-1/2 -translate-y-1/2 h-6 w-6 opacity-0 group-hover:opacity-100 hover:bg-primary/10 hover:text-primary"
+                          onClick={(e) => handleDeleteConversation(conversationId, e)}
+                        >
+                          <Trash2 size={14} />
+                        </Button>
+                      </div>
                     </li>
                   )
                 })}

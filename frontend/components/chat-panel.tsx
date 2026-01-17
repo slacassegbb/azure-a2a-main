@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { Paperclip, Mic, MicOff, Send, Bot, User, Paintbrush, Copy, ThumbsUp, ThumbsDown, Loader2, Phone, PhoneOff, Plus } from "lucide-react"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -1896,7 +1897,8 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
   }
 
   return (
-    <div className="flex flex-col h-full overflow-hidden relative">
+    <TooltipProvider delayDuration={300}>
+      <div className="flex flex-col h-full overflow-hidden relative">
       {/* Layout for when there are messages - normal chat */}
       {messages.length > 0 && (
         <>
@@ -2464,54 +2466,70 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
                 accept="*/*"
                 multiple
               />
-              <Button 
-                variant="ghost" 
-                size="icon"
-                className="h-9 w-9 rounded-full bg-muted hover:bg-primary/20"
-                disabled={isInferencing}
-                onClick={handlePaperclipClick}
-              >
-                <Plus size={20} className="text-foreground" />
-              </Button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button 
+                    variant="ghost" 
+                    size="icon"
+                    className="h-9 w-9 rounded-full bg-muted hover:bg-primary/20"
+                    disabled={isInferencing}
+                    onClick={handlePaperclipClick}
+                  >
+                    <Plus size={20} className="text-foreground" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="top">Attach files</TooltipContent>
+              </Tooltip>
             </div>
             
             {/* Right side - Action buttons */}
             <div className="absolute top-1/2 right-2 -translate-y-1/2 flex items-center gap-1">
-              <Button 
-                variant="ghost" 
-                size="icon"
-                className={`h-9 w-9 rounded-full ${voiceRecording.isRecording ? 'bg-red-100 text-red-600 hover:bg-red-200' : 'hover:bg-primary/20'}`}
-                disabled={isInferencing || voiceRecording.isProcessing}
-                onClick={handleMicClick}
-                title={voiceRecording.isRecording ? 
-                  `Recording... ${voiceRecording.duration}s` : 
-                  voiceRecording.isProcessing ? 'Processing...' : 'Record voice message'
-                }
-              >
-                {voiceRecording.isRecording ? <MicOff size={20} className="text-muted-foreground" /> : <Mic size={20} className="text-muted-foreground" />}
-              </Button>
-              <Button 
-                variant="ghost" 
-                size="icon"
-                className={`h-9 w-9 rounded-full ${
-                  voiceLive.isConnected 
-                    ? 'bg-green-100 text-green-600 hover:bg-green-200' 
-                    : voiceLive.error 
-                    ? 'bg-red-100 text-red-600' 
-                    : 'hover:bg-primary/20'
-                }`}
-                disabled={isInferencing}
-                onClick={voiceLive.isConnected ? voiceLive.stopVoiceConversation : voiceLive.startVoiceConversation}
-                title={
-                  voiceLive.isConnected 
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button 
+                    variant="ghost" 
+                    size="icon"
+                    className={`h-9 w-9 rounded-full ${voiceRecording.isRecording ? 'bg-red-100 text-red-600 hover:bg-red-200' : 'hover:bg-primary/20'}`}
+                    disabled={isInferencing || voiceRecording.isProcessing}
+                    onClick={handleMicClick}
+                  >
+                    {voiceRecording.isRecording ? <MicOff size={20} className="text-muted-foreground" /> : <Mic size={20} className="text-muted-foreground" />}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="top">
+                  {voiceRecording.isRecording ? 
+                    `Recording... ${voiceRecording.duration}s` : 
+                    voiceRecording.isProcessing ? 'Processing...' : 'Record voice message'
+                  }
+                </TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button 
+                    variant="ghost" 
+                    size="icon"
+                    className={`h-9 w-9 rounded-full ${
+                      voiceLive.isConnected 
+                        ? 'bg-green-100 text-green-600 hover:bg-green-200' 
+                        : voiceLive.error 
+                        ? 'bg-red-100 text-red-600' 
+                        : 'hover:bg-primary/20'
+                    }`}
+                    disabled={isInferencing}
+                    onClick={voiceLive.isConnected ? voiceLive.stopVoiceConversation : voiceLive.startVoiceConversation}
+                  >
+                    {voiceLive.isConnected ? <PhoneOff size={20} className="text-muted-foreground" /> : <Phone size={20} className="text-muted-foreground" />}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="top">
+                  {voiceLive.isConnected 
                     ? 'End voice conversation' 
                     : voiceLive.error 
                     ? `Error: ${voiceLive.error}` 
                     : 'Start voice conversation'
-                }
-              >
-                {voiceLive.isConnected ? <PhoneOff size={20} className="text-muted-foreground" /> : <Phone size={20} className="text-muted-foreground" />}
-              </Button>
+                  }
+                </TooltipContent>
+              </Tooltip>
               <Button 
                 onClick={handleSend} 
                 disabled={isInferencing || (!input.trim() && !refineTarget)}
@@ -2580,5 +2598,6 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
         />
       )}
     </div>
+    </TooltipProvider>
   )
 }
