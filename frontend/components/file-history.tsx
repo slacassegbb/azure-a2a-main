@@ -27,12 +27,6 @@ interface FileHistoryProps {
 
 const SESSION_ID_KEY = 'backendSessionId'
 
-// Get session-scoped storage key for file history
-function getFileHistoryStorageKey(): string {
-  const sessionId = getOrCreateSessionId()
-  return `uploadedFilesHistory_${sessionId}`
-}
-
 export function FileHistory({ className, onFileSelect }: FileHistoryProps) {
   const [files, setFiles] = useState<FileRecord[]>([])
   const { subscribe, unsubscribe } = useEventHub()
@@ -65,58 +59,51 @@ export function FileHistory({ className, onFileSelect }: FileHistoryProps) {
     }
   }, [subscribe, unsubscribe])
 
-  // Load files from localStorage on mount and validate they still exist
+  // Load files from backend API on mount
   useEffect(() => {
-    const storageKey = getFileHistoryStorageKey()
-    const savedFiles = localStorage.getItem(storageKey)
-    if (savedFiles) {
+    const loadFilesFromBackend = async () => {
       try {
-        const parsedFiles = JSON.parse(savedFiles).map((file: any) => ({
-          ...file,
-          uploadedAt: new Date(file.uploadedAt)
-        }))
+        const sessionId = getOrCreateSessionId()
+        const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:12000'
         
-        // Deduplicate loaded files by filename only (keep most recent)
-        const seenFiles = new Map<string, FileRecord>()
-        const deduplicatedFiles: FileRecord[] = []
+        console.log('[FileHistory] Loading files from backend for session:', sessionId.slice(0, 8))
         
-        for (const file of parsedFiles) {
-          const key = file.filename
-          
-          // Only keep the most recent version of each filename
-          if (!seenFiles.has(key)) {
-            seenFiles.set(key, file)
-            deduplicatedFiles.push(file)
-          } else {
-            // If we've seen this filename before, keep the newer one
-            const existing = seenFiles.get(key)!
-            if (file.uploadedAt > existing.uploadedAt) {
-              // Replace with newer file
-              const index = deduplicatedFiles.indexOf(existing)
-              deduplicatedFiles[index] = file
-              seenFiles.set(key, file)
-              console.log('[FileHistory] Replaced older duplicate:', file.filename)
-            } else {
-              console.log('[FileHistory] Removed duplicate from localStorage:', file.filename)
-            }
+        const response = await fetch(`${backendUrl}/api/files`, {
+          headers: {
+            'X-Session-ID': sessionId
           }
+        })
+        
+        if (!response.ok) {
+          throw new Error(`Failed to load files: ${response.statusText}`)
         }
         
-        setFiles(deduplicatedFiles)
-        console.log('[FileHistory] Loaded', deduplicatedFiles.length, 'unique files from localStorage (removed', parsedFiles.length - deduplicatedFiles.length, 'duplicates)')
+        const data = await response.json()
+        
+        if (data.success && data.files) {
+          const loadedFiles = data.files.map((file: any) => ({
+            ...file,
+            uploadedAt: file.uploadedAt ? new Date(file.uploadedAt) : new Date()
+          }))
+          
+          // Sort by upload date (most recent first)
+          loadedFiles.sort((a: FileRecord, b: FileRecord) => 
+            b.uploadedAt.getTime() - a.uploadedAt.getTime()
+          )
+          
+          setFiles(loadedFiles)
+          console.log('[FileHistory] Loaded', loadedFiles.length, 'files from backend')
+        } else {
+          console.warn('[FileHistory] No files returned from backend:', data.error || 'Unknown error')
+        }
       } catch (error) {
-        console.error('Error loading file history:', error)
-        // Clear corrupted data
-        localStorage.removeItem(storageKey)
+        console.error('[FileHistory] Error loading files from backend:', error)
+        // Continue with empty files list
       }
     }
+    
+    loadFilesFromBackend()
   }, [])
-
-  // Save files to localStorage whenever files change
-  useEffect(() => {
-    const storageKey = getFileHistoryStorageKey()
-    localStorage.setItem(storageKey, JSON.stringify(files))
-  }, [files])
 
   // Function to add a new file to history (will be called from parent)
   // Use useCallback to prevent recreating the function on every render

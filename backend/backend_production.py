@@ -1195,6 +1195,130 @@ Read-Host "Press Enter to close this window"
                 "error": str(e)
             }
 
+    # Add endpoint to list user files
+    @app.get("/api/files")
+    async def list_user_files(request: Request):
+        """List all files for a user from blob storage (with local fallback).
+        
+        Returns files stored under uploads/{session_id}/ in blob storage,
+        or from local filesystem if blob storage is unavailable.
+        """
+        try:
+            # Extract session_id from header
+            session_id = request.headers.get("X-Session-ID")
+            if not session_id:
+                return {"success": False, "error": "Missing X-Session-ID header"}
+            
+            files = []
+            
+            # Try blob storage first
+            try:
+                from azure.storage.blob import BlobServiceClient
+                from azure.identity import DefaultAzureCredential
+                from datetime import datetime, UTC
+                
+                # Get Azure connection details
+                connection_string = os.getenv('AZURE_STORAGE_CONNECTION_STRING')
+                storage_account_name = os.getenv('AZURE_STORAGE_ACCOUNT_NAME')
+                
+                if storage_account_name and not connection_string:
+                    # Use managed identity
+                    account_url = f"https://{storage_account_name}.blob.core.windows.net"
+                    credential = DefaultAzureCredential()
+                    blob_service_client = BlobServiceClient(account_url, credential=credential)
+                elif connection_string:
+                    # Use connection string
+                    blob_service_client = BlobServiceClient.from_connection_string(connection_string)
+                else:
+                    raise Exception("No Azure Storage configuration found")
+                
+                container_name = os.getenv('AZURE_BLOB_CONTAINER', 'a2a-files')
+                container_client = blob_service_client.get_container_client(container_name)
+                
+                # List blobs for this user's session
+                prefix = f"uploads/{session_id}/"
+                for blob in container_client.list_blobs(name_starts_with=prefix):
+                    # Parse blob path: uploads/{session_id}/{file_id}/{filename}
+                    parts = blob.name.split('/')
+                    if len(parts) >= 4:
+                        file_id = parts[2]
+                        filename = parts[3]
+                        
+                        # Generate SAS URL if using connection string
+                        blob_url = None
+                        if connection_string:
+                            from azure.storage.blob import generate_blob_sas, BlobSasPermissions
+                            from datetime import timedelta
+                            
+                            account_key = None
+                            for part in connection_string.split(';'):
+                                if part.startswith('AccountKey='):
+                                    account_key = part.split('=', 1)[1]
+                                    break
+                            
+                            if account_key:
+                                sas_token = generate_blob_sas(
+                                    account_name=blob_service_client.account_name,
+                                    container_name=container_name,
+                                    blob_name=blob.name,
+                                    account_key=account_key,
+                                    permission=BlobSasPermissions(read=True),
+                                    expiry=datetime.now(UTC) + timedelta(hours=24),
+                                    version="2023-11-03"
+                                )
+                                blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob.name)
+                                blob_url = f"{blob_client.url}?{sas_token}"
+                        
+                        files.append({
+                            "id": file_id,
+                            "filename": filename,
+                            "originalName": filename,
+                            "size": blob.size,
+                            "contentType": blob.content_settings.content_type if blob.content_settings else "application/octet-stream",
+                            "uploadedAt": blob.last_modified.isoformat() if blob.last_modified else None,
+                            "uri": blob_url or f"/uploads/{session_id}/{file_id}"
+                        })
+                
+                print(f"[INFO] Listed {len(files)} files from blob storage for session: {session_id}")
+                
+            except Exception as blob_error:
+                print(f"[WARN] Blob storage unavailable, falling back to local filesystem: {blob_error}")
+                
+                # Fallback to local filesystem
+                local_dir = UPLOADS_DIR / session_id
+                if local_dir.exists():
+                    for file_path in local_dir.rglob("*"):
+                        if file_path.is_file():
+                            # Try to extract file_id from parent directory structure
+                            rel_path = file_path.relative_to(local_dir)
+                            file_id = str(rel_path.parent) if rel_path.parent != Path('.') else str(uuid.uuid4())
+                            
+                            files.append({
+                                "id": file_id,
+                                "filename": file_path.name,
+                                "originalName": file_path.name,
+                                "size": file_path.stat().st_size,
+                                "contentType": "application/octet-stream",
+                                "uploadedAt": datetime.fromtimestamp(file_path.stat().st_mtime, UTC).isoformat(),
+                                "uri": f"/uploads/{session_id}/{file_id}"
+                            })
+                
+                print(f"[INFO] Listed {len(files)} files from local filesystem for session: {session_id}")
+            
+            return {
+                "success": True,
+                "files": files
+            }
+            
+        except Exception as e:
+            print(f"[ERROR] Failed to list files: {e}")
+            import traceback
+            traceback.print_exc()
+            return {
+                "success": False,
+                "error": str(e)
+            }
+
     # Add voice upload endpoint with transcription
     @app.post("/upload-voice")
     async def upload_voice(file: UploadFile = File(...), request: Request = None):
