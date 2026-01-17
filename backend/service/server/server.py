@@ -416,33 +416,46 @@ class ConversationServer:
             return ListConversationResponse(result=self.manager.conversations)
 
     async def _delete_conversation(self, request: Request):
-        """Delete a conversation by ID."""
+        """Delete a conversation by ID.
+        
+        Since conversations are stored with sessionId::conversationId format,
+        but frontend sends just conversationId (stripped during list), 
+        we need to reconstruct the full ID or match on the conversationId part.
+        """
         try:
             message_data = await request.json()
             params = message_data.get('params', {})
             conversation_id = params.get('conversationId')
+            session_id = params.get('sessionId')
             
             if not conversation_id:
                 return {"success": False, "error": "conversationId required"}
             
-            log_debug(f"🗑️  Deleting conversation: {conversation_id}")
-            log_debug(f"🗑️  Conversations before: {[c.conversation_id for c in self.manager.conversations]}")
+            log_debug(f"🗑️  Delete request - conversationId: {conversation_id}, sessionId: {session_id}")
+            log_debug(f"🗑️  Conversations in memory: {[c.conversation_id for c in self.manager.conversations]}")
             
-            # Simple: just filter out this conversation ID
+            # Reconstruct full contextId if session provided
+            full_id = f"{session_id}::{conversation_id}" if session_id else None
+            
+            # Filter: remove conversation matching either full ID or short ID
             original_length = len(self.manager.conversations)
             self.manager.conversations = [
                 c for c in self.manager.conversations 
-                if c.conversation_id != conversation_id
+                if not (
+                    c.conversation_id == conversation_id or  # Match short ID
+                    c.conversation_id == full_id or          # Match full ID
+                    c.conversation_id.endswith(f"::{conversation_id}")  # Match if ends with ::conversationId
+                )
             ]
             
             if len(self.manager.conversations) == original_length:
-                log_debug(f"⚠️  Conversation {conversation_id} not found")
+                log_debug(f"⚠️  Conversation not found: {conversation_id}")
                 return {"success": False, "error": "Conversation not found"}
             
-            log_debug(f"✅  Deleted! Conversations after: {[c.conversation_id for c in self.manager.conversations]}")
+            log_debug(f"✅  Deleted! Remaining: {[c.conversation_id for c in self.manager.conversations]}")
             return {"success": True}
         except Exception as e:
-            log_debug(f"❌  Error deleting conversation: {e}")
+            log_debug(f"❌  Error: {e}")
             return {"success": False, "error": str(e)}
 
     def _get_events(self):
