@@ -2195,7 +2195,7 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
       )}
       
       {/* Layout for empty state - centered welcome message and input */}
-      {!isLoadingMessages && messages.length === 0 && (
+      {!isLoadingMessages && messages.length === 0 && !isInferencing && (
         <div className="flex-1 flex flex-col items-center justify-center px-4">
           <div className="w-full max-w-4xl space-y-8">
             <TypingWelcomeMessage text="What can I help you with today?" />
