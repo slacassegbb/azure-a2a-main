@@ -151,6 +151,9 @@ class ConversationServer:
         app.add_api_route(
             '/conversation/list', self._list_conversation, methods=['POST']
         )
+        app.add_api_route(
+            '/conversation/delete', self._delete_conversation, methods=['POST']
+        )
         app.add_api_route('/message/send', self._send_message, methods=['POST'])
         app.add_api_route('/events/get', self._get_events, methods=['POST'])
         app.add_api_route(
@@ -411,6 +414,45 @@ class ConversationServer:
         except Exception as e:
             log_debug(f"Error in _list_conversation: {e}")
             return ListConversationResponse(result=self.manager.conversations)
+
+    async def _delete_conversation(self, request: Request):
+        """Delete a conversation by ID.
+        
+        Request body should include:
+        - conversationId: The ID of the conversation to delete
+        - sessionId: Optional session ID for tenant isolation
+        """
+        try:
+            message_data = await request.json()
+            params = message_data.get('params', {})
+            conversation_id = params.get('conversationId')
+            session_id = params.get('sessionId')
+            
+            if not conversation_id:
+                return {"success": False, "error": "conversationId required"}
+            
+            # If session_id is provided, construct the full contextId
+            full_conversation_id = f"{session_id}::{conversation_id}" if session_id else conversation_id
+            
+            # Find and remove the conversation
+            conversations = self.manager.conversations
+            conversation_found = False
+            
+            for i, conv in enumerate(conversations):
+                if conv.conversation_id == full_conversation_id or conv.conversation_id == conversation_id:
+                    conversations.pop(i)
+                    conversation_found = True
+                    log_debug(f"✅ Deleted conversation: {conversation_id}")
+                    break
+            
+            if not conversation_found:
+                log_debug(f"⚠️ Conversation not found: {conversation_id}")
+                return {"success": False, "error": "Conversation not found"}
+            
+            return {"success": True}
+        except Exception as e:
+            log_debug(f"Error in _delete_conversation: {e}")
+            return {"success": False, "error": str(e)}
 
     def _get_events(self):
         return GetEventResponse(result=self.manager.events)
