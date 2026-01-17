@@ -101,14 +101,7 @@ type Message = {
   }[]
 }
 
-const initialMessages: Message[] = [
-  {
-    id: "1",
-    role: "assistant",
-    content: "Hello! How can I help you today?",
-    agent: "Greeting Bot",
-  },
-]
+const initialMessages: Message[] = []
 
 type MaskEditorDialogProps = {
   open: boolean
