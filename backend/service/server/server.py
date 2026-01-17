@@ -437,10 +437,13 @@ class ConversationServer:
             # Reconstruct full contextId if session provided
             full_id = f"{session_id}::{conversation_id}" if session_id else None
             
-            # Filter: remove conversation matching either full ID or short ID
-            original_length = len(self.manager.conversations)
-            self.manager.conversations = [
-                c for c in self.manager.conversations 
+            # Find the conversation to delete
+            conversations = self.manager.conversations
+            original_length = len(conversations)
+            
+            # Filter out the conversation - modify the private _conversations list directly
+            filtered = [
+                c for c in conversations
                 if not (
                     c.conversation_id == conversation_id or  # Match short ID
                     c.conversation_id == full_id or          # Match full ID
@@ -448,7 +451,10 @@ class ConversationServer:
                 )
             ]
             
-            if len(self.manager.conversations) == original_length:
+            # Update the internal list (access private variable since property has no setter)
+            self.manager._conversations = filtered
+            
+            if len(filtered) == original_length:
                 log_debug(f"⚠️  Conversation not found: {conversation_id}")
                 return {"success": False, "error": "Conversation not found"}
             
