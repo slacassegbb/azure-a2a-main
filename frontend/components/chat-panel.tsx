@@ -2198,7 +2198,7 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
       {!isLoadingMessages && messages.length === 0 && (
         <div className="flex-1 flex flex-col items-center justify-center px-4">
           <div className="w-full max-w-4xl space-y-8">
-            <TypingWelcomeMessage text="What can I help with?" />
+            <TypingWelcomeMessage text="What can I help you with today?" />
             {/* Input rendered in shared section below will appear here visually */}
           </div>
         </div>
@@ -2239,19 +2239,19 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
                 }
                 
                 return (
-                  <div key={index} className="flex items-center gap-2 bg-gray-100 rounded-lg px-3 py-2 text-sm max-w-xs">
+                  <div key={index} className="flex items-center gap-2 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg px-3 py-2 text-sm max-w-xs">
                     <div className="flex items-center gap-2 flex-1 min-w-0">
                       <span className="text-lg">{getFileIcon(file.filename, file.content_type)}</span>
                       <div className="flex flex-col min-w-0 flex-1">
-                        <span className="truncate font-medium">{file.filename}</span>
-                        <span className="text-xs text-gray-500">
+                        <span className="truncate font-medium text-blue-900 dark:text-blue-100">{file.filename}</span>
+                        <span className="text-xs text-blue-600 dark:text-blue-400">
                           {file.size ? `${(file.size / 1024).toFixed(1)} KB` : ''}
                         </span>
                       </div>
                     </div>
                     <button
                       onClick={() => setUploadedFiles(prev => prev.filter((_, i) => i !== index))}
-                      className="text-gray-500 hover:text-primary flex-shrink-0 w-5 h-5 flex items-center justify-center rounded-full hover:bg-primary/10"
+                      className="text-blue-500 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 flex-shrink-0 w-5 h-5 flex items-center justify-center rounded-full hover:bg-blue-100 dark:hover:bg-blue-900/50"
                       title="Remove file"
                     >
                       ×
