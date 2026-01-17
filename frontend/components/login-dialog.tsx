@@ -14,6 +14,7 @@ import {
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { User } from "lucide-react"
 
 interface LoginDialogProps {
@@ -173,12 +174,17 @@ export function LoginDialog({ onLogin }: LoginDialogProps) {
         setIsOpen(open)
       }
     }}>
-      <DialogTrigger asChild>
-        <Button variant="ghost" size="icon" className="h-9 w-9">
-          <User size={20} />
-          <span className="sr-only">Login</span>
-        </Button>
-      </DialogTrigger>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <DialogTrigger asChild>
+            <Button variant="ghost" size="icon" className="h-9 w-9">
+              <User size={20} />
+              <span className="sr-only">Login</span>
+            </Button>
+          </DialogTrigger>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">Login</TooltipContent>
+      </Tooltip>
       <DialogContent className="sm:max-w-[500px] max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{isRegisterMode ? "Register" : "Login"}</DialogTitle>
