@@ -64,9 +64,9 @@ export function FileHistory({ className, onFileSelect }: FileHistoryProps) {
     const loadFilesFromBackend = async () => {
       try {
         const sessionId = getOrCreateSessionId()
-        const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:12000'
+        const backendUrl = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
         
-        console.log('[FileHistory] Loading files from backend for session:', sessionId.slice(0, 8))
+        console.log('[FileHistory] Loading files from backend for session:', sessionId.slice(0, 8), 'URL:', backendUrl)
         
         const response = await fetch(`${backendUrl}/api/files`, {
           headers: {
