@@ -900,6 +900,29 @@ class FoundryHostManager(ApplicationManager):
                     self._agents.append(agent_card)
                     log_debug(f"✅ Added {agent_card.name} to UI agent list")
                 
+                # Persist to agent registry file for persistence across restarts
+                try:
+                    from service.agent_registry import get_registry
+                    registry = get_registry()
+                    
+                    # Convert agent card to dict format for registry
+                    agent_dict = agent_card.model_dump()
+                    
+                    # Check if agent already exists in registry (by name or URL)
+                    existing_agent = registry.get_agent(agent_card.name)
+                    if existing_agent:
+                        # Update existing agent in registry
+                        registry.update_agent(agent_card.name, agent_dict)
+                        log_debug(f"💾 Updated {agent_card.name} in persistent agent registry")
+                    else:
+                        # Add new agent to registry
+                        if registry.add_agent(agent_dict):
+                            log_debug(f"💾 Persisted {agent_card.name} to agent registry file")
+                        else:
+                            log_debug(f"⚠️ Agent {agent_card.name} already exists in registry (skipped)")
+                except Exception as persist_error:
+                    log_debug(f"⚠️ Failed to persist agent to registry: {persist_error}")
+                
                 # Trigger immediate WebSocket sync to update UI in real-time
                 # This happens for both new and updated agents
                 try:

@@ -1283,17 +1283,19 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
     }
 
     // Handle tool response events
+    // DISABLED: task_updated is the single source of truth, this was causing duplicate status messages
     const handleToolResponse = (data: any) => {
-      console.log("[ChatPanel] Tool response received:", data)
-      if (data.toolName && data.agentName) {
-        const status = data.status === "success" 
-          ? `✅ ${data.toolName} completed`
-          : `❌ ${data.toolName} failed`
-        setInferenceSteps(prev => [...prev, { 
-          agent: data.agentName, 
-          status: status 
-        }])
-      }
+      console.log("[ChatPanel] Tool response received (ignored - using task_updated instead):", data)
+      // Commenting out to avoid duplicate messages with task_updated
+      // if (data.toolName && data.agentName) {
+      //   const status = data.status === "success" 
+      //     ? `✅ ${data.toolName} completed`
+      //     : `❌ ${data.toolName} failed`
+      //   setInferenceSteps(prev => [...prev, { 
+      //     agent: data.agentName, 
+      //     status: status 
+      //   }])
+      // }
     }
 
     // Handle remote agent activity events
