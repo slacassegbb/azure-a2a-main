@@ -2,6 +2,8 @@
 
 A local registry for storing and retrieving agent configurations.
 Provides CRUD operations for managing agent cards with a standardized structure.
+
+Agents are persisted to disk and survive backend restarts.
 """
 
 import json
