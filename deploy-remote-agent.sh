@@ -99,10 +99,8 @@ if [ ! -f "$AGENT_PATH/Dockerfile" ]; then
     exit 1
 fi
 
-# Prompt for Azure AI Foundry configuration (with .env file fallback)
+# Azure AI Foundry configuration (read from .env file or prompt if not available)
 echo -e "${CYAN}🔑 Azure AI Foundry Configuration${NC}"
-echo -e "${YELLOW}Enter the following values (press Enter to use .env file):${NC}"
-echo ""
 
 # Try to read from .env file as defaults (check agent directory first)
 if [ -f "$AGENT_PATH/.env" ]; then
@@ -113,11 +111,18 @@ elif [ -f ".env" ]; then
     DEFAULT_AI_MODEL=$(grep "AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME" .env | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
 fi
 
-read -p "Azure AI Foundry Project Endpoint [$DEFAULT_AI_ENDPOINT]: " AZURE_AI_ENDPOINT
-AZURE_AI_ENDPOINT=${AZURE_AI_ENDPOINT:-$DEFAULT_AI_ENDPOINT}
-
-read -p "Azure AI Agent Model Deployment Name [$DEFAULT_AI_MODEL]: " AZURE_AI_MODEL_DEPLOYMENT
-AZURE_AI_MODEL_DEPLOYMENT=${AZURE_AI_MODEL_DEPLOYMENT:-$DEFAULT_AI_MODEL}
+# If .env values exist, use them automatically; otherwise prompt
+if [ -n "$DEFAULT_AI_ENDPOINT" ] && [ -n "$DEFAULT_AI_MODEL" ]; then
+    AZURE_AI_ENDPOINT="$DEFAULT_AI_ENDPOINT"
+    AZURE_AI_MODEL_DEPLOYMENT="$DEFAULT_AI_MODEL"
+    echo -e "${GREEN}✅ Using configuration from .env file${NC}"
+    echo -e "${WHITE}  Endpoint: $AZURE_AI_ENDPOINT${NC}"
+    echo -e "${WHITE}  Model: $AZURE_AI_MODEL_DEPLOYMENT${NC}"
+else
+    echo -e "${YELLOW}No .env file found, please enter configuration:${NC}"
+    read -p "Azure AI Foundry Project Endpoint: " AZURE_AI_ENDPOINT
+    read -p "Azure AI Agent Model Deployment Name: " AZURE_AI_MODEL_DEPLOYMENT
+fi
 
 echo ""
 
@@ -207,7 +212,7 @@ if [ -n "$AGENT_EXISTS" ]; then
         --image "$IMAGE_NAME" \
         --set-env-vars \
             "A2A_PORT=$PORT" \
-            "A2A_HOST=$BACKEND_URL" \
+            "A2A_HOST=0.0.0.0" \
             "A2A_ENDPOINT=https://$AGENT_FQDN" \
             "BACKEND_SERVER_URL=$BACKEND_URL" \
             "AZURE_AI_FOUNDRY_PROJECT_ENDPOINT=$AZURE_AI_ENDPOINT" \

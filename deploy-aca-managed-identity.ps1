@@ -1260,7 +1260,7 @@ foreach ($agent in $agents) {
             --image "${AcrName}.azurecr.io/${agentName}:latest" `
             --set-env-vars `
                 "A2A_ENDPOINT=https://$agentName.internal.$envDefaultDomain" `
-                "A2A_HOST=https://$backendInternalFqdn" `
+                "A2A_HOST=0.0.0.0" `
                 "LOG_LEVEL=$($envVars['LOG_LEVEL'])" `
                 "AZURE_TENANT_ID=$($envVars['AZURE_TENANT_ID'])" `
                 "AZURE_SUBSCRIPTION_ID=$($envVars['AZURE_SUBSCRIPTION_ID'])" `
@@ -1292,7 +1292,7 @@ foreach ($agent in $agents) {
             --system-assigned `
             --env-vars `
                 "A2A_ENDPOINT=https://$agentName.internal.$envDefaultDomain" `
-                "A2A_HOST=https://$backendInternalFqdn" `
+                "A2A_HOST=0.0.0.0" `
                 "LOG_LEVEL=$($envVars['LOG_LEVEL'])" `
                 "AZURE_TENANT_ID=$($envVars['AZURE_TENANT_ID'])" `
                 "AZURE_SUBSCRIPTION_ID=$($envVars['AZURE_SUBSCRIPTION_ID'])" `
