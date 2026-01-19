@@ -1225,5 +1225,49 @@
         ]
       }
     ]
+  },
+  {
+    "name": "Benjamin School English Teacher",
+    "url": "https://azurefoundry-english.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
+    "description": "High school English teacher specializing in essay grading and literary analysis",
+    "capabilities": [
+      "grading",
+      "writing feedback",
+      "literary analysis"
+    ],
+    "avatar": "/placeholder.svg?height=32&width=32"
+  },
+  {
+    "name": "Benjamin School Biology Teacher",
+    "url": "https://azurefoundry-biology.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
+    "description": "High school biology teacher and study buddy",
+    "capabilities": [
+      "biology tutoring",
+      "homework help",
+      "concept explanations"
+    ],
+    "avatar": "/placeholder.svg?height=32&width=32"
+  },
+  {
+    "name": "Benjamin School AP-Calculus Study Buddy",
+    "url": "https://azurefoundry-apcalc.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
+    "description": "AP Calculus tutor and study companion",
+    "capabilities": [
+      "calculus tutoring",
+      "problem solving",
+      "test prep"
+    ],
+    "avatar": "/placeholder.svg?height=32&width=32"
+  },
+  {
+    "name": "Benjamin School AP Environmental Science Study Buddy",
+    "url": "https://azurefoundry-apes.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
+    "description": "AP Environmental Science tutor and study companion",
+    "capabilities": [
+      "environmental science tutoring",
+      "homework help",
+      "test prep"
+    ],
+    "avatar": "/placeholder.svg?height=32&width=32"
   }
 ]
