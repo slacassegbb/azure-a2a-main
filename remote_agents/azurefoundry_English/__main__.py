@@ -41,8 +41,14 @@ def _normalize_env_value(raw_value: str | None) -> str:
 
 
 def _resolve_default_host() -> str:
-    value = _normalize_env_value(os.getenv('A2A_ENDPOINT'))
-    return value or 'localhost'
+    """Resolve the default host to bind to.
+    
+    In containerized environments, always bind to 0.0.0.0 to accept connections.
+    The A2A_ENDPOINT env var is for the public URL, not the bind address.
+    """
+    # Always bind to 0.0.0.0 in production/container environments
+    # This allows the container to accept connections from the ingress
+    return '0.0.0.0'
 
 
 def _resolve_default_port() -> int:
