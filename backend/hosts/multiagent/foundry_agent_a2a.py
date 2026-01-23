@@ -807,12 +807,8 @@ class FoundryHostAgent2:
         """
         log_foundry_debug(f"_create_response_with_streaming: Creating streaming response for context {context_id}")
         
-        # Get authentication token
-        token = await self._get_auth_token_with_retries()
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json"
-        }
+        # Get authentication headers
+        headers = await self._get_auth_headers()
         
         # Build endpoint URL
         # Convert AI Foundry endpoint to OpenAI format
