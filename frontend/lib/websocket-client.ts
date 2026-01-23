@@ -295,6 +295,16 @@ export class WebSocketClient {
         case 'task':
           this.handleTaskEvent(eventData);
           break;
+        case 'task_updated':
+          // Direct emission for sidebar status updates
+          // Contains: taskId, conversationId, contextId, state, agentName, timestamp
+          logDebug(`[WebSocket] task_updated event for ${eventData.agentName}: state=${eventData.state}`);
+          this.emit('task_updated', eventData);
+          break;
+        case 'task_created':
+          logDebug(`[WebSocket] task_created event for ${eventData.agentName}`);
+          this.emit('task_created', eventData);
+          break;
         case 'event':
           this.handleGeneralEvent(eventData);
           break;

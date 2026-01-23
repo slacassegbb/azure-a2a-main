@@ -52,6 +52,7 @@ class RemoteAgentConnections:
 
         if streaming_supported:
             try:
+                print(f"🌊 [STREAMING] Starting streaming for {self.card.name}")
                 task = None
                 async for response in self.agent_client.send_message_streaming(
                     SendStreamingMessageRequest(id=str(uuid4()), params=request)
@@ -61,12 +62,14 @@ class RemoteAgentConnections:
                         return response.root.error
                     # In the case a message is returned, that is the end of the interaction.
                     event = response.root.result
+                    print(f"🌊 [STREAMING] Event from {self.card.name}: {type(event).__name__}")
                     log_debug(f"RemoteAgentConnections.send_message (streaming): event:: {event}")
                     if isinstance(event, Message):
                         return event
 
                     # Otherwise we are in the Task + TaskUpdate cycle.
                     if callback and event:
+                        print(f"🔔 [STREAMING] Invoking callback for {self.card.name}")
                         task = callback(event, self.card)
                     if hasattr(event, 'final') and event.final:
                         break

@@ -122,46 +122,41 @@ class FoundryClassificationAgentExecutor(AgentExecutor):
             agent = await self._get_or_create_agent()
             thread_id = await self._get_or_create_thread(context_id, agent)
             
-            # Use streaming to show tool calls in real-time
-            responses = []
-            tools_called = []
-            seen_tools = set()
+            # Emit initial working status
+            logger.info(f"📡 Emitting initial status update to host via task_updater...")
+            await task_updater.update_status(
+                TaskState.working,
+                message=new_agent_text_message("🧠 Processing request...", context_id=context_id)
+            )
+            logger.info(f"✅ Initial status update sent successfully")
             
-            async for event in agent.run_conversation_stream(thread_id, user_message):
-                # Check if this is a tool call event from remote agent
-                if event.startswith("🛠️ Remote agent executing:"):
-                    tool_description = event.replace("🛠️ Remote agent executing: ", "").strip()
-                    if tool_description not in seen_tools:
-                        seen_tools.add(tool_description)
-                        tools_called.append(tool_description)
-                        # Emit tool call in real-time
-                        tool_event_msg = new_agent_text_message(
-                            f"🛠️ Remote agent executing: {tool_description}", context_id=context_id
-                        )
-                        await task_updater.update_status(
-                            TaskState.working,
-                            message=tool_event_msg
-                        )
-                # Check if this is a processing message
-                elif event.startswith("🤖") or event.startswith("🧠") or event.startswith("🔍") or event.startswith("📝"):
-                    # Emit processing message in real-time
-                    processing_msg = new_agent_text_message(
-                        event, context_id=context_id
-                    )
+            # Use streaming to collect response chunks
+            responses = []
+            chunk_count = 0
+            last_update_time = time.time()
+            update_interval = 1.0  # Send status update every second
+            
+            logger.info(f"🔄 Starting streaming loop...")
+            async for chunk in agent.run_conversation_stream(user_message, thread_id):
+                chunk_count += 1
+                responses.append(chunk)
+                
+                # Send periodic status updates while streaming (every second)
+                current_time = time.time()
+                if current_time - last_update_time >= update_interval:
+                    char_count = len(''.join(responses))
+                    logger.info(f"📡 Emitting progress update: {char_count} chars, {chunk_count} chunks...")
                     await task_updater.update_status(
                         TaskState.working,
-                        message=processing_msg
+                        message=new_agent_text_message(
+                            f"🤖 Generating response... ({char_count} chars)", 
+                            context_id=context_id
+                        )
                     )
-                # Check if this is an error
-                elif event.startswith("Error:"):
-                    await task_updater.failed(
-                        message=new_agent_text_message(event, context_id=context_id)
-                    )
-                    return
-
-                # Otherwise, treat as a regular response
-                else:
-                    responses.append(event)
+                    logger.info(f"✅ Progress update sent successfully")
+                    last_update_time = current_time
+            
+            logger.info(f"✅ Streaming loop completed: {len(responses)} total chunks")
             
             # Emit the final response
             if responses:
@@ -293,9 +288,39 @@ class FoundryClassificationAgentExecutor(AgentExecutor):
             if not context.current_task:
                 await updater.submit()
             await updater.start_work()
+            # CRITICAL: Use context_id from the incoming message (host's context), not the SDK's internal context
+            # This ensures events are routed to the correct WebSocket tenant
+            
+            # Debug: Inspect message object structure
+            logger.info(f"🔍 DEBUG Message object attributes: {dir(context.message) if context.message else 'No message'}")
+            if context.message:
+                logger.info(f"🔍 DEBUG Message.__dict__: {vars(context.message)}")
+                logger.info(f"🔍 DEBUG hasattr context_id: {hasattr(context.message, 'context_id')}")
+                logger.info(f"🔍 DEBUG hasattr contextId: {hasattr(context.message, 'contextId')}")
+                # Try both snake_case and camelCase (Pydantic aliasing)
+                if hasattr(context.message, 'context_id'):
+                    logger.info(f"🔍 DEBUG message.context_id value: {context.message.context_id}")
+                if hasattr(context.message, 'contextId'):
+                    logger.info(f"🔍 DEBUG message.contextId value: {context.message.contextId}")
+            
+            # Extract context_id - try both attribute names due to Pydantic aliasing
+            message_context_id = None
+            if context.message:
+                # Try snake_case first (Python attribute)
+                if hasattr(context.message, 'context_id') and context.message.context_id:
+                    message_context_id = context.message.context_id
+                # Fall back to camelCase (serialized name)
+                elif hasattr(context.message, 'contextId') and context.message.contextId:
+                    message_context_id = context.message.contextId
+            
+            # Ultimate fallback to SDK's context_id
+            if not message_context_id:
+                message_context_id = context.context_id
+            
+            logger.info(f"Using contextId: message={message_context_id}, sdk={context.context_id}")
             await self._process_request(
                 context.message.parts if context.message else [],
-                context.context_id,
+                message_context_id,  # Use message's context_id for tenant routing
                 updater,
             )
             logger.info(f"Completed execution for {context.context_id}")
