@@ -268,7 +268,10 @@ class FoundryHostAgent2:
         self.cards: Dict[str, AgentCard] = {}
         self.agents: str = ''
         self.session_contexts: Dict[str, SessionContext] = {}
-        self.threads: Dict[str, str] = {}
+        
+        # RESPONSES API: Store response IDs for conversation chaining (replaces threads)
+        self.response_history: Dict[str, List[str]] = {}  # context_id -> [response_ids]
+        
         self.default_contextId = str(uuid.uuid4())
         self._agent_tasks: Dict[str, Optional[Task]] = {}
         self.agent_token_usage: Dict[str, dict] = {}  # Store token usage per agent
@@ -712,6 +715,53 @@ class FoundryHostAgent2:
             log_foundry_debug(f"❌ Error refreshing Azure CLI session: {e}")
             return False
 
+    def _get_openai_endpoint(self) -> str:
+        """
+        Convert AI Foundry endpoint to OpenAI /v1/ endpoint format.
+        
+        Converts from: https://RESOURCE.services.ai.azure.com/subscriptions/.../
+        To: https://RESOURCE.openai.azure.com/openai/v1/
+        """
+        endpoint = self.endpoint
+        
+        if "services.ai.azure.com" in endpoint:
+            # Extract resource name from AI Foundry endpoint
+            # Example: https://simonfoundry.services.ai.azure.com/...
+            parts = endpoint.split("//")[1].split(".")[0]
+            openai_endpoint = f"https://{parts}.openai.azure.com/openai/v1/"
+            log_foundry_debug(f"Converted endpoint: {endpoint} -> {openai_endpoint}")
+            return openai_endpoint
+        else:
+            # Already in OpenAI format or needs manual /openai/v1/ suffix
+            openai_endpoint = endpoint if endpoint.endswith("/openai/v1/") else f"{endpoint.rstrip('/')}/openai/v1/"
+            log_foundry_debug(f"Using endpoint as-is: {openai_endpoint}")
+            return openai_endpoint
+
+    def _get_openai_client(self):
+        """
+        Get OpenAI client configured for Responses API.
+        
+        Returns synchronous OpenAI client with:
+        - Converted endpoint (/openai/v1/ format)
+        - Azure AD token authentication
+        - API version 'preview' (required for Responses API)
+        """
+        from openai import OpenAI
+        from azure.identity import get_bearer_token_provider
+        
+        token_provider = get_bearer_token_provider(
+            self.credential,
+            "https://cognitiveservices.azure.com/.default"
+        )
+        
+        client = OpenAI(
+            base_url=self._get_openai_endpoint(),
+            azure_ad_token_provider=token_provider,
+            api_version="preview"  # REQUIRED for Responses API
+        )
+        
+        return client
+
     def _get_client(self):
         """Legacy method - now throws error to identify remaining SDK usage"""
         raise NotImplementedError(
@@ -868,6 +918,138 @@ class FoundryHostAgent2:
                     raise Exception(f"Failed to submit tool outputs: {response.status_code} - {response.text}")
         except Exception as e:
             log_foundry_debug(f"❌ Exception in _http_submit_tool_outputs: {e}")
+            raise
+
+    async def _create_response_with_streaming(
+        self,
+        user_message: str,
+        context_id: str,
+        session_context: SessionContext,
+        tools: List[Dict[str, Any]],
+        instructions: str,
+        event_logger=None
+    ) -> Dict[str, Any]:
+        """
+        Create a response using Responses API with streaming support.
+        
+        Replaces the old thread→message→run→poll flow with a single streaming response.
+        
+        Handles:
+        - Text streaming (response.output_text.delta events)
+        - Tool calls (response.function_call events)
+        - Response chaining (previous_response_id for conversation continuity)
+        
+        Returns:
+            Dict with keys: id, text, tool_calls, status, usage
+        """
+        log_foundry_debug(f"_create_response_with_streaming: Creating streaming response for context {context_id}")
+        
+        # Get OpenAI client
+        client = self._get_openai_client()
+        
+        # Build input content
+        input_content = [{"type": "input_text", "text": user_message}]
+        
+        # Get previous response ID for conversation chaining
+        previous_response_id = None
+        if context_id in self.response_history and self.response_history[context_id]:
+            previous_response_id = self.response_history[context_id][-1]
+            log_foundry_debug(f"Chaining to previous response: {previous_response_id}")
+        
+        # Determine parallel tool calls based on agent_mode
+        agent_mode = session_context.agent_mode if session_context else False
+        parallel_tool_calls = not agent_mode
+        log_foundry_debug(f"Agent Mode: {agent_mode}, Parallel Tool Calls: {parallel_tool_calls}")
+        
+        # Get model deployment name
+        model_name = os.environ.get("AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME", "gpt-4o")
+        log_foundry_debug(f"Using model: {model_name}")
+        
+        # Create streaming response
+        log_foundry_debug(f"Calling responses.create() with stream=True...")
+        try:
+            response_stream = client.responses.create(
+                model=model_name,
+                input=[{
+                    "role": "user",
+                    "content": input_content
+                }],
+                instructions=instructions,
+                tools=tools,
+                stream=True,
+                previous_response_id=previous_response_id,
+                parallel_tool_calls=parallel_tool_calls,
+                max_output_tokens=4000
+            )
+            
+            # Process streaming events
+            full_text = ""
+            tool_calls = []
+            response_id = None
+            usage_info = None
+            event_count = 0
+            
+            log_foundry_debug(f"Processing streaming events...")
+            for event in response_stream:
+                event_count += 1
+                
+                if event.type == 'response.created':
+                    response_id = event.id
+                    log_foundry_debug(f"Response created with ID: {response_id}")
+                    
+                elif event.type == 'response.output_text.delta':
+                    # TEXT CHUNK - stream to WebSocket
+                    chunk = event.delta
+                    full_text += chunk
+                    
+                    # Emit streaming chunk to frontend
+                    await self._emit_text_chunk(chunk, context_id)
+                    
+                elif event.type == 'response.function_call':
+                    # TOOL CALL REQUEST
+                    log_foundry_debug(f"Tool call: {event.name}")
+                    tool_calls.append({
+                        "id": event.call_id,
+                        "type": "function",
+                        "function": {
+                            "name": event.name,
+                            "arguments": event.arguments
+                        }
+                    })
+                    
+                elif event.type == 'response.done':
+                    # Response completed
+                    log_foundry_debug(f"Response done - total events: {event_count}")
+                    if hasattr(event, 'usage'):
+                        usage_info = event.usage
+                    break
+                    
+                elif event.type == 'error':
+                    log_error(f"Stream error: {event}")
+                    raise Exception(f"Streaming error: {event}")
+            
+            # Store response ID for future chaining
+            if response_id:
+                if context_id not in self.response_history:
+                    self.response_history[context_id] = []
+                self.response_history[context_id].append(response_id)
+                log_foundry_debug(f"Stored response ID for chaining: {response_id}")
+            
+            result = {
+                "id": response_id,
+                "text": full_text,
+                "tool_calls": tool_calls,
+                "status": "completed" if not tool_calls else "requires_action",
+                "usage": usage_info
+            }
+            
+            log_foundry_debug(f"Response complete - text length: {len(full_text)}, tool calls: {len(tool_calls)}")
+            return result
+            
+        except Exception as e:
+            log_error(f"Error in _create_response_with_streaming: {e}")
+            import traceback
+            traceback.print_exc()
             raise
 
     async def init_remote_agent_addresses(self, remote_agent_addresses: List[str]):
@@ -7157,6 +7339,23 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). Simply synt
         """Emit status event to WebSocket for real-time frontend updates."""
         # Use WebSocket streaming for real-time status updates
         await self._emit_granular_agent_event("foundry-host-agent", status_text, context_id)
+
+    async def _emit_text_chunk(self, chunk: str, context_id: str):
+        """
+        Emit text chunk to WebSocket for real-time streaming display.
+        
+        This enables ChatGPT-style token-by-token streaming in the UI.
+        """
+        if self.websocket_streamer:
+            try:
+                await self.websocket_streamer.stream_event({
+                    "type": "message_chunk",
+                    "contextId": context_id,
+                    "chunk": chunk,
+                    "timestamp": datetime.now().isoformat()
+                })
+            except Exception as e:
+                log_error(f"Failed to emit text chunk: {e}")
 
     @staticmethod
     def _normalize_function_response_text(raw_response: Any) -> Any:
