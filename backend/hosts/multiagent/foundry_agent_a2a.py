@@ -42,6 +42,22 @@ from azure.monitor.opentelemetry import configure_azure_monitor
 # Azure authentication - supports multiple credential types for flexibility
 from azure.identity import DefaultAzureCredential, ChainedTokenCredential, AzureCliCredential, ManagedIdentityCredential, EnvironmentCredential, ClientSecretCredential
 
+# Azure AI Foundry Agent Service - Official SDK for enterprise agents
+from azure.ai.projects.aio import AIProjectClient
+from azure.ai.agents import (
+    AsyncFunctionTool,
+    AsyncToolSet,
+    MessageDeltaChunk,
+    ThreadMessage,
+    ThreadRun,
+    RunStep,
+    AgentStreamEvent,
+)
+from azure.ai.agents.models import (
+    MessageRole,
+    FilePurpose,
+)
+
 # A2A Protocol SDK for agent-to-agent communication
 from a2a.client import A2ACardResolver
 from a2a.types import (
@@ -226,42 +242,44 @@ class FoundryHostAgent2:
         http_client: httpx.AsyncClient,
         task_callback: Optional[TaskUpdateCallback] = None,
         enable_task_evaluation: bool = False,
-        create_agent_at_startup: bool = False,  # Changed: Responses API is stateless, no agent needed
+        create_agent_at_startup: bool = True,  # Changed back: Using Foundry Agent Service
     ):
         """
-        Initialize the Foundry Host Agent with Azure AI Foundry backend and multi-agent coordination.
+        Initialize the Foundry Host Agent with Azure AI Foundry Agent Service backend.
         
         Args:
             remote_agent_addresses: List of remote agent URLs to connect to
             http_client: Shared HTTP client for agent communication
             task_callback: Optional callback for task status updates
             enable_task_evaluation: Whether to evaluate task completion quality
-            create_agent_at_startup: DEPRECATED - Responses API doesn't need agent creation (stateless)
+            create_agent_at_startup: Create agent in Azure AI Foundry at startup (enables portal visibility)
         """
         self.endpoint = os.environ["AZURE_AI_FOUNDRY_PROJECT_ENDPOINT"]
         
         try:
-            log_foundry_debug("Initializing Azure authentication with timeout handling...")
+            log_foundry_debug("Initializing Azure AI Foundry Agent Service...")
             print("💡 TIP: If you see authentication errors, run 'python test_azure_auth.py' to diagnose")
             
-            from azure.identity import AzureCliCredential, DefaultAzureCredential, ChainedTokenCredential
+            from azure.identity.aio import AzureCliCredential, DefaultAzureCredential
             
+            # Use async credentials for AIProjectClient
             cli_credential = AzureCliCredential(process_timeout=5)
-            
-            self.credential = ChainedTokenCredential(
-                cli_credential,
-                DefaultAzureCredential(exclude_interactive_browser_credential=True)
-            )
-            log_foundry_debug("✅ Using ChainedTokenCredential (AzureCLI + DefaultAzure) with 5s timeout")
+            self.credential = cli_credential
+            log_foundry_debug("✅ Using AzureCliCredential for async operations")
                     
         except Exception as e:
             log_foundry_debug(f"⚠️ Credential initialization failed: {e}")
             print("💡 DEBUG: Falling back to DefaultAzureCredential only")
-            from azure.identity import DefaultAzureCredential
+            from azure.identity.aio import DefaultAzureCredential
             self.credential = DefaultAzureCredential(exclude_interactive_browser_credential=True)
             log_foundry_debug("✅ Using DefaultAzureCredential as fallback")
-            
-        self.agent: Optional[Dict[str, Any]] = None
+        
+        # Initialize Azure AI Project Client (async)
+        self.project_client: Optional[AIProjectClient] = None
+        self.agents_client = None  # Will be set from project_client.agents
+        
+        self.agent: Optional[Any] = None  # Agent object from Foundry Agent Service
+        self.agent_id: Optional[str] = None
         self.task_callback = task_callback or self._default_task_callback
         self.httpx_client = http_client
         self.remote_agent_connections: Dict[str, RemoteAgentConnections] = {}
@@ -269,8 +287,8 @@ class FoundryHostAgent2:
         self.agents: str = ''
         self.session_contexts: Dict[str, SessionContext] = {}
         
-        # RESPONSES API: Store response IDs for conversation chaining (replaces threads)
-        self.response_history: Dict[str, List[str]] = {}  # context_id -> [response_ids]
+        # FOUNDRY AGENT SERVICE: Store thread IDs for conversation management
+        self.thread_ids: Dict[str, str] = {}  # context_id -> thread_id
         
         self.default_contextId = str(uuid.uuid4())
         self._agent_tasks: Dict[str, Optional[Task]] = {}
@@ -323,6 +341,45 @@ class FoundryHostAgent2:
         
         if self._create_agent_at_startup:
             loop.create_task(self._create_agent_at_startup_task())
+    
+    async def _ensure_project_client(self):
+        """Initialize Azure AI Project Client and Agents Client if not already done."""
+        if self.project_client is None:
+            log_foundry_debug("🔧 Initializing AIProjectClient...")
+            self.project_client = AIProjectClient(
+                endpoint=self.endpoint,
+                credential=self.credential,
+            )
+            log_foundry_debug("✅ AIProjectClient initialized")
+        
+        if self.agents_client is None:
+            log_foundry_debug("🔧 Getting AgentsClient from project...")
+            self.agents_client = self.project_client.agents
+            log_foundry_debug("✅ AgentsClient ready")
+    
+    async def _initialize_function_tools(self):
+        """
+        Initialize function tools for the agent.
+        
+        Returns AsyncFunctionTool configured with our agent coordination functions.
+        """
+        # Define the functions that the agent can call
+        user_functions = {
+            "list_remote_agents": self.list_remote_agents_sync,
+            "send_message": self.send_message_sync,
+        }
+        
+        # Create async function tool
+        functions = AsyncFunctionTool(user_functions)
+        
+        # Create toolset and add functions
+        toolset = AsyncToolSet()
+        toolset.add(functions)
+        
+        # Enable automatic function call execution
+        await self.agents_client.enable_auto_function_calls(toolset)
+        
+        return toolset
 
     async def set_session_agents(self, session_agents: List[Dict[str, Any]]):
         """Set the available agents for this session/request.
@@ -788,176 +845,94 @@ class FoundryHostAgent2:
         user_message: str,
         context_id: str,
         session_context: SessionContext,
-        tools: List[Dict[str, Any]],
-        instructions: str,
+        tools: List[Dict[str, Any]],  # No longer used - tools are in agent
+        instructions: str,  # No longer used - instructions are in agent
         event_logger=None
     ) -> Dict[str, Any]:
         """
-        Create a response using Responses API with streaming support via HTTP.
+        Create a response using Azure AI Foundry Agent Service with streaming.
         
-        Replaces the old thread→message→run→poll flow with a single streaming response.
-        
-        Handles:
-        - Text streaming (server-sent events)
-        - Tool calls (function_call events)
-        - Response chaining (previous_response_id for conversation continuity)
+        Uses the Agent Service SDK which provides:
+        - Thread-based conversation management
+        - Automatic tool execution
+        - Built-in streaming support
+        - Full Application Insights telemetry
         
         Returns:
             Dict with keys: id, text, tool_calls, status, usage
         """
         log_foundry_debug(f"_create_response_with_streaming: Creating streaming response for context {context_id}")
         
-        # Get authentication headers
-        headers = await self._get_auth_headers()
-        
-        # Build endpoint URL - Convert AI Foundry endpoint to OpenAI format
-        # Classification agent shows Responses API works through openai.azure.com endpoint
-        base_endpoint = os.getenv("AZURE_AI_FOUNDRY_PROJECT_ENDPOINT")
-        if not base_endpoint:
-            raise ValueError("AZURE_AI_FOUNDRY_PROJECT_ENDPOINT not set")
-        
-        # Convert from: https://simonfoundry.services.ai.azure.com/api/projects/proj-default
-        # To: https://simonfoundry.openai.azure.com/openai/v1/responses
-        if "services.ai.azure.com" in base_endpoint:
-            # Extract resource name from AI Foundry endpoint
-            parts = base_endpoint.split("//")[1].split(".")[0]
-            openai_base = f"https://{parts}.openai.azure.com/openai/v1"
-        else:
-            # Already in OpenAI format
-            openai_base = base_endpoint.rstrip('/')
-        
-        # Responses API endpoint with api-version query parameter
-        # Use "preview" as the API version (same as classification agent)
-        api_version = "preview"
-        responses_url = f"{openai_base}/responses?api-version={api_version}"
-        log_foundry_debug(f"Responses API URL: {responses_url}")
-        
-        # Get previous response ID for conversation chaining
-        previous_response_id = None
-        if context_id in self.response_history and self.response_history[context_id]:
-            previous_response_id = self.response_history[context_id][-1]
-            log_foundry_debug(f"Chaining to previous response: {previous_response_id}")
-        
-        # Determine parallel tool calls based on agent_mode
-        agent_mode = session_context.agent_mode if session_context else False
-        parallel_tool_calls = not agent_mode
-        log_foundry_debug(f"Agent Mode: {agent_mode}, Parallel Tool Calls: {parallel_tool_calls}")
-        
-        # Get model deployment name
-        model_name = os.environ.get("AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME", "gpt-4o")
-        log_foundry_debug(f"Using model: {model_name}")
-        
-        # Build request payload
-        payload = {
-            "model": model_name,
-            "input": [{
-                "role": "user",
-                "content": [{"type": "input_text", "text": user_message}]
-            }],
-            "instructions": instructions,
-            "tools": tools,
-            "stream": True,
-            "parallel_tool_calls": parallel_tool_calls,
-            "max_output_tokens": 4000
-        }
-        
-        if previous_response_id:
-            payload["previous_response_id"] = previous_response_id
-        
-        # Make streaming HTTP request
-        log_foundry_debug(f"Calling Responses API with stream=True...")
         try:
-            import httpx
+            # Ensure project client and agent are initialized
+            await self._ensure_project_client()
+            if not self.agent:
+                await self.create_agent()
             
-            async with httpx.AsyncClient(timeout=180.0) as client:
-                async with client.stream('POST', responses_url, json=payload, headers=headers) as response:
-                    # Check for errors and log response details
-                    if response.status_code != 200:
-                        error_body = await response.aread()
-                        log_error(f"Responses API error {response.status_code}: {error_body.decode()}")
-                        log_error(f"Request URL: {responses_url}")
-                        log_error(f"Request payload: {payload}")
-                    
-                    response.raise_for_status()
-                    
-                    # Process Server-Sent Events
-                    full_text = ""
-                    tool_calls = []
-                    response_id = None
-                    usage_info = None
-                    event_count = 0
-                    
-                    log_foundry_debug(f"Processing streaming events...")
-                    async for line in response.aiter_lines():
-                        if not line.strip() or not line.startswith('data: '):
-                            continue
-                        
-                        event_data = line[6:]  # Remove 'data: ' prefix
-                        if event_data == '[DONE]':
-                            break
-                        
-                        try:
-                            import json
-                            event = json.loads(event_data)
-                            event_count += 1
-                            event_type = event.get('type', '')
-                            
-                            if event_type == 'response.created':
-                                response_id = event.get('id')
-                                log_foundry_debug(f"Response created with ID: {response_id}")
-                                
-                            elif event_type == 'response.output_text.delta':
-                                # TEXT CHUNK - stream to WebSocket
-                                chunk = event.get('delta', '')
-                                full_text += chunk
-                                
-                                # Emit streaming chunk to frontend
-                                await self._emit_text_chunk(chunk, context_id)
-                                
-                            elif event_type == 'response.function_call':
-                                # TOOL CALL REQUEST
-                                function_name = event.get('name', '')
-                                log_foundry_debug(f"Tool call: {function_name}")
-                                tool_calls.append({
-                                    "id": event.get('call_id'),
-                                    "type": "function",
-                                    "function": {
-                                        "name": function_name,
-                                        "arguments": event.get('arguments', '{}')
-                                    }
-                                })
-                                
-                            elif event_type == 'response.done':
-                                # Response completed
-                                log_foundry_debug(f"Response done - total events: {event_count}")
-                                if 'usage' in event:
-                                    usage_info = event['usage']
-                                break
-                                
-                            elif event_type == 'error':
-                                log_error(f"Stream error: {event}")
-                                raise Exception(f"Streaming error: {event.get('message', event)}")
-                        
-                        except json.JSONDecodeError as e:
-                            log_error(f"Failed to parse SSE event: {line}")
-                            continue
+            log_foundry_debug(f"Using agent ID: {self.agent_id}")
             
-            # Store response ID for future chaining
-            if response_id:
-                if context_id not in self.response_history:
-                    self.response_history[context_id] = []
-                self.response_history[context_id].append(response_id)
-                log_foundry_debug(f"Stored response ID for chaining: {response_id}")
+            # Get or create thread for this context
+            if context_id not in self.thread_ids:
+                log_foundry_debug(f"Creating new thread for context: {context_id}")
+                thread = await self.agents_client.threads.create()
+                self.thread_ids[context_id] = thread.id
+                log_foundry_debug(f"Created thread ID: {thread.id}")
+            
+            thread_id = self.thread_ids[context_id]
+            log_foundry_debug(f"Using thread ID: {thread_id}")
+            
+            # Create message in thread
+            log_foundry_debug(f"Creating message: {user_message[:100]}...")
+            message = await self.agents_client.messages.create(
+                thread_id=thread_id,
+                role=MessageRole.USER,
+                content=user_message
+            )
+            log_foundry_debug(f"Created message ID: {message.id}")
+            
+            # Stream the run
+            full_text = ""
+            run_id = None
+            status = "completed"
+            
+            log_foundry_debug(f"Starting streaming run...")
+            async with self.agents_client.runs.stream(
+                thread_id=thread_id,
+                agent_id=self.agent_id
+            ) as stream:
+                async for event_type, event_data, _ in stream:
+                    log_foundry_debug(f"Stream event: {event_type}")
+                    
+                    if isinstance(event_data, MessageDeltaChunk):
+                        # TEXT CHUNK - stream to WebSocket
+                        chunk = event_data.text
+                        if chunk:
+                            full_text += chunk
+                            await self._emit_text_chunk(chunk, context_id)
+                    
+                    elif isinstance(event_data, ThreadRun):
+                        run_id = event_data.id
+                        status = event_data.status
+                        log_foundry_debug(f"Run status: {status}")
+                    
+                    elif event_type == AgentStreamEvent.ERROR:
+                        log_error(f"Stream error: {event_data}")
+                        raise Exception(f"Streaming error: {event_data}")
+                    
+                    elif event_type == AgentStreamEvent.DONE:
+                        log_foundry_debug("Stream completed")
+                        break
+            
+            log_foundry_debug(f"Stream complete - text length: {len(full_text)}")
             
             result = {
-                "id": response_id,
+                "id": run_id,
                 "text": full_text,
-                "tool_calls": tool_calls,
-                "status": "completed" if not tool_calls else "requires_action",
-                "usage": usage_info
+                "tool_calls": [],  # Tool calls are handled automatically by SDK
+                "status": status,
+                "usage": None  # Could extract from run if needed
             }
             
-            log_foundry_debug(f"Response complete - text length: {len(full_text)}, tool calls: {len(tool_calls)}")
             return result
             
         except Exception as e:
@@ -1133,12 +1108,24 @@ class FoundryHostAgent2:
         if self.agent:
             asyncio.create_task(self._update_agent_instructions())
 
-    async def create_agent(self) -> Dict[str, Any]:
+    async def create_agent(self) -> Any:
+        """
+        Create an agent using Azure AI Foundry Agent Service.
+        
+        This creates a persistent agent that:
+        - Appears in Azure AI Foundry portal
+        - Has full Application Insights telemetry
+        - Supports streaming responses
+        - Has managed conversation state (threads)
+        
+        Returns:
+            Agent object from Azure AI Foundry
+        """
         if self.agent:
-            log_foundry_debug(f"Agent already exists, reusing agent ID: {self.agent.get('id', 'unknown')}")
+            log_foundry_debug(f"Agent already exists, reusing agent ID: {self.agent_id}")
             return self.agent
         
-        log_foundry_debug(f"No existing agent found, creating new agent...")
+        log_foundry_debug(f"Creating new agent with Azure AI Foundry Agent Service...")
         log_foundry_debug(f"AZURE_AI_FOUNDRY_PROJECT_ENDPOINT = {os.environ.get('AZURE_AI_FOUNDRY_PROJECT_ENDPOINT', 'NOT SET')}")
         log_foundry_debug(f"AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME = {os.environ.get('AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME', 'NOT SET')}")
         
@@ -1148,68 +1135,38 @@ class FoundryHostAgent2:
         if not os.environ.get("AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME"):
             raise ValueError("AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME environment variable is required")
         
-        # Use the correct Azure AI Foundry API endpoint format
-        endpoint = os.environ["AZURE_AI_FOUNDRY_PROJECT_ENDPOINT"]
-        
-        # The endpoint should be in format: {base_url}/api/projects/{project-name}
-        # We need to use the assistants API endpoint: {endpoint}/assistants
-        if "/api/projects/" in endpoint:
-            # Use the full project endpoint + assistants path
-            api_url = f"{endpoint}/assistants"
-            log_foundry_debug(f"Using assistants API URL: {api_url}")
-        else:
-            print(f"❌ ERROR: Invalid endpoint format. Expected format with /api/projects/")
-            raise ValueError(f"Invalid endpoint format: {endpoint}")
-        
         try:
-            # Get authentication headers
-            headers = await self._get_auth_headers()
+            # Ensure project client is initialized
+            await self._ensure_project_client()
             
             model_name = os.environ["AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME"]
             instructions = self.root_instruction('foundry-host-agent')
-            tools = self._get_tools()
             
             log_foundry_debug(f"Agent parameters:")
             print(f"  - model: {model_name}")
             print(f"  - name: foundry-host-agent")
             print(f"  - instructions length: {len(instructions)}")
-            print(f"  - tools count: {len(tools)}")
             
-            # Prepare the request payload
-            payload = {
-                "model": model_name,
-                "name": "foundry-host-agent",
-                "instructions": instructions,
-                "tools": tools
-            }
+            # Initialize function tools
+            toolset = await self._initialize_function_tools()
             
-            # Make the HTTP request to create the assistant
-            async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    api_url,
-                    headers=headers,
-                    json=payload,
-                    params={"api-version": "2025-05-15-preview"},
-                    timeout=30.0
-                )
-                
-                log_foundry_debug(f"API Response Status: {response.status_code}")
-                
-                if response.status_code == 200 or response.status_code == 201:
-                    self.agent = response.json()
-                    log_foundry_debug(f"✅ Agent created successfully! ID: {self.agent['id']}")
-                    logger.info(f"Created Foundry Host agent: {self.agent['id']}")
-                    return self.agent
-                elif response.status_code == 401:
-                    log_foundry_debug(f"🔄 Authentication failed (401), clearing cached token")
-                    self._clear_cached_token()
-                    log_foundry_debug(f"❌ API request failed with status {response.status_code}")
-                    log_foundry_debug(f"❌ Response text: {response.text}")
-                    raise Exception(f"Failed to create agent (authentication failed): {response.status_code} - {response.text}")
-                else:
-                    log_foundry_debug(f"❌ API request failed with status {response.status_code}")
-                    log_foundry_debug(f"❌ Response text: {response.text}")
-                    raise Exception(f"Failed to create agent: {response.status_code} - {response.text}")
+            log_foundry_debug(f"  - tools: initialized with AsyncFunctionTool")
+            
+            # Create agent using Foundry Agent Service SDK
+            log_foundry_debug("Calling agents_client.create_agent()...")
+            self.agent = await self.agents_client.create_agent(
+                model=model_name,
+                name="foundry-host-agent",
+                instructions=instructions,
+                toolset=toolset,
+            )
+            
+            self.agent_id = self.agent.id
+            log_foundry_debug(f"✅ Agent created successfully! ID: {self.agent_id}")
+            logger.info(f"Created Foundry Host agent: {self.agent_id}")
+            print(f"🎉 Agent visible in Azure AI Foundry portal: {self.agent_id}")
+            
+            return self.agent
             
         except Exception as e:
             log_foundry_debug(f"❌ Exception in create_agent(): {type(e).__name__}: {e}")
@@ -1217,6 +1174,40 @@ class FoundryHostAgent2:
             import traceback
             traceback.print_exc()
             raise
+    
+    def list_remote_agents_sync(self):
+        """
+        Synchronous wrapper for list_remote_agents - for use with AsyncFunctionTool.
+        
+        Azure AI Agents SDK expects synchronous functions for tool definitions.
+        """
+        return self.list_remote_agents()
+    
+    def send_message_sync(self, agent_name: str, message: str):
+        """
+        Synchronous wrapper for send_message - for use with AsyncFunctionTool.
+        
+        This is a placeholder that will be called by the SDK. The actual async
+        execution is handled by the Foundry Agent Service.
+        
+        NOTE: In practice, the SDK will handle calling the async send_message method.
+        """
+        # Create a task context mock
+        tool_context = type('obj', (object,), {
+            'state': self.session_contexts.get(self.default_contextId, SessionContext(
+                agent_mode=False, 
+                host_task=None, 
+                plan=None
+            ))
+        })()
+        
+        # Return the coroutine - SDK will await it
+        return self.send_message(
+            agent_name=agent_name,
+            message=message,
+            tool_context=tool_context,
+            suppress_streaming=True
+        )
 
     async def _update_agent_instructions(self):
         """Update the agent's instructions with the current agent list"""
