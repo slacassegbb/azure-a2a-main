@@ -226,7 +226,7 @@ class FoundryHostAgent2:
         http_client: httpx.AsyncClient,
         task_callback: Optional[TaskUpdateCallback] = None,
         enable_task_evaluation: bool = False,
-        create_agent_at_startup: bool = True,
+        create_agent_at_startup: bool = False,  # Changed: Responses API is stateless, no agent needed
     ):
         """
         Initialize the Foundry Host Agent with Azure AI Foundry backend and multi-agent coordination.
@@ -236,7 +236,7 @@ class FoundryHostAgent2:
             http_client: Shared HTTP client for agent communication
             task_callback: Optional callback for task status updates
             enable_task_evaluation: Whether to evaluate task completion quality
-            create_agent_at_startup: Whether to create the Azure AI agent immediately
+            create_agent_at_startup: DEPRECATED - Responses API doesn't need agent creation (stateless)
         """
         self.endpoint = os.environ["AZURE_AI_FOUNDRY_PROJECT_ENDPOINT"]
         
@@ -6791,9 +6791,11 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). Simply synt
             return False
 
     @staticmethod
-    def create_with_shared_client(remote_agent_addresses: List[str], task_callback: Optional[TaskUpdateCallback] = None, enable_task_evaluation: bool = True, create_agent_at_startup: bool = True):
+    def create_with_shared_client(remote_agent_addresses: List[str], task_callback: Optional[TaskUpdateCallback] = None, enable_task_evaluation: bool = True, create_agent_at_startup: bool = False):
         """
         Factory method to create a FoundryHostAgent2 with a shared httpx.AsyncClient and optional task evaluation.
+        
+        Note: create_agent_at_startup defaults to False since Responses API is stateless and doesn't need agent creation.
         """
         shared_client = httpx.AsyncClient()
         return FoundryHostAgent2(remote_agent_addresses, http_client=shared_client, task_callback=task_callback, enable_task_evaluation=enable_task_evaluation, create_agent_at_startup=create_agent_at_startup)
