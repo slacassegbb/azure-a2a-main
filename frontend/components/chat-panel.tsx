@@ -578,8 +578,7 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
   })
   
   const [messages, setMessages] = useState<Message[]>([])
-  const [streamingMessage, setStreamingMessage] = useState<string>('')  // For real-time token streaming
-  const [streamingContextId, setStreamingContextId] = useState<string | null>(null)  // Track which context is streaming
+  const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null)  // Track which message is currently streaming
   const [isLoadingMessages, setIsLoadingMessages] = useState(true) // Add loading state
   const [input, setInput] = useState("")
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -1033,12 +1032,10 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
             agentName: agentName
           })
           
-          // Clear streaming state when complete message arrives
-          if (streamingContextId === (data.contextId || data.conversationId)) {
-            console.log("[ChatPanel] Clearing streaming message (complete message received)")
-            setStreamingMessage('')
-            setStreamingContextId(null)
-          }
+          // Remove streaming message when complete message arrives
+          const streamingId = `streaming_${data.contextId || data.conversationId}`
+          setMessages(prev => prev.filter(msg => msg.id !== streamingId))
+          setStreamingMessageId(null)
           
           // Emit final_response for internal processing - this is converted from message event
           emit("final_response", {
@@ -1064,8 +1061,32 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
       
       // Only accumulate chunks for the current context
       if (data.contextId === contextId) {
-        setStreamingMessage(prev => prev + (data.chunk || ''))
-        setStreamingContextId(data.contextId)
+        const streamingId = `streaming_${data.contextId}`
+        
+        setMessages(prev => {
+          const existingIndex = prev.findIndex(msg => msg.id === streamingId)
+          
+          if (existingIndex >= 0) {
+            // Update existing streaming message
+            const updated = [...prev]
+            updated[existingIndex] = {
+              ...updated[existingIndex],
+              content: (updated[existingIndex].content || '') + (data.chunk || '')
+            }
+            return updated
+          } else {
+            // Create new streaming message in the messages array
+            const newMessage: Message = {
+              id: streamingId,
+              role: "assistant",
+              content: data.chunk || '',
+              agent: "foundry-host-agent"
+            }
+            return [...prev, newMessage]
+          }
+        })
+        
+        setStreamingMessageId(streamingId)
         
         // Auto-scroll to bottom as tokens stream in
         if (messagesContainerRef.current) {
@@ -1973,6 +1994,11 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
             >
               <div className="flex flex-col gap-4 p-4">
             {messages.map((message, index) => {
+              // Skip streaming message - it will be rendered separately after workflow
+              if (message.id === streamingMessageId) {
+                return null
+              }
+              
               if (message.type === "inference_summary") {
                 // Only render if there are actual steps
                 if (!message.steps || message.steps.length === 0) {
@@ -2241,29 +2267,58 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
               )
             })}
             
-            {/* Streaming message display (real-time tokens from Responses API) */}
-            {streamingMessage && streamingContextId === contextId && (
-              <div className="flex gap-3 items-start">
-                <div className="h-8 w-8 flex-shrink-0 bg-blue-100 rounded-full flex items-center justify-center">
-                  <Bot size={18} className="text-blue-600" />
-                </div>
-                <div className="flex flex-col items-start">
-                  <div className="rounded-lg p-3 max-w-md bg-muted">
-                    <div className="prose prose-sm max-w-none dark:prose-invert">
-                      <ReactMarkdown
-                        remarkPlugins={[remarkGfm]}
-                        rehypePlugins={[rehypeHighlight]}
-                      >
-                        {streamingMessage}
-                      </ReactMarkdown>
+            {/* Workflow steps display - shows current agent activity - BEFORE streaming message */}
+            {isInferencing && <InferenceSteps steps={inferenceSteps} isInferencing={true} />}
+            
+            {/* Render streaming message separately AFTER workflow but treat it as a message */}
+            {streamingMessageId && messages.find(m => m.id === streamingMessageId) && (() => {
+              const streamingMsg = messages.find(m => m.id === streamingMessageId)!
+              return (
+                <div className="flex gap-3 items-start">
+                  <div className="h-8 w-8 flex-shrink-0 bg-blue-100 rounded-full flex items-center justify-center">
+                    <Bot size={18} className="text-blue-600" />
+                  </div>
+                  <div className="flex flex-col items-start">
+                    <div className="rounded-lg p-3 max-w-md bg-muted">
+                      <div className="text-sm prose prose-sm max-w-none dark:prose-invert">
+                        <ReactMarkdown
+                          remarkPlugins={[remarkGfm]}
+                          rehypePlugins={[rehypeHighlight]}
+                          components={{
+                            p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
+                            code: ({ node, inline, className, children, ...props }: any) => 
+                              inline ? (
+                                <code className="bg-black/10 dark:bg-white/10 px-1 py-0.5 rounded text-xs" {...props}>
+                                  {children}
+                                </code>
+                              ) : (
+                                <code className="block bg-black/10 dark:bg-white/10 p-2 rounded text-xs overflow-x-auto" {...props}>
+                                  {children}
+                                </code>
+                              ),
+                            pre: ({ children }) => <div className="my-2">{children}</div>,
+                            ul: ({ children }) => <ul className="mb-2 last:mb-0 pl-4">{children}</ul>,
+                            ol: ({ children }) => <ol className="mb-2 last:mb-0 pl-4">{children}</ol>,
+                            li: ({ children }) => <li className="mb-1">{children}</li>,
+                            h1: ({ children }) => <h1 className="text-base font-bold mb-2">{children}</h1>,
+                            h2: ({ children }) => <h2 className="text-sm font-bold mb-2">{children}</h2>,
+                            h3: ({ children }) => <h3 className="text-sm font-semibold mb-1">{children}</h3>,
+                            blockquote: ({ children }) => (
+                              <blockquote className="border-l-2 border-gray-300 dark:border-gray-600 pl-2 my-2 italic">
+                                {children}
+                              </blockquote>
+                            ),
+                          }}
+                        >
+                          {streamingMsg.content || ""}
+                        </ReactMarkdown>
+                        <span className="inline-block w-2 h-4 bg-blue-600 animate-pulse ml-1" />
+                      </div>
                     </div>
-                    <span className="inline-block w-2 h-4 bg-blue-600 animate-pulse ml-1" />
                   </div>
                 </div>
-              </div>
-            )}
-            
-            {isInferencing && <InferenceSteps steps={inferenceSteps} isInferencing={true} />}
+              )
+            })()}
           </div>
         </div>
       </div>

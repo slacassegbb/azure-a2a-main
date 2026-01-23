@@ -247,7 +247,7 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, agentMod
         statusClearTimeoutsRef.delete(targetAgent)
       }
       
-      // Clear the task after showing completion or failure for 10 seconds
+      // Clear the task after showing completion or failure for 5 seconds
       if (mappedState === "completed" || mappedState === "failed") {
         const timeoutId = setTimeout(() => {
           setAgentStatuses(prev => {
@@ -264,7 +264,7 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, agentMod
             return newStatuses
           })
           statusClearTimeoutsRef.delete(targetAgent)
-        }, 10000)
+        }, 5000)
         
         statusClearTimeoutsRef.set(targetAgent, timeoutId)
       }

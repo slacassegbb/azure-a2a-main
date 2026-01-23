@@ -924,7 +924,7 @@ class FoundryHostAgent2:
             # Cancel any active runs before creating new message
             # This prevents "Can't add messages while a run is active" errors
             try:
-                runs = await self.agents_client.runs.list(thread_id=thread_id)
+                runs = self.agents_client.runs.list(thread_id=thread_id)
                 async for run in runs:
                     if run.status in ["in_progress", "requires_action", "queued"]:
                         print(f"⚠️ Cancelling stuck run {run.id} with status {run.status}", flush=True)
