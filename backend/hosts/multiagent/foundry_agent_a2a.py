@@ -1262,29 +1262,31 @@ class FoundryHostAgent2:
             pass
 
     def _get_tools(self) -> List[Dict[str, Any]]:
-        """Define Azure AI Foundry function tools for agent coordination."""
+        """
+        Define Azure AI Foundry function tools for agent coordination.
+        
+        NOTE: Responses API format is different from Chat Completions API!
+        - Responses API: {"type": "function", "name": "...", "description": "...", "parameters": {...}}
+        - Chat Completions: {"type": "function", "function": {"name": "...", ...}}
+        """
         return [
             {
                 "type": "function",
-                "function": {
-                    "name": "list_remote_agents",
-                    "description": "List the available remote agents you can use to delegate the task.",
-                    "parameters": {"type": "object", "properties": {}},
-                },
+                "name": "list_remote_agents",
+                "description": "List the available remote agents you can use to delegate the task.",
+                "parameters": {"type": "object", "properties": {}},
             },
             {
                 "type": "function",
-                "function": {
-                    "name": "send_message",
-                    "description": "Send a message to a remote agent.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "agent_name": {"type": "string", "description": "The name of the agent to send the task to."},
-                            "message": {"type": "string", "description": "The message to send to the agent."},
-                        },
-                        "required": ["agent_name", "message"],
+                "name": "send_message",
+                "description": "Send a message to a remote agent.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "agent_name": {"type": "string", "description": "The name of the agent to send the task to."},
+                        "message": {"type": "string", "description": "The message to send to the agent."},
                     },
+                    "required": ["agent_name", "message"],
                 },
             },
         ]
