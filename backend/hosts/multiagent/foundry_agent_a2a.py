@@ -810,16 +810,26 @@ class FoundryHostAgent2:
         # Get authentication headers
         headers = await self._get_auth_headers()
         
-        # Build endpoint URL - Responses API uses AI Foundry endpoint, not OpenAI format
-        # The Responses API is only available through AI Foundry projects
+        # Build endpoint URL - Convert AI Foundry endpoint to OpenAI format
+        # Classification agent shows Responses API works through openai.azure.com endpoint
         base_endpoint = os.getenv("AZURE_AI_FOUNDRY_PROJECT_ENDPOINT")
         if not base_endpoint:
             raise ValueError("AZURE_AI_FOUNDRY_PROJECT_ENDPOINT not set")
         
+        # Convert from: https://simonfoundry.services.ai.azure.com/api/projects/proj-default
+        # To: https://simonfoundry.openai.azure.com/openai/v1/responses
+        if "services.ai.azure.com" in base_endpoint:
+            # Extract resource name from AI Foundry endpoint
+            parts = base_endpoint.split("//")[1].split(".")[0]
+            openai_base = f"https://{parts}.openai.azure.com/openai/v1"
+        else:
+            # Already in OpenAI format
+            openai_base = base_endpoint.rstrip('/')
+        
         # Responses API endpoint with api-version query parameter
         # Use "preview" as the API version (same as classification agent)
         api_version = "preview"
-        responses_url = f"{base_endpoint.rstrip('/')}/responses?api-version={api_version}"
+        responses_url = f"{openai_base}/responses?api-version={api_version}"
         log_foundry_debug(f"Responses API URL: {responses_url}")
         
         # Get previous response ID for conversation chaining
