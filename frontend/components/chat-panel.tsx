@@ -578,6 +578,8 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
   })
   
   const [messages, setMessages] = useState<Message[]>([])
+  const [streamingMessage, setStreamingMessage] = useState<string>('')  // For real-time token streaming
+  const [streamingContextId, setStreamingContextId] = useState<string | null>(null)  // Track which context is streaming
   const [isLoadingMessages, setIsLoadingMessages] = useState(true) // Add loading state
   const [input, setInput] = useState("")
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -1057,6 +1059,13 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
             agentName: agentName
           })
           
+          // Clear streaming state when complete message arrives
+          if (streamingContextId === (data.contextId || data.conversationId)) {
+            console.log("[ChatPanel] Clearing streaming message (complete message received)")
+            setStreamingMessage('')
+            setStreamingContextId(null)
+          }
+          
           // Emit final_response for internal processing - this is converted from message event
           emit("final_response", {
             inferenceId: data.conversationId || data.messageId,
@@ -1071,6 +1080,28 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
           })
         } else {
           console.log("[ChatPanel] Skipping user message echo from backend:", data)
+        }
+      }
+    }
+
+    // Handle streaming message chunks (Responses API real-time streaming)
+    const handleMessageChunk = (data: any) => {
+      console.log("[ChatPanel] 📡 Message chunk received:", data)
+      
+      // Only accumulate chunks for the current context
+      if (data.contextId === contextId) {
+        setStreamingMessage(prev => prev + (data.chunk || ''))
+        setStreamingContextId(data.contextId)
+        
+        // Auto-scroll to bottom as tokens stream in
+        if (messagesContainerRef.current) {
+          const container = messagesContainerRef.current
+          const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 100
+          if (isNearBottom) {
+            setTimeout(() => {
+              container.scrollTop = container.scrollHeight
+            }, 10)
+          }
         }
       }
     }
@@ -1183,6 +1214,7 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
     subscribe("message_sent", handleMessageSent)
     subscribe("message_received", handleMessageReceived)
     subscribe("message", handleMessage)
+    subscribe("message_chunk", handleMessageChunk)  // Real-time streaming
     subscribe("shared_message", handleSharedMessage)
     subscribe("shared_inference_started", handleSharedInferenceStarted)
     subscribe("shared_inference_ended", handleSharedInferenceEnded)
@@ -1202,6 +1234,7 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
       unsubscribe("message_sent", handleMessageSent)
       unsubscribe("message_received", handleMessageReceived)
       unsubscribe("message", handleMessage)
+      unsubscribe("message_chunk", handleMessageChunk)  // Real-time streaming
       unsubscribe("shared_message", handleSharedMessage)
       unsubscribe("shared_inference_started", handleSharedInferenceStarted)
       unsubscribe("shared_inference_ended", handleSharedInferenceEnded)
@@ -2186,6 +2219,29 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
                 </div>
               )
             })}
+            
+            {/* Streaming message display (real-time tokens from Responses API) */}
+            {streamingMessage && streamingContextId === contextId && (
+              <div className="flex gap-3 items-start">
+                <div className="h-8 w-8 flex-shrink-0 bg-blue-100 rounded-full flex items-center justify-center">
+                  <Bot size={18} className="text-blue-600" />
+                </div>
+                <div className="flex flex-col items-start">
+                  <div className="rounded-lg p-3 max-w-md bg-muted">
+                    <div className="prose prose-sm max-w-none dark:prose-invert">
+                      <ReactMarkdown
+                        remarkPlugins={[remarkGfm]}
+                        rehypePlugins={[rehypeHighlight]}
+                      >
+                        {streamingMessage}
+                      </ReactMarkdown>
+                    </div>
+                    <span className="inline-block w-2 h-4 bg-blue-600 animate-pulse ml-1" />
+                  </div>
+                </div>
+              </div>
+            )}
+            
             {isInferencing && <InferenceSteps steps={inferenceSteps} isInferencing={true} />}
           </div>
         </div>

@@ -795,41 +795,22 @@ class FoundryHostAgent2:
             "Please update the calling code to use HTTP-based methods."
         )
 
-    async def _http_list_messages(self, thread_id: str, limit: int = None) -> List[Dict[str, Any]]:
-        """List messages in a thread via HTTP API"""
-        try:
-            headers = await self._get_auth_headers()
-            endpoint = os.environ["AZURE_AI_FOUNDRY_PROJECT_ENDPOINT"]
-            api_url = f"{endpoint}/threads/{thread_id}/messages"
-            
-            params = {"api-version": "2025-05-15-preview"}
-            if limit:
-                params["limit"] = str(limit)
-            
-            async with httpx.AsyncClient() as client:
-                response = await client.get(
-                    api_url,
-                    headers=headers,
-                    params=params,
-                    timeout=30.0
-                )
-                
-                if response.status_code == 200:
-                    data = response.json()
-                    # Return messages in reverse order (most recent first)
-                    messages = data.get("data", [])
-                    return list(reversed(messages))
-                elif response.status_code == 401:
-                    log_foundry_debug(f"🔄 Authentication failed (401), clearing cached token")
-                    self._clear_cached_token()
-                    log_foundry_debug(f"❌ Failed to list messages: {response.status_code} - {response.text}")
-                    return []
-                else:
-                    log_foundry_debug(f"❌ Failed to list messages: {response.status_code} - {response.text}")
-                    return []
-        except Exception as e:
-            log_foundry_debug(f"❌ Exception in _http_list_messages: {e}")
-            return []
+    # ========================================================================
+    # DEPRECATED: Assistants API Methods - Replaced by Responses API
+    # ========================================================================
+    # The following methods are NO LONGER USED after migration to Responses API.
+    # They are kept here temporarily for reference and will be removed in a future cleanup.
+    # 
+    # Replaced by:
+    # - _create_response_with_streaming() - Single call for everything
+    # - _execute_tool_calls_from_response() - Tool execution
+    # 
+    # Old flow: create_thread() → send_message_to_thread() → _http_create_run() 
+    #           → _http_get_run() (polling) → _http_submit_tool_outputs() 
+    #           → _http_list_messages()
+    # 
+    # New flow: _create_response_with_streaming() (includes streaming, tools, chaining)
+    # ========================================================================
 
     async def _http_create_run(self, thread_id: str, agent_id: str, session_context: Optional[SessionContext] = None) -> Dict[str, Any]:
         """Create a run via HTTP API"""
@@ -2850,6 +2831,11 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
         return self.session_contexts[context_id]
 
     async def create_thread(self, context_id: str) -> Dict[str, Any]:
+        """
+        DEPRECATED: Part of old Assistants API flow.
+        Replaced by: response_history in _create_response_with_streaming()
+        Kept for compatibility with legacy code paths.
+        """
         if context_id in self.threads:
             # Return thread info instead of thread object
             log_foundry_debug(f"Thread already exists for context {context_id}, returning existing ID: {self.threads[context_id]}")
@@ -2902,6 +2888,11 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
             raise
 
     async def send_message_to_thread(self, thread_id: str, content: str, role: str = "user") -> Dict[str, Any]:
+        """
+        DEPRECATED: Part of old Assistants API flow.
+        Replaced by: _create_response_with_streaming() which handles message + response in one call
+        Kept for compatibility with legacy code paths.
+        """
         log_foundry_debug(f"send_message_to_thread ENTRY - thread_id: {thread_id}, role: {role}")
         log_foundry_debug(f"Message content length: {len(content)} chars")
         

@@ -17,6 +17,7 @@ export interface A2AEventEnvelope {
 // Union type for all possible event data types
 export type A2AEventData = 
   | MessageEventData
+  | MessageChunkEventData
   | ConversationCreatedEventData
   | ConversationUpdatedEventData
   | TaskCreatedEventData
@@ -39,6 +40,14 @@ export interface MessageEventData {
   role: string;
   content: MessageContent[];
   direction: "outgoing" | "incoming";
+}
+
+// Message chunk events (streaming tokens in real-time)
+export interface MessageChunkEventData {
+  type: 'message_chunk';
+  contextId: string;
+  chunk: string;
+  timestamp: string; // ISO 8601 format
 }
 
 export interface MessageContent {
