@@ -816,8 +816,9 @@ class FoundryHostAgent2:
         if not base_endpoint:
             raise ValueError("AZURE_AI_FOUNDRY_PROJECT_ENDPOINT not set")
         
-        # Responses API endpoint: {project}/responses
-        responses_url = f"{base_endpoint.rstrip('/')}/responses"
+        # Responses API endpoint with api-version query parameter
+        # Format: {project}/responses?api-version=2024-12-01-preview
+        responses_url = f"{base_endpoint.rstrip('/')}/responses?api-version=2024-12-01-preview"
         log_foundry_debug(f"Responses API URL: {responses_url}")
         
         # Get previous response ID for conversation chaining
