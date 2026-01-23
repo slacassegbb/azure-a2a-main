@@ -280,7 +280,13 @@ class FoundryHostManager(ApplicationManager):
         message_id = get_message_id(message)
         if message_id:
             self._pending_message_ids.append(message_id)
-        context_id = get_context_id(message) or str(uuid.uuid4())
+        
+        # DEBUG: Log what get_context_id returns
+        extracted_context_id = get_context_id(message)
+        log_debug(f"🔍 [process_message] get_context_id returned: {extracted_context_id}")
+        
+        context_id = extracted_context_id or str(uuid.uuid4())
+        log_debug(f"🔍 [process_message] Final context_id (after UUID fallback): {context_id}")
         log_debug(f"process_message: Agent Mode = {agent_mode}, Inter-Agent Memory = {enable_inter_agent_memory}, Workflow = {workflow[:50] if workflow else None}")
         conversation = self.get_conversation(context_id)
         if not conversation:
@@ -745,16 +751,18 @@ class FoundryHostManager(ApplicationManager):
                 import traceback
                 traceback.print_exc()
             
+            # Determine task state from response
+            # Priority: 1) A2A protocol status, 2) Session context (HITL), 3) Default to completed
             state = TaskState.completed
-            resp_lower = str(resp).lower() if isinstance(resp, str) else ""
+            
+            # Check if response has proper A2A status object (from remote agents)
             if hasattr(resp, 'status') and hasattr(resp.status, 'state'):
                 state = resp.status.state
-            elif "input required" in resp_lower or "please provide" in resp_lower or "waiting for" in resp_lower:
-                state = TaskState.input_required
-            elif "cancelled" in resp_lower or "canceled" in resp_lower:
-                state = TaskState.canceled
-            elif "failed" in resp_lower or "error" in resp_lower:
-                state = TaskState.failed
+            
+            # NOTE: We removed the text-based heuristics that tried to infer state from response content.
+            # These were unreliable - matching "failed" or "error" in conversational text is wrong.
+            # If we got here with a response, the operation succeeded. Actual failures are caught
+            # by exception handling earlier in the flow.
             
             # HUMAN-IN-THE-LOOP: Check if a remote agent set input_required state
             # This is tracked in the session context's pending_input_agent field

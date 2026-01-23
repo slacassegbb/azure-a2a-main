@@ -2,7 +2,7 @@ from typing import List, Optional, Dict, Any
 import os
 import json
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from dotenv import load_dotenv
 from azure.core.credentials import AzureKeyCredential
@@ -344,7 +344,7 @@ class A2AMemoryService:
                 "session_id": session_id,  # Tenant isolation field
                 "agent_name": interaction_data.get('agent_name', ''),
                 "processing_time_seconds": interaction_data.get('processing_time_seconds', 0.0),
-                "timestamp": interaction_data.get('timestamp', datetime.utcnow().isoformat() + 'Z'),
+                "timestamp": interaction_data.get('timestamp', datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'),
                 
                 "outbound_payload": json.dumps(interaction_data.get('outbound_payload', {})),
                 "inbound_payload": json.dumps(interaction_data.get('inbound_payload', {})),

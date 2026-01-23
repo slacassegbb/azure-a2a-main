@@ -28,7 +28,7 @@ import os
 import sys
 import logging
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Iterable, Literal
 import httpx
@@ -44,7 +44,7 @@ from azure.identity import DefaultAzureCredential, ChainedTokenCredential, Azure
 
 # Azure AI Foundry Agent Service - Official SDK for enterprise agents
 from azure.ai.projects.aio import AIProjectClient
-from azure.ai.agents import (
+from azure.ai.agents.models import (
     AsyncFunctionTool,
     AsyncToolSet,
     MessageDeltaChunk,
@@ -52,8 +52,6 @@ from azure.ai.agents import (
     ThreadRun,
     RunStep,
     AgentStreamEvent,
-)
-from azure.ai.agents.models import (
     MessageRole,
     FilePurpose,
 )
@@ -211,8 +209,8 @@ class AgentModeTask(BaseModel):
     recommended_agent: Optional[str] = Field(None, description="Agent name to execute this task.")
     output: Optional[Dict[str, Any]] = Field(None, description="A2A remote-agent output payload.")
     state: TaskStateEnum = Field("pending", description="Current A2A task state.")
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     error_message: Optional[str] = Field(None, description="Error message if task failed.")
 
 
@@ -221,8 +219,8 @@ class AgentModePlan(BaseModel):
     goal: str = Field(..., description="User query or objective.")
     goal_status: GoalStatus = Field("incomplete", description="Completion state of the goal.")
     tasks: List[AgentModeTask] = Field(default_factory=list, description="List of all tasks in the plan.")
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class NextStep(BaseModel):
@@ -290,7 +288,9 @@ class FoundryHostAgent2:
         # FOUNDRY AGENT SERVICE: Store thread IDs for conversation management
         self.thread_ids: Dict[str, str] = {}  # context_id -> thread_id
         
-        self.default_contextId = str(uuid.uuid4())
+        # REMOVED: self.default_contextId = str(uuid.uuid4())
+        # We NEVER want to use a UUID fallback - context_id must come from the request
+        self.default_contextId = None
         self._agent_tasks: Dict[str, Optional[Task]] = {}
         self.agent_token_usage: Dict[str, dict] = {}  # Store token usage per agent
         self.host_token_usage: Dict[str, int] = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}  # Host agent tokens
@@ -343,13 +343,46 @@ class FoundryHostAgent2:
             loop.create_task(self._create_agent_at_startup_task())
     
     async def _ensure_project_client(self):
-        """Initialize Azure AI Project Client and Agents Client if not already done."""
+        """
+        Initialize Azure AI Project Client and Agents Client if not already done.
+        
+        IMPORTANT: AIProjectClient must be created in the same event loop where it's used.
+        If the event loop has changed, we need to recreate the client.
+        """
+        current_loop = asyncio.get_running_loop()
+        
+        # Check if we need to recreate the client for a new event loop
+        if self.project_client is not None:
+            # Check if the client's loop is still the current loop
+            try:
+                # If the client was created in a different loop, recreate it
+                if hasattr(self, '_project_client_loop') and self._project_client_loop != current_loop:
+                    log_foundry_debug("� Event loop changed, recreating AIProjectClient...")
+                    # Close the old client if possible
+                    if hasattr(self.project_client, 'close'):
+                        try:
+                            await self.project_client.close()
+                        except:
+                            pass
+                    self.project_client = None
+                    self.agents_client = None
+                    self.credential = None
+            except:
+                pass
+        
+        # Recreate credential if needed
+        if self.credential is None:
+            from azure.identity.aio import AzureCliCredential
+            self.credential = AzureCliCredential(process_timeout=5)
+            log_foundry_debug("Recreated AzureCliCredential for new event loop")
+        
         if self.project_client is None:
-            log_foundry_debug("🔧 Initializing AIProjectClient...")
+            log_foundry_debug("�🔧 Initializing AIProjectClient...")
             self.project_client = AIProjectClient(
                 endpoint=self.endpoint,
                 credential=self.credential,
             )
+            self._project_client_loop = current_loop
             log_foundry_debug("✅ AIProjectClient initialized")
         
         if self.agents_client is None:
@@ -364,10 +397,11 @@ class FoundryHostAgent2:
         Returns AsyncFunctionTool configured with our agent coordination functions.
         """
         # Define the functions that the agent can call
-        user_functions = {
-            "list_remote_agents": self.list_remote_agents_sync,
-            "send_message": self.send_message_sync,
-        }
+        # AsyncFunctionTool expects a LIST of functions, not a dict
+        user_functions = [
+            self.list_remote_agents_sync,
+            self.send_message_sync,
+        ]
         
         # Create async function tool
         functions = AsyncFunctionTool(user_functions)
@@ -376,8 +410,8 @@ class FoundryHostAgent2:
         toolset = AsyncToolSet()
         toolset.add(functions)
         
-        # Enable automatic function call execution
-        await self.agents_client.enable_auto_function_calls(toolset)
+        # Enable automatic function call execution (synchronous method)
+        self.agents_client.enable_auto_function_calls(toolset)
         
         return toolset
 
@@ -619,7 +653,7 @@ class FoundryHostAgent2:
             print("🔍 Azure Blob check: uploading connectivity probe...")
             probe_blob_name = f"a2a-artifacts/_connectivity_probe_.txt"
             probe_client = container_client.get_blob_client(probe_blob_name)
-            probe_payload = f"connection verified at {datetime.utcnow().isoformat()}"
+            probe_payload = f"connection verified at {datetime.now(timezone.utc).isoformat()}"
             await asyncio.to_thread(probe_client.upload_blob, probe_payload, overwrite=True)
             print(f"✅ Azure Blob probe uploaded: {probe_blob_name}")
 
@@ -658,9 +692,9 @@ class FoundryHostAgent2:
         
         # Return cached token if still valid (with 5-minute safety buffer)
         if self._cached_token and self._token_expiry:
-            import datetime
+            from datetime import datetime as dt, timedelta
             # Add 5 minute buffer before expiry
-            buffer_time = datetime.datetime.now() + datetime.timedelta(minutes=5)
+            buffer_time = dt.now() + timedelta(minutes=5)
             if self._token_expiry > buffer_time:
                 log_foundry_debug(f"✅ Using cached token (expires: {self._token_expiry})")
                 return {
@@ -674,23 +708,36 @@ class FoundryHostAgent2:
             try:
                 log_foundry_debug(f"Token attempt {attempt + 1}/{max_retries}...")
                 
-                # Execute synchronous token acquisition in thread pool to avoid blocking async event loop
+                # Get token with proper async handling
                 import asyncio
+                import inspect
                 
-                async def get_token_async():
-                    loop = asyncio.get_event_loop()
-                    return await loop.run_in_executor(
-                        None, 
-                        lambda: self.credential.get_token("https://ai.azure.com/.default")
+                # Check if get_token is async or sync
+                get_token_method = self.credential.get_token
+                
+                if inspect.iscoroutinefunction(get_token_method):
+                    # Async credential - await directly with timeout
+                    log_foundry_debug("Using async credential.get_token()")
+                    token = await asyncio.wait_for(
+                        self.credential.get_token("https://ai.azure.com/.default"),
+                        timeout=8.0
                     )
-                
-                # 8-second timeout prevents indefinite hanging on slow networks
-                token = await asyncio.wait_for(get_token_async(), timeout=8.0)
+                else:
+                    # Sync credential - run in executor to avoid blocking
+                    log_foundry_debug("Using sync credential.get_token() in executor")
+                    async def get_token_async():
+                        loop = asyncio.get_event_loop()
+                        return await loop.run_in_executor(
+                            None, 
+                            lambda: self.credential.get_token("https://ai.azure.com/.default")
+                        )
+                    
+                    token = await asyncio.wait_for(get_token_async(), timeout=8.0)
                 
                 # Cache the token
                 self._cached_token = token.token
-                import datetime
-                self._token_expiry = datetime.datetime.fromtimestamp(token.expires_on)
+                from datetime import datetime as dt
+                self._token_expiry = dt.fromtimestamp(token.expires_on)
                 
                 headers = {
                     "Authorization": f"Bearer {token.token}",
@@ -776,25 +823,18 @@ class FoundryHostAgent2:
         """
         Format agent tools for Responses API.
         
-        Converts tools from Assistants API format to Responses API format.
-        The main difference is that Responses API uses a slightly different schema.
+        Returns tools in the Responses API format for function calling.
+        Uses _get_tools() to get the tool definitions.
         
         Returns:
             List of tool definitions in Responses API format
         """
-        if not self.agent or 'tools' not in self.agent:
-            return []
-        
-        formatted_tools = []
-        for tool in self.agent.get('tools', []):
-            if tool.get('type') == 'function':
-                # Responses API format is similar to Assistants API
-                formatted_tools.append({
-                    "type": "function",
-                    "function": tool.get('function', {})
-                })
-        
-        return formatted_tools
+        # Use _get_tools() which has the correct tool definitions
+        tools = self._get_tools()
+        print(f"🔧 [TOOLS] _format_tools_for_responses_api returning {len(tools)} tools", flush=True)
+        for tool in tools:
+            print(f"  • Tool: {tool.get('name', 'unknown')}", flush=True)
+        return tools
 
     def _get_openai_endpoint(self) -> str:
         """
@@ -881,6 +921,21 @@ class FoundryHostAgent2:
             thread_id = self.thread_ids[context_id]
             log_foundry_debug(f"Using thread ID: {thread_id}")
             
+            # Cancel any active runs before creating new message
+            # This prevents "Can't add messages while a run is active" errors
+            try:
+                runs = await self.agents_client.runs.list(thread_id=thread_id)
+                async for run in runs:
+                    if run.status in ["in_progress", "requires_action", "queued"]:
+                        print(f"⚠️ Cancelling stuck run {run.id} with status {run.status}", flush=True)
+                        try:
+                            await self.agents_client.runs.cancel(thread_id=thread_id, run_id=run.id)
+                            print(f"✅ Cancelled run {run.id}", flush=True)
+                        except Exception as cancel_error:
+                            print(f"⚠️ Could not cancel run {run.id}: {cancel_error}", flush=True)
+            except Exception as list_error:
+                log_foundry_debug(f"Could not list runs: {list_error}")
+            
             # Create message in thread
             log_foundry_debug(f"Creating message: {user_message[:100]}...")
             message = await self.agents_client.messages.create(
@@ -896,12 +951,36 @@ class FoundryHostAgent2:
             status = "completed"
             
             log_foundry_debug(f"Starting streaming run...")
-            async with self.agents_client.runs.stream(
+            
+            # Track if we're handling tool calls
+            tool_calls_to_execute = []
+            
+            # Note: tool_choice="auto" means the model decides when to call tools
+            # The model will call tools when it determines they're needed based on the user message
+            stream = await self.agents_client.runs.stream(
                 thread_id=thread_id,
-                agent_id=self.agent_id
-            ) as stream:
-                async for event_type, event_data, _ in stream:
-                    log_foundry_debug(f"Stream event: {event_type}")
+                agent_id=self.agent_id,
+                tool_choice="auto"  # Explicitly set to auto (default, but being explicit)
+            )
+            
+            # Use async context manager - it returns an event handler
+            async with stream as event_handler:
+                # Iterate over events from the event handler
+                async for event in event_handler:
+                    log_foundry_debug(f"Stream event: {event}")
+                    
+                    # Check event type and extract data
+                    if hasattr(event, 'event') and hasattr(event, 'data'):
+                        event_type = event.event
+                        event_data = event.data
+                    elif isinstance(event, tuple):
+                        event_type, event_data, *_ = event
+                    else:
+                        # Try to get the data directly
+                        event_data = event
+                        event_type = type(event).__name__
+                    
+                    log_foundry_debug(f"Event type: {event_type}, Data type: {type(event_data).__name__}")
                     
                     if isinstance(event_data, MessageDeltaChunk):
                         # TEXT CHUNK - stream to WebSocket
@@ -914,6 +993,13 @@ class FoundryHostAgent2:
                         run_id = event_data.id
                         status = event_data.status
                         log_foundry_debug(f"Run status: {status}")
+                        
+                        # Capture tool calls if requires_action
+                        if status == "requires_action" and hasattr(event_data, 'required_action'):
+                            required_action = event_data.required_action
+                            if required_action and hasattr(required_action, 'submit_tool_outputs'):
+                                tool_calls_to_execute = required_action.submit_tool_outputs.tool_calls
+                                log_foundry_debug(f"🔧 Captured {len(tool_calls_to_execute)} tool calls to execute")
                     
                     elif event_type == AgentStreamEvent.ERROR:
                         log_error(f"Stream error: {event_data}")
@@ -925,10 +1011,198 @@ class FoundryHostAgent2:
             
             log_foundry_debug(f"Stream complete - text length: {len(full_text)}")
             
+            # If we have tool calls to execute and status is requires_action, execute them
+            if status == "requires_action" and tool_calls_to_execute:
+                log_foundry_debug(f"🔧 Executing {len(tool_calls_to_execute)} tool calls...")
+                
+                # ✅ WORKFLOW VISIBILITY: Show that host agent is calling tools
+                for tool_call in tool_calls_to_execute:
+                    function_name = tool_call.function.name
+                    asyncio.create_task(self._emit_granular_agent_event(
+                        "foundry-host-agent",
+                        f"🛠️ Calling tool: {function_name}",
+                        context_id
+                    ))
+                
+                tool_outputs = []
+                
+                for tool_call in tool_calls_to_execute:
+                    function_name = tool_call.function.name
+                    arguments_str = tool_call.function.arguments
+                    tool_call_id = tool_call.id
+                    
+                    log_foundry_debug(f"🔧 Executing tool: {function_name} with args: {arguments_str}")
+                    
+                    try:
+                        # Parse arguments
+                        import json
+                        arguments = json.loads(arguments_str) if arguments_str else {}
+                        
+                        # Execute the tool function
+                        if function_name == "list_remote_agents_sync":
+                            result = self.list_remote_agents_sync()  # Synchronous call
+                        elif function_name == "send_message_sync":
+                            result = await self.send_message_sync(  # Async call
+                                agent_name=arguments.get("agent_name"),
+                                message=arguments.get("message")
+                            )
+                        else:
+                            result = {"error": f"Unknown function: {function_name}"}
+                        
+                        # Convert result to JSON-serializable format
+                        # Handle Pydantic objects by using model_dump() or converting to dict
+                        if hasattr(result, 'model_dump'):
+                            # Pydantic v2 object
+                            result_dict = result.model_dump(mode='json')
+                            result_str = json.dumps(result_dict)
+                        elif hasattr(result, 'dict'):
+                            # Pydantic v1 object or dict
+                            result_dict = result.dict() if hasattr(result, 'dict') and callable(result.dict) else result
+                            result_str = json.dumps(result_dict)
+                        elif isinstance(result, str):
+                            result_str = result
+                        elif isinstance(result, (list, dict)):
+                            # Try to serialize, handling nested Pydantic objects
+                            try:
+                                result_str = json.dumps(result)
+                            except TypeError:
+                                # If direct serialization fails, convert Pydantic objects
+                                def convert_pydantic(obj):
+                                    if hasattr(obj, 'model_dump'):
+                                        return obj.model_dump(mode='json')
+                                    elif hasattr(obj, 'dict') and callable(obj.dict):
+                                        return obj.dict()
+                                    elif isinstance(obj, list):
+                                        return [convert_pydantic(item) for item in obj]
+                                    elif isinstance(obj, dict):
+                                        return {k: convert_pydantic(v) for k, v in obj.items()}
+                                    return obj
+                                
+                                result_converted = convert_pydantic(result)
+                                result_str = json.dumps(result_converted)
+                        else:
+                            result_str = json.dumps(result)
+                        
+                        log_foundry_debug(f"🔧 Tool {function_name} returned: {result_str[:200]}...")
+                        
+                        # ✅ WORKFLOW VISIBILITY: Show tool execution result
+                        asyncio.create_task(self._emit_granular_agent_event(
+                            "foundry-host-agent",
+                            f"✅ Tool {function_name} completed",
+                            context_id
+                        ))
+                        
+                        tool_outputs.append({
+                            "tool_call_id": tool_call_id,
+                            "output": result_str
+                        })
+                    except Exception as e:
+                        log_error(f"🔧 Error executing tool {function_name}: {e}")
+                        tool_outputs.append({
+                            "tool_call_id": tool_call_id,
+                            "output": json.dumps({"error": str(e)})
+                        })
+                
+                # Submit tool outputs and continue streaming
+                log_foundry_debug(f"🔧 Submitting {len(tool_outputs)} tool outputs...")
+                
+                # Submit tool outputs - try without event_handler first
+                # The SDK might work like runs.stream() - returns stream directly
+                try:
+                    stream = await self.agents_client.runs.submit_tool_outputs_stream(
+                        thread_id=thread_id,
+                        run_id=run_id,
+                        tool_outputs=tool_outputs
+                    )
+                    log_foundry_debug(f"🔧 submit_tool_outputs_stream returned: {type(stream)}")
+                except TypeError as e:
+                    # If it requires event_handler, provide one
+                    if "event_handler" in str(e):
+                        log_foundry_debug("🔧 Retrying with custom event handler to capture response...")
+                        from azure.ai.agents.models import AsyncAgentEventHandler
+                        
+                        # Create custom event handler to capture response text
+                        class ResponseCapturingHandler(AsyncAgentEventHandler):
+                            def __init__(self):
+                                super().__init__()
+                                self.response_text = ""
+                                self.final_status = None
+                            
+                            async def on_message_delta(self, delta):
+                                """Capture message chunks as they arrive"""
+                                if hasattr(delta, 'text') and delta.text:
+                                    self.response_text += delta.text
+                                    # Emit to WebSocket in real-time
+                                    await self._emit_text_chunk(delta.text, context_id)
+                            
+                            async def on_thread_run(self, run):
+                                """Capture final run status"""
+                                self.final_status = run.status
+                        
+                        # Use our custom handler
+                        handler = ResponseCapturingHandler()
+                        # Need to bind the emit method
+                        handler._emit_text_chunk = self._emit_text_chunk
+                        
+                        result = await self.agents_client.runs.submit_tool_outputs_stream(
+                            thread_id=thread_id,
+                            run_id=run_id,
+                            tool_outputs=tool_outputs,
+                            event_handler=handler
+                        )
+                        log_foundry_debug(f"🔧 With event_handler returned: {type(result)}")
+                        
+                        # Event handler pattern - wait for completion
+                        await handler.until_done()
+                        
+                        # Extract captured response
+                        full_text += handler.response_text
+                        if handler.final_status:
+                            status = handler.final_status
+                        
+                        log_foundry_debug(f"🔧 Event handler completed - captured {len(handler.response_text)} chars, status: {handler.final_status}")
+                        # Skip the streaming loop - already processed
+                        stream = None
+                    else:
+                        raise
+                
+                # If we have a stream, process it
+                if stream is not None:
+                    # Continue streaming with tool outputs
+                    async with stream as event_handler:
+                        async for event in event_handler:
+                            log_foundry_debug(f"Stream event (after tools): {event}")
+                            
+                            if hasattr(event, 'event') and hasattr(event, 'data'):
+                                event_type = event.event
+                                event_data = event.data
+                            elif isinstance(event, tuple):
+                                event_type, event_data, *_ = event
+                            else:
+                                event_data = event
+                                event_type = type(event).__name__
+                            
+                            if isinstance(event_data, MessageDeltaChunk):
+                                chunk = event_data.text
+                                if chunk:
+                                    full_text += chunk
+                                    await self._emit_text_chunk(chunk, context_id)
+                            
+                            elif isinstance(event_data, ThreadRun):
+                                run_id = event_data.id
+                                status = event_data.status
+                                log_foundry_debug(f"Run status (after tools): {status}")
+                            
+                            elif event_type == AgentStreamEvent.DONE:
+                                log_foundry_debug("Stream completed (after tools)")
+                                break
+                
+                log_foundry_debug(f"Final stream complete - text length: {len(full_text)}")
+            
             result = {
                 "id": run_id,
                 "text": full_text,
-                "tool_calls": [],  # Tool calls are handled automatically by SDK
+                "tool_calls": [],  # Tool calls handled manually above
                 "status": status,
                 "usage": None  # Could extract from run if needed
             }
@@ -1085,6 +1359,7 @@ class FoundryHostAgent2:
         
         self._update_agent_registry(card)
         
+        print(f"🔗 [CALLBACK] Registering {card.name} with callback: {self.task_callback.__name__ if hasattr(self.task_callback, '__name__') else type(self.task_callback)}")
         remote_connection = RemoteAgentConnections(self.httpx_client, card, self.task_callback)
         self.remote_agent_connections[card.name] = remote_connection
         self.cards[card.name] = card
@@ -1179,34 +1454,61 @@ class FoundryHostAgent2:
         """
         Synchronous wrapper for list_remote_agents - for use with AsyncFunctionTool.
         
-        Azure AI Agents SDK expects synchronous functions for tool definitions.
+        The underlying list_remote_agents() method is synchronous, so this wrapper
+        can also be synchronous. AsyncFunctionTool will handle it appropriately.
         """
-        return self.list_remote_agents()
+        log_foundry_debug("🔧 [TOOL] list_remote_agents_sync called by SDK!")
+        result = self.list_remote_agents()
+        log_foundry_debug(f"🔧 [TOOL] list_remote_agents_sync returning: {result}")
+        return result
     
-    def send_message_sync(self, agent_name: str, message: str):
+    async def send_message_sync(self, agent_name: str, message: str):
         """
-        Synchronous wrapper for send_message - for use with AsyncFunctionTool.
+        Async wrapper for send_message - for use with AsyncFunctionTool.
         
-        This is a placeholder that will be called by the SDK. The actual async
-        execution is handled by the Foundry Agent Service.
-        
-        NOTE: In practice, the SDK will handle calling the async send_message method.
+        Azure AI Agents SDK's AsyncFunctionTool.execute() checks if the function
+        is async (using inspect.iscoroutinefunction) and awaits it if needed.
+        Since send_message is async, this wrapper must also be async.
         """
+        print(f"\n🔥🔥🔥 [SEND_MESSAGE_SYNC] CALLED by Azure SDK!")
+        print(f"🔥 agent_name: {agent_name}")
+        print(f"🔥 message: {message[:100]}...", flush=True)
+        
+        # Use the current host context ID - NO FALLBACK to UUID!
+        context_id_to_use = getattr(self, '_current_host_context_id', None)
+        
+        log_debug(f"🔍 [send_message_sync] _current_host_context_id: {context_id_to_use}")
+        log_debug(f"🔍 [send_message_sync] session_contexts keys: {list(self.session_contexts.keys())}")
+        
+        # CRITICAL: If we don't have the current context_id, this is a bug
+        if not context_id_to_use:
+            raise ValueError(f"send_message_sync called but _current_host_context_id not set! This should be set by run_conversation_with_parts. Available keys: {list(self.session_contexts.keys())}")
+        
+        # Get existing session context or create new one with proper contextId
+        session_ctx = self.session_contexts.get(context_id_to_use)
+        if not session_ctx:
+            log_debug(f"🔍 [send_message_sync] SessionContext NOT FOUND, creating new one with contextId={context_id_to_use}")
+            session_ctx = SessionContext(
+                agent_mode=False,
+                host_task=None,
+                plan=None,
+                contextId=context_id_to_use  # CRITICAL: Pass contextId to prevent UUID generation
+            )
+        else:
+            log_debug(f"🔍 [send_message_sync] SessionContext FOUND with contextId={session_ctx.contextId}")
+        
         # Create a task context mock
         tool_context = type('obj', (object,), {
-            'state': self.session_contexts.get(self.default_contextId, SessionContext(
-                agent_mode=False, 
-                host_task=None, 
-                plan=None
-            ))
+            'state': session_ctx
         })()
         
-        # Return the coroutine - SDK will await it
-        return self.send_message(
+        # Call the async send_message - SDK will await it
+        # NOTE: suppress_streaming=False allows status updates to flow to sidebar
+        return await self.send_message(
             agent_name=agent_name,
             message=message,
             tool_context=tool_context,
-            suppress_streaming=True
+            suppress_streaming=False  # Enable streaming for sidebar status updates!
         )
 
     async def _update_agent_instructions(self):
@@ -1337,7 +1639,23 @@ class FoundryHostAgent2:
                 2. Identify which agents are relevant based on their specialized capabilities.
                 3. Plan the collaboration strategy leveraging each agent's skills.
 
-
+                ### 🚨 MANDATORY TOOL USAGE PROTOCOL 🚨
+                
+                YOU MUST CALL TOOLS WHEN AGENTS ARE MENTIONED. NO EXCEPTIONS.
+                
+                CORRECT BEHAVIOR:
+                User: "use the classification agent to classify a transaction of $1250"
+                You: [CALL TOOL send_message_sync with agent_name="AI Foundry Classification Triage Agent", message="Classify transaction: $1250"]
+                Agent Response: "This is a P3 - Low priority transaction"
+                You: "The classification agent has classified this as a P3 - Low priority transaction."
+                
+                INCORRECT BEHAVIOR (DO NOT DO THIS):
+                User: "use the classification agent to classify a transaction of $1250"
+                You: "The classification agent reviewed the transaction but requires more context..." ❌ WRONG - you never called the tool!
+                
+                DETECTION: If I see you saying "The agent reviewed..." or "The agent needs..." without actual tool calls in the logs, you have FAILED.
+                
+                REMEMBER: You cannot classify, analyze, or process anything yourself. You MUST call the appropriate agent tool.
 
                 ---
 
@@ -1706,7 +2024,7 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                 
                 # Update plan status
                 plan.goal_status = next_step.goal_status
-                plan.updated_at = datetime.utcnow()
+                plan.updated_at = datetime.now(timezone.utc)
                 
                 # Log plan state after orchestrator decision
                 print(f"\n{'='*80}")
@@ -1931,7 +2249,7 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                         log_error(f"[Agent Mode] Task execution error: {e}")
                     
                     finally:
-                        task.updated_at = datetime.utcnow()
+                        task.updated_at = datetime.now(timezone.utc)
                         print(f"📊 [Agent Mode] Task final state: {task.state}")
                         
                         # Log task completion details
@@ -1988,7 +2306,7 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                         "agentName": "foundry-host-agent",
                         "tokenUsage": self.host_token_usage,
                         "state": "completed",
-                        "timestamp": __import__('datetime').datetime.utcnow().isoformat()
+                        "timestamp": __import__('datetime').datetime.now(timezone.utc).isoformat()
                     }
                     await streamer._send_event("host_token_usage", event_data, context_id)
                     print(f"📡 [Host Agent] Emitted token usage to frontend: {self.host_token_usage['total_tokens']} tokens")
@@ -2108,7 +2426,7 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                     "agentName": agent_name,
                     "toolName": tool_name,
                     "arguments": arguments,
-                    "timestamp": __import__('datetime').datetime.utcnow().isoformat(),
+                    "timestamp": __import__('datetime').datetime.now(timezone.utc).isoformat(),
                     "contextId": context_id
                 }
                 
@@ -2136,7 +2454,7 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                     "sourceAgent": "Host Agent",  # Host Agent is sending the message
                     "targetAgent": target_agent_name,  # Remote agent receiving the message
                     "message": message,
-                    "timestamp": __import__('datetime').datetime.utcnow().isoformat(),
+                    "timestamp": __import__('datetime').datetime.now(timezone.utc).isoformat(),
                     "contextId": context_id
                 }
                 
@@ -2158,7 +2476,7 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
         try:
             # Import here to avoid circular imports
             from service.websocket_streamer import get_websocket_streamer
-            import datetime
+            from datetime import datetime as dt, timezone as tz
             
             streamer = await get_websocket_streamer()
             if streamer:
@@ -2166,7 +2484,7 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                     "agentName": agent_name,
                     "toolName": tool_name,
                     "status": status,
-                    "timestamp": datetime.datetime.utcnow().isoformat(),
+                    "timestamp": dt.now(tz.utc).isoformat(),
                     "contextId": context_id
                 }
                 
@@ -2182,13 +2500,19 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                 # ALSO emit task_updated so the frontend sidebar updates correctly
                 # This is the single source of truth for agent sidebar status
                 task_state = "completed" if status == "success" else "failed"
+                
+                # CRITICAL: context_id must be provided, no fallback!
+                if not context_id:
+                    log_debug(f"⚠️ [_stream_remote_agent_activity] No context_id for agent {agent_name}, cannot emit task_updated")
+                    return
+                
                 task_updated_data = {
                     "taskId": str(uuid.uuid4()),
-                    "conversationId": context_id or getattr(self, 'default_contextId', str(uuid.uuid4())),
-                    "contextId": context_id or getattr(self, 'default_contextId', None),
+                    "conversationId": context_id,
+                    "contextId": context_id,
                     "state": task_state,
                     "agentName": agent_name,
-                    "timestamp": datetime.datetime.utcnow().isoformat(),
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
                     "content": f"Agent {status}" if not error_message else error_message
                 }
                 print(f"🎯 [SIDEBAR] Emitting task_updated for {agent_name}: state={task_state}")
@@ -2209,15 +2533,30 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
             
             streamer = await get_websocket_streamer()
             if streamer:
+                # DEBUG: Log what contextIds we're working with
+                stored_host_context = getattr(self, '_current_host_context_id', None)
+                log_debug(f"🔍 [CONTEXT DEBUG] _emit_granular_agent_event for {agent_name}:")
+                log_debug(f"  - context_id param: {context_id}")
+                log_debug(f"  - stored _current_host_context_id: {stored_host_context}")
+                
+                # CRITICAL: Use the provided context_id, or the stored one - NO UUID FALLBACK!
+                routing_context_id = context_id or stored_host_context
+                
+                if not routing_context_id:
+                    log_debug(f"⚠️ [_emit_granular_agent_event] No context_id for {agent_name}, skipping event emission")
+                    return
+                
+                log_debug(f"  - final routing_context_id: {routing_context_id}")
+                
                 event_data = {
                     "agentName": agent_name,
                     "content": status_text,
-                    "timestamp": __import__('datetime').datetime.utcnow().isoformat(),
-                    "contextId": context_id
+                    "timestamp": __import__('datetime').datetime.now(timezone.utc).isoformat(),
+                    "contextId": routing_context_id
                 }
                 
                 # Use the remote_agent_activity event type for granular visibility
-                success = await streamer._send_event("remote_agent_activity", event_data, context_id)
+                success = await streamer._send_event("remote_agent_activity", event_data, routing_context_id)
                 if success:
                     log_debug(f"Streamed remote agent activity: {agent_name} - {status_text}")
                 else:
@@ -2237,6 +2576,9 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
         remote agent status updates to prevent duplicate events in the UI.
         """
         agent_name = agent_card.name
+        print(f"🔔 [CALLBACK] Task callback invoked from {agent_name}: {type(event).__name__}", flush=True)
+        import sys
+        sys.stdout.flush()
         log_debug(f"[STREAMING] Task callback from {agent_name}: {type(event).__name__}")
         
         # Keep session context task mapping in sync per agent
@@ -2269,13 +2611,41 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
         if hasattr(event, 'kind'):
             event_kind = getattr(event, 'kind', 'unknown')
             log_debug(f"[STREAMING] Event kind from {agent_name}: {event_kind}")
+            print(f"🔔 [STREAMING] Received event from {agent_name}: kind={event_kind}", flush=True)
             
             # Only emit status-update and artifact-update to UI (NOT 'task' events)
             if event_kind in ['artifact-update', 'status-update']:
                 log_debug(f"[STREAMING] Emitting via _emit_task_event for {agent_name}: {event_kind}")
+                print(f"📤 [STREAMING] Calling _emit_task_event for {agent_name}: {event_kind}", flush=True)
                 self._emit_task_event(event, agent_card)
+                
+                # WORKFLOW VISIBILITY: Also emit granular workflow events
+                # Use stored host context if available, otherwise fall back to event's context
+                context_id_for_event = getattr(self, '_current_host_context_id', None) or get_context_id(event, None)
+                if event_kind == 'status-update':
+                    # Extract actual text from status message
+                    status_text = "processing"
+                    if hasattr(event, 'status') and event.status:
+                        if hasattr(event.status, 'message') and event.status.message:
+                            if hasattr(event.status.message, 'parts') and event.status.message.parts:
+                                for part in event.status.message.parts:
+                                    if hasattr(part, 'root') and hasattr(part.root, 'text'):
+                                        status_text = part.root.text
+                                        break
+                        elif hasattr(event.status, 'state'):
+                            state = event.status.state
+                            state_value = state.value if hasattr(state, 'value') else str(state)
+                            status_text = f"status: {state_value}"
+                    asyncio.create_task(self._emit_granular_agent_event(agent_name, status_text, context_id_for_event))
+                
+                elif event_kind == 'artifact-update':
+                    asyncio.create_task(self._emit_granular_agent_event(agent_name, "generating artifact", context_id_for_event))
+            
             elif event_kind == 'task':
                 log_debug(f"[STREAMING] Skipping UI emit for 'task' event from {agent_name} (internal tracking only)")
+                # But still emit to workflow for task started
+                context_id_for_event = getattr(self, '_current_host_context_id', None) or get_context_id(event, None)
+                asyncio.create_task(self._emit_granular_agent_event(agent_name, "task started", context_id_for_event))
             # Skip other intermediate events
         
         # Get or create task for this specific agent
@@ -2315,8 +2685,16 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
             return current_task
         
         # Create minimal task for this agent
+        # Note: These are fallbacks for events that don't have taskId/contextId
+        # This shouldn't happen in normal flow but protects against malformed events
         task_id = get_task_id(event, str(uuid.uuid4()))
-        contextId = get_context_id(event, str(uuid.uuid4()))
+        contextId_from_event = get_context_id(event, None)
+        
+        if not contextId_from_event:
+            log_debug(f"⚠️ [_emit_task_event] Event from {agent_card.name} has no contextId, using UUID fallback")
+            contextId = str(uuid.uuid4())
+        else:
+            contextId = contextId_from_event
         
         from a2a.types import TaskStatus, TaskState
         status = TaskStatus(
@@ -2340,7 +2718,9 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
 
     def _emit_task_event(self, task: TaskCallbackArg, agent_card: AgentCard):
         """Emit event for task callback, with enhanced agent name context for UI status tracking."""
-        log_debug(f"Emitting task event for agent: {agent_card.name}")
+        agent_name = agent_card.name
+        log_debug(f"🔔 [EMIT_TASK_EVENT] Called for agent: {agent_name}")
+        print(f"🎯 [_emit_task_event] CALLED for agent: {agent_name}, task.kind: {getattr(task, 'kind', 'NO KIND')}", flush=True)
         log_debug(f"Agent capabilities: {agent_card.capabilities if hasattr(agent_card, 'capabilities') else 'None'}")
         
         content = None
@@ -2350,6 +2730,7 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
         
         # Extract task state and ID
         if hasattr(task, 'kind') and task.kind == 'status-update':
+            print(f"🔍 [_emit_task_event] Processing status-update event", flush=True)
             task_id = get_task_id(task, None)
             # Extract state from status object, handling enum types
             if hasattr(task, 'status') and task.status:
@@ -2362,6 +2743,7 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                 task_state = 'working'
             
             log_debug(f"Status update extracted: {task_state} for {agent_card.name}")
+            print(f"✨ [_emit_task_event] Extracted task_state: {task_state} for {agent_name}", flush=True)
             
             if hasattr(task, 'status') and task.status and task.status.message:
                 content = task.status.message
@@ -2429,12 +2811,12 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
         
         # Create Event object like ADK version, but with enhanced agent context
         if content:
-            import datetime
+            from datetime import datetime as dt, timezone as tz
             event_obj = type('Event', (), {
                 'id': str(uuid.uuid4()),
                 'actor': agent_card.name,  # Use the actual agent name
                 'content': content,
-                'timestamp': datetime.datetime.utcnow().timestamp(),
+                'timestamp': dt.now(tz.utc).timestamp(),
             })()
             
             # Add to host manager events if available
@@ -2467,14 +2849,19 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
 
                         # CONSOLIDATED: Include ALL relevant data in single task_updated event
                         # This is the ONLY event emitted for remote agent status updates
+                        # Use stored host context if available, otherwise fall back to event's context
+                        routing_context_id = (getattr(self, '_current_host_context_id', None) or 
+                                             contextId or 
+                                             getattr(self, 'default_contextId', str(uuid.uuid4())))
+                        
                         event_data = {
                             "taskId": task_id or str(uuid.uuid4()),
-                            "conversationId": contextId or str(uuid.uuid4()),
-                            "contextId": contextId,
+                            "conversationId": routing_context_id or str(uuid.uuid4()),
+                            "contextId": routing_context_id,
                             "state": task_state,
                             "artifactsCount": len(getattr(task, 'artifacts', [])),
                             "agentName": agent_card.name,
-                            "timestamp": datetime.datetime.utcnow().isoformat(),
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
                             # Include message content so frontend has everything in one event
                             "content": text_content if text_content else None,
                         }
@@ -2490,9 +2877,9 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                             event_type = "task_created"
 
                         # DEBUG: Log what we're sending to the frontend
-                        print(f"📡 [A2A STREAM] Emitting {event_type} for {agent_card.name}: state={task_state}")
+                        print(f"📡 [A2A STREAM] Emitting {event_type} for {agent_card.name}: state={task_state}", flush=True)
                         
-                        success = await streamer._send_event(event_type, event_data, contextId)
+                        success = await streamer._send_event(event_type, event_data, routing_context_id)
                         if success:
                             log_debug(f"✅ A2A task event streamed: {agent_card.name} -> {task_state}")
                         else:
@@ -2518,8 +2905,9 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
         try:
             import asyncio
             
-            # Try to get the current default context
-            default_context_id = getattr(self, 'default_contextId', str(uuid.uuid4()))
+            # Agent registration happens outside of any specific conversation
+            # so we use a generic "system" context for routing
+            routing_context_id = "system_agent_registry"
             
             async def stream_registration_event():
                 try:
@@ -2533,12 +2921,12 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                     event_data = {
                         "agentName": agent_card.name,
                         "status": "registered",
-                        "timestamp": __import__('datetime').datetime.utcnow().isoformat(),
+                        "timestamp": __import__('datetime').datetime.now(timezone.utc).isoformat(),
                         "avatar": "/placeholder.svg?height=32&width=32",
                         "agentPath": getattr(agent_card, 'url', ''),
                     }
 
-                    success = await streamer._send_event("agent_registered", event_data, default_context_id)
+                    success = await streamer._send_event("agent_registered", event_data, routing_context_id)
                     if success:
                         log_debug(f"✅ Agent registration event streamed to WebSocket for {agent_card.name}")
                     else:
@@ -2725,11 +3113,18 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
         return result
 
     def get_session_context(self, context_id: str) -> SessionContext:
+        log_debug(f"🔍 [get_session_context] Called with context_id: {context_id}")
+        log_debug(f"🔍 [get_session_context] Existing session_contexts keys: {list(self.session_contexts.keys())}")
+        
         if context_id not in self.session_contexts:
             # Clear host response tracking for new conversations
             if context_id in self._host_responses_sent:
                 self._host_responses_sent.remove(context_id)
+            log_debug(f"🔍 [get_session_context] Creating NEW SessionContext with contextId={context_id}")
             self.session_contexts[context_id] = SessionContext(contextId=context_id)
+        else:
+            log_debug(f"🔍 [get_session_context] FOUND existing SessionContext for key={context_id}")
+            
         return self.session_contexts[context_id]
 
     async def _search_relevant_memory(self, query: str, context_id: str, agent_name: str = None, top_k: int = 5) -> List[Dict[str, Any]]:
@@ -2873,7 +3268,7 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
             # Create the memory artifact data
             memory_data = {
                 "search_query": query,
-                "search_timestamp": datetime.utcnow().isoformat() + 'Z',
+                "search_timestamp": datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z',
                 "total_results": len(memory_results),
                 "session_timeline": sorted(session_timeline, key=lambda x: x.get('timestamp', '')),
                 "agent_patterns": agent_patterns,
@@ -3194,6 +3589,7 @@ Answer with just JSON:
         2. Reducing synchronous pre-await work
         3. Simplifying event processing
         """
+        print(f"\n🚀🚀🚀 [SEND_MESSAGE] ENTERING send_message for agent: {agent_name}", flush=True)
         with tracer.start_as_current_span("send_message") as span:
             span.set_attribute("agent_name", agent_name)
             span.set_attribute("suppress_streaming", suppress_streaming)
@@ -3203,10 +3599,9 @@ Answer with just JSON:
                     "tool_context.state must be a SessionContext instance for A2A-compliant send_message"
                 )
 
-            # FIXED: Only generate IDs if they don't exist (preserve shared context for parallel calls)
+            # CRITICAL: DO NOT generate new contextId - it comes from the session_context
+            # The session_context already has the correct contextId from the HTTP request
             import uuid
-            if not hasattr(session_context, 'contextId') or not session_context.contextId:
-                session_context.contextId = str(uuid.uuid4())
             if not session_context.task_id:
                 session_context.task_id = str(uuid.uuid4())
             if not session_context.message_id:
@@ -3311,13 +3706,12 @@ Answer with just JSON:
                         prepared_parts.append(Part(root=TextPart(text=str(prepared_part))))
 
             request = MessageSendParams(
-                id=str(uuid.uuid4()),
                 message=Message(
                     role='user',
                     parts=prepared_parts,
-                    messageId=messageId,
-                    contextId=contextId,
-                    taskId=taskId,
+                    message_id=messageId,
+                    context_id=contextId,  # Use snake_case as per A2A SDK
+                    task_id=taskId,
                 ),
                 configuration=MessageSendConfiguration(
                     acceptedOutputModes=['text', 'text/plain', 'image/png'],
@@ -3325,92 +3719,191 @@ Answer with just JSON:
             )
             
             log_debug(f"🚀 [PARALLEL] Calling agent: {agent_name} with context: {contextId}")
+            log_debug(f"🔍 [DEBUG] Message object context_id being sent: {request.message.context_id}")
+            log_debug(f"🔍 [DEBUG] Full message dict: {request.message.model_dump()}")
             
             # Track start time for processing duration
             start_time = time.time()
             
+            # ========================================================================
+            # EMIT WORKFLOW MESSAGE: Clear "Calling agent" message for workflow panel
+            # ========================================================================
+            asyncio.create_task(self._emit_granular_agent_event(agent_name, f"📞 Calling {agent_name}...", contextId))
+            
+            # ========================================================================
+            # EMIT INITIAL STATUS: "submitted" - task has been sent to remote agent
+            # This is for the SIDEBAR to show the agent is starting work
+            # ========================================================================
             try:
+                async def emit_submitted_status():
+                    print(f"🔵 [SUBMITTED] emit_submitted_status() CALLED for {agent_name}", flush=True)
+                    from service.websocket_streamer import get_websocket_streamer
+                    streamer = await get_websocket_streamer()
+                    print(f"🔵 [SUBMITTED] Got streamer: {streamer is not None}", flush=True)
+                    if streamer:
+                        task_id = taskId or str(uuid.uuid4())
+                        event_data = {
+                            "taskId": task_id,
+                            "conversationId": contextId,
+                            "contextId": contextId,
+                            "state": "submitted",
+                            "agentName": agent_name,
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                        }
+                        print(f"📡 [SIDEBAR] Emitting task_updated for {agent_name}: state=submitted", flush=True)
+                        result = await streamer._send_event("task_updated", event_data, contextId)
+                        print(f"📡 [SIDEBAR] _send_event returned: {result}", flush=True)
+                    else:
+                        print(f"❌ [SUBMITTED] No streamer available!", flush=True)
+                
+                asyncio.create_task(emit_submitted_status())
+            except Exception as e:
+                print(f"❌ [SUBMITTED] Exception: {e}", flush=True)
+                log_debug(f"Error emitting submitted status: {e}")
+            
+            try:
+                # CRITICAL: Store HOST's contextId for use in callbacks
+                # Callbacks receive events with remote agent's contextId, but we need
+                # to route WebSocket events using the host's session contextId
+                self._current_host_context_id = contextId
+                host_context_id = contextId
+                
                 # SIMPLIFIED: Callback for streaming execution that handles file artifacts
                 # Status events are handled ONLY in _default_task_callback -> _emit_task_event
+                # Track if we've emitted "working" status for this callback session
+                _working_emitted = {"emitted": False}
+                
                 def streaming_task_callback(event, agent_card):
-                    """Callback for streaming execution - handles file artifacts only.
-                    
-                    CONSOLIDATED: Status updates are emitted ONLY via _emit_task_event
-                    to prevent duplicate events in the UI.
-                    """
+                    """Enhanced callback for streaming execution that captures detailed agent activities"""
                     agent_name = agent_card.name
-                    log_debug(f"[STREAMING] Callback from {agent_name}: {type(event).__name__}")
+                    print(f"🎬 [streaming_task_callback] CALLED for {agent_name}: {type(event).__name__}", flush=True)
+                    log_debug(f"[STREAMING] Detailed callback from {agent_name}: {type(event).__name__}")
                     
-                    # Only handle file artifacts here - status events go through _emit_task_event
-                    if hasattr(event, 'kind') and event.kind == 'status-update':
-                        if hasattr(event, 'status') and event.status:
-                            if hasattr(event.status, 'message') and event.status.message:
-                                if hasattr(event.status.message, 'parts') and event.status.message.parts:
-                                    # Process parts to find image artifacts (but NOT emit status events)
-                                    for part in event.status.message.parts:
-                                        # Check for image artifacts in DataPart
-                                        if hasattr(part, 'root') and hasattr(part.root, 'data') and isinstance(part.root.data, dict):
-                                            artifact_uri = part.root.data.get('artifact-uri')
-                                            if artifact_uri:
-                                                log_debug(f"Found image artifact in streaming event: {artifact_uri}")
-                                                # Emit file_uploaded event
-                                                async def emit_file_event(part_data=part.root.data, uri=artifact_uri):
-                                                    try:
-                                                        from service.websocket_streamer import get_websocket_streamer
-                                                        streamer = await get_websocket_streamer()
-                                                        if streamer:
-                                                            file_info = {
-                                                                "file_id": str(uuid.uuid4()),
-                                                                "filename": part_data.get("file-name", "agent-artifact.png"),
-                                                                "uri": uri,
-                                                                "size": part_data.get("file-size", 0),
-                                                                "content_type": "image/png",
-                                                                "source_agent": agent_name,
-                                                                "contextId": get_context_id(event)
-                                                            }
-                                                            await streamer.stream_file_uploaded(file_info, get_context_id(event))
-                                                            log_debug(f"File uploaded event sent for streaming artifact: {file_info['filename']}")
-                                                    except Exception as e:
-                                                        log_debug(f"Error emitting file_uploaded event: {e}")
-                                                asyncio.create_task(emit_file_event())
-                                        # Check for image artifacts in FilePart
-                                        elif hasattr(part, 'root') and hasattr(part.root, 'file'):
-                                            file_obj = part.root.file
-                                            if isinstance(file_obj, FileWithUri):
-                                                file_uri = file_obj.uri
-                                                if file_uri and str(file_uri).startswith(("http://", "https://")):
-                                                    log_debug(f"Found image artifact in streaming event (FilePart): {file_uri}")
-                                                    # Capture values to avoid closure issues
-                                                    file_name = file_obj.name
-                                                    mime_type = file_obj.mimeType if hasattr(file_obj, 'mimeType') else 'image/png'
-                                                    # Emit file_uploaded event
-                                                    async def emit_file_event_fp():
+                    # ========================================================================
+                    # EMIT "working" status on FIRST callback - shows agent is processing
+                    # ========================================================================
+                    if not _working_emitted["emitted"]:
+                        _working_emitted["emitted"] = True
+                        print(f"🟡 [WORKING] First callback! Will emit working status for {agent_name}", flush=True)
+                        async def emit_working_status():
+                            try:
+                                print(f"🟡 [WORKING] emit_working_status() CALLED for {agent_name}", flush=True)
+                                from service.websocket_streamer import get_websocket_streamer
+                                streamer = await get_websocket_streamer()
+                                print(f"🟡 [WORKING] Got streamer: {streamer is not None}", flush=True)
+                                if streamer:
+                                    event_data = {
+                                        "taskId": taskId or str(uuid.uuid4()),
+                                        "conversationId": contextId,
+                                        "contextId": contextId,
+                                        "state": "working",
+                                        "agentName": agent_name,
+                                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                                    }
+                                    print(f"📡 [SIDEBAR] Emitting task_updated for {agent_name}: state=working", flush=True)
+                                    result = await streamer._send_event("task_updated", event_data, contextId)
+                                    print(f"📡 [SIDEBAR] _send_event result: {result}", flush=True)
+                                else:
+                                    print(f"❌ [WORKING] No streamer available!", flush=True)
+                            except Exception as e:
+                                print(f"❌ [WORKING] Exception: {e}", flush=True)
+                                log_debug(f"Error emitting working status: {e}")
+                        asyncio.create_task(emit_working_status())
+                    else:
+                        print(f"🟡 [WORKING] Already emitted, skipping", flush=True)
+                    
+                    # Emit granular events based on the type of update
+                    if hasattr(event, 'kind'):
+                        event_kind = getattr(event, 'kind', 'unknown')
+                        
+                        if event_kind == 'status-update':
+                            # Extract detailed status information
+                            status_text = "processing"
+                            if hasattr(event, 'status') and event.status:
+                                if hasattr(event.status, 'message') and event.status.message:
+                                    if hasattr(event.status.message, 'parts') and event.status.message.parts:
+                                        # Process ALL parts - don't break early so we catch all image artifacts
+                                        for part in event.status.message.parts:
+                                            # Check for text parts
+                                            if hasattr(part, 'root') and hasattr(part.root, 'text'):
+                                                status_text = part.root.text
+                                                # Continue processing to find image artifacts - don't break!
+                                            # Check for image artifacts in DataPart
+                                            elif hasattr(part, 'root') and hasattr(part.root, 'data') and isinstance(part.root.data, dict):
+                                                artifact_uri = part.root.data.get('artifact-uri')
+                                                if artifact_uri:
+                                                    log_debug(f"Found image artifact in streaming event: {artifact_uri}")
+                                                    # Emit file_uploaded event - USE HOST'S contextId for routing!
+                                                    async def emit_file_event(part_data=part.root.data, uri=artifact_uri):
                                                         try:
                                                             from service.websocket_streamer import get_websocket_streamer
                                                             streamer = await get_websocket_streamer()
                                                             if streamer:
                                                                 file_info = {
                                                                     "file_id": str(uuid.uuid4()),
-                                                                    "filename": file_name,
-                                                                    "uri": file_uri,
-                                                                    "size": 0,
-                                                                    "content_type": mime_type,
+                                                                    "filename": part_data.get("file-name", "agent-artifact.png"),
+                                                                    "uri": uri,
+                                                                    "size": part_data.get("file-size", 0),
+                                                                    "content_type": "image/png",
                                                                     "source_agent": agent_name,
-                                                                    "contextId": get_context_id(event)
+                                                                    "contextId": host_context_id  # ← USE HOST CONTEXT
                                                                 }
-                                                                await streamer.stream_file_uploaded(file_info, get_context_id(event))
-                                                                log_debug(f"File uploaded event sent for streaming FilePart: {file_info['filename']}")
+                                                                await streamer.stream_file_uploaded(file_info, host_context_id)  # ← USE HOST CONTEXT
+                                                                log_debug(f"File uploaded event sent for streaming artifact: {file_info['filename']}")
                                                         except Exception as e:
-                                                            log_debug(f"Error emitting file_uploaded event for FilePart: {e}")
-                                                    asyncio.create_task(emit_file_event_fp())
+                                                            log_debug(f"Error emitting file_uploaded event: {e}")
+                                                    asyncio.create_task(emit_file_event())
+                                            # Check for image artifacts in FilePart
+                                            elif hasattr(part, 'root') and hasattr(part.root, 'file'):
+                                                file_obj = part.root.file
+                                                if isinstance(file_obj, FileWithUri):
+                                                    file_uri = file_obj.uri
+                                                    if file_uri and str(file_uri).startswith(("http://", "https://")):
+                                                        log_debug(f"Found image artifact in streaming event (FilePart): {file_uri}")
+                                                        # Capture values to avoid closure issues
+                                                        file_name = file_obj.name
+                                                        mime_type = file_obj.mimeType if hasattr(file_obj, 'mimeType') else 'image/png'
+                                                        # Emit file_uploaded event - USE HOST'S contextId for routing!
+                                                        async def emit_file_event_fp():
+                                                            try:
+                                                                from service.websocket_streamer import get_websocket_streamer
+                                                                streamer = await get_websocket_streamer()
+                                                                if streamer:
+                                                                    file_info = {
+                                                                        "file_id": str(uuid.uuid4()),
+                                                                        "filename": file_name,
+                                                                        "uri": file_uri,
+                                                                        "size": 0,
+                                                                        "content_type": mime_type,
+                                                                        "source_agent": agent_name,
+                                                                        "contextId": host_context_id  # ← USE HOST CONTEXT
+                                                                    }
+                                                                    await streamer.stream_file_uploaded(file_info, host_context_id)  # ← USE HOST CONTEXT
+                                                                    log_debug(f"File uploaded event sent for streaming FilePart: {file_info['filename']}")
+                                                            except Exception as e:
+                                                                log_debug(f"Error emitting file_uploaded event for FilePart: {e}")
+                                                        asyncio.create_task(emit_file_event_fp())
+                                elif hasattr(event.status, 'state'):
+                                    state = event.status.state
+                                    if hasattr(state, 'value'):
+                                        state_value = state.value
+                                    else:
+                                        state_value = str(state)
+                                    status_text = f"status: {state_value}"
+                            
+                            # Stream detailed status to UI - USE HOST'S contextId for routing!
+                            asyncio.create_task(self._emit_granular_agent_event(agent_name, status_text, host_context_id))
+                            
+                        elif event_kind == 'artifact-update':
+                            # Agent is generating artifacts - USE HOST'S contextId for routing!
+                            asyncio.create_task(self._emit_granular_agent_event(agent_name, "generating artifact", host_context_id))
+                        
+                        elif event_kind == 'task':
+                            # Initial task creation - USE HOST'S contextId for routing!
+                            asyncio.create_task(self._emit_granular_agent_event(agent_name, "task started", host_context_id))
                     
-                    # REMOVED: _emit_granular_agent_event calls that caused duplicate events
-                    # Status events are now emitted ONLY via _default_task_callback -> _emit_task_event
-                    
-                    # Call the original callback for task management (which handles status emission)
-                    return self._default_task_callback(event, agent_card)
-                
-                # Emit outgoing message event for DAG display (use original message, not contextualized)
+                    # Call the original callback for task management
+                    return self._default_task_callback(event, agent_card)                # Emit outgoing message event for DAG display (use original message, not contextualized)
                 clean_message = message
                 if isinstance(message, dict):
                     clean_message = message.get('text', message.get('message', str(message)))
@@ -3421,34 +3914,13 @@ Answer with just JSON:
                 if len(clean_message) > 500:
                     clean_message = clean_message[:497] + "..."
                 
-                # IMPORTANT: Emit "working" status BEFORE any other events
-                # This tells the frontend a new task is starting for this agent,
-                # so it can advance to the next step before activity messages arrive
-                async def emit_working_status():
-                    try:
-                        from service.websocket_streamer import get_websocket_streamer
-                        streamer = await get_websocket_streamer()
-                        if streamer:
-                            event_data = {
-                                "taskId": taskId or str(uuid.uuid4()),
-                                "conversationId": contextId,
-                                "contextId": contextId,
-                                "state": "working",
-                                "agentName": agent_name,
-                                "artifactsCount": 0,
-                                "timestamp": __import__('datetime').datetime.utcnow().isoformat(),
-                            }
-                            await streamer._send_event("task_updated", event_data, contextId)
-                            log_debug(f"📡 Emitted working status for {agent_name} BEFORE calling agent")
-                    except Exception as e:
-                        log_debug(f"Error emitting pre-call working status: {e}")
-                
-                await emit_working_status()
-                
                 asyncio.create_task(self._emit_outgoing_message_event(agent_name, clean_message, contextId))
                 
+                print(f"\n📞📞📞 [ABOUT TO CALL] client.send_message for {agent_name} with streaming_task_callback", flush=True)
+                print(f"📞 Callback type: {type(streaming_task_callback)}, callable: {callable(streaming_task_callback)}", flush=True)
                 response = await client.send_message(request, streaming_task_callback)
-                print(f"✅ [STREAMING] Agent {agent_name} responded successfully!")
+                print(f"✅ [STREAMING] Agent {agent_name} responded successfully!", flush=True)
+
                 
             except Exception as e:
                 print(f"❌ [STREAMING] Agent {agent_name} failed: {e}")
@@ -3490,6 +3962,38 @@ Answer with just JSON:
                 print(f"🔍 Checking task state: {task.status.state} == TaskState.completed? {task.status.state == TaskState.completed}")
                 print(f"🔍 task.status.state type: {type(task.status.state)}, TaskState.completed type: {type(TaskState.completed)}")
                 if task.status.state == TaskState.completed:
+                    # ========================================================================
+                    # EMIT COMPLETED STATUS for sidebar
+                    # ========================================================================
+                    print(f"🟢 [COMPLETED] Task completed! Will emit completed status for {agent_name}", flush=True)
+                    async def emit_completed_status(ag_name=agent_name, ctx_id=contextId):
+                        try:
+                            print(f"🟢 [COMPLETED] emit_completed_status() CALLED for {ag_name}", flush=True)
+                            from service.websocket_streamer import get_websocket_streamer
+                            streamer = await get_websocket_streamer()
+                            print(f"🟢 [COMPLETED] Got streamer: {streamer is not None}", flush=True)
+                            if streamer:
+                                event_data = {
+                                    "taskId": taskId or str(uuid.uuid4()),
+                                    "conversationId": ctx_id,
+                                    "contextId": ctx_id,
+                                    "state": "completed",
+                                    "agentName": ag_name,
+                                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                                }
+                                print(f"📡 [SIDEBAR] Emitting task_updated for {ag_name}: state=completed", flush=True)
+                                result = await streamer._send_event("task_updated", event_data, ctx_id)
+                                print(f"📡 [SIDEBAR] _send_event result: {result}", flush=True)
+                            else:
+                                print(f"❌ [COMPLETED] No streamer available!", flush=True)
+                        except Exception as e:
+                            print(f"❌ [COMPLETED] Exception: {e}", flush=True)
+                            log_debug(f"Error emitting completed status: {e}")
+                    asyncio.create_task(emit_completed_status())
+                    
+                    # Emit workflow message for completed task
+                    asyncio.create_task(self._emit_granular_agent_event(agent_name, f"✅ {agent_name} completed task", contextId))
+                    
                     response_parts = []
                     
                     # DEBUG: Check what's in the task
@@ -3936,7 +4440,7 @@ Original request: {message}"""
                                         ],
                                         "direction": "incoming",
                                         "agentName": agent_name,
-                                        "timestamp": __import__('datetime').datetime.utcnow().isoformat()
+                                        "timestamp": __import__('datetime').datetime.now(timezone.utc).isoformat()
                                     }
                                     
                                     # Await the streaming to completion before continuing
@@ -4136,7 +4640,7 @@ Original request: {message}"""
                                     ],
                                     "direction": "incoming",
                                     "agentName": agent_name,
-                                    "timestamp": __import__('datetime').datetime.utcnow().isoformat()
+                                    "timestamp": __import__('datetime').datetime.now(timezone.utc).isoformat()
                                 }
                                 
                                 # Await the streaming to completion before continuing
@@ -4591,7 +5095,7 @@ Original request: {message}"""
                 "interaction_id": str(uuid.uuid4()),
                 "agent_name": agent_name,
                 "processing_time_seconds": processing_time,
-                "timestamp": datetime.utcnow().isoformat() + 'Z',
+                "timestamp": datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z',
                 
                 # Complete outbound A2A payload
                 "outbound_payload": outbound_request.model_dump() if hasattr(outbound_request, 'model_dump') else str(outbound_request),
@@ -4609,6 +5113,31 @@ Original request: {message}"""
             else:
                 log_debug(f"[A2A Memory] Failed to store A2A payloads for {agent_name}")
                 span.add_event("memory_store_failed", {"agent_name": agent_name})
+            
+            # ✅ EMIT A2A PAYLOAD TO WEBSOCKET FOR FRONTEND VISIBILITY
+            # This enables the "Show Agent Workflow" view and sidebar status tracking
+            try:
+                from service.websocket_streamer import get_websocket_streamer
+                streamer = await get_websocket_streamer()
+                if streamer:
+                    # Emit a2a_payload event with complete request/response data
+                    a2a_payload_event = {
+                        "interactionId": interaction_data["interaction_id"],
+                        "agentName": agent_name,
+                        "timestamp": interaction_data["timestamp"],
+                        "processingTime": processing_time,
+                        "outboundPayload": interaction_data["outbound_payload"],
+                        "inboundPayload": interaction_data["inbound_payload"],
+                        "contextId": context_id
+                    }
+                    
+                    await streamer._send_event("a2a_payload", a2a_payload_event, context_id)
+                    log_debug(f"📡 [A2A PAYLOAD] Emitted A2A payload to WebSocket for {agent_name}")
+                else:
+                    log_debug("⚠️ WebSocket streamer not available for A2A payload emission")
+            except Exception as ws_error:
+                log_debug(f"⚠️ Failed to emit A2A payload to WebSocket: {ws_error}")
+                # Don't fail the entire storage operation if WebSocket emission fails
                 
         except Exception as e:
             log_debug(f"[A2A Memory] Error storing A2A payloads: {str(e)}")
@@ -4758,7 +5287,7 @@ Original request: {message}"""
                 "interaction_id": str(uuid.uuid4()),
                 "agent_name": "host_agent",
                 "processing_time_seconds": 1.0,
-                "timestamp": datetime.utcnow().isoformat() + 'Z',
+                "timestamp": datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z',
                 "outbound_payload": outbound_dict,
                 "inbound_payload": inbound_dict
             }
@@ -4856,9 +5385,19 @@ Original request: {message}"""
                 log_debug(f"Step: Set span attribute")
             log_debug(f"run_conversation_with_parts: {len(message_parts)} parts")
             
+            log_debug(f"🔍 [run_conversation_with_parts] ENTRY - context_id param: {context_id}")
+            
+            # CRITICAL: context_id must be provided by caller (foundry_host_manager.process_message)
+            # It should NEVER be None - if it is, that's a bug in the caller
             if not context_id:
-                context_id = self.default_context_id
-            log_debug(f"Step: Set context_id to {context_id}")
+                raise ValueError(f"context_id is required but was None or empty. This is a bug - foundry_host_manager should always provide context_id")
+            
+            log_debug(f"🔍 [run_conversation_with_parts] Using context_id: {context_id}")
+            
+            # CRITICAL: Store the context_id so send_message_sync can access it
+            # This is THE source of truth for the current request's contextId
+            self._current_host_context_id = context_id
+            log_debug(f"🔍 [run_conversation_with_parts] SET _current_host_context_id to: {context_id}")
             
             # Extract text message for thread
             log_debug(f"Step: About to extract text message...")
@@ -5609,7 +6148,7 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). Simply synt
                                     ],
                                     "direction": "incoming",
                                     "agentName": "foundry-host-agent",  # Host agent name
-                                    "timestamp": __import__('datetime').datetime.utcnow().isoformat(),
+                                    "timestamp": __import__('datetime').datetime.now(timezone.utc).isoformat(),
                                     "source": "run_conversation_with_parts"  # Track which method sent this
                                 }
                                 
@@ -6811,16 +7350,22 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). Simply synt
         
         This enables ChatGPT-style token-by-token streaming in the UI.
         """
-        if self.websocket_streamer:
-            try:
-                await self.websocket_streamer.stream_event({
-                    "type": "message_chunk",
-                    "contextId": context_id,
-                    "chunk": chunk,
-                    "timestamp": datetime.now().isoformat()
-                })
-            except Exception as e:
-                log_error(f"Failed to emit text chunk: {e}")
+        try:
+            from service.websocket_streamer import get_websocket_streamer
+            websocket_streamer = await get_websocket_streamer()
+            
+            if websocket_streamer:
+                await websocket_streamer._send_event(
+                    "message_chunk",
+                    {
+                        "contextId": context_id,
+                        "chunk": chunk,
+                        "timestamp": datetime.now().isoformat()
+                    },
+                    partition_key=context_id
+                )
+        except Exception as e:
+            log_error(f"Failed to emit text chunk: {e}")
 
     @staticmethod
     def _normalize_function_response_text(raw_response: Any) -> Any:
@@ -7036,7 +7581,7 @@ class DummyToolContext:
                     description=f"File uploaded via A2A protocol: {file_id}",
                     parts=[file_part],
                     metadata={
-                        "uploadTime": datetime.utcnow().isoformat(),
+                        "uploadTime": datetime.now(timezone.utc).isoformat(),
                         "fileSize": len(file_bytes),
                         "storageType": "azure_blob",
                         "contentType": mime_type,
@@ -7050,7 +7595,7 @@ class DummyToolContext:
                     'artifact': artifact,
                     'storage_type': 'azure_blob',
                     'uri': file_uri,
-                    'created_at': datetime.utcnow().isoformat(),
+                    'created_at': datetime.now(timezone.utc).isoformat(),
                     'role': normalized_role,
                 }
 
@@ -7081,7 +7626,7 @@ class DummyToolContext:
                     description=f"File uploaded via A2A protocol: {file_id}",
                     parts=[file_part],
                     metadata={
-                        "uploadTime": datetime.utcnow().isoformat(),
+                        "uploadTime": datetime.now(timezone.utc).isoformat(),
                         "fileSize": len(file_bytes),
                         "localPath": file_path,
                         "storageType": "local",
@@ -7098,7 +7643,7 @@ class DummyToolContext:
                     'file_bytes': file_bytes,
                     'local_path': file_path,
                     'storage_type': 'local',
-                    'created_at': datetime.utcnow().isoformat(),
+                    'created_at': datetime.now(timezone.utc).isoformat(),
                     'role': normalized_role,
                 }
                 
@@ -7201,7 +7746,7 @@ class DummyToolContext:
                 metadata={
                     'artifact_id': artifact_id,
                     'original_name': file_name,
-                    'upload_time': datetime.utcnow().isoformat(),
+                    'upload_time': datetime.now(timezone.utc).isoformat(),
                     'a2a_protocol': 'true'
                 },
                 overwrite=True
@@ -7227,7 +7772,7 @@ class DummyToolContext:
                     blob_name=blob_name,
                     account_key=account_key,
                     permission=BlobSasPermissions(read=True),
-                    expiry=datetime.utcnow() + timedelta(hours=24),
+                    expiry=datetime.now(timezone.utc) + timedelta(hours=24),
                     version="2023-11-03",
                 )
             else:
@@ -7235,8 +7780,8 @@ class DummyToolContext:
                 try:
                     print(f"   🔐 Requesting user delegation key for SAS...")
                     delegation_key = self._azure_blob_client.get_user_delegation_key(
-                        key_start_time=datetime.utcnow() - timedelta(minutes=5),
-                        key_expiry_time=datetime.utcnow() + timedelta(hours=24),
+                        key_start_time=datetime.now(timezone.utc) - timedelta(minutes=5),
+                        key_expiry_time=datetime.now(timezone.utc) + timedelta(hours=24),
                     )
                     sas_token = generate_blob_sas(
                         account_name=blob_client.account_name,
@@ -7244,7 +7789,7 @@ class DummyToolContext:
                         blob_name=blob_name,
                         user_delegation_key=delegation_key,
                         permission=BlobSasPermissions(read=True),
-                        expiry=datetime.utcnow() + timedelta(hours=24),
+                        expiry=datetime.now(timezone.utc) + timedelta(hours=24),
                         version="2023-11-03",
                     )
                     print(f"   ✅ User delegation SAS generated")
