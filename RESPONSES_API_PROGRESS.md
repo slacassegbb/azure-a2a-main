@@ -105,31 +105,38 @@ None! All phases complete and ready for testing.
 ## ✅ COMPLETED
 
 ### Phase 3: Cleanup and Frontend Updates ✅
-**Commit:** `119686e` - "feat: Phase 3 - Add frontend streaming support and deprecate old methods"
+**Commits:** 
+- `119686e` - "feat: Phase 3 - Add frontend streaming support and deprecate old methods"
+- `e379c22` - "cleanup: Remove deprecated Assistants API methods completely"
 
-**Backend Cleanup:**
-- Added deprecation comments to all Assistants API methods
-- Methods marked as **DEPRECATED** with header explaining replacement
-- Kept methods for backward compatibility with legacy paths (e.g., `run_conversation`)
-- Clear documentation showing old flow vs new flow
+**Backend Cleanup:** ✅ **COMPLETE REMOVAL**
 
-**Deprecated Methods** (kept for compatibility):
+**Completely Removed** (~250 lines deleted):
+1. ✅ `_http_create_run()` - ~60 lines
+2. ✅ `_http_get_run()` - ~30 lines
+3. ✅ `_http_submit_tool_outputs()` - ~25 lines
+4. ✅ `create_thread()` - ~50 lines
+5. ✅ `send_message_to_thread()` - ~60 lines
+6. ✅ Deprecated section header - ~17 lines
+7. ✅ `_http_list_messages()` - ~35 lines
+
+**Rationale for complete removal:**
+- Azure is deprecating the Assistants API (no point keeping backward compat)
+- Cleaner, more maintainable codebase
+- All active code paths now use Responses API
+- Old `run_conversation()` method still exists but will fail if called (intentional - it's never used in production)
+
+**Replacement Architecture:**
 ```python
-# DEPRECATED: Assistants API Methods - Replaced by Responses API
-# Old flow: create_thread() → send_message_to_thread() → _http_create_run() 
-#           → _http_get_run() (polling) → _http_submit_tool_outputs() 
-#           → _http_list_messages()
-# 
-# New flow: _create_response_with_streaming() (includes streaming, tools, chaining)
-```
+# OLD FLOW (deleted):
+create_thread() → send_message_to_thread() → _http_create_run() 
+  → _http_get_run() (polling) → _http_submit_tool_outputs() 
+  → _http_list_messages()
 
-Methods deprecated:
-1. `create_thread()` - replaced by `response_history` tracking
-2. `send_message_to_thread()` - replaced by `_create_response_with_streaming()`
-3. `_http_list_messages()` - response text available directly in streaming call
-4. `_http_create_run()` - replaced by `_create_response_with_streaming()`
-5. `_http_get_run()` - no polling needed with streaming
-6. `_http_submit_tool_outputs()` - tools handled in stream
+# NEW FLOW (active):
+_create_response_with_streaming() 
+  → real-time streaming + tool execution + conversation chaining
+```
 
 **Frontend Updates:**
 
