@@ -569,22 +569,24 @@ export function AgentCatalog() {
                     {/* Skills Summary */}
                     <div className="space-y-2">
                       <span className="text-xs font-medium text-muted-foreground">
-                        Skills ({agent.skills.length})
+                        Skills ({agent.skills?.length || 0})
                       </span>
                       <div className="space-y-1">
-                        <div className="bg-muted/50 rounded p-2">
-                          <div className="font-medium text-xs">{agent.skills[0].name}</div>
-                          <div className="text-xs text-muted-foreground mt-1 line-clamp-2">
-                            {agent.skills[0].description}
+                        {agent.skills && agent.skills.length > 0 && (
+                          <div className="bg-muted/50 rounded p-2">
+                            <div className="font-medium text-xs">{agent.skills[0].name}</div>
+                            <div className="text-xs text-muted-foreground mt-1 line-clamp-2">
+                              {agent.skills[0].description}
+                            </div>
+                            <div className="flex flex-wrap gap-1 mt-2">
+                              {agent.skills[0].tags?.slice(0, 3).map((tag: string, idx: number) => (
+                                <Badge key={idx} variant="outline" className="text-xs">
+                                  {tag}
+                                </Badge>
+                              ))}
+                            </div>
                           </div>
-                          <div className="flex flex-wrap gap-1 mt-2">
-                            {agent.skills[0].tags.slice(0, 3).map((tag: string, idx: number) => (
-                              <Badge key={idx} variant="outline" className="text-xs">
-                                {tag}
-                              </Badge>
-                            ))}
-                          </div>
-                        </div>
+                        )}
                       </div>
                     </div>
 

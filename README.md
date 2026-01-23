@@ -130,7 +130,7 @@ The **Host Orchestrator** acts as the core intelligence and coordination hub:
 ```bash
 cd backend
 python3 -m venv .venv    # (Windows: python -m venv venv)
-source venv/bin/activate # (Windows: .\venv\Scripts\Activate.ps1)
+source .venv/bin/activate # (Windows: .\venv\Scripts\Activate.ps1)
 python -m pip install -r requirements.txt
 
 # Optional for Multi-Modal Document Processing
@@ -140,7 +140,16 @@ brew install --cask LibreOffice    # (Windows: winget install TheDocumentFoundat
 # In Terminal or PowerShell, run:
 az login
 
+# Start the backend API server
 python backend_production.py
+```
+
+**In a separate terminal, start the WebSocket server:**
+
+```bash
+cd backend
+source .venv/bin/activate # (Windows: .\venv\Scripts\Activate.ps1)
+python start_websocket.py
 ```
 
 ---

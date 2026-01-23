@@ -3,7 +3,7 @@
     "name": "AI Foundry Classification Triage Agent",
     "description": "An intelligent incident classification and triage agent powered by Azure AI Foundry. Specializes in analyzing customer issues, classifying incidents into proper categories, assessing priority levels, and routing cases to appropriate teams using ServiceNow standards.",
     "version": "1.0.0",
-    "url": "https://azurefoundry-classification.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
+    "url": "http://localhost:8009/",
     "defaultInputModes": [
       "text"
     ],
