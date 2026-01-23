@@ -71,6 +71,7 @@ type AgentStatus = {
     taskId: string
     state: TaskState
     contextId: string
+    timestamp: string
     lastUpdate: string
   }
   connectionStatus: "online" | "offline" | "connecting"
@@ -167,6 +168,13 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, agentMod
   // Store status clear timeouts to prevent race conditions
   const statusClearTimeoutsRef = useState<Map<string, NodeJS.Timeout>>(new Map())[0]
   
+  // Track when agents entered "working" state to ensure minimum display time
+  const workingStartTimeRef = useRef<Map<string, number>>(new Map())
+  const pendingCompletedRef = useRef<Map<string, { eventData: any, timeoutId: NodeJS.Timeout }>>(new Map())
+  
+  // Minimum time to show "working" state (in ms) before allowing transition to completed
+  const MIN_WORKING_DISPLAY_TIME = 800
+  
   // Use existing EventHub context instead of creating new WebSocket client
   const { subscribe, unsubscribe, isConnected, emit } = useEventHub()
   
@@ -174,28 +182,129 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, agentMod
   const registeredAgentsRef = useRef<Agent[]>(registeredAgents)
   registeredAgentsRef.current = registeredAgents // Keep ref in sync
 
+  // Helper function to apply status update
+  const applyStatusUpdate = useCallback((targetAgent: string, taskId: string, mappedState: TaskState, contextId: string, timestamp: string) => {
+    setAgentStatuses(prev => {
+      const newStatuses = new Map(prev)
+      const currentStatus = newStatuses.get(targetAgent) || {
+        agentName: targetAgent,
+        connectionStatus: "online" as const,
+        lastSeen: new Date().toISOString()
+      }
+      
+      // Track when we enter "working" state
+      if (mappedState === "working") {
+        workingStartTimeRef.current.set(targetAgent, Date.now())
+      }
+      
+      // Clear working start time on terminal states
+      if (mappedState === "completed" || mappedState === "failed") {
+        workingStartTimeRef.current.delete(targetAgent)
+      }
+      
+      const currentTaskState = currentStatus.currentTask?.state
+      const currentTimestamp = currentStatus.currentTask?.timestamp
+      
+      // Never allow backwards transition from terminal states
+      const isCurrentTerminal = currentTaskState === "completed" || currentTaskState === "failed"
+      const isNewNonTerminal = mappedState === "working" || mappedState === "submitted"
+      
+      if (isCurrentTerminal && isNewNonTerminal) {
+        console.log('[AgentNetwork] ⏭️ Blocking backwards transition:', currentTaskState, '→', mappedState)
+        return prev
+      }
+      
+      // Check timestamp ordering
+      if (currentTimestamp && timestamp) {
+        const currentTime = new Date(currentTimestamp).getTime()
+        const newTime = new Date(timestamp).getTime()
+        if (newTime < currentTime) {
+          console.log('[AgentNetwork] ⏭️ Ignoring older event')
+          return prev
+        }
+      }
+      
+      console.log('[AgentNetwork] ✅ State transition:', currentTaskState || 'none', '→', mappedState, 'for', targetAgent)
+      
+      const updatedStatus = {
+        ...currentStatus,
+        currentTask: {
+          taskId,
+          state: mappedState,
+          contextId: contextId || '',
+          timestamp: timestamp || new Date().toISOString(),
+          lastUpdate: new Date().toISOString()
+        },
+        lastSeen: new Date().toISOString()
+      }
+      
+      newStatuses.set(targetAgent, updatedStatus)
+      
+      // Clear any existing timeout for this agent
+      const existingTimeout = statusClearTimeoutsRef.get(targetAgent)
+      if (existingTimeout) {
+        clearTimeout(existingTimeout)
+        statusClearTimeoutsRef.delete(targetAgent)
+      }
+      
+      // Clear the task after showing completion or failure for 10 seconds
+      if (mappedState === "completed" || mappedState === "failed") {
+        const timeoutId = setTimeout(() => {
+          setAgentStatuses(prev => {
+            const newStatuses = new Map(prev)
+            const currentStatus = newStatuses.get(targetAgent)
+            if (currentStatus && currentStatus.currentTask && 
+                (currentStatus.currentTask.state === "completed" || currentStatus.currentTask.state === "failed")) {
+              newStatuses.set(targetAgent, {
+                ...currentStatus,
+                currentTask: undefined,
+                lastSeen: new Date().toISOString()
+              })
+            }
+            return newStatuses
+          })
+          statusClearTimeoutsRef.delete(targetAgent)
+        }, 10000)
+        
+        statusClearTimeoutsRef.set(targetAgent, timeoutId)
+      }
+      
+      return newStatuses
+    })
+  }, [statusClearTimeoutsRef])
+
   // Handle task status updates from WebSocket
   // FIXED: Prevents out-of-order events from causing backwards state transitions
+  // ENHANCED: Ensures "working" state is visible for minimum time before showing "completed"
   const handleTaskUpdate = useCallback((eventData: any) => {
-    const { taskId, state, contextId, agentName } = eventData
-    
-    console.log('[AgentNetwork] 📥 task_updated received:', { agentName, state, taskId: taskId?.substring?.(0, 8) })
-    
-    let targetAgent = agentName
+    try {
+      const { taskId, state, contextId, agentName, timestamp } = eventData
+      
+      console.log('[AgentNetwork] 📥 task_updated received:', { agentName, state, taskId: taskId?.substring?.(0, 8), timestamp })
+      console.log('[AgentNetwork] 🔍 About to check targetAgent...')
+      
+      let targetAgent = agentName
     
     if (!targetAgent) {
+      console.log('[AgentNetwork] ❌ No targetAgent, returning early')
       return
     }
     
-    // Verify the agent exists in our registered agents (using ref to avoid dependency)
+    // Check if agent exists in registry
+    // If not, DON'T return early - we want to update the status anyway
+    // The agent might be registered later, and status should still show
     const agentExists = registeredAgentsRef.current.some(agent => agent.name === targetAgent)
     if (!agentExists) {
-      return
+      console.log('[AgentNetwork] ⚠️ Agent not in registry yet, but continuing with status update:', targetAgent)
+      // Continue processing - don't return early
     }
     
     if (!taskId || !state) {
+      console.log('[AgentNetwork] ❌ Missing taskId or state:', { taskId, state })
       return
     }
+    
+    console.log('[AgentNetwork] ✅ Passed validation checks, processing event...')
     
     // Map A2A task states to our UI states
     let mappedState: TaskState = "working"
@@ -213,75 +322,46 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, agentMod
       mappedState = "input-required"
     }
     
-    setAgentStatuses(prev => {
-      const newStatuses = new Map(prev)
-      const currentStatus = newStatuses.get(targetAgent) || {
-        agentName: targetAgent,
-        connectionStatus: "online" as const,
-        lastSeen: new Date().toISOString()
-      }
+    console.log('[AgentNetwork] 🎨 Mapped state:', stateStr, '→', mappedState)
+    
+    // ========================================================================
+    // MINIMUM WORKING TIME: Ensure "working" state is visible before "completed"
+    // ========================================================================
+    if (mappedState === "completed" || mappedState === "failed") {
+      const workingStartTime = workingStartTimeRef.current.get(targetAgent)
       
-      // ========================================================================
-      // A2A TaskState Flow Protection: submitted → working → completed/failed
-      // Prevent backwards state transitions due to out-of-order events (race condition)
-      // ========================================================================
-      const currentTaskState = currentStatus.currentTask?.state
-      const isTerminalState = currentTaskState === "completed" || currentTaskState === "failed"
-      const isNewNonTerminalState = mappedState === "working" || mappedState === "submitted"
-      
-      if (isTerminalState && isNewNonTerminalState) {
-        // Ignore stale event - agent already reached terminal state
-        console.log('[AgentNetwork] ⏭️ Ignoring out-of-order event:', currentTaskState, '→', mappedState, 'for', targetAgent)
-        return prev // Don't update
-      }
-      
-      console.log('[AgentNetwork] ✅ State transition:', currentTaskState || 'none', '→', mappedState, 'for', targetAgent)
-      
-      const updatedStatus = {
-        ...currentStatus,
-        currentTask: {
-          taskId,
-          state: mappedState,
-          contextId: contextId || '',
-          lastUpdate: new Date().toISOString()
-        },
-        lastSeen: new Date().toISOString()
-      }
-      
-      newStatuses.set(targetAgent, updatedStatus)
-      
-      // Clear any existing timeout for this agent
-      const existingTimeout = statusClearTimeoutsRef.get(targetAgent)
-      if (existingTimeout) {
-        clearTimeout(existingTimeout)
-        statusClearTimeoutsRef.delete(targetAgent)
-      }
-      
-      // Clear the task after showing completion or failure for 5 seconds
-      if (mappedState === "completed" || mappedState === "failed") {
-        const timeoutId = setTimeout(() => {
-          setAgentStatuses(prev => {
-            const newStatuses = new Map(prev)
-            const currentStatus = newStatuses.get(targetAgent)
-            if (currentStatus && currentStatus.currentTask && 
-                (currentStatus.currentTask.state === "completed" || currentStatus.currentTask.state === "failed")) {
-              newStatuses.set(targetAgent, {
-                ...currentStatus,
-                currentTask: undefined,
-                lastSeen: new Date().toISOString()
-              })
-            }
-            return newStatuses
-          })
-          statusClearTimeoutsRef.delete(targetAgent)
-        }, 5000)
+      if (workingStartTime) {
+        const elapsedTime = Date.now() - workingStartTime
+        const remainingTime = MIN_WORKING_DISPLAY_TIME - elapsedTime
         
-        statusClearTimeoutsRef.set(targetAgent, timeoutId)
+        if (remainingTime > 0) {
+          console.log(`[AgentNetwork] ⏳ Delaying ${mappedState} by ${remainingTime}ms to show working state for ${targetAgent}`)
+          
+          // Cancel any existing pending completed for this agent
+          const existing = pendingCompletedRef.current.get(targetAgent)
+          if (existing) {
+            clearTimeout(existing.timeoutId)
+          }
+          
+          // Schedule the completed update after remaining time
+          const timeoutId = setTimeout(() => {
+            console.log(`[AgentNetwork] ⏰ Delayed ${mappedState} now applying for ${targetAgent}`)
+            applyStatusUpdate(targetAgent, taskId, mappedState, contextId, timestamp)
+            pendingCompletedRef.current.delete(targetAgent)
+          }, remainingTime)
+          
+          pendingCompletedRef.current.set(targetAgent, { eventData, timeoutId })
+          return // Don't apply immediately
+        }
       }
-      
-      return newStatuses
-    })
-  }, []) // Empty deps - uses registeredAgentsRef to avoid recreating callback
+    }
+    
+    // Apply the status update immediately
+    applyStatusUpdate(targetAgent, taskId, mappedState, contextId, timestamp)
+    } catch (error) {
+      console.error('[AgentNetwork] ❌ ERROR in handleTaskUpdate:', error)
+    }
+  }, [applyStatusUpdate]) // Depend on applyStatusUpdate
 
   // Handle agent status updates from WebSocket
   const handleAgentStatusUpdate = useCallback((eventData: any) => {

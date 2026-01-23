@@ -833,17 +833,15 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
   // Real Event Hub listener for backend events - moved inside component
   useEffect(() => {
     // Handle real status updates from A2A backend
-    // CONSOLIDATED: task_updated is now the SINGLE source of truth for remote agent status
+    // CONSOLIDATED: task_updated is now ONLY for sidebar status (agent-network.tsx)
+    // Workflow display uses remote_agent_activity instead
+    // This prevents duplicate messages in the workflow
     const handleTaskUpdate = (data: any) => {
-      console.log("[ChatPanel] Task update received:", data)
+      console.log("[ChatPanel] Task update received (for agent registration only):", data)
       // A2A TaskEventData has: taskId, conversationId, contextId, state, artifactsCount, agentName, content
       if (data.taskId && data.state) {
         // Use the actual agent name if available, otherwise fall back to generic names
         let agentName = data.agentName || "Host Agent"
-        
-        // PRIORITY: Use content from backend if available (contains actual agent message)
-        // This is the detailed text from the A2A protocol message
-        let status = data.content || data.state
         
         // If this is a new agent we haven't seen before, register it
         if (data.agentName && data.agentName !== "Host Agent" && data.agentName !== "System") {
@@ -854,38 +852,17 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
           })
         }
         
-        // Only map state to friendly text if no content was provided
-        if (!data.content) {
-          if (data.state === "created") {
-            status = "initializing conversation"
-          } else if (data.state === "completed") {
-            status = "response complete"
-          } else if (data.state === "in_progress") {
-            status = "processing request"
-          } else if (data.state === "queued") {
-            status = "request queued"
-          } else if (data.state === "requires_action") {
-            status = "executing tools"
-          } else if (data.state === "input_required" || data.state === "input-required") {
-            status = "waiting for your response"
-          }
-        }
-        
-        emit("status_update", {
-          inferenceId: data.taskId,
-          agent: agentName,
-          status: status
-        })
+        // DO NOT emit status_update here - that causes duplicates
+        // The sidebar uses task_updated directly, workflow uses remote_agent_activity
       }
     }
 
     // Handle system events for more detailed trace
+    // These are for system-level events, NOT for workflow display
     const handleSystemEvent = (data: any) => {
       console.log("[ChatPanel] System event received:", data)
       // A2A SystemEventData has: eventId, conversationId, actor, role, content
       if (data.eventId && data.content) {
-        let agentName = data.actor || "System"
-        
         // If this is a new agent we haven't seen before, register it
         if (data.actor && data.actor !== "Host Agent" && data.actor !== "System" && data.actor !== "User") {
           emit("agent_registered", {
@@ -895,11 +872,8 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
           })
         }
         
-        emit("status_update", {
-          inferenceId: data.conversationId || data.eventId,
-          agent: agentName,
-          status: data.content
-        })
+        // DO NOT emit status_update - workflow uses remote_agent_activity only
+        // This prevents duplicate messages
       }
     }
 
@@ -1332,13 +1306,60 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
     }
 
     // Handle remote agent activity events
+    // THIS is the single source for workflow display messages
     const handleRemoteAgentActivity = (data: any) => {
       console.log("[ChatPanel] Remote agent activity received:", data)
       if (data.agentName && data.content) {
-        setInferenceSteps(prev => [...prev, { 
-          agent: data.agentName, 
-          status: data.content 
-        }])
+        const content = data.content
+        
+        // Filter out noisy intermediate updates that shouldn't show in workflow
+        // These are streaming progress indicators, not meaningful status updates
+        // KEEP: status transitions (submitted, working, completed) - these are important
+        // FILTER: repeated "Generating response..." progress updates
+        const isNoisyUpdate = content === "task started" ||
+                             content === "processing" ||
+                             content === "processing request" ||
+                             content === "generating artifact" ||
+                             // Filter repetitive progress indicators with char counts
+                             (content.includes("🤖 Generating response...") && content.includes("chars")) ||
+                             (content.includes("🧠 Processing request..."))
+        
+        // Skip updates from host agent that are just tool management noise
+        // These are internal implementation details, not meaningful user-facing updates
+        const isHostToolNoise = data.agentName === "foundry-host-agent" && (
+          content.includes("executing tools") ||
+          content.includes("tool execution completed") ||
+          content.includes("AI processing completed") ||
+          content.includes("creating AI response") ||
+          content.includes("AI response created") ||
+          content.includes("finalizing response") ||
+          content.startsWith("🛠️ Calling tool:") ||
+          content.startsWith("✅ Tool ")
+        )
+        
+        if (isNoisyUpdate || isHostToolNoise) {
+          console.log("[ChatPanel] Skipping noisy remote activity:", content.substring(0, 50))
+          return
+        }
+        
+        // Deduplicate: check if we already have this exact message from this agent
+        setInferenceSteps(prev => {
+          // Check last 5 entries for duplicates
+          const recentEntries = prev.slice(-5)
+          const isDuplicate = recentEntries.some(
+            entry => entry.agent === data.agentName && entry.status === content
+          )
+          
+          if (isDuplicate) {
+            console.log("[ChatPanel] Skipping duplicate remote activity:", content.substring(0, 50))
+            return prev
+          }
+          
+          return [...prev, { 
+            agent: data.agentName, 
+            status: content 
+          }]
+        })
       }
     }
 
