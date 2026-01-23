@@ -763,28 +763,16 @@ class FoundryHostAgent2:
 
     def _get_openai_client(self):
         """
-        Get OpenAI client configured for Responses API.
+        Get client configured for Responses API via direct HTTP calls.
         
-        Returns synchronous OpenAI client with:
-        - Converted endpoint (/openai/v1/ format)
-        - Azure AD token authentication
-        - API version 'preview' (required for Responses API)
+        Note: The Responses API is accessed via direct HTTP to /openai/v1/responses,
+        not through the OpenAI SDK's standard client interface.
+        
+        This method is kept for compatibility but the actual HTTP calls
+        are made directly in _create_response_with_streaming.
         """
-        from openai import OpenAI
-        from azure.identity import get_bearer_token_provider
-        
-        token_provider = get_bearer_token_provider(
-            self.credential,
-            "https://cognitiveservices.azure.com/.default"
-        )
-        
-        client = OpenAI(
-            base_url=self._get_openai_endpoint(),
-            azure_ad_token_provider=token_provider,
-            api_version="preview"  # REQUIRED for Responses API
-        )
-        
-        return client
+        # This is now a placeholder - actual HTTP calls are made directly
+        return None
 
     def _get_client(self):
         """Legacy method - now throws error to identify remaining SDK usage"""
@@ -805,13 +793,13 @@ class FoundryHostAgent2:
         event_logger=None
     ) -> Dict[str, Any]:
         """
-        Create a response using Responses API with streaming support.
+        Create a response using Responses API with streaming support via HTTP.
         
         Replaces the old thread→message→run→poll flow with a single streaming response.
         
         Handles:
-        - Text streaming (response.output_text.delta events)
-        - Tool calls (response.function_call events)
+        - Text streaming (server-sent events)
+        - Tool calls (function_call events)
         - Response chaining (previous_response_id for conversation continuity)
         
         Returns:
@@ -819,11 +807,18 @@ class FoundryHostAgent2:
         """
         log_foundry_debug(f"_create_response_with_streaming: Creating streaming response for context {context_id}")
         
-        # Get OpenAI client
-        client = self._get_openai_client()
+        # Get authentication token
+        token = await self._get_auth_token_with_retries()
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json"
+        }
         
-        # Build input content
-        input_content = [{"type": "input_text", "text": user_message}]
+        # Build endpoint URL
+        # Convert AI Foundry endpoint to OpenAI format
+        base_endpoint = self._get_openai_endpoint().rstrip('/')
+        responses_url = f"{base_endpoint}/responses"
+        log_foundry_debug(f"Responses API URL: {responses_url}")
         
         # Get previous response ID for conversation chaining
         previous_response_id = None
@@ -840,68 +835,93 @@ class FoundryHostAgent2:
         model_name = os.environ.get("AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME", "gpt-4o")
         log_foundry_debug(f"Using model: {model_name}")
         
-        # Create streaming response
-        log_foundry_debug(f"Calling responses.create() with stream=True...")
+        # Build request payload
+        payload = {
+            "model": model_name,
+            "input": [{
+                "role": "user",
+                "content": [{"type": "input_text", "text": user_message}]
+            }],
+            "instructions": instructions,
+            "tools": tools,
+            "stream": True,
+            "parallel_tool_calls": parallel_tool_calls,
+            "max_output_tokens": 4000
+        }
+        
+        if previous_response_id:
+            payload["previous_response_id"] = previous_response_id
+        
+        # Make streaming HTTP request
+        log_foundry_debug(f"Calling Responses API with stream=True...")
         try:
-            response_stream = client.responses.create(
-                model=model_name,
-                input=[{
-                    "role": "user",
-                    "content": input_content
-                }],
-                instructions=instructions,
-                tools=tools,
-                stream=True,
-                previous_response_id=previous_response_id,
-                parallel_tool_calls=parallel_tool_calls,
-                max_output_tokens=4000
-            )
+            import httpx
             
-            # Process streaming events
-            full_text = ""
-            tool_calls = []
-            response_id = None
-            usage_info = None
-            event_count = 0
-            
-            log_foundry_debug(f"Processing streaming events...")
-            for event in response_stream:
-                event_count += 1
-                
-                if event.type == 'response.created':
-                    response_id = event.id
-                    log_foundry_debug(f"Response created with ID: {response_id}")
+            async with httpx.AsyncClient(timeout=180.0) as client:
+                async with client.stream('POST', responses_url, json=payload, headers=headers) as response:
+                    response.raise_for_status()
                     
-                elif event.type == 'response.output_text.delta':
-                    # TEXT CHUNK - stream to WebSocket
-                    chunk = event.delta
-                    full_text += chunk
+                    # Process Server-Sent Events
+                    full_text = ""
+                    tool_calls = []
+                    response_id = None
+                    usage_info = None
+                    event_count = 0
                     
-                    # Emit streaming chunk to frontend
-                    await self._emit_text_chunk(chunk, context_id)
-                    
-                elif event.type == 'response.function_call':
-                    # TOOL CALL REQUEST
-                    log_foundry_debug(f"Tool call: {event.name}")
-                    tool_calls.append({
-                        "id": event.call_id,
-                        "type": "function",
-                        "function": {
-                            "name": event.name,
-                            "arguments": event.arguments
-                        }
-                    })
-                    
-                elif event.type == 'response.done':
-                    # Response completed
-                    log_foundry_debug(f"Response done - total events: {event_count}")
-                    if hasattr(event, 'usage'):
-                        usage_info = event.usage
-                    break
-                    
-                elif event.type == 'error':
-                    log_error(f"Stream error: {event}")
-                    raise Exception(f"Streaming error: {event}")
+                    log_foundry_debug(f"Processing streaming events...")
+                    async for line in response.aiter_lines():
+                        if not line.strip() or not line.startswith('data: '):
+                            continue
+                        
+                        event_data = line[6:]  # Remove 'data: ' prefix
+                        if event_data == '[DONE]':
+                            break
+                        
+                        try:
+                            import json
+                            event = json.loads(event_data)
+                            event_count += 1
+                            event_type = event.get('type', '')
+                            
+                            if event_type == 'response.created':
+                                response_id = event.get('id')
+                                log_foundry_debug(f"Response created with ID: {response_id}")
+                                
+                            elif event_type == 'response.output_text.delta':
+                                # TEXT CHUNK - stream to WebSocket
+                                chunk = event.get('delta', '')
+                                full_text += chunk
+                                
+                                # Emit streaming chunk to frontend
+                                await self._emit_text_chunk(chunk, context_id)
+                                
+                            elif event_type == 'response.function_call':
+                                # TOOL CALL REQUEST
+                                function_name = event.get('name', '')
+                                log_foundry_debug(f"Tool call: {function_name}")
+                                tool_calls.append({
+                                    "id": event.get('call_id'),
+                                    "type": "function",
+                                    "function": {
+                                        "name": function_name,
+                                        "arguments": event.get('arguments', '{}')
+                                    }
+                                })
+                                
+                            elif event_type == 'response.done':
+                                # Response completed
+                                log_foundry_debug(f"Response done - total events: {event_count}")
+                                if 'usage' in event:
+                                    usage_info = event['usage']
+                                break
+                                
+                            elif event_type == 'error':
+                                log_error(f"Stream error: {event}")
+                                raise Exception(f"Streaming error: {event.get('message', event)}")
+                        
+                        except json.JSONDecodeError as e:
+                            log_error(f"Failed to parse SSE event: {line}")
+                            continue
             
             # Store response ID for future chaining
             if response_id:
