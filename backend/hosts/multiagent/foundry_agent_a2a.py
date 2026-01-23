@@ -4975,20 +4975,7 @@ Original request: {message}"""
                             name = part.get('file-name', part.get('name', 'unknown'))
                             print(f"  • Dict {idx}: {name} (role={role})")
             
-            # Create or get thread
-            thread_created = False
-            if context_id not in self.threads:
-                log_foundry_debug(f"Creating new thread for context_id: {context_id}")
-                thread = await self.create_thread(context_id)
-                self.threads[context_id] = thread["id"]  # Use dictionary access
-                thread_created = True
-                log_foundry_debug(f"New thread created with ID: {thread['id']}")
-            else:
-                log_foundry_debug(f"Reusing existing thread for context_id: {context_id}, thread_id: {self.threads[context_id]}")
-            thread_id = self.threads[context_id]
-            
-            log_foundry_debug(f"=================== THREAD READY, STARTING MESSAGE PROCESSING ===================")
-            log_foundry_debug(f"Thread ID: {thread_id}")
+            log_foundry_debug(f"=================== STARTING MESSAGE PROCESSING ===================")
             log_foundry_debug(f"About to process {len(message_parts)} message parts")
             
             # Process all message parts (including files) BEFORE sending to thread
@@ -5222,12 +5209,6 @@ Original request: {message}"""
                     enhanced_message = guidance_block
             
             log_debug(f"Enhanced message: {enhanced_message}")
-            
-            # Send enhanced message to thread
-            log_debug(f"About to send message to thread...")
-            await self._emit_status_event("sending message to AI thread", context_id)
-            await self.send_message_to_thread(thread_id, enhanced_message)
-            print(f"🔍 Message sent to thread successfully")
             
             # Check if we're in Agent Mode
             if session_context.agent_mode:
@@ -5514,14 +5495,13 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). Simply synt
                             filename = artifact_data.get('file-name', 'unknown')
                             print(f"  • Artifact {idx+1}: {filename} (URI: {uri[:80]}...)")
 
-                # If we have extracted content, prepend it and save to thread context
+                # If we have extracted content, prepend it to the response
                 if has_extracted_content:
                     extracted_content_message = (
                         "The file has been processed. Here is the extracted content:\n\n" + 
                         "\n\n---\n\n".join(extracted_contents)
                     )
-                    log_debug(f"📝 Sending extracted content to thread for future context...")
-                    await self.send_message_to_thread(thread_id, extracted_content_message, role="assistant")
+                    log_debug(f"📝 Prepending extracted content to response...")
                     final_responses.insert(0, extracted_content_message)
 
                 # Fallback if nothing collected yet
