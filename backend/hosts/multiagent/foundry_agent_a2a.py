@@ -810,10 +810,14 @@ class FoundryHostAgent2:
         # Get authentication headers
         headers = await self._get_auth_headers()
         
-        # Build endpoint URL
-        # Convert AI Foundry endpoint to OpenAI format
-        base_endpoint = self._get_openai_endpoint().rstrip('/')
-        responses_url = f"{base_endpoint}/responses"
+        # Build endpoint URL - Responses API uses AI Foundry endpoint, not OpenAI format
+        # The Responses API is only available through AI Foundry projects
+        base_endpoint = os.getenv("AZURE_AI_FOUNDRY_PROJECT_ENDPOINT")
+        if not base_endpoint:
+            raise ValueError("AZURE_AI_FOUNDRY_PROJECT_ENDPOINT not set")
+        
+        # Responses API endpoint: {project}/responses
+        responses_url = f"{base_endpoint.rstrip('/')}/responses"
         log_foundry_debug(f"Responses API URL: {responses_url}")
         
         # Get previous response ID for conversation chaining
@@ -855,6 +859,13 @@ class FoundryHostAgent2:
             
             async with httpx.AsyncClient(timeout=180.0) as client:
                 async with client.stream('POST', responses_url, json=payload, headers=headers) as response:
+                    # Check for errors and log response details
+                    if response.status_code != 200:
+                        error_body = await response.aread()
+                        log_error(f"Responses API error {response.status_code}: {error_body.decode()}")
+                        log_error(f"Request URL: {responses_url}")
+                        log_error(f"Request payload: {payload}")
+                    
                     response.raise_for_status()
                     
                     # Process Server-Sent Events
