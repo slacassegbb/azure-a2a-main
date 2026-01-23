@@ -715,6 +715,30 @@ class FoundryHostAgent2:
             log_foundry_debug(f"❌ Error refreshing Azure CLI session: {e}")
             return False
 
+    def _format_tools_for_responses_api(self) -> List[Dict[str, Any]]:
+        """
+        Format agent tools for Responses API.
+        
+        Converts tools from Assistants API format to Responses API format.
+        The main difference is that Responses API uses a slightly different schema.
+        
+        Returns:
+            List of tool definitions in Responses API format
+        """
+        if not self.agent or 'tools' not in self.agent:
+            return []
+        
+        formatted_tools = []
+        for tool in self.agent.get('tools', []):
+            if tool.get('type') == 'function':
+                # Responses API format is similar to Assistants API
+                formatted_tools.append({
+                    "type": "function",
+                    "function": tool.get('function', {})
+                })
+        
+        return formatted_tools
+
     def _get_openai_endpoint(self) -> str:
         """
         Convert AI Foundry endpoint to OpenAI /v1/ endpoint format.
@@ -1051,6 +1075,120 @@ class FoundryHostAgent2:
             import traceback
             traceback.print_exc()
             raise
+
+    async def _execute_tool_calls_from_response(
+        self,
+        tool_calls: List[Dict[str, Any]],
+        context_id: str,
+        session_context: SessionContext,
+        event_logger=None
+    ) -> List[Dict[str, Any]]:
+        """
+        Execute tool calls from Responses API.
+        
+        This is a simpler version adapted for Responses API that reuses
+        the tool execution logic from _handle_tool_calls.
+        
+        Args:
+            tool_calls: List of tool calls from Responses API
+            context_id: Conversation context ID
+            session_context: Session state
+            event_logger: Optional event logger
+            
+        Returns:
+            List of tool outputs in format needed for next response
+        """
+        log_foundry_debug(f"_execute_tool_calls_from_response: Processing {len(tool_calls)} tool calls")
+        
+        tool_outputs = []
+        
+        # Separate send_message calls from other tools
+        send_message_calls = []
+        other_calls = []
+        
+        for tool_call in tool_calls:
+            function_name = tool_call["function"]["name"]
+            if function_name == "send_message":
+                send_message_calls.append(tool_call)
+            else:
+                other_calls.append(tool_call)
+        
+        # Execute send_message calls in parallel (if not in agent mode)
+        if send_message_calls and not session_context.agent_mode:
+            log_foundry_debug(f"Executing {len(send_message_calls)} send_message calls in parallel")
+            
+            tasks = []
+            for tool_call in send_message_calls:
+                arguments = json.loads(tool_call["function"]["arguments"]) if isinstance(tool_call["function"]["arguments"], str) else tool_call["function"]["arguments"]
+                
+                # Create dummy tool context
+                tool_context = type('obj', (object,), {'state': session_context})()
+                
+                task = self.send_message(
+                    agent_name=arguments["agent_name"],
+                    message=arguments["message"],
+                    tool_context=tool_context,
+                    suppress_streaming=True
+                )
+                tasks.append((tool_call, task))
+            
+            # Execute in parallel
+            results = await asyncio.gather(*[task for _, task in tasks], return_exceptions=True)
+            
+            for (tool_call, _), result in zip(tasks, results):
+                if isinstance(result, Exception):
+                    output = {"error": str(result)}
+                else:
+                    output = result
+                
+                tool_outputs.append({
+                    "type": "function_call_output",
+                    "call_id": tool_call["id"],
+                    "output": json.dumps(output)
+                })
+        else:
+            # Sequential execution for agent mode
+            for tool_call in send_message_calls:
+                arguments = json.loads(tool_call["function"]["arguments"]) if isinstance(tool_call["function"]["arguments"], str) else tool_call["function"]["arguments"]
+                
+                tool_context = type('obj', (object,), {'state': session_context})()
+                
+                try:
+                    output = await self.send_message(
+                        agent_name=arguments["agent_name"],
+                        message=arguments["message"],
+                        tool_context=tool_context,
+                        suppress_streaming=True
+                    )
+                except Exception as e:
+                    output = {"error": str(e)}
+                
+                tool_outputs.append({
+                    "type": "function_call_output",
+                    "call_id": tool_call["id"],
+                    "output": json.dumps(output)
+                })
+        
+        # Execute other tool calls sequentially
+        for tool_call in other_calls:
+            function_name = tool_call["function"]["name"]
+            arguments = json.loads(tool_call["function"]["arguments"]) if isinstance(tool_call["function"]["arguments"], str) else tool_call["function"]["arguments"]
+            
+            await self._emit_tool_call_event("foundry-host-agent", function_name, arguments, context_id)
+            
+            if function_name == "list_remote_agents":
+                output = self.list_remote_agents()
+            else:
+                output = {"error": f"Unknown function: {function_name}"}
+            
+            tool_outputs.append({
+                "type": "function_call_output",
+                "call_id": tool_call["id"],
+                "output": json.dumps(output)
+            })
+        
+        log_foundry_debug(f"Tool execution complete - {len(tool_outputs)} outputs")
+        return tool_outputs
 
     async def init_remote_agent_addresses(self, remote_agent_addresses: List[str]):
         async with asyncio.TaskGroup() as task_group:
@@ -5376,113 +5514,69 @@ Task Outputs:
 
 IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). Simply synthesize these outputs into a clear, cohesive response. Do NOT ask for confirmation or what to do next."""
                     
-                    # Send synthesis prompt to thread
-                    await self.send_message_to_thread(thread_id, synthesis_prompt, "user")
+                    # RESPONSES API: Use streaming synthesis (no thread/run needed)
+                    log_foundry_debug(f"Creating synthesis response with Responses API...")
+                    synthesis_response = await self._create_response_with_streaming(
+                        user_message=synthesis_prompt,
+                        context_id=context_id,
+                        session_context=session_context,
+                        tools=[],  # No tools for synthesis - just text generation
+                        instructions="Synthesize the following task outputs into a coherent response. Do NOT call any tools.",
+                        event_logger=event_logger
+                    )
                     
-                    # Create run for synthesis
-                    log_foundry_debug(f"Creating synthesis run...")
-                    run = await self._http_create_run(thread_id, self.agent['id'], session_context)
-                    log_foundry_debug(f"Synthesis run created: {run['id']}")
+                    # Extract token usage from synthesis response
+                    if 'usage' in synthesis_response and synthesis_response['usage']:
+                        usage = synthesis_response['usage']
+                        self.host_token_usage["prompt_tokens"] += usage.get('prompt_tokens', 0) or 0
+                        self.host_token_usage["completion_tokens"] += usage.get('completion_tokens', 0) or 0
+                        self.host_token_usage["total_tokens"] += usage.get('total_tokens', 0) or 0
+                        print(f"🎟️ [Host Agent] Synthesis tokens: +{usage.get('total_tokens', 0)} (total: {self.host_token_usage['total_tokens']})")
                     
-                    # Poll for completion
-                    max_iterations = 30
-                    poll_iteration = 0
-                    import asyncio
-                    while run['status'] in ['queued', 'in_progress']:
-                        poll_iteration += 1
-                        if poll_iteration > max_iterations:
-                            print(f"⚠️ [Agent Mode] Synthesis polling timeout")
-                            break
+                    # Get final response from synthesis
+                    if synthesis_response['status'] == 'completed':
+                        final_response = synthesis_response.get('text', '')
+                        log_info(f"✅ [Agent Mode] Final synthesis extracted: {final_response[:200] if final_response else '(EMPTY!)'}...")
                         
-                        await asyncio.sleep(2)
-                        run = await self._http_get_run(thread_id, run['id'])
-                        log_foundry_debug(f"Synthesis run status: {run['status']}")
-                    
-                    # If requires_action, submit empty outputs to force completion
-                    if run['status'] == 'requires_action':
-                        print(f"⚠️ [Agent Mode] Synthesis trying to call tools - forcing skip")
-                        try:
-                            # Get the tool calls and submit empty responses
-                            tool_calls = run.get('required_action', {}).get('submit_tool_outputs', {}).get('tool_calls', [])
-                            if tool_calls:
-                                tool_outputs = [
-                                    {"tool_call_id": tc['id'], "output": "Tool calls not allowed during synthesis. Please provide final answer based on provided information."}
-                                    for tc in tool_calls
-                                ]
-                                run = await self._http_submit_tool_outputs(thread_id, run['id'], tool_outputs)
-                                # Continue polling
-                                poll_iteration = 0
-                                while run['status'] in ['queued', 'in_progress'] and poll_iteration < max_iterations:
-                                    poll_iteration += 1
-                                    await asyncio.sleep(2)
-                                    run = await self._http_get_run(thread_id, run['id'])
-                                    log_foundry_debug(f"Synthesis run status after tool skip: {run['status']}")
-                        except Exception as e:
-                            print(f"⚠️ [Agent Mode] Error skipping synthesis tools: {e}")
-                    
-                    # Get final response from thread
-                    if run['status'] == 'completed':
-                        # Extract token usage from synthesis run
-                        if 'usage' in run and run['usage']:
-                            usage = run['usage']
-                            self.host_token_usage["prompt_tokens"] += usage.get('prompt_tokens', 0) or 0
-                            self.host_token_usage["completion_tokens"] += usage.get('completion_tokens', 0) or 0
-                            self.host_token_usage["total_tokens"] += usage.get('total_tokens', 0) or 0
-                            print(f"🎟️ [Host Agent] Synthesis tokens: +{usage.get('total_tokens', 0)} (total: {self.host_token_usage['total_tokens']})")
-                        
-                        messages = await self._http_list_messages(thread_id, limit=1)
-                        if messages:
-                            log_foundry_debug(f"Retrieved {len(messages)} message(s) from synthesis thread")
-                            log_foundry_debug(f"Message structure: {type(messages[0])}")
-                            log_foundry_debug(f"Message keys: {messages[0].keys() if isinstance(messages[0], dict) else 'N/A'}")
-                            if isinstance(messages[0], dict) and 'content' in messages[0]:
-                                log_foundry_debug(f"Content structure: {messages[0]['content'][:500] if isinstance(messages[0]['content'], str) else messages[0]['content']}")
-                            
-                            final_response = self._extract_message_content(messages[0])
-                            log_info(f"✅ [Agent Mode] Final synthesis extracted: {final_response[:200] if final_response else '(EMPTY!)'}...")
-                            
-                            # Include ONLY agent-generated artifacts (not user uploads)
-                            # This ensures the UI can display NEW images with "Refine this image" buttons
-                            final_responses = [final_response]
-                            log_foundry_debug(f"Checking for agent-generated artifacts to include in final response...")
-                            log_foundry_debug(f"session_context has _agent_generated_artifacts: {hasattr(session_context, '_agent_generated_artifacts')}")
-                            if hasattr(session_context, '_agent_generated_artifacts'):
-                                log_foundry_debug(f"_agent_generated_artifacts length: {len(session_context._agent_generated_artifacts)}")
-                                artifact_dicts = []
-                                for idx, part in enumerate(session_context._agent_generated_artifacts):
-                                    log_foundry_debug(f"Part {idx}: type={type(part)}")
-                                    
-                                    # Check for wrapped Part objects with .root
-                                    if hasattr(part, 'root'):
-                                        log_foundry_debug(f"Part {idx} has .root, root type: {type(part.root)}")
-                                        if isinstance(part.root, DataPart) and isinstance(part.root.data, dict) and 'artifact-uri' in part.root.data:
-                                            log_foundry_debug(f"Part {idx} wrapped DataPart with artifact-uri ✓")
-                                            artifact_dicts.append(part.root.data)
-                                    
-                                    # Check for unwrapped DataPart objects (no .root)
-                                    elif isinstance(part, DataPart):
-                                        log_foundry_debug(f"Part {idx} is unwrapped DataPart, data type: {type(part.data)}")
-                                        if isinstance(part.data, dict) and 'artifact-uri' in part.data:
-                                            log_foundry_debug(f"Part {idx} unwrapped DataPart with artifact-uri ✓")
-                                            artifact_dicts.append(part.data)
+                        # Include ONLY agent-generated artifacts (not user uploads)
+                        # This ensures the UI can display NEW images with "Refine this image" buttons
+                        final_responses = [final_response]
+                        log_foundry_debug(f"Checking for agent-generated artifacts to include in final response...")
+                        log_foundry_debug(f"session_context has _agent_generated_artifacts: {hasattr(session_context, '_agent_generated_artifacts')}")
+                        if hasattr(session_context, '_agent_generated_artifacts'):
+                            log_foundry_debug(f"_agent_generated_artifacts length: {len(session_context._agent_generated_artifacts)}")
+                            artifact_dicts = []
+                            for idx, part in enumerate(session_context._agent_generated_artifacts):
+                                log_foundry_debug(f"Part {idx}: type={type(part)}")
                                 
-                                log_foundry_debug(f"Found {len(artifact_dicts)} artifact dicts from remote agents")
-                                if artifact_dicts:
-                                    log_debug(f"📦 [Agent Mode] Including {len(artifact_dicts)} artifact(s) from remote agents in final response for UI display")
-                                    final_responses.extend(artifact_dicts)
-                                    for idx, artifact_data in enumerate(artifact_dicts):
-                                        uri = artifact_data.get('artifact-uri', '')
-                                        filename = artifact_data.get('file-name', 'unknown')
-                                        print(f"  • Artifact {idx+1} from remote agent: {filename} (URI has SAS: {'?' in uri})")
-                                else:
-                                    print(f"⚠️ [DEBUG] No artifact dicts found (agent doesn't generate files)")
+                                # Check for wrapped Part objects with .root
+                                if hasattr(part, 'root'):
+                                    log_foundry_debug(f"Part {idx} has .root, root type: {type(part.root)}")
+                                    if isinstance(part.root, DataPart) and isinstance(part.root.data, dict) and 'artifact-uri' in part.root.data:
+                                        log_foundry_debug(f"Part {idx} wrapped DataPart with artifact-uri ✓")
+                                        artifact_dicts.append(part.root.data)
+                                
+                                # Check for unwrapped DataPart objects (no .root)
+                                elif isinstance(part, DataPart):
+                                    log_foundry_debug(f"Part {idx} is unwrapped DataPart, data type: {type(part.data)}")
+                                    if isinstance(part.data, dict) and 'artifact-uri' in part.data:
+                                        log_foundry_debug(f"Part {idx} unwrapped DataPart with artifact-uri ✓")
+                                        artifact_dicts.append(part.data)
+                            
+                            log_foundry_debug(f"Found {len(artifact_dicts)} artifact dicts from remote agents")
+                            if artifact_dicts:
+                                log_debug(f"📦 [Agent Mode] Including {len(artifact_dicts)} artifact(s) from remote agents in final response for UI display")
+                                final_responses.extend(artifact_dicts)
+                                for idx, artifact_data in enumerate(artifact_dicts):
+                                    uri = artifact_data.get('artifact-uri', '')
+                                    filename = artifact_data.get('file-name', 'unknown')
+                                    print(f"  • Artifact {idx+1} from remote agent: {filename} (URI has SAS: {'?' in uri})")
                             else:
-                                print(f"⚠️ [DEBUG] session_context does not have _agent_generated_artifacts")
+                                print(f"⚠️ [DEBUG] No artifact dicts found (agent doesn't generate files)")
                         else:
-                            print(f"⚠️ [Agent Mode] No messages in synthesis response")
-                            final_responses = ["Task orchestration completed successfully."]
+                            print(f"⚠️ [DEBUG] session_context does not have _agent_generated_artifacts")
                     else:
-                        print(f"⚠️ [Agent Mode] Synthesis run did not complete: {run['status']}")
+                        print(f"⚠️ [Agent Mode] Synthesis response did not complete: {synthesis_response['status']}")
                         final_responses = ["Task orchestration completed but synthesis failed."]
                     
                     # Store the interaction and return
@@ -5531,130 +5625,78 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). Simply synt
                         final_responses = [f"Agent Mode orchestration encountered an error: {error_msg}"]
                         return final_responses
             
-            # Continue with standard conversation flow using HTTP API
-            log_foundry_debug(f"=================== STARTING RUN CREATION ===================")
-            log_foundry_debug(f"About to create run with agent_id: {self.agent['id']} (FIRST PATH)")
-            await self._emit_status_event("creating AI agent run", context_id)
+            # Continue with standard conversation flow using Responses API (streaming)
+            log_foundry_debug(f"=================== STARTING RESPONSE CREATION ===================")
+            log_foundry_debug(f"Creating response with Responses API (streaming)")
+            await self._emit_status_event("creating AI response with streaming", context_id)
             
-            log_foundry_debug(f"Calling _http_create_run...")
-            run = await self._http_create_run(thread_id, self.agent['id'], session_context)
-            log_foundry_debug(f"Run created successfully with ID: {run['id']}, status: {run['status']} (FIRST PATH)")
-            log_foundry_debug(f"=================== RUN CREATED SUCCESSFULLY ===================")
-            await self._emit_status_event(f"AI run started - status: {run['status']}", context_id)
+            # Get tools for this agent
+            tools = self._format_tools_for_responses_api()
             
-            # Poll until completion, handle tool calls
-            max_iterations = 30
-            iterations = 0
+            # Create streaming response
+            response = await self._create_response_with_streaming(
+                user_message=enhanced_message,
+                context_id=context_id,
+                session_context=session_context,
+                tools=tools,
+                instructions=self.agent.get('instructions', ''),
+                event_logger=event_logger
+            )
+            
+            log_foundry_debug(f"Response created successfully with ID: {response['id']}, status: {response['status']}")
+            log_foundry_debug(f"=================== RESPONSE CREATED SUCCESSFULLY ===================")
+            await self._emit_status_event(f"AI response created - status: {response['status']}", context_id)
+            
+            # Handle tool calls if needed (iterative loop for multi-turn tool execution)
+            max_tool_iterations = 30
+            tool_iteration = 0
             last_tool_output = None
-            tool_calls_count = 0
             
-            log_foundry_debug(f"Starting polling loop for run {run['id']} (FIRST PATH)")
-            while run["status"] in ["queued", "in_progress", "requires_action"] and iterations < max_iterations:
-                iterations += 1
-                log_foundry_debug(f"Polling iteration {iterations}, current status: {run['status']} (FIRST PATH)")
+            log_foundry_debug(f"Starting tool handling loop for response {response['id']}")
+            while response["status"] == "requires_action" and tool_iteration < max_tool_iterations:
+                tool_iteration += 1
+                log_foundry_debug(f"Tool iteration {tool_iteration}, response requires action")
+                await self._emit_status_event(f"executing tools (attempt {tool_iteration})", context_id)
                 
-                # Emit status for different run states
-                if run["status"] == "queued":
-                    await self._emit_status_event("AI request queued for processing", context_id)
-                elif run["status"] == "in_progress":
-                    await self._emit_status_event("AI is analyzing and processing", context_id)
-                elif run["status"] == "requires_action":
-                    await self._emit_status_event("AI requires tools - executing actions", context_id)
+                # Execute all tool calls from this response
+                tool_outputs = await self._execute_tool_calls_from_response(
+                    tool_calls=response.get('tool_calls', []),
+                    context_id=context_id,
+                    session_context=session_context,
+                    event_logger=event_logger
+                )
                 
-                import asyncio; await asyncio.sleep(1)
-                log_foundry_debug(f"About to get run status for iteration {iterations} (FIRST PATH)")
-                run = await self._http_get_run(thread_id, run["id"])
-                log_foundry_debug(f"Got run status: {run['status']} (iteration {iterations}) (FIRST PATH)")
-                
-                if run["status"] == "failed":
-                    log_foundry_debug(f"Run failed, breaking from loop (FIRST PATH)")
-                    await self._emit_status_event("AI run failed", context_id)
+                if tool_outputs:
+                    last_tool_output = tool_outputs
+                    await self._emit_status_event("tool execution completed, continuing conversation", context_id)
+                    
+                    # Create a new response with tool outputs to continue the conversation
+                    # The tool outputs become part of the conversation history via previous_response_id chaining
+                    response = await self._create_response_with_streaming(
+                        user_message="",  # Empty message, tool outputs are in conversation history
+                        context_id=context_id,
+                        session_context=session_context,
+                        tools=tools,
+                        instructions=self.agent.get('instructions', ''),
+                        event_logger=event_logger
+                    )
+                    log_foundry_debug(f"Created follow-up response after tool execution: {response['id']}, status: {response['status']}")
+                else:
+                    log_debug(f"⚠️ No tool outputs generated, breaking tool loop")
                     break
-                    
-                if run["status"] == "requires_action":
-                    log_foundry_debug(f"Run requires action, handling tool calls (FIRST PATH)")
-                    tool_calls_count += 1
-                    await self._emit_status_event(f"executing tools (attempt {tool_calls_count})", context_id)
-                    
-                    # OPTIMIZED: Process all available tool calls in one batch
-                    all_tool_calls = []
-                    current_run = run
-                    
-                    # Collect tool calls - we can only get the current batch
-                    # We CANNOT submit empty outputs as the Azure API requires outputs for all tool_calls
-                    if current_run.get('required_action') and current_run['required_action'].get('submit_tool_outputs'):
-                        batch_tool_calls = current_run['required_action']['submit_tool_outputs']['tool_calls']
-                        all_tool_calls.extend(batch_tool_calls)
-                        log_debug(f"🔥 OPTIMIZED: Processing {len(batch_tool_calls)} tool calls in batch")
-                    
-                    # Now execute all tool calls in parallel fashion
-                    if all_tool_calls:
-                        log_debug(f"🔥 OPTIMIZED: Executing {len(all_tool_calls)} tool calls in parallel")
-                        
-                        # Ensure the run has the tool calls properly set up
-                        if not run.get('required_action'):
-                            run['required_action'] = {}
-                        if not run['required_action'].get('submit_tool_outputs'):
-                            run['required_action']['submit_tool_outputs'] = {}
-                        run['required_action']['submit_tool_outputs']['tool_calls'] = all_tool_calls
-                        
-                        # Now process all tool calls in parallel
-                        tool_output = await self._handle_tool_calls(run, thread_id, context_id, session_context, event_logger=event_logger)
-                        if tool_output:
-                            last_tool_output = tool_output
-                            await self._emit_status_event("tool execution completed", context_id)
-                    
-                    # Get the latest run status after all tool executions
-                    run = await self._http_get_run(thread_id, run["id"])
             
-            log_foundry_debug(f"Polling loop completed. Final status: {run['status']}, iterations: {iterations} (FIRST PATH)")
-            await self._emit_status_event("AI processing completed, generating response", context_id)
+            log_foundry_debug(f"Tool handling loop completed. Final status: {response['status']}, iterations: {tool_iteration}")
+            await self._emit_status_event("AI processing completed, finalizing response", context_id)
             
-            # Get response messages
-            log_foundry_debug(f"About to retrieve messages from thread (FIRST PATH)")
-            await self._emit_status_event("retrieving AI response", context_id)
-            messages = await self._http_list_messages(thread_id)
-            log_foundry_debug(f"Retrieved {len(messages)} messages from thread (FIRST PATH)")
-            
+            # Get response text
             responses = []
-            assistant_messages_found = 0
+            if response.get('text'):
+                responses.append(response['text'])
+                log_foundry_debug(f"Found response text: {response['text'][:100]}...")
             
-            for i, msg in enumerate(messages):
-                log_foundry_debug(f"Message {i}: role={msg.get('role')}, has_content={bool(msg.get('content'))} (FIRST PATH)")
-                if msg.get("content"):
-                    log_foundry_debug(f"Message {i} content count: {len(msg['content'])} (FIRST PATH)")
-                    for j, content in enumerate(msg['content']):
-                        log_foundry_debug(f"Content {j}: type={content.get('type')}, has_text={bool(content.get('text'))} (FIRST PATH)")
-                        if content.get("text"):
-                            log_foundry_debug(f"Text object: {content.get('text')} (FIRST PATH)")
-                else:
-                    log_foundry_debug(f"Message {i} has no content! (FIRST PATH)")
-                
-                if msg.get("role") == "assistant" and msg.get("content"):
-                    assistant_messages_found += 1
-                    log_foundry_debug(f"Processing assistant message {assistant_messages_found} (FIRST PATH)")
-                    current_responses = []
-                    for content in msg["content"]:
-                        if content.get("type") == "text" and content.get("text", {}).get("value"):
-                            text_value = content["text"]["value"]
-                            log_foundry_debug(f"Found text value: {text_value[:100]}... (FIRST PATH)")
-                            if not text_value or "couldn't retrieve" in text_value.lower() or "no response" in text_value.lower():
-                                log_foundry_debug(f"Skipping invalid text value (FIRST PATH)")
-                                continue
-                            current_responses.append(text_value)
-                            log_foundry_debug(f"Added response to current list (FIRST PATH)")
-                    if current_responses:
-                        log_foundry_debug(f"Found responses in message {i}, updating latest responses (FIRST PATH)")
-                        responses = current_responses  # Keep updating to get the most recent responses
-                else:
-                    if msg.get("role") != "assistant":
-                        log_foundry_debug(f"Skipping message {i} - not assistant role: {msg.get('role')} (FIRST PATH)")
-                    else:
-                        log_foundry_debug(f"Skipping message {i} - assistant but no content (FIRST PATH)")
-            
-            # If no valid assistant message found, surface tool output as fallback
+            # If no valid response text found, surface tool output as fallback
             if not responses and last_tool_output:
-                log_foundry_debug(f"No assistant responses found, using tool output as fallback (FIRST PATH)")
+                log_foundry_debug(f"No response text found, using tool output as fallback")
 
                 def _flatten_tool_output(output):
                     if isinstance(output, list):
@@ -5670,12 +5712,15 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). Simply synt
 
                     return [str(output)]
 
-                payload_to_flatten = last_tool_output.get("response") if isinstance(last_tool_output, dict) and "response" in last_tool_output else last_tool_output
-                responses = _flatten_tool_output(payload_to_flatten)
+                # Extract response from tool outputs
+                if last_tool_output and len(last_tool_output) > 0:
+                    for tool_output in last_tool_output:
+                        if isinstance(tool_output, dict) and 'output' in tool_output:
+                            responses.append(tool_output['output'])
             
-            log_foundry_debug(f"After message processing - responses count: {len(responses) if responses else 0} (FIRST PATH)")
+            log_foundry_debug(f"After response processing - responses count: {len(responses) if responses else 0}")
             if responses:
-                log_foundry_debug(f"First response: {responses[0][:100]}... (FIRST PATH)")
+                log_foundry_debug(f"First response: {responses[0][:100]}...")
                 
                 # Check if files were processed and have extracted content
                 has_extracted_content = False
