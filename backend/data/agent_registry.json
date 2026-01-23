@@ -909,7 +909,7 @@
     "name": "AI Foundry Branding & Content Agent",
     "description": "An intelligent branding partner powered by Azure AI Foundry. Delivers on-brand messaging, visual direction, and creative prompts grounded in the Company Branding Guide.",
     "version": "1.0.0",
-    "url": "https://azurefoundry-branding.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
+    "url": "http://localhost:9020/",
     "defaultInputModes": [
       "text"
     ],

@@ -955,12 +955,13 @@ class FoundryHostAgent2:
             # Track if we're handling tool calls
             tool_calls_to_execute = []
             
-            # Note: tool_choice="auto" means the model decides when to call tools
-            # The model will call tools when it determines they're needed based on the user message
+            # IMPORTANT: Use "required" to force the model to call tools
+            # With "auto", the model hallucinates agent responses instead of actually calling them
+            # The model should call list_remote_agents or send_message - never answer directly about agent tasks
             stream = await self.agents_client.runs.stream(
                 thread_id=thread_id,
                 agent_id=self.agent_id,
-                tool_choice="auto"  # Explicitly set to auto (default, but being explicit)
+                tool_choice="required"
             )
             
             # Use async context manager - it returns an event handler
@@ -995,7 +996,9 @@ class FoundryHostAgent2:
                         log_foundry_debug(f"Run status: {status}")
                         
                         # Capture tool calls if requires_action
-                        if status == "requires_action" and hasattr(event_data, 'required_action'):
+                        # Status can be a RunStatus enum or string, convert to string for comparison
+                        status_str = str(status).lower() if status else ""
+                        if "requires_action" in status_str and hasattr(event_data, 'required_action'):
                             required_action = event_data.required_action
                             if required_action and hasattr(required_action, 'submit_tool_outputs'):
                                 tool_calls_to_execute = required_action.submit_tool_outputs.tool_calls
@@ -1011,9 +1014,21 @@ class FoundryHostAgent2:
             
             log_foundry_debug(f"Stream complete - text length: {len(full_text)}")
             
-            # If we have tool calls to execute and status is requires_action, execute them
-            if status == "requires_action" and tool_calls_to_execute:
-                log_foundry_debug(f"🔧 Executing {len(tool_calls_to_execute)} tool calls...")
+            # MULTI-TURN TOOL EXECUTION LOOP
+            # Keep executing tool calls until status is completed
+            max_tool_iterations = 30
+            tool_iteration = 0
+            
+            # Helper to check if status requires action (handles enum and string)
+            def status_requires_action(s):
+                if s is None:
+                    return False
+                s_str = str(s).lower()
+                return "requires_action" in s_str
+            
+            while status_requires_action(status) and tool_calls_to_execute and tool_iteration < max_tool_iterations:
+                tool_iteration += 1
+                log_foundry_debug(f"🔧 Tool iteration {tool_iteration}: Executing {len(tool_calls_to_execute)} tool calls...")
                 
                 # ✅ WORKFLOW VISIBILITY: Show that host agent is calling tools
                 for tool_call in tool_calls_to_execute:
@@ -1024,14 +1039,130 @@ class FoundryHostAgent2:
                         context_id
                     ))
                 
+                # Separate send_message calls for parallel execution
+                send_message_calls = []
+                other_calls = []
+                
+                log_foundry_debug(f"🔧 Processing {len(tool_calls_to_execute)} tool calls")
+                for tool_call in tool_calls_to_execute:
+                    function_name = tool_call.function.name
+                    log_foundry_debug(f"🔧 Tool call: {function_name} - args: {tool_call.function.arguments[:100] if tool_call.function.arguments else 'None'}...")
+                    if function_name == "send_message_sync":
+                        send_message_calls.append(tool_call)
+                    else:
+                        other_calls.append(tool_call)
+                
+                log_foundry_debug(f"🔧 Separated: {len(send_message_calls)} send_message calls, {len(other_calls)} other calls")
                 tool_outputs = []
                 
-                for tool_call in tool_calls_to_execute:
+                # Execute send_message calls in PARALLEL if there are multiple
+                if len(send_message_calls) > 1:
+                    log_foundry_debug(f"🚀 Executing {len(send_message_calls)} send_message calls in PARALLEL...")
+                    
+                    async def execute_send_message(tool_call):
+                        """Execute a single send_message call and return result with tool_call_id"""
+                        try:
+                            import json
+                            arguments = json.loads(tool_call.function.arguments) if tool_call.function.arguments else {}
+                            agent_name = arguments.get("agent_name")
+                            result = await self.send_message_sync(
+                                agent_name=agent_name,
+                                message=arguments.get("message")
+                            )
+                            
+                            # Convert response_parts list to clean text for the model
+                            # The model needs readable text, not complex JSON structures
+                            result_str = self._format_agent_response_for_model(result, agent_name)
+                            
+                            log_foundry_debug(f"🔧 Tool send_message_sync returned: {result_str[:200]}...")
+                            asyncio.create_task(self._emit_granular_agent_event(
+                                "foundry-host-agent",
+                                f"✅ Tool send_message_sync completed for {agent_name}",
+                                context_id
+                            ))
+                            
+                            return {"tool_call_id": tool_call.id, "output": result_str}
+                        except Exception as e:
+                            log_error(f"🔧 Error executing send_message_sync: {e}")
+                            import traceback
+                            traceback.print_exc()
+                            return {"tool_call_id": tool_call.id, "output": json.dumps({"error": str(e)})}
+                    
+                    # Execute all send_message calls in parallel using asyncio.gather
+                    parallel_results = await asyncio.gather(
+                        *[execute_send_message(tc) for tc in send_message_calls],
+                        return_exceptions=True
+                    )
+                    
+                    # Collect results
+                    import json as json_module  # Ensure json is available in this scope
+                    log_foundry_debug(f"🔧 Parallel execution returned {len(parallel_results)} results")
+                    for idx, result in enumerate(parallel_results):
+                        if isinstance(result, Exception):
+                            log_error(f"🔧 Parallel execution error for call {idx}: {type(result).__name__}: {result}")
+                            import traceback
+                            traceback.print_exc()
+                            # Still add an error result for this tool_call
+                            if idx < len(send_message_calls):
+                                tool_call = send_message_calls[idx]
+                                tool_outputs.append({
+                                    "tool_call_id": tool_call.id,
+                                    "output": json_module.dumps({"error": f"Exception: {str(result)}"})
+                                })
+                        else:
+                            log_foundry_debug(f"🔧 Parallel result {idx}: {str(result)[:200]}...")
+                            tool_outputs.append(result)
+                    
+                    log_foundry_debug(f"✅ Parallel execution complete - {len(tool_outputs)} outputs collected")
+                
+                elif len(send_message_calls) == 1:
+                    # Single send_message - execute normally
+                    tool_call = send_message_calls[0]
                     function_name = tool_call.function.name
                     arguments_str = tool_call.function.arguments
                     tool_call_id = tool_call.id
                     
-                    log_foundry_debug(f"🔧 Executing tool: {function_name} with args: {arguments_str}")
+                    log_foundry_debug(f"🔧 Executing single tool: {function_name} with args: {arguments_str}")
+                    
+                    try:
+                        import json
+                        arguments = json.loads(arguments_str) if arguments_str else {}
+                        agent_name = arguments.get("agent_name")
+                        result = await self.send_message_sync(
+                            agent_name=agent_name,
+                            message=arguments.get("message")
+                        )
+                        
+                        # Use the same clean formatting as parallel execution
+                        result_str = self._format_agent_response_for_model(result, agent_name)
+                        
+                        log_foundry_debug(f"🔧 Tool {function_name} returned: {result_str[:200]}...")
+                        asyncio.create_task(self._emit_granular_agent_event(
+                            "foundry-host-agent",
+                            f"✅ Tool {function_name} completed",
+                            context_id
+                        ))
+                        
+                        tool_outputs.append({
+                            "tool_call_id": tool_call_id,
+                            "output": result_str
+                        })
+                    except Exception as e:
+                        log_error(f"🔧 Error executing tool {function_name}: {e}")
+                        import traceback
+                        traceback.print_exc()
+                        tool_outputs.append({
+                            "tool_call_id": tool_call_id,
+                            "output": json.dumps({"error": str(e)})
+                        })
+                
+                # Execute other (non-send_message) tool calls sequentially
+                for tool_call in other_calls:
+                    function_name = tool_call.function.name
+                    arguments_str = tool_call.function.arguments
+                    tool_call_id = tool_call.id
+                    
+                    log_foundry_debug(f"🔧 Executing other tool: {function_name} with args: {arguments_str}")
                     
                     try:
                         # Parse arguments
@@ -1041,11 +1172,6 @@ class FoundryHostAgent2:
                         # Execute the tool function
                         if function_name == "list_remote_agents_sync":
                             result = self.list_remote_agents_sync()  # Synchronous call
-                        elif function_name == "send_message_sync":
-                            result = await self.send_message_sync(  # Async call
-                                agent_name=arguments.get("agent_name"),
-                                message=arguments.get("message")
-                            )
                         else:
                             result = {"error": f"Unknown function: {function_name}"}
                         
@@ -1121,12 +1247,13 @@ class FoundryHostAgent2:
                         log_foundry_debug("🔧 Retrying with custom event handler to capture response...")
                         from azure.ai.agents.models import AsyncAgentEventHandler
                         
-                        # Create custom event handler to capture response text
+                        # Create custom event handler to capture response text AND tool calls
                         class ResponseCapturingHandler(AsyncAgentEventHandler):
                             def __init__(self):
                                 super().__init__()
                                 self.response_text = ""
                                 self.final_status = None
+                                self.tool_calls = []  # Capture tool calls for multi-turn
                             
                             async def on_message_delta(self, delta):
                                 """Capture message chunks as they arrive"""
@@ -1136,8 +1263,14 @@ class FoundryHostAgent2:
                                     await self._emit_text_chunk(delta.text, context_id)
                             
                             async def on_thread_run(self, run):
-                                """Capture final run status"""
+                                """Capture final run status and any tool calls"""
                                 self.final_status = run.status
+                                # Capture tool calls if requires_action
+                                status_str = str(run.status).lower() if run.status else ""
+                                if "requires_action" in status_str and hasattr(run, 'required_action'):
+                                    required_action = run.required_action
+                                    if required_action and hasattr(required_action, 'submit_tool_outputs'):
+                                        self.tool_calls = required_action.submit_tool_outputs.tool_calls or []
                         
                         # Use our custom handler
                         handler = ResponseCapturingHandler()
@@ -1160,7 +1293,14 @@ class FoundryHostAgent2:
                         if handler.final_status:
                             status = handler.final_status
                         
-                        log_foundry_debug(f"🔧 Event handler completed - captured {len(handler.response_text)} chars, status: {handler.final_status}")
+                        # Capture tool calls for next iteration
+                        if handler.tool_calls:
+                            tool_calls_to_execute = handler.tool_calls
+                            log_foundry_debug(f"🔧 Event handler captured {len(tool_calls_to_execute)} tool calls for next iteration")
+                        else:
+                            tool_calls_to_execute = []
+                        
+                        log_foundry_debug(f"🔧 Event handler completed - captured {len(handler.response_text)} chars, status: {handler.final_status}, tool_calls: {len(tool_calls_to_execute)}")
                         # Skip the streaming loop - already processed
                         stream = None
                     else:
@@ -1169,6 +1309,9 @@ class FoundryHostAgent2:
                 # If we have a stream, process it
                 if stream is not None:
                     # Continue streaming with tool outputs
+                    # Reset tool_calls_to_execute to capture any new ones
+                    tool_calls_to_execute = []
+                    
                     async with stream as event_handler:
                         async for event in event_handler:
                             log_foundry_debug(f"Stream event (after tools): {event}")
@@ -1192,12 +1335,21 @@ class FoundryHostAgent2:
                                 run_id = event_data.id
                                 status = event_data.status
                                 log_foundry_debug(f"Run status (after tools): {status}")
+                                
+                                # Capture any new tool calls for the loop
+                                # Use string comparison to handle RunStatus enum
+                                status_str = str(status).lower() if status else ""
+                                if "requires_action" in status_str and hasattr(event_data, 'required_action'):
+                                    required_action = event_data.required_action
+                                    if required_action and hasattr(required_action, 'submit_tool_outputs'):
+                                        tool_calls_to_execute = required_action.submit_tool_outputs.tool_calls
+                                        log_foundry_debug(f"🔧 Captured {len(tool_calls_to_execute)} NEW tool calls for next iteration")
                             
                             elif event_type == AgentStreamEvent.DONE:
                                 log_foundry_debug("Stream completed (after tools)")
                                 break
                 
-                log_foundry_debug(f"Final stream complete - text length: {len(full_text)}")
+                log_foundry_debug(f"Tool iteration {tool_iteration} complete - text length: {len(full_text)}, status: {status}")
             
             result = {
                 "id": run_id,
@@ -1247,7 +1399,8 @@ class FoundryHostAgent2:
         
         for tool_call in tool_calls:
             function_name = tool_call["function"]["name"]
-            if function_name == "send_message":
+            # Check for both send_message and send_message_sync (the actual function name)
+            if function_name in ("send_message", "send_message_sync"):
                 send_message_calls.append(tool_call)
             else:
                 other_calls.append(tool_call)
@@ -1438,6 +1591,13 @@ class FoundryHostAgent2:
             
             self.agent_id = self.agent.id
             log_foundry_debug(f"✅ Agent created successfully! ID: {self.agent_id}")
+            
+            # Debug: Log what tools the agent has
+            if hasattr(self.agent, 'tools'):
+                print(f"🔧 Agent tools: {self.agent.tools}")
+            else:
+                print(f"🔧 Agent object attributes: {[a for a in dir(self.agent) if not a.startswith('_')]}")
+            
             logger.info(f"Created Foundry Host agent: {self.agent_id}")
             print(f"🎉 Agent visible in Azure AI Foundry portal: {self.agent_id}")
             
@@ -1510,6 +1670,89 @@ class FoundryHostAgent2:
             tool_context=tool_context,
             suppress_streaming=False  # Enable streaming for sidebar status updates!
         )
+
+    def _format_agent_response_for_model(self, response_parts: list, agent_name: str) -> str:
+        """
+        Format the response parts from send_message into clean text for the model.
+        
+        The model expects readable text as tool output, not complex nested JSON.
+        This extracts text content from response_parts and formats it cleanly.
+        
+        Args:
+            response_parts: List of Part objects from send_message
+            agent_name: Name of the agent that responded
+            
+        Returns:
+            Clean text string suitable for tool output
+        """
+        import json
+        
+        if not response_parts:
+            return json.dumps({
+                "agent": agent_name,
+                "status": "completed",
+                "response": "Agent completed the task but returned no text content."
+            })
+        
+        text_parts = []
+        file_parts = []
+        data_parts = []
+        
+        for part in response_parts:
+            try:
+                # Handle various part formats
+                part_root = getattr(part, 'root', part)
+                
+                # Check for text content
+                if hasattr(part_root, 'text') and part_root.text:
+                    text_parts.append(part_root.text)
+                elif hasattr(part, 'text') and part.text:
+                    text_parts.append(part.text)
+                elif isinstance(part, str):
+                    text_parts.append(part)
+                elif isinstance(part, dict):
+                    if 'text' in part:
+                        text_parts.append(part['text'])
+                    elif 'content' in part:
+                        text_parts.append(str(part['content']))
+                    else:
+                        # Data part
+                        data_parts.append(part)
+                
+                # Check for file content
+                if hasattr(part_root, 'file') or hasattr(part, 'file'):
+                    file_obj = getattr(part_root, 'file', None) or getattr(part, 'file', None)
+                    if file_obj:
+                        file_name = getattr(file_obj, 'name', 'unknown_file')
+                        file_parts.append(file_name)
+                        
+            except Exception as e:
+                log_foundry_debug(f"Error processing part: {e}")
+                # Try to convert to string as fallback
+                try:
+                    if hasattr(part, 'model_dump'):
+                        text_parts.append(str(part.model_dump(mode='json')))
+                    else:
+                        text_parts.append(str(part))
+                except:
+                    pass
+        
+        # Build clean response
+        response_text = "\n\n".join(text_parts) if text_parts else ""
+        
+        result = {
+            "agent": agent_name,
+            "status": "completed",
+            "response": response_text if response_text else "Task completed successfully."
+        }
+        
+        if file_parts:
+            result["files_generated"] = file_parts
+            
+        if data_parts:
+            result["additional_data"] = len(data_parts)
+        
+        return json.dumps(result, ensure_ascii=False)
 
     async def _update_agent_instructions(self):
         """Update the agent's instructions with the current agent list"""
@@ -1639,23 +1882,43 @@ class FoundryHostAgent2:
                 2. Identify which agents are relevant based on their specialized capabilities.
                 3. Plan the collaboration strategy leveraging each agent's skills.
 
-                ### 🚨 MANDATORY TOOL USAGE PROTOCOL 🚨
+                ### 🚨 CRITICAL: YOU CANNOT ANSWER ON BEHALF OF AGENTS 🚨
                 
-                YOU MUST CALL TOOLS WHEN AGENTS ARE MENTIONED. NO EXCEPTIONS.
+                ⚠️ ABSOLUTE RULE: When a user mentions ANY agent by name or asks to "use" an agent:
+                   YOU MUST CALL THE send_message TOOL. PERIOD. NO EXCEPTIONS. NO EXCUSES.
                 
-                CORRECT BEHAVIOR:
+                ❌ YOU CANNOT:
+                - Generate agent responses from your training data
+                - Summarize what you "think" an agent would say
+                - Answer on behalf of any agent
+                - Say "The agent reviewed..." without calling the tool
+                
+                ✅ YOU MUST:
+                - ALWAYS call send_message when an agent is mentioned
+                - Make MULTIPLE send_message calls when multiple agents are needed (they run in parallel)
+                - Wait for the ACTUAL agent response before answering the user
+                
+                📋 EXAMPLES:
+                
+                CORRECT (Single Agent):
                 User: "use the classification agent to classify a transaction of $1250"
-                You: [CALL TOOL send_message_sync with agent_name="AI Foundry Classification Triage Agent", message="Classify transaction: $1250"]
-                Agent Response: "This is a P3 - Low priority transaction"
-                You: "The classification agent has classified this as a P3 - Low priority transaction."
+                You: [CALL send_message_sync("AI Foundry Classification Triage Agent", "Classify: $1250")]
+                Tool Returns: "P3 - Low priority transaction"
+                You: "The classification agent classified this as P3 - Low priority."
                 
-                INCORRECT BEHAVIOR (DO NOT DO THIS):
-                User: "use the classification agent to classify a transaction of $1250"
-                You: "The classification agent reviewed the transaction but requires more context..." ❌ WRONG - you never called the tool!
+                CORRECT (Multiple Agents in Parallel):
+                User: "use both the classification and branding agents on the guidelines"
+                You: [CALL send_message_sync("AI Foundry Classification Triage Agent", "Classify guidelines")]
+                     [CALL send_message_sync("AI Foundry Branding & Content Agent", "Analyze guidelines")]
+                Tool Returns: [Both responses come back]
+                You: "Here's what both agents found: [actual results from tools]"
                 
-                DETECTION: If I see you saying "The agent reviewed..." or "The agent needs..." without actual tool calls in the logs, you have FAILED.
+                ❌ WRONG - THIS IS A VIOLATION:
+                User: "use the classification agent"
+                You: "The classification agent has reviewed the document and found..." 
+                ^ NO TOOL CALL = FAILURE. You made up the response!
                 
-                REMEMBER: You cannot classify, analyze, or process anything yourself. You MUST call the appropriate agent tool.
+                🔍 DETECTION: Every time you mention an agent's findings, there MUST be a corresponding tool call in the logs. If you say an agent did something but there's no tool call, you have VIOLATED this protocol.
 
                 ---
 
@@ -5943,12 +6206,21 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). Simply synt
             await self._emit_status_event(f"AI response created - status: {response['status']}", context_id)
             
             # Handle tool calls if needed (iterative loop for multi-turn tool execution)
+            # NOTE: _create_response_with_streaming now handles tool calls internally, 
+            # so this loop should rarely execute (only if internal loop hit max iterations)
             max_tool_iterations = 30
             tool_iteration = 0
             last_tool_output = None
             
+            # Helper to check if response status requires action (handles enum and string)
+            def response_requires_action(response_status):
+                if response_status is None:
+                    return False
+                status_str = str(response_status).lower()
+                return "requires_action" in status_str
+            
             log_foundry_debug(f"Starting tool handling loop for response {response['id']}")
-            while response["status"] == "requires_action" and tool_iteration < max_tool_iterations:
+            while response_requires_action(response["status"]) and tool_iteration < max_tool_iterations:
                 tool_iteration += 1
                 log_foundry_debug(f"Tool iteration {tool_iteration}, response requires action")
                 await self._emit_status_event(f"executing tools (attempt {tool_iteration})", context_id)
@@ -6346,29 +6618,19 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). Simply synt
                                 "output": output
                             })
                         
-                        # Format output for Azure AI Agents (normalize to string)
-                        normalized_output = self._normalize_function_response_text(output)
-                        if isinstance(normalized_output, list):
-                            normalized_text = "\n\n".join(str(item) for item in normalized_output)
-                        elif isinstance(normalized_output, str):
-                            normalized_text = normalized_output
-                        else:
-                            normalized_text = str(normalized_output)
-
-                        tool_output_payload = {
-                            "kind": "function_response",
-                            "name": "send_message",
-                            "response": normalized_text
-                        }
+                        # Format output for Azure AI Agents using clean text format
+                        # The model expects readable text, not complex JSON wrappers
+                        agent_name = send_message_tool_calls[i][2].get("agent_name")
+                        normalized_text = self._format_agent_response_for_model(output, agent_name) if not isinstance(result, Exception) else json.dumps({"error": str(result), "agent": agent_name})
 
                         tool_outputs.append({
                             "tool_call_id": tool_call["id"],
-                            "output": json.dumps(tool_output_payload)
+                            "output": normalized_text
                         })
 
                         if not isinstance(result, Exception):
-                            successful_tool_outputs.append(tool_output_payload)
-                            last_tool_output = tool_output_payload
+                            successful_tool_outputs.append({"agent": agent_name, "response": normalized_text})
+                            last_tool_output = {"agent": agent_name, "response": normalized_text}
                     
                     print(f"✅ Parallel agent calls completed successfully")
                     self._add_status_message_to_conversation("✅ All parallel agent calls completed", context_id)

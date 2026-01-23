@@ -289,8 +289,15 @@ class ConversationServer:
         workflow = message_data.get('params', {}).get('workflow')
         log_debug(f"_send_message: Agent Mode = {agent_mode}, Inter-Agent Memory = {enable_inter_agent_memory}, Workflow = {workflow[:50] if workflow else None}")
         
+        # DEBUG: Log the contextId from frontend
+        frontend_context_id = message_data.get('params', {}).get('contextId')
+        log_debug(f"🔍 [_send_message] Frontend sent contextId: {frontend_context_id}")
+        
         # Transform the message data to handle frontend format
         transformed_params = self._transform_message_data(message_data['params'])
+        
+        # DEBUG: Check if contextId survived transformation
+        log_debug(f"🔍 [_send_message] After transform, contextId: {transformed_params.get('contextId')}")
         
         # Add required fields if missing
         if 'messageId' not in transformed_params:

@@ -235,12 +235,10 @@ export function ChatLayout() {
 
     const handleTaskUpdated = (data: any) => {
       if (DEBUG) console.log("[ChatLayout] Task updated")
-      // Forward task updates to chat panel for status display
-      emit("status_update", {
-        inferenceId: data.taskId || `task_${Date.now()}`,
-        agent: data.agentName || "Unknown Agent",  // Use agentName to match backend events
-        status: data.state || "Processing..."  // Use state instead of status
-      })
+      
+      // NOTE: ChatLayout no longer emits status_update for workflow display
+      // ChatPanel handles that with proper filtering to avoid duplicates
+      // This handler is kept for potential future ChatLayout-specific logic
     }
 
     const handleFileUploaded = (data: any) => {

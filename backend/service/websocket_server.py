@@ -493,9 +493,14 @@ class WebSocketManager:
             # Only use tenant broadcast if we have connections for this tenant
             if tenant_id in self.tenant_connections:
                 return await self.broadcast_to_tenant(event_data, tenant_id)
+            else:
+                # Tenant extracted but no registered connections yet - fallback to global broadcast
+                # This handles race condition where events arrive before WebSocket tenant registration completes
+                logger.debug(f"Tenant {tenant_id[:20]}... not registered yet, using global broadcast fallback")
+                return await self.broadcast_event(event_data)
         
-        # No tenant found - skip broadcast (multi-tenant isolation, no global fallback)
-        logger.debug(f"Skipping smart_broadcast - no valid tenant found (multi-tenant isolation)")
+        # No context_id found - skip broadcast (multi-tenant isolation)
+        logger.debug(f"Skipping smart_broadcast - no contextId found in event data")
         return 0
     
     def get_status(self) -> Dict[str, Any]:
