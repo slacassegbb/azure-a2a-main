@@ -147,6 +147,7 @@ type Message = {
   images?: {
     uri: string
     fileName?: string
+    mimeType?: string
   }[]
 }
 
@@ -2294,26 +2295,40 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                           })}
                         </div>
                       )}
-                      {/* Render images loaded from conversation history (DataPart artifacts) */}
+                      {/* Render images/videos loaded from conversation history (DataPart artifacts) */}
                       {message.images && message.images.length > 0 && (
                         <div className="flex flex-col gap-3 mb-3">
-                          {message.images.map((image, imageIndex) => (
-                            <div key={`${message.id}-image-${imageIndex}`} className="flex flex-col gap-2">
-                              <a
-                                href={image.uri}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="block rounded-lg border border-border overflow-hidden"
-                              >
-                                <img
-                                  src={image.uri}
-                                  alt={image.fileName || "Generated image"}
-                                  className="w-full h-auto block rounded-lg"
-                                  style={{ maxHeight: '500px', objectFit: 'contain', backgroundColor: '#f5f5f5' }}
-                                />
-                              </a>
-                            </div>
-                          ))}
+                          {message.images.map((image, imageIndex) => {
+                            const isVideo = image.mimeType?.startsWith('video/') || image.uri.match(/\.(mp4|webm|mov)(\?|$)/i)
+                            return (
+                              <div key={`${message.id}-image-${imageIndex}`} className="flex flex-col gap-2">
+                                {isVideo ? (
+                                  <video
+                                    src={image.uri}
+                                    controls
+                                    className="w-full h-auto block rounded-lg border border-border"
+                                    style={{ maxHeight: '500px', objectFit: 'contain', backgroundColor: '#000' }}
+                                  >
+                                    Your browser does not support the video tag.
+                                  </video>
+                                ) : (
+                                  <a
+                                    href={image.uri}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="block rounded-lg border border-border overflow-hidden"
+                                  >
+                                    <img
+                                      src={image.uri}
+                                      alt={image.fileName || "Generated image"}
+                                      className="w-full h-auto block rounded-lg"
+                                      style={{ maxHeight: '500px', objectFit: 'contain', backgroundColor: '#f5f5f5' }}
+                                    />
+                                  </a>
+                                )}
+                              </div>
+                            )
+                          })}
                         </div>
                       )}
                       {message.content && message.content.trim().length > 0 && (
