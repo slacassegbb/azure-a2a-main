@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
-import { Paperclip, Mic, MicOff, Send, Bot, User, Paintbrush, Copy, ThumbsUp, ThumbsDown, Loader2, Phone, PhoneOff, Plus } from "lucide-react"
+import { Paperclip, Mic, MicOff, Send, Bot, User, Paintbrush, Copy, ThumbsUp, ThumbsDown, Loader2, Phone, PhoneOff, Plus, Pencil, X } from "lucide-react"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { useEventHub } from "@/hooks/use-event-hub"
@@ -2170,7 +2170,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                             
                             if (isImage) {
                               return (
-                                <div key={`${message.id}-attachment-${attachmentIndex}`} className="flex flex-col gap-2">
+                                <div key={`${message.id}-attachment-${attachmentIndex}`} className="relative flex flex-col gap-2">
                                   <a
                                     href={attachment.uri}
                                     target="_blank"
@@ -2187,13 +2187,22 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                                       {attachment.fileName || "Image attachment"}
                                     </div>
                                   </a>
+                                  {/* Overlay buttons for refine and mask - bottom right corner */}
                                   {message.role === "assistant" && (
-                                    <div className="flex flex-wrap gap-2">
+                                    <div className="absolute bottom-10 right-2 flex flex-col gap-1">
+                                      {/* Refine button */}
                                       <Button
-                                        variant={refineTarget?.imageUrl === attachment.uri ? "default" : "secondary"}
-                                        size="sm"
-                                        className="self-start"
-                                        onClick={() => {
+                                        variant={refineTarget?.imageUrl === attachment.uri ? "destructive" : "default"}
+                                        size="icon"
+                                        className={`h-8 w-8 rounded-full shadow-lg ${
+                                          refineTarget?.imageUrl === attachment.uri 
+                                            ? '' 
+                                            : 'bg-blue-500 hover:bg-blue-600 text-white'
+                                        }`}
+                                        title={refineTarget?.imageUrl === attachment.uri ? "Cancel refine" : "Refine this image"}
+                                        onClick={(e) => {
+                                          e.preventDefault()
+                                          e.stopPropagation()
                                           if (refineTarget?.imageUrl === attachment.uri) {
                                             setRefineTarget(null)
                                             setMaskAttachment(null)
@@ -2206,19 +2215,24 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                                           }
                                         }}
                                       >
-                                        {refineTarget?.imageUrl === attachment.uri ? "Cancel refine" : "Refine this image"}
+                                        {refineTarget?.imageUrl === attachment.uri ? <X size={16} /> : <Pencil size={16} />}
                                       </Button>
+                                      {/* Paint mask button - only visible when refine is active */}
                                       {refineTarget?.imageUrl === attachment.uri && (
                                         <Button
-                                          variant="outline"
-                                          size="sm"
+                                          variant="default"
+                                          size="icon"
+                                          className="h-8 w-8 rounded-full shadow-lg bg-blue-500 hover:bg-blue-600 text-white"
+                                          title={maskUploadInFlight ? "Saving mask…" : maskAttachment ? "Edit mask" : "Paint mask"}
                                           disabled={maskUploadInFlight}
-                                          onClick={() => {
+                                          onClick={(e) => {
+                                            e.preventDefault()
+                                            e.stopPropagation()
                                             setMaskEditorSource({ uri: attachment.uri, meta: attachment })
                                             setMaskEditorOpen(true)
                                           }}
                                         >
-                                          {maskUploadInFlight ? "Saving mask…" : maskAttachment ? "Edit mask" : "Paint mask"}
+                                          {maskUploadInFlight ? <Loader2 size={16} className="animate-spin" /> : <Paintbrush size={16} />}
                                         </Button>
                                       )}
                                     </div>
