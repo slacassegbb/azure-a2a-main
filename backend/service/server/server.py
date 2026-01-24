@@ -730,8 +730,8 @@ class ConversationServer:
             base_url = agent_url.rstrip('/')  # Remove trailing slash
             health_url = f"{base_url}/health"
             
-            # Health check with longer timeout for more reliable agent detection
-            timeout_value = 8.0  # Increased from 3.0 to 8.0 seconds for more reliable detection
+            # Health check with shorter timeout for faster UI responsiveness
+            timeout_value = 3.0  # Reduced from 8.0 to 3.0 for faster catalog loading
             log_debug(f"Health check timeout set to: {timeout_value}s for {health_url}")
             async with httpx.AsyncClient(timeout=timeout_value) as client:  # More generous timeout for network latency
                 response = await client.get(health_url)
