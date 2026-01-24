@@ -9,40 +9,125 @@ It demonstrates how to design, host, and scale a distributed network of intellig
 ## 🎉 What's New — Major Updates (Last 2 Months)
 
 ### 🚀 **Azure AI Foundry Agent Service Migration**
-- **Complete refactor from Assistants API to Responses API** — Migrated the entire orchestration system to use Azure AI Foundry's new stateless Responses API, eliminating thread management complexity and improving scalability
-- **Real-time streaming support** — Full streaming implementation across backend and frontend for live agent responses, status updates, and tool execution events
-- **Direct HTTP integration** — Optimized API calls using direct HTTP requests with proper authentication and error handling
+- **Complete refactor from Assistants API to Responses API** — Migrated the entire orchestration system from thread-based Assistants API to Azure AI Foundry's stateless Responses API, eliminating thread management complexity and improving scalability
+- **Real-time streaming support** — Full token-by-token streaming implementation across backend and frontend for live agent responses, status updates, and tool execution events
+- **Direct HTTP integration** — Optimized API calls using direct HTTP requests with proper authentication headers and comprehensive error handling
+- **Stateless architecture** — No more thread creation/management overhead; each request is independent and faster
+- **Reference implementation** — New Classification Response API agent demonstrates best practices for Responses API integration
 
-### ⚡ **Parallel & Sequential Workflow Execution**
-- **Visual Workflow Designer** — Interactive canvas for building multi-agent workflows with drag-and-drop nodes and connections
-- **Parallel execution engine** — Run multiple agents simultaneously using `asyncio.gather()` for dramatic performance improvements
-- **Smart sequential detection** — Automatically detects dependencies (e.g., "then", "after that") in natural language and executes agents in order
-- **Context passing** — Sequential workflows now pass previous step outputs to subsequent steps with intelligent truncation (1000 chars) to prevent context window explosion
-- **Duplicate prevention** — Advanced deduplication logic prevents duplicate messages in workflow designer and agent bubbles
+### ⚡ **Visual Workflow Designer & Orchestration**
+- **Interactive canvas-based workflow builder** — Drag-and-drop interface for designing multi-agent workflows visually with zoom, pan, and selection controls
+- **Dual-mode interface** — Seamlessly switch between Visual Designer and Text Editor modes with automatic synchronization
+- **Real-time workflow execution visualization** — Watch agents execute in real-time with status indicators, completion timers, and message bubbles on the canvas
+- **Parallel execution engine** — Run multiple independent agents simultaneously using `asyncio.gather()` for dramatic performance improvements
+- **Smart sequential detection** — Automatically detects dependencies (e.g., "then", "after that", "before") in natural language and executes agents in the correct order
+- **Context passing** — Sequential workflows intelligently pass previous step outputs to subsequent steps with smart truncation (1000 chars) to prevent context window explosion
+- **Duplicate prevention** — Advanced deduplication logic prevents duplicate messages in workflow activity sidebar and agent message bubbles
+- **Step reordering** — Move steps up/down, edit descriptions, and delete steps with keyboard shortcuts
+- **Workflow analytics** — Track total execution time, token usage, cost estimation, agents completed, and average time per agent
 
-### 🎓 **Benjamin School Remote Agents** (4 New Specialized Agents)
-- **AP Calculus Teacher** — Helps students with calculus problems, proofs, and exam preparation using grounded curriculum documents
-- **AP Environmental Science Teacher** — Guides students through APES concepts with access to unit review sheets and study materials
-- **Biology Teacher** — Assists with biology topics using chapter-specific documentation
-- **English Teacher** — Helps with writing assignments using rubrics, outlines, and evaluation checklists
+### 📊 **Token Usage & Cost Analytics**
+- **Real-time token tracking** — Monitor prompt tokens, completion tokens, and total tokens for every agent execution
+- **Cost calculation** — Automatic cost estimation based on Azure OpenAI pricing
+- **Workflow analytics bar** — Comprehensive dashboard showing total time, tokens consumed, agents completed, and average performance per agent
+- **Per-agent metrics** — Track individual agent performance and resource consumption
+- **Token usage display** — View token statistics in workflow designer without cluttering main chat
 
-### 🎨 **Enhanced UI/UX**
-- **Improved streaming visualization** — Real-time token-by-token streaming with better status indicators and progress tracking
-- **File history sync** — Azure Blob Storage integration for persistent conversation file history across sessions
-- **Collapsible sidebar** — Better screen real estate management with animated sidebar collapse (2% width when collapsed)
-- **Enhanced tooltips** — Contextual help for attach files, voice input, system prompts, and workflow tools
-- **Cleaner chat interface** — Removed initial greeting message, improved message positioning, and streamlined welcome screen
+### 🎓 **Benjamin School Remote Agents** (4 New Specialized Teacher Agents)
+- **AP Calculus Teacher** — Helps students with calculus problems, Riemann sums, derivatives, integrals, and exam preparation using grounded curriculum documents and practice exams
+- **AP Environmental Science (APES) Teacher** — Guides students through all APES units with access to comprehensive review sheets, study materials, and biodiversity content
+- **Biology Teacher** — Assists with biology topics (Chapter 9 & 10) using chapter-specific documentation for cellular processes, genetics, and more
+- **English Teacher** — Helps with writing assignments using rubrics, outline templates, self-evaluation checklists, and TBS writing standards
+
+### 🎨 **UI/UX Revolution**
+- **Complete design rebrand** — Switched from red to light blue accent color throughout the entire interface for a modern, professional look
+- **A2A branding integration** — New A2A logo beside bot icon in sidebar and dedicated branding assets
+- **Collapsible sidebar sections** — Remote Agents and Connected Users panels now collapse for better space management
+- **Network DAG moved to sidebar** — Agent network visualization moved from top bar to sidebar for cleaner layout
+- **Improved streaming visualization** — Real-time token-by-token streaming with smooth typing animation and better status indicators
+- **ChatGPT-like empty chat behavior** — Clean welcome screen with typing animation that disappears on first message
+- **Enhanced tooltips** — Contextual help for attach files, voice input, phone call, system prompts, clear memory, and DAG diagram buttons
+- **File history hover improvements** — Better color contrast and visual feedback for file history interactions
+- **Balanced spacing** — Refined spacing between welcome message and input for optimal visual hierarchy
+- **Simplified logo design** — Clean blue icon-only logo for modern aesthetics
+
+### 👥 **Multi-Tenancy & Session Management**
+- **User-based session management** — Complete isolation of user sessions with authentication-based access control
+- **Session-scoped file isolation** — Files uploaded by one user are completely isolated from other users' sessions
+- **Session-scoped memory service** — Each user session has independent memory storage and retrieval
+- **WebSocket authentication** — Secure WebSocket connections with token-based authentication and SECRET_KEY validation
+- **Connected users tracking** — Real-time display of all connected users with proper session ID handling
+- **Conversation persistence** — ChatGPT-like conversation history that persists across sessions with proper session scoping
+- **Delete conversation support** — Users can delete their own conversations with proper session ID validation
+
+### 📁 **File Management & Storage**
+- **Azure Blob Storage integration** — Persistent file history sync across sessions using Azure Storage
+- **Session-scoped uploads** — File uploads are automatically scoped to the user's session
+- **File history API** — RESTful API for retrieving conversation file history
+- **Multimodal document processing** — Support for PDF, images, Office documents with LibreOffice integration
+- **File search integration** — Uploaded files are automatically indexed for agent file search capabilities
+
+### 🌐 **Agent Network & Visualization**
+- **Interactive Agent Network DAG** — Real-time visualization of agent connections and message flow
+- **Hexagonal agent nodes** — Unique colors per agent with consistent styling across all visualizations
+- **Connection animations** — Visual representation of agent-to-agent communication with directional arrows
+- **Zoom and pan controls** — Navigate complex agent networks with smooth canvas interactions
+- **Agent status indicators** — Real-time status display for each agent (idle, working, completed, failed)
+
+### 🎯 **Agent Catalog & Discovery**
+- **Agent persistence** — Registered agents persist in the catalog across system restarts
+- **Catalog filtering** — Browse agents by category, capability, or search keywords
+- **Session-enabled agents** — Filter agent list to show only agents enabled for current session
+- **Agent card enhancements** — Better visual design with consistent colors and metadata display
+- **Self-registration** — Remote agents can automatically register themselves with the host on startup
+
+### 🔊 **Voice & Audio Integration**
+- **Voice input support** — Microphone button for voice-to-text input
+- **Phone call integration** — Direct phone call capabilities through dedicated UI button
+- **Audio processing** — Voice recordings stored and processed for multimodal interactions
 
 ### 🛠️ **Developer Experience Improvements**
-- **Classification Response API Agent** — New reference implementation demonstrating Responses API patterns
-- **Better error handling** — Comprehensive error logging and status tracking throughout the orchestration pipeline
-- **Agent persistence** — Agents now persist in the catalog across system restarts
-- **Deployment automation** — Improved GitHub Actions CI/CD pipeline for automated deployments
+- **Comprehensive logging** — Event logging for user_list_update, task events, and orchestration flows with detailed debugging info
+- **Better error handling** — Comprehensive error tracking throughout orchestration pipeline with status determination
+- **Run cleanup** — Proper cleanup of Azure AI Foundry resources to prevent resource leaks
+- **Datetime fixes** — Resolved datetime serialization issues for JSON responses
+- **Agent mode detection** — Backend now properly detects and routes agent mode vs. normal chat mode
+- **Tool output formatting** — Improved formatting of tool execution results in chat display
 
-### 📚 **Documentation**
-- **Parallel Workflow Guide** — Complete guide for building and executing parallel workflows (`PARALLEL_WORKFLOW_GUIDE.md`)
-- **Responses API Migration Docs** — Detailed migration plan and progress tracking for the Azure AI Foundry transition
-- **Updated deployment scripts** — Refined PowerShell and Bash scripts for easier local and cloud deployment
+### 📚 **Documentation & Guides**
+- **`PARALLEL_WORKFLOW_GUIDE.md`** — Complete guide for building and executing parallel workflows
+- **`VISUAL_WORKFLOW_DESIGNER.md`** — Comprehensive documentation for visual workflow designer features and controls
+- **`VISUAL_WORKFLOW_UI_GUIDE.md`** — UI implementation guide for workflow components
+- **`IMPLEMENTATION_SUMMARY.md`** — Technical architecture and implementation details
+- **`RESPONSES_API_MIGRATION_PLAN.md`** — Detailed migration strategy from Assistants API to Responses API
+- **`RESPONSES_API_PROGRESS.md`** — Phase-by-phase progress tracking for the migration
+- **`CI-CD-GUIDE.md`** — GitHub Actions setup and deployment automation guide
+- **Updated deployment scripts** — Refined PowerShell and Bash scripts for local and Azure cloud deployment
+
+### 🚀 **Infrastructure & Deployment**
+- **GitHub Actions CI/CD** — Automated build, test, and deployment pipeline
+- **Docker support** — Containerized backend and frontend with docker-compose configurations
+- **Azure deployment scripts** — One-click deployment to Azure Container Apps with managed identity
+- **Environment automation** — Automated setup of GitHub secrets and Azure resources
+- **Remote agent deployment** — Streamlined scripts for deploying remote agents to Azure
+
+### 🐛 **Stability & Bug Fixes**
+- **Fixed duplicate message issues** — Eliminated duplicate messages in workflow designer and chat panel
+- **WebSocket authentication fixes** — Proper token handling and SECRET_KEY initialization
+- **Session ID fixes** — Removed double user_ prefix in session IDs
+- **Workflow visualization persistence** — Fixed workflow canvas persisting when switching conversations
+- **Agent routing improvements** — Better routing for repeated agents in workflows using taskId tracking
+- **Host agent event handling** — Proper routing of host agent events to correct workflow steps
+- **Token usage filtering** — Prevented token_usage data from appearing in main chat display
+- **File history hover colors** — Fixed contrast issues for better visibility
+- **Sidebar collapse alignment** — Fixed Connected Users section alignment when collapsed
+- **Status display issues** — Resolved status determination and datetime serialization problems
+
+### 🎨 **Additional Remote Agents & Templates**
+- **Video Agent (Sora2)** — Video generation capabilities
+- **SalesForce Agent** — CRM integration for Salesforce operations
+- **Updated agent registry** — Expanded agent catalog with consistent metadata
+- **Template agent improvements** — Enhanced azurefoundry_template for easier custom agent creation
 
 ---
 
