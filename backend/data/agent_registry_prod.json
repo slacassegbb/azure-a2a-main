@@ -1,0 +1,1273 @@
+[
+  {
+    "name": "AI Foundry Classification Triage Agent",
+    "description": "An intelligent incident classification and triage agent powered by Azure AI Foundry. Specializes in analyzing customer issues, classifying incidents into proper categories, assessing priority levels, and routing cases to appropriate teams using ServiceNow standards.",
+    "version": "1.0.0",
+    "url": "https://azurefoundry-classification.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "incident_classification",
+        "name": "Incident Classification",
+        "description": "Classify customer incidents into categories such as Fraud, Technical Issues, Payment Issues, Card Issues, Account Services, Security, and Inquiries",
+        "examples": [
+          "I lost my card while traveling",
+          "There is an unauthorized charge on my account",
+          "I cannot log into my banking app",
+          "My payment failed to go through"
+        ],
+        "tags": [
+          "classification",
+          "incident",
+          "triage",
+          "categorization"
+        ]
+      },
+      {
+        "id": "priority_assessment",
+        "name": "Priority Assessment",
+        "description": "Determine urgency, impact, and priority levels for incidents using ServiceNow standard mapping",
+        "examples": [
+          "Assess priority for fraud incident",
+          "Determine urgency for account blocked",
+          "Evaluate impact of system outage",
+          "Calculate priority matrix for technical issue"
+        ],
+        "tags": [
+          "priority",
+          "urgency",
+          "impact",
+          "assessment",
+          "servicenow"
+        ]
+      },
+      {
+        "id": "routing_triage",
+        "name": "Routing & Triage",
+        "description": "Route incidents to appropriate teams and provide triage recommendations based on classification",
+        "examples": [
+          "Route fraud case to security team",
+          "Escalate critical payment issue",
+          "Assign technical issue to IT support",
+          "Triage account service request"
+        ],
+        "tags": [
+          "routing",
+          "triage",
+          "escalation",
+          "team-assignment"
+        ]
+      },
+      {
+        "id": "field_mapping",
+        "name": "ServiceNow Field Mapping",
+        "description": "Map incident details to proper ServiceNow fields including category, subcategory, description, and metadata",
+        "examples": [
+          "Map incident to ServiceNow fields",
+          "Generate proper short description",
+          "Categorize into subcategory",
+          "Create structured ticket data"
+        ],
+        "tags": [
+          "servicenow",
+          "mapping",
+          "fields",
+          "metadata"
+        ]
+      },
+      {
+        "id": "keyword_analysis",
+        "name": "Keyword Analysis",
+        "description": "Analyze customer messages for classification keywords and context cues to determine incident type",
+        "examples": [
+          "Analyze message for fraud keywords",
+          "Identify technical issue indicators",
+          "Extract payment problem signals",
+          "Detect security concerns"
+        ],
+        "tags": [
+          "keywords",
+          "analysis",
+          "context",
+          "nlp"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "AI Foundry Deep Search Knowledge Agent",
+    "description": "An intelligent customer support agent powered by Azure AI Foundry with deep search capabilities through comprehensive support documentation covering account management, billing, payments, fraud protection, and technical support.",
+    "version": "1.0.0",
+    "url": "http://localhost:8002/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "document_search",
+        "name": "Document Search",
+        "description": "Deep search through customer support documents including account management, billing, payments, complaints, and technical support",
+        "examples": [
+          "How do I close my account?",
+          "What are the fees for wire transfers?",
+          "How to dispute a charge on my account?",
+          "What do I do if I suspect fraud on my card?"
+        ],
+        "tags": [
+          "search",
+          "documents",
+          "knowledge-base",
+          "customer-support"
+        ]
+      },
+      {
+        "id": "account_support",
+        "name": "Account Support",
+        "description": "Comprehensive support for account opening, closure, and management procedures",
+        "examples": [
+          "Steps to open a new account",
+          "Account closure procedures",
+          "Required documents for account setup",
+          "Account management best practices"
+        ],
+        "tags": [
+          "account",
+          "opening",
+          "closure",
+          "management"
+        ]
+      },
+      {
+        "id": "billing_payments",
+        "name": "Billing & Payments",
+        "description": "Information about billing, payments, fees, and charges",
+        "examples": [
+          "Understanding monthly fees",
+          "Payment methods and options",
+          "How to set up automatic payments",
+          "Fee schedule and billing cycle information"
+        ],
+        "tags": [
+          "billing",
+          "payments",
+          "fees",
+          "charges"
+        ]
+      },
+      {
+        "id": "fraud_security",
+        "name": "Fraud & Security",
+        "description": "Guidance on fraud prevention, unauthorized transactions, and security measures",
+        "examples": [
+          "What to do if my card is stolen",
+          "Reporting unauthorized transactions",
+          "Security features and protections",
+          "Fraud prevention tips"
+        ],
+        "tags": [
+          "fraud",
+          "security",
+          "unauthorized",
+          "protection"
+        ]
+      },
+      {
+        "id": "technical_support",
+        "name": "Technical Support",
+        "description": "Online banking, mobile app, and technical assistance",
+        "examples": [
+          "Online banking login issues",
+          "Mobile app troubleshooting",
+          "Password reset procedures",
+          "Technical feature guidance"
+        ],
+        "tags": [
+          "technical",
+          "online-banking",
+          "mobile",
+          "troubleshooting"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Sentiment Analysis Agent",
+    "description": "This agent determines the sentiment of a customer given context, and personalizes the experience based on sentiment and context.",
+    "version": "1.0.0",
+    "url": "http://localhost:8003/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "sentiment_analysis",
+        "name": "Sentiment Analysis Tool",
+        "description": "Analyzes the sentiment of a customer given context and personalizes the experience based on sentiment and context.",
+        "examples": [
+          "How does the customer feel about our service?",
+          "Analyze the sentiment of this feedback: \"I love the new features!\"",
+          "What is the mood of this message: \"I am frustrated with the wait time.\""
+        ],
+        "tags": [
+          "sentiment",
+          "analysis",
+          "personalization"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Salesforce CRM Agent",
+    "description": "An intelligent Salesforce agent with full CRM data access, metadata management, and Apex development capabilities.",
+    "version": "1.0.0",
+    "url": "http://localhost:8000/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "salesforce_data_query",
+        "name": "Salesforce Data Query & Search",
+        "description": "Query and search Salesforce data using SOQL and SOSL. Execute aggregate queries (COUNT, SUM, AVG), search across multiple objects, and retrieve detailed records.",
+        "examples": [
+          "Show me all accounts in the technology industry",
+          "How many opportunities are in the pipeline?",
+          "What is the average deal size this quarter?"
+        ],
+        "tags": [
+          "salesforce",
+          "soql",
+          "sosl",
+          "query",
+          "search",
+          "data"
+        ]
+      },
+      {
+        "id": "salesforce_data_management",
+        "name": "Salesforce Data Management",
+        "description": "Create, update, and delete Salesforce records including Accounts, Contacts, Leads, Opportunities, and Cases using DML operations.",
+        "examples": [
+          "Create a new contact named John Smith at Acme Corp",
+          "Update the opportunity status to Closed Won",
+          "Create a new account for TechCorp Inc"
+        ],
+        "tags": [
+          "salesforce",
+          "crm",
+          "create",
+          "update",
+          "delete",
+          "dml"
+        ]
+      },
+      {
+        "id": "salesforce_metadata",
+        "name": "Salesforce Metadata Management",
+        "description": "Describe Salesforce objects, create custom objects and fields, manage field-level security permissions.",
+        "examples": [
+          "What fields does the Account object have?",
+          "Create a new custom field on the Lead object"
+        ],
+        "tags": [
+          "salesforce",
+          "metadata",
+          "fields",
+          "objects",
+          "permissions"
+        ]
+      },
+      {
+        "id": "salesforce_development",
+        "name": "Salesforce Apex Development",
+        "description": "Read and write Apex classes and triggers, execute anonymous Apex code, manage debug logs.",
+        "examples": [
+          "Show me the code for the AccountTrigger",
+          "Enable debug logs for user admin@example.com"
+        ],
+        "tags": [
+          "salesforce",
+          "apex",
+          "code",
+          "triggers",
+          "development"
+        ]
+      },
+      {
+        "id": "human_interaction",
+        "name": "Human Expert Escalation",
+        "description": "Escalate complex issues to human experts when needed.",
+        "examples": [
+          "I need to speak with a person",
+          "Connect me with a human agent"
+        ],
+        "tags": [
+          "human-interaction",
+          "escalation",
+          "expert",
+          "human-capable"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "SportsResultAgent",
+    "description": "This agent provides sports results for various sports leagues such as MLB, NBA, NASCAR, and Golf.",
+    "version": "0.1.0",
+    "url": "https://sports-results-agent.ashydesert-9d471906.westus2.azurecontainerapps.io/rpc/v1",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "sports_results_agent",
+        "name": "Sports Results Agent",
+        "description": "Provides sports results from various sports leagues. Include scores, who won, and other relevant information.",
+        "examples": [
+          "Show score for Pirates game last night",
+          "What was the final score of the game 7 NBA finals and who won?",
+          "Who won the 2025 US Golf Open Championship and where was it played?"
+        ],
+        "tags": [
+          "mlb",
+          "nba",
+          "nascar",
+          "golf",
+          "college football"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "AI Foundry Claims Specialist Agent",
+    "description": "An intelligent multi-line claims specialist powered by Azure AI Foundry. Provides coverage validation, settlement calculations, documentation checklists, and compliance guidance across auto, property, travel, and health insurance claims.",
+    "version": "1.0.0",
+    "url": "http://localhost:9001/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "auto_claims_assessment",
+        "name": "Auto Claims Assessment",
+        "description": "Evaluate auto insurance losses, apply deductibles, total loss thresholds, and rental allowances using auto_claims.md guidance.",
+        "examples": [
+          "My car was rear-ended and the repair shop quoted $6,500. How much will insurance cover?",
+          "Do I get a rental car while my vehicle is repaired?",
+          "The thief stole my car and it was recovered with damage—what happens next?",
+          "Is hail damage covered under my comprehensive policy?"
+        ],
+        "tags": [
+          "auto",
+          "claims",
+          "settlement",
+          "deductible"
+        ]
+      },
+      {
+        "id": "property_claims_management",
+        "name": "Property Claims Management",
+        "description": "Guide homeowners and property claims: covered perils, mitigation steps, documentation, and settlement math from home_claims.md.",
+        "examples": [
+          "A pipe burst in my basement and ruined the flooring—what documentation do you need?",
+          "There was a kitchen fire; how do I calculate depreciation on cabinetry?",
+          "Do I have coverage for wind damage to my roof?",
+          "What temporary housing benefits apply during repairs?"
+        ],
+        "tags": [
+          "home",
+          "property",
+          "water-damage",
+          "perils"
+        ]
+      },
+      {
+        "id": "travel_claim_support",
+        "name": "Travel Claim Support",
+        "description": "Assess trip cancellation, baggage, and emergency medical claims using travel_claims.md coverage and exclusions.",
+        "examples": [
+          "I had to cancel my trip because I was hospitalized—can I get reimbursed?",
+          "My luggage was delayed for two days; what can I claim?",
+          "What proof is required for emergency evacuation abroad?",
+          "Does a government travel advisory trigger cancellation coverage?"
+        ],
+        "tags": [
+          "travel",
+          "cancellation",
+          "baggage",
+          "medical"
+        ]
+      },
+      {
+        "id": "health_claim_guidance",
+        "name": "Health Claim Guidance",
+        "description": "Explain deductibles, coinsurance, and documentation needs for medical claims per health_claims.md.",
+        "examples": [
+          "How much will I owe for a $12,000 inpatient surgery?",
+          "Is my specialty medication covered and what is the copay?",
+          "Do emergency out-of-network services get paid at in-network rates?",
+          "What documents are required for a maternity claim?"
+        ],
+        "tags": [
+          "health",
+          "medical",
+          "coinsurance",
+          "documentation"
+        ]
+      },
+      {
+        "id": "claims_documentation_compliance",
+        "name": "Documentation & Compliance",
+        "description": "Provide required forms, fraud checks, and regulatory timelines using universal_claims.md, procedures_faq.md, and regulatory_compliance.md.",
+        "examples": [
+          "What documents do I submit for a coordinated benefits claim?",
+          "How quickly must I report a loss to stay within policy guidelines?",
+          "What red flags should I be aware of for potential fraud escalation?",
+          "How do we communicate claim denials while staying compliant?"
+        ],
+        "tags": [
+          "documentation",
+          "compliance",
+          "fraud",
+          "regulation"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "AI Foundry Assessment & Estimation Agent",
+    "description": "An intelligent assessment specialist powered by Azure AI Foundry. Performs multi-line damage evaluations, cost estimations, and structured reporting for auto, property, travel, and health scenarios.",
+    "version": "1.0.0",
+    "url": "http://localhost:9002/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "auto_damage_assessment",
+        "name": "Auto Damage Assessment",
+        "description": "Analyze collision/comprehensive losses, estimate labor/materials, and recommend severity using auto_estimation.md tables.",
+        "examples": [
+          "Front bumper and headlight replacement – provide estimated cost and labor hours",
+          "Hail damage across hood and roof – severity and paint estimate",
+          "Flooded SUV interior – determine total loss threshold",
+          "Rear-end collision with airbags deployed – labor/material cost breakdown"
+        ],
+        "tags": [
+          "auto",
+          "damage",
+          "estimation",
+          "labor-hours"
+        ]
+      },
+      {
+        "id": "property_damage_estimation",
+        "name": "Property Damage Estimation",
+        "description": "Assess dwelling and contents losses, apply depreciation, and flag mitigation steps per property_estimation.md.",
+        "examples": [
+          "Basement flood affecting drywall and flooring – provide estimated repair cost",
+          "Kitchen fire damaging cabinets and appliances – breakdown labor vs materials",
+          "Windstorm removing 30% of roof shingles – estimate replacement cost",
+          "Contents smoke damage – calculate ACV vs replacement cost"
+        ],
+        "tags": [
+          "property",
+          "dwelling",
+          "contents",
+          "depreciation"
+        ]
+      },
+      {
+        "id": "travel_loss_estimation",
+        "name": "Travel Loss Estimation",
+        "description": "Estimate trip interruption, baggage loss, and medical evacuation costs using travel_estimation.md benchmarks.",
+        "examples": [
+          "Trip cancellation due to illness – estimate reimbursable costs",
+          "Lost baggage including laptop and clothing – provide replacement value",
+          "Medical emergency abroad – estimate ER, hospital, and evacuation costs",
+          "Cruise interruption – calculate prorated trip value"
+        ],
+        "tags": [
+          "travel",
+          "trip",
+          "baggage",
+          "medical"
+        ]
+      },
+      {
+        "id": "health_cost_estimation",
+        "name": "Health Cost Estimation",
+        "description": "Estimate medical service costs, bundled treatments, and specialist visits using health_estimation.md guidance.",
+        "examples": [
+          "Appendectomy with 3-day stay – estimate total cost range",
+          "MRI plus specialist consult – provide bundled estimate",
+          "ER visit for stitches and X-ray – calculate typical charges",
+          "Specialty drug therapy – monthly cost range"
+        ],
+        "tags": [
+          "health",
+          "medical",
+          "cost-estimation"
+        ]
+      },
+      {
+        "id": "estimation_quality_assurance",
+        "name": "Estimation Quality & QA",
+        "description": "Apply universal estimation workflow, depreciation rules, and QA checklists from universal_estimation.md and procedures_faq.md.",
+        "examples": [
+          "Provide step-by-step assessment workflow for new assignment",
+          "Apply depreciation to electronics and furniture for contents loss",
+          "Explain severity categorization based on cost thresholds",
+          "List QA checklist items before submitting estimate report"
+        ],
+        "tags": [
+          "workflow",
+          "qa",
+          "depreciation",
+          "reporting"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "AI Foundry Fraud Intelligence Agent",
+    "description": "An intelligent fraud specialist powered by Azure AI Foundry. Evaluates claims for red flags, organizes evidence, and recommends SIU escalation across auto, property, travel, and health domains.",
+    "version": "1.0.0",
+    "url": "http://localhost:9004/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "auto_fraud_detection",
+        "name": "Auto Fraud Detection",
+        "description": "Identify staged collisions, inflated injuries, and documentation anomalies using fraud_auto.md guidance.",
+        "examples": [
+          "Low-speed collision with high medical bills—evaluate fraud indicators",
+          "Vehicle theft claim with missing keys—outline red flags",
+          "Multiple prior auto claims in 18 months—assess escalation needs",
+          "Handwritten repair receipts with inconsistencies—flag concerns"
+        ],
+        "tags": [
+          "auto",
+          "fraud",
+          "siu",
+          "red-flags"
+        ]
+      },
+      {
+        "id": "property_fraud_detection",
+        "name": "Property Fraud Detection",
+        "description": "Spot intentional fire, inflated contents, and contractor fraud patterns per fraud_property.md.",
+        "examples": [
+          "Fire shortly after coverage increase—analyze red flags",
+          "Contents claim with no receipts—evaluate fraud risk",
+          "Roof claim citing sudden damage—compare against fraud indicators",
+          "Contractor estimate triple market rate—recommend actions"
+        ],
+        "tags": [
+          "property",
+          "fire",
+          "contents",
+          "fraud"
+        ]
+      },
+      {
+        "id": "travel_fraud_detection",
+        "name": "Travel Fraud Detection",
+        "description": "Detect forged medical notes, baggage padding, and duplicate cancellations using fraud_travel.md.",
+        "examples": [
+          "Trip cancellation with questionable medical note—verify fraud signs",
+          "Lost baggage claim with luxury items—assess proof requirements",
+          "Duplicate receipts across travelers—highlight escalation triggers",
+          "Trip booked then cancelled immediately—identify scheme type"
+        ],
+        "tags": [
+          "travel",
+          "cancellation",
+          "baggage",
+          "fraud"
+        ]
+      },
+      {
+        "id": "health_fraud_screening",
+        "name": "Health Fraud Screening",
+        "description": "Analyze phantom billing, upcoding, and prescription anomalies per fraud_health.md.",
+        "examples": [
+          "Provider billing 15 MRIs in one day—summarize red flags",
+          "Out-of-network surgery with inflated rates—flag investigation steps",
+          "Frequent prescription refills—recommend monitoring actions",
+          "Elective procedure coded as emergency—assess documentation gaps"
+        ],
+        "tags": [
+          "health",
+          "billing",
+          "provider",
+          "fraud"
+        ]
+      },
+      {
+        "id": "fraud_workflow_and_escalation",
+        "name": "Fraud Workflow & Escalation",
+        "description": "Apply universal fraud red flags, anomaly patterns, and SIU referral rules from fraud_universal.md and fraud_procedures_faq.md.",
+        "examples": [
+          "Compile fraud evidence summary for SIU referral",
+          "Determine if multiple red flags trigger escalation",
+          "Outline documentation needed before escalating",
+          "Explain fraud ring indicators in cluster of claims"
+        ],
+        "tags": [
+          "workflow",
+          "siu",
+          "red-flags",
+          "compliance"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Legal Compliance & Regulatory Agent",
+    "description": "An intelligent legal and compliance agent specialized in regulatory analysis, risk assessment, document analysis, and incident response. Can analyze compliance requirements for GDPR, SOX, CCPA and other regulations, assess legal risks, research regulatory requirements, analyze legal documents, handle incident reporting, search the web for current legal information, and search through uploaded legal documents and compliance materials, all with professional legal guidance.",
+    "version": "1.0.0",
+    "url": "http://localhost:8006/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "legal_compliance",
+        "name": "Legal Compliance",
+        "description": "Analyze compliance requirements for specific regulations (GDPR, SOX, CCPA, etc.) and provide regulatory guidance.",
+        "examples": [
+          "Assess GDPR compliance for data processing",
+          "Conduct SOX compliance audit",
+          "Evaluate CCPA compliance requirements",
+          "Analyze regulatory requirements for a business activity"
+        ],
+        "tags": [
+          "legal",
+          "compliance",
+          "gdpr",
+          "sox",
+          "ccpa",
+          "regulatory"
+        ]
+      },
+      {
+        "id": "risk_assessment",
+        "name": "Risk Assessment",
+        "description": "Assess legal and compliance risks for business activities and provide mitigation strategies.",
+        "examples": [
+          "Assess legal risks for a new business activity",
+          "Evaluate compliance risks for data processing",
+          "Provide risk mitigation strategies",
+          "Conduct regulatory risk assessment"
+        ],
+        "tags": [
+          "risk",
+          "assessment",
+          "legal",
+          "compliance",
+          "mitigation"
+        ]
+      },
+      {
+        "id": "regulatory_research",
+        "name": "Regulatory Research",
+        "description": "Research specific regulations and their requirements using legal databases and web search.",
+        "examples": [
+          "Research GDPR Article 6 requirements",
+          "Find SOX Section 404 compliance requirements",
+          "Look up CCPA data subject rights",
+          "Research regulatory guidance for data transfers"
+        ],
+        "tags": [
+          "research",
+          "regulatory",
+          "legal",
+          "compliance",
+          "gdpr",
+          "sox"
+        ]
+      },
+      {
+        "id": "document_analysis",
+        "name": "Document Analysis",
+        "description": "Analyze legal documents, contracts, and compliance materials for regulatory requirements.",
+        "examples": [
+          "Analyze privacy policy for GDPR compliance",
+          "Review data processing agreement",
+          "Assess contract for regulatory requirements",
+          "Analyze compliance documentation"
+        ],
+        "tags": [
+          "document",
+          "analysis",
+          "legal",
+          "contract",
+          "compliance"
+        ]
+      },
+      {
+        "id": "incident_response",
+        "name": "Incident Response",
+        "description": "Handle data breach and compliance incident reporting with proper procedures.",
+        "examples": [
+          "Create data breach incident report",
+          "Generate compliance violation report",
+          "Provide incident response procedures",
+          "Assess incident severity and impact"
+        ],
+        "tags": [
+          "incident",
+          "response",
+          "breach",
+          "compliance",
+          "reporting"
+        ]
+      },
+      {
+        "id": "web_search",
+        "name": "Web Search",
+        "description": "Search the web for current legal and regulatory information using Bing or other integrated search tools.",
+        "examples": [
+          "Find latest regulatory updates",
+          "Search for legal precedents",
+          "Get current compliance guidance",
+          "Research regulatory enforcement actions"
+        ],
+        "tags": [
+          "web",
+          "search",
+          "bing",
+          "internet",
+          "legal",
+          "regulatory"
+        ]
+      },
+      {
+        "id": "file_knowledge_search",
+        "name": "File & Knowledge Search",
+        "description": "Search through uploaded legal documents, compliance materials, and knowledge bases for specific information.",
+        "examples": [
+          "Search legal documents for specific requirements",
+          "Find compliance guidance in uploaded materials",
+          "Extract regulatory information from documents",
+          "Search through compliance policies"
+        ],
+        "tags": [
+          "file",
+          "document",
+          "knowledge",
+          "search",
+          "legal",
+          "compliance"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "AI Foundry Image Generator Agent",
+    "description": "An Azure AI Foundry agent that can generate and edit images.",
+    "version": "1.0.0",
+    "url": "http://localhost:9010/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "generate_image",
+        "name": "Generate Image",
+        "description": "Create new images from text prompts with various styles, subjects, and compositions.",
+        "examples": [
+          "Generate a mountain landscape with a dog",
+          "Create a product visualization for marketing materials",
+          "Design concept art for a fantasy scene",
+          "Produce an image matching specific brand guidelines"
+        ],
+        "tags": [
+          "image-generation",
+          "text-to-image",
+          "creative"
+        ]
+      },
+      {
+        "id": "edit_image",
+        "name": "Edit Image",
+        "description": "Modify existing images through inpainting, outpainting, style transfer, or targeted edits.",
+        "examples": [
+          "Remove background from an image",
+          "Change the color scheme of an existing image",
+          "Add or remove objects from a scene",
+          "Extend an image beyond its original boundaries"
+        ],
+        "tags": [
+          "image-editing",
+          "modification",
+          "refinement"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "AI Foundry Image Analysis Agent",
+    "description": "Analyzes images using Azure AI Foundry with GPT-4o vision.",
+    "version": "1.0.0",
+    "url": "http://localhost:9066/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "image_analysis",
+        "name": "Image Analysis",
+        "description": "Analyze images using GPT-4o vision capabilities.",
+        "examples": [
+          "Analyze this vehicle damage photo",
+          "What do you see in this image?",
+          "Describe what is shown in this picture",
+          "What issues or concerns are visible here?",
+          "Tell me about this image"
+        ],
+        "tags": [
+          "vision",
+          "analysis",
+          "ai"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "AI Foundry Branding & Content Agent",
+    "description": "An intelligent branding partner powered by Azure AI Foundry. Delivers on-brand messaging, visual direction, and creative prompts grounded in the Company Branding Guide.",
+    "version": "1.0.0",
+    "url": "https://azurefoundry-branding.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "brand_strategy_alignment",
+        "name": "Brand Strategy Alignment",
+        "description": "Map campaign goals, audiences, and messaging pillars to the Company Branding Guide, ensuring voice, tone, and terminology remain on-brand.",
+        "examples": [
+          "Outline messaging pillars for a product-launch email aligned to the brand voice",
+          "Review draft tagline options and recommend the on-brand choice with rationale",
+          "Summarize how a campaign concept supports our innovation + trust positioning",
+          "Identify missing brand attributes in a draft hero statement and propose fixes"
+        ],
+        "tags": [
+          "branding",
+          "strategy",
+          "messaging",
+          "tone"
+        ]
+      },
+      {
+        "id": "visual_identity_direction",
+        "name": "Visual Identity Direction",
+        "description": "Provide art direction, mood, and composition notes anchored in brand colors, lighting, and imagery guidelines from `company_branding.md`.",
+        "examples": [
+          "Translate the brand palette into a prompt for a hero illustration",
+          "Advise on lighting and depth for a LinkedIn carousel background",
+          "Recommend iconography and layout for a landing page hero graphic",
+          "Evaluate a storyboard concept for adherence to brand mood and colors"
+        ],
+        "tags": [
+          "visual",
+          "design",
+          "palette",
+          "composition"
+        ]
+      },
+      {
+        "id": "brand_voice_copywriting",
+        "name": "Brand Voice Copywriting",
+        "description": "Draft or refine copy so it reflects the confident, professional, forward-looking voice defined in the branding guide.",
+        "examples": [
+          "Rewrite social captions to emphasize calm confidence and innovation",
+          "Transform a technical paragraph into on-brand website copy",
+          "Craft CTA variations that stay within voice and typography rules",
+          "Edit onboarding email copy to remove off-brand phrasing"
+        ],
+        "tags": [
+          "copywriting",
+          "voice",
+          "tone",
+          "editing"
+        ]
+      },
+      {
+        "id": "generative_prompt_engineering",
+        "name": "Generative Prompt Engineering",
+        "description": "Create positive and negative prompts for image/video generation that encode brand palette, lighting, typography, and prohibited elements.",
+        "examples": [
+          "Draft a stable diffusion prompt for a brand-aligned product hero image",
+          "Provide Midjourney prompt + negatives for a futuristic workspace scene",
+          "Generate prompt variants for thumbnails following brand composition rules",
+          "Audit an existing AI prompt and adjust it to match company branding"
+        ],
+        "tags": [
+          "prompt",
+          "imaging",
+          "ai-art",
+          "guidelines"
+        ]
+      },
+      {
+        "id": "brand_review_feedback",
+        "name": "Brand Review & QA",
+        "description": "Evaluate supplied copy, prompts, or visuals and document brand compliance gaps with actionable corrections.",
+        "examples": [
+          "Assess a video script for voice consistency and suggest edits",
+          "Flag off-brand colors in a design mock and propose replacements",
+          "Provide a brand compliance checklist for a cross-channel campaign",
+          "Summarize risks before publishing content created by external partners"
+        ],
+        "tags": [
+          "review",
+          "qa",
+          "compliance",
+          "feedback"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Sora 2 Video Generator",
+    "description": "Generate stunning AI videos from text prompts using Azure OpenAI's Sora 2 model. Create cinematic scenes, product demos, animations, and creative visual content with natural language descriptions. Supports 4-12 second videos in landscape or portrait format.",
+    "version": "1.0.0",
+    "url": "http://localhost:9028/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "video_generation",
+        "name": "AI Video Generation",
+        "description": "Generate high-quality AI videos from text prompts using Azure OpenAI's Sora 2 model. Create cinematic scenes, animations, and visual content with natural language descriptions.",
+        "examples": [
+          "Generate a video of a golden retriever running through a sunlit meadow at sunset",
+          "Create a cinematic shot of waves crashing on a rocky coastline at dawn",
+          "Make a video of a futuristic city with flying cars at night"
+        ],
+        "tags": [
+          "video",
+          "sora",
+          "generation",
+          "ai",
+          "creative",
+          "multimedia"
+        ]
+      },
+      {
+        "id": "video_from_image",
+        "name": "Image-to-Video Generation",
+        "description": "Transform static images into dynamic videos. Provide a reference image and describe the motion or animation you want to create.",
+        "examples": [
+          "Animate this landscape image with gentle wind blowing through the trees",
+          "Turn this portrait into a video where the person slowly smiles",
+          "Make the water in this photo start flowing naturally"
+        ],
+        "tags": [
+          "video",
+          "image",
+          "animation",
+          "transform",
+          "sora"
+        ]
+      },
+      {
+        "id": "video_to_video",
+        "name": "Video-to-Video Generation",
+        "description": "Transform existing videos using AI. Upload a reference video and describe the transformation you want - change styles, atmospheres, or subjects while maintaining motion and structure.",
+        "examples": [
+          "Transform this daytime scene into a moonlit nighttime video",
+          "Convert this video into an animated cartoon style",
+          "Change this urban scene to a post-apocalyptic landscape"
+        ],
+        "tags": [
+          "video",
+          "transform",
+          "sora",
+          "style-transfer",
+          "reference"
+        ]
+      },
+      {
+        "id": "video_remix",
+        "name": "Video Remix",
+        "description": "Modify specific aspects of previously generated Sora 2 videos while preserving core elements like scene transitions and visual layout. Make targeted adjustments to color palettes, lighting, or style.",
+        "examples": [
+          "Shift the color palette to warm sunset tones",
+          "Change the lighting to dramatic noir style",
+          "Transform the season from summer to winter"
+        ],
+        "tags": [
+          "video",
+          "remix",
+          "edit",
+          "modify",
+          "sora"
+        ]
+      },
+      {
+        "id": "video_prompt_assistance",
+        "name": "Video Prompt Crafting",
+        "description": "Help craft effective prompts for video generation. Get advice on describing scenes, camera movements, lighting, and style for optimal results.",
+        "examples": [
+          "How do I describe a tracking shot in my video prompt?",
+          "What details should I include for a cinematic video?",
+          "Help me write a prompt for a product showcase video"
+        ],
+        "tags": [
+          "prompt",
+          "assistance",
+          "help",
+          "creative",
+          "writing"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "AI Foundry Reporter Agent",
+    "description": "A professional report creation agent powered by Azure AI Foundry. Creates executive summaries, technical analyses, project status reports, and custom reports with structured templates.",
+    "version": "1.0.0",
+    "url": "http://localhost:9032/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "executive_summary_report",
+        "name": "Executive Summary Report",
+        "description": "Creates high-level executive summary reports for leadership and stakeholders with key findings, recommendations, and next steps.",
+        "examples": [
+          "Create an executive summary about our Q4 performance",
+          "Generate a leadership report on the new product launch",
+          "Write an executive overview of the market analysis"
+        ],
+        "tags": [
+          "report",
+          "executive",
+          "summary",
+          "leadership",
+          "stakeholder"
+        ]
+      },
+      {
+        "id": "technical_analysis_report",
+        "name": "Technical Analysis Report",
+        "description": "Creates detailed technical analysis reports with metrics, data, risk assessments, and technical recommendations.",
+        "examples": [
+          "Create a technical analysis of our system architecture",
+          "Generate a technical report on the API performance issues",
+          "Write a detailed analysis of the security vulnerabilities"
+        ],
+        "tags": [
+          "report",
+          "technical",
+          "analysis",
+          "metrics",
+          "engineering"
+        ]
+      },
+      {
+        "id": "project_status_report",
+        "name": "Project Status Report",
+        "description": "Creates project status reports with progress updates, milestones, issues, blockers, and outlook.",
+        "examples": [
+          "Create a project status report for the migration project",
+          "Generate a weekly status update for the development team",
+          "Write a progress report on the implementation phase"
+        ],
+        "tags": [
+          "report",
+          "project",
+          "status",
+          "progress",
+          "milestone"
+        ]
+      },
+      {
+        "id": "custom_report",
+        "name": "Custom Report",
+        "description": "Creates custom reports with user-defined sections and structure for any topic or purpose.",
+        "examples": [
+          "Create a report on AI trends in healthcare with custom sections",
+          "Generate a competitive analysis report",
+          "Write a research summary report on renewable energy"
+        ],
+        "tags": [
+          "report",
+          "custom",
+          "flexible",
+          "document"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Email Agent",
+    "description": "A conversational assistant that helps you communicate via email. Describe what you want to say and to whom, and I'll help compose and send the message.",
+    "version": "1.0.0",
+    "url": "http://localhost:9029/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "email_communication",
+        "name": "Email Communication",
+        "description": "A conversational assistant that helps compose and send professional emails. Just describe what you want to communicate and who should receive it.",
+        "examples": [
+          "I need to ask John for a project update",
+          "Help me write a message to the client about the deadline",
+          "I want to follow up with the team about the meeting"
+        ],
+        "tags": [
+          "communication",
+          "writing",
+          "messaging"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Benjamin School English Teacher",
+    "url": "https://azurefoundry-english.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
+    "description": "High school English teacher specializing in essay grading and literary analysis",
+    "capabilities": [
+      "grading",
+      "writing feedback",
+      "literary analysis"
+    ],
+    "avatar": "/placeholder.svg?height=32&width=32"
+  },
+  {
+    "name": "Benjamin School Biology Teacher",
+    "url": "https://azurefoundry-biology.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
+    "description": "High school biology teacher and study buddy",
+    "capabilities": [
+      "biology tutoring",
+      "homework help",
+      "concept explanations"
+    ],
+    "avatar": "/placeholder.svg?height=32&width=32"
+  },
+  {
+    "name": "Benjamin School AP-Calculus Study Buddy",
+    "url": "https://azurefoundry-apcalc.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
+    "description": "AP Calculus tutor and study companion",
+    "capabilities": [
+      "calculus tutoring",
+      "problem solving",
+      "test prep"
+    ],
+    "avatar": "/placeholder.svg?height=32&width=32"
+  },
+  {
+    "name": "Benjamin School AP Environmental Science Study Buddy",
+    "url": "https://azurefoundry-apes.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
+    "description": "AP Environmental Science tutor and study companion",
+    "capabilities": [
+      "environmental science tutoring",
+      "homework help",
+      "test prep"
+    ],
+    "avatar": "/placeholder.svg?height=32&width=32"
+  }
+]

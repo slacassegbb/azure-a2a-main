@@ -7,6 +7,7 @@ Agents are persisted to disk and survive backend restarts.
 """
 
 import json
+import os
 from typing import List, Dict, Any, Optional
 from pathlib import Path
 
@@ -21,9 +22,14 @@ class AgentRegistry:
             registry_file: Path to the JSON file for storing agent data
         """
         if registry_file is None:
+            # Check if we should use production registry (for Azure deployment)
+            use_prod = os.environ.get("USE_PROD_REGISTRY", "false").lower() == "true"
+            registry_filename = "agent_registry_prod.json" if use_prod else "agent_registry.json"
             self.registry_file = (
-                Path(__file__).resolve().parent.parent / "data" / "agent_registry.json"
+                Path(__file__).resolve().parent.parent / "data" / registry_filename
             )
+            if use_prod:
+                print(f"[AgentRegistry] Using PRODUCTION registry: {registry_filename}")
         else:
             self.registry_file = Path(registry_file)
         self.registry_file.parent.mkdir(parents=True, exist_ok=True)

@@ -122,6 +122,7 @@ jobs:
             --image ${{ env.REGISTRY }}/backend:${{ github.sha }} \
             --set-env-vars \
               "SECRET_KEY=${{ secrets.SECRET_KEY }}" \
+              "USE_PROD_REGISTRY=true" \
               "AZURE_AI_FOUNDRY_PROJECT_ENDPOINT=${{ secrets.AZURE_AI_FOUNDRY_PROJECT_ENDPOINT }}" \
               "AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME=${{ secrets.AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME }}" \
               "AZURE_OPENAI_GPT_API_BASE=${{ secrets.AZURE_OPENAI_GPT_API_BASE }}" \
