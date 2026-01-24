@@ -2383,19 +2383,18 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
         </>
       )}
       
-      {/* Layout for empty state - centered welcome message and input */}
+      {/* Layout for empty state - centered welcome message (input is rendered in the shared section below) */}
       {!isLoadingMessages && messages.length === 0 && !isInferencing && (
-        <div className="flex-1 flex flex-col items-center justify-center px-4">
-          <div className="w-full max-w-4xl space-y-8">
+        <div className="flex-1 flex flex-col items-center justify-center px-4 -mb-20">
+          <div className="w-full max-w-2xl text-center">
             <TypingWelcomeMessage text="What can I help you with today?" />
-            {/* Input rendered in shared section below will appear here visually */}
           </div>
         </div>
       )}
       
-      {/* Chat input area - positioned differently based on state */}
-      <div className={`${!isLoadingMessages && messages.length === 0 && !isInferencing ? 'absolute top-1/2 left-0 right-0 flex items-center justify-center mt-8' : 'flex-shrink-0'}`}>
-        <div className={`px-4 pb-4 pt-2 ${!isLoadingMessages && messages.length === 0 && !isInferencing ? 'w-full max-w-4xl' : 'w-full'}`}>
+      {/* Chat input area - always at the bottom, centered for empty state */}
+      <div className={`flex-shrink-0 ${!isLoadingMessages && messages.length === 0 && !isInferencing ? 'flex items-center justify-center px-4' : ''}`}>
+        <div className={`pb-4 pt-2 ${!isLoadingMessages && messages.length === 0 && !isInferencing ? 'w-full max-w-2xl' : 'w-full px-4'}`}>
           {/* File upload previews */}
           {uploadedFiles.length > 0 && (
             <div className="mb-2 flex flex-wrap gap-2">
