@@ -1654,19 +1654,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       const mediaFromSteps = inferenceSteps.filter(step => step.imageUrl)
       if (mediaFromSteps.length > 0) {
         mediaFromSteps.forEach((step, idx) => {
-          // Determine mediaType: use step.mediaType if available, otherwise infer from file extension
-          let mediaType = step.mediaType
-          if (!mediaType && step.imageUrl) {
-            // Extract extension from URL (before any query params)
-            const urlWithoutParams = step.imageUrl.split('?')[0]
-            const ext = urlWithoutParams.split('.').pop()?.toLowerCase()
-            if (ext === 'mp4' || ext === 'webm' || ext === 'mov' || ext === 'avi' || ext === 'mkv') {
-              mediaType = `video/${ext === 'mov' ? 'quicktime' : ext}`
-            } else {
-              mediaType = 'image/png'
-            }
-          }
-          const isVideo = mediaType?.startsWith("video/")
+          const isVideo = step.mediaType?.startsWith("video/")
           const mediaMsg: Message = {
             id: `media_${responseId}_${idx}_${Date.now()}`,
             role: "assistant",
@@ -1675,7 +1663,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
             attachments: [{
               uri: step.imageUrl!,
               fileName: step.imageName || (isVideo ? "Generated video" : "Generated image"),
-              mediaType: mediaType || "image/png",
+              mediaType: step.mediaType || "image/png",
             }],
           }
           messagesToAdd.push(mediaMsg)
@@ -2219,14 +2207,9 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                       {message.attachments && message.attachments.length > 0 && (
                         <div className="flex flex-col gap-3 mb-3">
                           {message.attachments.map((attachment, attachmentIndex) => {
-                            // Check mediaType first, then fall back to URL extension detection
-                            const urlWithoutParams = (attachment.uri || "").split('?')[0].toLowerCase()
-                            const isVideoByExt = /\.(mp4|webm|mov|avi|mkv)$/.test(urlWithoutParams)
-                            const isImageByExt = /\.(png|jpe?g|gif|webp|svg|bmp)$/.test(urlWithoutParams)
-                            const isImage = (attachment.mediaType || "").startsWith("image/") || (!attachment.mediaType && isImageByExt)
-                            const isVideo = (attachment.mediaType || "").startsWith("video/") || (!attachment.mediaType && isVideoByExt) || isVideoByExt
+                            const isImage = (attachment.mediaType || "").startsWith("image/")
+                            const isVideo = (attachment.mediaType || "").startsWith("video/")
                             
-                            // Check video FIRST (so .mp4 URLs don't get treated as images)
                             if (isVideo) {
                               return (
                                 <div key={`${message.id}-attachment-${attachmentIndex}`} className="flex flex-col gap-2">
@@ -2334,7 +2317,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                       {message.images && message.images.length > 0 && (
                         <div className="flex flex-col gap-3 mb-3">
                           {message.images.map((image, imageIndex) => {
-                            const isVideo = image.mimeType?.startsWith('video/') || image.uri.match(/\.(mp4|webm|mov)(\?|$)/i)
+                            const isVideo = image.mimeType?.startsWith('video/')
                             return (
                               <div key={`${message.id}-image-${imageIndex}`} className="flex flex-col gap-2">
                                 {isVideo ? (
