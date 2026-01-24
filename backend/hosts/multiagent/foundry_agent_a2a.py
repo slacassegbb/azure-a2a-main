@@ -2028,7 +2028,9 @@ class FoundryHostAgent2:
                 Before answering any user request, always:
                 1. Analyze the available agents (listed at the end of this prompt), including their skills.
                 2. Identify which agents are relevant based on their specialized capabilities.
-                3. Plan the collaboration strategy leveraging each agent's skills.
+                3. **CRITICAL: Detect sequential dependencies** - If the user says "then", "after that", "using the output from", or similar sequential language, you MUST call agents ONE AT A TIME in the specified order, NOT in parallel.
+                4. **Data Flow Analysis**: If Agent B needs the actual output/results from Agent A (not just conceptual knowledge), call Agent A first, wait for results, then call Agent B.
+                5. Plan the collaboration strategy leveraging each agent's skills.
 
                 ### 🚨 CRITICAL: YOU CANNOT ANSWER ON BEHALF OF AGENTS 🚨
                 
@@ -2067,6 +2069,23 @@ class FoundryHostAgent2:
                 ^ NO TOOL CALL = FAILURE. You made up the response!
                 
                 🔍 DETECTION: Every time you mention an agent's findings, there MUST be a corresponding tool call in the logs. If you say an agent did something but there's no tool call, you have VIOLATED this protocol.
+
+                ---
+
+                ### 🔀 SEQUENTIAL vs PARALLEL EXECUTION
+
+                **WHEN TO EXECUTE SEQUENTIALLY (One After Another):**
+                - User says "**then**", "**after that**", "**next**", "**using the output/results from**"
+                - Agent B needs the **actual data/output** from Agent A to complete its task
+                - Example: "Get color branding **then** classify the branding" → Call branding agent FIRST, wait for response, THEN call classification agent with the results
+                - Example: "Use branding agent to get colors, **then use** those colors with classification agent" → Sequential!
+                
+                **WHEN TO EXECUTE IN PARALLEL (Simultaneously):**
+                - Tasks are independent and don't need each other's outputs
+                - User says "**and**" or "**both**" without sequential language
+                - Example: "What do the branding and classification agents say about our guidelines?" → Both can run simultaneously
+                
+                **⚠️ DEFAULT TO SEQUENTIAL IF UNCLEAR** - If you're not sure whether tasks are independent, execute them sequentially to ensure proper data flow.
 
                 ---
 
