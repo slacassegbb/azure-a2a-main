@@ -529,9 +529,19 @@ class FoundryHostAgent2:
         
         # Recreate credential if needed
         if self.credential is None:
-            from azure.identity.aio import AzureCliCredential
-            self.credential = AzureCliCredential(process_timeout=5)
-            log_foundry_debug("Recreated AzureCliCredential for new event loop")
+            from azure.identity.aio import AzureCliCredential, DefaultAzureCredential
+            
+            # Detect if we're running in Azure Container Apps (managed identity)
+            is_azure_container = os.environ.get('CONTAINER_APP_NAME') or os.environ.get('WEBSITE_INSTANCE_ID')
+            
+            if is_azure_container:
+                # Use DefaultAzureCredential in Azure (will use managed identity)
+                self.credential = DefaultAzureCredential(exclude_interactive_browser_credential=True)
+                log_foundry_debug("Recreated DefaultAzureCredential (Managed Identity) for new event loop")
+            else:
+                # Use AzureCliCredential locally
+                self.credential = AzureCliCredential(process_timeout=5)
+                log_foundry_debug("Recreated AzureCliCredential for new event loop")
         
         if self.project_client is None:
             log_foundry_debug("�🔧 Initializing AIProjectClient...")

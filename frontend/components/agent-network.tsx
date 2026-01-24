@@ -1196,11 +1196,13 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
                             </div>
                           )}
                           
-                          {agent.url && (
+                          {(agent.url || agent.endpoint) && (
                             <div className="flex items-center gap-2 text-xs">
                               <Globe className="h-3 w-3 text-muted-foreground" />
                               <span className="text-muted-foreground">Endpoint:</span>
-                              <code className="text-xs bg-muted px-1 rounded">{agent.url}</code>
+                              <code className="text-xs bg-muted px-1 py-0.5 rounded truncate max-w-[200px] block">
+                                {agent.url || agent.endpoint}
+                              </code>
                             </div>
                           )}
                           
