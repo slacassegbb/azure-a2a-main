@@ -399,6 +399,27 @@ class ConversationServer:
             
             all_conversations = self.manager.conversations
             
+            # DEBUG: Log conversation and message details for troubleshooting image persistence
+            for conv in all_conversations:
+                file_parts_count = 0
+                data_parts_with_uri = 0
+                for msg in conv.messages:
+                    if hasattr(msg, 'parts'):
+                        for part in msg.parts:
+                            root = getattr(part, 'root', part)
+                            if hasattr(root, 'kind'):
+                                if root.kind == 'file':
+                                    file_parts_count += 1
+                                    file_obj = getattr(root, 'file', None)
+                                    if file_obj:
+                                        log_debug(f"📸 [CONV DEBUG] FilePart in {conv.conversation_id}: name={getattr(file_obj, 'name', 'unknown')}, uri={getattr(file_obj, 'uri', 'no-uri')[:80]}...")
+                                elif root.kind == 'data' and isinstance(getattr(root, 'data', None), dict):
+                                    if 'artifact-uri' in root.data:
+                                        data_parts_with_uri += 1
+                                        log_debug(f"📸 [CONV DEBUG] DataPart with artifact-uri in {conv.conversation_id}: {root.data.get('artifact-uri', '')[:80]}...")
+                if file_parts_count > 0 or data_parts_with_uri > 0:
+                    log_debug(f"📸 [CONV DEBUG] Conversation {conv.conversation_id}: {len(conv.messages)} messages, {file_parts_count} FileParts, {data_parts_with_uri} DataParts with URIs")
+            
             # If sessionId is provided, filter conversations for that session
             if session_id:
                 filtered_conversations = []

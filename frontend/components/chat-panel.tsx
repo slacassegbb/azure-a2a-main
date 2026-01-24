@@ -748,6 +748,9 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
               let content = ''
               let images: { uri: string; fileName?: string }[] = []
               
+              // DEBUG: Log the raw message parts to trace image persistence issues
+              console.log(`[ChatPanel] Message ${index} parts:`, JSON.stringify(msg.parts, null, 2).substring(0, 500))
+              
               if (msg.parts && Array.isArray(msg.parts)) {
                 for (const part of msg.parts) {
                   // A2A flattened format (most common): { kind: 'text', text: '...' }
@@ -1382,6 +1385,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
           )
         
         // Add to inference steps (with thumbnail for images, text for other files)
+        // This shows the image in the workflow panel during execution
         setInferenceSteps(prev => [...prev, { 
           agent: data.fileInfo.source_agent, 
           status: `📎 Generated ${data.fileInfo.filename}`,
@@ -1389,40 +1393,21 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
           imageName: data.fileInfo.filename
         }])
         
-        // ALSO add image as an attachment message in the main chat so it renders with refine buttons
+        // NOTE: We do NOT add images as separate messages here anymore
+        // The image will be included in the final_response message via attachments
+        // This ensures the image appears AFTER the workflow, not before it
+        
+        // Add to file history so it appears in the sidebar
         if (isImage && data.fileInfo.uri) {
-          const attachmentMsgId = `file_uploaded_${data.fileInfo.uri}_${Date.now()}`
-          
-          // Check if we've already added this image
-          if (!processedMessageIds.has(attachmentMsgId)) {
-            setProcessedMessageIds(prev => new Set([...prev, attachmentMsgId]))
-            
-            const imageMessage: Message = {
-              id: attachmentMsgId,
-              role: "assistant",
-              agent: data.fileInfo.source_agent,
-              content: "",
-              attachments: [{
-                uri: data.fileInfo.uri,
-                fileName: data.fileInfo.filename || "Generated image",
-                mediaType: data.fileInfo.content_type || "image/png",
-              }],
-            }
-            
-            console.log("[ChatPanel] Adding image attachment message from file_uploaded:", imageMessage)
-            setMessages(prev => [...prev, imageMessage])
-            
-            // Also add to file history
-            if ((window as any).addFileToHistory) {
-              (window as any).addFileToHistory({
-                file_id: data.fileInfo.uri,
-                filename: data.fileInfo.filename || "Generated image",
-                size: data.fileInfo.size || 0,
-                content_type: data.fileInfo.content_type || "image/png",
-                uri: data.fileInfo.uri,
-              })
-              console.log("[ChatPanel] Added image to file history:", data.fileInfo.filename)
-            }
+          if ((window as any).addFileToHistory) {
+            (window as any).addFileToHistory({
+              file_id: data.fileInfo.uri,
+              filename: data.fileInfo.filename || "Generated image",
+              size: data.fileInfo.size || 0,
+              content_type: data.fileInfo.content_type || "image/png",
+              uri: data.fileInfo.uri,
+            })
+            console.log("[ChatPanel] Added image to file history:", data.fileInfo.filename)
           }
         }
       }
@@ -1603,6 +1588,27 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
           })),
         }
         messagesToAdd.push(finalMessage)
+      }
+
+      // Add any images from inference steps as separate messages AFTER the final response
+      // This ensures images appear below the workflow and response, not above
+      const imagesFromSteps = inferenceSteps.filter(step => step.imageUrl)
+      if (imagesFromSteps.length > 0) {
+        imagesFromSteps.forEach((step, idx) => {
+          const imageMsg: Message = {
+            id: `img_${responseId}_${idx}_${Date.now()}`,
+            role: "assistant",
+            agent: step.agent,
+            content: "",
+            attachments: [{
+              uri: step.imageUrl!,
+              fileName: step.imageName || "Generated image",
+              mediaType: "image/png",
+            }],
+          }
+          messagesToAdd.push(imageMsg)
+          console.log("[ChatPanel] Adding image from inference steps after final response:", imageMsg)
+        })
       }
 
       // Check if this is a Voice Live response that needs to be injected back
