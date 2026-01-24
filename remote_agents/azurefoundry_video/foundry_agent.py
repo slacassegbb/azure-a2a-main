@@ -44,7 +44,7 @@ Reference: https://learn.microsoft.com/en-us/answers/questions/2237624/getting-r
 import os
 import time
 import datetime
-from datetime import timedelta
+from datetime import datetime as dt_datetime, timedelta
 import asyncio
 import logging
 import json
@@ -151,9 +151,18 @@ class FoundryTemplateAgent:
             return None
 
         container_name = os.getenv("AZURE_BLOB_CONTAINER", "a2a-files")
+        blob_size_threshold = int(os.getenv("AZURE_BLOB_SIZE_THRESHOLD", "8048576"))
+        force_blob = os.getenv("FORCE_AZURE_BLOB", "false").lower() == "true"
 
         try:
             file_size = file_path.stat().st_size
+            if not force_blob and file_size < blob_size_threshold:
+                logger.info(
+                    "File %s below blob size threshold (%s); skipping upload",
+                    file_path,
+                    blob_size_threshold,
+                )
+                return None
         except FileNotFoundError:
             logger.error(f"File not found for blob upload: {file_path}")
             return None
@@ -200,7 +209,7 @@ class FoundryTemplateAgent:
                             blob_name=blob_name,
                             account_key=account_key_value,
                             permission=BlobSasPermissions(read=True),
-                            expiry=datetime.datetime.utcnow() + timedelta(minutes=sas_duration_minutes),
+                            expiry=dt_datetime.utcnow() + timedelta(minutes=sas_duration_minutes),
                             protocol="https",
                             version="2023-11-03",
                         )
@@ -210,8 +219,8 @@ class FoundryTemplateAgent:
             if sas_token is None and self._blob_service_client is not None:
                 try:
                     delegation_key = self._blob_service_client.get_user_delegation_key(
-                        key_start_time=datetime.datetime.utcnow() - timedelta(minutes=5),
-                        key_expiry_time=datetime.datetime.utcnow() + timedelta(minutes=sas_duration_minutes),
+                        key_start_time=dt_datetime.utcnow() - timedelta(minutes=5),
+                        key_expiry_time=dt_datetime.utcnow() + timedelta(minutes=sas_duration_minutes),
                     )
                     sas_token = generate_blob_sas(
                         account_name=self._blob_service_client.account_name,
@@ -219,7 +228,7 @@ class FoundryTemplateAgent:
                         blob_name=blob_name,
                         user_delegation_key=delegation_key,
                         permission=BlobSasPermissions(read=True),
-                        expiry=datetime.datetime.utcnow() + timedelta(minutes=sas_duration_minutes),
+                        expiry=dt_datetime.utcnow() + timedelta(minutes=sas_duration_minutes),
                         protocol="https",
                         version="2023-11-03",
                     )
@@ -334,6 +343,54 @@ class FoundryTemplateAgent:
         tool_resources = None
         
         project_client = self._get_project_client()
+        
+        # Add video generation function tool definition
+        generate_video_tool = {
+            "type": "function",
+            "function": {
+                "name": "generate_video",
+                "description": """Generate AI videos using Azure OpenAI's Sora 2 model from text prompts.
+                
+Creates high-quality video content with cinematic quality, natural motion, and optional audio.
+
+Key capabilities:
+- Text-to-video generation from detailed prompts
+- Supports landscape (1280x720) and portrait (720x1280) resolutions
+- Video durations: 4, 8, or 12 seconds
+- Includes audio generation in output videos
+
+For best results, include in prompts:
+- Shot type (close-up, wide shot, tracking, aerial)
+- Subject details and actions
+- Setting and atmosphere
+- Lighting description
+- Camera motion
+
+IMPORTANT: Video generation can take 60-120 seconds. Be patient.""",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "prompt": {
+                            "type": "string",
+                            "description": "Detailed text description of the desired video. Include shot type, subject, actions, setting, lighting, and atmosphere for best results."
+                        },
+                        "size": {
+                            "type": "string",
+                            "enum": ["1280x720", "720x1280"],
+                            "description": "Video resolution. 1280x720 for landscape (default), 720x1280 for portrait."
+                        },
+                        "duration": {
+                            "type": "integer",
+                            "enum": [4, 8, 12],
+                            "description": "Video duration in seconds. Options: 4, 8, or 12 seconds. Default is 8."
+                        }
+                    },
+                    "required": ["prompt"],
+                    "additionalProperties": False
+                }
+            }
+        }
+        tools.append(generate_video_tool)
         
         # Add Bing search tool if available
         try:
@@ -1210,62 +1267,66 @@ class FoundryTemplateAgent:
         return f"""
 You are a **Sora 2 Video Generation Specialist** powered by Azure AI Foundry.
 
-You help users create stunning AI-generated videos using Azure OpenAI's Sora 2 model.
+You create stunning AI-generated videos using Azure OpenAI's Sora 2 model through the generate_video function.
 
 ## Core Responsibilities
 
-1. **Video Prompt Crafting** – Help users write effective, detailed prompts that produce high-quality videos
-2. **Creative Consultation** – Suggest creative ideas, shot compositions, and visual storytelling techniques
-3. **Technical Guidance** – Explain Sora 2 capabilities, limitations, and best practices
-4. **Troubleshooting** – Help diagnose issues with video generation and suggest improvements
+1. **Video Generation** – When users request a video, IMMEDIATELY call the generate_video function with their prompt
+2. **Prompt Enhancement** – Improve basic prompts with cinematographic details before generating
+3. **Creative Consultation** – Suggest improvements to make videos more cinematic and engaging
+4. **Technical Guidance** – Explain Sora 2 capabilities and best practices
+
+## CRITICAL: When to Call generate_video
+
+**ALWAYS call generate_video immediately when:**
+- User asks to "generate a video"
+- User describes a scene they want as a video
+- User requests "create", "make", or "produce" a video
+- User provides any video description
+
+**DO NOT just provide prompt suggestions - GENERATE THE VIDEO!**
 
 ## Sora 2 Capabilities
 
-- **Text-to-Video**: Generate videos from text descriptions
-- **Image-to-Video**: Animate static images (reference image must match output resolution)
-- **Video-to-Video**: Transform existing videos using a reference video
-- **Remix**: Modify existing generated videos while preserving structure
-- **Resolutions**: 1280x720 (landscape) or 720x1280 (portrait)
-- **Durations**: 4, 8, or 12 seconds
-- **Audio**: Sora 2 supports audio generation in output videos
+- **Text-to-Video**: Generate videos from text descriptions  
+- **Resolutions**: 1280x720 (landscape, default) or 720x1280 (portrait)
+- **Durations**: 4, 8, or 12 seconds (default: 8)
+- **Audio**: Includes audio generation in output videos
 
-## Prompt Writing Best Practices
+## Prompt Enhancement
 
-When helping users craft prompts, encourage them to include:
+Before calling generate_video, enhance basic prompts with:
 
 1. **Shot Type**: Close-up, wide shot, medium shot, tracking shot, aerial view
-2. **Subject**: Who or what is the main focus? Describe in detail.
-3. **Action**: What is happening? Be specific about movements.
-4. **Setting**: Where does this take place? Indoor/outdoor, time of day.
-5. **Lighting**: Natural, dramatic, soft, golden hour, neon, etc.
+2. **Subject Details**: Describe the main focus in detail
+3. **Action/Movement**: Specific movements and what's happening
+4. **Setting**: Location, indoor/outdoor, time of day
+5. **Lighting**: Natural, dramatic, soft, golden hour, cinematic
 6. **Atmosphere/Mood**: Cinematic, dreamy, energetic, peaceful, mysterious
-7. **Camera Motion**: Pan, zoom, dolly, static, handheld, smooth tracking
+7. **Camera Motion**: Pan, zoom, dolly, static, smooth tracking
 
-## Example Prompts
+## Example Flow
 
-**Good prompt:**
-"A cinematic tracking shot of a golden retriever running through a sunlit meadow at sunset. 
-The camera follows alongside the dog at eye level. Golden hour lighting creates long shadows 
-on the grass, which sways gently in the breeze. The mood is joyful and peaceful."
+**User:** "Generate a video of a dog running"
 
-**Basic prompt (less effective):**
-"A dog running in a field"
+**You should:**
+1. Enhance the prompt internally
+2. Immediately call generate_video with: "A cinematic tracking shot of a golden retriever joyfully running through a sunlit meadow at sunset. The camera follows alongside the dog at eye level. Golden hour lighting creates warm tones and long shadows on the grass, which sways gently in the breeze. The mood is energetic and peaceful. Smooth camera motion captures the dog's playful energy."
+3. After generation completes, explain what you created
 
-## Response Guidelines
+## Function Call Parameters
 
-- Be enthusiastic and creative when helping with video ideas
-- Provide specific, actionable suggestions to improve prompts
-- Explain WHY certain details improve video quality
-- If asked to generate a video, guide users to use the Video Generation tab in the UI
-- For A2A requests, acknowledge video generation requests and provide prompt optimization tips
+When calling generate_video:
+- **prompt** (required): Detailed, enhanced description
+- **size** (optional): "1280x720" (landscape, default) or "720x1280" (portrait)  
+- **duration** (optional): 4, 8 (default), or 12 seconds
 
-## Limitations to Communicate
+## Limitations
 
-- Complex physics and causal relationships may not render perfectly
+- Video generation takes 60-120 seconds
+- Complex physics may not render perfectly
 - Spatial reasoning (left/right) can be challenging
-- Very specific text or logos in videos are difficult
-- Maximum 2 concurrent video jobs
-- Videos expire after 24 hours and must be downloaded
+- Very specific text or logos are difficult
 
 Current date and time: {datetime.datetime.now().isoformat()}
 """
@@ -1563,6 +1624,7 @@ Current date and time: {datetime.datetime.now().isoformat()}
             return
             
         try:
+            action_type = getattr(required_action, 'type', 'submit_tool_outputs')
             tool_calls = required_action.submit_tool_outputs.tool_calls
             if not tool_calls:
                 logger.warning("No tool calls found in required action")
@@ -1575,6 +1637,40 @@ Current date and time: {datetime.datetime.now().isoformat()}
                 arguments = tool_call.function.arguments
                 logger.info(f"Processing tool call: {function_name} with args: {arguments}")
                 logger.debug(f"Tool call ID: {tool_call.id}")
+                
+                # Handle generate_video function call
+                if function_name == "generate_video":
+                    try:
+                        args_dict = json.loads(arguments) if isinstance(arguments, str) else arguments
+                        logger.info(f"Calling generate_video with args: {args_dict}")
+                        
+                        # Call the generate_video method
+                        video_artifacts = await self.generate_video(
+                            prompt=args_dict.get("prompt"),
+                            size=args_dict.get("size", "1280x720"),
+                            duration=args_dict.get("duration", 8)
+                        )
+                        
+                        # Return success with video info
+                        result = {
+                            "success": True,
+                            "message": "Video generated successfully",
+                            "artifacts": video_artifacts
+                        }
+                        
+                        return {
+                            "tool_call_id": tool_call.id,
+                            "output": json.dumps(result)
+                        }
+                    except Exception as e:
+                        logger.error(f"Error generating video: {e}")
+                        return {
+                            "tool_call_id": tool_call.id,
+                            "output": json.dumps({
+                                "success": False,
+                                "error": str(e)
+                            })
+                        }
                 
                 # For Bing grounding and file search tool calls, they're handled automatically by the system
                 logger.info(f"Skipping system tool call: {function_name} (handled automatically)")
