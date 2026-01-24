@@ -2219,8 +2219,32 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                       {message.attachments && message.attachments.length > 0 && (
                         <div className="flex flex-col gap-3 mb-3">
                           {message.attachments.map((attachment, attachmentIndex) => {
-                            const isImage = (attachment.mediaType || "").startsWith("image/")
-                            const isVideo = (attachment.mediaType || "").startsWith("video/")
+                            // Check mediaType first, then fall back to URL extension detection
+                            const urlWithoutParams = (attachment.uri || "").split('?')[0].toLowerCase()
+                            const isVideoByExt = /\.(mp4|webm|mov|avi|mkv)$/.test(urlWithoutParams)
+                            const isImageByExt = /\.(png|jpe?g|gif|webp|svg|bmp)$/.test(urlWithoutParams)
+                            const isImage = (attachment.mediaType || "").startsWith("image/") || (!attachment.mediaType && isImageByExt)
+                            const isVideo = (attachment.mediaType || "").startsWith("video/") || (!attachment.mediaType && isVideoByExt) || isVideoByExt
+                            
+                            // Check video FIRST (so .mp4 URLs don't get treated as images)
+                            if (isVideo) {
+                              return (
+                                <div key={`${message.id}-attachment-${attachmentIndex}`} className="flex flex-col gap-2">
+                                  <div className="overflow-hidden rounded-lg border border-border bg-background">
+                                    <video
+                                      src={attachment.uri}
+                                      controls
+                                      className="w-full h-auto"
+                                    >
+                                      Your browser does not support the video tag.
+                                    </video>
+                                    <div className="px-3 py-2 text-xs text-muted-foreground border-t border-border bg-muted/50">
+                                      {attachment.fileName || "Video attachment"}
+                                    </div>
+                                  </div>
+                                </div>
+                              )
+                            }
                             
                             if (isImage) {
                               return (
@@ -2288,25 +2312,6 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                                       )}
                                     </div>
                                   )}
-                                </div>
-                              )
-                            }
-                            
-                            if (isVideo) {
-                              return (
-                                <div key={`${message.id}-attachment-${attachmentIndex}`} className="flex flex-col gap-2">
-                                  <div className="overflow-hidden rounded-lg border border-border bg-background">
-                                    <video
-                                      src={attachment.uri}
-                                      controls
-                                      className="w-full h-auto"
-                                    >
-                                      Your browser does not support the video tag.
-                                    </video>
-                                    <div className="px-3 py-2 text-xs text-muted-foreground border-t border-border bg-muted/50">
-                                      {attachment.fileName || "Video attachment"}
-                                    </div>
-                                  </div>
                                 </div>
                               )
                             }

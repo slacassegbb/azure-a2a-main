@@ -700,18 +700,31 @@ class FoundryHostManager(ApplicationManager):
                             if isinstance(root, TextPart):
                                 text_parts.append(root.text)
                             elif isinstance(root, FilePart):
-                                # Handle FilePart with FileWithUri (from Image Generator and other agents)
+                                # Handle FilePart with FileWithUri (from Image Generator, Video agents, etc.)
                                 file_obj = getattr(root, 'file', None)
                                 if file_obj:
                                     file_uri = getattr(file_obj, 'uri', None)
                                     if file_uri:
                                         log_debug(f"Found FilePart with URI: {file_uri}")
+                                        # Determine type based on mimeType or file extension
+                                        mime_type = getattr(file_obj, 'mimeType', '')
+                                        file_name = getattr(file_obj, 'name', 'agent-artifact')
+                                        # Check mimeType first, then fall back to extension
+                                        if mime_type.startswith('video/'):
+                                            part_type = "video"
+                                            default_name = "video.mp4"
+                                        elif any(ext in file_uri.lower() for ext in ['.mp4', '.webm', '.mov', '.avi']):
+                                            part_type = "video"
+                                            default_name = "video.mp4"
+                                        else:
+                                            part_type = "image"
+                                            default_name = "image.png"
                                         image_parts.append({
-                                            "type": "image",
+                                            "type": part_type,
                                             "uri": file_uri,
-                                            "fileName": getattr(file_obj, 'name', 'agent-artifact.png'),
+                                            "fileName": file_name if file_name != 'agent-artifact' else default_name,
                                             "fileSize": getattr(file_obj, 'size', 0),
-                                            "mediaType": getattr(file_obj, 'mimeType', 'image/png'),
+                                            "mediaType": mime_type or ("video/mp4" if part_type == "video" else "image/png"),
                                             "storageType": "azure_blob",
                                             "status": "completed",
                                         })
@@ -721,13 +734,22 @@ class FoundryHostManager(ApplicationManager):
                                 artifact_uri = root.data.get("artifact-uri")
                                 log_debug(f"Found DataPart with dict, has artifact-uri: {bool(artifact_uri)}")
                                 if artifact_uri:
-                                    log_debug(f"Adding image to content: {root.data.get('file-name')}")
+                                    log_debug(f"Adding artifact to content: {root.data.get('file-name')}")
+                                    # Determine type based on mime or media-type
+                                    media_type = root.data.get("media-type") or root.data.get("mime", "")
+                                    file_name = root.data.get("file-name", "")
+                                    if media_type.startswith('video/') or any(ext in artifact_uri.lower() for ext in ['.mp4', '.webm', '.mov', '.avi']):
+                                        part_type = "video"
+                                        default_media = "video/mp4"
+                                    else:
+                                        part_type = "image"
+                                        default_media = "image/png"
                                     image_parts.append({
-                                        "type": "image",
+                                        "type": part_type,
                                         "uri": artifact_uri,
-                                        "fileName": root.data.get("file-name"),
+                                        "fileName": file_name,
                                         "fileSize": root.data.get("file-size"),
-                                        "mediaType": root.data.get("media-type", "image/png"),
+                                        "mediaType": media_type or default_media,
                                         "storageType": root.data.get("storage-type", "azure_blob"),
                                         "status": root.data.get("status"),
                                         "sourceUrl": root.data.get("source-url"),
