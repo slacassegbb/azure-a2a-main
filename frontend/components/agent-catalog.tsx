@@ -20,7 +20,11 @@ import {
   RefreshCw,
   UserPlus,
   Check,
-  X
+  X,
+  UserCheck,
+  UserMinus,
+  Power,
+  Plus
 } from "lucide-react"
 import {
   Dialog,
@@ -520,11 +524,10 @@ export function AgentCatalog() {
                                 <TooltipTrigger asChild>
                                   <Button
                                     onClick={() => handleDisableAgent(agent)}
-                                    size="sm"
-                                    className="h-8 px-3 rounded-full text-xs bg-sky-500 hover:bg-sky-600 text-white shadow-sm hover:shadow-md transition-all duration-200"
+                                    size="icon"
+                                    className="h-9 w-9 rounded-full bg-red-500 hover:bg-red-600 text-white shadow-sm hover:shadow-md transition-all duration-200"
                                   >
-                                    <X className="h-3.5 w-3.5 mr-1.5" />
-                                    Disable
+                                    <UserMinus className="h-4 w-4" />
                                   </Button>
                                 </TooltipTrigger>
                                 <TooltipContent>
@@ -536,11 +539,10 @@ export function AgentCatalog() {
                                 <TooltipTrigger asChild>
                                   <Button
                                     onClick={() => handleEnableAgent(agent)}
-                                    size="sm"
-                                    className="h-8 px-3 rounded-full text-xs bg-sky-500 hover:bg-sky-600 text-white shadow-sm hover:shadow-md transition-all duration-200"
+                                    size="icon"
+                                    className="h-9 w-9 rounded-full bg-green-500 hover:bg-green-600 text-white shadow-sm hover:shadow-md transition-all duration-200"
                                   >
-                                    <Check className="h-3.5 w-3.5 mr-1.5" />
-                                    Enable
+                                    <Plus className="h-5 w-5" />
                                   </Button>
                                 </TooltipTrigger>
                                 <TooltipContent>
@@ -555,11 +557,10 @@ export function AgentCatalog() {
                                 <Button
                                   onClick={() => handleStartAgent(agent)}
                                   disabled={isStarting}
-                                  size="sm"
-                                  className="h-8 px-3 rounded-full text-xs bg-sky-500 hover:bg-sky-600 text-white shadow-sm hover:shadow-md transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                                  size="icon"
+                                  className="h-9 w-9 rounded-full bg-sky-500 hover:bg-sky-600 text-white shadow-sm hover:shadow-md transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
                                 >
-                                  <Play className="h-3.5 w-3.5 mr-1.5" />
-                                  {isStarting ? "Waking..." : "Wake Up"}
+                                  <Power className="h-4 w-4" />
                                 </Button>
                               </TooltipTrigger>
                               <TooltipContent>
