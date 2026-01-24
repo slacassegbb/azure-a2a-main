@@ -108,10 +108,14 @@ if [ -f "$AGENT_PATH/.env" ]; then
     DEFAULT_AI_MODEL=$(grep "AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME" "$AGENT_PATH/.env" | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
     # Read optional OPENAI_API_KEY for agents that use OpenAI directly (e.g., image generator)
     OPENAI_API_KEY=$(grep "^OPENAI_API_KEY" "$AGENT_PATH/.env" | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
+    # Read blob storage configuration for image generator
+    AZURE_STORAGE_CONNECTION_STRING=$(grep "^AZURE_STORAGE_CONNECTION_STRING" "$AGENT_PATH/.env" | cut -d '=' -f2- | tr -d '"')
 elif [ -f ".env" ]; then
     DEFAULT_AI_ENDPOINT=$(grep "AZURE_AI_FOUNDRY_PROJECT_ENDPOINT" .env | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
     DEFAULT_AI_MODEL=$(grep "AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME" .env | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
     OPENAI_API_KEY=$(grep "^OPENAI_API_KEY" .env | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
+    # Read blob storage configuration from root .env
+    AZURE_STORAGE_CONNECTION_STRING=$(grep "^AZURE_STORAGE_CONNECTION_STRING" .env | cut -d '=' -f2- | tr -d '"')
 fi
 
 # If .env values exist, use them automatically; otherwise prompt
@@ -228,6 +232,14 @@ if [ -n "$AGENT_EXISTS" ]; then
         ENV_VARS+=("OPENAI_API_KEY=$OPENAI_API_KEY")
     fi
     
+    # Add blob storage env vars for image generator agent
+    if [[ "$AGENT_NAME" == *"image_generator"* ]] && [ -n "$AZURE_STORAGE_CONNECTION_STRING" ]; then
+        ENV_VARS+=("FORCE_AZURE_BLOB=true")
+        ENV_VARS+=("AZURE_STORAGE_CONNECTION_STRING=$AZURE_STORAGE_CONNECTION_STRING")
+        ENV_VARS+=("AZURE_BLOB_CONTAINER=a2a-files")
+        echo -e "${GREEN}✅ Blob storage configuration added for Image Generator${NC}"
+    fi
+    
     az containerapp update \
         --name "$CONTAINER_NAME" \
         --resource-group "$RESOURCE_GROUP" \
@@ -243,6 +255,12 @@ else
     # Add OPENAI_API_KEY if set (for agents like image_generator that use OpenAI directly)
     if [ -n "$OPENAI_API_KEY" ]; then
         ENV_VARS_CREATE="$ENV_VARS_CREATE OPENAI_API_KEY=$OPENAI_API_KEY"
+    fi
+    
+    # Add blob storage env vars for image generator agent
+    if [[ "$AGENT_NAME" == *"image_generator"* ]] && [ -n "$AZURE_STORAGE_CONNECTION_STRING" ]; then
+        ENV_VARS_CREATE="$ENV_VARS_CREATE FORCE_AZURE_BLOB=true AZURE_STORAGE_CONNECTION_STRING=\"$AZURE_STORAGE_CONNECTION_STRING\" AZURE_BLOB_CONTAINER=a2a-files"
+        echo -e "${GREEN}✅ Blob storage configuration added for Image Generator${NC}"
     fi
     
     az containerapp create \

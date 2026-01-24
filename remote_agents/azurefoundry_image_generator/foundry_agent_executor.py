@@ -240,12 +240,8 @@ class FoundryImageGeneratorAgentExecutor(AgentExecutor):
                         response_preview = final_text_response[:500] + "..." if len(final_text_response) > 500 else final_text_response
                         logger.info(f"📤 Agent response ({len(final_text_response)} chars, {len(artifact_parts)} artifacts): {response_preview}")
                         
-                        # Emit the text response as a status update FIRST so it shows in the DAG
-                        # (Similar to how branding agent sends text directly)
-                        await task_updater.update_status(
-                            TaskState.working,
-                            message=new_agent_text_message(final_text_response, context_id=context_id)
-                        )
+                        # Don't send text separately - include everything in the final complete() message
+                        # This ensures the backend processes text + FileParts together without deduplication issues
                         
                         # This ensures downstream agents receive file metadata for agent-to-agent file exchange
                         final_parts = [Part(root=TextPart(text=final_text_response))]
