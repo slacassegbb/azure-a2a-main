@@ -136,6 +136,21 @@ class FoundryHostManager(ApplicationManager):
         log_debug(f"Response content: {resp}")
         
         parts = []
+        
+        # Handle FilePart directly (preferred format for file artifacts)
+        if isinstance(resp, FilePart):
+            file_obj = getattr(resp, 'file', None)
+            uri = getattr(file_obj, 'uri', None) if file_obj else None
+            log_debug(f"Processing as direct FilePart - uri: {uri[:80] if uri else 'none'}...")
+            parts.append(Part(root=resp))
+            return Message(
+                role='agent',
+                parts=parts,
+                contextId=context_id,
+                taskId=task_id,
+                messageId=str(uuid.uuid4()),
+            )
+        
         # Handle list of dicts (artifact wrapper)
         if isinstance(resp, list) and resp and isinstance(resp[0], dict) and 'kind' in resp[0]:
             log_debug(f"Processing as list of dicts with kind")
@@ -144,11 +159,23 @@ class FoundryHostManager(ApplicationManager):
         elif isinstance(resp, dict) and 'kind' in resp:
             log_debug(f"Processing as single dict with kind")
             items = [resp]
-        # Handle single dict with artifact metadata (from DataPart)
+        # Handle single dict with artifact metadata - CONVERT TO FilePart (not DataPart)
+        # This ensures all file references use the standard A2A FilePart format
         elif isinstance(resp, dict) and ('artifact-uri' in resp or 'artifact-id' in resp):
-            log_debug(f"Processing as artifact dict - wrapping in DataPart")
-            log_debug(f"Artifact URI: {resp.get('artifact-uri', '')[:150]}")
-            parts.append(Part(root=DataPart(data=resp)))
+            artifact_uri = resp.get('artifact-uri', '')
+            log_debug(f"Processing as artifact dict - converting to FilePart: {artifact_uri[:150]}")
+            if artifact_uri:
+                # Convert to proper A2A FilePart with FileWithUri
+                file_with_uri = FileWithUri(
+                    name=resp.get('file-name', 'artifact'),
+                    uri=artifact_uri,
+                    mimeType=resp.get('media-type', resp.get('mime', 'image/png'))
+                )
+                parts.append(Part(root=FilePart(file=file_with_uri)))
+            else:
+                # Fallback for artifact-id without URI (shouldn't happen, but be safe)
+                log_debug(f"WARNING: artifact dict without URI, using DataPart fallback")
+                parts.append(Part(root=DataPart(data=resp)))
             return Message(
                 role='agent',
                 parts=parts,

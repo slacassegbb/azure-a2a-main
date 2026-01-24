@@ -772,37 +772,55 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                   else if (part.content) {
                     content += (content ? '\n' : '') + part.content
                   }
-                  // Handle FilePart with image artifacts (from Image Generator)
+                  // PRIMARY: Handle FilePart with image artifacts (standard A2A format)
+                  // This is the canonical format - all images should come as FilePart with URI
                   else if (part.kind === 'file' && part.file?.uri) {
+                    const uri = part.file.uri
                     const mimeType = part.file.mimeType || ''
-                    if (mimeType.startsWith('image/') || /\.(png|jpe?g|gif|webp)$/i.test(part.file.uri)) {
-                      images.push({ uri: part.file.uri, fileName: part.file.name || 'Generated image' })
+                    // Only include images with valid blob storage URIs (not local cache refs)
+                    if (uri.startsWith('http://') || uri.startsWith('https://')) {
+                      if (mimeType.startsWith('image/') || /\.(png|jpe?g|gif|webp)$/i.test(uri)) {
+                        console.log(`[ChatPanel] Found FilePart image: ${uri.substring(0, 80)}...`)
+                        images.push({ uri: uri, fileName: part.file.name || 'Generated image' })
+                      }
                     }
                   }
                   // Nested FilePart format
                   else if (part.root?.kind === 'file' && part.root?.file?.uri) {
+                    const uri = part.root.file.uri
                     const mimeType = part.root.file.mimeType || ''
-                    if (mimeType.startsWith('image/') || /\.(png|jpe?g|gif|webp)$/i.test(part.root.file.uri)) {
-                      images.push({ uri: part.root.file.uri, fileName: part.root.file.name || 'Generated image' })
+                    if (uri.startsWith('http://') || uri.startsWith('https://')) {
+                      if (mimeType.startsWith('image/') || /\.(png|jpe?g|gif|webp)$/i.test(uri)) {
+                        console.log(`[ChatPanel] Found nested FilePart image: ${uri.substring(0, 80)}...`)
+                        images.push({ uri: uri, fileName: part.root.file.name || 'Generated image' })
+                      }
                     }
                   }
-                  // Handle DataPart with image artifacts
+                  // LEGACY: Handle DataPart with artifact-uri (for backward compatibility)
+                  // This should be phased out - new code should use FilePart
                   else if (part.kind === 'data' && part.data) {
                     const artifactUri = part.data['artifact-uri']
                     const fileName = part.data['file-name']
-                    if (artifactUri) {
+                    if (artifactUri && (artifactUri.startsWith('http://') || artifactUri.startsWith('https://'))) {
+                      console.log(`[ChatPanel] Found DataPart artifact-uri (legacy): ${artifactUri.substring(0, 80)}...`)
                       images.push({ uri: artifactUri, fileName })
                     }
                   }
-                  // Nested DataPart format
+                  // Nested DataPart format (legacy)
                   else if (part.root?.kind === 'data' && part.root?.data) {
                     const artifactUri = part.root.data['artifact-uri']
                     const fileName = part.root.data['file-name']
-                    if (artifactUri) {
+                    if (artifactUri && (artifactUri.startsWith('http://') || artifactUri.startsWith('https://'))) {
+                      console.log(`[ChatPanel] Found nested DataPart artifact-uri (legacy): ${artifactUri.substring(0, 80)}...`)
                       images.push({ uri: artifactUri, fileName })
                     }
                   }
                 }
+              }
+              
+              // Log final image count for debugging
+              if (images.length > 0) {
+                console.log(`[ChatPanel] Message ${index} has ${images.length} images`)
               }
               
               return {
