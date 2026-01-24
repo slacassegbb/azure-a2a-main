@@ -1072,8 +1072,18 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
         // Only process assistant messages to avoid duplicating user messages
         if (data.role === "assistant" || data.role === "system") {
           const textContent = data.content.find((c: any) => c.type === "text")?.content || ""
+          // Get image parts
           const imageContents = data.content.filter((c: any) => c.type === "image")
+          // Get video parts - either type="video" OR type="file" with video/* mimeType
+          const videoContents = data.content.filter((c: any) => 
+            c.type === "video" || (c.type === "file" && c.mimeType?.startsWith("video/"))
+          ).map((c: any) => ({
+            uri: c.uri,
+            fileName: c.name || c.fileName || "Generated video",
+            mediaType: c.mimeType || "video/mp4",
+          }))
           console.log("[ChatPanel] Image parts count:", imageContents.length)
+          console.log("[ChatPanel] Video parts count:", videoContents.length)
           // Disable markdown URL extraction - images should come from file_uploaded events with proper SAS tokens
           // Extracting URLs from text can result in URLs without access tokens
           const derivedImageAttachments = [] as any[]
@@ -1106,7 +1116,8 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
           
           const existingUris = new Set(imageContents.map((img: any) => img.uri))
           const filteredDerived = derivedImageAttachments.filter(att => !existingUris.has(att.uri))
-          const allImageAttachments = [...imageContents, ...filteredDerived]
+          // Combine images and videos into all attachments
+          const allImageAttachments = [...imageContents, ...filteredDerived, ...videoContents]
           if (allImageAttachments.length > 0) {
             const attachmentId = `${data.messageId}_attachments`
             if (!processedMessageIds.has(attachmentId)) {
@@ -1425,13 +1436,18 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
           ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp'].includes(
             (data.fileInfo.filename || '').toLowerCase().split('.').pop() || ''
           )
+        const isVideo = data.fileInfo.content_type?.startsWith('video/') || 
+          ['mp4', 'webm', 'mov', 'avi', 'mkv'].includes(
+            (data.fileInfo.filename || '').toLowerCase().split('.').pop() || ''
+          )
+        const isMedia = isImage || isVideo
         
         // Add to inference steps (with thumbnail for images, text for other files)
-        // This shows the image in the workflow panel during execution
+        // This shows the image/video in the workflow panel during execution
         setInferenceSteps(prev => [...prev, { 
           agent: data.fileInfo.source_agent, 
           status: `📎 Generated ${data.fileInfo.filename}`,
-          imageUrl: isImage && data.fileInfo.uri ? data.fileInfo.uri : undefined,
+          imageUrl: isMedia && data.fileInfo.uri ? data.fileInfo.uri : undefined,
           imageName: data.fileInfo.filename
         }])
         
@@ -1440,16 +1456,16 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
         // This ensures the image appears AFTER the workflow, not before it
         
         // Add to file history so it appears in the sidebar
-        if (isImage && data.fileInfo.uri) {
+        if (isMedia && data.fileInfo.uri) {
           if ((window as any).addFileToHistory) {
             (window as any).addFileToHistory({
               file_id: data.fileInfo.uri,
-              filename: data.fileInfo.filename || "Generated image",
+              filename: data.fileInfo.filename || (isVideo ? "Generated video" : "Generated image"),
               size: data.fileInfo.size || 0,
-              content_type: data.fileInfo.content_type || "image/png",
+              content_type: data.fileInfo.content_type || (isVideo ? "video/mp4" : "image/png"),
               uri: data.fileInfo.uri,
             })
-            console.log("[ChatPanel] Added image to file history:", data.fileInfo.filename)
+            console.log("[ChatPanel] Added media to file history:", data.fileInfo.filename)
           }
         }
       }

@@ -414,18 +414,22 @@ class WebSocketStreamer:
                         })
                     elif hasattr(part, 'file') and part.file:
                         file_obj = part.file
+                        mime_type = getattr(file_obj, 'mimeType', '')
                         file_dict = {
                             "type": "file",
-                            "content": f"File: {getattr(file_obj, 'name', 'unknown')}"
+                            "content": f"File: {getattr(file_obj, 'name', 'unknown')}",
+                            "mimeType": mime_type  # Always include mimeType for frontend filtering
                         }
                         # Include URI if available (for images and other files)
                         if hasattr(file_obj, 'uri') and file_obj.uri:
                             file_dict["uri"] = str(file_obj.uri)
                             file_dict["fileName"] = getattr(file_obj, 'name', 'unknown')
                             # Check if it's an image based on URI or mimeType
-                            mime_type = getattr(file_obj, 'mimeType', '')
                             if mime_type.startswith('image/') or any(ext in str(file_obj.uri).lower() for ext in ['.png', '.jpg', '.jpeg', '.gif', '.webp']):
                                 file_dict["type"] = "image"
+                            # Check if it's a video based on mimeType or URI
+                            elif mime_type.startswith('video/') or any(ext in str(file_obj.uri).lower() for ext in ['.mp4', '.webm', '.mov', '.avi']):
+                                file_dict["type"] = "video"
                         content.append(file_dict)
                 return content
             else:
