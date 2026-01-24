@@ -106,9 +106,12 @@ echo -e "${CYAN}🔑 Azure AI Foundry Configuration${NC}"
 if [ -f "$AGENT_PATH/.env" ]; then
     DEFAULT_AI_ENDPOINT=$(grep "AZURE_AI_FOUNDRY_PROJECT_ENDPOINT" "$AGENT_PATH/.env" | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
     DEFAULT_AI_MODEL=$(grep "AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME" "$AGENT_PATH/.env" | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
+    # Read optional OPENAI_API_KEY for agents that use OpenAI directly (e.g., image generator)
+    OPENAI_API_KEY=$(grep "^OPENAI_API_KEY" "$AGENT_PATH/.env" | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
 elif [ -f ".env" ]; then
     DEFAULT_AI_ENDPOINT=$(grep "AZURE_AI_FOUNDRY_PROJECT_ENDPOINT" .env | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
     DEFAULT_AI_MODEL=$(grep "AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME" .env | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
+    OPENAI_API_KEY=$(grep "^OPENAI_API_KEY" .env | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
 fi
 
 # If .env values exist, use them automatically; otherwise prompt
@@ -118,6 +121,9 @@ if [ -n "$DEFAULT_AI_ENDPOINT" ] && [ -n "$DEFAULT_AI_MODEL" ]; then
     echo -e "${GREEN}✅ Using configuration from .env file${NC}"
     echo -e "${WHITE}  Endpoint: $AZURE_AI_ENDPOINT${NC}"
     echo -e "${WHITE}  Model: $AZURE_AI_MODEL_DEPLOYMENT${NC}"
+    if [ -n "$OPENAI_API_KEY" ]; then
+        echo -e "${WHITE}  OpenAI API Key: ****${OPENAI_API_KEY: -4}${NC}"
+    fi
 else
     echo -e "${YELLOW}No .env file found, please enter configuration:${NC}"
     read -p "Azure AI Foundry Project Endpoint: " AZURE_AI_ENDPOINT
@@ -206,21 +212,39 @@ if [ -n "$AGENT_EXISTS" ]; then
         --resource-group "$RESOURCE_GROUP" \
         --query properties.configuration.ingress.fqdn -o tsv)
     
+    # Build env vars array
+    ENV_VARS=(
+        "A2A_PORT=$PORT"
+        "A2A_HOST=0.0.0.0"
+        "A2A_ENDPOINT=https://$AGENT_FQDN"
+        "BACKEND_SERVER_URL=$BACKEND_URL"
+        "AZURE_AI_FOUNDRY_PROJECT_ENDPOINT=$AZURE_AI_ENDPOINT"
+        "AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME=$AZURE_AI_MODEL_DEPLOYMENT"
+        "AZURE_CLIENT_ID=$MANAGED_IDENTITY_CLIENT_ID"
+    )
+    
+    # Add OPENAI_API_KEY if set (for agents like image_generator that use OpenAI directly)
+    if [ -n "$OPENAI_API_KEY" ]; then
+        ENV_VARS+=("OPENAI_API_KEY=$OPENAI_API_KEY")
+    fi
+    
     az containerapp update \
         --name "$CONTAINER_NAME" \
         --resource-group "$RESOURCE_GROUP" \
         --image "$IMAGE_NAME" \
-        --set-env-vars \
-            "A2A_PORT=$PORT" \
-            "A2A_HOST=0.0.0.0" \
-            "A2A_ENDPOINT=https://$AGENT_FQDN" \
-            "BACKEND_SERVER_URL=$BACKEND_URL" \
-            "AZURE_AI_FOUNDRY_PROJECT_ENDPOINT=$AZURE_AI_ENDPOINT" \
-            "AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME=$AZURE_AI_MODEL_DEPLOYMENT" \
-            "AZURE_CLIENT_ID=$MANAGED_IDENTITY_CLIENT_ID" \
+        --set-env-vars "${ENV_VARS[@]}" \
         --output none
 else
     echo -e "${YELLOW}  Creating new agent...${NC}"
+    
+    # Build env vars string for create command
+    ENV_VARS_CREATE="A2A_PORT=$PORT A2A_HOST=0.0.0.0 AZURE_AI_FOUNDRY_PROJECT_ENDPOINT=$AZURE_AI_ENDPOINT AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME=$AZURE_AI_MODEL_DEPLOYMENT AZURE_CLIENT_ID=$MANAGED_IDENTITY_CLIENT_ID"
+    
+    # Add OPENAI_API_KEY if set (for agents like image_generator that use OpenAI directly)
+    if [ -n "$OPENAI_API_KEY" ]; then
+        ENV_VARS_CREATE="$ENV_VARS_CREATE OPENAI_API_KEY=$OPENAI_API_KEY"
+    fi
+    
     az containerapp create \
         --name "$CONTAINER_NAME" \
         --resource-group "$RESOURCE_GROUP" \
@@ -234,12 +258,7 @@ else
         --max-replicas 1 \
         --cpu 0.5 \
         --memory 1.0Gi \
-        --env-vars \
-            "A2A_PORT=$PORT" \
-            "A2A_HOST=0.0.0.0" \
-            "AZURE_AI_FOUNDRY_PROJECT_ENDPOINT=$AZURE_AI_ENDPOINT" \
-            "AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME=$AZURE_AI_MODEL_DEPLOYMENT" \
-            "AZURE_CLIENT_ID=$MANAGED_IDENTITY_CLIENT_ID" \
+        --env-vars $ENV_VARS_CREATE \
         --output none
     
     # Get the newly created agent's FQDN and update with A2A_ENDPOINT and BACKEND_SERVER_URL
