@@ -1552,6 +1552,12 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
           agent: data.message.agent,
           // Include images from the message so they appear inline with the response
           images: data.message.images || [],
+          // Convert images to attachments format for rendering (images show refine buttons, attachments property is what JSX renders)
+          attachments: (data.message.images || []).map((img: any) => ({
+            uri: img.uri,
+            fileName: img.fileName || "Generated image",
+            mediaType: img.mediaType || "image/png",
+          })),
         }
         messagesToAdd.push(finalMessage)
       }
