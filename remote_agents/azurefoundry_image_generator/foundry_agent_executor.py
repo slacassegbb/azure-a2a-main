@@ -169,14 +169,14 @@ class FoundryImageGeneratorAgentExecutor(AgentExecutor):
                         attachments=attachments,
                     ):
                         # Check if this is a tool call event from remote agent
-                        if event.startswith("🛠️ Remote agent executing:"):
-                            tool_description = event.replace("🛠️ Remote agent executing: ", "").strip()
+                        if event.startswith("🎨 Creating"):
+                            tool_description = event.replace("🎨 Creating your image", "Creating your image").strip()
                             if tool_description not in seen_tools:
                                 seen_tools.add(tool_description)
                                 tools_called.append(tool_description)
                                 # Emit tool call in real-time
                                 tool_event_msg = new_agent_text_message(
-                                    f"🛠️ Remote agent executing: {tool_description}", context_id=context_id
+                                    f"🎨 {tool_description}...", context_id=context_id
                                 )
                                 await task_updater.update_status(
                                     TaskState.working,

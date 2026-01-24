@@ -873,7 +873,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
         emit("status_update", {
           inferenceId: data.taskId,
           agent: data.agentName || "System",
-          status: "starting new task"
+          status: "🚀 Starting a new task..."
         })
       }
     }
@@ -1297,7 +1297,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
     const handleToolCall = (data: any) => {
       console.log("[ChatPanel] Tool call received:", data)
       if (data.toolName && data.agentName) {
-        const status = `🛠️ Calling ${data.toolName}`
+        const status = `� Using ${data.toolName} to help...`
         setInferenceSteps(prev => [...prev, { 
           agent: data.agentName, 
           status: status 

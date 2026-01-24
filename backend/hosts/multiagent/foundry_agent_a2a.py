@@ -4916,7 +4916,7 @@ Answer with just JSON:
             # ========================================================================
             # EMIT WORKFLOW MESSAGE: Clear "Calling agent" message for workflow panel
             # ========================================================================
-            asyncio.create_task(self._emit_granular_agent_event(agent_name, f"📞 Calling {agent_name}...", contextId))
+            asyncio.create_task(self._emit_granular_agent_event(agent_name, f"📞 Contacting {agent_name} to help with this...", contextId))
             
             # ========================================================================
             # EMIT INITIAL STATUS: "submitted" - task has been sent to remote agent
@@ -5077,7 +5077,13 @@ Answer with just JSON:
                                         state_value = state.value
                                     else:
                                         state_value = str(state)
-                                    status_text = f"status: {state_value}"
+                                    # Make status messages more friendly
+                                    if state_value == "working":
+                                        status_text = "🔄 Working on it..."
+                                    elif state_value == "submitted":
+                                        status_text = "📨 Request sent, waiting for response..."
+                                    else:
+                                        status_text = f"status: {state_value}"
                             
                             # Stream detailed status to UI - USE HOST'S contextId for routing!
                             asyncio.create_task(self._emit_granular_agent_event(agent_name, status_text, host_context_id))
@@ -5180,7 +5186,7 @@ Answer with just JSON:
                     asyncio.create_task(emit_completed_status())
                     
                     # Emit workflow message for completed task
-                    asyncio.create_task(self._emit_granular_agent_event(agent_name, f"✅ {agent_name} completed task", contextId))
+                    asyncio.create_task(self._emit_granular_agent_event(agent_name, f"✅ Great! {agent_name} finished successfully", contextId))
                     
                     response_parts = []
                     

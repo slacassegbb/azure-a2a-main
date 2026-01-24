@@ -553,7 +553,7 @@ Always validate the prompt for safety before invoking the tool.
                                 if tool_type not in tool_calls_yielded:
                                     # Show actual tool calls that we can detect
                                     tool_description = self._get_tool_description(tool_type, tool_call)
-                                    yield f"🛠️ Remote agent executing: {tool_description}"
+                                    yield f"🎨 Creating your image..."
                                     tool_calls_yielded.add(tool_type)
             except Exception as e:
                 # Continue if we can't get run steps yet
