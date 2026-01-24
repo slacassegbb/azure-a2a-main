@@ -761,8 +761,10 @@ class FoundryHostManager(ApplicationManager):
                         self._pending_artifacts.pop(context_id, None)
 
                     success = await streamer._send_event("message", event_data, context_id)
+                    print(f"📁 [FILE_HISTORY] Checking {len(event_data['content'])} content items for images...")
                     for content_item in event_data["content"]:
                         if content_item.get("type") == "image":
+                            print(f"📁 [FILE_HISTORY] Found image content with uri: {content_item.get('uri', 'no-uri')[:80]}...")
                             log_debug(f"Found file content with uri: {content_item.get('uri')}")
                         if content_item.get("type") == "image" and content_item.get("uri"):
                             file_uri = content_item.get("uri")
@@ -777,8 +779,27 @@ class FoundryHostManager(ApplicationManager):
                                 "source_agent": status_agent_name,
                                 "contextId": context_id
                             }
+                            print(f"📁 [FILE_HISTORY] Emitting file_uploaded event for: {file_info['filename']}")
                             await streamer.stream_file_uploaded(file_info, context_id)
                             log_debug(f"File uploaded event sent for agent artifact: {file_info['filename']}")
+                            
+                            # Register file in agent file registry for session persistence
+                            # Extract session_id from context_id (format: sessionId::conversationId)
+                            try:
+                                from service.agent_file_registry import register_agent_file
+                                session_id = context_id.split('::')[0] if '::' in context_id else context_id
+                                register_agent_file(
+                                    session_id=session_id,
+                                    file_id=file_info["file_id"],
+                                    filename=file_info["filename"],
+                                    uri=file_uri,
+                                    content_type=file_info["content_type"],
+                                    size=file_info.get("size", 0),
+                                    source_agent=status_agent_name
+                                )
+                                print(f"📁 [FILE_REGISTRY] Registered agent file for session {session_id[:8]}...")
+                            except Exception as reg_error:
+                                print(f"⚠️ [FILE_REGISTRY] Failed to register file: {reg_error}")
                             
                             await streamer._send_event(
                                 "remote_agent_activity",
