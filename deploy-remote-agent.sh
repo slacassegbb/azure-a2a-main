@@ -351,19 +351,28 @@ if [ -z "$COGNITIVE_SERVICES_ID" ]; then
 fi
 
 if [ -n "$COGNITIVE_SERVICES_ID" ]; then
-    echo -e "${YELLOW}  Granting 'Cognitive Services User' role...${NC}"
+    # Determine which role to assign based on agent type
+    # Video agents (using Sora) need Contributor role for video generation
+    # Other agents can use the basic User role
+    if [[ "$AGENT_NAME" == *"video"* ]]; then
+        ROLE_NAME="Cognitive Services OpenAI Contributor"
+        echo -e "${YELLOW}  Granting '$ROLE_NAME' role (required for Sora video generation)...${NC}"
+    else
+        ROLE_NAME="Cognitive Services User"
+        echo -e "${YELLOW}  Granting '$ROLE_NAME' role...${NC}"
+    fi
     
     # Check if role assignment already exists
     EXISTING_ROLE=$(az role assignment list \
         --assignee "$PRINCIPAL_ID" \
-        --role "Cognitive Services User" \
+        --role "$ROLE_NAME" \
         --scope "$COGNITIVE_SERVICES_ID" \
         --query "[0].id" -o tsv 2>/dev/null)
     
     if [ -z "$EXISTING_ROLE" ]; then
         az role assignment create \
             --assignee "$PRINCIPAL_ID" \
-            --role "Cognitive Services User" \
+            --role "$ROLE_NAME" \
             --scope "$COGNITIVE_SERVICES_ID" \
             --output none
         echo -e "${GREEN}  ✅ Role assigned (may take 2-3 minutes to propagate)${NC}"

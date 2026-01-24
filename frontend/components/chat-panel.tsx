@@ -746,7 +746,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
             const convertedMessages: Message[] = apiMessages.map((msg, index) => {
               // Extract text content from parts - handle A2A format
               let content = ''
-              let images: { uri: string; fileName?: string }[] = []
+              let images: { uri: string; fileName?: string; mimeType?: string }[] = []
               
               // DEBUG: Log the raw message parts to trace image persistence issues
               console.log(`[ChatPanel] Message ${index} parts:`, JSON.stringify(msg.parts, null, 2).substring(0, 500))
@@ -772,16 +772,20 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                   else if (part.content) {
                     content += (content ? '\n' : '') + part.content
                   }
-                  // PRIMARY: Handle FilePart with image artifacts (standard A2A format)
-                  // This is the canonical format - all images should come as FilePart with URI
+                  // PRIMARY: Handle FilePart with media artifacts (standard A2A format)
+                  // This is the canonical format - all media files (images, videos) should come as FilePart with URI
                   else if (part.kind === 'file' && part.file?.uri) {
                     const uri = part.file.uri
                     const mimeType = part.file.mimeType || ''
-                    // Only include images with valid blob storage URIs (not local cache refs)
+                    // Only include media files with valid blob storage URIs (not local cache refs)
                     if (uri.startsWith('http://') || uri.startsWith('https://')) {
-                      if (mimeType.startsWith('image/') || /\.(png|jpe?g|gif|webp)$/i.test(uri)) {
-                        console.log(`[ChatPanel] Found FilePart image: ${uri.substring(0, 80)}...`)
-                        images.push({ uri: uri, fileName: part.file.name || 'Generated image' })
+                      // Accept images and videos
+                      const isImage = mimeType.startsWith('image/') || /\.(png|jpe?g|gif|webp)$/i.test(uri)
+                      const isVideo = mimeType.startsWith('video/') || /\.(mp4|mov|avi|mkv|webm)$/i.test(uri)
+                      if (isImage || isVideo) {
+                        const mediaType = isVideo ? 'video' : 'image'
+                        console.log(`[ChatPanel] Found FilePart ${mediaType}: ${uri.substring(0, 80)}...`)
+                        images.push({ uri: uri, fileName: part.file.name || `Generated ${mediaType}`, mimeType: mimeType })
                       }
                     }
                   }
@@ -790,9 +794,13 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                     const uri = part.root.file.uri
                     const mimeType = part.root.file.mimeType || ''
                     if (uri.startsWith('http://') || uri.startsWith('https://')) {
-                      if (mimeType.startsWith('image/') || /\.(png|jpe?g|gif|webp)$/i.test(uri)) {
-                        console.log(`[ChatPanel] Found nested FilePart image: ${uri.substring(0, 80)}...`)
-                        images.push({ uri: uri, fileName: part.root.file.name || 'Generated image' })
+                      // Accept images and videos
+                      const isImage = mimeType.startsWith('image/') || /\.(png|jpe?g|gif|webp)$/i.test(uri)
+                      const isVideo = mimeType.startsWith('video/') || /\.(mp4|mov|avi|mkv|webm)$/i.test(uri)
+                      if (isImage || isVideo) {
+                        const mediaType = isVideo ? 'video' : 'image'
+                        console.log(`[ChatPanel] Found nested FilePart ${mediaType}: ${uri.substring(0, 80)}...`)
+                        images.push({ uri: uri, fileName: part.root.file.name || `Generated ${mediaType}`, mimeType: mimeType })
                       }
                     }
                   }
@@ -818,9 +826,9 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                 }
               }
               
-              // Log final image count for debugging
+              // Log final file count for debugging
               if (images.length > 0) {
-                console.log(`[ChatPanel] Message ${index} has ${images.length} images`)
+                console.log(`[ChatPanel] Message ${index} has ${images.length} files (images/videos)`)
               }
               
               return {
@@ -829,12 +837,27 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                       (msg.role === 'agent' ? 'assistant' : msg.role) : 'assistant',
                 content: content,
                 images: images.length > 0 ? images : undefined,
-                // Convert images to attachments format for rendering (JSX looks for attachments, not images)
-                attachments: images.length > 0 ? images.map(img => ({
-                  uri: img.uri,
-                  fileName: img.fileName || "Generated image",
-                  mediaType: "image/png", // Default to PNG for generated images
-                })) : undefined,
+                // Convert media files to attachments format for rendering (JSX looks for attachments, not images)
+                attachments: images.length > 0 ? images.map(img => {
+                  // Use the actual mimeType from the file, or infer from extension
+                  let mediaType = img.mimeType || 'image/png'
+                  if (!img.mimeType) {
+                    // Fallback: infer from file extension
+                    const ext = img.fileName?.split('.').pop()?.toLowerCase()
+                    if (ext === 'mp4' || ext === 'mov' || ext === 'avi' || ext === 'mkv' || ext === 'webm') {
+                      mediaType = `video/${ext === 'mov' ? 'quicktime' : ext}`
+                    } else if (ext === 'jpg' || ext === 'jpeg') {
+                      mediaType = 'image/jpeg'
+                    } else if (ext === 'png' || ext === 'gif' || ext === 'webp') {
+                      mediaType = `image/${ext}`
+                    }
+                  }
+                  return {
+                    uri: img.uri,
+                    fileName: img.fileName || "Generated file",
+                    mediaType: mediaType,
+                  }
+                }) : undefined,
                 agent: (msg.role === 'assistant' || msg.role === 'agent') ? 'Assistant' : undefined
               }
             })
