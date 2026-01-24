@@ -323,22 +323,54 @@ export function AgentCatalog() {
     
     try {
       toast({
-        title: "Starting Agent...",
-        description: `Starting ${agent.name}`,
+        title: "Waking Up Agent...",
+        description: `Triggering ${agent.name} (may take 10-15 seconds if cold start)`,
       })
       
-      // For now, just simulate starting
-      await new Promise(resolve => setTimeout(resolve, 2000))
+      // Ping the agent's health endpoint multiple times to trigger Azure auto-scale
+      // This will wake up the container if it's scaled to 0
+      const maxRetries = 3
+      let isOnline = false
       
-      toast({
-        title: "Agent Started",
-        description: `${agent.name} is now running`,
-      })
+      for (let i = 0; i < maxRetries; i++) {
+        console.log(`[Agent Catalog] Wake-up attempt ${i + 1}/${maxRetries} for ${agent.name}`)
+        
+        // Check agent health (this will trigger auto-scale)
+        isOnline = await checkAgentHealth(agent.endpoint)
+        
+        if (isOnline) {
+          console.log(`[Agent Catalog] Agent ${agent.name} is now online!`)
+          break
+        }
+        
+        // Wait between retries (10 seconds for cold start)
+        if (i < maxRetries - 1) {
+          await new Promise(resolve => setTimeout(resolve, 10000))
+        }
+      }
+      
+      if (isOnline) {
+        toast({
+          title: "Agent Awake! ✅",
+          description: `${agent.name} is now running and ready`,
+        })
+        
+        // Refresh the agent's status in the UI
+        setCatalogAgents(prev => prev.map(a => 
+          a.id === agent.id ? { ...a, status: "Online" } : a
+        ))
+      } else {
+        toast({
+          title: "Wake Up Failed",
+          description: `${agent.name} did not respond. It may need more time or manual intervention.`,
+          variant: "destructive"
+        })
+      }
     } catch (error) {
-      console.error('[Agent Catalog] Error starting agent:', error)
+      console.error('[Agent Catalog] Error waking up agent:', error)
       toast({
         title: "Error",
-        description: "Failed to start agent",
+        description: "Failed to wake up agent",
         variant: "destructive"
       })
     } finally {
@@ -498,15 +530,18 @@ export function AgentCatalog() {
                             </Button>
                           )
                         )}
-                        <Button
-                          onClick={() => handleStartAgent(agent)}
-                          disabled={isStarting || isOffline}
-                          size="sm"
-                          className="h-7 px-2 text-xs"
-                        >
-                          <Play className="h-3 w-3 mr-1" />
-                          {isStarting ? "Starting..." : "Start"}
-                        </Button>
+                        {agent.status === "Offline" && (
+                          <Button
+                            onClick={() => handleStartAgent(agent)}
+                            disabled={isStarting}
+                            size="sm"
+                            variant="outline"
+                            className="h-7 px-2 text-xs text-yellow-600 border-yellow-200 hover:bg-yellow-50"
+                          >
+                            <Play className="h-3 w-3 mr-1" />
+                            {isStarting ? "Waking..." : "Wake Up"}
+                          </Button>
+                        )}
                       </div>
                     </div>
                   </CardHeader>
