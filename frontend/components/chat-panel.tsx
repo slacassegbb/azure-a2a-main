@@ -624,7 +624,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const messagesContainerRef = useRef<HTMLDivElement>(null)
   const [isInferencing, setIsInferencing] = useState(false)
-  const [inferenceSteps, setInferenceSteps] = useState<{ agent: string; status: string; imageUrl?: string; imageName?: string }[]>([])
+  const [inferenceSteps, setInferenceSteps] = useState<{ agent: string; status: string; imageUrl?: string; imageName?: string; mediaType?: string }[]>([])
   const [localActiveNode, setLocalActiveNode] = useState<string | null>(null)
   // Use external activeNode if provided, otherwise use local state
   const activeNode = externalActiveNode !== undefined ? externalActiveNode : localActiveNode
@@ -1448,7 +1448,8 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
           agent: data.fileInfo.source_agent, 
           status: `📎 Generated ${data.fileInfo.filename}`,
           imageUrl: isMedia && data.fileInfo.uri ? data.fileInfo.uri : undefined,
-          imageName: data.fileInfo.filename
+          imageName: data.fileInfo.filename,
+          mediaType: data.fileInfo.content_type || (isVideo ? "video/mp4" : "image/png")
         }])
         
         // NOTE: We do NOT add images as separate messages here anymore
@@ -1648,24 +1649,24 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
         messagesToAdd.push(finalMessage)
       }
 
-      // Add any images from inference steps as separate messages AFTER the final response
-      // This ensures images appear below the workflow and response, not above
-      const imagesFromSteps = inferenceSteps.filter(step => step.imageUrl)
-      if (imagesFromSteps.length > 0) {
-        imagesFromSteps.forEach((step, idx) => {
-          const imageMsg: Message = {
-            id: `img_${responseId}_${idx}_${Date.now()}`,
+      // Add any images/videos from inference steps as separate messages AFTER the final response
+      // This ensures media appear below the workflow and response, not above
+      const mediaFromSteps = inferenceSteps.filter(step => step.imageUrl)
+      if (mediaFromSteps.length > 0) {
+        mediaFromSteps.forEach((step, idx) => {
+          const mediaMsg: Message = {
+            id: `media_${responseId}_${idx}_${Date.now()}`,
             role: "assistant",
             agent: step.agent,
             content: "",
             attachments: [{
               uri: step.imageUrl!,
-              fileName: step.imageName || "Generated image",
-              mediaType: "image/png",
+              fileName: step.imageName || (step.mediaType?.startsWith("video/") ? "Generated video" : "Generated image"),
+              mediaType: step.mediaType || "image/png",
             }],
           }
-          messagesToAdd.push(imageMsg)
-          console.log("[ChatPanel] Adding image from inference steps after final response:", imageMsg)
+          messagesToAdd.push(mediaMsg)
+          console.log("[ChatPanel] Adding media from inference steps after final response:", mediaMsg)
         })
       }
 
