@@ -347,6 +347,15 @@ class ConversationServer:
         return ListMessageResponse(result=[])
 
     def cache_content(self, messages: list[Message]):
+        """Process messages for API response.
+        
+        For FileParts:
+        - If file has a valid HTTP/HTTPS URI (blob storage), preserve it as-is
+        - If file has embedded bytes, cache them and replace with local reference
+        
+        This ensures blob storage URIs (from Image Generator, etc.) are preserved
+        and images persist across page refreshes.
+        """
         rval = []
         for m in messages:
             message_id = get_message_id(m)
@@ -359,13 +368,32 @@ class ConversationServer:
                 if part.kind != 'file':
                     new_parts.append(p)
                     continue
+                
+                # Check if this FilePart already has a valid HTTP/HTTPS URI (blob storage)
+                # If so, preserve it - don't replace with local cache reference
+                file_obj = part.file
+                if hasattr(file_obj, 'uri') and file_obj.uri:
+                    uri_str = str(file_obj.uri)
+                    if uri_str.startswith(('http://', 'https://')):
+                        # Keep the original blob storage URI
+                        log_debug(f"📸 Preserving blob URI for file: {uri_str[:80]}...")
+                        new_parts.append(p)
+                        continue
+                
+                # Only cache files with embedded bytes (FileWithBytes)
+                if not hasattr(file_obj, 'bytes') or not file_obj.bytes:
+                    # No bytes and no valid URI - skip this part
+                    log_debug(f"⚠️ FilePart has no bytes and no valid URI, skipping")
+                    new_parts.append(p)
+                    continue
+                
                 message_part_id = f'{message_id}:{i}'
                 if message_part_id in self._message_to_cache:
                     cache_id = self._message_to_cache[message_part_id]
                 else:
                     cache_id = str(uuid.uuid4())
                     self._message_to_cache[message_part_id] = cache_id
-                # Replace the part data with a url reference
+                # Replace embedded bytes with a local url reference
                 new_parts.append(
                     Part(
                         root=FilePart(

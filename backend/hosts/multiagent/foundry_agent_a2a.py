@@ -5245,16 +5245,22 @@ Answer with just JSON:
                         latest = session_context._latest_processed_parts
                         print(f"📦 After convert_parts, _latest_processed_parts has {len(latest)} items total (accumulated)")
                         
-                    # Add DataParts from THIS response to _agent_generated_artifacts for UI display
-                    # Use response_parts (from THIS agent) instead of _latest_processed_parts (accumulated)
+                    # Add file artifacts from THIS response to _agent_generated_artifacts for UI display
+                    # Support both FilePart (preferred) and DataPart (legacy) formats
                     mode = "Agent Mode" if session_context.agent_mode else "Standard Mode"
-                    print(f"🔍 [{mode}] Checking response_parts ({len(response_parts)} items) for DataParts to add...")
+                    print(f"🔍 [{mode}] Checking response_parts ({len(response_parts)} items) for file artifacts...")
                     for item in response_parts:
-                        if isinstance(item, DataPart) or (hasattr(item, 'root') and isinstance(item.root, DataPart)):
+                        # Check for FilePart (new standard format)
+                        is_file_part = isinstance(item, FilePart) or (hasattr(item, 'root') and isinstance(item.root, FilePart))
+                        # Check for DataPart with artifact-uri (legacy format)
+                        is_data_artifact = isinstance(item, DataPart) or (hasattr(item, 'root') and isinstance(item.root, DataPart))
+                        
+                        if is_file_part or is_data_artifact:
                             if not hasattr(session_context, '_agent_generated_artifacts'):
                                 session_context._agent_generated_artifacts = []
                             session_context._agent_generated_artifacts.append(item)
-                            print(f"📎 [STREAMING - {mode}] Added DataPart from THIS response to _agent_generated_artifacts")
+                            part_type = "FilePart" if is_file_part else "DataPart"
+                            print(f"📎 [STREAMING - {mode}] Added {part_type} from THIS response to _agent_generated_artifacts")
                     
                     if hasattr(session_context, '_agent_generated_artifacts'):
                         print(f"✅ [{mode}] Total _agent_generated_artifacts: {len(session_context._agent_generated_artifacts)}")
@@ -7206,25 +7212,48 @@ Original request: {message}"""
 
                 # Include ONLY agent-generated artifacts (not user uploads) in Standard Mode
                 # This ensures NEW images show up with "Refine" buttons, but user uploads don't echo
+                # Support both FilePart (preferred) and DataPart (legacy) formats
                 if hasattr(session_context, '_agent_generated_artifacts'):
-                    artifact_dicts = []
-                    for part in session_context._agent_generated_artifacts:
-                        # Check for wrapped Part objects with .root
-                        if hasattr(part, 'root'):
-                            if isinstance(part.root, DataPart) and isinstance(part.root.data, dict) and 'artifact-uri' in part.root.data:
-                                artifact_dicts.append(part.root.data)
-                        # Check for unwrapped DataPart objects (no .root)
-                        elif isinstance(part, DataPart):
-                            if isinstance(part.data, dict) and 'artifact-uri' in part.data:
-                                artifact_dicts.append(part.data)
+                    artifact_file_parts = []  # FilePart objects (new format)
+                    artifact_dicts = []       # Dicts from DataPart (legacy format)
                     
+                    for part in session_context._agent_generated_artifacts:
+                        # Check for FilePart (preferred format)
+                        if isinstance(part, FilePart):
+                            file_obj = getattr(part, 'file', None)
+                            if file_obj and hasattr(file_obj, 'uri') and file_obj.uri:
+                                artifact_file_parts.append(part)
+                                log_debug(f"📦 Found FilePart artifact: {file_obj.uri[:80]}...")
+                        elif hasattr(part, 'root') and isinstance(part.root, FilePart):
+                            file_obj = getattr(part.root, 'file', None)
+                            if file_obj and hasattr(file_obj, 'uri') and file_obj.uri:
+                                artifact_file_parts.append(part.root)
+                                log_debug(f"📦 Found nested FilePart artifact: {file_obj.uri[:80]}...")
+                        # Check for DataPart with artifact-uri (legacy format)
+                        elif isinstance(part, DataPart) and isinstance(part.data, dict) and 'artifact-uri' in part.data:
+                            artifact_dicts.append(part.data)
+                        elif hasattr(part, 'root') and isinstance(part.root, DataPart):
+                            if isinstance(part.root.data, dict) and 'artifact-uri' in part.root.data:
+                                artifact_dicts.append(part.root.data)
+                    
+                    # Append FileParts directly to response (they'll be converted to Message with FilePart)
+                    if artifact_file_parts:
+                        log_debug(f"📦 [Standard Mode] Including {len(artifact_file_parts)} FilePart artifact(s) in response")
+                        final_responses.extend(artifact_file_parts)
+                        for idx, fp in enumerate(artifact_file_parts):
+                            file_obj = getattr(fp, 'file', None)
+                            uri = getattr(file_obj, 'uri', '') if file_obj else ''
+                            filename = getattr(file_obj, 'name', 'unknown') if file_obj else 'unknown'
+                            print(f"  • FilePart Artifact {idx+1}: {filename} (URI: {uri[:80]}...)")
+                    
+                    # Also include legacy DataPart dicts for backward compatibility
                     if artifact_dicts:
-                        log_debug(f"📦 [Standard Mode] Including {len(artifact_dicts)} agent-generated artifact(s) in response for UI display")
+                        log_debug(f"📦 [Standard Mode] Including {len(artifact_dicts)} DataPart artifact(s) (legacy) in response")
                         final_responses.extend(artifact_dicts)
                         for idx, artifact_data in enumerate(artifact_dicts):
                             uri = artifact_data.get('artifact-uri', '')
                             filename = artifact_data.get('file-name', 'unknown')
-                            print(f"  • Artifact {idx+1}: {filename} (URI: {uri[:80]}...)")
+                            print(f"  • DataPart Artifact {idx+1}: {filename} (URI: {uri[:80]}...)")
 
                 # If we have extracted content, prepend it to the response
                 if has_extracted_content:
