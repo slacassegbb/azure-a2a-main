@@ -413,10 +413,20 @@ class WebSocketStreamer:
                             "content": str(part.data)[:1000]  # Truncate large data
                         })
                     elif hasattr(part, 'file') and part.file:
-                        content.append({
+                        file_obj = part.file
+                        file_dict = {
                             "type": "file",
-                            "content": f"File: {getattr(part.file, 'name', 'unknown')}"
-                        })
+                            "content": f"File: {getattr(file_obj, 'name', 'unknown')}"
+                        }
+                        # Include URI if available (for images and other files)
+                        if hasattr(file_obj, 'uri') and file_obj.uri:
+                            file_dict["uri"] = str(file_obj.uri)
+                            file_dict["fileName"] = getattr(file_obj, 'name', 'unknown')
+                            # Check if it's an image based on URI or mimeType
+                            mime_type = getattr(file_obj, 'mimeType', '')
+                            if mime_type.startswith('image/') or any(ext in str(file_obj.uri).lower() for ext in ['.png', '.jpg', '.jpeg', '.gif', '.webp']):
+                                file_dict["type"] = "image"
+                        content.append(file_dict)
                 return content
             else:
                 return [{"type": "text", "content": str(message)}]
