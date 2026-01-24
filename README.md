@@ -4,6 +4,48 @@ This repository is an **experimental (and evolving)** implementation of an **Azu
 
 It demonstrates how to design, host, and scale a distributed network of intelligent agents using open protocols (**A2A**, **MCP**), **Azure AI Foundry**, and Azure-native services for **memory** and **observability**. The goal is to create an interoperable, production-grade framework that allows agents to communicate, collaborate, and reason together across environments and organizations.
 
+---
+
+## 🎉 What's New — Major Updates (Last 2 Months)
+
+### 🚀 **Azure AI Foundry Agent Service Migration**
+- **Complete refactor from Assistants API to Responses API** — Migrated the entire orchestration system to use Azure AI Foundry's new stateless Responses API, eliminating thread management complexity and improving scalability
+- **Real-time streaming support** — Full streaming implementation across backend and frontend for live agent responses, status updates, and tool execution events
+- **Direct HTTP integration** — Optimized API calls using direct HTTP requests with proper authentication and error handling
+
+### ⚡ **Parallel & Sequential Workflow Execution**
+- **Visual Workflow Designer** — Interactive canvas for building multi-agent workflows with drag-and-drop nodes and connections
+- **Parallel execution engine** — Run multiple agents simultaneously using `asyncio.gather()` for dramatic performance improvements
+- **Smart sequential detection** — Automatically detects dependencies (e.g., "then", "after that") in natural language and executes agents in order
+- **Context passing** — Sequential workflows now pass previous step outputs to subsequent steps with intelligent truncation (1000 chars) to prevent context window explosion
+- **Duplicate prevention** — Advanced deduplication logic prevents duplicate messages in workflow designer and agent bubbles
+
+### 🎓 **Benjamin School Remote Agents** (4 New Specialized Agents)
+- **AP Calculus Teacher** — Helps students with calculus problems, proofs, and exam preparation using grounded curriculum documents
+- **AP Environmental Science Teacher** — Guides students through APES concepts with access to unit review sheets and study materials
+- **Biology Teacher** — Assists with biology topics using chapter-specific documentation
+- **English Teacher** — Helps with writing assignments using rubrics, outlines, and evaluation checklists
+
+### 🎨 **Enhanced UI/UX**
+- **Improved streaming visualization** — Real-time token-by-token streaming with better status indicators and progress tracking
+- **File history sync** — Azure Blob Storage integration for persistent conversation file history across sessions
+- **Collapsible sidebar** — Better screen real estate management with animated sidebar collapse (2% width when collapsed)
+- **Enhanced tooltips** — Contextual help for attach files, voice input, system prompts, and workflow tools
+- **Cleaner chat interface** — Removed initial greeting message, improved message positioning, and streamlined welcome screen
+
+### 🛠️ **Developer Experience Improvements**
+- **Classification Response API Agent** — New reference implementation demonstrating Responses API patterns
+- **Better error handling** — Comprehensive error logging and status tracking throughout the orchestration pipeline
+- **Agent persistence** — Agents now persist in the catalog across system restarts
+- **Deployment automation** — Improved GitHub Actions CI/CD pipeline for automated deployments
+
+### 📚 **Documentation**
+- **Parallel Workflow Guide** — Complete guide for building and executing parallel workflows (`PARALLEL_WORKFLOW_GUIDE.md`)
+- **Responses API Migration Docs** — Detailed migration plan and progress tracking for the Azure AI Foundry transition
+- **Updated deployment scripts** — Refined PowerShell and Bash scripts for easier local and cloud deployment
+
+---
+
 This repository contains the complete documentation and setup instructions including the **Host Orchestrator (backend)**, **Frontend UI (frontend)**, and a collection of **specialized remote agents (remote_agents)**. Each remote agent runs independently and can connect to the Host Orchestrator through open protocols like **A2A (Agent-to-Agent)**. 
 
 You'll find detailed guides to install, configure, and run the full system, along with a **ready-to-use Agent Template** for building custom agents, plus sample agents that showcase realistic enterprise workflows including the **Claims, Fraud, Legal, Branding, Classification, Deep Search, Assessment & Estimation, Customer Support (MCP), Image Analysis, Image Generation, and Sentiment Analysis (Google ADK)** agents. Including an agent template for you to build your own remote agents quickly. 
