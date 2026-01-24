@@ -826,7 +826,7 @@
     "name": "AI Foundry Image Generator Agent",
     "description": "An Azure AI Foundry agent that can generate and edit images.",
     "version": "1.0.0",
-    "url": "http://localhost:9010/",
+    "url": "https://azurefoundry-image-generator.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
     "defaultInputModes": [
       "text"
     ],
