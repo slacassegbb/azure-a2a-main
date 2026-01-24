@@ -671,6 +671,24 @@ class FoundryHostManager(ApplicationManager):
                             root = part.root if hasattr(part, 'root') else part
                             if isinstance(root, TextPart):
                                 text_parts.append(root.text)
+                            elif isinstance(root, FilePart):
+                                # Handle FilePart with FileWithUri (from Image Generator and other agents)
+                                file_obj = getattr(root, 'file', None)
+                                if file_obj:
+                                    file_uri = getattr(file_obj, 'uri', None)
+                                    if file_uri:
+                                        log_debug(f"Found FilePart with URI: {file_uri}")
+                                        image_parts.append({
+                                            "type": "image",
+                                            "uri": file_uri,
+                                            "fileName": getattr(file_obj, 'name', 'agent-artifact.png'),
+                                            "fileSize": getattr(file_obj, 'size', 0),
+                                            "mediaType": getattr(file_obj, 'mimeType', 'image/png'),
+                                            "storageType": "azure_blob",
+                                            "status": "completed",
+                                        })
+                                    else:
+                                        log_debug(f"FilePart has no URI, skipping: {file_obj}")
                             elif isinstance(root, DataPart) and isinstance(root.data, dict):
                                 artifact_uri = root.data.get("artifact-uri")
                                 log_debug(f"Found DataPart with dict, has artifact-uri: {bool(artifact_uri)}")
