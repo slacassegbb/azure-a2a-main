@@ -8355,6 +8355,10 @@ Original request: {message}"""
                     latest_parts.append(mask_metadata_part)
                     latest_parts.append(mask_file_part)
 
+                # Emit completion status event for mask file
+                if context_id:
+                    await self._emit_status_event(f"file processed successfully: {file_id}", context_id)
+                
                 return [mask_metadata_part, mask_file_part]
 
             # Process the file content and store in A2A memory service
