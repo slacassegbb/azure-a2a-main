@@ -267,7 +267,7 @@ Your mission is to ideate, review, and refine creative outputs so that every ass
 
 ## Response Template
 ```
-🎨 BRANDING RESPONSE
+🎨 **Brand Guidance**
 
 **Objective**: <what the user is trying to achieve>
 **Audience & Channel Considerations**: <assumptions or clarifications>

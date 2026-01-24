@@ -1,12 +1,23 @@
 "use client"
 
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
-import { CheckCircle2, Loader, Workflow } from "lucide-react"
+import { Loader, Workflow } from "lucide-react"
 import { useEffect, useRef } from "react"
 
 type InferenceStepsProps = {
   steps: { agent: string; status: string; imageUrl?: string; imageName?: string }[]
   isInferencing: boolean
+}
+
+// Pulsing blue dot component - small bullet point style
+const PulsingDot = ({ size = "small" }: { size?: "small" | "large" }) => {
+  const sizeClass = size === "small" ? "h-1.5 w-1.5" : "h-2 w-2"
+  return (
+    <div className={`${sizeClass} flex-shrink-0 mt-1.5 relative`}>
+      <div className={`${sizeClass} bg-primary rounded-full animate-pulse`} />
+      <div className={`${sizeClass} bg-primary rounded-full absolute top-0 left-0 animate-ping opacity-75`} />
+    </div>
+  )
 }
 
 export function InferenceSteps({ steps, isInferencing }: InferenceStepsProps) {
@@ -31,28 +42,36 @@ export function InferenceSteps({ steps, isInferencing }: InferenceStepsProps) {
             ref={stepsContainerRef}
             className="space-y-2 max-h-48 overflow-y-auto scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-transparent"
           >
-            {steps.map((step, index) => (
-              <li key={index} className="flex items-start gap-2 text-xs text-muted-foreground">
-                <CheckCircle2 className="h-3 w-3 text-green-500 flex-shrink-0 mt-0.5" />
-                <div className="flex-1 min-w-0">
-                  <span>
-                    <span className="font-semibold text-foreground">{step.agent}:</span> {step.status}
-                  </span>
-                  {step.imageUrl && (
-                    <div className="mt-1">
-                      <img 
-                        src={step.imageUrl} 
-                        alt={step.imageName || 'Generated image'}
-                        className="w-20 h-20 object-cover rounded border border-gray-200"
-                        onError={(e) => {
-                          e.currentTarget.style.display = 'none'
-                        }}
-                      />
-                    </div>
+            {steps.map((step, index) => {
+              // Show pulsing dot for the latest step, static dot for previous steps
+              const isLatestStep = index === steps.length - 1
+              return (
+                <li key={index} className="flex items-start gap-2 text-xs text-muted-foreground">
+                  {isLatestStep ? (
+                    <PulsingDot size="small" />
+                  ) : (
+                    <div className="h-1.5 w-1.5 bg-primary rounded-full flex-shrink-0 mt-1.5 opacity-60" />
                   )}
-                </div>
-              </li>
-            ))}
+                  <div className="flex-1 min-w-0">
+                    <span className="text-foreground">
+                      {step.status}
+                    </span>
+                    {step.imageUrl && (
+                      <div className="mt-1">
+                        <img 
+                          src={step.imageUrl} 
+                          alt={step.imageName || 'Generated image'}
+                          className="w-20 h-20 object-cover rounded border border-gray-200"
+                          onError={(e) => {
+                            e.currentTarget.style.display = 'none'
+                          }}
+                        />
+                      </div>
+                    )}
+                  </div>
+                </li>
+              )
+            })}
           </ul>
         </div>
       </div>
@@ -70,28 +89,31 @@ export function InferenceSteps({ steps, isInferencing }: InferenceStepsProps) {
         </AccordionTrigger>
         <AccordionContent>
           <ul className="space-y-2 pt-2 max-h-48 overflow-y-auto scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-transparent">
-            {steps.map((step, index) => (
-              <li key={index} className="flex items-start gap-2 text-sm text-muted-foreground">
-                <CheckCircle2 className="h-4 w-4 text-green-500 flex-shrink-0 mt-0.5" />
-                <div className="flex-1 min-w-0">
-                  <span>
-                    <span className="font-semibold text-foreground">{step.agent}:</span> {step.status}
-                  </span>
-                  {step.imageUrl && (
-                    <div className="mt-1">
-                      <img 
-                        src={step.imageUrl} 
-                        alt={step.imageName || 'Generated image'}
-                        className="w-24 h-24 object-cover rounded border border-gray-200"
-                        onError={(e) => {
-                          e.currentTarget.style.display = 'none'
-                        }}
-                      />
-                    </div>
-                  )}
-                </div>
-              </li>
-            ))}
+            {steps.map((step, index) => {
+              // All steps in collapsed view show static dots
+              return (
+                <li key={index} className="flex items-start gap-2 text-sm text-muted-foreground">
+                  <div className="h-2 w-2 bg-primary rounded-full flex-shrink-0 mt-1.5 opacity-60" />
+                  <div className="flex-1 min-w-0">
+                    <span className="text-foreground">
+                      {step.status}
+                    </span>
+                    {step.imageUrl && (
+                      <div className="mt-1">
+                        <img 
+                          src={step.imageUrl} 
+                          alt={step.imageName || 'Generated image'}
+                          className="w-24 h-24 object-cover rounded border border-gray-200"
+                          onError={(e) => {
+                            e.currentTarget.style.display = 'none'
+                          }}
+                        />
+                      </div>
+                    )}
+                  </div>
+                </li>
+              )
+            })}
           </ul>
         </AccordionContent>
       </AccordionItem>
