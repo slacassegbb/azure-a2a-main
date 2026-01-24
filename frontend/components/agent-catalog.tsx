@@ -35,6 +35,12 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
 
 export function AgentCatalog() {
   const { toast } = useToast()
@@ -507,41 +513,61 @@ export function AgentCatalog() {
                         </div>
                       </div>
                       <div className="ml-2 flex gap-2" onClick={(e) => e.stopPropagation()}>
-                        {agent.status === "Online" && (
-                          isEnabled ? (
-                            <Button
-                              onClick={() => handleDisableAgent(agent)}
-                              size="sm"
-                              variant="outline"
-                              className="h-7 px-2 text-xs text-primary border-primary/20 hover:bg-primary/10"
-                            >
-                              <X className="h-3 w-3 mr-1" />
-                              Disable
-                            </Button>
-                          ) : (
-                            <Button
-                              onClick={() => handleEnableAgent(agent)}
-                              size="sm"
-                              variant="outline"
-                              className="h-7 px-2 text-xs text-green-600 border-green-200 hover:bg-green-50"
-                            >
-                              <Check className="h-3 w-3 mr-1" />
-                              Enable
-                            </Button>
-                          )
-                        )}
-                        {agent.status === "Offline" && (
-                          <Button
-                            onClick={() => handleStartAgent(agent)}
-                            disabled={isStarting}
-                            size="sm"
-                            variant="outline"
-                            className="h-7 px-2 text-xs text-yellow-600 border-yellow-200 hover:bg-yellow-50"
-                          >
-                            <Play className="h-3 w-3 mr-1" />
-                            {isStarting ? "Waking..." : "Wake Up"}
-                          </Button>
-                        )}
+                        <TooltipProvider>
+                          {agent.status === "Online" && (
+                            isEnabled ? (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button
+                                    onClick={() => handleDisableAgent(agent)}
+                                    size="sm"
+                                    className="h-8 px-3 rounded-full text-xs bg-sky-500 hover:bg-sky-600 text-white shadow-sm hover:shadow-md transition-all duration-200"
+                                  >
+                                    <X className="h-3.5 w-3.5 mr-1.5" />
+                                    Disable
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  <p>Remove agent from your team</p>
+                                </TooltipContent>
+                              </Tooltip>
+                            ) : (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button
+                                    onClick={() => handleEnableAgent(agent)}
+                                    size="sm"
+                                    className="h-8 px-3 rounded-full text-xs bg-sky-500 hover:bg-sky-600 text-white shadow-sm hover:shadow-md transition-all duration-200"
+                                  >
+                                    <Check className="h-3.5 w-3.5 mr-1.5" />
+                                    Enable
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  <p>Add agent to your team</p>
+                                </TooltipContent>
+                              </Tooltip>
+                            )
+                          )}
+                          {agent.status === "Offline" && (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  onClick={() => handleStartAgent(agent)}
+                                  disabled={isStarting}
+                                  size="sm"
+                                  className="h-8 px-3 rounded-full text-xs bg-sky-500 hover:bg-sky-600 text-white shadow-sm hover:shadow-md transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                  <Play className="h-3.5 w-3.5 mr-1.5" />
+                                  {isStarting ? "Waking..." : "Wake Up"}
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                <p>Wake up the agent container</p>
+                              </TooltipContent>
+                            </Tooltip>
+                          )}
+                        </TooltipProvider>
                       </div>
                     </div>
                   </CardHeader>
