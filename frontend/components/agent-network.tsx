@@ -94,6 +94,16 @@ type Props = {
 // Store persistent color assignments for agents
 const agentColorMap = new Map<string, any>()
 
+// Simple hash function to get consistent color for agent name
+function hashAgentName(name: string): number {
+  let hash = 0
+  for (let i = 0; i < name.length; i++) {
+    hash = ((hash << 5) - hash) + name.charCodeAt(i)
+    hash = hash & hash // Convert to 32bit integer
+  }
+  return Math.abs(hash)
+}
+
 // Function to get consistent colors for each agent
 function getAgentDisplayInfo(agentName: string) {
   // Check if we already have a color assigned for this agent
@@ -102,27 +112,22 @@ function getAgentDisplayInfo(agentName: string) {
   }
   
   const colors = [
-    { color: "text-blue-700", bgColor: "bg-blue-100" },
-    { color: "text-purple-700", bgColor: "bg-purple-100" },
-    { color: "text-green-700", bgColor: "bg-green-100" },
-    { color: "text-orange-700", bgColor: "bg-orange-100" },
-    { color: "text-red-700", bgColor: "bg-red-100" },
-    { color: "text-indigo-700", bgColor: "bg-indigo-100" },
-    { color: "text-pink-700", bgColor: "bg-pink-100" },
-    { color: "text-teal-700", bgColor: "bg-teal-100" },
-    { color: "text-cyan-700", bgColor: "bg-cyan-100" },
-    { color: "text-amber-700", bgColor: "bg-amber-100" },
-    { color: "text-lime-700", bgColor: "bg-lime-100" },
-    { color: "text-violet-700", bgColor: "bg-violet-100" },
-    { color: "text-rose-700", bgColor: "bg-rose-100" },
-    { color: "text-emerald-700", bgColor: "bg-emerald-100" },
-    { color: "text-sky-700", bgColor: "bg-sky-100" },
+    { color: "text-pink-700", bgColor: "bg-pink-100", hex: "#ec4899" },      // pink - matches AGENT_COLORS[0]
+    { color: "text-purple-700", bgColor: "bg-purple-100", hex: "#8b5cf6" },  // purple - matches AGENT_COLORS[1]
+    { color: "text-cyan-700", bgColor: "bg-cyan-100", hex: "#06b6d4" },      // cyan - matches AGENT_COLORS[2]
+    { color: "text-emerald-700", bgColor: "bg-emerald-100", hex: "#10b981" }, // emerald - matches AGENT_COLORS[3]
+    { color: "text-amber-700", bgColor: "bg-amber-100", hex: "#f59e0b" },    // amber - matches AGENT_COLORS[4]
+    { color: "text-red-700", bgColor: "bg-red-100", hex: "#ef4444" },        // red - matches AGENT_COLORS[5]
+    { color: "text-blue-700", bgColor: "bg-blue-100", hex: "#3b82f6" },      // blue - matches AGENT_COLORS[6]
+    { color: "text-teal-700", bgColor: "bg-teal-100", hex: "#14b8a6" },      // teal - matches AGENT_COLORS[7]
+    { color: "text-orange-700", bgColor: "bg-orange-100", hex: "#f97316" },  // orange - matches AGENT_COLORS[8]
+    { color: "text-violet-700", bgColor: "bg-violet-100", hex: "#a855f7" },  // violet - matches AGENT_COLORS[9]
   ]
   
-  // Pick a random color and store it persistently
-  const randomIndex = Math.floor(Math.random() * colors.length)
+  // Use hash for deterministic color selection - same agent name always gets same color
+  const colorIndex = hashAgentName(agentName) % colors.length
   const agentDisplayInfo = {
-    ...colors[randomIndex],
+    ...colors[colorIndex],
     icon: Bot // Same icon for all agents
   }
   
@@ -1163,7 +1168,15 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
                                           status.currentTask.state === "submitted" && "border-blue-300 text-blue-800"
                                         )}
                                       >
-                                        {status.currentTask.state}
+                                        {status.currentTask.state === "submitted" 
+                                          ? "Processing request" 
+                                          : status.currentTask.state === "working" 
+                                          ? "Analyzing" 
+                                          : status.currentTask.state === "completed" 
+                                          ? "Task complete" 
+                                          : status.currentTask.state === "failed" 
+                                          ? "Task failed" 
+                                          : status.currentTask.state}
                                       </Badge>
                                     </div>
                                     <div className="flex justify-between">

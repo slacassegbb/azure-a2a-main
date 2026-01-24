@@ -4913,10 +4913,16 @@ Answer with just JSON:
             # Track start time for processing duration
             start_time = time.time()
             
+            # Create a user-friendly query preview for status messages
+            # Truncate long queries to keep status messages clean
+            query_preview = message[:60] + "..." if len(message) > 60 else message
+            # Clean up the query preview - remove newlines and extra whitespace
+            query_preview = " ".join(query_preview.split())
+            
             # ========================================================================
             # EMIT WORKFLOW MESSAGE: Clear "Calling agent" message for workflow panel
             # ========================================================================
-            asyncio.create_task(self._emit_granular_agent_event(agent_name, f"📞 Contacting {agent_name}...", contextId))
+            asyncio.create_task(self._emit_granular_agent_event(agent_name, f"Contacting {agent_name}...", contextId))
             
             # ========================================================================
             # EMIT INITIAL STATUS: "submitted" - task has been sent to remote agent
@@ -5077,24 +5083,31 @@ Answer with just JSON:
                                         state_value = state.value
                                     else:
                                         state_value = str(state)
-                                    # Make status messages friendly and natural for TTS - use full agent name
+                                    
+                                    # Calculate elapsed time for context
+                                    elapsed_seconds = int(time.time() - start_time)
+                                    elapsed_str = f" ({elapsed_seconds}s)" if elapsed_seconds >= 5 else ""
+                                    
+                                    # Make status messages friendly and personalized with user's query context
                                     if state_value == "working":
-                                        status_text = f"🔄 {agent_name} is working on it..."
+                                        status_text = f"{agent_name} is working on: \"{query_preview}\"{elapsed_str}"
                                     elif state_value == "submitted":
-                                        status_text = f"📨 Request sent to {agent_name}, waiting for response..."
+                                        status_text = f"Request sent to {agent_name}: \"{query_preview}\""
                                     else:
-                                        status_text = f"📊 {agent_name} status: {state_value}"
+                                        status_text = f"{agent_name}: {state_value}{elapsed_str}"
                             
                             # Stream detailed status to UI - USE HOST'S contextId for routing!
                             asyncio.create_task(self._emit_granular_agent_event(agent_name, status_text, host_context_id))
                             
                         elif event_kind == 'artifact-update':
                             # Agent is generating artifacts - USE HOST'S contextId for routing!
-                            asyncio.create_task(self._emit_granular_agent_event(agent_name, f"📝 {agent_name} is generating artifacts...", host_context_id))
+                            elapsed_seconds = int(time.time() - start_time)
+                            elapsed_str = f" ({elapsed_seconds}s)" if elapsed_seconds >= 5 else ""
+                            asyncio.create_task(self._emit_granular_agent_event(agent_name, f"{agent_name} is preparing results{elapsed_str}", host_context_id))
                         
                         elif event_kind == 'task':
                             # Initial task creation - USE HOST'S contextId for routing!
-                            asyncio.create_task(self._emit_granular_agent_event(agent_name, f"🎯 {agent_name} has started the task", host_context_id))
+                            asyncio.create_task(self._emit_granular_agent_event(agent_name, f"{agent_name} has started working on: \"{query_preview}\"", host_context_id))
                     
                     # Call the original callback for task management
                     return self._default_task_callback(event, agent_card)                # Emit outgoing message event for DAG display (use original message, not contextualized)
@@ -5186,7 +5199,7 @@ Answer with just JSON:
                     asyncio.create_task(emit_completed_status())
                     
                     # Emit workflow message for completed task
-                    asyncio.create_task(self._emit_granular_agent_event(agent_name, f"✅ {agent_name} has completed the task successfully", contextId))
+                    asyncio.create_task(self._emit_granular_agent_event(agent_name, f"{agent_name} has completed the task successfully", contextId))
                     
                     response_parts = []
                     

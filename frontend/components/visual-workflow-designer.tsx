@@ -3430,7 +3430,10 @@ export function VisualWorkflowDesigner({
             <div className="p-3 border-b border-slate-700 bg-slate-800/50 flex items-center justify-between">
               <div>
                 <h3 className="text-sm font-semibold text-indigo-400 flex items-center gap-2">
-                  <div className="h-2 w-2 rounded-full bg-indigo-400 animate-pulse"></div>
+                  <div 
+                    className="h-2 w-2 rounded-full animate-pulse"
+                    style={{ backgroundColor: hostMessages.length > 0 ? (hostMessages[hostMessages.length - 1].agentColor || "#818cf8") : "#818cf8" }}
+                  ></div>
                   Workflow Activity
                 </h3>
                 <p className="text-xs text-slate-400 mt-1">All agent messages & orchestration</p>
@@ -3535,7 +3538,10 @@ export function VisualWorkflowDesigner({
               <div className="flex items-center gap-2">
                 <ChevronLeft className="h-4 w-4" />
                 <span className="text-xs font-medium">Activity</span>
-                <div className="h-2 w-2 rounded-full bg-indigo-400 animate-pulse"></div>
+                <div 
+                  className="h-2 w-2 rounded-full animate-pulse"
+                  style={{ backgroundColor: hostMessages.length > 0 ? (hostMessages[hostMessages.length - 1].agentColor || "#818cf8") : "#818cf8" }}
+                ></div>
               </div>
             </button>
           )}

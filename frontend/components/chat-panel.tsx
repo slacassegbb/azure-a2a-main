@@ -22,6 +22,55 @@ import { useSearchParams, useRouter } from "next/navigation"
 import { getConversation, updateConversationTitle, createConversation, notifyConversationCreated, type Message as APIMessage } from "@/lib/conversation-api"
 import { createContextId, getOrCreateSessionId } from "@/lib/session"
 
+// Transform technical status messages into user-friendly display text
+const transformStatusMessage = (message: string, agentName?: string): string => {
+  // Remove "🛠️ Remote agent executing: " prefix
+  let transformed = message.replace(/^🛠️\s+Remote agent executing:\s*/i, "")
+  
+  // Transform common technical patterns
+  const transformations: Record<string, string> = {
+    // Tool execution patterns
+    "Executing file_search": "Searching through uploaded documents",
+    "Executing bing_grounding": "Searching the web",
+    "Executing web_search": "Searching the web",
+    
+    // Generic "Executing X" patterns
+    "Executing ": "Using ",
+    
+    // Status patterns - now with agent context (no icons)
+    "status: submitted": agentName ? `${agentName} is processing your request...` : "Processing request",
+    "status: working": agentName ? `${agentName} is analyzing...` : "Analyzing",
+    "status: completed": agentName ? `${agentName} completed the task` : "Task complete",
+    "status: failed": agentName ? `${agentName} encountered an error` : "Task failed",
+    
+    // Standalone status words (case insensitive)
+    "^processing request$": agentName ? `${agentName} is processing your request...` : "Processing request",
+    "^analyzing$": agentName ? `${agentName} is analyzing...` : "Analyzing",
+    
+    // Remote agent patterns
+    "Remote agent executing": "",
+  }
+  
+  // Apply transformations
+  for (const [pattern, replacement] of Object.entries(transformations)) {
+    if (pattern.startsWith("^") && pattern.endsWith("$")) {
+      // Regex pattern
+      transformed = transformed.replace(new RegExp(pattern, "gi"), replacement)
+    } else {
+      // Simple string replacement
+      transformed = transformed.replace(new RegExp(pattern, "gi"), replacement)
+    }
+  }
+  
+  // Remove any remaining 🛠️ icons
+  transformed = transformed.replace(/🛠️\s*/g, "")
+  
+  // Clean up any double spaces or trailing colons
+  transformed = transformed.replace(/\s+/g, " ").replace(/:\s*$/, "").trim()
+  
+  return transformed
+}
+
 // Helper function to generate conversation title from first message
 const generateTitleFromMessage = (message: string): string => {
   // Clean up the message and truncate to reasonable length
@@ -654,6 +703,13 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
     }
   }, [messages])
 
+  // Auto-scroll to bottom when inference steps change (so user sees thinking progress)
+  useEffect(() => {
+    if (isInferencing && inferenceSteps.length > 0 && messagesContainerRef.current) {
+      messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight
+    }
+  }, [inferenceSteps, isInferencing])
+
   // Also clear uploaded files on component mount (page refresh)
   useEffect(() => {
     if (DEBUG) console.log('[ChatPanel] Component mounted, clearing any stale uploaded files')
@@ -873,7 +929,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
         emit("status_update", {
           inferenceId: data.taskId,
           agent: data.agentName || "System",
-          status: "🚀 The host orchestrator is starting a new task..."
+          status: "The host orchestrator is starting a new task..."
         })
       }
     }
@@ -1358,22 +1414,25 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
           return
         }
         
+        // Transform technical messages to user-friendly display text
+        const displayContent = transformStatusMessage(content, data.agentName)
+        
         // Deduplicate: check if we already have this exact message from this agent
         setInferenceSteps(prev => {
-          // Check last 5 entries for duplicates
+          // Check last 5 entries for duplicates (compare transformed content)
           const recentEntries = prev.slice(-5)
           const isDuplicate = recentEntries.some(
-            entry => entry.agent === data.agentName && entry.status === content
+            entry => entry.agent === data.agentName && entry.status === displayContent
           )
           
           if (isDuplicate) {
-            console.log("[ChatPanel] Skipping duplicate remote activity:", content.substring(0, 50))
+            console.log("[ChatPanel] Skipping duplicate remote activity:", displayContent.substring(0, 50))
             return prev
           }
           
           return [...prev, { 
             agent: data.agentName, 
-            status: content 
+            status: displayContent 
           }]
         })
       }
@@ -2027,7 +2086,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                     )}
                     <div className="flex gap-3">
                       <div
-                        className={`rounded-lg p-3 max-w-md ${message.role === "user" ? "bg-slate-700 text-white" : "bg-muted"
+                        className={`rounded-lg p-3 ${message.role === "user" ? "bg-slate-700 text-white max-w-md" : "bg-muted flex-1"
                           }`}
                       >
                       {message.attachments && message.attachments.length > 0 && (
@@ -2274,8 +2333,8 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                   <div className="h-8 w-8 flex-shrink-0 bg-blue-100 rounded-full flex items-center justify-center">
                     <Bot size={18} className="text-blue-600" />
                   </div>
-                  <div className="flex flex-col items-start">
-                    <div className="rounded-lg p-3 max-w-md bg-muted">
+                  <div className="flex flex-col items-start flex-1">
+                    <div className="rounded-lg p-3 bg-muted w-full">
                       <div className="text-sm prose prose-sm max-w-none dark:prose-invert">
                         <ReactMarkdown
                           remarkPlugins={[remarkGfm]}
