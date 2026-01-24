@@ -241,15 +241,17 @@ export function ChatLayout() {
     }
 
     const handleFileUploaded = (data: any) => {
-      if (DEBUG) console.log("[ChatLayout] File uploaded:", data)
+      console.log("[ChatLayout] 📁 File uploaded event received:", data)
       
       // Add file to File History (deduplication is handled in FileHistory component)
       if (data?.fileInfo && (window as any).addFileToHistory) {
-        (window as any).addFileToHistory(data.fileInfo)
-        if (DEBUG) console.log("[ChatLayout] Sent file to history:", data.fileInfo.filename)
+        console.log("[ChatLayout] 📁 Adding to file history:", data.fileInfo.filename, data.fileInfo.uri?.substring(0, 80))
+        ;(window as any).addFileToHistory(data.fileInfo)
         
         // Auto-expand file history when a file is added
         setFileHistoryOpen(true)
+      } else {
+        console.log("[ChatLayout] 📁 NOT adding to history - fileInfo:", !!data?.fileInfo, "addFileToHistory:", !!(window as any).addFileToHistory)
       }
     }
 

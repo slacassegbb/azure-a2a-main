@@ -1644,11 +1644,11 @@ Current date and time: {datetime.datetime.now().isoformat()}
                         args_dict = json.loads(arguments) if isinstance(arguments, str) else arguments
                         logger.info(f"Calling generate_video with args: {args_dict}")
                         
-                        # Call the generate_video method
+                        # Call the generate_video method (map duration to seconds parameter)
                         video_artifacts = await self.generate_video(
                             prompt=args_dict.get("prompt"),
                             size=args_dict.get("size", "1280x720"),
-                            duration=args_dict.get("duration", 8)
+                            seconds=args_dict.get("duration", 8)  # Map duration param to seconds arg
                         )
                         
                         # Return success with video info
