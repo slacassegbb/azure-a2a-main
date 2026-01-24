@@ -151,12 +151,16 @@ export function AgentCatalog() {
         defaultOutputModes: agent.defaultOutputModes
       }))
       
-      // Set initial agents with "Checking..." status
+      // Set initial agents with "Checking..." status and stop loading immediately
       setCatalogAgents(transformedAgents)
+      setLoading(false) // Stop loading spinner right away - show agents immediately
       
-      // Check health status for all agents
-      const agentsWithHealthStatus = await checkAllAgentsHealth(transformedAgents)
-      setCatalogAgents(agentsWithHealthStatus)
+      // Check health status for all agents in background (non-blocking)
+      checkAllAgentsHealth(transformedAgents).then(agentsWithHealthStatus => {
+        setCatalogAgents(agentsWithHealthStatus)
+      }).catch(err => {
+        console.warn('Background health check failed:', err)
+      })
     } catch (err) {
       console.error('Error fetching agents:', err)
       setError(err instanceof Error ? err.message : 'Failed to load agents')
@@ -165,7 +169,6 @@ export function AgentCatalog() {
         description: "Failed to load agents from registry",
         variant: "destructive"
       })
-    } finally {
       setLoading(false)
     }
   }
