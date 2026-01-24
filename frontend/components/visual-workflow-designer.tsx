@@ -192,16 +192,26 @@ export function VisualWorkflowDesigner({
   const voiceLiveCallMapRef = useRef<Map<string, string>>(new Map()) // messageId -> call_id
   
   // Helper function to generate workflow text from current refs (used by voiceLive hook)
+  // NEW: Supports parallel branches with sub-lettered steps (2a, 2b, etc.)
   const generateWorkflowTextFromRefs = (): string => {
     const steps = workflowStepsRef.current
     const conns = connectionsRef.current
     
     if (steps.length === 0) return ""
     
-    // If connections exist, use them to determine order
+    // If connections exist, use them to determine order and detect parallel branches
     if (conns.length > 0) {
-      const visited = new Set<string>()
-      const result: WorkflowStep[] = []
+      // Build adjacency maps
+      const outgoing = new Map<string, string[]>()
+      const incoming = new Map<string, string[]>()
+      
+      conns.forEach(conn => {
+        if (!outgoing.has(conn.fromStepId)) outgoing.set(conn.fromStepId, [])
+        outgoing.get(conn.fromStepId)!.push(conn.toStepId)
+        
+        if (!incoming.has(conn.toStepId)) incoming.set(conn.toStepId, [])
+        incoming.get(conn.toStepId)!.push(conn.fromStepId)
+      })
       
       const connectedStepIds = new Set<string>()
       conns.forEach(conn => {
@@ -209,29 +219,84 @@ export function VisualWorkflowDesigner({
         connectedStepIds.add(conn.toStepId)
       })
       
+      // Find root nodes
       const hasIncoming = new Set(conns.map(c => c.toStepId))
       const rootNodes = steps.filter(step => 
         connectedStepIds.has(step.id) && !hasIncoming.has(step.id)
       )
       
-      const dfs = (stepId: string) => {
-        if (visited.has(stepId)) return
+      // BFS with parallel detection
+      interface WorkflowEntry {
+        stepNumber: number
+        subLetter?: string
+        step: WorkflowStep
+      }
+      
+      const entries: WorkflowEntry[] = []
+      const visited = new Set<string>()
+      let currentStepNumber = 0
+      
+      type QueueItem = { stepId: string, parentNumber: number, parallelSiblings: string[], siblingIndex: number }
+      const queue: QueueItem[] = []
+      
+      if (rootNodes.length > 1) {
+        rootNodes.forEach((node, idx) => {
+          queue.push({ stepId: node.id, parentNumber: 0, parallelSiblings: rootNodes.map(n => n.id), siblingIndex: idx })
+        })
+      } else {
+        rootNodes.forEach(node => {
+          queue.push({ stepId: node.id, parentNumber: 0, parallelSiblings: [], siblingIndex: 0 })
+        })
+      }
+      
+      while (queue.length > 0) {
+        const { stepId, parentNumber, parallelSiblings, siblingIndex } = queue.shift()!
+        
+        if (visited.has(stepId)) continue
         visited.add(stepId)
         
         const step = steps.find(s => s.id === stepId)
-        if (step) {
-          result.push(step)
-          const outgoing = conns.filter(c => c.fromStepId === stepId)
-          outgoing.forEach(conn => dfs(conn.toStepId))
+        if (!step) continue
+        
+        let stepNumber: number
+        let subLetter: string | undefined
+        
+        if (parallelSiblings.length > 1) {
+          stepNumber = parentNumber + 1
+          subLetter = String.fromCharCode(97 + siblingIndex)
+        } else {
+          currentStepNumber++
+          stepNumber = currentStepNumber
+        }
+        
+        entries.push({ stepNumber, subLetter, step })
+        
+        const children = outgoing.get(stepId) || []
+        if (children.length > 1) {
+          children.forEach((childId, idx) => {
+            queue.push({ stepId: childId, parentNumber: stepNumber, parallelSiblings: children, siblingIndex: idx })
+          })
+        } else if (children.length === 1) {
+          queue.push({ stepId: children[0], parentNumber: stepNumber, parallelSiblings: [], siblingIndex: 0 })
+        }
+        
+        if (parallelSiblings.length <= 1) {
+          // Sequential
+        } else if (siblingIndex === parallelSiblings.length - 1) {
+          currentStepNumber = stepNumber
         }
       }
       
-      rootNodes.forEach(node => dfs(node.id))
+      entries.sort((a, b) => {
+        if (a.stepNumber !== b.stepNumber) return a.stepNumber - b.stepNumber
+        return (a.subLetter || '').localeCompare(b.subLetter || '')
+      })
       
-      // Generate text ONLY from connected nodes
-      return result.map((step, index) => 
-        `${index + 1}. ${step.description || `Use the ${step.agentName} agent`}`
-      ).join('\n')
+      return entries.map(entry => {
+        const label = entry.subLetter ? `${entry.stepNumber}${entry.subLetter}` : `${entry.stepNumber}`
+        const desc = entry.step.description || `Use the ${entry.step.agentName} agent`
+        return `${label}. ${desc}`
+      }).join('\n')
     } else {
       // No connections - use visual order
       const sortedSteps = [...steps].sort((a, b) => a.order - b.order)
@@ -529,6 +594,7 @@ export function VisualWorkflowDesigner({
   }, [])
 
   // Update workflow text whenever steps or connections change
+  // NEW: Detects parallel branches (fan-out) and generates sub-lettered steps (2a, 2b, etc.)
   useEffect(() => {
     if (workflowSteps.length === 0) {
       setGeneratedWorkflowText("")
@@ -537,10 +603,19 @@ export function VisualWorkflowDesigner({
       return
     }
     
-    // If connections exist, use them to determine order
+    // If connections exist, use them to determine order and detect parallel branches
     if (connections.length > 0) {
-      const visited = new Set<string>()
-      const result: WorkflowStep[] = []
+      // Build adjacency maps
+      const outgoing = new Map<string, string[]>()
+      const incoming = new Map<string, string[]>()
+      
+      connections.forEach(conn => {
+        if (!outgoing.has(conn.fromStepId)) outgoing.set(conn.fromStepId, [])
+        outgoing.get(conn.fromStepId)!.push(conn.toStepId)
+        
+        if (!incoming.has(conn.toStepId)) incoming.set(conn.toStepId, [])
+        incoming.get(conn.toStepId)!.push(conn.fromStepId)
+      })
       
       const connectedStepIds = new Set<string>()
       connections.forEach(conn => {
@@ -548,40 +623,108 @@ export function VisualWorkflowDesigner({
         connectedStepIds.add(conn.toStepId)
       })
       
+      // Find root nodes (no incoming connections)
       const hasIncoming = new Set(connections.map(c => c.toStepId))
       const rootNodes = workflowSteps.filter(step => 
         connectedStepIds.has(step.id) && !hasIncoming.has(step.id)
       )
       
-      const dfs = (stepId: string) => {
-        if (visited.has(stepId)) return
+      // BFS to generate workflow with parallel detection
+      interface WorkflowEntry {
+        stepNumber: number
+        subLetter?: string  // 'a', 'b', 'c' for parallel steps
+        step: WorkflowStep
+      }
+      
+      const entries: WorkflowEntry[] = []
+      const visited = new Set<string>()
+      let currentStepNumber = 0
+      
+      // Queue for BFS: [stepId, parentStepNumber, isPartOfParallelGroup, subLetterIndex]
+      type QueueItem = { stepId: string, parentNumber: number, parallelSiblings: string[], siblingIndex: number }
+      const queue: QueueItem[] = []
+      
+      // Start with root nodes
+      if (rootNodes.length > 1) {
+        // Multiple roots = parallel from the start
+        rootNodes.forEach((node, idx) => {
+          queue.push({ stepId: node.id, parentNumber: 0, parallelSiblings: rootNodes.map(n => n.id), siblingIndex: idx })
+        })
+      } else {
+        rootNodes.forEach(node => {
+          queue.push({ stepId: node.id, parentNumber: 0, parallelSiblings: [], siblingIndex: 0 })
+        })
+      }
+      
+      while (queue.length > 0) {
+        const { stepId, parentNumber, parallelSiblings, siblingIndex } = queue.shift()!
+        
+        if (visited.has(stepId)) continue
         visited.add(stepId)
         
         const step = workflowSteps.find(s => s.id === stepId)
-        if (step) {
-          result.push(step)
-          const outgoing = connections.filter(c => c.fromStepId === stepId)
-          outgoing.forEach(conn => dfs(conn.toStepId))
+        if (!step) continue
+        
+        // Determine step number and sub-letter
+        let stepNumber: number
+        let subLetter: string | undefined
+        
+        if (parallelSiblings.length > 1) {
+          // This step is part of a parallel group - use parent's next number with sub-letter
+          stepNumber = parentNumber + 1
+          subLetter = String.fromCharCode(97 + siblingIndex) // 'a', 'b', 'c', ...
+        } else {
+          // Sequential step
+          currentStepNumber++
+          stepNumber = currentStepNumber
+        }
+        
+        entries.push({ stepNumber, subLetter, step })
+        
+        // Add children to queue
+        const children = outgoing.get(stepId) || []
+        if (children.length > 1) {
+          // Fan-out: parallel children
+          children.forEach((childId, idx) => {
+            queue.push({ stepId: childId, parentNumber: stepNumber, parallelSiblings: children, siblingIndex: idx })
+          })
+        } else if (children.length === 1) {
+          // Sequential child
+          queue.push({ stepId: children[0], parentNumber: stepNumber, parallelSiblings: [], siblingIndex: 0 })
+        }
+        
+        // Update currentStepNumber for next sequential step
+        if (parallelSiblings.length <= 1) {
+          // Only increment if this wasn't a parallel step
+        } else if (siblingIndex === parallelSiblings.length - 1) {
+          // Last parallel sibling - increment for next sequential
+          currentStepNumber = stepNumber
         }
       }
       
-      rootNodes.forEach(node => dfs(node.id))
+      // Sort entries and generate text
+      entries.sort((a, b) => {
+        if (a.stepNumber !== b.stepNumber) return a.stepNumber - b.stepNumber
+        // Same number = parallel, sort by sub-letter
+        return (a.subLetter || '').localeCompare(b.subLetter || '')
+      })
       
-      // Generate text ONLY from connected nodes
-      const workflowText = result.map((step, index) => 
-        `${index + 1}. ${step.description || `Use the ${step.agentName} agent`}`
-      ).join('\n')
+      const workflowText = entries.map(entry => {
+        const label = entry.subLetter ? `${entry.stepNumber}${entry.subLetter}` : `${entry.stepNumber}`
+        const desc = entry.step.description || `Use the ${entry.step.agentName} agent`
+        return `${label}. ${desc}`
+      }).join('\n')
       
       const orderMap = new Map<string, number>()
-      result.forEach((step, index) => {
-        orderMap.set(step.id, index + 1)
+      entries.forEach((entry, index) => {
+        orderMap.set(entry.step.id, index + 1)
       })
       
       setWorkflowOrderMap(orderMap)
       setGeneratedWorkflowText(workflowText)
       onWorkflowGeneratedRef.current(workflowText)
     } else {
-      // No connections - use visual order
+      // No connections - use visual order (all sequential)
       const sortedSteps = [...workflowSteps].sort((a, b) => a.order - b.order)
       const workflowText = sortedSteps.map((step, index) => 
         `${index + 1}. ${step.description || `Use the ${step.agentName} agent`}`
@@ -1984,16 +2127,13 @@ export function VisualWorkflowDesigner({
           ctx.stroke()
         }
         
-        // Connection handle (arrow button on the right side) - only show on selected agent if it doesn't have outgoing connection
+        // Connection handle (arrow button on the right side) - show on selected agent for parallel workflow support
         if (isSelected) {
-          // Check if this agent already has an outgoing connection
-          const hasOutgoingConnection = connections.some(c => c.fromStepId === step.id)
-          
-          // Only show handle if no outgoing connection (sequential workflow)
-          if (!hasOutgoingConnection) {
-            const handleX = x + 50
-            const handleY = y
-            const handleRadius = 10
+          // PARALLEL WORKFLOW SUPPORT:
+          // Always show connection handle to allow multiple outgoing connections (fan-out)
+          const handleX = x + 50
+          const handleY = y
+          const handleRadius = 10
             
             // Glow on/off animation
             const glow = Math.sin(Date.now() / 250) * 0.5 + 0.5 // Oscillates between 0 and 1
@@ -2012,18 +2152,17 @@ export function VisualWorkflowDesigner({
             ctx.fill()
             ctx.shadowBlur = 0
             
-            // Arrow icon (smaller)
-            ctx.save()
-            ctx.translate(handleX, handleY)
-            ctx.fillStyle = "#ffffff"
-            ctx.beginPath()
-            ctx.moveTo(2.5, 0)
-            ctx.lineTo(-2.5, -4)
-            ctx.lineTo(-2.5, 4)
-            ctx.closePath()
-            ctx.fill()
-            ctx.restore()
-          }
+          // Arrow icon (smaller)
+          ctx.save()
+          ctx.translate(handleX, handleY)
+          ctx.fillStyle = "#ffffff"
+          ctx.beginPath()
+          ctx.moveTo(2.5, 0)
+          ctx.lineTo(-2.5, -4)
+          ctx.lineTo(-2.5, 4)
+          ctx.closePath()
+          ctx.fill()
+          ctx.restore()
         }
 
         // Agent name - positioned below hexagon
@@ -2588,30 +2727,28 @@ export function VisualWorkflowDesigner({
           }
           
           // Check if clicking on connection handle (arrow button)
-          // Only allow if agent doesn't already have an outgoing connection (sequential workflow)
-          const hasOutgoingConnection = connectionsRef.current.some(c => c.fromStepId === selectedStep.id)
+          // PARALLEL WORKFLOW SUPPORT: Allow clicking handle even if connections exist
+          const handleX = selectedStep.x + 50
+          const handleY = selectedStep.y
+          const handleDx = canvasX - handleX
+          const handleDy = canvasY - handleY
+          const handleDistance = Math.sqrt(handleDx * handleDx + handleDy * handleDy)
           
-          if (!hasOutgoingConnection) {
-            const handleX = selectedStep.x + 50
-            const handleY = selectedStep.y
-            const handleDx = canvasX - handleX
-            const handleDy = canvasY - handleY
-            const handleDistance = Math.sqrt(handleDx * handleDx + handleDy * handleDy)
-            
-            if (handleDistance < 12) { // 12px radius for handle (slightly larger for easier clicking)
-              // Start creating a connection
-              isCreatingConnectionRef.current = true
-              setIsCreatingConnection(true)
-              const startData = {
-                stepId: selectedStep.id,
-                x: selectedStep.x,
-                y: selectedStep.y
-              }
-              connectionStartRef.current = startData
-              setConnectionStart(startData)
-              setConnectionPreview({ x: canvasX, y: canvasY })
-              return
+          if (handleDistance < 12) { // 12px radius for handle (slightly larger for easier clicking)
+            // Start creating a connection
+            e.preventDefault()
+            e.stopPropagation()
+            isCreatingConnectionRef.current = true
+            setIsCreatingConnection(true)
+            const startData = {
+              stepId: selectedStep.id,
+              x: selectedStep.x,
+              y: selectedStep.y
             }
+            connectionStartRef.current = startData
+            setConnectionStart(startData)
+            setConnectionPreview({ x: canvasX, y: canvasY })
+            return
           }
           
           // Check if clicking on a connection delete button (only for selected agent's connections)
@@ -2722,35 +2859,10 @@ export function VisualWorkflowDesigner({
         })
         
         if (targetStep) {
-          // Check if source agent already has an outgoing connection (sequential workflow constraint)
-          const hasOutgoing = connectionsRef.current.some(c => 
-            c.fromStepId === connectionStartRef.current!.stepId
-          )
-          
-          if (hasOutgoing) {
-            // Reset connection creation state
-            isCreatingConnectionRef.current = false
-            connectionStartRef.current = null
-            setIsCreatingConnection(false)
-            setConnectionStart(null)
-            setConnectionPreview(null)
-            return
-          }
-          
-          // Check if target agent already has an incoming connection (sequential workflow constraint)
-          const hasIncoming = connectionsRef.current.some(c => 
-            c.toStepId === targetStep.id
-          )
-          
-          if (hasIncoming) {
-            // Reset connection creation state
-            isCreatingConnectionRef.current = false
-            connectionStartRef.current = null
-            setIsCreatingConnection(false)
-            setConnectionStart(null)
-            setConnectionPreview(null)
-            return
-          }
+          // PARALLEL WORKFLOW SUPPORT:
+          // Allow multiple outgoing connections from one step (fan-out for parallel execution)
+          // Allow multiple incoming connections to one step (fan-in to merge parallel branches)
+          // Only prevent duplicate connections (same from->to)
           
           // Create connection
           const newConnection: Connection = {
@@ -2759,7 +2871,7 @@ export function VisualWorkflowDesigner({
             toStepId: targetStep.id
           }
           
-          // Check if connection already exists (shouldn't happen but double-check)
+          // Check if this exact connection already exists
           const exists = connectionsRef.current.some(c => 
             c.fromStepId === newConnection.fromStepId && c.toStepId === newConnection.toStepId
           )

@@ -275,7 +275,7 @@ class FoundryHostManager(ApplicationManager):
             messageId=str(uuid.uuid4()),
         )
 
-    async def process_message(self, message: Message, agent_mode: bool = False, enable_inter_agent_memory: bool = False, workflow: str = None):
+    async def process_message(self, message: Message, agent_mode: bool = None, enable_inter_agent_memory: bool = False, workflow: str = None):
         await self.ensure_host_agent_initialized()
         message_id = get_message_id(message)
         if message_id:
@@ -287,7 +287,11 @@ class FoundryHostManager(ApplicationManager):
         
         context_id = extracted_context_id or str(uuid.uuid4())
         log_debug(f"🔍 [process_message] Final context_id (after UUID fallback): {context_id}")
-        log_debug(f"process_message: Agent Mode = {agent_mode}, Inter-Agent Memory = {enable_inter_agent_memory}, Workflow = {workflow[:50] if workflow else None}")
+        
+        # Auto-detect agent_mode based on workflow presence (backward compatible)
+        # If agent_mode is explicitly passed, use it; otherwise detect from workflow
+        effective_agent_mode = agent_mode if agent_mode is not None else (workflow is not None and workflow.strip() != "")
+        log_debug(f"process_message: Agent Mode = {effective_agent_mode} (explicit={agent_mode}), Inter-Agent Memory = {enable_inter_agent_memory}, Workflow = {workflow[:50] if workflow else None}")
         conversation = self.get_conversation(context_id)
         if not conversation:
             conversation = Conversation(conversation_id=context_id, is_active=True)
@@ -534,8 +538,8 @@ class FoundryHostManager(ApplicationManager):
         
         # Pass the entire message with all parts (including files) to the host agent
         user_text = message.parts[0].root.text if message.parts and message.parts[0].root.kind == 'text' else ""
-        log_debug(f"About to call run_conversation_with_parts with message parts: {len(message.parts)} parts, agent_mode: {agent_mode}, enable_inter_agent_memory: {enable_inter_agent_memory}, workflow: {workflow[:50] if workflow else None}")
-        responses = await self._host_agent.run_conversation_with_parts(message.parts, context_id, event_logger=event_logger, agent_mode=agent_mode, enable_inter_agent_memory=enable_inter_agent_memory, workflow=workflow)
+        log_debug(f"About to call run_conversation_with_parts with message parts: {len(message.parts)} parts, agent_mode: {effective_agent_mode}, enable_inter_agent_memory: {enable_inter_agent_memory}, workflow: {workflow[:50] if workflow else None}")
+        responses = await self._host_agent.run_conversation_with_parts(message.parts, context_id, event_logger=event_logger, agent_mode=effective_agent_mode, enable_inter_agent_memory=enable_inter_agent_memory, workflow=workflow)
         log_debug(f"FoundryHostAgent responses count: {len(responses) if responses else 'None'}")
         log_debug(f"FoundryHostAgent responses: {responses}")
         

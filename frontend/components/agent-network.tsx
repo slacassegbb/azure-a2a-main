@@ -82,8 +82,6 @@ type Props = {
   registeredAgents: Agent[]
   isCollapsed: boolean
   onToggle: () => void
-  agentMode: boolean
-  onAgentModeChange: (enabled: boolean) => void
   enableInterAgentMemory: boolean
   onInterAgentMemoryChange: (enabled: boolean) => void
   workflow?: string
@@ -139,7 +137,7 @@ function hasHumanInteractionSkill(agent: Agent): boolean {
   return agent.skills?.some(skill => skill.id === 'human_interaction') ?? false
 }
 
-export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, agentMode, onAgentModeChange, enableInterAgentMemory, onInterAgentMemoryChange, workflow: propWorkflow, onWorkflowChange, dagNodes = [], dagLinks = [], activeNode = null }: Props) {
+export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableInterAgentMemory, onInterAgentMemoryChange, workflow: propWorkflow, onWorkflowChange, dagNodes = [], dagLinks = [], activeNode = null }: Props) {
   const searchParams = useSearchParams()
   const currentConversationId = searchParams.get('conversationId') || undefined
   
@@ -793,71 +791,55 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, agentMod
                     </div>
                   </div>
                   
-                  {/* Agent Mode Toggle */}
+                  {/* Workflow Button - Always visible (auto-detects workflow mode on backend) */}
                   <div className="pt-3 border-t mt-3 space-y-3">
-                    <div className="flex items-center justify-between py-2">
-                      <div className="flex items-center gap-2">
-                        <Brain className="h-4 w-4 text-muted-foreground" />
-                        <Label htmlFor="agent-mode" className="text-sm font-medium cursor-pointer">
-                          Agent Mode
-                        </Label>
-                      </div>
-                      <Switch 
-                        id="agent-mode"
-                        checked={agentMode} 
-                        onCheckedChange={onAgentModeChange}
-                      />
-                    </div>
-                    
-                    {/* Workflow Button - Only show when Agent Mode is enabled */}
-                    {agentMode && (
-                      <div>
-                        <Dialog open={isWorkflowDialogOpen} onOpenChange={setIsWorkflowDialogOpen}>
-                          <DialogTrigger asChild>
-                            <Button 
-                              variant="outline" 
-                              size="sm" 
-                              className="w-full"
-                              onClick={() => {
-                                setEditedWorkflow(workflow)
-                                setIsWorkflowDialogOpen(true)
-                              }}
-                            >
-                              <ListOrdered className="h-3 w-3 mr-2" />
-                              {workflow ? "Edit Workflow" : "Define Workflow"}
-                            </Button>
-                          </DialogTrigger>
-                          <DialogContent className="max-w-[95vw] max-h-[95vh] h-[900px]">
-                            <Tabs defaultValue="visual" className="flex-1 flex flex-col w-full">
-                              <DialogHeader className="mb-4">
-                                <DialogTitle>Agent Mode Workflow</DialogTitle>
-                                <DialogDescription>
-                                  Define the workflow steps that will be appended to your goal. This helps guide the orchestration.
-                                </DialogDescription>
-                              </DialogHeader>
-                              
-                              <TabsList className="grid w-full grid-cols-2 mb-4">
-                                <TabsTrigger value="visual">Visual Designer</TabsTrigger>
-                                <TabsTrigger value="text">Text Editor</TabsTrigger>
-                              </TabsList>
-                              
-                              <TabsContent value="visual" className="flex-1 overflow-hidden w-full">
-                                <div className="h-[680px] w-full">
-                                  <VisualWorkflowDesigner
-                                    registeredAgents={registeredAgents.map(agent => ({
-                                      ...agent,
-                                      id: agent.name.toLowerCase().replace(/\s+/g, '-')
-                                    }))}
-                                    onWorkflowGenerated={(text) => setEditedWorkflow(text)}
-                                    initialWorkflow={editedWorkflow}
-                                    conversationId={currentConversationId}
-                                  />
-                                </div>
-                              </TabsContent>                            
-                              <TabsContent value="text" className="flex-1 overflow-hidden w-full">
-                                <div className="space-y-4 h-full flex-col w-full">
-                                  <Textarea
-                                    value={editedWorkflow}
+                    <div>
+                      <Dialog open={isWorkflowDialogOpen} onOpenChange={setIsWorkflowDialogOpen}>
+                        <DialogTrigger asChild>
+                          <Button 
+                            variant="outline" 
+                            size="sm" 
+                            className="w-full"
+                            onClick={() => {
+                              setEditedWorkflow(workflow)
+                              setIsWorkflowDialogOpen(true)
+                            }}
+                          >
+                            <ListOrdered className="h-3 w-3 mr-2" />
+                            {workflow ? "Edit Workflow" : "Define Workflow"}
+                          </Button>
+                        </DialogTrigger>
+                        <DialogContent className="max-w-[95vw] max-h-[95vh] h-[900px]">
+                          <Tabs defaultValue="visual" className="flex-1 flex flex-col w-full">
+                            <DialogHeader className="mb-4">
+                              <DialogTitle>Workflow Designer</DialogTitle>
+                              <DialogDescription>
+                                Define workflow steps to orchestrate agents. Connect one step to multiple agents for parallel execution.
+                              </DialogDescription>
+                            </DialogHeader>
+                            
+                            <TabsList className="grid w-full grid-cols-2 mb-4">
+                              <TabsTrigger value="visual">Visual Designer</TabsTrigger>
+                              <TabsTrigger value="text">Text Editor</TabsTrigger>
+                            </TabsList>
+                            
+                            <TabsContent value="visual" className="flex-1 overflow-hidden w-full">
+                              <div className="h-[680px] w-full">
+                                <VisualWorkflowDesigner
+                                  registeredAgents={registeredAgents.map(agent => ({
+                                    ...agent,
+                                    id: agent.name.toLowerCase().replace(/\s+/g, '-')
+                                  }))}
+                                  onWorkflowGenerated={(text) => setEditedWorkflow(text)}
+                                  initialWorkflow={editedWorkflow}
+                                  conversationId={currentConversationId}
+                                />
+                              </div>
+                            </TabsContent>                            
+                            <TabsContent value="text" className="flex-1 overflow-hidden w-full">
+                              <div className="space-y-4 h-full flex-col w-full">
+                                <Textarea
+                                  value={editedWorkflow}
                                     onChange={(e) => setEditedWorkflow(e.target.value)}
                                     placeholder="Example:&#10;1. Use the image generator agent to create an image&#10;2. Use the branding agent to get branding guidelines&#10;3. Use the image generator to refine the image based on branding&#10;4. Use the image analysis agent to review the result"
                                     className="flex-1 font-mono text-sm"
@@ -900,7 +882,6 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, agentMod
                           </p>
                         )}
                       </div>
-                    )}
                   </div>
                 </div>
               </CardContent>

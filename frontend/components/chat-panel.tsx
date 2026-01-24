@@ -467,7 +467,6 @@ function MaskEditorDialog({ open, imageUrl, onClose, onSave }: MaskEditorDialogP
 type ChatPanelProps = {
   dagNodes: any[]
   dagLinks: any[]
-  agentMode: boolean
   enableInterAgentMemory: boolean
   workflow?: string
   registeredAgents?: any[]
@@ -476,7 +475,7 @@ type ChatPanelProps = {
   setActiveNode?: (node: string | null) => void
 }
 
-export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemory, workflow, registeredAgents = [], connectedUsers = [], activeNode: externalActiveNode, setActiveNode: externalSetActiveNode }: ChatPanelProps) {
+export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow, registeredAgents = [], connectedUsers = [], activeNode: externalActiveNode, setActiveNode: externalSetActiveNode }: ChatPanelProps) {
   const DEBUG = process.env.NEXT_PUBLIC_DEBUG_LOGS === 'true'
   // Use the shared Event Hub hook so we subscribe to the same client as the rest of the app
   const { subscribe, unsubscribe, emit, sendMessage, isConnected } = useEventHub()
@@ -497,14 +496,8 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
   const voiceLiveCallMapRef = useRef<Map<string, string>>(new Map()) // messageId -> call_id
   
   // Use refs to always get the latest values (avoid stale closure)
-  const agentModeRef = useRef(agentMode)
   const workflowRef = useRef(workflow)
   const enableInterAgentMemoryRef = useRef(enableInterAgentMemory)
-  
-  // Update refs when props change
-  useEffect(() => {
-    agentModeRef.current = agentMode
-  }, [agentMode])
   
   useEffect(() => {
     workflowRef.current = workflow
@@ -526,12 +519,10 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
         console.log('[Voice Live] Metadata:', metadata)
         
         // Get current values from refs (not stale closure values!)
-        const currentAgentMode = agentModeRef.current
         const currentWorkflow = workflowRef.current
         const currentEnableMemory = enableInterAgentMemoryRef.current
         
         console.log('[Voice Live] Current settings:', {
-          agentMode: currentAgentMode,
           workflow: currentWorkflow?.substring(0, 50),
           enableMemory: currentEnableMemory
         })
@@ -556,9 +547,8 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
               contextId: contextId,  // Use tenant-aware contextId
               role: 'user',
               parts: [{ root: { kind: 'text', text: message } }],
-              agentMode: currentAgentMode,
               enableInterAgentMemory: currentEnableMemory,
-              workflow: currentAgentMode && currentWorkflow ? currentWorkflow.trim() : undefined
+              workflow: currentWorkflow ? currentWorkflow.trim() : undefined  // Backend auto-detects mode from workflow presence
             }
           })
         })
@@ -1934,9 +1924,8 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
             contextId: createContextId(actualConversationId),  // Use tenant-aware contextId
             role: 'user',
             parts: parts,
-            agentMode: agentMode,  // Include agent mode in message params
             enableInterAgentMemory: enableInterAgentMemory,  // Include inter-agent memory flag
-            workflow: agentMode && workflow ? workflow.trim() : undefined  // Include workflow for planner prompt injection
+            workflow: workflow ? workflow.trim() : undefined  // Backend auto-detects mode from workflow presence
           }
         })
       })

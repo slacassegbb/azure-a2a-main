@@ -284,7 +284,8 @@ class ConversationServer:
     async def _send_message(self, request: Request):
         message_data = await request.json()
         # Extract agent mode, inter-agent memory, and workflow from params if present
-        agent_mode = message_data.get('params', {}).get('agentMode', False)
+        # agent_mode defaults to None to allow auto-detection based on workflow presence
+        agent_mode = message_data.get('params', {}).get('agentMode', None)
         enable_inter_agent_memory = message_data.get('params', {}).get('enableInterAgentMemory', False)
         workflow = message_data.get('params', {}).get('workflow')
         log_debug(f"_send_message: Agent Mode = {agent_mode}, Inter-Agent Memory = {enable_inter_agent_memory}, Workflow = {workflow[:50] if workflow else None}")

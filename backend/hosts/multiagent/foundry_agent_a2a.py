@@ -28,6 +28,8 @@ import os
 import sys
 import logging
 import time
+from dataclasses import dataclass
+from enum import Enum
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Iterable, Literal
@@ -228,9 +230,155 @@ class NextStep(BaseModel):
     goal_status: GoalStatus = Field(..., description="Whether the goal is completed or not.")
     next_task: Optional[Dict[str, Optional[str]]] = Field(
         None,
-        description='{"task_description": str, "recommended_agent": str|None} if incomplete, else null.'
+        description='Single task: {"task_description": str, "recommended_agent": str|None}. Use this for sequential execution. Set to null if using next_tasks for parallel execution.'
+    )
+    next_tasks: Optional[List[Dict[str, Optional[str]]]] = Field(
+        None,
+        description='Multiple tasks to execute IN PARALLEL: [{"task_description": str, "recommended_agent": str|None}, ...]. Use this when workflow has parallel steps (e.g., 2a, 2b). Set to null for sequential execution.'
+    )
+    parallel: bool = Field(
+        False,
+        description='Set to true when next_tasks should be executed in parallel (e.g., for workflow steps like 2a, 2b). Set to false for sequential execution.'
     )
     reasoning: str = Field(..., description="Short explanation of the decision.")
+
+
+# ============================================================================
+# PARALLEL WORKFLOW SUPPORT
+# ============================================================================
+# New models for parsed workflows with parallel execution support
+# Format: Sequential steps are "1. ...", "2. ...", parallel steps are "2a. ...", "2b. ..."
+
+class WorkflowStepType(str, Enum):
+    """Type of workflow step execution."""
+    SEQUENTIAL = "sequential"
+    PARALLEL = "parallel"
+
+
+@dataclass
+class ParsedWorkflowStep:
+    """A single step within a workflow."""
+    step_label: str  # e.g., "1", "2a", "2b", "3"
+    description: str
+    agent_hint: Optional[str] = None  # Extracted agent name if mentioned in description
+
+
+@dataclass
+class ParsedWorkflowGroup:
+    """A group of steps that execute together (sequential = 1 step, parallel = multiple)."""
+    group_number: int  # The main step number (e.g., 2 for "2a", "2b")
+    group_type: WorkflowStepType
+    steps: List[ParsedWorkflowStep]
+
+
+@dataclass
+class ParsedWorkflow:
+    """Complete parsed workflow with sequential and parallel groups."""
+    groups: List[ParsedWorkflowGroup]
+    
+    def __str__(self) -> str:
+        lines = []
+        for group in self.groups:
+            if group.group_type == WorkflowStepType.PARALLEL:
+                lines.append(f"[Parallel Group {group.group_number}]")
+                for step in group.steps:
+                    lines.append(f"  {step.step_label}. {step.description}")
+            else:
+                step = group.steps[0]
+                lines.append(f"{step.step_label}. {step.description}")
+        return "\n".join(lines)
+
+
+class WorkflowParser:
+    """
+    Parse workflow text into structured groups with parallel execution support.
+    
+    Workflow Text Format:
+    - Sequential steps: "1. Do something", "2. Do another thing"
+    - Parallel steps: "2a. First parallel task", "2b. Second parallel task"
+    
+    Example:
+        1. Use Classification agent to analyze document
+        2a. Use Branding agent to check guidelines
+        2b. Use Legal agent to verify compliance
+        3. Use Reporter agent to synthesize results
+        
+    In this example:
+    - Step 1 runs first (sequential)
+    - Steps 2a and 2b run in parallel
+    - Step 3 runs after both 2a and 2b complete
+    """
+    
+    # Regex to match step labels like "1.", "2a.", "2b.", "10c."
+    STEP_PATTERN = re.compile(r'^(\d+)([a-z])?\.?\s*(.+)$', re.IGNORECASE)
+    
+    @classmethod
+    def parse(cls, workflow_text: str) -> ParsedWorkflow:
+        """Parse workflow text into structured groups."""
+        if not workflow_text or not workflow_text.strip():
+            return ParsedWorkflow(groups=[])
+        
+        lines = workflow_text.strip().split('\n')
+        steps_by_number: Dict[int, List[ParsedWorkflowStep]] = {}
+        
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+                
+            # Try to match step pattern
+            match = cls.STEP_PATTERN.match(line)
+            if match:
+                main_number = int(match.group(1))
+                sub_letter = match.group(2)  # Could be None for "1.", or "a" for "1a."
+                description = match.group(3).strip()
+                
+                # Create step label
+                if sub_letter:
+                    step_label = f"{main_number}{sub_letter.lower()}"
+                else:
+                    step_label = str(main_number)
+                
+                # Extract agent hint if agent name is mentioned
+                agent_hint = cls._extract_agent_hint(description)
+                
+                step = ParsedWorkflowStep(
+                    step_label=step_label,
+                    description=description,
+                    agent_hint=agent_hint
+                )
+                
+                if main_number not in steps_by_number:
+                    steps_by_number[main_number] = []
+                steps_by_number[main_number].append(step)
+        
+        # Convert to groups
+        groups = []
+        for main_number in sorted(steps_by_number.keys()):
+            steps = steps_by_number[main_number]
+            
+            if len(steps) > 1:
+                # Multiple steps with same number = parallel
+                group_type = WorkflowStepType.PARALLEL
+            else:
+                group_type = WorkflowStepType.SEQUENTIAL
+            
+            groups.append(ParsedWorkflowGroup(
+                group_number=main_number,
+                group_type=group_type,
+                steps=steps
+            ))
+        
+        return ParsedWorkflow(groups=groups)
+    
+    @staticmethod
+    def _extract_agent_hint(description: str) -> Optional[str]:
+        """Try to extract agent name from description like 'Use the Classification agent to...'"""
+        # Pattern: "Use (the)? <AgentName> agent"
+        match = re.search(r'[Uu]se\s+(?:the\s+)?(\w+)\s+agent', description)
+        if match:
+            return match.group(1)
+        return None
 
 
 class FoundryHostAgent2:
@@ -2052,6 +2200,669 @@ class FoundryHostAgent2:
             traceback.print_exc()
             raise
 
+    async def _call_azure_openai_raw(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        context_id: str
+    ) -> str:
+        """
+        Make a simple text completion request to Azure OpenAI.
+        Used for lightweight tasks like agent selection.
+        """
+        try:
+            endpoint = os.environ["AZURE_AI_FOUNDRY_PROJECT_ENDPOINT"]
+            model_name = os.environ["AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME"]
+            base_endpoint = endpoint.split('/api/projects')[0] if '/api/projects' in endpoint else endpoint
+            
+            from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+            credential = DefaultAzureCredential()
+            token_provider = get_bearer_token_provider(credential, "https://cognitiveservices.azure.com/.default")
+            
+            client = AsyncAzureOpenAI(
+                azure_endpoint=base_endpoint,
+                azure_ad_token_provider=token_provider,
+                api_version="2024-08-01-preview"
+            )
+            
+            completion = await client.chat.completions.create(
+                model=model_name,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=0.3,
+                max_tokens=100
+            )
+            
+            return completion.choices[0].message.content or ""
+            
+        except Exception as e:
+            log_error(f"[Azure OpenAI Raw] Error: {e}")
+            raise
+
+    async def _select_agent_for_task(
+        self,
+        task_description: str,
+        available_agents: List[Dict[str, str]],
+        context_id: str
+    ) -> Optional[str]:
+        """
+        Use LLM to select the best agent for a task description.
+        
+        This is a lightweight call just for agent selection when the workflow
+        doesn't explicitly specify which agent to use.
+        """
+        try:
+            system_prompt = """You are an agent selector. Given a task description and available agents, 
+select the most appropriate agent. Return ONLY the agent name, nothing else."""
+            
+            user_prompt = f"""Task: {task_description}
+
+Available Agents:
+{json.dumps(available_agents, indent=2)}
+
+Return the name of the best agent for this task (exact match from the list above):"""
+            
+            response = await self._call_azure_openai_raw(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                context_id=context_id
+            )
+            
+            agent_name = response.strip().strip('"').strip("'")
+            
+            # Verify it's a valid agent
+            for agent in available_agents:
+                if agent["name"].lower() == agent_name.lower():
+                    return agent["name"]
+            
+            # Try partial match
+            for agent in available_agents:
+                if agent_name.lower() in agent["name"].lower() or agent["name"].lower() in agent_name.lower():
+                    return agent["name"]
+            
+            return None
+            
+        except Exception as e:
+            log_error(f"[Agent Selection] Error: {e}")
+            return None
+
+    async def _execute_parsed_workflow(
+        self,
+        parsed_workflow: ParsedWorkflow,
+        user_message: str,
+        context_id: str,
+        session_context: SessionContext
+    ) -> List[str]:
+        """
+        Execute a pre-parsed workflow with support for parallel step groups.
+        
+        This method uses the Pydantic AgentModePlan for proper state management,
+        retry logic, HITL support, and artifact tracking - just like the dynamic
+        orchestration loop, but with a pre-defined workflow structure.
+        
+        Parallel groups (e.g., steps 2a, 2b) are executed concurrently using 
+        asyncio.gather() while still creating proper AgentModeTask objects for
+        state persistence.
+        
+        Args:
+            parsed_workflow: The parsed workflow with sequential and parallel groups
+            user_message: Original user message for context
+            context_id: Conversation identifier
+            session_context: Session state
+            
+        Returns:
+            List of output strings from all executed steps
+        """
+        log_info(f"🚀 [Workflow] Executing parsed workflow with {len(parsed_workflow.groups)} groups")
+        print(f"📋 [Workflow] Parsed structure:\n{parsed_workflow}")
+        
+        # Use the class method for extracting clean text from A2A response objects
+        extract_text_from_response = self._extract_text_from_response
+        
+        # Initialize Pydantic plan for state tracking (just like dynamic orchestration)
+        plan = AgentModePlan(goal=user_message, goal_status="incomplete")
+        all_task_outputs = []
+        
+        # Log initial plan
+        print(f"\n{'='*80}")
+        log_debug(f"📋 [Parsed Workflow] INITIAL PLAN")
+        print(f"{'='*80}")
+        print(f"Goal: {plan.goal}")
+        print(f"Groups: {len(parsed_workflow.groups)}")
+        print(f"{'='*80}\n")
+        
+        for group_idx, group in enumerate(parsed_workflow.groups):
+            group_type = "PARALLEL" if group.group_type == WorkflowStepType.PARALLEL else "SEQUENTIAL"
+            log_info(f"📦 [Workflow] Executing group {group.group_number} ({group_type}, {len(group.steps)} steps)")
+            
+            if group.group_type == WorkflowStepType.PARALLEL:
+                # ============================================================
+                # PARALLEL EXECUTION with proper state tracking
+                # ============================================================
+                await self._emit_status_event(
+                    f"Executing parallel group {group.group_number} ({len(group.steps)} agents simultaneously)...",
+                    context_id
+                )
+                
+                # Create AgentModeTask objects for each parallel step
+                parallel_tasks: List[AgentModeTask] = []
+                for step in group.steps:
+                    task = AgentModeTask(
+                        task_id=str(uuid.uuid4()),
+                        task_description=f"[Step {step.step_label}] {step.description}",
+                        recommended_agent=None,  # Will be resolved during execution
+                        state="pending"
+                    )
+                    plan.tasks.append(task)
+                    parallel_tasks.append(task)
+                
+                # Execute all steps in parallel
+                async def execute_parallel_step(step: ParsedWorkflowStep, task: AgentModeTask):
+                    """Execute a single step and update its task state."""
+                    task.state = "running"
+                    task.updated_at = datetime.now(timezone.utc)
+                    
+                    try:
+                        result = await self._execute_workflow_step_with_state(
+                            step=step,
+                            task=task,
+                            session_context=session_context,
+                            context_id=context_id,
+                            user_message=user_message,
+                            extract_text_fn=extract_text_from_response
+                        )
+                        return result
+                    except Exception as e:
+                        task.state = "failed"
+                        task.error_message = str(e)
+                        task.updated_at = datetime.now(timezone.utc)
+                        log_error(f"[Workflow] Parallel step {step.step_label} failed: {e}")
+                        return {"error": str(e), "step_label": step.step_label}
+                
+                # Run in parallel
+                results = await asyncio.gather(
+                    *[execute_parallel_step(step, task) for step, task in zip(group.steps, parallel_tasks)],
+                    return_exceptions=True
+                )
+                
+                # Collect results and check for HITL pause
+                for i, result in enumerate(results):
+                    step = group.steps[i]
+                    task = parallel_tasks[i]
+                    
+                    if isinstance(result, Exception):
+                        log_error(f"[Workflow] Parallel step {step.step_label} exception: {result}")
+                        all_task_outputs.append(f"[Step {step.step_label} Error]: {str(result)}")
+                    elif isinstance(result, dict):
+                        # Check for HITL pause
+                        if result.get("hitl_pause"):
+                            log_info(f"⏸️ [Workflow] HITL pause triggered by step {step.step_label}")
+                            # Store workflow state for resumption
+                            session_context.pending_workflow = str(parsed_workflow)
+                            session_context.pending_workflow_outputs = all_task_outputs.copy()
+                            session_context.pending_workflow_user_message = user_message
+                            return all_task_outputs
+                        
+                        if result.get("output"):
+                            all_task_outputs.append(f"[Step {step.step_label} - {result.get('agent', 'unknown')}]: {result['output']}")
+                        elif result.get("error"):
+                            all_task_outputs.append(f"[Step {step.step_label} Error]: {result['error']}")
+                
+                log_info(f"✅ [Workflow] Parallel group {group.group_number} completed")
+                
+            else:
+                # ============================================================
+                # SEQUENTIAL EXECUTION with proper state tracking
+                # ============================================================
+                step = group.steps[0]
+                
+                # Create AgentModeTask for this step
+                task = AgentModeTask(
+                    task_id=str(uuid.uuid4()),
+                    task_description=f"[Step {step.step_label}] {step.description}",
+                    recommended_agent=None,
+                    state="running"
+                )
+                plan.tasks.append(task)
+                
+                await self._emit_status_event(f"Executing step {step.step_label}: {step.description[:50]}...", context_id)
+                
+                try:
+                    result = await self._execute_workflow_step_with_state(
+                        step=step,
+                        task=task,
+                        session_context=session_context,
+                        context_id=context_id,
+                        user_message=user_message,
+                        extract_text_fn=extract_text_from_response
+                    )
+                    
+                    # Check for HITL pause
+                    if result.get("hitl_pause"):
+                        log_info(f"⏸️ [Workflow] HITL pause triggered by step {step.step_label}")
+                        session_context.pending_workflow = str(parsed_workflow)
+                        session_context.pending_workflow_outputs = all_task_outputs.copy()
+                        session_context.pending_workflow_user_message = user_message
+                        return all_task_outputs
+                    
+                    if result.get("output"):
+                        all_task_outputs.append(f"[Step {step.step_label} - {result.get('agent', 'unknown')}]: {result['output']}")
+                    elif result.get("error"):
+                        all_task_outputs.append(f"[Step {step.step_label} Error]: {result['error']}")
+                    
+                except Exception as e:
+                    task.state = "failed"
+                    task.error_message = str(e)
+                    task.updated_at = datetime.now(timezone.utc)
+                    log_error(f"[Workflow] Sequential step {step.step_label} failed: {e}")
+                    all_task_outputs.append(f"[Step {step.step_label} Error]: {str(e)}")
+                
+                log_info(f"✅ [Workflow] Sequential step {step.step_label} completed")
+        
+        # Mark plan as completed
+        plan.goal_status = "completed"
+        plan.updated_at = datetime.now(timezone.utc)
+        
+        # Log final plan summary
+        print(f"\n{'='*80}")
+        print(f"🎬 [Parsed Workflow] FINAL PLAN SUMMARY")
+        print(f"{'='*80}")
+        print(f"Goal: {plan.goal}")
+        print(f"Final Status: {plan.goal_status}")
+        print(f"Total Tasks Created: {len(plan.tasks)}")
+        print(f"\nTask Breakdown:")
+        for i, task in enumerate(plan.tasks, 1):
+            print(f"  {i}. [{task.state.upper()}] {task.task_description[:60]}...")
+            print(f"     Agent: {task.recommended_agent or 'None'}")
+            if task.error_message:
+                print(f"     Error: {task.error_message}")
+        print(f"\nTask Outputs Collected: {len(all_task_outputs)}")
+        print(f"{'='*80}\n")
+        
+        log_info(f"🎉 [Workflow] All {len(parsed_workflow.groups)} groups completed, collected {len(all_task_outputs)} outputs")
+        return all_task_outputs
+    
+    async def _execute_workflow_step_with_state(
+        self,
+        step: ParsedWorkflowStep,
+        task: AgentModeTask,
+        session_context: SessionContext,
+        context_id: str,
+        user_message: str,
+        extract_text_fn
+    ) -> Dict[str, Any]:
+        """
+        Execute a single workflow step with full state tracking via AgentModeTask.
+        
+        This mirrors the task execution logic from the dynamic orchestration loop,
+        including HITL detection, artifact collection, and proper error handling.
+        
+        Args:
+            step: The parsed workflow step
+            task: The AgentModeTask to update with execution state
+            session_context: Session state
+            context_id: Conversation identifier
+            user_message: Original user message
+            extract_text_fn: Function to extract text from responses
+            
+        Returns:
+            Dict with execution result, agent info, and flags (e.g., hitl_pause)
+        """
+        log_debug(f"🚀 [Workflow] Executing step {step.step_label}: {step.description}")
+        
+        # Resolve agent (by hint or LLM selection)
+        agent_name = None
+        
+        if step.agent_hint:
+            # Try exact match first
+            for card_name in self.cards.keys():
+                if step.agent_hint.lower() in card_name.lower():
+                    agent_name = card_name
+                    break
+        
+        if not agent_name:
+            # Fall back to LLM agent selection
+            available_agents = [{"name": card.name, "description": card.description} for card in self.cards.values()]
+            agent_name = await self._select_agent_for_task(step.description, available_agents, context_id)
+        
+        if not agent_name or agent_name not in self.cards:
+            task.state = "failed"
+            task.error_message = "No suitable agent found"
+            task.updated_at = datetime.now(timezone.utc)
+            log_error(f"[Workflow] No suitable agent found for step {step.step_label}")
+            return {
+                "step_label": step.step_label,
+                "agent": None,
+                "state": "failed",
+                "error": "No suitable agent found",
+                "output": None
+            }
+        
+        # Update task with resolved agent
+        task.recommended_agent = agent_name
+        task.updated_at = datetime.now(timezone.utc)
+        
+        log_debug(f"� [Workflow] Selected agent: {agent_name}")
+        await self._emit_granular_agent_event(
+            agent_name=agent_name,
+            status_text=f"Starting: {step.description[:50]}...",
+            context_id=context_id
+        )
+        
+        # File deduplication for multi-step workflows (same as dynamic orchestration)
+        if hasattr(session_context, '_latest_processed_parts') and len(session_context._latest_processed_parts) > 1:
+            from collections import defaultdict
+            old_count = len(session_context._latest_processed_parts)
+            
+            MAX_GENERATED_FILES = 3
+            editing_roles = defaultdict(lambda: None)
+            generated_artifacts = []
+            
+            for part in reversed(session_context._latest_processed_parts):
+                role = None
+                if isinstance(part, DataPart) and isinstance(part.data, dict):
+                    role = part.data.get('role')
+                elif hasattr(part, 'root') and isinstance(part.root, DataPart) and isinstance(part.root.data, dict):
+                    role = part.root.data.get('role')
+                
+                if role in ['base', 'mask', 'overlay']:
+                    if role not in editing_roles:
+                        editing_roles[role] = part
+                else:
+                    if len(generated_artifacts) < MAX_GENERATED_FILES:
+                        generated_artifacts.append(part)
+            
+            deduplicated_parts = list(editing_roles.values()) + generated_artifacts
+            session_context._latest_processed_parts = deduplicated_parts
+            print(f"📎 [Workflow] File management: {old_count} files → {len(deduplicated_parts)} files")
+        
+        try:
+            # Create task message with context
+            task_message = f"{step.description}\n\nContext: {user_message}"
+            
+            # Create dummy tool context
+            dummy_context = DummyToolContext(session_context, self._azure_blob_client)
+            
+            # Call the agent
+            responses = await self.send_message(
+                agent_name=agent_name,
+                message=task_message,
+                tool_context=dummy_context,
+                suppress_streaming=False
+            )
+            
+            if responses and len(responses) > 0:
+                response_obj = responses[0] if isinstance(responses, list) else responses
+                
+                # Check for HITL (input_required)
+                if session_context.pending_input_agent:
+                    log_info(f"⏸️ [Workflow] Agent '{agent_name}' returned input_required")
+                    task.state = "input_required"
+                    task.updated_at = datetime.now(timezone.utc)
+                    
+                    output_text = extract_text_fn(response_obj)
+                    return {
+                        "step_label": step.step_label,
+                        "agent": agent_name,
+                        "state": "input_required",
+                        "output": output_text,
+                        "hitl_pause": True
+                    }
+                
+                # Handle A2A Task response with proper state extraction
+                if isinstance(response_obj, Task):
+                    task.state = response_obj.status.state
+                    task.output = {
+                        "task_id": response_obj.id,
+                        "state": response_obj.status.state,
+                        "result": response_obj.result if hasattr(response_obj, 'result') else None,
+                        "artifacts": [a.model_dump() for a in response_obj.artifacts] if response_obj.artifacts else []
+                    }
+                    task.updated_at = datetime.now(timezone.utc)
+                    
+                    if task.state == "failed":
+                        task.error_message = response_obj.status.message or "Task failed"
+                        log_error(f"[Workflow] Task failed: {task.error_message}")
+                        return {
+                            "step_label": step.step_label,
+                            "agent": agent_name,
+                            "state": "failed",
+                            "error": task.error_message,
+                            "output": None
+                        }
+                    
+                    # Collect artifacts
+                    output_text = str(response_obj.result) if response_obj.result else ""
+                    if response_obj.artifacts:
+                        artifact_descriptions = []
+                        for artifact in response_obj.artifacts:
+                            if hasattr(artifact, 'parts'):
+                                for part in artifact.parts:
+                                    if not hasattr(session_context, '_latest_processed_parts'):
+                                        session_context._latest_processed_parts = []
+                                    session_context._latest_processed_parts.append(part)
+                                    
+                                    if hasattr(part, 'root'):
+                                        if hasattr(part.root, 'file'):
+                                            file_info = part.root.file
+                                            file_name = getattr(file_info, 'name', 'unknown')
+                                            artifact_descriptions.append(f"[File: {file_name}]")
+                                        elif hasattr(part.root, 'text'):
+                                            artifact_descriptions.append(part.root.text)
+                        
+                        if artifact_descriptions:
+                            output_text = f"{output_text}\n\nArtifacts:\n" + "\n".join(artifact_descriptions)
+                    
+                    log_info(f"✅ [Workflow] Step {step.step_label} completed by {agent_name}")
+                    return {
+                        "step_label": step.step_label,
+                        "agent": agent_name,
+                        "state": "completed",
+                        "error": None,
+                        "output": output_text
+                    }
+                else:
+                    # Simple string response
+                    task.state = "completed"
+                    output_text = extract_text_fn(response_obj)
+                    task.output = {"result": output_text}
+                    task.updated_at = datetime.now(timezone.utc)
+                    
+                    log_info(f"✅ [Workflow] Step {step.step_label} completed by {agent_name}")
+                    return {
+                        "step_label": step.step_label,
+                        "agent": agent_name,
+                        "state": "completed",
+                        "error": None,
+                        "output": output_text
+                    }
+            else:
+                task.state = "failed"
+                task.error_message = "No response from agent"
+                task.updated_at = datetime.now(timezone.utc)
+                return {
+                    "step_label": step.step_label,
+                    "agent": agent_name,
+                    "state": "failed",
+                    "error": "No response from agent",
+                    "output": None
+                }
+                
+        except Exception as e:
+            task.state = "failed"
+            task.error_message = str(e)
+            task.updated_at = datetime.now(timezone.utc)
+            log_error(f"[Workflow] Error executing step {step.step_label}: {e}")
+            return {
+                "step_label": step.step_label,
+                "agent": agent_name,
+                "state": "failed",
+                "error": str(e),
+                "output": None
+            }
+
+    async def _execute_orchestrated_task(
+        self,
+        task: AgentModeTask,
+        session_context: SessionContext,
+        context_id: str,
+        workflow: Optional[str],
+        user_message: str,
+        extract_text_fn
+    ) -> Dict[str, Any]:
+        """
+        Execute a single orchestrated task with full state management.
+        
+        This method handles:
+        - File deduplication for multi-step workflows
+        - Agent calling via send_message
+        - HITL (input_required) detection
+        - Response parsing (A2A Task or legacy format)
+        - Artifact collection
+        - State updates on the AgentModeTask
+        
+        Args:
+            task: The AgentModeTask to execute
+            session_context: Session state
+            context_id: Conversation identifier  
+            workflow: Optional workflow definition
+            user_message: Original user message
+            extract_text_fn: Function to extract text from responses
+            
+        Returns:
+            Dict with output, hitl_pause flag, and error info
+        """
+        recommended_agent = task.recommended_agent
+        task_desc = task.task_description
+        
+        log_debug(f"🚀 [Agent Mode] Executing task: {task_desc[:50]}...")
+        
+        # Stream task creation event
+        await self._emit_granular_agent_event(
+            agent_name=recommended_agent or "orchestrator",
+            status_text=f"Executing: {task_desc[:50]}...",
+            context_id=context_id
+        )
+        
+        if not recommended_agent or recommended_agent not in self.cards:
+            task.state = "failed"
+            task.error_message = f"Agent '{recommended_agent}' not found"
+            task.updated_at = datetime.now(timezone.utc)
+            log_error(f"[Agent Mode] Agent not found: {recommended_agent}")
+            return {"error": task.error_message, "output": None}
+        
+        log_debug(f"🎯 [Agent Mode] Calling agent: {recommended_agent}")
+        
+        # File deduplication for multi-step workflows
+        if hasattr(session_context, '_latest_processed_parts') and len(session_context._latest_processed_parts) > 1:
+            from collections import defaultdict
+            old_count = len(session_context._latest_processed_parts)
+            
+            MAX_GENERATED_FILES = 3
+            editing_roles = defaultdict(lambda: None)
+            generated_artifacts = []
+            
+            for part in reversed(session_context._latest_processed_parts):
+                role = None
+                if isinstance(part, DataPart) and isinstance(part.data, dict):
+                    role = part.data.get('role')
+                elif hasattr(part, 'root') and isinstance(part.root, DataPart) and isinstance(part.root.data, dict):
+                    role = part.root.data.get('role')
+                
+                if role in ['base', 'mask', 'overlay']:
+                    if role not in editing_roles:
+                        editing_roles[role] = part
+                else:
+                    if len(generated_artifacts) < MAX_GENERATED_FILES:
+                        generated_artifacts.append(part)
+            
+            deduplicated_parts = list(editing_roles.values()) + generated_artifacts
+            session_context._latest_processed_parts = deduplicated_parts
+            print(f"📎 [Agent Mode] File management: {old_count} files → {len(deduplicated_parts)} files")
+        
+        # Create tool context and call agent
+        dummy_context = DummyToolContext(session_context, self._azure_blob_client)
+        
+        responses = await self.send_message(
+            agent_name=recommended_agent,
+            message=task_desc,
+            tool_context=dummy_context,
+            suppress_streaming=False
+        )
+        
+        if not responses or len(responses) == 0:
+            task.state = "failed"
+            task.error_message = "No response from agent"
+            task.updated_at = datetime.now(timezone.utc)
+            log_error(f"[Agent Mode] No response from agent")
+            return {"error": "No response from agent", "output": None}
+        
+        response_obj = responses[0] if isinstance(responses, list) else responses
+        
+        # Check for HITL (input_required)
+        if session_context.pending_input_agent:
+            log_info(f"⏸️ [Agent Mode] Agent '{recommended_agent}' returned input_required")
+            task.state = "input_required"
+            task.updated_at = datetime.now(timezone.utc)
+            
+            output_text = extract_text_fn(response_obj)
+            log_info(f"⏸️ [Agent Mode] Waiting for user response to '{recommended_agent}'")
+            await self._emit_status_event(f"Waiting for your response...", context_id)
+            
+            return {"output": output_text, "hitl_pause": True}
+        
+        # Parse response
+        if isinstance(response_obj, Task):
+            task.state = response_obj.status.state
+            task.output = {
+                "task_id": response_obj.id,
+                "state": response_obj.status.state,
+                "result": response_obj.result if hasattr(response_obj, 'result') else None,
+                "artifacts": [a.model_dump() for a in response_obj.artifacts] if response_obj.artifacts else []
+            }
+            task.updated_at = datetime.now(timezone.utc)
+            
+            if task.state == "failed":
+                task.error_message = response_obj.status.message or "Task failed"
+                log_error(f"[Agent Mode] Task failed: {task.error_message}")
+                return {"error": task.error_message, "output": None}
+            
+            log_info(f"✅ [Agent Mode] Task completed with state: {task.state}")
+            output_text = str(response_obj.result) if response_obj.result else ""
+            
+            # Collect artifacts
+            if response_obj.artifacts:
+                artifact_descriptions = []
+                for artifact in response_obj.artifacts:
+                    if hasattr(artifact, 'parts'):
+                        for part in artifact.parts:
+                            if not hasattr(session_context, '_latest_processed_parts'):
+                                session_context._latest_processed_parts = []
+                            session_context._latest_processed_parts.append(part)
+                            
+                            if hasattr(part, 'root'):
+                                if hasattr(part.root, 'file'):
+                                    file_info = part.root.file
+                                    file_name = getattr(file_info, 'name', 'unknown')
+                                    artifact_descriptions.append(f"[File: {file_name}]")
+                                elif hasattr(part.root, 'text'):
+                                    artifact_descriptions.append(part.root.text)
+                
+                if artifact_descriptions:
+                    output_text = f"{output_text}\n\nArtifacts:\n" + "\n".join(artifact_descriptions)
+            
+            return {"output": output_text, "hitl_pause": False}
+        else:
+            # Simple string response (legacy format)
+            task.state = "completed"
+            output_text = extract_text_fn(response_obj)
+            task.output = {"result": output_text}
+            task.updated_at = datetime.now(timezone.utc)
+            log_info(f"✅ [Agent Mode] Task completed successfully")
+            return {"output": output_text, "hitl_pause": False}
+
     async def _agent_mode_orchestration_loop(
         self,
         user_message: str,
@@ -2090,7 +2901,17 @@ class FoundryHostAgent2:
         # Reset host token usage for this workflow
         self.host_token_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
         
-        await self._emit_status_event("Initializing Agent Mode orchestration...", context_id)
+        await self._emit_status_event("Initializing orchestration...", context_id)
+        
+        # =====================================================================
+        # LLM ORCHESTRATION PATH: All workflows go through the orchestrator
+        # =====================================================================
+        # The LLM orchestrator handles both sequential and parallel workflows.
+        # For parallel steps (e.g., 2a., 2b.), the LLM will return next_tasks
+        # with parallel=True, and we execute them via asyncio.gather().
+        # =====================================================================
+        # orchestrator LLM decides which agents to call and in what order.
+        # =====================================================================
         
         # Handle conversation continuity - distinguish new goals from follow-up clarifications
         # FIXED: Don't treat workflow iterations as follow-ups - they should continue in one loop
@@ -2136,7 +2957,7 @@ class FoundryHostAgent2:
 PRIMARY RESPONSIBILITIES:
 - **FIRST**: Check if a MANDATORY WORKFLOW exists below - if it does, you MUST complete ALL workflow steps before marking goal as "completed"
 - Evaluate whether the user's goal is achieved by analyzing all completed tasks and their outputs
-- If incomplete, propose exactly ONE next task that moves closer to the goal
+- If incomplete, propose the next task(s) that move closer to the goal
 - Select the most appropriate agent based on their specialized skills
 
 DECISION-MAKING RULES:
@@ -2146,6 +2967,27 @@ DECISION-MAKING RULES:
 - Match tasks to agents using their "skills" field for best results
 - If no agent fits, set recommended_agent=null
 - Mark goal_status="completed" ONLY when: (1) ALL MANDATORY WORKFLOW steps are completed (if workflow exists), AND (2) the objective is fully achieved
+
+### 🔀 PARALLEL EXECUTION SUPPORT
+When the workflow contains parallel steps (indicated by letter suffixes like 2a., 2b., 2c.):
+- These steps can be executed SIMULTANEOUSLY - they do not depend on each other
+- Use `next_tasks` (list) instead of `next_task` (single) to propose multiple parallel tasks
+- Set `parallel=true` to indicate these tasks should run concurrently
+- Example: For steps "2a. Legal review" and "2b. Technical assessment":
+  ```json
+  {
+    "goal_status": "incomplete",
+    "next_task": null,
+    "next_tasks": [
+      {"task_description": "Legal review of requirements", "recommended_agent": "Legal Agent"},
+      {"task_description": "Technical assessment", "recommended_agent": "Tech Agent"}
+    ],
+    "parallel": true,
+    "reasoning": "Steps 2a and 2b can run in parallel as they are independent"
+  }
+  ```
+- After parallel tasks complete, proceed to the next sequential step (e.g., step 3)
+- If NO parallel steps, use `next_task` (single) and set `parallel=false`
 
 MULTI-AGENT STRATEGY:
 - **MAXIMIZE AGENT UTILIZATION**: Break complex goals into specialized subtasks
@@ -2184,8 +3026,10 @@ Do NOT skip steps. Do NOT mark goal as completed until ALL workflow steps are do
 {workflow.strip()}
 
 **IMPORTANT**: 
-- Execute each step in sequence
-- Wait for each step to complete before moving to the next
+- Execute sequential steps (1, 2, 3) one after another
+- **PARALLEL STEPS** (e.g., 2a, 2b, 2c): When you see steps with letter suffixes, these can run SIMULTANEOUSLY
+  - Use `next_tasks` (list) with `parallel=true` to execute them concurrently
+  - Wait for ALL parallel tasks to complete before moving to the next sequential step
 - Only mark goal_status="completed" after ALL workflow steps are finished
 - If a step fails, you may retry or adapt, but you must complete all steps
 """
@@ -2307,8 +3151,13 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                         output_preview = str(task.output).replace('\n', ' ')[:100]
                         print(f"    Output: {output_preview}...")
                 print(f"\n  Next Step Reasoning: {next_step.reasoning}")
-                if next_step.next_task:
-                    print(f"  Next Task: {next_step.next_task.get('task_description', 'N/A')}")
+                print(f"  🔀 Parallel Flag: {next_step.parallel}")
+                if next_step.next_tasks:
+                    print(f"  🔀 Next Tasks (list): {len(next_step.next_tasks)} tasks")
+                    for idx, task in enumerate(next_step.next_tasks, 1):
+                        print(f"    {idx}. {task.get('task_description', 'N/A')} → {task.get('recommended_agent', 'N/A')}")
+                elif next_step.next_task:
+                    print(f"  Next Task (single): {next_step.next_task.get('task_description', 'N/A')}")
                     print(f"  Target Agent: {next_step.next_task.get('recommended_agent', 'N/A')}")
                 print(f"{'='*80}\n")
                 
@@ -2322,190 +3171,166 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                     await self._emit_status_event("Goal achieved! Generating final response...", context_id)
                     break
                 
-                # Execute next task if provided
-                if next_step.next_task:
-                    task_desc = next_step.next_task.get("task_description")
-                    recommended_agent = next_step.next_task.get("recommended_agent")
-                    
-                    if not task_desc:
-                        print(f"⚠️ [Agent Mode] No task description provided, breaking loop")
-                        break
-                    
-                    # Create new task
+                # =========================================================
+                # TASK EXECUTION: Handle both sequential and parallel tasks
+                # =========================================================
+                
+                # Determine which tasks to execute
+                tasks_to_execute = []
+                is_parallel = next_step.parallel and next_step.next_tasks
+                
+                if is_parallel and next_step.next_tasks:
+                    # PARALLEL EXECUTION: Multiple tasks via next_tasks
+                    log_info(f"🔀 [Agent Mode] PARALLEL execution: {len(next_step.next_tasks)} tasks")
+                    await self._emit_status_event(f"Executing {len(next_step.next_tasks)} tasks in parallel...", context_id)
+                    for task_dict in next_step.next_tasks:
+                        tasks_to_execute.append({
+                            "task_description": task_dict.get("task_description"),
+                            "recommended_agent": task_dict.get("recommended_agent")
+                        })
+                elif next_step.next_task:
+                    # SEQUENTIAL EXECUTION: Single task via next_task
+                    tasks_to_execute.append({
+                        "task_description": next_step.next_task.get("task_description"),
+                        "recommended_agent": next_step.next_task.get("recommended_agent")
+                    })
+                
+                if not tasks_to_execute:
+                    print(f"⚠️ [Agent Mode] No tasks to execute, breaking loop")
+                    break
+                
+                # Validate all tasks have descriptions
+                for task_dict in tasks_to_execute:
+                    if not task_dict.get("task_description"):
+                        print(f"⚠️ [Agent Mode] Task missing description, skipping")
+                        tasks_to_execute.remove(task_dict)
+                
+                if not tasks_to_execute:
+                    print(f"⚠️ [Agent Mode] No valid tasks after validation, breaking loop")
+                    break
+                
+                # Create AgentModeTask objects for all tasks
+                pydantic_tasks = []
+                for task_dict in tasks_to_execute:
                     task = AgentModeTask(
                         task_id=str(uuid.uuid4()),
-                        task_description=task_desc,
-                        recommended_agent=recommended_agent,
-                        state="running"
+                        task_description=task_dict["task_description"],
+                        recommended_agent=task_dict.get("recommended_agent"),
+                        state="pending"
                     )
                     plan.tasks.append(task)
+                    pydantic_tasks.append(task)
+                    log_debug(f"📋 [Agent Mode] Created task: {task.task_description[:50]}...")
+                
+                # Execute tasks (parallel or sequential)
+                if is_parallel:
+                    # ============================================
+                    # PARALLEL EXECUTION via asyncio.gather()
+                    # ============================================
+                    import asyncio as async_lib  # Import locally to avoid any scoping issues
+                    log_info(f"🔀 [Agent Mode] Executing {len(pydantic_tasks)} tasks IN PARALLEL")
+                    await self._emit_status_event(f"Executing {len(pydantic_tasks)} tasks simultaneously...", context_id)
                     
-                    log_debug(f"📋 [Agent Mode] New task: {task_desc}")
-                    log_debug(f"🎯 [Agent Mode] Target agent: {recommended_agent or 'None specified'}")
-                    await self._emit_status_event(f"Executing: {task_desc}", context_id)
-                    
-                    # Stream task creation event
-                    await self._emit_granular_agent_event(
-                        agent_name=recommended_agent or "orchestrator",
-                        status_text=f"Task created: {task_desc}",
-                        context_id=context_id
-                    )
-                    
-                    # Execute the task by delegating to the selected remote agent
-                    try:
-                        if recommended_agent and recommended_agent in self.cards:
-                            log_debug(f"🚀 [Agent Mode] Calling agent: {recommended_agent}")
-                            
-                            # File deduplication for agent mode workflows
-                            # Keep only the most recent files to prevent accumulation across workflow iterations
-                            if hasattr(session_context, '_latest_processed_parts') and len(session_context._latest_processed_parts) > 1:
-                                from collections import defaultdict
-                                old_count = len(session_context._latest_processed_parts)
-                                
-                                # Maximum number of generated files to keep (most recent N)
-                                # This prevents accumulation when workflows have many iterations
-                                MAX_GENERATED_FILES = 3
-                                
-                                # Separate artifacts with editing roles (base/mask/overlay) from generated outputs
-                                editing_roles = defaultdict(lambda: None)  # For base/mask/overlay - keep latest only
-                                generated_artifacts = []  # For generated images/files - keep only most recent N
-                                
-                                for part in reversed(session_context._latest_processed_parts):  # reversed = most recent first
-                                    role = None
-                                    if isinstance(part, DataPart) and isinstance(part.data, dict):
-                                        role = part.data.get('role')
-                                    elif hasattr(part, 'root') and isinstance(part.root, DataPart) and isinstance(part.root.data, dict):
-                                        role = part.root.data.get('role')
-                                    
-                                    # Deduplicate ONLY editing roles (base, mask, overlay)
-                                    # These are meant for iterative editing workflows
-                                    if role in ['base', 'mask', 'overlay']:
-                                        if role not in editing_roles:
-                                            editing_roles[role] = part
-                                    else:
-                                        # Keep only the most recent N generated artifacts to prevent accumulation
-                                        # This prevents passing 17+ files to agents like Image Analysis
-                                        if len(generated_artifacts) < MAX_GENERATED_FILES:
-                                            generated_artifacts.append(part)
-                                
-                                # Combine: editing roles (deduplicated) + most recent N generated artifacts  
-                                # Keep generated_artifacts in newest-first order (from reversed iteration)
-                                # This ensures the LATEST generated image is FIRST, so it's used as base for next edit
-                                deduplicated_parts = list(editing_roles.values()) + generated_artifacts
-                                session_context._latest_processed_parts = deduplicated_parts
-                                print(f"📎 [Agent Mode] File management: {old_count} files → {len(deduplicated_parts)} files")
-                                print(f"   • Editing roles (deduplicated): {len(editing_roles)} (base/mask/overlay)")
-                                print(f"   • Generated artifacts (kept {len(generated_artifacts)} most recent, max {MAX_GENERATED_FILES})")
-                            
-                            # Create dummy tool context for send_message
-                            dummy_context = DummyToolContext(session_context, self._azure_blob_client)
-                            
-                            # Call send_message (existing method)
-                            responses = await self.send_message(
-                                agent_name=recommended_agent,
-                                message=task_desc,
-                                tool_context=dummy_context,
-                                suppress_streaming=False  # Show in UI
+                    async def execute_task_parallel(task: AgentModeTask) -> Dict[str, Any]:
+                        """Execute a single task and return result dict."""
+                        task.state = "running"
+                        task.updated_at = datetime.now(timezone.utc)
+                        
+                        try:
+                            result = await self._execute_orchestrated_task(
+                                task=task,
+                                session_context=session_context,
+                                context_id=context_id,
+                                workflow=workflow,
+                                user_message=user_message,
+                                extract_text_fn=extract_text_from_response
                             )
-                            
-                            # Parse and record task execution results
-                            # Extract state information from A2A Task protocol response
-                            if responses and len(responses) > 0:
-                                response_obj = responses[0] if isinstance(responses, list) else responses
-                                
-                                # WORKFLOW PAUSE: Check if agent returned input_required
-                                # This is detected via session_context.pending_input_agent being set
-                                if session_context.pending_input_agent:
-                                    log_info(f"⏸️ [Agent Mode] Agent '{recommended_agent}' returned input_required - PAUSING WORKFLOW")
-                                    task.state = "input_required"
-                                    
-                                    # Collect any output from the agent's question (properly extract text)
-                                    output_text = extract_text_from_response(response_obj)
-                                    if output_text:
-                                        all_task_outputs.append(output_text)
-                                    
-                                    # Store workflow state for resumption after HITL
-                                    session_context.pending_workflow = workflow
-                                    session_context.pending_workflow_outputs = all_task_outputs.copy()
-                                    session_context.pending_workflow_user_message = user_message
-                                    
-                                    log_info(f"⏸️ [Agent Mode] Workflow paused. Collected {len(all_task_outputs)} outputs so far.")
-                                    log_info(f"⏸️ [Agent Mode] Waiting for user response to '{recommended_agent}'")
-                                    await self._emit_status_event(f"Waiting for your response to continue...", context_id)
-                                    
-                                    # Return current outputs - workflow will resume after HITL
-                                    return all_task_outputs
-                                
-                                # A2A Task response includes detailed state and artifacts
-                                if isinstance(response_obj, Task):
-                                    task.state = response_obj.status.state
-                                    task.output = {
-                                        "task_id": response_obj.id,
-                                        "state": response_obj.status.state,
-                                        "result": response_obj.result if hasattr(response_obj, 'result') else None,
-                                        "artifacts": [a.model_dump() for a in response_obj.artifacts] if response_obj.artifacts else []
-                                    }
-                                    
-                                    if task.state == "failed":
-                                        task.error_message = response_obj.status.message or "Task failed"
-                                        log_error(f"[Agent Mode] Task failed: {task.error_message}")
-                                    else:
-                                        log_info(f"✅ [Agent Mode] Task completed with state: {task.state}")
-                                        # Collect text result
-                                        output_text = str(response_obj.result) if response_obj.result else ""
-                                        
-                                        # Also collect any artifacts (files, images, etc.) from this task
-                                        if response_obj.artifacts:
-                                            artifact_descriptions = []
-                                            for artifact in response_obj.artifacts:
-                                                if hasattr(artifact, 'parts'):
-                                                    for part in artifact.parts:
-                                                        # Add to _latest_processed_parts for agent-to-agent communication
-                                                        if not hasattr(session_context, '_latest_processed_parts'):
-                                                            session_context._latest_processed_parts = []
-                                                        session_context._latest_processed_parts.append(part)
-                                                        
-                                                        # NOTE: Not adding to _agent_generated_artifacts here
-                                                        # It will be added later during streaming processing (send_message)
-                                                        # to avoid duplicates since send_message processes _latest_processed_parts
-                                                        
-                                                        if hasattr(part, 'root'):
-                                                            # File parts (images, documents, etc.)
-                                                            if hasattr(part.root, 'file'):
-                                                                file_info = part.root.file
-                                                                file_name = getattr(file_info, 'name', 'unknown')
-                                                                file_url = getattr(file_info, 'uri', None)
-                                                                artifact_descriptions.append(f"[File: {file_name}]")
-                                                                if file_url:
-                                                                    artifact_descriptions.append(f"URI: {file_url}")
-                                                            # Text parts in artifacts
-                                                            elif hasattr(part.root, 'text'):
-                                                                artifact_descriptions.append(part.root.text)
-                                            
-                                            if artifact_descriptions:
-                                                artifacts_summary = "\n".join(artifact_descriptions)
-                                                all_task_outputs.append(f"{output_text}\n\nArtifacts:\n{artifacts_summary}")
-                                            else:
-                                                all_task_outputs.append(output_text)
-                                        else:
-                                            all_task_outputs.append(output_text)
-                                else:
-                                    # Simple string response (legacy format) - extract text properly
-                                    task.state = "completed"
-                                    output_text = extract_text_from_response(response_obj)
-                                    task.output = {"result": output_text}
-                                    all_task_outputs.append(output_text)
-                                    log_info(f"✅ [Agent Mode] Task completed successfully")
-                            else:
-                                # No response indicates communication failure
-                                task.state = "failed"
-                                task.error_message = "No response from agent"
-                                log_error(f"[Agent Mode] No response from agent")
-                        else:
+                            return result
+                        except Exception as e:
                             task.state = "failed"
-                            task.error_message = f"Agent '{recommended_agent}' not found"
-                            log_error(f"[Agent Mode] Agent not found: {recommended_agent}")
+                            task.error_message = str(e)
+                            task.updated_at = datetime.now(timezone.utc)
+                            log_error(f"[Agent Mode] Parallel task failed: {e}")
+                            return {"error": str(e), "task_id": task.task_id}
                     
+                    # Run all tasks in parallel
+                    try:
+                        log_info(f"🔀 [Agent Mode] About to call asyncio.gather with {len(pydantic_tasks)} tasks")
+                        results = await async_lib.gather(
+                            *[execute_task_parallel(t) for t in pydantic_tasks],
+                            return_exceptions=True
+                        )
+                        log_info(f"🔀 [Agent Mode] asyncio.gather completed, got {len(results)} results")
+                    except Exception as gather_error:
+                        log_error(f"[Agent Mode] ERROR in asyncio.gather: {gather_error}")
+                        log_error(f"[Agent Mode] Error type: {type(gather_error)}")
+                        import traceback
+                        log_error(f"[Agent Mode] Traceback:\n{traceback.format_exc()}")
+                        raise
+                    
+                    # Process results
+                    hitl_pause = False
+                    for i, result in enumerate(results):
+                        task = pydantic_tasks[i]
+                        if isinstance(result, Exception):
+                            log_error(f"[Agent Mode] Parallel task exception: {result}")
+                            task.state = "failed"
+                            task.error_message = str(result)
+                        elif isinstance(result, dict):
+                            if result.get("hitl_pause"):
+                                hitl_pause = True
+                                # Store for HITL resumption
+                                if result.get("output"):
+                                    all_task_outputs.append(result["output"])
+                            elif result.get("output"):
+                                all_task_outputs.append(result["output"])
+                            elif result.get("error"):
+                                log_error(f"[Agent Mode] Task error: {result['error']}")
+                        task.updated_at = datetime.now(timezone.utc)
+                    
+                    # If any task triggered HITL pause, pause the workflow
+                    if hitl_pause:
+                        log_info(f"⏸️ [Agent Mode] HITL pause triggered during parallel execution")
+                        session_context.pending_workflow = workflow
+                        session_context.pending_workflow_outputs = all_task_outputs.copy()
+                        session_context.pending_workflow_user_message = user_message
+                        return all_task_outputs
+                    
+                    log_info(f"✅ [Agent Mode] All {len(pydantic_tasks)} parallel tasks completed")
+                    
+                else:
+                    # ============================================
+                    # SEQUENTIAL EXECUTION (single task)
+                    # ============================================
+                    task = pydantic_tasks[0]
+                    task.state = "running"
+                    task.updated_at = datetime.now(timezone.utc)
+                    
+                    log_debug(f"📋 [Agent Mode] Sequential task: {task.task_description}")
+                    await self._emit_status_event(f"Executing: {task.task_description[:50]}...", context_id)
+                    
+                    try:
+                        result = await self._execute_orchestrated_task(
+                            task=task,
+                            session_context=session_context,
+                            context_id=context_id,
+                            workflow=workflow,
+                            user_message=user_message,
+                            extract_text_fn=extract_text_from_response
+                        )
+                        
+                        if result.get("hitl_pause"):
+                            # HITL pause - return immediately
+                            if result.get("output"):
+                                all_task_outputs.append(result["output"])
+                            session_context.pending_workflow = workflow
+                            session_context.pending_workflow_outputs = all_task_outputs.copy()
+                            session_context.pending_workflow_user_message = user_message
+                            return all_task_outputs
+                        
+                        if result.get("output"):
+                            all_task_outputs.append(result["output"])
+                        
                     except Exception as e:
                         task.state = "failed"
                         task.error_message = str(e)
@@ -2513,9 +3338,8 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                     
                     finally:
                         task.updated_at = datetime.now(timezone.utc)
-                        print(f"📊 [Agent Mode] Task final state: {task.state}")
                         
-                        # Log task completion details
+                        # Log task completion
                         print(f"\n{'~'*80}")
                         log_info(f"✅ [Agent Mode] TASK COMPLETED")
                         print(f"{'~'*80}")
@@ -6044,10 +6868,17 @@ Original request: {message}"""
             
             log_debug(f"Enhanced message: {enhanced_message}")
             
-            # Check if we're in Agent Mode
-            if session_context.agent_mode:
-                log_debug(f"🎯 [Agent Mode] Agent Mode ENABLED - using orchestration loop")
-                await self._emit_status_event("Agent Mode: Starting task orchestration...", context_id)
+            # =====================================================================
+            # MODE DETECTION: Auto-detect based on workflow presence
+            # =====================================================================
+            # - Workflow defined → Use orchestration loop (sequential/parallel execution)
+            # - No workflow → Use standard tool-calling path (dynamic, parallel-capable)
+            # =====================================================================
+            use_orchestration = workflow and workflow.strip()
+            
+            if use_orchestration:
+                log_debug(f"🎯 [Workflow Mode] Workflow detected - using orchestration loop")
+                await self._emit_status_event("Starting workflow orchestration...", context_id)
                 
                 # Use agent mode orchestration loop
                 try:
@@ -6059,83 +6890,20 @@ Original request: {message}"""
                         workflow=workflow
                     )
                     
-                    # Generate final synthesis using Azure AI Foundry agent
-                    print(f"🎬 [Agent Mode] Generating final response synthesis...")
-                    await self._emit_status_event("Synthesizing final response...", context_id)
+                    # WORKFLOW MODE: Combine outputs into single response without calling agents
+                    # The orchestration loop has executed all workflow steps in order
+                    print(f"✅ [Workflow Mode] Workflow completed - {len(orchestration_outputs)} task outputs")
+                    log_debug(f"✅ [Workflow Mode] All workflow steps completed, combining outputs")
                     
-                    # Create synthesis prompt with all task outputs
-                    # Tell the agent NOT to use tools, just synthesize
-                    synthesis_prompt = f"""Based on the following task outputs, provide a comprehensive answer to the user's question: "{enhanced_message}"
-
-Task Outputs:
-{chr(10).join(f"- {output}" for output in orchestration_outputs)}
-
-IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). Simply synthesize these outputs into a clear, cohesive response. Do NOT ask for confirmation or what to do next."""
-                    
-                    # RESPONSES API: Use streaming synthesis (no thread/run needed)
-                    log_foundry_debug(f"Creating synthesis response with Responses API...")
-                    synthesis_response = await self._create_response_with_streaming(
-                        user_message=synthesis_prompt,
-                        context_id=context_id,
-                        session_context=session_context,
-                        tools=[],  # No tools for synthesis - just text generation
-                        instructions="Synthesize the following task outputs into a coherent response. Do NOT call any tools.",
-                        event_logger=event_logger
-                    )
-                    
-                    # Extract token usage from synthesis response
-                    if 'usage' in synthesis_response and synthesis_response['usage']:
-                        usage = synthesis_response['usage']
-                        self.host_token_usage["prompt_tokens"] += usage.get('prompt_tokens', 0) or 0
-                        self.host_token_usage["completion_tokens"] += usage.get('completion_tokens', 0) or 0
-                        self.host_token_usage["total_tokens"] += usage.get('total_tokens', 0) or 0
-                        print(f"🎟️ [Host Agent] Synthesis tokens: +{usage.get('total_tokens', 0)} (total: {self.host_token_usage['total_tokens']})")
-                    
-                    # Get final response from synthesis
-                    if synthesis_response['status'] == 'completed':
-                        final_response = synthesis_response.get('text', '')
-                        log_info(f"✅ [Agent Mode] Final synthesis extracted: {final_response[:200] if final_response else '(EMPTY!)'}...")
-                        
-                        # Include ONLY agent-generated artifacts (not user uploads)
-                        # This ensures the UI can display NEW images with "Refine this image" buttons
-                        final_responses = [final_response]
-                        log_foundry_debug(f"Checking for agent-generated artifacts to include in final response...")
-                        log_foundry_debug(f"session_context has _agent_generated_artifacts: {hasattr(session_context, '_agent_generated_artifacts')}")
-                        if hasattr(session_context, '_agent_generated_artifacts'):
-                            log_foundry_debug(f"_agent_generated_artifacts length: {len(session_context._agent_generated_artifacts)}")
-                            artifact_dicts = []
-                            for idx, part in enumerate(session_context._agent_generated_artifacts):
-                                log_foundry_debug(f"Part {idx}: type={type(part)}")
-                                
-                                # Check for wrapped Part objects with .root
-                                if hasattr(part, 'root'):
-                                    log_foundry_debug(f"Part {idx} has .root, root type: {type(part.root)}")
-                                    if isinstance(part.root, DataPart) and isinstance(part.root.data, dict) and 'artifact-uri' in part.root.data:
-                                        log_foundry_debug(f"Part {idx} wrapped DataPart with artifact-uri ✓")
-                                        artifact_dicts.append(part.root.data)
-                                
-                                # Check for unwrapped DataPart objects (no .root)
-                                elif isinstance(part, DataPart):
-                                    log_foundry_debug(f"Part {idx} is unwrapped DataPart, data type: {type(part.data)}")
-                                    if isinstance(part.data, dict) and 'artifact-uri' in part.data:
-                                        log_foundry_debug(f"Part {idx} unwrapped DataPart with artifact-uri ✓")
-                                        artifact_dicts.append(part.data)
-                            
-                            log_foundry_debug(f"Found {len(artifact_dicts)} artifact dicts from remote agents")
-                            if artifact_dicts:
-                                log_debug(f"📦 [Agent Mode] Including {len(artifact_dicts)} artifact(s) from remote agents in final response for UI display")
-                                final_responses.extend(artifact_dicts)
-                                for idx, artifact_data in enumerate(artifact_dicts):
-                                    uri = artifact_data.get('artifact-uri', '')
-                                    filename = artifact_data.get('file-name', 'unknown')
-                                    print(f"  • Artifact {idx+1} from remote agent: {filename} (URI has SAS: {'?' in uri})")
-                            else:
-                                print(f"⚠️ [DEBUG] No artifact dicts found (agent doesn't generate files)")
-                        else:
-                            print(f"⚠️ [DEBUG] session_context does not have _agent_generated_artifacts")
+                    # Combine all task outputs into a single coherent response
+                    if orchestration_outputs:
+                        combined_response = "\n\n".join(orchestration_outputs)
+                        log_debug(f"✅ [Workflow Mode] Combined {len(orchestration_outputs)} outputs into single response")
                     else:
-                        print(f"⚠️ [Agent Mode] Synthesis response did not complete: {synthesis_response['status']}")
-                        final_responses = ["Task orchestration completed but synthesis failed."]
+                        combined_response = "Workflow completed successfully."
+                    
+                    # Return as single response (not a list)
+                    final_responses = [combined_response]
                     
                     # Store the interaction and return
                     log_debug("About to store User→Host interaction for context_id: {context_id}")
@@ -6147,7 +6915,7 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). Simply synt
                         span=span
                     )
                     
-                    log_debug(f"🎯 [Agent Mode] Orchestration complete, returning {len(final_responses)} responses")
+                    log_debug(f"🎯 [Workflow Mode] Orchestration complete, returning 1 combined response")
                     return final_responses
                     
                 except Exception as e:

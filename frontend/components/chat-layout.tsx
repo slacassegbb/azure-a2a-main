@@ -26,7 +26,6 @@ export function ChatLayout() {
   const [isLeftSidebarCollapsed, setLeftSidebarCollapsed] = useState(false)
   const [isRightSidebarCollapsed, setRightSidebarCollapsed] = useState(false)
   const [isFileHistoryOpen, setFileHistoryOpen] = useState(false) // Closed by default
-  const [agentMode, setAgentMode] = useState(false)  // Always starts OFF
   const [enableInterAgentMemory, setEnableInterAgentMemory] = useState(true)
   const [activeNode, setActiveNode] = useState<string | null>(null)
   
@@ -344,7 +343,6 @@ export function ChatLayout() {
             <ChatPanel 
               dagNodes={dagNodes} 
               dagLinks={dagLinks} 
-              agentMode={agentMode}
               enableInterAgentMemory={enableInterAgentMemory}
               workflow={workflow}
               registeredAgents={registeredAgents}
@@ -373,8 +371,6 @@ export function ChatLayout() {
             registeredAgents={registeredAgents}
             isCollapsed={isRightSidebarCollapsed}
             onToggle={handleRightSidebarToggle}
-            agentMode={agentMode}
-            onAgentModeChange={setAgentMode}
             enableInterAgentMemory={enableInterAgentMemory}
             onInterAgentMemoryChange={setEnableInterAgentMemory}
             workflow={workflow}
