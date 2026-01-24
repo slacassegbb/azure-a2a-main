@@ -769,6 +769,20 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                   else if (part.content) {
                     content += (content ? '\n' : '') + part.content
                   }
+                  // Handle FilePart with image artifacts (from Image Generator)
+                  else if (part.kind === 'file' && part.file?.uri) {
+                    const mimeType = part.file.mimeType || ''
+                    if (mimeType.startsWith('image/') || /\.(png|jpe?g|gif|webp)$/i.test(part.file.uri)) {
+                      images.push({ uri: part.file.uri, fileName: part.file.name || 'Generated image' })
+                    }
+                  }
+                  // Nested FilePart format
+                  else if (part.root?.kind === 'file' && part.root?.file?.uri) {
+                    const mimeType = part.root.file.mimeType || ''
+                    if (mimeType.startsWith('image/') || /\.(png|jpe?g|gif|webp)$/i.test(part.root.file.uri)) {
+                      images.push({ uri: part.root.file.uri, fileName: part.root.file.name || 'Generated image' })
+                    }
+                  }
                   // Handle DataPart with image artifacts
                   else if (part.kind === 'data' && part.data) {
                     const artifactUri = part.data['artifact-uri']
@@ -794,6 +808,12 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                       (msg.role === 'agent' ? 'assistant' : msg.role) : 'assistant',
                 content: content,
                 images: images.length > 0 ? images : undefined,
+                // Convert images to attachments format for rendering (JSX looks for attachments, not images)
+                attachments: images.length > 0 ? images.map(img => ({
+                  uri: img.uri,
+                  fileName: img.fileName || "Generated image",
+                  mediaType: "image/png", // Default to PNG for generated images
+                })) : undefined,
                 agent: (msg.role === 'assistant' || msg.role === 'agent') ? 'Assistant' : undefined
               }
             })
@@ -1061,7 +1081,22 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
               console.log("[ChatPanel] Adding attachment message:", attachmentMessage)
               setMessages(prev => [...prev, attachmentMessage])
               
-              // Broadcast attachment message to other users so they can see images
+              // Add ALL agent-generated artifacts/files to file history (session-scoped)
+              // This ensures any file returned by a remote agent is visible in file history
+              allImageAttachments.forEach((artifact: any) => {
+                if ((window as any).addFileToHistory) {
+                  (window as any).addFileToHistory({
+                    file_id: artifact.uri, // Use URI as unique ID
+                    filename: artifact.fileName || artifact.filename || "Agent artifact",
+                    size: artifact.fileSize || artifact.size || 0,
+                    content_type: artifact.mediaType || artifact.content_type || artifact.mime_type || "application/octet-stream",
+                    uri: artifact.uri,
+                  })
+                  console.log("[ChatPanel] Added agent artifact to file history:", artifact.fileName || artifact.filename)
+                }
+              })
+              
+              // Broadcast attachment message to other users so they can see artifacts
               sendMessage({
                 type: "shared_message",
                 message: attachmentMessage
@@ -1253,6 +1288,146 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       }
     }
 
+    // Handle inference step events (tool calls, remote agent activities)
+    const handleInferenceStep = (data: any) => {
+      console.log("[ChatPanel] Inference step received:", data)
+      if (data.agent && data.status) {
+        setInferenceSteps(prev => {
+          // Avoid duplicates - update existing or add new
+          const existingIndex = prev.findIndex(step => 
+            step.agent === data.agent && step.status === data.status
+          )
+          if (existingIndex >= 0) {
+            return prev // Already exists, don't duplicate
+          }
+          return [...prev, { agent: data.agent, status: data.status }]
+        })
+      }
+    }
+
+    // Handle tool call events
+    const handleToolCall = (data: any) => {
+      console.log("[ChatPanel] Tool call received:", data)
+      if (data.toolName && data.agentName) {
+        const status = `🛠️ ${data.agentName} is using ${data.toolName}...`
+        setInferenceSteps(prev => [...prev, { 
+          agent: data.agentName, 
+          status: status 
+        }])
+      }
+    }
+
+    // Handle tool response events
+    const handleToolResponse = (data: any) => {
+      console.log("[ChatPanel] Tool response received (ignored - using task_updated instead):", data)
+    }
+
+    // Handle remote agent activity events
+    const handleRemoteAgentActivity = (data: any) => {
+      console.log("[ChatPanel] Remote agent activity received:", data)
+      if (data.agentName && data.content) {
+        const content = data.content
+        
+        const isNoisyUpdate = content === "task started" ||
+                             content === "processing" ||
+                             content === "processing request" ||
+                             content === "generating artifact" ||
+                             (content.includes("🤖 Generating response...") && content.includes("chars")) ||
+                             (content.includes("🧠 Processing request..."))
+        
+        const isHostToolNoise = data.agentName === "foundry-host-agent" && (
+          content.includes("executing tools") ||
+          content.includes("tool execution completed") ||
+          content.includes("AI processing completed") ||
+          content.includes("creating AI response") ||
+          content.includes("AI response created") ||
+          content.includes("finalizing response") ||
+          content.startsWith("🛠️ Calling tool:") ||
+          content.startsWith("✅ Tool ")
+        )
+        
+        if (isNoisyUpdate || isHostToolNoise) {
+          console.log("[ChatPanel] Skipping noisy remote activity:", content.substring(0, 50))
+          return
+        }
+        
+        const displayContent = transformStatusMessage(content, data.agentName)
+        
+        setInferenceSteps(prev => {
+          const recentEntries = prev.slice(-5)
+          const isDuplicate = recentEntries.some(
+            entry => entry.agent === data.agentName && entry.status === displayContent
+          )
+          
+          if (isDuplicate) {
+            console.log("[ChatPanel] Skipping duplicate remote activity:", displayContent.substring(0, 50))
+            return prev
+          }
+          
+          return [...prev, { 
+            agent: data.agentName, 
+            status: displayContent 
+          }]
+        })
+      }
+    }
+
+    // Handle file uploaded events from agents
+    const handleFileUploaded = (data: any) => {
+      console.log("[ChatPanel] File uploaded from agent:", data)
+      if (data?.fileInfo && data.fileInfo.source_agent) {
+        const isImage = data.fileInfo.content_type?.startsWith('image/') || 
+          ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp'].includes(
+            (data.fileInfo.filename || '').toLowerCase().split('.').pop() || ''
+          )
+        
+        // Add to inference steps (with thumbnail for images, text for other files)
+        setInferenceSteps(prev => [...prev, { 
+          agent: data.fileInfo.source_agent, 
+          status: `📎 Generated ${data.fileInfo.filename}`,
+          imageUrl: isImage && data.fileInfo.uri ? data.fileInfo.uri : undefined,
+          imageName: data.fileInfo.filename
+        }])
+        
+        // ALSO add image as an attachment message in the main chat so it renders with refine buttons
+        if (isImage && data.fileInfo.uri) {
+          const attachmentMsgId = `file_uploaded_${data.fileInfo.uri}_${Date.now()}`
+          
+          // Check if we've already added this image
+          if (!processedMessageIds.has(attachmentMsgId)) {
+            setProcessedMessageIds(prev => new Set([...prev, attachmentMsgId]))
+            
+            const imageMessage: Message = {
+              id: attachmentMsgId,
+              role: "assistant",
+              agent: data.fileInfo.source_agent,
+              content: "",
+              attachments: [{
+                uri: data.fileInfo.uri,
+                fileName: data.fileInfo.filename || "Generated image",
+                mediaType: data.fileInfo.content_type || "image/png",
+              }],
+            }
+            
+            console.log("[ChatPanel] Adding image attachment message from file_uploaded:", imageMessage)
+            setMessages(prev => [...prev, imageMessage])
+            
+            // Also add to file history
+            if ((window as any).addFileToHistory) {
+              (window as any).addFileToHistory({
+                file_id: data.fileInfo.uri,
+                filename: data.fileInfo.filename || "Generated image",
+                size: data.fileInfo.size || 0,
+                content_type: data.fileInfo.content_type || "image/png",
+                uri: data.fileInfo.uri,
+              })
+              console.log("[ChatPanel] Added image to file history:", data.fileInfo.filename)
+            }
+          }
+        }
+      }
+    }
+
     // Subscribe to real Event Hub events from A2A backend
     subscribe("task_updated", handleTaskUpdate)
     subscribe("task_created", handleTaskCreated)
@@ -1324,138 +1499,6 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       }
     }
   }, [conversationId])
-
-  // Handle inference step events (tool calls, remote agent activities)
-    const handleInferenceStep = (data: any) => {
-      console.log("[ChatPanel] Inference step received:", data)
-      if (data.agent && data.status) {
-        setInferenceSteps(prev => {
-          // Avoid duplicates - update existing or add new
-          const existingIndex = prev.findIndex(step => 
-            step.agent === data.agent && step.status === data.status
-          )
-          if (existingIndex >= 0) {
-            return prev // Already exists, don't duplicate
-          }
-          return [...prev, { agent: data.agent, status: data.status }]
-        })
-        
-        // Also emit as status update for compatibility
-        // eventHub.emit("status_update", {
-        //   inferenceId: data.conversationId || `inf_${Date.now()}`,
-        //   agent: data.agent,
-        //   status: data.status
-        // })
-      }
-    }
-
-    // Handle tool call events
-    const handleToolCall = (data: any) => {
-      console.log("[ChatPanel] Tool call received:", data)
-      if (data.toolName && data.agentName) {
-        const status = `🛠️ ${data.agentName} is using ${data.toolName}...`
-        setInferenceSteps(prev => [...prev, { 
-          agent: data.agentName, 
-          status: status 
-        }])
-      }
-    }
-
-    // Handle tool response events
-    // DISABLED: task_updated is the single source of truth, this was causing duplicate status messages
-    const handleToolResponse = (data: any) => {
-      console.log("[ChatPanel] Tool response received (ignored - using task_updated instead):", data)
-      // Commenting out to avoid duplicate messages with task_updated
-      // if (data.toolName && data.agentName) {
-      //   const status = data.status === "success" 
-      //     ? `✅ ${data.toolName} completed`
-      //     : `❌ ${data.toolName} failed`
-      //   setInferenceSteps(prev => [...prev, { 
-      //     agent: data.agentName, 
-      //     status: status 
-      //   }])
-      // }
-    }
-
-    // Handle remote agent activity events
-    // THIS is the single source for workflow display messages
-    const handleRemoteAgentActivity = (data: any) => {
-      console.log("[ChatPanel] Remote agent activity received:", data)
-      if (data.agentName && data.content) {
-        const content = data.content
-        
-        // Filter out noisy intermediate updates that shouldn't show in workflow
-        // These are streaming progress indicators, not meaningful status updates
-        // KEEP: status transitions (submitted, working, completed) - these are important
-        // FILTER: repeated "Generating response..." progress updates
-        const isNoisyUpdate = content === "task started" ||
-                             content === "processing" ||
-                             content === "processing request" ||
-                             content === "generating artifact" ||
-                             // Filter repetitive progress indicators with char counts
-                             (content.includes("🤖 Generating response...") && content.includes("chars")) ||
-                             (content.includes("🧠 Processing request..."))
-        
-        // Skip updates from host agent that are just tool management noise
-        // These are internal implementation details, not meaningful user-facing updates
-        const isHostToolNoise = data.agentName === "foundry-host-agent" && (
-          content.includes("executing tools") ||
-          content.includes("tool execution completed") ||
-          content.includes("AI processing completed") ||
-          content.includes("creating AI response") ||
-          content.includes("AI response created") ||
-          content.includes("finalizing response") ||
-          content.startsWith("🛠️ Calling tool:") ||
-          content.startsWith("✅ Tool ")
-        )
-        
-        if (isNoisyUpdate || isHostToolNoise) {
-          console.log("[ChatPanel] Skipping noisy remote activity:", content.substring(0, 50))
-          return
-        }
-        
-        // Transform technical messages to user-friendly display text
-        const displayContent = transformStatusMessage(content, data.agentName)
-        
-        // Deduplicate: check if we already have this exact message from this agent
-        setInferenceSteps(prev => {
-          // Check last 5 entries for duplicates (compare transformed content)
-          const recentEntries = prev.slice(-5)
-          const isDuplicate = recentEntries.some(
-            entry => entry.agent === data.agentName && entry.status === displayContent
-          )
-          
-          if (isDuplicate) {
-            console.log("[ChatPanel] Skipping duplicate remote activity:", displayContent.substring(0, 50))
-            return prev
-          }
-          
-          return [...prev, { 
-            agent: data.agentName, 
-            status: displayContent 
-          }]
-        })
-      }
-    }
-
-    // Handle file uploaded events from agents
-    const handleFileUploaded = (data: any) => {
-      console.log("[ChatPanel] File uploaded from agent:", data)
-      if (data?.fileInfo && data.fileInfo.source_agent) {
-        const isImage = data.fileInfo.content_type?.startsWith('image/') || 
-          ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp'].includes(
-            (data.fileInfo.filename || '').toLowerCase().split('.').pop() || ''
-          )
-        
-        // Add to inference steps (with thumbnail for images, text for other files)
-        setInferenceSteps(prev => [...prev, { 
-          agent: data.fileInfo.source_agent, 
-          status: `📎 Generated ${data.fileInfo.filename}`,
-          imageUrl: isImage && data.fileInfo.uri ? data.fileInfo.uri : undefined,
-          imageName: data.fileInfo.filename
-        }])
-      }
-    }
 
   useEffect(() => {
     const handleStatusUpdate = (data: { inferenceId: string; agent: string; status: string }) => {
