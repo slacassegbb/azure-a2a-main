@@ -1095,7 +1095,7 @@
     "name": "Sora 2 Video Generator",
     "description": "Generate stunning AI videos from text prompts using Azure OpenAI's Sora 2 model. Create cinematic scenes, product demos, animations, and creative visual content with natural language descriptions. Supports 4-12 second videos in landscape or portrait format.",
     "version": "1.0.0",
-    "url": "http://localhost:9028/",
+    "url": "https://azurefoundry-video.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
     "defaultInputModes": [
       "text"
     ],
