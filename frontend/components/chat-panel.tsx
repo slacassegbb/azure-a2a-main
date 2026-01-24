@@ -1654,6 +1654,19 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       const mediaFromSteps = inferenceSteps.filter(step => step.imageUrl)
       if (mediaFromSteps.length > 0) {
         mediaFromSteps.forEach((step, idx) => {
+          // Determine mediaType: use step.mediaType if available, otherwise infer from file extension
+          let mediaType = step.mediaType
+          if (!mediaType && step.imageUrl) {
+            // Extract extension from URL (before any query params)
+            const urlWithoutParams = step.imageUrl.split('?')[0]
+            const ext = urlWithoutParams.split('.').pop()?.toLowerCase()
+            if (ext === 'mp4' || ext === 'webm' || ext === 'mov' || ext === 'avi' || ext === 'mkv') {
+              mediaType = `video/${ext === 'mov' ? 'quicktime' : ext}`
+            } else {
+              mediaType = 'image/png'
+            }
+          }
+          const isVideo = mediaType?.startsWith("video/")
           const mediaMsg: Message = {
             id: `media_${responseId}_${idx}_${Date.now()}`,
             role: "assistant",
@@ -1661,8 +1674,8 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
             content: "",
             attachments: [{
               uri: step.imageUrl!,
-              fileName: step.imageName || (step.mediaType?.startsWith("video/") ? "Generated video" : "Generated image"),
-              mediaType: step.mediaType || "image/png",
+              fileName: step.imageName || (isVideo ? "Generated video" : "Generated image"),
+              mediaType: mediaType || "image/png",
             }],
           }
           messagesToAdd.push(mediaMsg)
