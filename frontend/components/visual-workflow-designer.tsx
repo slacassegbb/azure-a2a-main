@@ -797,14 +797,23 @@ export function VisualWorkflowDesigner({
       const current = stepStatusesRef.current.get(stepId)
       const messages = current?.messages || []
       
-      // Add new message to the array if provided
+      // Add new message to the array if provided (with deduplication)
       if (newMessage || imageUrl) {
-        messages.push({
-          text: newMessage,
-          imageUrl,
-          fileName,
-          timestamp: Date.now()
-        })
+        // Check for duplicate: same message text within the last few messages (within 2 seconds)
+        const messagePrefix = (newMessage || '').slice(0, 100)
+        const isDuplicate = messages.slice(-5).some(m => 
+          (m.text || '').slice(0, 100) === messagePrefix && 
+          Date.now() - (m.timestamp || 0) < 2000
+        )
+        
+        if (!isDuplicate) {
+          messages.push({
+            text: newMessage,
+            imageUrl,
+            fileName,
+            timestamp: Date.now()
+          })
+        }
       }
       
       // Track start time when agent starts working

@@ -2829,7 +2829,7 @@ Use the above output from the previous workflow step to complete your task."""
             agent_name=recommended_agent,
             message=enhanced_task_message,  # ✅ Now includes previous task outputs!
             tool_context=dummy_context,
-            suppress_streaming=False
+            suppress_streaming=True  # Suppress agent's internal streaming to avoid duplicates in workflow mode
         )
         
         if not responses or len(responses) == 0:
@@ -3352,7 +3352,7 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                     task.updated_at = datetime.now(timezone.utc)
                     
                     log_debug(f"📋 [Agent Mode] Sequential task: {task.task_description}")
-                    await self._emit_status_event(f"Executing: {task.task_description[:50]}...", context_id)
+                    # Removed duplicate "Executing:" emit - already emitted in _execute_orchestrated_task
                     
                     try:
                         # For sequential tasks, pass only the LAST task output (from the immediately previous step)
@@ -3860,8 +3860,30 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
         print(f"🎯 [_emit_task_event] CALLED for agent: {agent_name}, task.kind: {getattr(task, 'kind', 'NO KIND')}", flush=True)
         log_debug(f"Agent capabilities: {agent_card.capabilities if hasattr(agent_card, 'capabilities') else 'None'}")
         
-        content = None
+        # WORKFLOW MODE: Suppress redundant status events from remote agents
+        # The workflow orchestrator already emits clean status updates
         contextId = get_context_id(task, None)
+        if contextId:
+            try:
+                session_ctx = self.get_session_context(contextId)
+                if session_ctx.agent_mode:
+                    # In workflow/agent mode, suppress intermediate "working" and "submitted" status updates
+                    # Only allow "completed" and "failed" events through (final states)
+                    if hasattr(task, 'kind') and task.kind == 'status-update':
+                        if hasattr(task, 'status') and task.status:
+                            state_obj = getattr(task.status, 'state', 'working')
+                            task_state = state_obj.value if hasattr(state_obj, 'value') else str(state_obj)
+                            
+                            # Suppress intermediate states in workflow mode - orchestrator handles these
+                            if task_state in ['working', 'submitted', 'pending']:
+                                log_debug(f"[WORKFLOW MODE] Suppressing intermediate '{task_state}' event from {agent_name}")
+                                return task  # Return without emitting event
+                    
+                    log_debug(f"[WORKFLOW MODE] Allowing event from {agent_name}: {getattr(task, 'kind', 'unknown')}")
+            except Exception as e:
+                log_debug(f"Error checking workflow mode in _emit_task_event: {e}")
+        
+        content = None
         task_id = None
         task_state = None
         
@@ -3983,6 +4005,16 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                                 if hasattr(part, 'root') and hasattr(part.root, 'text'):
                                     text_content = part.root.text
                                     break
+                        
+                        # WORKFLOW MODE: Suppress full response text in workflow activity panel
+                        # The orchestrator will display the full response - avoid duplicates
+                        try:
+                            session_ctx = self.get_session_context(contextId)
+                            if session_ctx.agent_mode and text_content and task_state == 'completed':
+                                log_debug(f"[WORKFLOW MODE] Suppressing full response text from {agent_card.name} - orchestrator will display")
+                                text_content = ""  # Clear the content to avoid duplicate display
+                        except Exception as e:
+                            log_debug(f"Error checking workflow mode for content suppression: {e}")
 
                         # CONSOLIDATED: Include ALL relevant data in single task_updated event
                         # This is the ONLY event emitted for remote agent status updates
