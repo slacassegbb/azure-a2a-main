@@ -19,6 +19,7 @@ from hosts.multiagent.foundry_agent_a2a import FoundryHostAgent2
 from service.server.application_manager import ApplicationManager
 from service.types import Conversation, Event
 from utils.agent_card import get_agent_card
+from utils.file_parts import extract_uri, convert_artifact_dict_to_file_part, create_file_part
 from service.agent_registry import get_session_registry
 
 # Tenant separator used in contextId format: sessionId::conversationId
@@ -163,15 +164,15 @@ class FoundryHostManager(ApplicationManager):
         # This ensures all file references use the standard A2A FilePart format
         elif isinstance(resp, dict) and ('artifact-uri' in resp or 'artifact-id' in resp):
             artifact_uri = resp.get('artifact-uri', '')
-            log_debug(f"Processing as artifact dict - converting to FilePart: {artifact_uri[:150]}")
+            log_debug(f"Processing as artifact dict - converting to FilePart: {artifact_uri[:150] if artifact_uri else 'no-uri'}")
             if artifact_uri:
-                # Convert to proper A2A FilePart with FileWithUri
-                file_with_uri = FileWithUri(
-                    name=resp.get('file-name', 'artifact'),
+                # Use utility to create proper FilePart
+                file_part = create_file_part(
                     uri=artifact_uri,
-                    mimeType=resp.get('media-type', resp.get('mime', 'image/png'))
+                    name=resp.get('file-name', 'artifact'),
+                    mime_type=resp.get('media-type', resp.get('mime', 'image/png'))
                 )
-                parts.append(Part(root=FilePart(file=file_with_uri)))
+                parts.append(Part(root=file_part))
             else:
                 # Fallback for artifact-id without URI (shouldn't happen, but be safe)
                 log_debug(f"WARNING: artifact dict without URI, using DataPart fallback")

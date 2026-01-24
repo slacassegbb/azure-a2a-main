@@ -84,6 +84,17 @@ from pydantic import BaseModel, Field
 
 # Tenant utilities for multi-tenancy support
 from utils.tenant import get_tenant_from_context
+# File parts utilities for standardized artifact handling
+from utils.file_parts import (
+    extract_uri,
+    extract_filename,
+    extract_mime_type,
+    create_file_part,
+    is_file_part,
+    is_image_part,
+    extract_all_images,
+    convert_artifact_dict_to_file_part,
+)
 import time
 
 # Load environment configuration from project root
@@ -6820,39 +6831,22 @@ Original request: {message}"""
             prepared_parts_for_agents: List[Part] = []
 
             def _wrap_for_agent(item: Any) -> List[Part]:
+                """Wrap any item as A2A Parts for agent communication."""
                 wrapped: List[Part] = []
 
                 if isinstance(item, Part):
                     wrapped.append(item)
                 elif isinstance(item, DataPart):
+                    # First add the DataPart itself for backward compatibility
                     wrapped.append(Part(root=item))
 
+                    # Also convert to FilePart using our utility for consistent handling
                     if isinstance(item.data, dict):
-                        artifact_uri = item.data.get("artifact-uri")
-                        file_name = item.data.get("file-name") or item.data.get("artifact-id") or "uploaded-file"
-                        mime_type = item.data.get("mime", "application/octet-stream")
-                        role_value = (item.data.get("role") or (item.data.get("metadata") or {}).get("role"))
-
-                        metadata_block = item.data.get("metadata") or {}
-                        if role_value and metadata_block.get("role") != role_value:
-                            metadata_block = {**metadata_block, "role": role_value}
-                            item.data["metadata"] = metadata_block
-                        if role_value and item.data.get("role") != role_value:
-                            item.data["role"] = role_value
-
-                        if artifact_uri:
-                            wrapped.append(
-                                Part(
-                                    root=FilePart(
-                                        file=FileWithUri(
-                                            name=file_name,
-                                            mimeType=mime_type,
-                                            uri=artifact_uri,
-                                            role=role_value,
-                                        )
-                                    )
-                                )
-                            )
+                        uri = extract_uri(item)
+                        if uri:
+                            file_part = convert_artifact_dict_to_file_part(item)
+                            if file_part:
+                                wrapped.append(Part(root=file_part))
 
                         if item.data.get("extracted_content"):
                             wrapped.append(
@@ -6869,7 +6863,14 @@ Original request: {message}"""
                     wrapped.append(Part(root=TextPart(text=item)))
 
                 elif isinstance(item, dict):
-                    wrapped.append(Part(root=DataPart(data=item)))
+                    # Check if this is an artifact dict and convert to FilePart
+                    uri = extract_uri(item)
+                    if uri:
+                        file_part = convert_artifact_dict_to_file_part(item)
+                        if file_part:
+                            wrapped.append(Part(root=file_part))
+                    else:
+                        wrapped.append(Part(root=DataPart(data=item)))
 
                 elif item is not None:
                     wrapped.append(Part(root=TextPart(text=str(item))))
@@ -7062,10 +7063,13 @@ Original request: {message}"""
                         if hasattr(session_context, '_agent_generated_artifacts'):
                             artifact_dicts = []
                             for part in session_context._agent_generated_artifacts:
-                                if hasattr(part, 'root') and isinstance(part.root, DataPart) and isinstance(part.root.data, dict) and 'artifact-uri' in part.root.data:
-                                    artifact_dicts.append(part.root.data)
-                                elif isinstance(part, DataPart) and isinstance(part.data, dict) and 'artifact-uri' in part.data:
-                                    artifact_dicts.append(part.data)
+                                # Use utility to extract URI from any part type
+                                uri = extract_uri(part)
+                                if uri:
+                                    # Convert to FilePart format for consistency
+                                    file_part = convert_artifact_dict_to_file_part(part)
+                                    if file_part:
+                                        artifact_dicts.append(file_part)
                             
                             if artifact_dicts:
                                 log_debug(f"📦 [Agent Mode] Including {len(artifact_dicts)} agent-generated artifact(s) in fallback response")
@@ -7212,31 +7216,28 @@ Original request: {message}"""
 
                 # Include ONLY agent-generated artifacts (not user uploads) in Standard Mode
                 # This ensures NEW images show up with "Refine" buttons, but user uploads don't echo
-                # Support both FilePart (preferred) and DataPart (legacy) formats
+                # Use centralized utility for clean artifact handling
                 if hasattr(session_context, '_agent_generated_artifacts'):
-                    artifact_file_parts = []  # FilePart objects (new format)
-                    artifact_dicts = []       # Dicts from DataPart (legacy format)
+                    artifact_file_parts = []  # FilePart objects (standard format)
                     
                     for part in session_context._agent_generated_artifacts:
-                        # Check for FilePart (preferred format)
-                        if isinstance(part, FilePart):
-                            file_obj = getattr(part, 'file', None)
-                            if file_obj and hasattr(file_obj, 'uri') and file_obj.uri:
-                                artifact_file_parts.append(part)
-                                log_debug(f"📦 Found FilePart artifact: {file_obj.uri[:80]}...")
-                        elif hasattr(part, 'root') and isinstance(part.root, FilePart):
-                            file_obj = getattr(part.root, 'file', None)
-                            if file_obj and hasattr(file_obj, 'uri') and file_obj.uri:
-                                artifact_file_parts.append(part.root)
-                                log_debug(f"📦 Found nested FilePart artifact: {file_obj.uri[:80]}...")
-                        # Check for DataPart with artifact-uri (legacy format)
-                        elif isinstance(part, DataPart) and isinstance(part.data, dict) and 'artifact-uri' in part.data:
-                            artifact_dicts.append(part.data)
-                        elif hasattr(part, 'root') and isinstance(part.root, DataPart):
-                            if isinstance(part.root.data, dict) and 'artifact-uri' in part.root.data:
-                                artifact_dicts.append(part.root.data)
+                        # Use utility to extract URI from any format
+                        uri = extract_uri(part)
+                        if uri and uri.startswith('http'):
+                            # Convert to FilePart if not already
+                            if is_file_part(part):
+                                # Already a FilePart, use directly
+                                actual_part = part.root if hasattr(part, 'root') and is_file_part(part.root) else part
+                                artifact_file_parts.append(actual_part)
+                                log_debug(f"📦 Found FilePart artifact: {uri[:80]}...")
+                            else:
+                                # Convert legacy DataPart to FilePart
+                                file_part = convert_artifact_dict_to_file_part(part)
+                                if file_part:
+                                    artifact_file_parts.append(file_part)
+                                    log_debug(f"📦 Converted DataPart to FilePart: {uri[:80]}...")
                     
-                    # Append FileParts directly to response (they'll be converted to Message with FilePart)
+                    # Append FileParts to response (they'll be converted to Message with FilePart)
                     if artifact_file_parts:
                         log_debug(f"📦 [Standard Mode] Including {len(artifact_file_parts)} FilePart artifact(s) in response")
                         final_responses.extend(artifact_file_parts)
@@ -7245,15 +7246,6 @@ Original request: {message}"""
                             uri = getattr(file_obj, 'uri', '') if file_obj else ''
                             filename = getattr(file_obj, 'name', 'unknown') if file_obj else 'unknown'
                             print(f"  • FilePart Artifact {idx+1}: {filename} (URI: {uri[:80]}...)")
-                    
-                    # Also include legacy DataPart dicts for backward compatibility
-                    if artifact_dicts:
-                        log_debug(f"📦 [Standard Mode] Including {len(artifact_dicts)} DataPart artifact(s) (legacy) in response")
-                        final_responses.extend(artifact_dicts)
-                        for idx, artifact_data in enumerate(artifact_dicts):
-                            uri = artifact_data.get('artifact-uri', '')
-                            filename = artifact_data.get('file-name', 'unknown')
-                            print(f"  • DataPart Artifact {idx+1}: {filename} (URI: {uri[:80]}...)")
 
                 # If we have extracted content, prepend it to the response
                 if has_extracted_content:
@@ -7816,15 +7808,9 @@ Original request: {message}"""
                 meta["role"] = normalized_role
                 target.metadata = meta
 
-        def _extract_uri_from_part(part: Any) -> Optional[str]:
-            target = part.root if isinstance(part, Part) else part
-            if isinstance(target, DataPart) and isinstance(target.data, dict):
-                return target.data.get("artifact-uri") or target.data.get("uri")
-            if isinstance(target, FilePart):
-                file_obj = target.file
-                if isinstance(file_obj, FileWithUri):
-                    return getattr(file_obj, "uri", None)
-            return None
+        # Use centralized utility for URI extraction
+        def _local_extract_uri(part: Any) -> Optional[str]:
+            return extract_uri(part)
 
         flattened_parts = []
         pending_file_parts: List[FilePart] = []
@@ -7894,7 +7880,7 @@ Original request: {message}"""
                     flattened_parts.append(TextPart(text=str(item.data)))
             elif isinstance(item, (TextPart, FilePart, DataPart)):
                 flattened_parts.append(item)
-                _register_part_uri(item, _extract_uri_from_part(item))
+                _register_part_uri(item, _local_extract_uri(item))
             elif isinstance(item, dict):
                 if item.get("kind") == "refine-image":
                     refine_payload = item
@@ -7933,7 +7919,7 @@ Original request: {message}"""
 
         if base_uri_hint or mask_uri_hint:
             for part in flattened_parts:
-                candidate_uri = _normalize_uri(_extract_uri_from_part(part))
+                candidate_uri = _normalize_uri(_local_extract_uri(part))
                 if base_uri_hint and candidate_uri == base_uri_hint:
                     _apply_role_to_part(part, "base")
                     _register_role(candidate_uri, "base")
@@ -7962,7 +7948,7 @@ Original request: {message}"""
 
         def _apply_assigned_roles(parts: Iterable[Any]) -> None:
             for part in parts:
-                uri = _normalize_uri(_extract_uri_from_part(part))
+                uri = _normalize_uri(_local_extract_uri(part))
                 if not uri:
                     continue
                 role_for_uri = assigned_roles.get(uri)
