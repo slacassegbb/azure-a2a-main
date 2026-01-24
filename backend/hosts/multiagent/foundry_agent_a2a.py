@@ -2710,7 +2710,8 @@ Return the name of the best agent for this task (exact match from the list above
         context_id: str,
         workflow: Optional[str],
         user_message: str,
-        extract_text_fn
+        extract_text_fn,
+        previous_task_outputs: Optional[List[str]] = None
     ) -> Dict[str, Any]:
         """
         Execute a single orchestrated task with full state management.
@@ -2755,6 +2756,26 @@ Return the name of the best agent for this task (exact match from the list above
         
         log_debug(f"🎯 [Agent Mode] Calling agent: {recommended_agent}")
         
+        # Build enhanced task message with previous task output for sequential context
+        # This enables agents to build upon previous work in the workflow
+        enhanced_task_message = task_desc
+        
+        # For sequential workflows: Include ONLY the immediately previous task output as context
+        # This allows step N to access the output from step N-1 without context window explosion
+        if previous_task_outputs and len(previous_task_outputs) > 0:
+            print(f"📋 [Agent Mode] Including previous task output as context (limited to last step only)")
+            # Truncate to prevent context overflow (keep first 1000 chars)
+            prev_output = previous_task_outputs[0]
+            if len(prev_output) > 1000:
+                prev_output = prev_output[:1000] + "... [truncated for context window management]"
+            
+            enhanced_task_message = f"""{task_desc}
+
+## Context from Previous Step:
+{prev_output}
+
+Use the above output from the previous workflow step to complete your task."""
+        
         # File deduplication for multi-step workflows
         if hasattr(session_context, '_latest_processed_parts') and len(session_context._latest_processed_parts) > 1:
             from collections import defaultdict
@@ -2787,7 +2808,7 @@ Return the name of the best agent for this task (exact match from the list above
         
         responses = await self.send_message(
             agent_name=recommended_agent,
-            message=task_desc,
+            message=enhanced_task_message,  # ✅ Now includes previous task outputs!
             tool_context=dummy_context,
             suppress_streaming=False
         )
@@ -3237,13 +3258,18 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                         task.updated_at = datetime.now(timezone.utc)
                         
                         try:
+                            # For parallel tasks, pass only the LAST task output (from the step before parallel group)
+                            # Don't pass all accumulated outputs - that would grow context exponentially
+                            previous_output = [all_task_outputs[-1]] if all_task_outputs else None
+                            
                             result = await self._execute_orchestrated_task(
                                 task=task,
                                 session_context=session_context,
                                 context_id=context_id,
                                 workflow=workflow,
                                 user_message=user_message,
-                                extract_text_fn=extract_text_from_response
+                                extract_text_fn=extract_text_from_response,
+                                previous_task_outputs=previous_output  # ✅ Only LAST output
                             )
                             return result
                         except Exception as e:
@@ -3310,13 +3336,18 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                     await self._emit_status_event(f"Executing: {task.task_description[:50]}...", context_id)
                     
                     try:
+                        # For sequential tasks, pass only the LAST task output (from the immediately previous step)
+                        # Don't pass all accumulated outputs - that would grow context exponentially
+                        previous_output = [all_task_outputs[-1]] if all_task_outputs else None
+                        
                         result = await self._execute_orchestrated_task(
                             task=task,
                             session_context=session_context,
                             context_id=context_id,
                             workflow=workflow,
                             user_message=user_message,
-                            extract_text_fn=extract_text_from_response
+                            extract_text_fn=extract_text_from_response,
+                            previous_task_outputs=previous_output  # ✅ Only LAST output
                         )
                         
                         if result.get("hitl_pause"):
