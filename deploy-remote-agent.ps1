@@ -52,11 +52,50 @@ if (!(Test-Path "$AgentPath/Dockerfile")) {
 
 # Prompt for Azure AI Foundry configuration
 Write-Host "🔑 Azure AI Foundry Configuration" -ForegroundColor Cyan
-Write-Host "Enter the following values:" -ForegroundColor Yellow
-Write-Host ""
 
-$azureAiEndpoint = Read-Host "Azure AI Foundry Project Endpoint"
-$azureAiModelDeployment = Read-Host "Azure AI Agent Model Deployment Name (e.g., gpt-4o)"
+# Try to read from .env file as defaults (check agent directory first)
+$envFilePath = "$AgentPath/.env"
+if (!(Test-Path $envFilePath)) {
+    $envFilePath = ".env"
+}
+
+$azureAiEndpoint = $null
+$azureAiModelDeployment = $null
+$openAiApiKey = $null
+$azureStorageConnectionString = $null
+
+if (Test-Path $envFilePath) {
+    $envContent = Get-Content $envFilePath
+    foreach ($line in $envContent) {
+        if ($line -match "^AZURE_AI_FOUNDRY_PROJECT_ENDPOINT=(.+)") {
+            $azureAiEndpoint = $matches[1].Trim('"').Trim()
+        }
+        if ($line -match "^AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME=(.+)") {
+            $azureAiModelDeployment = $matches[1].Trim('"').Trim()
+        }
+        if ($line -match "^OPENAI_API_KEY=(.+)") {
+            $openAiApiKey = $matches[1].Trim('"').Trim()
+        }
+        if ($line -match "^AZURE_STORAGE_CONNECTION_STRING=(.+)") {
+            $azureStorageConnectionString = $matches[1].Trim('"')
+        }
+    }
+}
+
+if ($azureAiEndpoint -and $azureAiModelDeployment) {
+    Write-Host "✅ Using configuration from .env file" -ForegroundColor Green
+    Write-Host "  Endpoint: $azureAiEndpoint" -ForegroundColor White
+    Write-Host "  Model: $azureAiModelDeployment" -ForegroundColor White
+    if ($openAiApiKey) {
+        $maskedKey = $openAiApiKey.Substring($openAiApiKey.Length - 4)
+        Write-Host "  OpenAI API Key: ****$maskedKey" -ForegroundColor White
+    }
+} else {
+    Write-Host "No .env file found, please enter configuration:" -ForegroundColor Yellow
+    Write-Host ""
+    $azureAiEndpoint = Read-Host "Azure AI Foundry Project Endpoint"
+    $azureAiModelDeployment = Read-Host "Azure AI Agent Model Deployment Name (e.g., gpt-4o)"
+}
 
 Write-Host ""
 
@@ -136,21 +175,61 @@ if ($agentExists) {
         --resource-group $ResourceGroup `
         --query properties.configuration.ingress.fqdn -o tsv
     
+    # Build environment variables array
+    $envVars = @(
+        "A2A_PORT=$Port"
+        "A2A_HOST=0.0.0.0"
+        "A2A_ENDPOINT=https://$agentFqdn"
+        "BACKEND_SERVER_URL=$backendUrl"
+        "AZURE_AI_FOUNDRY_PROJECT_ENDPOINT=$azureAiEndpoint"
+        "AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME=$azureAiModelDeployment"
+        "AZURE_CLIENT_ID=$ManagedIdentityClientId"
+    )
+    
+    # Add OPENAI_API_KEY if set
+    if ($openAiApiKey) {
+        $envVars += "OPENAI_API_KEY=$openAiApiKey"
+    }
+    
+    # Add blob storage env vars for image generator agent
+    if ($AgentName -like "*image_generator*" -and $azureStorageConnectionString) {
+        $envVars += "FORCE_AZURE_BLOB=true"
+        $envVars += "AZURE_STORAGE_CONNECTION_STRING=$azureStorageConnectionString"
+        $envVars += "AZURE_BLOB_CONTAINER=a2a-files"
+        Write-Host "✅ Blob storage configuration added for Image Generator" -ForegroundColor Green
+    }
+    
     az containerapp update `
         --name $containerName `
         --resource-group $ResourceGroup `
         --image $imageName `
-        --set-env-vars `
-            "A2A_PORT=$Port" `
-            "A2A_HOST=0.0.0.0" `
-            "A2A_ENDPOINT=https://$agentFqdn" `
-            "BACKEND_SERVER_URL=$backendUrl" `
-            "AZURE_AI_FOUNDRY_PROJECT_ENDPOINT=$azureAiEndpoint" `
-            "AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME=$azureAiModelDeployment" `
-            "AZURE_CLIENT_ID=$ManagedIdentityClientId" `
+        --set-env-vars $envVars `
         --output none
 } else {
     Write-Host "  Creating new agent..." -ForegroundColor Yellow
+    
+    # Build environment variables string
+    $envVarsCreate = @(
+        "A2A_PORT=$Port"
+        "A2A_HOST=0.0.0.0"
+        "AZURE_AI_FOUNDRY_PROJECT_ENDPOINT=$azureAiEndpoint"
+        "AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME=$azureAiModelDeployment"
+        "AZURE_CLIENT_ID=$ManagedIdentityClientId"
+    )
+    
+    # Add OPENAI_API_KEY if set
+    if ($openAiApiKey) {
+        $envVarsCreate += "OPENAI_API_KEY=$openAiApiKey"
+    }
+    
+    # Add blob storage env vars for image generator agent
+    if ($AgentName -like "*image_generator*" -and $azureStorageConnectionString) {
+        $envVarsCreate += "FORCE_AZURE_BLOB=true"
+        $envVarsCreate += "AZURE_STORAGE_CONNECTION_STRING=$azureStorageConnectionString"
+        $envVarsCreate += "AZURE_BLOB_CONTAINER=a2a-files"
+        Write-Host "✅ Blob storage configuration added for Image Generator" -ForegroundColor Green
+    }
+    
     az containerapp create `
         --name $containerName `
         --resource-group $ResourceGroup `
@@ -164,12 +243,7 @@ if ($agentExists) {
         --max-replicas 1 `
         --cpu 0.5 `
         --memory 1.0Gi `
-        --env-vars `
-            "A2A_PORT=$Port" `
-            "A2A_HOST=0.0.0.0" `
-            "AZURE_AI_FOUNDRY_PROJECT_ENDPOINT=$azureAiEndpoint" `
-            "AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME=$azureAiModelDeployment" `
-            "AZURE_CLIENT_ID=$ManagedIdentityClientId" `
+        --env-vars $envVarsCreate `
         --output none
     
     # Get the newly created agent's FQDN and update with A2A_ENDPOINT and BACKEND_SERVER_URL
