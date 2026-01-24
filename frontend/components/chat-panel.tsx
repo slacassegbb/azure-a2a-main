@@ -2175,21 +2175,18 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                                     href={attachment.uri}
                                     target="_blank"
                                     rel="noopener noreferrer"
-                                    className="block rounded-lg border border-border"
+                                    className="block rounded-lg border border-border overflow-hidden"
                                   >
                                     <img
                                       src={attachment.uri}
                                       alt={attachment.fileName || "Image attachment"}
-                                      className="w-full h-auto block rounded-t-lg"
+                                      className="w-full h-auto block rounded-lg"
                                       style={{ maxHeight: '500px', objectFit: 'contain', backgroundColor: '#f5f5f5' }}
                                     />
-                                    <div className="px-3 py-2 text-xs text-muted-foreground border-t border-border bg-muted/50">
-                                      {attachment.fileName || "Image attachment"}
-                                    </div>
                                   </a>
                                   {/* Overlay buttons for refine and mask - bottom right corner */}
                                   {message.role === "assistant" && (
-                                    <div className="absolute bottom-10 right-2 flex flex-col gap-1">
+                                    <div className="absolute bottom-2 right-2 flex flex-col gap-1">
                                       {/* Refine button */}
                                       <Button
                                         variant={refineTarget?.imageUrl === attachment.uri ? "destructive" : "default"}
@@ -2283,17 +2280,14 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                                 href={image.uri}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="block rounded-lg border border-border"
+                                className="block rounded-lg border border-border overflow-hidden"
                               >
                                 <img
                                   src={image.uri}
                                   alt={image.fileName || "Generated image"}
-                                  className="w-full h-auto block rounded-t-lg"
+                                  className="w-full h-auto block rounded-lg"
                                   style={{ maxHeight: '500px', objectFit: 'contain', backgroundColor: '#f5f5f5' }}
                                 />
-                                <div className="px-3 py-2 text-xs text-muted-foreground border-t border-border bg-muted/50">
-                                  {image.fileName || "Generated image"}
-                                </div>
                               </a>
                             </div>
                           ))}
