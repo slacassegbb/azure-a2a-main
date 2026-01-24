@@ -1305,6 +1305,19 @@ Read-Host "Press Enter to close this window"
                 
                 print(f"[INFO] Listed {len(files)} files from local filesystem for session: {session_id}")
             
+            # Also include agent-generated files from the registry
+            try:
+                from service.agent_file_registry import get_agent_files
+                agent_files = get_agent_files(session_id)
+                if agent_files:
+                    files.extend(agent_files)
+                    print(f"[INFO] Added {len(agent_files)} agent-generated files for session: {session_id}")
+            except Exception as agent_files_error:
+                print(f"[WARN] Failed to get agent files: {agent_files_error}")
+            
+            # Sort by upload date (most recent first)
+            files.sort(key=lambda f: f.get('uploadedAt', ''), reverse=True)
+            
             return {
                 "success": True,
                 "files": files

@@ -5038,6 +5038,16 @@ Answer with just JSON:
                                                 artifact_uri = part.root.data.get('artifact-uri')
                                                 if artifact_uri:
                                                     log_debug(f"Found image artifact in streaming event: {artifact_uri}")
+                                                    # Register in agent file registry for file history persistence
+                                                    session_id = host_context_id.split('::')[0] if '::' in host_context_id else host_context_id
+                                                    from service.agent_file_registry import register_agent_file
+                                                    register_agent_file(
+                                                        session_id=session_id,
+                                                        uri=artifact_uri,
+                                                        filename=part.root.data.get("file-name", "agent-artifact.png"),
+                                                        content_type="image/png",
+                                                        source_agent=agent_name
+                                                    )
                                                     # Emit file_uploaded event - USE HOST'S contextId for routing!
                                                     async def emit_file_event(part_data=part.root.data, uri=artifact_uri):
                                                         try:
@@ -5068,6 +5078,16 @@ Answer with just JSON:
                                                         # Capture values to avoid closure issues
                                                         file_name = file_obj.name
                                                         mime_type = file_obj.mimeType if hasattr(file_obj, 'mimeType') else 'image/png'
+                                                        # Register in agent file registry for file history persistence
+                                                        session_id = host_context_id.split('::')[0] if '::' in host_context_id else host_context_id
+                                                        from service.agent_file_registry import register_agent_file
+                                                        register_agent_file(
+                                                            session_id=session_id,
+                                                            uri=str(file_uri),
+                                                            filename=file_name,
+                                                            content_type=mime_type,
+                                                            source_agent=agent_name
+                                                        )
                                                         # Emit file_uploaded event - USE HOST'S contextId for routing!
                                                         async def emit_file_event_fp():
                                                             try:
