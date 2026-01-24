@@ -24,7 +24,8 @@ import {
   UserCheck,
   UserMinus,
   Power,
-  Plus
+  Plus,
+  Minus
 } from "lucide-react"
 import {
   Dialog,
@@ -527,7 +528,7 @@ export function AgentCatalog() {
                                     size="icon"
                                     className="h-9 w-9 rounded-full bg-red-500 hover:bg-red-600 text-white shadow-sm hover:shadow-md transition-all duration-200"
                                   >
-                                    <UserMinus className="h-4 w-4" />
+                                    <Minus className="h-5 w-5" />
                                   </Button>
                                 </TooltipTrigger>
                                 <TooltipContent>
