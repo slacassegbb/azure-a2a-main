@@ -59,6 +59,12 @@ export function AgentCatalog() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
+  // Helper function to check if an endpoint is localhost (wake-up doesn't make sense for local agents)
+  const isLocalhostEndpoint = (endpoint: string): boolean => {
+    const lower = endpoint.toLowerCase()
+    return lower.includes('localhost') || lower.includes('127.0.0.1')
+  }
+
     // Function to check agent health status via backend proxy
   const checkAgentHealth = async (url: string): Promise<boolean> => {
     try {
@@ -570,7 +576,7 @@ export function AgentCatalog() {
                               </Tooltip>
                             )
                           )}
-                          {agent.status === "Offline" && (
+                          {agent.status === "Offline" && !isLocalhostEndpoint(agent.endpoint) && (
                             <Tooltip>
                               <TooltipTrigger asChild>
                                 <Button
