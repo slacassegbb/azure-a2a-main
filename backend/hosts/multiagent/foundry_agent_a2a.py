@@ -406,12 +406,21 @@ class FoundryHostAgent2:
             log_foundry_debug("Initializing Azure AI Foundry Agent Service...")
             print("💡 TIP: If you see authentication errors, run 'python test_azure_auth.py' to diagnose")
             
-            from azure.identity.aio import AzureCliCredential, DefaultAzureCredential
+            from azure.identity.aio import AzureCliCredential, DefaultAzureCredential, ManagedIdentityCredential
             
-            # Use async credentials for AIProjectClient
-            cli_credential = AzureCliCredential(process_timeout=5)
-            self.credential = cli_credential
-            log_foundry_debug("✅ Using AzureCliCredential for async operations")
+            # Detect if we're running in Azure Container Apps (managed identity)
+            is_azure_container = os.environ.get('CONTAINER_APP_NAME') or os.environ.get('WEBSITE_INSTANCE_ID')
+            
+            if is_azure_container:
+                # Use DefaultAzureCredential in Azure (will use managed identity)
+                log_foundry_debug("🔵 Running in Azure Container Apps - using DefaultAzureCredential (Managed Identity)")
+                self.credential = DefaultAzureCredential(exclude_interactive_browser_credential=True)
+                log_foundry_debug("✅ Using DefaultAzureCredential for managed identity")
+            else:
+                # Use AzureCliCredential locally
+                cli_credential = AzureCliCredential(process_timeout=5)
+                self.credential = cli_credential
+                log_foundry_debug("✅ Using AzureCliCredential for local development")
                     
         except Exception as e:
             log_foundry_debug(f"⚠️ Credential initialization failed: {e}")
