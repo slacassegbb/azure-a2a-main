@@ -1028,6 +1028,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
           setStreamingMessageId(null)
           
           // Emit final_response for internal processing - this is converted from message event
+          // Include images from the message content so they appear inline with the text
           emit("final_response", {
             inferenceId: data.conversationId || data.messageId,
             conversationId: data.conversationId || data.contextId,
@@ -1036,7 +1037,11 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
               role: data.role === "user" ? "user" : "assistant",
               content: textContent,
               agent: agentName,
-              attachments: [],
+              // Include image content from the message so it appears inline
+              images: imageContents.map((img: any) => ({
+                uri: img.uri,
+                fileName: img.fileName || "Generated image",
+              })),
             },
           })
         } else {
@@ -1486,6 +1491,8 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
           role: data.message.role === "user" ? "user" : "assistant",
           content: data.message.content,
           agent: data.message.agent,
+          // Include images from the message so they appear inline with the response
+          images: data.message.images || [],
         }
         messagesToAdd.push(finalMessage)
       }
