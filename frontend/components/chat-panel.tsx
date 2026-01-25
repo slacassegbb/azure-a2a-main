@@ -1072,15 +1072,23 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
         // Only process assistant messages to avoid duplicating user messages
         if (data.role === "assistant" || data.role === "system") {
           const textContent = data.content.find((c: any) => c.type === "text")?.content || ""
-          // Get image parts
-          const imageContents = data.content.filter((c: any) => c.type === "image")
+          // Get image parts - map to ensure mediaType is included
+          const imageContents = data.content.filter((c: any) => c.type === "image").map((c: any) => ({
+            uri: c.uri,
+            fileName: c.fileName || "Generated image",
+            fileSize: c.fileSize,
+            storageType: c.storageType,
+            mediaType: c.mediaType || "image/png",
+          }))
           // Get video parts - either type="video" OR type="file" with video/* mimeType
           const videoContents = data.content.filter((c: any) => 
             c.type === "video" || (c.type === "file" && c.mimeType?.startsWith("video/"))
           ).map((c: any) => ({
             uri: c.uri,
-            fileName: c.name || c.fileName || "Generated video",
-            mediaType: c.mimeType || "video/mp4",
+            fileName: c.fileName || "Generated video",
+            fileSize: c.fileSize,
+            storageType: c.storageType,
+            mediaType: c.mediaType || c.mimeType || "video/mp4",
           }))
           console.log("[ChatPanel] Image parts count:", imageContents.length)
           console.log("[ChatPanel] Video parts count:", videoContents.length)
