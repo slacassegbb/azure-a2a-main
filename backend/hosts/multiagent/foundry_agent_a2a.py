@@ -5087,37 +5087,8 @@ Answer with just JSON:
             log_debug(f"  • agent_mode: {getattr(session_context, 'agent_mode', False)}")
 
             if session_parts:
-                log_debug(f"📦 Prepared {len(session_parts)} parts for remote agent {agent_name} (context {contextId})")
-                for idx, prepared_part in enumerate(session_parts):
-                    part_root = getattr(prepared_part, "root", prepared_part)
-                    kind = getattr(part_root, "kind", getattr(part_root, "type", type(part_root).__name__))
-                    log_debug(f"  • Prepared part {idx}: kind={kind}")
-                    
-                    # Enhanced file part logging with role information
-                    if isinstance(part_root, FilePart) and hasattr(part_root, "file"):
-                        file_obj = part_root.file
-                        file_name = getattr(file_obj, 'name', 'unknown')
-                        file_uri = getattr(file_obj, 'uri', 'no-uri')
-                        # Check role in metadata (primary location for remote agents)
-                        file_role = (part_root.metadata or {}).get("role", None) if hasattr(part_root, "metadata") else None
-                        log_debug(f"    → FilePart: name={file_name} role={file_role or 'no-role'}")
-                        log_debug(f"    → URI: {file_uri[:80]}..." if len(file_uri) > 80 else f"    → URI: {file_uri}")
-                    elif hasattr(part_root, "file") and getattr(part_root.file, "uri", None):
-                        log_debug(f"    → file name={getattr(part_root.file, 'name', 'unknown')} uri={part_root.file.uri}")
-                    
-                    # Enhanced DataPart logging with role information
-                    if isinstance(part_root, DataPart) and getattr(part_root, "data", None):
-                        data_keys = list(part_root.data.keys()) if isinstance(part_root.data, dict) else []
-                        log_debug(f"    → data keys={data_keys}")
-                        if isinstance(part_root.data, dict):
-                            role = part_root.data.get("role", "no-role")
-                            artifact_uri = part_root.data.get("artifact-uri", "")
-                            file_name = part_root.data.get("file-name", "unknown")
-                            if role != "no-role" or artifact_uri:
-                                log_debug(f"    → DataPart file: {file_name} role={role}")
-                                if artifact_uri:
-                                    log_debug(f"    → Artifact URI: {artifact_uri[:80]}..." if len(artifact_uri) > 80 else f"    → Artifact URI: {artifact_uri}")
-
+                log_debug(f"📦 Prepared {len(session_parts)} parts for remote agent {agent_name}")
+                for prepared_part in session_parts:
                     if isinstance(prepared_part, Part):
                         prepared_parts.append(prepared_part)
                     elif isinstance(prepared_part, (TextPart, DataPart, FilePart)):
@@ -5134,7 +5105,7 @@ Answer with just JSON:
                     role='user',
                     parts=prepared_parts,
                     message_id=messageId,
-                    context_id=contextId,  # Use snake_case as per A2A SDK
+                    context_id=contextId,
                     task_id=taskId,
                 ),
                 configuration=MessageSendConfiguration(
@@ -5142,17 +5113,13 @@ Answer with just JSON:
                 ),
             )
             
-            log_debug(f"🚀 [PARALLEL] Calling agent: {agent_name} with context: {contextId}")
-            log_debug(f"🔍 [DEBUG] Message object context_id being sent: {request.message.context_id}")
-            log_debug(f"🔍 [DEBUG] Full message dict: {request.message.model_dump()}")
+            log_debug(f"🚀 Calling agent: {agent_name} with context: {contextId}")
             
             # Track start time for processing duration
             start_time = time.time()
             
             # Create a user-friendly query preview for status messages
-            # Truncate long queries to keep status messages clean
             query_preview = message[:60] + "..." if len(message) > 60 else message
-            # Clean up the query preview - remove newlines and extra whitespace
             query_preview = " ".join(query_preview.split())
             
             # ========================================================================
@@ -5307,42 +5274,26 @@ Answer with just JSON:
                 
                 asyncio.create_task(self._emit_outgoing_message_event(agent_name, clean_message, contextId))
                 
-                log_debug(f"\n📞📞📞 [ABOUT TO CALL] client.send_message for {agent_name} with streaming_task_callback")
-                log_debug(f"📞 Callback type: {type(streaming_task_callback)}, callable: {callable(streaming_task_callback)}")
                 response = await client.send_message(request, streaming_task_callback)
-                log_debug(f"✅ [STREAMING] Agent {agent_name} responded successfully!")
-
+                log_debug(f"✅ Agent {agent_name} responded successfully")
                 
             except Exception as e:
-                log_debug(f"❌ [STREAMING] Agent {agent_name} failed: {e}")
-                
+                log_debug(f"❌ Agent {agent_name} failed: {e}")
                 import traceback
-                log_debug(f"❌ Full traceback: {traceback.format_exc()}")
+                log_debug(f"❌ Traceback: {traceback.format_exc()}")
                 raise
             
-            log_debug(f"🔄 [STREAMING] Processing response from {agent_name}: {type(response)}")
-            
-            # Simplified response processing for streaming execution
+            # Process response based on type
             if isinstance(response, Task):
                 task = response
+                log_debug(f"📊 Task response from {agent_name}: state={task.status.state if hasattr(task, 'status') else 'N/A'}")
                 
-                # DEBUG: Log task response structure
-                log_debug(f"📊 Received Task response from {agent_name}:")
-                log_debug(f"  • Task ID: {task.id if hasattr(task, 'id') else 'N/A'}")
-                log_debug(f"  • Task state: {task.status.state if hasattr(task, 'status') else 'N/A'}")
-                log_debug(f"  • Has status.message: {hasattr(task, 'status') and hasattr(task.status, 'message') and task.status.message is not None}")
-                log_debug(f"  • Has artifacts: {hasattr(task, 'artifacts') and task.artifacts is not None}")
-                if hasattr(task, 'artifacts') and task.artifacts:
-                    log_debug(f"  • Artifacts count: {len(task.artifacts)}")
-                
-                # Update session context only with essential info
+                # Update session context
                 context_id = get_context_id(task)
                 if context_id:
                     session_context.contextId = context_id
-                # Record the task id for this specific agent only
                 t_id = get_task_id(task)
                 session_context.agent_task_ids[agent_name] = t_id
-                # Track latest state for this agent's task
                 try:
                     state_val = task.status.state.value if hasattr(task.status.state, 'value') else str(task.status.state)
                 except Exception:
@@ -5350,28 +5301,11 @@ Answer with just JSON:
                 session_context.agent_task_states[agent_name] = state_val
                 
                 # Handle task states
-                log_debug(f"Checking task state: {task.status.state}")
                 if task.status.state == TaskState.completed:
-                    # ========================================================================
-                    # EMIT COMPLETED STATUS for sidebar
-                    # ========================================================================
-                    log_debug(f"Task completed - emitting completed status for {agent_name}")
                     asyncio.create_task(self._emit_simple_task_status(agent_name, "completed", contextId, taskId))
-                    
-                    # Emit workflow message for completed task
                     asyncio.create_task(self._emit_granular_agent_event(agent_name, f"{agent_name} has completed the task successfully", contextId))
                     
                     response_parts = []
-                    
-                    # DEBUG: Check what's in the task
-                    log_debug(f"Task completed - message exists: {task.status.message is not None}")
-                    if task.status.message:
-                        log_debug(f"Task completed - parts count: {len(task.status.message.parts) if task.status.message.parts else 0}")
-                    log_debug(f"  • task.artifacts exists: {task.artifacts is not None}")
-                    if task.artifacts:
-                        log_debug(f"  • task.artifacts count: {len(task.artifacts)}")
-                        for idx, art in enumerate(task.artifacts):
-                            log_debug(f"  • artifact[{idx}].parts count: {len(art.parts) if art.parts else 0}")
                     
                     # Extract token usage from message parts before converting
                     if task.status.message and task.status.message.parts:
@@ -5384,7 +5318,6 @@ Answer with just JSON:
                                         'completion_tokens': data.get('completion_tokens', 0),
                                         'total_tokens': data.get('total_tokens', 0)
                                     }
-                                    log_debug(f"💰 [TASK] Extracted token usage for {agent_name}: {self.agent_token_usage[agent_name]}")
                                     break
                     
                     if task.status.message:
@@ -5396,37 +5329,19 @@ Answer with just JSON:
                             response_parts.extend(
                                 await self.convert_parts(artifact.parts, tool_context)
                             )
-                            # Note: Artifacts will be added to _agent_generated_artifacts with deduplication
-                            # in the processing loop below (lines 3131-3168)
 
-                    # DEBUG: Log what's now in _latest_processed_parts after conversion
-                    if hasattr(session_context, "_latest_processed_parts"):
-                        latest = session_context._latest_processed_parts
-                        log_debug(f"📦 After convert_parts, _latest_processed_parts has {len(latest)} items total (accumulated)")
-                        
-                    # Add file artifacts from THIS response to _agent_generated_artifacts for UI display
-                    # Support both FilePart (preferred) and DataPart (legacy) formats
-                    mode = "Agent Mode" if session_context.agent_mode else "Standard Mode"
-                    log_debug(f"🔍 [{mode}] Checking response_parts ({len(response_parts)} items) for file artifacts...")
+                    # Add file artifacts from this response to _agent_generated_artifacts for UI display
                     for item in response_parts:
-                        # Check for FilePart (new standard format)
-                        is_file_part = isinstance(item, FilePart) or (hasattr(item, 'root') and isinstance(item.root, FilePart))
-                        # Check for DataPart with artifact-uri (legacy format)
-                        is_data_artifact = isinstance(item, DataPart) or (hasattr(item, 'root') and isinstance(item.root, DataPart))
-                        
-                        if is_file_part or is_data_artifact:
+                        is_file = isinstance(item, FilePart) or (hasattr(item, 'root') and isinstance(item.root, FilePart))
+                        is_data = isinstance(item, DataPart) or (hasattr(item, 'root') and isinstance(item.root, DataPart))
+                        if is_file or is_data:
                             if not hasattr(session_context, '_agent_generated_artifacts'):
                                 session_context._agent_generated_artifacts = []
                             session_context._agent_generated_artifacts.append(item)
-                            part_type = "FilePart" if is_file_part else "DataPart"
-                            log_debug(f"📎 [STREAMING - {mode}] Added {part_type} from THIS response to _agent_generated_artifacts")
-                    
-                    if hasattr(session_context, '_agent_generated_artifacts'):
-                        log_debug(f"✅ [{mode}] Total _agent_generated_artifacts: {len(session_context._agent_generated_artifacts)}")
 
                     self._update_last_host_turn(session_context, agent_name, response_parts)
                     
-                    # Store interaction in background (don't await to avoid blocking streaming execution)
+                    # Store interaction in background
                     asyncio.create_task(self._store_a2a_interaction_background(
                         outbound_request=request,
                         inbound_response=response,
@@ -5440,7 +5355,6 @@ Answer with just JSON:
                     
                 elif task.status.state == TaskState.failed:
                     log_debug(f"Task failed for {agent_name}")
-                    # Detect rate limit and retry after suggested delay
                     retry_after = self._parse_retry_after_from_task(task)
                     max_rate_limit_retries = 3
                     retry_attempt = 0
@@ -5550,12 +5464,10 @@ Answer with just JSON:
                 return result
                 
             elif isinstance(response, str):
-                log_debug(f"[STREAMING] String response from {agent_name}: {response[:200]}...")
                 self._update_last_host_turn(session_context, agent_name, [response])
                 return [response]
                 
             else:
-                log_debug(f"[STREAMING] Unknown response type from {agent_name}: {type(response)}")
                 return [str(response)]
             
     async def _add_context_to_message(
@@ -5618,39 +5530,20 @@ Answer with just JSON:
         context_parts = []
         
         # Primary approach: Use semantic memory search for relevant context (only if enabled)
-        if enable_memory:
-            log_debug(f"🎯 [{mode_label}] Inter-agent memory enabled - searching vector memory")
         try:
-            log_debug(f"🧠 Searching memory for semantically relevant context...")
-            log_debug(f"About to call _search_relevant_memory...")
             memory_results = await self._search_relevant_memory(
                 query=message,
                 context_id=session_context.contextId,
-                agent_name=None,  # Search across all interactions for maximum relevance
-                top_k=5  # Get top 5 most relevant pieces of context
+                agent_name=None,
+                top_k=5
             )
-            print(f"✅ _search_relevant_memory completed, got {len(memory_results) if memory_results else 0} results")
             
             if memory_results:
                 context_parts.append("Relevant context from previous interactions:")
-                print(f"Processing {len(memory_results)} memory results...")
-                
-                # Debug: Show structure of first result
-                if memory_results:
-                    first_result = memory_results[0]
-                    print(f"First result keys: {list(first_result.keys()) if isinstance(first_result, dict) else 'Not a dict'}")
-                    if isinstance(first_result, dict) and 'a2a_inbound_response' in first_result:
-                        inbound = first_result['a2a_inbound_response']
-                        print(f"Inbound response type: {type(inbound)}")
-                        if isinstance(inbound, dict):
-                            print(f"Inbound response keys: {list(inbound.keys())}")
-                        elif isinstance(inbound, str):
-                            print(f"Inbound response (string): {inbound[:200]}...")
                 
                 # Process memory results to extract key information
                 for i, result in enumerate(memory_results, 1):
                     try:
-                        # Extract the most relevant parts from each memory result
                         agent_name = result.get('agent_name', 'Unknown')
                         timestamp = result.get('timestamp', 'Unknown')
                             
@@ -5677,7 +5570,6 @@ Answer with just JSON:
                                 parts_content = []
                                 for part in inbound['parts']:
                                     if isinstance(part, dict):
-                                        # Look for text in various structures
                                         if 'text' in part:
                                             parts_content.append(str(part['text']))
                                         elif 'root' in part and isinstance(part['root'], dict) and 'text' in part['root']:
