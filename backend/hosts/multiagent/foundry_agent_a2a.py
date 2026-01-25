@@ -7239,8 +7239,17 @@ Original request: {message}"""
                 # Use centralized utility for clean artifact handling
                 if hasattr(session_context, '_agent_generated_artifacts'):
                     artifact_file_parts = []  # FilePart objects (standard format)
+                    video_metadata_parts = []  # DataParts with video_metadata (for video_id tracking)
                     
                     for part in session_context._agent_generated_artifacts:
+                        # Check if this is a video_metadata DataPart - keep it for later
+                        target = getattr(part, 'root', part)
+                        if isinstance(target, DataPart) and isinstance(target.data, dict):
+                            if target.data.get('type') == 'video_metadata':
+                                video_metadata_parts.append(part)
+                                print(f"📎 [VideoRemix] Collected video_metadata with video_id: {target.data.get('video_id')}")
+                                continue  # Don't convert to FilePart
+                        
                         # Use utility to extract URI from any format
                         uri = extract_uri(part)
                         if uri and uri.startswith('http'):
@@ -7257,10 +7266,36 @@ Original request: {message}"""
                                     artifact_file_parts.append(file_part)
                                     log_debug(f"📦 Converted DataPart to FilePart: {uri[:80]}...")
                     
-                    # Append FileParts to response (they'll be converted to Message with FilePart)
+                    # Group video FileParts with their metadata to preserve video_id for remix
                     if artifact_file_parts:
                         log_debug(f"📦 [Standard Mode] Including {len(artifact_file_parts)} FilePart artifact(s) in response")
-                        final_responses.extend(artifact_file_parts)
+                        
+                        # Create a Message containing all artifact parts (FileParts + video_metadata)
+                        # This ensures video_id flows through to frontend
+                        combined_parts = []
+                        for fp in artifact_file_parts:
+                            if hasattr(fp, 'root'):
+                                combined_parts.append(fp)  # Already a Part
+                            else:
+                                combined_parts.append(Part(root=fp))
+                        
+                        # Add video_metadata DataParts so they're in the same Message
+                        for vmp in video_metadata_parts:
+                            if hasattr(vmp, 'root'):
+                                combined_parts.append(vmp)
+                            else:
+                                combined_parts.append(Part(root=vmp))
+                        
+                        # Create a single Message with all parts (FileParts + video_metadata)
+                        if combined_parts:
+                            combined_message = Message(
+                                role='agent',
+                                parts=combined_parts,
+                                messageId=str(uuid.uuid4()),
+                            )
+                            final_responses.append(combined_message)
+                            print(f"📦 [VideoRemix] Created combined message with {len(artifact_file_parts)} FileParts and {len(video_metadata_parts)} video_metadata")
+                        
                         for idx, fp in enumerate(artifact_file_parts):
                             file_obj = getattr(fp, 'file', None)
                             uri = getattr(file_obj, 'uri', '') if file_obj else ''
@@ -8092,6 +8127,11 @@ Original request: {message}"""
             if isinstance(data, dict) and data.get('type') == 'token_usage':
                 return None
             print(f"DataPart data: {data} (type: {type(data)})")
+            # IMPORTANT: Preserve DataPart wrapper for metadata types that need to flow through
+            # (video_metadata, image_metadata, etc.) so they can be detected by artifact processing
+            if isinstance(data, dict) and data.get('type') in ('video_metadata', 'image_metadata'):
+                print(f"📎 [VideoRemix] Preserving DataPart wrapper for {data.get('type')} with video_id={data.get('video_id')}")
+                return part  # Return the full Part(root=DataPart(...)) to preserve structure
             return data
         elif hasattr(part, 'root') and part.root.kind == 'file':
             # A2A protocol compliant file handling with enterprise security

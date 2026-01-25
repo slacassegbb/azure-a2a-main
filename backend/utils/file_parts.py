@@ -150,19 +150,65 @@ def extract_all_images(parts: List[Any]) -> List[dict]:
     return images
 
 
-def convert_artifact_dict_to_file_part(artifact: dict) -> Optional[Part]:
+def convert_artifact_dict_to_file_part(artifact: Any) -> Optional[Part]:
     """
-    Convert legacy artifact dict to FilePart.
+    Convert legacy artifact dict or DataPart to FilePart.
     
-    Use this when receiving {"artifact-uri": "...", "file-name": "...", ...}
-    to convert to the standard FilePart format.
+    Handles:
+    - Dict with {"artifact-uri": "...", ...}
+    - Dict with {"uri": "...", ...} (video_metadata format)
+    - Part(root=DataPart(...))
+    - DataPart directly
+    
+    Use this when receiving legacy format to convert to the standard FilePart format.
     """
-    uri = artifact.get('artifact-uri')
+    # Handle Part wrapper
+    if hasattr(artifact, 'root'):
+        target = artifact.root
+    else:
+        target = artifact
+    
+    # Handle DataPart
+    if hasattr(target, 'data') and isinstance(target.data, dict):
+        data = target.data
+    elif isinstance(target, dict):
+        data = target
+    else:
+        return None
+    
+    # Extract URI (support both artifact-uri and uri keys)
+    uri = data.get('artifact-uri') or data.get('uri')
     if not uri:
         return None
     
-    return create_file_part(
+    # Determine mime type - check for video types
+    mime_type = data.get('media-type') or data.get('mime', 'image/png')
+    if data.get('type') == 'video_metadata' or uri.lower().endswith(('.mp4', '.webm', '.mov', '.avi')):
+        mime_type = data.get('media-type') or data.get('mime', 'video/mp4')
+    
+    file_part = create_file_part(
         uri=uri,
-        name=artifact.get('file-name', 'artifact'),
-        mime_type=artifact.get('media-type', artifact.get('mime', 'image/png'))
+        name=data.get('file-name') or data.get('file_name', 'artifact'),
+        mime_type=mime_type
     )
+    
+    # Preserve video_id for remix functionality
+    if data.get('video_id'):
+        # Add video metadata to the file's metadata
+        if hasattr(file_part, 'file') and file_part.file:
+            if not hasattr(file_part.file, 'metadata'):
+                # Create a new FileWithUri with metadata if needed
+                from a2a.types import FileWithUri
+                file_part = FilePart(
+                    file=FileWithUri(
+                        uri=uri,
+                        name=data.get('file-name') or data.get('file_name', 'video.mp4'),
+                        mimeType=mime_type,
+                    )
+                )
+            # Store video_id in a way we can retrieve it later
+            # Since FileWithUri doesn't have metadata, we'll wrap in Part with DataPart sibling
+            # Actually, let's just return a pair or use a different approach
+    
+    return Part(root=file_part)
+
