@@ -2214,31 +2214,7 @@ Return the name of the best agent for this task (exact match from the list above
 Use the above output from the previous workflow step to complete your task."""
         
         # File deduplication for multi-step workflows
-        if hasattr(session_context, '_latest_processed_parts') and len(session_context._latest_processed_parts) > 1:
-            from collections import defaultdict
-            old_count = len(session_context._latest_processed_parts)
-            
-            MAX_GENERATED_FILES = 3
-            editing_roles = defaultdict(lambda: None)
-            generated_artifacts = []
-            
-            for part in reversed(session_context._latest_processed_parts):
-                role = None
-                if isinstance(part, DataPart) and isinstance(part.data, dict):
-                    role = part.data.get('role')
-                elif hasattr(part, 'root') and isinstance(part.root, DataPart) and isinstance(part.root.data, dict):
-                    role = part.root.data.get('role')
-                
-                if role in ['base', 'mask', 'overlay']:
-                    if role not in editing_roles:
-                        editing_roles[role] = part
-                else:
-                    if len(generated_artifacts) < MAX_GENERATED_FILES:
-                        generated_artifacts.append(part)
-            
-            deduplicated_parts = list(editing_roles.values()) + generated_artifacts
-            session_context._latest_processed_parts = deduplicated_parts
-            print(f"📎 [Agent Mode] File management: {old_count} files → {len(deduplicated_parts)} files")
+        self._deduplicate_workflow_files(session_context)
         
         # Create tool context and call agent
         dummy_context = DummyToolContext(session_context, self._azure_blob_client)
@@ -2287,29 +2263,13 @@ Use the above output from the previous workflow step to complete your task."""
                 log_error(f"[Agent Mode] Task failed: {task.error_message}")
                 return {"error": task.error_message, "output": None}
             
-            log_info(f"✅ [Agent Mode] Task completed with state: {task.state}")
             output_text = str(response_obj.result) if response_obj.result else ""
             
-            # Collect artifacts
+            # Collect artifacts using helper
             if response_obj.artifacts:
-                artifact_descriptions = []
-                for artifact in response_obj.artifacts:
-                    if hasattr(artifact, 'parts'):
-                        for part in artifact.parts:
-                            if not hasattr(session_context, '_latest_processed_parts'):
-                                session_context._latest_processed_parts = []
-                            session_context._latest_processed_parts.append(part)
-                            
-                            if hasattr(part, 'root'):
-                                if hasattr(part.root, 'file'):
-                                    file_info = part.root.file
-                                    file_name = getattr(file_info, 'name', 'unknown')
-                                    artifact_descriptions.append(f"[File: {file_name}]")
-                                elif hasattr(part.root, 'text'):
-                                    artifact_descriptions.append(part.root.text)
-                
-                if artifact_descriptions:
-                    output_text = f"{output_text}\n\nArtifacts:\n" + "\n".join(artifact_descriptions)
+                artifact_texts = self._collect_artifacts(response_obj.artifacts, session_context)
+                if artifact_texts:
+                    output_text = f"{output_text}\n\nArtifacts:\n" + "\n".join(artifact_texts)
             
             return {"output": output_text, "hitl_pause": False}
         else:
@@ -2318,7 +2278,6 @@ Use the above output from the previous workflow step to complete your task."""
             output_text = extract_text_fn(response_obj)
             task.output = {"result": output_text}
             task.updated_at = datetime.now(timezone.utc)
-            log_info(f"✅ [Agent Mode] Task completed successfully")
             return {"output": output_text, "hitl_pause": False}
 
     async def _agent_mode_orchestration_loop(
