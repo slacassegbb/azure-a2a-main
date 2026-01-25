@@ -7399,7 +7399,6 @@ Answer with just JSON:
                 file_role_attr = self._infer_file_role(None, file_id)
             
             is_mask_artifact = (file_role_attr == "mask")
-            summary_text = None
             artifact_response = None
 
             artifact_info: dict[str, Any] = {
@@ -7409,52 +7408,43 @@ Answer with just JSON:
             if file_role_attr:
                 artifact_info['role'] = str(file_role_attr).lower()
             
-            # Use save_artifact following A2A best practices (pure A2A implementation)
-            if hasattr(tool_context, 'save_artifact'):
-                log_debug(f"tool_context has save_artifact method")
-                try:
-                    # Create A2A-native file part without Google ADK dependencies
-                    log_debug(f"Creating A2A-native file part with {len(file_bytes)} bytes")
-                    
-                    # Create a simple file part structure compatible with A2A protocol
-                    a2a_file_part = {
-                        'kind': 'file',
-                        'file': {
-                            'name': file_id,
-                            'mimeType': getattr(part.root.file, 'mimeType', 'application/octet-stream'),
-                            'data': file_bytes,  # Raw bytes, not base64
-                            'force_blob': is_mask_artifact,
-                            **({'role': str(file_role_attr)} if file_role_attr else {}),
-                        }
+            # Save artifact using A2A protocol
+            if not hasattr(tool_context, 'save_artifact'):
+                log_error(f"tool_context missing save_artifact method")
+                return DataPart(data={'error': f'File processing unavailable for {file_id}'})
+            
+            try:
+                # Create A2A file part structure
+                a2a_file_part = {
+                    'kind': 'file',
+                    'file': {
+                        'name': file_id,
+                        'mimeType': getattr(part.root.file, 'mimeType', 'application/octet-stream'),
+                        'data': file_bytes,
+                        'force_blob': is_mask_artifact,
+                        **({'role': str(file_role_attr)} if file_role_attr else {}),
                     }
-                    log_debug(f"Successfully created A2A file part")
+                }
+                
+                artifact_response = await tool_context.save_artifact(file_id, a2a_file_part)
+                tool_context.actions.skip_summarization = True
+                tool_context.actions.escalate = True
+                
+                if isinstance(artifact_response, DataPart) and hasattr(artifact_response, 'data'):
+                    if file_role_attr:
+                        artifact_response.data['role'] = str(file_role_attr).lower()
+                        meta = artifact_response.data.get('metadata') or {}
+                        meta['role'] = str(file_role_attr).lower()
+                        artifact_response.data['metadata'] = meta
                     
-                    log_debug(f"Calling save_artifact...")
-                    # save_artifact now returns A2A compliant DataPart with artifact metadata
-                    artifact_response = await tool_context.save_artifact(file_id, a2a_file_part)
-                    tool_context.actions.skip_summarization = True
-                    tool_context.actions.escalate = True
-                    
-                    if isinstance(artifact_response, DataPart) and hasattr(artifact_response, 'data'):
-                        if file_role_attr:
-                            artifact_response.data['role'] = str(file_role_attr).lower()
-                            meta = artifact_response.data.get('metadata') or {}
-                            meta['role'] = str(file_role_attr).lower()
-                            artifact_response.data['metadata'] = meta
-                        
-                        artifact_info.update({
-                            'artifact_id': artifact_response.data.get('artifact-id'),
-                            'artifact_uri': artifact_response.data.get('artifact-uri'),
-                            'storage_type': artifact_response.data.get('storage-type')
-                        })
-                        # Note: file_bytes already in artifact_info from earlier
-                except Exception as e:
-                    log_debug(f"Exception in save_artifact process: {e}")
-                    import traceback
-                    log_error(f"Full traceback: {traceback.format_exc()}")
-                    artifact_response = DataPart(data={'error': f'Failed to process file: {str(e)}'})
-            else:
-                log_debug(f"ERROR: tool_context has no save_artifact method")
+                    artifact_info.update({
+                        'artifact_id': artifact_response.data.get('artifact-id'),
+                        'artifact_uri': artifact_response.data.get('artifact-uri'),
+                        'storage_type': artifact_response.data.get('storage-type')
+                    })
+            except Exception as e:
+                log_error(f"save_artifact failed: {e}")
+                artifact_response = DataPart(data={'error': f'Failed to process file: {str(e)}'})
             
             if is_mask_artifact:
                 log_debug(f"Skipping document processing for mask artifact: {file_id}")
@@ -7489,11 +7479,9 @@ Answer with just JSON:
                 
                 return [mask_metadata_part, mask_file_part]
 
-            # Process the file content and store in A2A memory service
+            # Process file content (text extraction for documents)
+            session_id = get_tenant_from_context(context_id) if context_id else None
             try:
-                log_debug(f"FILE DEBUG: Calling document processor for {file_id}")
-                # Extract session_id for tenant isolation
-                session_id = get_tenant_from_context(context_id) if context_id else None
                 processing_result = await a2a_document_processor.process_file_part(
                     part.root.file, 
                     artifact_info,
@@ -7502,32 +7490,17 @@ Answer with just JSON:
                 
                 if processing_result and isinstance(processing_result, dict) and processing_result.get("success"):
                     content = processing_result.get("content", "")
-                    log_debug(f"FILE DEBUG: Document processing successful, content length: {len(content)}")
-                    
-                    # Emit completion status event
                     if context_id:
                         await self._emit_status_event(f"file processed successfully: {file_id}", context_id)
-                    
-                    summary_text = f"File: {file_id}\nContent:\n{content}"
                     
                     if isinstance(artifact_response, DataPart) and hasattr(artifact_response, 'data'):
                         artifact_response.data['extracted_content'] = content
                         artifact_response.data['content_preview'] = content[:500] + "..." if len(content) > 500 else content
-                else:
-                    error = processing_result.get("error", "Unknown error") if isinstance(processing_result, dict) else "Processing failed"
-                    log_debug(f"FILE DEBUG: Document processing failed: {error}")
-                    summary_text = f"File: {file_id} (processing failed: {error})"
             except Exception as e:
-                log_debug(f"❌ FILE DEBUG: Error processing uploaded file: {e}")
-                import traceback
-                log_debug(f"❌ FILE DEBUG: Processing traceback: {traceback.format_exc()}")
-                summary_text = f"File: {file_id} (processing error: {str(e)})"
+                log_debug(f"Document processing error for {file_id}: {e}")
             
+            # Return artifact with optional FilePart for remote agents
             if isinstance(artifact_response, DataPart):
-                log_debug(f"save_artifact completed, returning response with data: {artifact_response.data}")
-                
-                # IMPORTANT: For non-mask files, also create and store a FilePart so remote agents can access the file
-                # Remote agents need FilePart objects with URIs, not just DataPart metadata
                 artifact_uri = artifact_response.data.get('artifact-uri')
                 if artifact_uri:
                     file_part_for_remote = FilePart(
@@ -7539,15 +7512,9 @@ Answer with just JSON:
                             role=str(file_role_attr).lower() if file_role_attr else None,
                         ),
                     )
-                    
-                    # Store both the DataPart (for host) and FilePart (for remote agents)
                     self._store_parts_in_session(tool_context, artifact_response, Part(root=file_part_for_remote))
-                    log_debug(f"✅ Stored both DataPart and FilePart for non-mask file {file_id} with role={file_role_attr}")
                 
                 return artifact_response
-            
-            if summary_text:
-                return summary_text
             
             return DataPart(data={'error': f'File {file_id} processed without artifact metadata'})
 
