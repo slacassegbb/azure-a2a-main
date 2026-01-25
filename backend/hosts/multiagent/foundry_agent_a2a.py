@@ -770,9 +770,9 @@ class FoundryHostAgent2:
         """
         # Use _get_tools() which has the correct tool definitions
         tools = self._get_tools()
-        print(f"🔧 [TOOLS] _format_tools_for_responses_api returning {len(tools)} tools", flush=True)
+        print(f"🔧 [TOOLS] _format_tools_for_responses_api returning {len(tools)} tools")
         for tool in tools:
-            print(f"  • Tool: {tool.get('name', 'unknown')}", flush=True)
+            print(f"  • Tool: {tool.get('name', 'unknown')}")
         return tools
 
     def _get_openai_endpoint(self) -> str:
@@ -866,12 +866,12 @@ class FoundryHostAgent2:
                 runs = self.agents_client.runs.list(thread_id=thread_id)
                 async for run in runs:
                     if run.status in ["in_progress", "requires_action", "queued"]:
-                        print(f"⚠️ Cancelling stuck run {run.id} with status {run.status}", flush=True)
+                        print(f"⚠️ Cancelling stuck run {run.id} with status {run.status}")
                         try:
                             await self.agents_client.runs.cancel(thread_id=thread_id, run_id=run.id)
-                            print(f"✅ Cancelled run {run.id}", flush=True)
+                            print(f"✅ Cancelled run {run.id}")
                         except Exception as cancel_error:
-                            print(f"⚠️ Could not cancel run {run.id}: {cancel_error}", flush=True)
+                            print(f"⚠️ Could not cancel run {run.id}: {cancel_error}")
             except Exception as list_error:
                 log_foundry_debug(f"Could not list runs: {list_error}")
             
@@ -1571,7 +1571,7 @@ class FoundryHostAgent2:
         """
         print(f"\n🔥🔥🔥 [SEND_MESSAGE_SYNC] CALLED by Azure SDK!")
         print(f"🔥 agent_name: {agent_name}")
-        print(f"🔥 message: {message[:100]}...", flush=True)
+        print(f"🔥 message: {message[:100]}...")
         
         # Use the current host context ID - NO FALLBACK to UUID!
         context_id_to_use = getattr(self, '_current_host_context_id', None)
@@ -3461,7 +3461,7 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
         remote agent status updates to prevent duplicate events in the UI.
         """
         agent_name = agent_card.name
-        print(f"🔔 [CALLBACK] Task callback invoked from {agent_name}: {type(event).__name__}", flush=True)
+        print(f"🔔 [CALLBACK] Task callback invoked from {agent_name}: {type(event).__name__}")
         import sys
         sys.stdout.flush()
         log_debug(f"[STREAMING] Task callback from {agent_name}: {type(event).__name__}")
@@ -3496,12 +3496,12 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
         if hasattr(event, 'kind'):
             event_kind = getattr(event, 'kind', 'unknown')
             log_debug(f"[STREAMING] Event kind from {agent_name}: {event_kind}")
-            print(f"🔔 [STREAMING] Received event from {agent_name}: kind={event_kind}", flush=True)
+            print(f"🔔 [STREAMING] Received event from {agent_name}: kind={event_kind}")
             
             # Only emit status-update and artifact-update to UI (NOT 'task' events)
             if event_kind in ['artifact-update', 'status-update']:
                 log_debug(f"[STREAMING] Emitting via _emit_task_event for {agent_name}: {event_kind}")
-                print(f"📤 [STREAMING] Calling _emit_task_event for {agent_name}: {event_kind}", flush=True)
+                print(f"📤 [STREAMING] Calling _emit_task_event for {agent_name}: {event_kind}")
                 self._emit_task_event(event, agent_card)
                 
                 # WORKFLOW VISIBILITY: Also emit granular workflow events
@@ -3605,7 +3605,7 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
         """Emit event for task callback, with enhanced agent name context for UI status tracking."""
         agent_name = agent_card.name
         log_debug(f"🔔 [EMIT_TASK_EVENT] Called for agent: {agent_name}")
-        print(f"🎯 [_emit_task_event] CALLED for agent: {agent_name}, task.kind: {getattr(task, 'kind', 'NO KIND')}", flush=True)
+        print(f"🎯 [_emit_task_event] CALLED for agent: {agent_name}, task.kind: {getattr(task, 'kind', 'NO KIND')}")
         log_debug(f"Agent capabilities: {agent_card.capabilities if hasattr(agent_card, 'capabilities') else 'None'}")
         
         # WORKFLOW MODE: Suppress redundant status events from remote agents
@@ -3637,7 +3637,7 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
         
         # Extract task state and ID
         if hasattr(task, 'kind') and task.kind == 'status-update':
-            print(f"🔍 [_emit_task_event] Processing status-update event", flush=True)
+            print(f"🔍 [_emit_task_event] Processing status-update event")
             task_id = get_task_id(task, None)
             # Extract state from status object, handling enum types
             if hasattr(task, 'status') and task.status:
@@ -3650,7 +3650,7 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                 task_state = 'working'
             
             log_debug(f"Status update extracted: {task_state} for {agent_card.name}")
-            print(f"✨ [_emit_task_event] Extracted task_state: {task_state} for {agent_name}", flush=True)
+            print(f"✨ [_emit_task_event] Extracted task_state: {task_state} for {agent_name}")
             
             if hasattr(task, 'status') and task.status and task.status.message:
                 content = task.status.message
@@ -3794,7 +3794,7 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                             event_type = "task_created"
 
                         # DEBUG: Log what we're sending to the frontend
-                        print(f"📡 [A2A STREAM] Emitting {event_type} for {agent_card.name}: state={task_state}", flush=True)
+                        print(f"📡 [A2A STREAM] Emitting {event_type} for {agent_card.name}: state={task_state}")
                         
                         success = await streamer._send_event(event_type, event_data, routing_context_id)
                         if success:
@@ -4397,6 +4397,34 @@ Answer with just JSON:
         
         return options
 
+    @staticmethod
+    def _parse_retry_after_from_task(task) -> int:
+        """
+        Parse retry-after delay from a failed task's error message.
+        
+        Looks for rate limit messages and extracts the suggested wait time.
+        Returns 0 if no rate limit is detected, otherwise the wait time in seconds.
+        """
+        try:
+            if hasattr(task, 'status') and task.status and getattr(task.status, 'message', None):
+                parts = getattr(task.status.message, 'parts', []) or []
+                import re
+                for p in parts:
+                    txt = None
+                    if hasattr(p, 'root') and hasattr(p.root, 'text') and p.root.text:
+                        txt = p.root.text
+                    elif hasattr(p, 'text') and p.text:
+                        txt = p.text
+                    if not txt:
+                        continue
+                    lower = txt.lower()
+                    if 'rate limit' in lower or 'rate_limit_exceeded' in lower:
+                        m = re.search(r"try again in\s+(\d+)\s*seconds", lower)
+                        return int(m.group(1)) if m else 15
+        except Exception:
+            pass
+        return 0
+
     def _get_retry_count(self, session_context: SessionContext) -> int:
         """Get current retry count for this session"""
         return session_context.retry_count
@@ -4506,7 +4534,7 @@ Answer with just JSON:
         2. Reducing synchronous pre-await work
         3. Simplifying event processing
         """
-        print(f"\n🚀🚀🚀 [SEND_MESSAGE] ENTERING send_message for agent: {agent_name}", flush=True)
+        log_debug(f"[SEND_MESSAGE] ENTERING send_message for agent: {agent_name}")
         with tracer.start_as_current_span("send_message") as span:
             span.set_attribute("agent_name", agent_name)
             span.set_attribute("suppress_streaming", suppress_streaming)
@@ -4575,16 +4603,16 @@ Answer with just JSON:
             
             # DEBUG: Log what we're about to send
             log_foundry_debug(f"Before sending to {agent_name}:")
-            print(f"  • _latest_processed_parts exists: {hasattr(session_context, '_latest_processed_parts')}")
-            print(f"  • session_parts count: {len(session_parts)}")
-            print(f"  • agent_mode: {getattr(session_context, 'agent_mode', False)}")
+            log_debug(f"  • _latest_processed_parts exists: {hasattr(session_context, '_latest_processed_parts')}")
+            log_debug(f"  • session_parts count: {len(session_parts)}")
+            log_debug(f"  • agent_mode: {getattr(session_context, 'agent_mode', False)}")
 
             if session_parts:
                 log_debug(f"📦 Prepared {len(session_parts)} parts for remote agent {agent_name} (context {contextId})")
                 for idx, prepared_part in enumerate(session_parts):
                     part_root = getattr(prepared_part, "root", prepared_part)
                     kind = getattr(part_root, "kind", getattr(part_root, "type", type(part_root).__name__))
-                    print(f"  • Prepared part {idx}: kind={kind}")
+                    log_debug(f"  • Prepared part {idx}: kind={kind}")
                     
                     # Enhanced file part logging with role information
                     if isinstance(part_root, FilePart) and hasattr(part_root, "file"):
@@ -4593,23 +4621,23 @@ Answer with just JSON:
                         file_uri = getattr(file_obj, 'uri', 'no-uri')
                         # Check role in metadata (primary location for remote agents)
                         file_role = (part_root.metadata or {}).get("role", None) if hasattr(part_root, "metadata") else None
-                        print(f"    → FilePart: name={file_name} role={file_role or 'no-role'}")
-                        print(f"    → URI: {file_uri[:80]}..." if len(file_uri) > 80 else f"    → URI: {file_uri}")
+                        log_debug(f"    → FilePart: name={file_name} role={file_role or 'no-role'}")
+                        log_debug(f"    → URI: {file_uri[:80]}..." if len(file_uri) > 80 else f"    → URI: {file_uri}")
                     elif hasattr(part_root, "file") and getattr(part_root.file, "uri", None):
-                        print(f"    → file name={getattr(part_root.file, 'name', 'unknown')} uri={part_root.file.uri}")
+                        log_debug(f"    → file name={getattr(part_root.file, 'name', 'unknown')} uri={part_root.file.uri}")
                     
                     # Enhanced DataPart logging with role information
                     if isinstance(part_root, DataPart) and getattr(part_root, "data", None):
                         data_keys = list(part_root.data.keys()) if isinstance(part_root.data, dict) else []
-                        print(f"    → data keys={data_keys}")
+                        log_debug(f"    → data keys={data_keys}")
                         if isinstance(part_root.data, dict):
                             role = part_root.data.get("role", "no-role")
                             artifact_uri = part_root.data.get("artifact-uri", "")
                             file_name = part_root.data.get("file-name", "unknown")
                             if role != "no-role" or artifact_uri:
-                                print(f"    → DataPart file: {file_name} role={role}")
+                                log_debug(f"    → DataPart file: {file_name} role={role}")
                                 if artifact_uri:
-                                    print(f"    → Artifact URI: {artifact_uri[:80]}..." if len(artifact_uri) > 80 else f"    → Artifact URI: {artifact_uri}")
+                                    log_debug(f"    → Artifact URI: {artifact_uri[:80]}..." if len(artifact_uri) > 80 else f"    → Artifact URI: {artifact_uri}")
 
                     if isinstance(prepared_part, Part):
                         prepared_parts.append(prepared_part)
@@ -4674,7 +4702,7 @@ Answer with just JSON:
                 def streaming_task_callback(event, agent_card):
                     """Enhanced callback for streaming execution that captures detailed agent activities"""
                     agent_name = agent_card.name
-                    print(f"🎬 [streaming_task_callback] CALLED for {agent_name}: {type(event).__name__}", flush=True)
+                    log_debug(f"🎬 [streaming_task_callback] CALLED for {agent_name}: {type(event).__name__}")
                     log_debug(f"[STREAMING] Detailed callback from {agent_name}: {type(event).__name__}")
                     
                     # ========================================================================
@@ -4800,33 +4828,33 @@ Answer with just JSON:
                 
                 asyncio.create_task(self._emit_outgoing_message_event(agent_name, clean_message, contextId))
                 
-                print(f"\n📞📞📞 [ABOUT TO CALL] client.send_message for {agent_name} with streaming_task_callback", flush=True)
-                print(f"📞 Callback type: {type(streaming_task_callback)}, callable: {callable(streaming_task_callback)}", flush=True)
+                log_debug(f"\n📞📞📞 [ABOUT TO CALL] client.send_message for {agent_name} with streaming_task_callback")
+                log_debug(f"📞 Callback type: {type(streaming_task_callback)}, callable: {callable(streaming_task_callback)}")
                 response = await client.send_message(request, streaming_task_callback)
-                print(f"✅ [STREAMING] Agent {agent_name} responded successfully!", flush=True)
+                log_debug(f"✅ [STREAMING] Agent {agent_name} responded successfully!")
 
                 
             except Exception as e:
-                print(f"❌ [STREAMING] Agent {agent_name} failed: {e}")
+                log_debug(f"❌ [STREAMING] Agent {agent_name} failed: {e}")
                 
                 import traceback
-                print(f"❌ Full traceback: {traceback.format_exc()}")
+                log_debug(f"❌ Full traceback: {traceback.format_exc()}")
                 raise
             
-            print(f"🔄 [STREAMING] Processing response from {agent_name}: {type(response)}")
+            log_debug(f"🔄 [STREAMING] Processing response from {agent_name}: {type(response)}")
             
             # Simplified response processing for streaming execution
             if isinstance(response, Task):
                 task = response
                 
                 # DEBUG: Log task response structure
-                print(f"📊 Received Task response from {agent_name}:")
-                print(f"  • Task ID: {task.id if hasattr(task, 'id') else 'N/A'}")
-                print(f"  • Task state: {task.status.state if hasattr(task, 'status') else 'N/A'}")
-                print(f"  • Has status.message: {hasattr(task, 'status') and hasattr(task.status, 'message') and task.status.message is not None}")
-                print(f"  • Has artifacts: {hasattr(task, 'artifacts') and task.artifacts is not None}")
+                log_debug(f"📊 Received Task response from {agent_name}:")
+                log_debug(f"  • Task ID: {task.id if hasattr(task, 'id') else 'N/A'}")
+                log_debug(f"  • Task state: {task.status.state if hasattr(task, 'status') else 'N/A'}")
+                log_debug(f"  • Has status.message: {hasattr(task, 'status') and hasattr(task.status, 'message') and task.status.message is not None}")
+                log_debug(f"  • Has artifacts: {hasattr(task, 'artifacts') and task.artifacts is not None}")
                 if hasattr(task, 'artifacts') and task.artifacts:
-                    print(f"  • Artifacts count: {len(task.artifacts)}")
+                    log_debug(f"  • Artifacts count: {len(task.artifacts)}")
                 
                 # Update session context only with essential info
                 context_id = get_context_id(task)
@@ -4860,11 +4888,11 @@ Answer with just JSON:
                     log_debug(f"Task completed - message exists: {task.status.message is not None}")
                     if task.status.message:
                         log_debug(f"Task completed - parts count: {len(task.status.message.parts) if task.status.message.parts else 0}")
-                    print(f"  • task.artifacts exists: {task.artifacts is not None}")
+                    log_debug(f"  • task.artifacts exists: {task.artifacts is not None}")
                     if task.artifacts:
-                        print(f"  • task.artifacts count: {len(task.artifacts)}")
+                        log_debug(f"  • task.artifacts count: {len(task.artifacts)}")
                         for idx, art in enumerate(task.artifacts):
-                            print(f"  • artifact[{idx}].parts count: {len(art.parts) if art.parts else 0}")
+                            log_debug(f"  • artifact[{idx}].parts count: {len(art.parts) if art.parts else 0}")
                     
                     # Extract token usage from message parts before converting
                     if task.status.message and task.status.message.parts:
@@ -4877,7 +4905,7 @@ Answer with just JSON:
                                         'completion_tokens': data.get('completion_tokens', 0),
                                         'total_tokens': data.get('total_tokens', 0)
                                     }
-                                    print(f"💰 [TASK] Extracted token usage for {agent_name}: {self.agent_token_usage[agent_name]}")
+                                    log_debug(f"💰 [TASK] Extracted token usage for {agent_name}: {self.agent_token_usage[agent_name]}")
                                     break
                     
                     if task.status.message:
@@ -4895,12 +4923,12 @@ Answer with just JSON:
                     # DEBUG: Log what's now in _latest_processed_parts after conversion
                     if hasattr(session_context, "_latest_processed_parts"):
                         latest = session_context._latest_processed_parts
-                        print(f"📦 After convert_parts, _latest_processed_parts has {len(latest)} items total (accumulated)")
+                        log_debug(f"📦 After convert_parts, _latest_processed_parts has {len(latest)} items total (accumulated)")
                         
                     # Add file artifacts from THIS response to _agent_generated_artifacts for UI display
                     # Support both FilePart (preferred) and DataPart (legacy) formats
                     mode = "Agent Mode" if session_context.agent_mode else "Standard Mode"
-                    print(f"🔍 [{mode}] Checking response_parts ({len(response_parts)} items) for file artifacts...")
+                    log_debug(f"🔍 [{mode}] Checking response_parts ({len(response_parts)} items) for file artifacts...")
                     for item in response_parts:
                         # Check for FilePart (new standard format)
                         is_file_part = isinstance(item, FilePart) or (hasattr(item, 'root') and isinstance(item.root, FilePart))
@@ -4912,10 +4940,10 @@ Answer with just JSON:
                                 session_context._agent_generated_artifacts = []
                             session_context._agent_generated_artifacts.append(item)
                             part_type = "FilePart" if is_file_part else "DataPart"
-                            print(f"📎 [STREAMING - {mode}] Added {part_type} from THIS response to _agent_generated_artifacts")
+                            log_debug(f"📎 [STREAMING - {mode}] Added {part_type} from THIS response to _agent_generated_artifacts")
                     
                     if hasattr(session_context, '_agent_generated_artifacts'):
-                        print(f"✅ [{mode}] Total _agent_generated_artifacts: {len(session_context._agent_generated_artifacts)}")
+                        log_debug(f"✅ [{mode}] Total _agent_generated_artifacts: {len(session_context._agent_generated_artifacts)}")
 
                     self._update_last_host_turn(session_context, agent_name, response_parts)
                     
@@ -4932,30 +4960,9 @@ Answer with just JSON:
                     return response_parts
                     
                 elif task.status.state == TaskState.failed:
-                    print(f"❌ [STREAMING] Task failed for {agent_name}")
-                    # Detect rate limit and retry once after suggested delay
-                    def _parse_retry_after_from_task(t) -> int:
-                        try:
-                            if hasattr(t, 'status') and t.status and getattr(t.status, 'message', None):
-                                parts = getattr(t.status.message, 'parts', []) or []
-                                import re
-                                for p in parts:
-                                    txt = None
-                                    if hasattr(p, 'root') and hasattr(p.root, 'text') and p.root.text:
-                                        txt = p.root.text
-                                    elif hasattr(p, 'text') and p.text:
-                                        txt = p.text
-                                    if not txt:
-                                        continue
-                                    lower = txt.lower()
-                                    if 'rate limit' in lower or 'rate_limit_exceeded' in lower:
-                                        m = re.search(r"try again in\s+(\d+)\s*seconds", lower)
-                                        return int(m.group(1)) if m else 15
-                        except Exception:
-                            pass
-                        return 0
-
-                    retry_after = _parse_retry_after_from_task(task)
+                    log_debug(f"Task failed for {agent_name}")
+                    # Detect rate limit and retry after suggested delay
+                    retry_after = self._parse_retry_after_from_task(task)
                     max_rate_limit_retries = 3
                     retry_attempt = 0
 
@@ -5019,7 +5026,7 @@ Answer with just JSON:
                                 return [f"Agent {agent_name} requires additional input"]
 
                             if task2.status.state == TaskState.failed:
-                                retry_after = _parse_retry_after_from_task(task2)
+                                retry_after = self._parse_retry_after_from_task(task2)
                                 if retry_after:
                                     continue
 
@@ -5035,7 +5042,7 @@ Answer with just JSON:
                     return [f"Agent {agent_name} failed to complete the task"]
 
                 elif task.status.state == TaskState.input_required:
-                    print(f"⚠️ [STREAMING] Agent {agent_name} requires input")
+                    log_debug(f"⚠️ [STREAMING] Agent {agent_name} requires input")
                     if task.status.message:
                         response_parts = await self.convert_parts(task.status.message.parts, tool_context)
                         self._update_last_host_turn(session_context, agent_name, response_parts)
