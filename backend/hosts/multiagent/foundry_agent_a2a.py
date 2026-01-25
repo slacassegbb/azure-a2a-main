@@ -824,106 +824,71 @@ class FoundryHostAgent2:
         user_message: str,
         context_id: str,
         session_context: SessionContext,
-        tools: List[Dict[str, Any]],  # No longer used - tools are in agent
-        instructions: str,  # No longer used - instructions are in agent
+        tools: List[Dict[str, Any]],
+        instructions: str,
         event_logger=None
     ) -> Dict[str, Any]:
         """
         Create a response using Azure AI Foundry Agent Service with streaming.
         
-        Uses the Agent Service SDK which provides:
-        - Thread-based conversation management
-        - Automatic tool execution
-        - Built-in streaming support
-        - Full Application Insights telemetry
-        
         Returns:
             Dict with keys: id, text, tool_calls, status, usage
         """
-        log_foundry_debug(f"_create_response_with_streaming: Creating streaming response for context {context_id}")
-        
         try:
-            # Ensure project client and agent are initialized
             await self._ensure_project_client()
             if not self.agent:
                 await self.create_agent()
             
-            log_foundry_debug(f"Using agent ID: {self.agent_id}")
-            
             # Get or create thread for this context
             if context_id not in self.thread_ids:
-                log_foundry_debug(f"Creating new thread for context: {context_id}")
                 thread = await self.agents_client.threads.create()
                 self.thread_ids[context_id] = thread.id
-                log_foundry_debug(f"Created thread ID: {thread.id}")
             
             thread_id = self.thread_ids[context_id]
-            log_foundry_debug(f"Using thread ID: {thread_id}")
             
             # Cancel any active runs before creating new message
-            # This prevents "Can't add messages while a run is active" errors
             try:
                 runs = self.agents_client.runs.list(thread_id=thread_id)
                 async for run in runs:
                     if run.status in ["in_progress", "requires_action", "queued"]:
-                        print(f"⚠️ Cancelling stuck run {run.id} with status {run.status}")
                         try:
                             await self.agents_client.runs.cancel(thread_id=thread_id, run_id=run.id)
-                            print(f"✅ Cancelled run {run.id}")
-                        except Exception as cancel_error:
-                            print(f"⚠️ Could not cancel run {run.id}: {cancel_error}")
-            except Exception as list_error:
-                log_foundry_debug(f"Could not list runs: {list_error}")
+                        except Exception:
+                            pass
+            except Exception:
+                pass
             
             # Create message in thread
-            log_foundry_debug(f"Creating message: {user_message[:100]}...")
             message = await self.agents_client.messages.create(
                 thread_id=thread_id,
                 role=MessageRole.USER,
                 content=user_message
             )
-            log_foundry_debug(f"Created message ID: {message.id}")
             
             # Stream the run
             full_text = ""
             run_id = None
             status = "completed"
-            
-            log_foundry_debug(f"Starting streaming run...")
-            
-            # Track if we're handling tool calls
             tool_calls_to_execute = []
             
-            # IMPORTANT: Use "required" to force the model to call tools
-            # With "auto", the model hallucinates agent responses instead of actually calling them
-            # The model should call list_remote_agents or send_message - never answer directly about agent tasks
             stream = await self.agents_client.runs.stream(
                 thread_id=thread_id,
                 agent_id=self.agent_id,
                 tool_choice="required"
             )
             
-            # Use async context manager - it returns an event handler
             async with stream as event_handler:
-                # Iterate over events from the event handler
                 async for event in event_handler:
-                    log_foundry_debug(f"Stream event: {event}")
-                    
-                    # Check event type and extract data
                     if hasattr(event, 'event') and hasattr(event, 'data'):
                         event_type = event.event
                         event_data = event.data
                     elif isinstance(event, tuple):
                         event_type, event_data, *_ = event
                     else:
-                        # Try to get the data directly
                         event_data = event
                         event_type = type(event).__name__
                     
-                    log_foundry_debug(f"Event type: {event_type}, Data type: {type(event_data).__name__}")
-                    
                     if isinstance(event_data, MessageDeltaChunk):
-                        # TEXT CHUNK - stream to WebSocket
                         chunk = event_data.text
                         if chunk:
                             full_text += chunk
@@ -932,288 +897,141 @@ class FoundryHostAgent2:
                     elif isinstance(event_data, ThreadRun):
                         run_id = event_data.id
                         status = event_data.status
-                        log_foundry_debug(f"Run status: {status}")
-                        
-                        # Capture tool calls if requires_action
-                        # Status can be a RunStatus enum or string, convert to string for comparison
                         status_str = str(status).lower() if status else ""
                         if "requires_action" in status_str and hasattr(event_data, 'required_action'):
                             required_action = event_data.required_action
                             if required_action and hasattr(required_action, 'submit_tool_outputs'):
                                 tool_calls_to_execute = required_action.submit_tool_outputs.tool_calls
-                                log_foundry_debug(f"🔧 Captured {len(tool_calls_to_execute)} tool calls to execute")
                     
                     elif event_type == AgentStreamEvent.ERROR:
-                        log_error(f"Stream error: {event_data}")
                         raise Exception(f"Streaming error: {event_data}")
                     
                     elif event_type == AgentStreamEvent.DONE:
-                        log_foundry_debug("Stream completed")
                         break
             
-            log_foundry_debug(f"Stream complete - text length: {len(full_text)}")
-            
             # MULTI-TURN TOOL EXECUTION LOOP
-            # Keep executing tool calls until status is completed
             max_tool_iterations = 30
             tool_iteration = 0
             
-            # Helper to check if status requires action (handles enum and string)
             def status_requires_action(s):
-                if s is None:
-                    return False
-                s_str = str(s).lower()
-                return "requires_action" in s_str
+                return s and "requires_action" in str(s).lower()
             
             while status_requires_action(status) and tool_calls_to_execute and tool_iteration < max_tool_iterations:
                 tool_iteration += 1
-                log_foundry_debug(f"🔧 Tool iteration {tool_iteration}: Executing {len(tool_calls_to_execute)} tool calls...")
                 
-                # ✅ WORKFLOW VISIBILITY: Show that host agent is calling tools
+                # Emit tool call events for UI visibility
                 for tool_call in tool_calls_to_execute:
-                    function_name = tool_call.function.name
                     asyncio.create_task(self._emit_granular_agent_event(
-                        "foundry-host-agent",
-                        f"🛠️ Calling tool: {function_name}",
-                        context_id
+                        "foundry-host-agent", f"🛠️ Calling: {tool_call.function.name}", context_id
                     ))
                 
                 # Separate send_message calls for parallel execution
-                send_message_calls = []
-                other_calls = []
-                
-                log_foundry_debug(f"🔧 Processing {len(tool_calls_to_execute)} tool calls")
-                for tool_call in tool_calls_to_execute:
-                    function_name = tool_call.function.name
-                    log_foundry_debug(f"🔧 Tool call: {function_name} - args: {tool_call.function.arguments[:100] if tool_call.function.arguments else 'None'}...")
-                    if function_name == "send_message_sync":
-                        send_message_calls.append(tool_call)
-                    else:
-                        other_calls.append(tool_call)
-                
-                log_foundry_debug(f"🔧 Separated: {len(send_message_calls)} send_message calls, {len(other_calls)} other calls")
+                send_message_calls = [tc for tc in tool_calls_to_execute if tc.function.name == "send_message_sync"]
+                other_calls = [tc for tc in tool_calls_to_execute if tc.function.name != "send_message_sync"]
                 tool_outputs = []
                 
                 # Execute send_message calls in PARALLEL if there are multiple
                 if len(send_message_calls) > 1:
-                    log_foundry_debug(f"🚀 Executing {len(send_message_calls)} send_message calls in PARALLEL...")
-                    
                     async def execute_send_message(tool_call):
-                        """Execute a single send_message call and return result with tool_call_id"""
+                        """Execute a single send_message call and return result"""
                         try:
-                            import json
                             arguments = json.loads(tool_call.function.arguments) if tool_call.function.arguments else {}
                             agent_name = arguments.get("agent_name")
                             result = await self.send_message_sync(
                                 agent_name=agent_name,
                                 message=arguments.get("message")
                             )
-                            
-                            # Convert response_parts list to clean text for the model
-                            # The model needs readable text, not complex JSON structures
                             result_str = self._format_agent_response_for_model(result, agent_name)
-                            
-                            log_foundry_debug(f"🔧 Tool send_message_sync returned: {result_str[:200]}...")
-                            asyncio.create_task(self._emit_granular_agent_event(
-                                "foundry-host-agent",
-                                f"✅ Tool send_message_sync completed for {agent_name}",
-                                context_id
-                            ))
-                            
                             return {"tool_call_id": tool_call.id, "output": result_str}
                         except Exception as e:
-                            log_error(f"🔧 Error executing send_message_sync: {e}")
-                            import traceback
-                            traceback.print_exc()
+                            log_error(f"send_message_sync error: {e}")
                             return {"tool_call_id": tool_call.id, "output": json.dumps({"error": str(e)})}
                     
-                    # Execute all send_message calls in parallel using asyncio.gather
                     parallel_results = await asyncio.gather(
                         *[execute_send_message(tc) for tc in send_message_calls],
                         return_exceptions=True
                     )
                     
-                    # Collect results
-                    import json as json_module  # Ensure json is available in this scope
-                    log_foundry_debug(f"🔧 Parallel execution returned {len(parallel_results)} results")
                     for idx, result in enumerate(parallel_results):
                         if isinstance(result, Exception):
-                            log_error(f"🔧 Parallel execution error for call {idx}: {type(result).__name__}: {result}")
-                            import traceback
-                            traceback.print_exc()
-                            # Still add an error result for this tool_call
                             if idx < len(send_message_calls):
-                                tool_call = send_message_calls[idx]
                                 tool_outputs.append({
-                                    "tool_call_id": tool_call.id,
-                                    "output": json_module.dumps({"error": f"Exception: {str(result)}"})
+                                    "tool_call_id": send_message_calls[idx].id,
+                                    "output": json.dumps({"error": str(result)})
                                 })
                         else:
-                            log_foundry_debug(f"🔧 Parallel result {idx}: {str(result)[:200]}...")
                             tool_outputs.append(result)
-                    
-                    log_foundry_debug(f"✅ Parallel execution complete - {len(tool_outputs)} outputs collected")
                 
                 elif len(send_message_calls) == 1:
-                    # Single send_message - execute normally
                     tool_call = send_message_calls[0]
-                    function_name = tool_call.function.name
-                    arguments_str = tool_call.function.arguments
-                    tool_call_id = tool_call.id
-                    
-                    log_foundry_debug(f"🔧 Executing single tool: {function_name} with args: {arguments_str}")
-                    
                     try:
-                        import json
-                        arguments = json.loads(arguments_str) if arguments_str else {}
+                        arguments = json.loads(tool_call.function.arguments) if tool_call.function.arguments else {}
                         agent_name = arguments.get("agent_name")
                         result = await self.send_message_sync(
                             agent_name=agent_name,
                             message=arguments.get("message")
                         )
-                        
-                        # Use the same clean formatting as parallel execution
                         result_str = self._format_agent_response_for_model(result, agent_name)
-                        
-                        log_foundry_debug(f"🔧 Tool {function_name} returned: {result_str[:200]}...")
-                        asyncio.create_task(self._emit_granular_agent_event(
-                            "foundry-host-agent",
-                            f"✅ Tool {function_name} completed",
-                            context_id
-                        ))
-                        
-                        tool_outputs.append({
-                            "tool_call_id": tool_call_id,
-                            "output": result_str
-                        })
+                        tool_outputs.append({"tool_call_id": tool_call.id, "output": result_str})
                     except Exception as e:
-                        log_error(f"🔧 Error executing tool {function_name}: {e}")
-                        import traceback
-                        traceback.print_exc()
-                        tool_outputs.append({
-                            "tool_call_id": tool_call_id,
-                            "output": json.dumps({"error": str(e)})
-                        })
+                        log_error(f"send_message_sync error: {e}")
+                        tool_outputs.append({"tool_call_id": tool_call.id, "output": json.dumps({"error": str(e)})})
                 
                 # Execute other (non-send_message) tool calls sequentially
                 for tool_call in other_calls:
                     function_name = tool_call.function.name
-                    arguments_str = tool_call.function.arguments
-                    tool_call_id = tool_call.id
-                    
-                    log_foundry_debug(f"🔧 Executing other tool: {function_name} with args: {arguments_str}")
-                    
                     try:
-                        # Parse arguments
-                        import json
-                        arguments = json.loads(arguments_str) if arguments_str else {}
-                        
-                        # Execute the tool function
                         if function_name == "list_remote_agents_sync":
-                            result = self.list_remote_agents_sync()  # Synchronous call
+                            result = self.list_remote_agents_sync()
                         else:
                             result = {"error": f"Unknown function: {function_name}"}
                         
-                        # Convert result to JSON-serializable format
-                        # Handle Pydantic objects by using model_dump() or converting to dict
+                        # Convert result to JSON string
                         if hasattr(result, 'model_dump'):
-                            # Pydantic v2 object
-                            result_dict = result.model_dump(mode='json')
-                            result_str = json.dumps(result_dict)
-                        elif hasattr(result, 'dict'):
-                            # Pydantic v1 object or dict
-                            result_dict = result.dict() if hasattr(result, 'dict') and callable(result.dict) else result
-                            result_str = json.dumps(result_dict)
+                            result_str = json.dumps(result.model_dump(mode='json'))
                         elif isinstance(result, str):
                             result_str = result
-                        elif isinstance(result, (list, dict)):
-                            # Try to serialize, handling nested Pydantic objects
-                            try:
-                                result_str = json.dumps(result)
-                            except TypeError:
-                                # If direct serialization fails, convert Pydantic objects
-                                def convert_pydantic(obj):
-                                    if hasattr(obj, 'model_dump'):
-                                        return obj.model_dump(mode='json')
-                                    elif hasattr(obj, 'dict') and callable(obj.dict):
-                                        return obj.dict()
-                                    elif isinstance(obj, list):
-                                        return [convert_pydantic(item) for item in obj]
-                                    elif isinstance(obj, dict):
-                                        return {k: convert_pydantic(v) for k, v in obj.items()}
-                                    return obj
-                                
-                                result_converted = convert_pydantic(result)
-                                result_str = json.dumps(result_converted)
                         else:
                             result_str = json.dumps(result)
                         
-                        log_foundry_debug(f"🔧 Tool {function_name} returned: {result_str[:200]}...")
-                        
-                        # ✅ WORKFLOW VISIBILITY: Show tool execution result
-                        asyncio.create_task(self._emit_granular_agent_event(
-                            "foundry-host-agent",
-                            f"✅ Tool {function_name} completed",
-                            context_id
-                        ))
-                        
-                        tool_outputs.append({
-                            "tool_call_id": tool_call_id,
-                            "output": result_str
-                        })
+                        tool_outputs.append({"tool_call_id": tool_call.id, "output": result_str})
                     except Exception as e:
-                        log_error(f"🔧 Error executing tool {function_name}: {e}")
-                        tool_outputs.append({
-                            "tool_call_id": tool_call_id,
-                            "output": json.dumps({"error": str(e)})
-                        })
+                        log_error(f"Tool {function_name} error: {e}")
+                        tool_outputs.append({"tool_call_id": tool_call.id, "output": json.dumps({"error": str(e)})})
                 
                 # Submit tool outputs and continue streaming
-                log_foundry_debug(f"🔧 Submitting {len(tool_outputs)} tool outputs...")
-                
-                # Submit tool outputs - try without event_handler first
-                # The SDK might work like runs.stream() - returns stream directly
                 try:
                     stream = await self.agents_client.runs.submit_tool_outputs_stream(
                         thread_id=thread_id,
                         run_id=run_id,
                         tool_outputs=tool_outputs
                     )
-                    log_foundry_debug(f"🔧 submit_tool_outputs_stream returned: {type(stream)}")
                 except TypeError as e:
                     # If it requires event_handler, provide one
                     if "event_handler" in str(e):
-                        log_foundry_debug("🔧 Retrying with custom event handler to capture response...")
                         from azure.ai.agents.models import AsyncAgentEventHandler
                         
-                        # Create custom event handler to capture response text AND tool calls
                         class ResponseCapturingHandler(AsyncAgentEventHandler):
                             def __init__(self):
                                 super().__init__()
                                 self.response_text = ""
                                 self.final_status = None
-                                self.tool_calls = []  # Capture tool calls for multi-turn
+                                self.tool_calls = []
                             
                             async def on_message_delta(self, delta):
-                                """Capture message chunks as they arrive"""
                                 if hasattr(delta, 'text') and delta.text:
                                     self.response_text += delta.text
-                                    # Emit to WebSocket in real-time
                                     await self._emit_text_chunk(delta.text, context_id)
                             
                             async def on_thread_run(self, run):
-                                """Capture final run status and any tool calls"""
                                 self.final_status = run.status
-                                # Capture tool calls if requires_action
                                 status_str = str(run.status).lower() if run.status else ""
                                 if "requires_action" in status_str and hasattr(run, 'required_action'):
                                     required_action = run.required_action
                                     if required_action and hasattr(required_action, 'submit_tool_outputs'):
                                         self.tool_calls = required_action.submit_tool_outputs.tool_calls or []
                         
-                        # Use our custom handler
                         handler = ResponseCapturingHandler()
-                        # Need to bind the emit method
                         handler._emit_text_chunk = self._emit_text_chunk
                         
                         result = await self.agents_client.runs.submit_tool_outputs_stream(
@@ -1222,39 +1040,24 @@ class FoundryHostAgent2:
                             tool_outputs=tool_outputs,
                             event_handler=handler
                         )
-                        log_foundry_debug(f"🔧 With event_handler returned: {type(result)}")
                         
-                        # Event handler pattern - wait for completion
                         await handler.until_done()
                         
-                        # Extract captured response
                         full_text += handler.response_text
                         if handler.final_status:
                             status = handler.final_status
                         
-                        # Capture tool calls for next iteration
-                        if handler.tool_calls:
-                            tool_calls_to_execute = handler.tool_calls
-                            log_foundry_debug(f"🔧 Event handler captured {len(tool_calls_to_execute)} tool calls for next iteration")
-                        else:
-                            tool_calls_to_execute = []
-                        
-                        log_foundry_debug(f"🔧 Event handler completed - captured {len(handler.response_text)} chars, status: {handler.final_status}, tool_calls: {len(tool_calls_to_execute)}")
-                        # Skip the streaming loop - already processed
+                        tool_calls_to_execute = handler.tool_calls if handler.tool_calls else []
                         stream = None
                     else:
                         raise
                 
                 # If we have a stream, process it
                 if stream is not None:
-                    # Continue streaming with tool outputs
-                    # Reset tool_calls_to_execute to capture any new ones
                     tool_calls_to_execute = []
                     
                     async with stream as event_handler:
                         async for event in event_handler:
-                            log_foundry_debug(f"Stream event (after tools): {event}")
-                            
                             if hasattr(event, 'event') and hasattr(event, 'data'):
                                 event_type = event.event
                                 event_data = event.data
@@ -1273,37 +1076,26 @@ class FoundryHostAgent2:
                             elif isinstance(event_data, ThreadRun):
                                 run_id = event_data.id
                                 status = event_data.status
-                                log_foundry_debug(f"Run status (after tools): {status}")
                                 
-                                # Capture any new tool calls for the loop
-                                # Use string comparison to handle RunStatus enum
                                 status_str = str(status).lower() if status else ""
                                 if "requires_action" in status_str and hasattr(event_data, 'required_action'):
                                     required_action = event_data.required_action
                                     if required_action and hasattr(required_action, 'submit_tool_outputs'):
                                         tool_calls_to_execute = required_action.submit_tool_outputs.tool_calls
-                                        log_foundry_debug(f"🔧 Captured {len(tool_calls_to_execute)} NEW tool calls for next iteration")
                             
                             elif event_type == AgentStreamEvent.DONE:
-                                log_foundry_debug("Stream completed (after tools)")
                                 break
-                
-                log_foundry_debug(f"Tool iteration {tool_iteration} complete - text length: {len(full_text)}, status: {status}")
             
-            result = {
+            return {
                 "id": run_id,
                 "text": full_text,
-                "tool_calls": [],  # Tool calls handled manually above
+                "tool_calls": [],
                 "status": status,
-                "usage": None  # Could extract from run if needed
+                "usage": None
             }
-            
-            return result
             
         except Exception as e:
             log_error(f"Error in _create_response_with_streaming: {e}")
-            import traceback
-            traceback.print_exc()
             raise
 
     async def _execute_tool_calls_from_response(
@@ -6503,19 +6295,15 @@ Answer with just JSON:
         """
         with tracer.start_as_current_span("handle_tool_calls") as span:
             span.set_attribute("context_id", context_id)
-            print(f"_handle_tool_calls called for thread_id: {thread_id}, context_id: {context_id}")
             
             if not run.get('required_action'):
-                log_debug("No required_action in run.")
                 return None
                 
             required_action = run.get('required_action')
             if not required_action.get('submit_tool_outputs'):
-                log_debug("No submit_tool_outputs in required_action.")
                 return None
                 
             tool_calls = required_action['submit_tool_outputs']['tool_calls']
-            log_debug(f"🔥 OPTIMIZED: Processing {len(tool_calls)} tool calls")
             
             # Add status message for tool calls starting
             self._add_status_message_to_conversation(f"🛠️ Executing {len(tool_calls)} tool call(s)", context_id)
@@ -6545,9 +6333,9 @@ Answer with just JSON:
                     # Keep other tool calls for sequential execution
                     other_tool_calls.append((tool_call, function_name, arguments))
             
-            # NEW: Execute send_message calls in parallel
+            # Execute send_message calls in parallel
             if send_message_tool_calls:
-                log_debug(f"🚀 Executing {len(send_message_tool_calls)} send_message calls in parallel")
+                log_debug(f"Executing {len(send_message_tool_calls)} send_message calls in parallel")
                 span.add_event("parallel_agent_calls_started", {
                     "agent_calls_count": len(send_message_tool_calls),
                     "run_id": run["id"]
@@ -6604,14 +6392,13 @@ Answer with just JSON:
                         agent_name = send_message_tool_calls[i][2].get("agent_name")
                         
                         if isinstance(result, Exception):
-                            print(f"❌ Parallel agent call failed: {result}")
+                            log_error(f"Parallel agent call failed: {result}")
                             output = {"error": f"Agent call failed: {str(result)}"}
                             self._add_status_message_to_conversation(f"❌ Agent call to {agent_name} failed", context_id)
                             span.add_event("parallel_agent_call_failed", {
                                 "agent_name": agent_name,
                                 "error": str(result)
                             })
-                            # Stream tool failure to WebSocket
                             asyncio.create_task(self._emit_tool_response_event(agent_name, "send_message", "failed", str(result), context_id))
                         else:
                             output = result
@@ -6620,7 +6407,6 @@ Answer with just JSON:
                                 "agent_name": agent_name,
                                 "output_type": type(output).__name__
                             })
-                            # Stream tool success to WebSocket
                             asyncio.create_task(self._emit_tool_response_event(agent_name, "send_message", "success", None, context_id))
                         
                         # Log tool result event - use agent_name as actor so frontend can attribute correctly
@@ -6647,7 +6433,6 @@ Answer with just JSON:
                             successful_tool_outputs.append({"agent": agent_name, "response": normalized_text})
                             last_tool_output = {"agent": agent_name, "response": normalized_text}
                     
-                    print(f"✅ Parallel agent calls completed successfully")
                     self._add_status_message_to_conversation("✅ All parallel agent calls completed", context_id)
                     await self._emit_status_event("all agent calls completed", context_id)
                     span.add_event("parallel_agent_calls_completed", {
@@ -6656,7 +6441,7 @@ Answer with just JSON:
                     })
                     
                 except Exception as e:
-                    print(f"❌ Error in parallel agent execution: {e}")
+                    log_error(f"Error in parallel agent execution: {e}")
                     self._add_status_message_to_conversation(f"❌ Parallel execution failed: {str(e)}", context_id)
                     span.add_event("parallel_agent_execution_error", {
                         "error": str(e)
@@ -6673,26 +6458,14 @@ Answer with just JSON:
                             })
                         })
             
-            # Execute other tool calls sequentially (as before)
+            # Execute other tool calls sequentially
             for tool_call, function_name, arguments in other_tool_calls:
-                print(f"Handling tool: {function_name}, args: {arguments}")
-                
-                # Add status message for each tool call
                 self._add_status_message_to_conversation(f"🛠️ Executing tool: {function_name}", context_id)
                 await self._emit_status_event(f"executing {function_name} tool", context_id)
                 
-                # Enhanced tool call tracking
-                span.add_event(f"tool_call: {function_name}", {
-                    "function_name": function_name,
-                    "tool_call_id": tool_call["id"],
-                    "arguments_keys": list(arguments.keys()) if isinstance(arguments, dict) else [],
-                    "arguments_summary": str(arguments)[:200] + "..." if len(str(arguments)) > 200 else str(arguments)
-                })
-                
-                # Stream tool call to WebSocket for thinking box visibility
+                span.add_event(f"tool_call: {function_name}", {"function_name": function_name})
                 await self._emit_tool_call_event("foundry-host-agent", function_name, arguments, context_id)
                 
-                # Log tool call event and add span event
                 if event_logger:
                     event_logger({
                         "id": str(uuid.uuid4()),
@@ -6705,23 +6478,12 @@ Answer with just JSON:
                 if function_name == "list_remote_agents":
                     output = self.list_remote_agents()
                     self._add_status_message_to_conversation(f"✅ Tool {function_name} completed", context_id)
-                    span.add_event("agents_listed", {
-                        "available_agents_count": len(output),
-                        "agent_names": [agent.get("name", "unknown") for agent in output] if output else []
-                    })
-                    # Stream tool success to WebSocket
                     await self._emit_tool_response_event("foundry-host-agent", function_name, "success", None, context_id)
                 else:
                     output = {"error": f"Unknown function: {function_name}"}
                     self._add_status_message_to_conversation(f"❌ Unknown tool: {function_name}", context_id)
-                    span.add_event("unknown_function_called", {
-                        "function_name": function_name,
-                        "available_functions": ["list_remote_agents", "send_message"]
-                    })
-                    # Stream tool failure to WebSocket
                     await self._emit_tool_response_event("foundry-host-agent", function_name, "failed", f"Unknown function: {function_name}", context_id)
                 
-                # Log tool result event
                 if event_logger:
                     event_logger({
                         "id": str(uuid.uuid4()),
@@ -6729,19 +6491,6 @@ Answer with just JSON:
                         "name": function_name,
                         "type": "tool_result",
                         "output": output
-                    })
-                
-                # Track tool execution outcome
-                if isinstance(output, dict) and "error" in output:
-                    span.add_event("tool_execution_error", {
-                        "function_name": function_name,
-                        "error": output["error"]
-                    })
-                elif output:
-                    span.add_event("tool_execution_success", {
-                        "function_name": function_name,
-                        "output_type": type(output).__name__,
-                        "output_size": len(str(output))
                     })
                 
                 # Format output for Azure AI Agents
@@ -6767,24 +6516,7 @@ Answer with just JSON:
                 successful_tool_outputs.append(payload)
                 last_tool_output = payload
             
-            # Track overall tool execution summary
-            total_calls = len(send_message_tool_calls) + len(other_tool_calls)
-            span.set_attribute("tools.total_calls", total_calls)
-            span.set_attribute("tools.parallel_calls", len(send_message_tool_calls))
-            span.set_attribute("tools.sequential_calls", len(other_tool_calls))
-            span.set_attribute("tools.successful_calls", len([o for o in tool_outputs if o]))
-            
-            # Submit tool outputs
-            span.add_event("tool_outputs_submitted", {
-                "tool_outputs_count": len(tool_outputs),
-                "parallel_calls": len(send_message_tool_calls),
-                "sequential_calls": len(other_tool_calls),
-                "run_id": run["id"],
-                "thread_id": thread_id
-            })
-            
             # Submit tool outputs via HTTP API
-            log_debug(f"🔥 OPTIMIZED: Submitting {len(tool_outputs)} tool outputs in one batch")
             await self._http_submit_tool_outputs(thread_id, run["id"], tool_outputs)
             
             if successful_tool_outputs:
