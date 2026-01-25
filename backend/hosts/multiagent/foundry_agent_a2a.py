@@ -4581,6 +4581,25 @@ Answer with just JSON:
 
         return mask_metadata_part, mask_file_part
 
+    @staticmethod
+    def _store_parts_in_session(tool_context: Any, *parts: Any) -> None:
+        """
+        Store processed parts in session context for later access.
+        
+        Parts are appended to session_context._latest_processed_parts list.
+        This is used to make file artifacts accessible to remote agents.
+        """
+        session_context = getattr(tool_context, "state", None)
+        if session_context is None:
+            return
+        latest_parts = getattr(session_context, "_latest_processed_parts", None)
+        if latest_parts is None:
+            latest_parts = []
+            setattr(session_context, "_latest_processed_parts", latest_parts)
+        for p in parts:
+            if p is not None:
+                latest_parts.append(p)
+
     def _get_retry_count(self, session_context: SessionContext) -> int:
         """Get current retry count for this session"""
         return session_context.retry_count
@@ -7497,14 +7516,7 @@ Answer with just JSON:
                 )
 
                 # Store parts in session context for later access
-                session_context = getattr(tool_context, "state", None)
-                if session_context is not None:
-                    latest_parts = getattr(session_context, "_latest_processed_parts", None)
-                    if latest_parts is None:
-                        latest_parts = []
-                        setattr(session_context, "_latest_processed_parts", latest_parts)
-                    latest_parts.append(mask_metadata_part)
-                    latest_parts.append(mask_file_part)
+                self._store_parts_in_session(tool_context, mask_metadata_part, mask_file_part)
 
                 # Emit completion status event for mask file
                 if context_id:
@@ -7564,15 +7576,8 @@ Answer with just JSON:
                     )
                     
                     # Store both the DataPart (for host) and FilePart (for remote agents)
-                    session_context = getattr(tool_context, "state", None)
-                    if session_context is not None:
-                        latest_parts = getattr(session_context, "_latest_processed_parts", None)
-                        if latest_parts is None:
-                            latest_parts = []
-                            setattr(session_context, "_latest_processed_parts", latest_parts)
-                        latest_parts.append(artifact_response)  # DataPart for host
-                        latest_parts.append(Part(root=file_part_for_remote))  # FilePart for remote agents
-                        log_debug(f"✅ Stored both DataPart and FilePart for non-mask file {file_id} with role={file_role_attr}")
+                    self._store_parts_in_session(tool_context, artifact_response, Part(root=file_part_for_remote))
+                    log_debug(f"✅ Stored both DataPart and FilePart for non-mask file {file_id} with role={file_role_attr}")
                 
                 return artifact_response
             
