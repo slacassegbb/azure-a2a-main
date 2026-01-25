@@ -4600,6 +4600,80 @@ Answer with just JSON:
             if p is not None:
                 latest_parts.append(p)
 
+    @staticmethod
+    def _load_file_bytes(file_part: Any, context_id: Optional[str] = None) -> tuple[Optional[bytes], Optional[str]]:
+        """
+        Load file bytes from various sources: uploads directory, inline bytes, or HTTP URI.
+        
+        Args:
+            file_part: The file object from FilePart.root.file
+            context_id: Context ID for session-scoped directory lookup
+            
+        Returns:
+            Tuple of (file_bytes, error_message). One will be None.
+        """
+        import os
+        
+        file_id = getattr(file_part, 'name', 'unknown')
+        
+        # Strategy 1: Load from /uploads/ URI
+        uri = getattr(file_part, 'uri', None)
+        if uri and str(uri).startswith('/uploads/'):
+            file_uuid = uri.split('/')[-1]
+            upload_dir = "uploads"
+            
+            # Extract session_id for tenant isolation
+            session_id = None
+            if context_id and '::' in context_id:
+                session_id = context_id.split('::')[0]
+            
+            try:
+                # Try session-scoped directory first
+                if session_id:
+                    session_upload_dir = os.path.join(upload_dir, session_id)
+                    if os.path.exists(session_upload_dir):
+                        for filename in os.listdir(session_upload_dir):
+                            if filename.startswith(file_uuid):
+                                file_path = os.path.join(session_upload_dir, filename)
+                                with open(file_path, 'rb') as f:
+                                    return f.read(), None
+                
+                # Fall back to flat directory (legacy)
+                if os.path.exists(upload_dir):
+                    for filename in os.listdir(upload_dir):
+                        if os.path.isdir(os.path.join(upload_dir, filename)):
+                            continue
+                        if filename.startswith(file_uuid):
+                            file_path = os.path.join(upload_dir, filename)
+                            with open(file_path, 'rb') as f:
+                                return f.read(), None
+                
+                return None, f"Could not find uploaded file {file_id}"
+            except Exception as e:
+                return None, f"Could not read uploaded file {file_id}: {e}"
+        
+        # Strategy 2: Inline base64 or raw bytes
+        if hasattr(file_part, 'bytes') and file_part.bytes:
+            try:
+                if isinstance(file_part.bytes, str):
+                    return base64.b64decode(file_part.bytes), None
+                return file_part.bytes, None
+            except Exception as e:
+                return None, f"Failed to decode file {file_id}: {e}"
+        
+        # Strategy 3: HTTP/HTTPS URI download
+        if uri and str(uri).lower().startswith(("http://", "https://")):
+            try:
+                import httpx
+                with httpx.Client(timeout=60.0, follow_redirects=True) as client:
+                    resp = client.get(uri)
+                    resp.raise_for_status()
+                    return resp.content, None
+            except Exception as e:
+                return None, f"Could not download file {file_id}: {e}"
+        
+        return None, f"No file data found for {file_id}"
+
     def _get_retry_count(self, session_context: SessionContext) -> int:
         """Get current retry count for this session"""
         return session_context.retry_count
@@ -7270,13 +7344,14 @@ Answer with just JSON:
             text_content = part.root.text or ""
             log_debug(f"convert_part: text part content: {text_content[:200]}...")
 
+            # Check for [refine-image] markers (image editing workflow)
             refine_matches = list(re.finditer(r"\[refine-image\]\s+(https?://\S+)", text_content, flags=re.IGNORECASE))
-            mask_matches = list(re.finditer(r"\[refine-mask\]\s+(https?://\S+)", text_content, flags=re.IGNORECASE))
-
             if refine_matches:
+                mask_matches = list(re.finditer(r"\[refine-mask\]\s+(https?://\S+)", text_content, flags=re.IGNORECASE))
                 image_url = refine_matches[-1].group(1)
                 mask_url = mask_matches[-1].group(1) if mask_matches else None
 
+                # Strip markers from text
                 cleaned_text = re.sub(r"\[refine-image\]\s+https?://\S+", "", text_content, flags=re.IGNORECASE)
                 cleaned_text = re.sub(r"\[refine-mask\]\s+https?://\S+", "", cleaned_text, flags=re.IGNORECASE)
 
@@ -7284,16 +7359,10 @@ Answer with just JSON:
                 if mask_url:
                     refine_data["mask_url"] = mask_url
 
-                session_context = getattr(tool_context, "state", None)
-                if session_context is not None:
-                    latest_parts = getattr(session_context, "_latest_processed_parts", None)
-                    if latest_parts is None:
-                        latest_parts = []
-                        setattr(session_context, "_latest_processed_parts", latest_parts)
-                    latest_parts.append(DataPart(data=refine_data))
-                    log_debug(f"convert_part: captured refine request with image_url={image_url}")
+                self._store_parts_in_session(tool_context, DataPart(data=refine_data))
+                log_debug(f"convert_part: captured refine request with image_url={image_url}")
 
-                return cleaned_text or "Refine the previous image."
+                return cleaned_text.strip() or "Refine the previous image."
 
             return text_content
         elif hasattr(part, 'root') and part.root.kind == 'data':
@@ -7309,125 +7378,29 @@ Answer with just JSON:
                 return part  # Return the full Part(root=DataPart(...)) to preserve structure
             return data
         elif hasattr(part, 'root') and part.root.kind == 'file':
-            # A2A protocol compliant file handling with enterprise security
+            # A2A protocol compliant file handling
             file_id = part.root.file.name
-            log_debug(f"🔍 FILE DEBUG: Starting file processing for: {file_id}")
+            log_debug(f"Processing file: {file_id}")
             
-            file_bytes = None
-            summary_text = None
-            artifact_response = None
             file_role_attr = getattr(part.root.file, 'role', None)
             
-            # Check if this is an uploaded file with URI
-            if hasattr(part.root.file, 'uri') and part.root.file.uri:
-                log_debug(f"🔍 FILE DEBUG: Found URI: {part.root.file.uri}")
-                # This is an uploaded file, read from uploads directory
-                if part.root.file.uri.startswith('/uploads/'):
-                    file_uuid = part.root.file.uri.split('/')[-1]
-                    upload_dir = "uploads"
-                    
-                    # Extract session_id from context_id for tenant isolation
-                    session_id = None
-                    if context_id and '::' in context_id:
-                        session_id = context_id.split('::')[0]
-                    
-                    log_debug(f"🔍 FILE DEBUG: Looking for file with UUID: {file_uuid} in {upload_dir} (session: {session_id})")
-                    
-                    # Find the actual file with this UUID (may have extension)
-                    try:
-                        import os
-                        
-                        # Try session-scoped directory first (new format)
-                        if session_id:
-                            session_upload_dir = os.path.join(upload_dir, session_id)
-                            if os.path.exists(session_upload_dir):
-                                log_debug(f"🔍 FILE DEBUG: Checking session-scoped directory: {session_upload_dir}")
-                                uploaded_files = os.listdir(session_upload_dir)
-                                for uploaded_filename in uploaded_files:
-                                    if uploaded_filename.startswith(file_uuid):
-                                        file_path = os.path.join(session_upload_dir, uploaded_filename)
-                                        log_debug(f"🔍 FILE DEBUG: Reading file from session dir: {file_path}")
-                                        with open(file_path, 'rb') as f:
-                                            file_bytes = f.read()
-                                        log_debug(f"📄 FILE DEBUG: Loaded uploaded file: {len(file_bytes)} bytes from {file_path}")
-                                        break
-                        
-                        # Fall back to flat directory (legacy format)
-                        if file_bytes is None and os.path.exists(upload_dir):
-                            log_debug(f"🔍 FILE DEBUG: Falling back to flat directory: {upload_dir}")
-                            uploaded_files = os.listdir(upload_dir)
-                            log_debug(f"🔍 FILE DEBUG: Found {len(uploaded_files)} entries")
-                            
-                            for uploaded_filename in uploaded_files:
-                                # Skip directories (session folders)
-                                if os.path.isdir(os.path.join(upload_dir, uploaded_filename)):
-                                    continue
-                                log_debug(f"🔍 FILE DEBUG: Checking file: {uploaded_filename}")
-                                if uploaded_filename.startswith(file_uuid):
-                                    file_path = os.path.join(upload_dir, uploaded_filename)
-                                    log_debug(f"🔍 FILE DEBUG: Reading file: {file_path}")
-                                    with open(file_path, 'rb') as f:
-                                        file_bytes = f.read()
-                                    log_debug(f"📄 FILE DEBUG: Loaded uploaded file: {len(file_bytes)} bytes from {file_path}")
-                                    break
-                        
-                        if file_bytes is None:
-                            log_debug(f"❌ FILE DEBUG: Uploaded file not found for UUID: {file_uuid}")
-                            return f"Error: Could not find uploaded file {file_id}"
-                    except Exception as e:
-                        log_debug(f"❌ FILE DEBUG: Error reading uploaded file: {e}")
-                        import traceback
-                        log_debug(f"❌ FILE DEBUG: Traceback: {traceback.format_exc()}")
-                        return f"Error: Could not read uploaded file {file_id}: {str(e)}"
-            else:
-                # Try to get bytes from the file part (legacy format)
-                try:
-                    if hasattr(part.root.file, 'bytes') and part.root.file.bytes:
-                        if isinstance(part.root.file.bytes, str):
-                            # bytes field is a base64 string, decode it
-                            file_bytes = base64.b64decode(part.root.file.bytes)
-                        else:
-                            # bytes field is already binary data
-                            file_bytes = part.root.file.bytes
-                    else:
-                        log_debug(f"❌ No file bytes or URI found in file part")
-                        return f"Error: No file data found for {file_id}"
-                except Exception as e:
-                    log_debug(f"❌ Error decoding file bytes: {e}")
-                    log_debug(f"❌ FILE DEBUG: Decoding traceback: {traceback.format_exc()}")
-                    return f"Error: Failed to decode file {file_id}: {str(e)}"
+            # Load file bytes from URI, inline bytes, or HTTP download
+            file_bytes, load_error = self._load_file_bytes(part.root.file, context_id)
+            if load_error:
+                log_debug(f"File load error: {load_error}")
+                return f"Error: {load_error}"
             
-            if not file_bytes:
-                http_uri = getattr(part.root.file, 'uri', None)
-                if http_uri and str(http_uri).lower().startswith(("http://", "https://")):
-                    try:
-                        import httpx
-
-                        with httpx.Client(timeout=60.0, follow_redirects=True) as http_client:
-                            resp = http_client.get(http_uri)
-                            resp.raise_for_status()
-                            file_bytes = resp.content
-                        log_debug(f"✅ FILE DEBUG: Downloaded file from URI: {len(file_bytes)} bytes")
-                    except Exception as download_err:
-                        log_debug(f"❌ FILE DEBUG: Failed to fetch remote file {http_uri}: {download_err}")
-                        return f"Error: Could not load file data for {file_id}: {download_err}"
-
-                    # Continue processing - don't return early, let document processor handle it
-                else:
-                    log_debug(f"❌ No file bytes loaded and no valid URI")
-                    return f"Error: Could not load file data for {file_id}"
-            
-            # Enhanced security: Validate file before processing
-            if len(file_bytes) > 50 * 1024 * 1024:  # 50MB limit
+            # Security: Validate file size (50MB limit)
+            if len(file_bytes) > 50 * 1024 * 1024:
                 return DataPart(data={'error': 'File too large', 'max_size': '50MB'})
             
-            log_debug(f"File validation passed, proceeding with artifact creation")
-            
-            # Use unified role inference (replaces duplicate inline logic)
+            # Infer role if not explicitly set
             if not file_role_attr:
                 file_role_attr = self._infer_file_role(None, file_id)
             
             is_mask_artifact = (file_role_attr == "mask")
+            summary_text = None
+            artifact_response = None
 
             artifact_info: dict[str, Any] = {
                 'file_name': file_id,
@@ -7474,15 +7447,7 @@ Answer with just JSON:
                             'artifact_uri': artifact_response.data.get('artifact-uri'),
                             'storage_type': artifact_response.data.get('storage-type')
                         })
-                        
-                        # For local files, get the file bytes directly from tool_context
-                        if artifact_info.get('storage_type') == 'local':
-                            artifact_id = artifact_info.get('artifact_id')
-                            if hasattr(tool_context, '_artifacts') and artifact_id in tool_context._artifacts:
-                                artifact_data = tool_context._artifacts[artifact_id]
-                                if 'file_bytes' in artifact_data:
-                                    artifact_info['file_bytes'] = artifact_data['file_bytes']
-                                    log_debug(f"Added file bytes to artifact_info for local file: {len(artifact_data['file_bytes'])} bytes")
+                        # Note: file_bytes already in artifact_info from earlier
                 except Exception as e:
                     log_debug(f"Exception in save_artifact process: {e}")
                     import traceback
