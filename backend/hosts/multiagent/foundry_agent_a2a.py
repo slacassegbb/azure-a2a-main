@@ -4601,6 +4601,131 @@ Answer with just JSON:
                 latest_parts.append(p)
 
     @staticmethod
+    def _wrap_item_for_agent(item: Any) -> List[Part]:
+        """
+        Wrap any item as A2A Parts for agent communication.
+        
+        Handles Part, DataPart, FilePart, TextPart, str, dict, and other types.
+        For DataParts with artifact data, also creates FilePart for consistency.
+        """
+        wrapped: List[Part] = []
+
+        if isinstance(item, Part):
+            wrapped.append(item)
+        elif isinstance(item, DataPart):
+            wrapped.append(Part(root=item))
+            # Also convert to FilePart for consistent handling
+            if isinstance(item.data, dict):
+                uri = extract_uri(item)
+                if uri:
+                    file_part = convert_artifact_dict_to_file_part(item)
+                    if file_part:
+                        wrapped.append(Part(root=file_part))
+                if item.data.get("extracted_content"):
+                    wrapped.append(Part(root=TextPart(text=str(item.data["extracted_content"]))))
+        elif isinstance(item, FilePart):
+            wrapped.append(Part(root=item))
+        elif isinstance(item, TextPart):
+            wrapped.append(Part(root=item))
+        elif isinstance(item, str):
+            wrapped.append(Part(root=TextPart(text=item)))
+        elif isinstance(item, dict):
+            uri = extract_uri(item)
+            if uri:
+                file_part = convert_artifact_dict_to_file_part(item)
+                if file_part:
+                    wrapped.append(Part(root=file_part))
+            else:
+                wrapped.append(Part(root=DataPart(data=item)))
+        elif item is not None:
+            wrapped.append(Part(root=TextPart(text=str(item))))
+
+        return wrapped
+
+    @staticmethod
+    def _flatten_nested(items: Iterable[Any]) -> Iterable[Any]:
+        """Flatten nested lists/tuples/sets into a single iterable."""
+        def _do_flatten(items):
+            for item in items:
+                if isinstance(item, (list, tuple, set)):
+                    yield from _do_flatten(item)
+                else:
+                    yield item
+        return _do_flatten(items)
+
+    def _build_image_edit_guidance(self, processed_parts: List[Any]) -> Optional[str]:
+        """
+        Scan processed parts for base/mask image attachments and build
+        guidance text for image editing workflows.
+        
+        Returns guidance string if base attachment found, None otherwise.
+        """
+        has_base = False
+        has_mask = False
+        base_filenames: List[str] = []
+        mask_filenames: List[str] = []
+
+        for result in self._flatten_nested(processed_parts):
+            candidate_part = None
+            candidate_data: Optional[Dict[str, Any]] = None
+
+            if isinstance(result, DataPart) and isinstance(result.data, dict):
+                candidate_data = result.data
+            elif isinstance(result, FilePart):
+                candidate_part = result
+            elif isinstance(result, Part):
+                inner = getattr(result, "root", None)
+                if isinstance(inner, DataPart) and isinstance(inner.data, dict):
+                    candidate_data = inner.data
+                elif isinstance(inner, FilePart):
+                    candidate_part = inner
+
+            if candidate_data:
+                role_val = (candidate_data.get("role") or (candidate_data.get("metadata") or {}).get("role") or "").lower()
+                if role_val == "base":
+                    has_base = True
+                    name_hint = candidate_data.get("file-name") or candidate_data.get("name")
+                    if name_hint:
+                        base_filenames.append(str(name_hint))
+                if role_val == "mask":
+                    has_mask = True
+                    name_hint = candidate_data.get("file-name") or candidate_data.get("name")
+                    if name_hint:
+                        mask_filenames.append(str(name_hint))
+
+            if candidate_part:
+                role_attr = getattr(candidate_part.file, "role", None)
+                part_name = getattr(candidate_part.file, "name", "")
+                name_attr = part_name.lower()
+                role_lower = str(role_attr).lower() if role_attr else ""
+                if role_lower == "base" or name_attr.endswith("_base.png"):
+                    has_base = True
+                    if part_name:
+                        base_filenames.append(part_name)
+                if role_lower == "mask" or "_mask" in name_attr or "-mask" in name_attr:
+                    has_mask = True
+                    if part_name:
+                        mask_filenames.append(part_name)
+
+        if not has_base:
+            return None
+
+        lines = [
+            "IMPORTANT: Treat this request as an image edit using the provided attachments.",
+            "Reuse the supplied base image exactly; do not regenerate a new scene or subject.",
+        ]
+        if base_filenames:
+            lines.append(f"Base image attachment(s): {', '.join(sorted(set(base_filenames)))}.")
+        if has_mask:
+            lines.append("Apply the requested changes strictly within the transparent region of the provided mask and leave all other pixels unchanged.")
+            if mask_filenames:
+                lines.append(f"Mask attachment(s): {', '.join(sorted(set(mask_filenames)))} (must include transparency).")
+        else:
+            lines.append("Apply the requested changes directly to the supplied base image only.")
+
+        return "\n".join(lines)
+
+    @staticmethod
     def _load_file_bytes(file_part: Any, context_id: Optional[str] = None) -> tuple[Optional[bytes], Optional[str]]:
         """
         Load file bytes from various sources: uploads directory, inline bytes, or HTTP URI.
@@ -6167,63 +6292,13 @@ Answer with just JSON:
 
             # Convert processed results into A2A Part wrappers for delegation
             prepared_parts_for_agents: List[Part] = []
-
-            def _wrap_for_agent(item: Any) -> List[Part]:
-                """Wrap any item as A2A Parts for agent communication."""
-                wrapped: List[Part] = []
-
-                if isinstance(item, Part):
-                    wrapped.append(item)
-                elif isinstance(item, DataPart):
-                    # First add the DataPart itself for backward compatibility
-                    wrapped.append(Part(root=item))
-
-                    # Also convert to FilePart using our utility for consistent handling
-                    if isinstance(item.data, dict):
-                        uri = extract_uri(item)
-                        if uri:
-                            file_part = convert_artifact_dict_to_file_part(item)
-                            if file_part:
-                                wrapped.append(Part(root=file_part))
-
-                        if item.data.get("extracted_content"):
-                            wrapped.append(
-                                Part(root=TextPart(text=str(item.data["extracted_content"])))
-                            )
-
-                elif isinstance(item, FilePart):
-                    wrapped.append(Part(root=item))
-
-                elif isinstance(item, TextPart):
-                    wrapped.append(Part(root=item))
-
-                elif isinstance(item, str):
-                    wrapped.append(Part(root=TextPart(text=item)))
-
-                elif isinstance(item, dict):
-                    # Check if this is an artifact dict and convert to FilePart
-                    uri = extract_uri(item)
-                    if uri:
-                        file_part = convert_artifact_dict_to_file_part(item)
-                        if file_part:
-                            wrapped.append(Part(root=file_part))
-                    else:
-                        wrapped.append(Part(root=DataPart(data=item)))
-
-                elif item is not None:
-                    wrapped.append(Part(root=TextPart(text=str(item))))
-
-                return wrapped
-
             for processed in processed_parts:
-                prepared_parts_for_agents.extend(_wrap_for_agent(processed))
+                prepared_parts_for_agents.extend(self._wrap_item_for_agent(processed))
 
             # Store prepared parts for sending to agents (includes user uploads for refinement)
             session_context._latest_processed_parts = prepared_parts_for_agents
-            # Clear the list for agent-generated artifacts (only NEW files from agents shown in response)
             session_context._agent_generated_artifacts = []
             log_debug(f"📦 Prepared {len(prepared_parts_for_agents)} parts to attach for remote agents")
-            log_debug(f"📤 Cleared agent-generated artifacts list (will only show NEW files from agents)")
             
             # If files were processed, include information about them in the message
             file_info = []
@@ -6251,93 +6326,15 @@ Answer with just JSON:
             if file_contents:
                 enhanced_message = f"{enhanced_message}\n\n{''.join(file_contents)}"
 
-            has_base_attachment = False
-            has_mask_attachment = False
-            base_filenames: List[str] = []
-            mask_filenames: List[str] = []
-
-            def _flatten_processed(items: Iterable[Any]) -> Iterable[Any]:
-                for item in items:
-                    if isinstance(item, (list, tuple, set)):
-                        yield from _flatten_processed(item)
-                    else:
-                        yield item
-
-            for result in _flatten_processed(processed_parts):
-                candidate_part = None
-                candidate_data: Optional[Dict[str, Any]] = None
-
-                if isinstance(result, DataPart) and isinstance(result.data, dict):
-                    candidate_data = result.data
-                elif isinstance(result, FilePart):
-                    candidate_part = result
-                elif isinstance(result, Part):
-                    inner = getattr(result, "root", None)
-                    if isinstance(inner, DataPart) and isinstance(inner.data, dict):
-                        candidate_data = inner.data
-                    elif isinstance(inner, FilePart):
-                        candidate_part = inner
-
-                if candidate_data:
-                    role_val = (candidate_data.get("role") or (candidate_data.get("metadata") or {}).get("role") or "").lower()
-                    if role_val == "base":
-                        has_base_attachment = True
-                        name_hint = candidate_data.get("file-name") or candidate_data.get("name")
-                        if name_hint:
-                            base_filenames.append(str(name_hint))
-                    if role_val == "mask":
-                        has_mask_attachment = True
-                        name_hint = candidate_data.get("file-name") or candidate_data.get("name")
-                        if name_hint:
-                            mask_filenames.append(str(name_hint))
-
-                if candidate_part:
-                    role_attr = getattr(candidate_part.file, "role", None)
-                    part_name = getattr(candidate_part.file, "name", "")
-                    name_attr = part_name.lower()
-                    role_lower = str(role_attr).lower() if role_attr else ""
-                    if role_lower == "base" or name_attr.endswith("_base.png"):
-                        has_base_attachment = True
-                        if part_name:
-                            base_filenames.append(part_name)
-                    if role_lower == "mask" or "_mask" in name_attr or "-mask" in name_attr:
-                        has_mask_attachment = True
-                        if part_name:
-                            mask_filenames.append(part_name)
-
-            if has_base_attachment:
-                guidance_lines = [
-                    "IMPORTANT: Treat this request as an image edit using the provided attachments.",
-                    "Reuse the supplied base image exactly; do not regenerate a new scene or subject.",
-                ]
-                if base_filenames:
-                    unique_base = ", ".join(sorted({str(name) for name in base_filenames}))
-                    guidance_lines.append(f"Base image attachment(s): {unique_base}.")
-                if has_mask_attachment:
-                    guidance_lines.append(
-                        "Apply the requested changes strictly within the transparent region of the provided mask and leave all other pixels unchanged."
-                    )
-                    if mask_filenames:
-                        unique_masks = ", ".join(sorted({str(name) for name in mask_filenames}))
-                        guidance_lines.append(f"Mask attachment(s): {unique_masks} (must include transparency).")
-                else:
-                    guidance_lines.append(
-                        "Apply the requested changes directly to the supplied base image only."
-                    )
-
-                guidance_block = "\n".join(guidance_lines)
-                if enhanced_message:
-                    enhanced_message = f"{guidance_block}\n\n{enhanced_message}"
-                else:
-                    enhanced_message = guidance_block
+            # Add image edit guidance if base/mask attachments detected
+            image_guidance = self._build_image_edit_guidance(processed_parts)
+            if image_guidance:
+                enhanced_message = f"{image_guidance}\n\n{enhanced_message}" if enhanced_message else image_guidance
             
-            log_debug(f"Enhanced message: {enhanced_message}")
+            log_debug(f"Enhanced message prepared")
             
             # =====================================================================
             # MODE DETECTION: Auto-detect based on workflow presence
-            # =====================================================================
-            # - Workflow defined → Use orchestration loop (sequential/parallel execution)
-            # - No workflow → Use standard tool-calling path (dynamic, parallel-capable)
             # =====================================================================
             use_orchestration = workflow and workflow.strip()
             
