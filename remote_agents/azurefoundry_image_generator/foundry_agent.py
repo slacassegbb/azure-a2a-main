@@ -1360,13 +1360,15 @@ Always validate the prompt for safety before invoking the tool.
 
             if saved_path:
                 entry["saved_path"] = str(saved_path)
+                logger.info(f"📁 Image saved locally to: {saved_path}")
                 blob_url = self._upload_to_blob(saved_path)
                 if blob_url:
                     entry["blob_url"] = blob_url
-                    logger.info("Uploaded edited image to blob: %s", blob_url)
+                    logger.info(f"✅ Uploaded image to blob: {blob_url[:100]}...")
                     artifact_record: Dict[str, Any] = {
                         "artifact-uri": blob_url,
                         "file-name": saved_path.name,
+                        "mime": "image/png",  # CRITICAL: Add mime type for executor
                         "storage-type": "azure_blob",
                         "status": "stored",
                         "provider-response-id": response_id,
@@ -1381,8 +1383,12 @@ Always validate the prompt for safety before invoking the tool.
                         artifact_record["file-size"] = entry["file_size_bytes"]
                     if entry.get("source_url"):
                         artifact_record["source-url"] = entry["source_url"]
-                    logger.info(f"🖼️ [EDIT] Created artifact_record: file={artifact_record.get('file-name')}, has_role={'role' in artifact_record}, keys={list(artifact_record.keys())}")
+                    logger.info(f"🖼️ [GEN] Created artifact_record: file={artifact_record.get('file-name')}, mime={artifact_record.get('mime')}, uri={blob_url[:80]}...")
                     generated_artifacts.append(artifact_record)
+                else:
+                    logger.error(f"❌ Failed to upload {saved_path.name} to blob storage - no artifact created")
+            else:
+                logger.warning(f"⚠️ No saved_path for image index {output_index} - skipping artifact creation")
 
             images.append(entry)
 
@@ -1812,12 +1818,15 @@ Always validate the prompt for safety before invoking the tool.
 
             if saved_path:
                 entry["saved_path"] = str(saved_path)
+                logger.info(f"📁 Edited image saved locally to: {saved_path}")
                 blob_url = self._upload_to_blob(saved_path)
                 if blob_url:
                     entry["blob_url"] = blob_url
+                    logger.info(f"✅ Uploaded edited image to blob: {blob_url[:100]}...")
                     artifact_record: Dict[str, Any] = {
                         "artifact-uri": blob_url,
                         "file-name": saved_path.name,
+                        "mime": "image/png",  # CRITICAL: Add mime type for executor
                         "storage-type": "azure_blob",
                         "status": "stored",
                         "provider-response-id": entry["response_id"],
@@ -1832,8 +1841,12 @@ Always validate the prompt for safety before invoking the tool.
                         artifact_record["file-size"] = entry["file_size_bytes"]
                     if entry.get("source_url"):
                         artifact_record["source-url"] = entry["source_url"]
-                    logger.info(f"🖼️ [GEN] Created artifact_record: file={artifact_record.get('file-name')}, has_role={'role' in artifact_record}, keys={list(artifact_record.keys())}")
+                    logger.info(f"🖼️ [EDIT] Created artifact_record: file={artifact_record.get('file-name')}, mime={artifact_record.get('mime')}, uri={blob_url[:80]}...")
                     generated_artifacts.append(artifact_record)
+                else:
+                    logger.error(f"❌ Failed to upload edited image {saved_path.name} to blob storage - no artifact created")
+            else:
+                logger.warning(f"⚠️ No saved_path for edited image index {output_index} - skipping artifact creation")
 
             images.append(entry)
 

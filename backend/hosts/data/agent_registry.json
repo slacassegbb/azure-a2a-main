@@ -203,5 +203,157 @@
         ]
       }
     ]
+  },
+  {
+    "name": "AI Foundry Image Generator Agent",
+    "description": "An Azure AI Foundry agent that can generate and edit images.",
+    "version": "1.0.0",
+    "url": "http://localhost:9010/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "generate_image",
+        "name": "Generate Image",
+        "description": "Create new images from text prompts with various styles, subjects, and compositions.",
+        "examples": [
+          "Generate a mountain landscape with a dog",
+          "Create a product visualization for marketing materials",
+          "Design concept art for a fantasy scene",
+          "Produce an image matching specific brand guidelines"
+        ],
+        "tags": [
+          "image-generation",
+          "text-to-image",
+          "creative"
+        ]
+      },
+      {
+        "id": "edit_image",
+        "name": "Edit Image",
+        "description": "Modify existing images through inpainting, outpainting, style transfer, or targeted edits.",
+        "examples": [
+          "Remove background from an image",
+          "Change the color scheme of an existing image",
+          "Add or remove objects from a scene",
+          "Extend an image beyond its original boundaries"
+        ],
+        "tags": [
+          "image-editing",
+          "modification",
+          "refinement"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Sora 2 Video Generator",
+    "description": "Generate stunning AI videos from text prompts using Azure OpenAI's Sora 2 model. Create cinematic scenes, product demos, animations, and creative visual content with natural language descriptions. Supports 4-12 second videos in landscape or portrait format.",
+    "version": "1.0.0",
+    "url": "http://localhost:9028/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "video_generation",
+        "name": "AI Video Generation",
+        "description": "Generate high-quality AI videos from text prompts using Azure OpenAI's Sora 2 model. Create cinematic scenes, animations, and visual content with natural language descriptions.",
+        "examples": [
+          "Generate a video of a golden retriever running through a sunlit meadow at sunset",
+          "Create a cinematic shot of waves crashing on a rocky coastline at dawn",
+          "Make a video of a futuristic city with flying cars at night"
+        ],
+        "tags": [
+          "video",
+          "sora",
+          "generation",
+          "ai",
+          "creative",
+          "multimedia"
+        ]
+      },
+      {
+        "id": "video_from_image",
+        "name": "Image-to-Video Generation",
+        "description": "Transform static images into dynamic videos. Provide a reference image and describe the motion or animation you want to create.",
+        "examples": [
+          "Animate this landscape image with gentle wind blowing through the trees",
+          "Turn this portrait into a video where the person slowly smiles",
+          "Make the water in this photo start flowing naturally"
+        ],
+        "tags": [
+          "video",
+          "image",
+          "animation",
+          "transform",
+          "sora"
+        ]
+      },
+      {
+        "id": "video_to_video",
+        "name": "Video-to-Video Generation",
+        "description": "Transform existing videos using AI. Upload a reference video and describe the transformation you want - change styles, atmospheres, or subjects while maintaining motion and structure.",
+        "examples": [
+          "Transform this daytime scene into a moonlit nighttime video",
+          "Convert this video into an animated cartoon style",
+          "Change this urban scene to a post-apocalyptic landscape"
+        ],
+        "tags": [
+          "video",
+          "transform",
+          "sora",
+          "style-transfer",
+          "reference"
+        ]
+      },
+      {
+        "id": "video_remix",
+        "name": "Video Remix",
+        "description": "Modify specific aspects of previously generated Sora 2 videos while preserving core elements like scene transitions and visual layout. Make targeted adjustments to color palettes, lighting, or style.",
+        "examples": [
+          "Shift the color palette to warm sunset tones",
+          "Change the lighting to dramatic noir style",
+          "Transform the season from summer to winter"
+        ],
+        "tags": [
+          "video",
+          "remix",
+          "edit",
+          "modify",
+          "sora"
+        ]
+      },
+      {
+        "id": "video_prompt_assistance",
+        "name": "Video Prompt Crafting",
+        "description": "Help craft effective prompts for video generation. Get advice on describing scenes, camera movements, lighting, and style for optimal results.",
+        "examples": [
+          "How do I describe a tracking shot in my video prompt?",
+          "What details should I include for a cinematic video?",
+          "Help me write a prompt for a product showcase video"
+        ],
+        "tags": [
+          "prompt",
+          "assistance",
+          "help",
+          "creative",
+          "writing"
+        ]
+      }
+    ]
   }
 ]

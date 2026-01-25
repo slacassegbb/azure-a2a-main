@@ -823,23 +823,31 @@
     ]
   },
   {
-    "name": "AI Foundry Image Generator Agent",
-    "description": "An Azure AI Foundry agent that can generate and edit images.",
-    "version": "1.0.0",
-    "url": "http://localhost:9010/",
+    "additionalInterfaces": null,
+    "capabilities": {
+      "extensions": null,
+      "pushNotifications": null,
+      "stateTransitionHistory": null,
+      "streaming": true
+    },
     "defaultInputModes": [
       "text"
     ],
     "defaultOutputModes": [
       "text"
     ],
-    "capabilities": {
-      "streaming": true
-    },
+    "description": "An Azure AI Foundry agent that can generate and edit images.",
+    "documentationUrl": null,
+    "iconUrl": null,
+    "name": "AI Foundry Image Generator Agent",
+    "preferredTransport": "JSONRPC",
+    "protocolVersion": "0.3.0",
+    "provider": null,
+    "security": null,
+    "securitySchemes": null,
+    "signatures": null,
     "skills": [
       {
-        "id": "generate_image",
-        "name": "Generate Image",
         "description": "Create new images from text prompts with various styles, subjects, and compositions.",
         "examples": [
           "Generate a mountain landscape with a dog",
@@ -847,6 +855,11 @@
           "Design concept art for a fantasy scene",
           "Produce an image matching specific brand guidelines"
         ],
+        "id": "generate_image",
+        "inputModes": null,
+        "name": "Generate Image",
+        "outputModes": null,
+        "security": null,
         "tags": [
           "image-generation",
           "text-to-image",
@@ -854,8 +867,6 @@
         ]
       },
       {
-        "id": "edit_image",
-        "name": "Edit Image",
         "description": "Modify existing images through inpainting, outpainting, style transfer, or targeted edits.",
         "examples": [
           "Remove background from an image",
@@ -863,13 +874,21 @@
           "Add or remove objects from a scene",
           "Extend an image beyond its original boundaries"
         ],
+        "id": "edit_image",
+        "inputModes": null,
+        "name": "Edit Image",
+        "outputModes": null,
+        "security": null,
         "tags": [
           "image-editing",
           "modification",
           "refinement"
         ]
       }
-    ]
+    ],
+    "supportsAuthenticatedExtendedCard": null,
+    "url": "http://localhost:9010/",
+    "version": "1.0.0"
   },
   {
     "name": "AI Foundry Image Analysis Agent",
@@ -1008,29 +1027,43 @@
     ]
   },
   {
-    "name": "Sora 2 Video Generator",
-    "description": "Generate stunning AI videos from text prompts using Azure OpenAI's Sora 2 model. Create cinematic scenes, product demos, animations, and creative visual content with natural language descriptions. Supports 4-12 second videos in landscape or portrait format.",
-    "version": "1.0.0",
-    "url": "http://localhost:9028/",
+    "additionalInterfaces": null,
+    "capabilities": {
+      "extensions": null,
+      "pushNotifications": null,
+      "stateTransitionHistory": null,
+      "streaming": true
+    },
     "defaultInputModes": [
       "text"
     ],
     "defaultOutputModes": [
-      "text"
+      "text",
+      "video"
     ],
-    "capabilities": {
-      "streaming": true
-    },
+    "description": "Generate stunning AI videos from text prompts using Azure OpenAI's Sora 2 model. Create cinematic scenes, product demos, animations, and creative visual content with natural language descriptions. Supports 4-12 second videos in landscape or portrait format.",
+    "documentationUrl": null,
+    "iconUrl": null,
+    "name": "Sora 2 Video Generator",
+    "preferredTransport": "JSONRPC",
+    "protocolVersion": "0.3.0",
+    "provider": null,
+    "security": null,
+    "securitySchemes": null,
+    "signatures": null,
     "skills": [
       {
-        "id": "video_generation",
-        "name": "AI Video Generation",
         "description": "Generate high-quality AI videos from text prompts using Azure OpenAI's Sora 2 model. Create cinematic scenes, animations, and visual content with natural language descriptions.",
         "examples": [
           "Generate a video of a golden retriever running through a sunlit meadow at sunset",
           "Create a cinematic shot of waves crashing on a rocky coastline at dawn",
           "Make a video of a futuristic city with flying cars at night"
         ],
+        "id": "video_generation",
+        "inputModes": null,
+        "name": "AI Video Generation",
+        "outputModes": null,
+        "security": null,
         "tags": [
           "video",
           "sora",
@@ -1041,14 +1074,17 @@
         ]
       },
       {
-        "id": "video_from_image",
-        "name": "Image-to-Video Generation",
         "description": "Transform static images into dynamic videos. Provide a reference image and describe the motion or animation you want to create.",
         "examples": [
           "Animate this landscape image with gentle wind blowing through the trees",
           "Turn this portrait into a video where the person slowly smiles",
           "Make the water in this photo start flowing naturally"
         ],
+        "id": "video_from_image",
+        "inputModes": null,
+        "name": "Image-to-Video Generation",
+        "outputModes": null,
+        "security": null,
         "tags": [
           "video",
           "image",
@@ -1058,14 +1094,17 @@
         ]
       },
       {
-        "id": "video_to_video",
-        "name": "Video-to-Video Generation",
         "description": "Transform existing videos using AI. Upload a reference video and describe the transformation you want - change styles, atmospheres, or subjects while maintaining motion and structure.",
         "examples": [
           "Transform this daytime scene into a moonlit nighttime video",
           "Convert this video into an animated cartoon style",
           "Change this urban scene to a post-apocalyptic landscape"
         ],
+        "id": "video_to_video",
+        "inputModes": null,
+        "name": "Video-to-Video Generation",
+        "outputModes": null,
+        "security": null,
         "tags": [
           "video",
           "transform",
@@ -1075,14 +1114,17 @@
         ]
       },
       {
-        "id": "video_remix",
-        "name": "Video Remix",
         "description": "Modify specific aspects of previously generated Sora 2 videos while preserving core elements like scene transitions and visual layout. Make targeted adjustments to color palettes, lighting, or style.",
         "examples": [
           "Shift the color palette to warm sunset tones",
           "Change the lighting to dramatic noir style",
           "Transform the season from summer to winter"
         ],
+        "id": "video_remix",
+        "inputModes": null,
+        "name": "Video Remix",
+        "outputModes": null,
+        "security": null,
         "tags": [
           "video",
           "remix",
@@ -1092,14 +1134,17 @@
         ]
       },
       {
-        "id": "video_prompt_assistance",
-        "name": "Video Prompt Crafting",
         "description": "Help craft effective prompts for video generation. Get advice on describing scenes, camera movements, lighting, and style for optimal results.",
         "examples": [
           "How do I describe a tracking shot in my video prompt?",
           "What details should I include for a cinematic video?",
           "Help me write a prompt for a product showcase video"
         ],
+        "id": "video_prompt_assistance",
+        "inputModes": null,
+        "name": "Video Prompt Crafting",
+        "outputModes": null,
+        "security": null,
         "tags": [
           "prompt",
           "assistance",
@@ -1108,7 +1153,10 @@
           "writing"
         ]
       }
-    ]
+    ],
+    "supportsAuthenticatedExtendedCard": null,
+    "url": "http://localhost:9028/",
+    "version": "1.0.0"
   },
   {
     "name": "AI Foundry Reporter Agent",

@@ -203,45 +203,50 @@ class FoundryImageGeneratorAgentExecutor(AgentExecutor):
                         elif isinstance(event, str):
                             responses.append(event)
 
-                    # Emit the final response
+                    # CRITICAL: Always check for artifacts, even if no text responses
+                    # The agent may generate images without providing text responses
+                    artifacts = agent.pop_latest_artifacts()
+                    artifact_parts = []
+                    if artifacts:
+                        logger.info(f"🎨 Found {len(artifacts)} artifacts to return")
+                        # Convert artifacts to appropriate Part types
+                        for artifact in artifacts:
+                            if isinstance(artifact, dict) and artifact.get("artifact-uri"):
+                                # For artifacts with URIs (like images), create FilePart with FileWithUri
+                                file_with_uri = FileWithUri(
+                                    name=artifact.get("file-name", "artifact"),
+                                    uri=artifact["artifact-uri"],
+                                    mimeType=artifact.get("mime", "image/png")
+                                )
+                                artifact_parts.append(Part(root=FilePart(file=file_with_uri)))
+                                logger.info(f"  📎 FilePart: {artifact.get('file-name')} -> {artifact['artifact-uri'][:80]}...")
+                            else:
+                                # For other artifacts, use DataPart
+                                artifact_parts.append(Part(root=DataPart(data=artifact)))
+                                logger.info(f"  📦 DataPart: {artifact}")
+                        
+                        # Send artifact message immediately
+                        artifact_message = new_agent_parts_message(parts=artifact_parts, context_id=context_id)
+                        await task_updater.update_status(
+                            TaskState.working,
+                            message=artifact_message
+                        )
+                    else:
+                        logger.warning("⚠️ No artifacts found after image generation")
+                    
+                    # Now handle text responses (if any)
                     if responses:
-                        artifacts = agent.pop_latest_artifacts()
-                        artifact_parts = []
-                        if artifacts:
-                            # Convert artifacts to appropriate Part types
-                            for artifact in artifacts:
-                                if isinstance(artifact, dict) and artifact.get("artifact-uri"):
-                                    # For artifacts with URIs (like images), create FilePart with FileWithUri
-                                    file_with_uri = FileWithUri(
-                                        name=artifact.get("file-name", "artifact"),
-                                        uri=artifact["artifact-uri"],
-                                        mimeType=artifact.get("mime", "image/png")
-                                    )
-                                    artifact_parts.append(Part(root=FilePart(file=file_with_uri)))
-                                else:
-                                    # For other artifacts, use DataPart
-                                    artifact_parts.append(Part(root=DataPart(data=artifact)))
-                            
-                            artifact_message = new_agent_parts_message(parts=artifact_parts, context_id=context_id)
-                            responses.append(artifact_message)
-                            await task_updater.update_status(
-                                TaskState.working,
-                                message=artifact_message
-                            )
                         final_text_response = next(
                             (resp for resp in reversed(responses) if isinstance(resp, str)),
                             None
                         )
                         if final_text_response is None:
-                            final_text_response = "Image generated successfully."
+                            final_text_response = "Image generated successfully." if artifact_parts else "No content generated."
                         
                         # Include both text summary AND artifact parts in final completion message
                         # Log a preview of the response (first 500 chars)
                         response_preview = final_text_response[:500] + "..." if len(final_text_response) > 500 else final_text_response
                         logger.info(f"📤 Agent response ({len(final_text_response)} chars, {len(artifact_parts)} artifacts): {response_preview}")
-                        
-                        # Don't send text separately - include everything in the final complete() message
-                        # This ensures the backend processes text + FileParts together without deduplication issues
                         
                         # This ensures downstream agents receive file metadata for agent-to-agent file exchange
                         final_parts = [Part(root=TextPart(text=final_text_response))]
@@ -260,28 +265,47 @@ class FoundryImageGeneratorAgentExecutor(AgentExecutor):
                             message=new_agent_parts_message(parts=final_parts, context_id=context_id)
                         )
                     else:
-                        logger.warning("⚠️ No response generated by agent")
+                        # No text responses, but we may have artifacts
+                        logger.warning("⚠️ No text response generated by agent")
                         
-                        # Build message parts (even for error case)
-                        import uuid
-                        message_parts = [TextPart(text="No response generated")]
-                        
-                        # Add token usage even if no response (in case run consumed tokens)
-                        if hasattr(agent, 'last_token_usage') and agent.last_token_usage:
-                            message_parts.append(DataPart(data={
-                                'type': 'token_usage',
-                                **agent.last_token_usage
-                            }))
-                            logger.info(f"💰 Including token usage in response: {agent.last_token_usage}")
-                        
-                        await task_updater.complete(
-                            message=Message(
-                                role="agent",
-                                messageId=str(uuid.uuid4()),
-                                parts=message_parts,
-                                contextId=context_id
+                        if artifact_parts:
+                            # We have artifacts but no text - complete with artifacts only
+                            logger.info(f"✅ Completing with {len(artifact_parts)} artifacts and default text")
+                            final_parts = [Part(root=TextPart(text="Image generated successfully."))]
+                            final_parts.extend(artifact_parts)
+                            
+                            # Add token usage if available
+                            if hasattr(agent, 'last_token_usage') and agent.last_token_usage:
+                                final_parts.append(Part(root=DataPart(data={
+                                    'type': 'token_usage',
+                                    **agent.last_token_usage
+                                })))
+                                logger.info(f"💰 Including token usage in response: {agent.last_token_usage}")
+                            
+                            await task_updater.complete(
+                                message=new_agent_parts_message(parts=final_parts, context_id=context_id)
                             )
-                        )
+                        else:
+                            # No text and no artifacts - this is an error case
+                            import uuid
+                            message_parts = [TextPart(text="No content generated")]
+                            
+                            # Add token usage even if no response (in case run consumed tokens)
+                            if hasattr(agent, 'last_token_usage') and agent.last_token_usage:
+                                message_parts.append(DataPart(data={
+                                    'type': 'token_usage',
+                                    **agent.last_token_usage
+                                }))
+                                logger.info(f"💰 Including token usage in response: {agent.last_token_usage}")
+                            
+                            await task_updater.complete(
+                                message=Message(
+                                    role="agent",
+                                    messageId=str(uuid.uuid4()),
+                                    parts=message_parts,
+                                    contextId=context_id
+                                )
+                            )
                     return
 
                 except RuntimeError as run_error:

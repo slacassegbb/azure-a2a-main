@@ -210,6 +210,33 @@ class FoundryHostManager(ApplicationManager):
                 taskId=task_id,
                 messageId=str(uuid.uuid4()),
             )
+        # Handle Message object (must check BEFORE hasattr(resp, 'kind') because Message.kind = 'message')
+        elif hasattr(resp, 'parts') and hasattr(resp, 'kind') and resp.kind == 'message':
+            log_debug(f"Processing as Message object with {len(resp.parts) if resp.parts else 0} parts")
+            for part in resp.parts:
+                root = getattr(part, 'root', part)
+                kind = getattr(root, 'kind', None)
+                if kind == 'text':
+                    text_content = getattr(root, 'text', str(root))
+                    log_debug(f"Text part: {text_content[:200]}...")
+                    parts.append(Part(root=TextPart(text=text_content)))
+                elif kind == 'data':
+                    data_content = getattr(root, 'data', {})
+                    log_debug(f"Data part: {data_content}")
+                    parts.append(Part(root=DataPart(data=data_content)))
+                elif kind == 'file':
+                    log_debug(f"File part: {getattr(root, 'file', None)}")
+                    parts.append(Part(root=FilePart(file=getattr(root, 'file', None))))
+                else:
+                    log_debug(f"Unknown part kind: {kind}, content: {str(root)[:200]}...")
+                    parts.append(Part(root=TextPart(text=str(root))))
+            return Message(
+                role=getattr(resp, 'role', 'agent'),
+                parts=parts,
+                contextId=context_id,
+                taskId=task_id,
+                messageId=str(uuid.uuid4()),
+            )
         # Handle TextPart, DataPart, FilePart directly (unwrapped from Part)
         elif hasattr(resp, 'kind'):
             kind = resp.kind
@@ -235,9 +262,9 @@ class FoundryHostManager(ApplicationManager):
                 taskId=task_id,
                 messageId=str(uuid.uuid4()),
             )
-        # Handle Message object
+        # Handle objects with 'parts' attribute (generic Message-like objects)
         elif hasattr(resp, 'parts'):
-            log_debug(f"Processing as Message object with {len(resp.parts) if resp.parts else 0} parts")
+            log_debug(f"Processing as generic parts object with {len(resp.parts) if resp.parts else 0} parts")
             for part in resp.parts:
                 root = getattr(part, 'root', part)
                 kind = getattr(root, 'kind', None)
@@ -555,7 +582,7 @@ class FoundryHostManager(ApplicationManager):
         if session_id:
             session_registry = get_session_registry()
             session_agents = session_registry.get_session_agents(session_id)
-            print(f"� [MANAGER] Retrieved {len(session_agents)} agents from session registry for {session_id[:12]}")
+            print(f"🔵 [MANAGER] Retrieved {len(session_agents)} agents from session registry for {session_id[:12]}")
             for idx, agent in enumerate(session_agents):
                 print(f"🟢 [MANAGER]   Agent {idx+1}: {agent.get('name')} - {agent.get('url')}")
             print(f"🟢 [MANAGER] Calling set_session_agents...")

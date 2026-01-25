@@ -2387,6 +2387,7 @@ Answer with just JSON:
                             )
 
                     # Add file artifacts from this response to _agent_generated_artifacts for UI display
+                    # AND emit WebSocket events so the frontend/test can receive them
                     for item in response_parts:
                         is_file = isinstance(item, FilePart) or (hasattr(item, 'root') and isinstance(item.root, FilePart))
                         is_data = isinstance(item, DataPart) or (hasattr(item, 'root') and isinstance(item.root, DataPart))
@@ -2394,6 +2395,39 @@ Answer with just JSON:
                             if not hasattr(session_context, '_agent_generated_artifacts'):
                                 session_context._agent_generated_artifacts = []
                             session_context._agent_generated_artifacts.append(item)
+                            
+                            # EMIT FILE ARTIFACT EVENT for WebSocket subscribers
+                            # This ensures frontend/tests receive file parts from completed tasks
+                            if is_file:
+                                try:
+                                    file_part = item.root if hasattr(item, 'root') else item
+                                    file_obj = getattr(file_part, 'file', None)
+                                    if file_obj:
+                                        file_uri = str(getattr(file_obj, 'uri', ''))
+                                        file_name = getattr(file_obj, 'name', 'agent-artifact')
+                                        mime_type = getattr(file_obj, 'mimeType', 'application/octet-stream')
+                                        if file_uri.startswith(('http://', 'https://')):
+                                            log_debug(f"🎬 Emitting file artifact event for completed task: {file_name}")
+                                            # Register in agent file registry
+                                            session_id = contextId.split('::')[0] if '::' in contextId else contextId
+                                            from service.agent_file_registry import register_agent_file
+                                            register_agent_file(
+                                                session_id=session_id,
+                                                uri=file_uri,
+                                                filename=file_name,
+                                                content_type=mime_type,
+                                                source_agent=agent_name
+                                            )
+                                            asyncio.create_task(self._emit_file_artifact_event(
+                                                filename=file_name,
+                                                uri=file_uri,
+                                                context_id=contextId,
+                                                agent_name=agent_name,
+                                                content_type=mime_type,
+                                                size=0
+                                            ))
+                                except Exception as e:
+                                    log_debug(f"Error emitting file artifact event: {e}")
 
                     self._update_last_host_turn(session_context, agent_name, response_parts)
                     
@@ -2977,11 +3011,19 @@ Answer with just JSON:
                 if isinstance(response, dict) and ('artifact-uri' in response or 'artifact-id' in response):
                     log_debug(f"📝 Step 3.{i+1}: Skipping artifact dict (not storing in memory)")
                     continue
+                
+                # Skip Message objects - they contain FileParts which are handled separately
+                if hasattr(response, 'parts') and hasattr(response, 'kind') and response.kind == 'message':
+                    log_debug(f"📝 Step 3.{i+1}: Skipping Message object (FileParts handled separately)")
+                    continue
                     
                 log_debug(f"📝 Step 3.{i+1}: Creating Part for response {i+1}")
                 # Convert non-string responses to JSON string
                 if isinstance(response, str):
                     text = response
+                elif hasattr(response, 'model_dump'):
+                    # Handle Pydantic models
+                    text = json.dumps(response.model_dump(mode='json'), ensure_ascii=False)
                 else:
                     text = json.dumps(response, ensure_ascii=False)
                 text_part = TextPart(text=text)  # Don't pass kind - it's inferred from the class
@@ -4023,6 +4065,13 @@ Answer with just JSON:
             elif isinstance(item, (TextPart, FilePart, DataPart)):
                 flattened_parts.append(item)
                 _register_part_uri(item, _local_extract_uri(item))
+            elif hasattr(item, 'root') and isinstance(item.root, (TextPart, FilePart, DataPart)):
+                # Handle Part wrappers (e.g., Part(root=FilePart(...)) or Part(root=DataPart(...)))
+                # Extract the inner part and add it to flattened_parts
+                inner_part = item.root
+                flattened_parts.append(inner_part)
+                _register_part_uri(inner_part, _local_extract_uri(inner_part))
+                log_debug(f"📦 Unwrapped Part({type(inner_part).__name__}) for flattening")
             elif isinstance(item, dict):
                 if item.get("kind") == "refine-image":
                     refine_payload = item
@@ -4219,6 +4268,14 @@ Answer with just JSON:
             # A2A protocol compliant file handling
             file_id = part.root.file.name
             log_debug(f"Processing file: {file_id}")
+            
+            # Check if this is a FilePart with an HTTP URI (returned from agent, already on blob storage)
+            # In this case, pass through without re-downloading/re-processing
+            file_uri = getattr(part.root.file, 'uri', None)
+            if file_uri and str(file_uri).startswith(('http://', 'https://')):
+                log_debug(f"📤 FilePart already has HTTP URI, passing through: {file_id}")
+                # Return the FilePart directly so it can be detected by the artifact handling
+                return part.root  # Return the FilePart directly
             
             file_role_attr = getattr(part.root.file, 'role', None)
             

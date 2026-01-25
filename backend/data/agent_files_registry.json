@@ -1,0 +1,119 @@
+{
+  "sess_2f207f9d-e50a-40c2-a55f-092465ad3160": [
+    {
+      "id": "a283100a-c4df-4b7a-a3ba-115acaed8d65",
+      "filename": "generated_895a3efb_0.png",
+      "originalName": "generated_895a3efb_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-25T19:06:59.053973",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/6badde352bca47a8885439693c138c89/generated_895a3efb_0.png?se=2026-01-26T19%3A06%3A53Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=/5jMmoGjc9nyVM3NpMZtcqBOIbAfvHlSMnwnJLzaehk%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    }
+  ],
+  "video_test_46ed6ce3": [
+    {
+      "id": "7e81917d-c5cb-48fe-81af-66258d29ed0c",
+      "filename": "sora_20260125_175750_c1m4r1nh.mp4",
+      "originalName": "sora_20260125_175750_c1m4r1nh.mp4",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-25T22:58:04.141524",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/video-generator/1a611651764548dabbe41b28bbf45df8/sora_20260125_175750_c1m4r1nh.mp4?se=2026-01-26T22%3A57%3A59Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=ihC3XUDYK7KZFRDBuXhL5vm8zCbjzAwxAmer%2BKAsfWI%3D",
+      "sourceAgent": "Sora 2 Video Generator",
+      "type": "agent_generated"
+    }
+  ],
+  "video_test_907d4edc": [
+    {
+      "id": "bb1712c9-636d-4c58-a278-f00956d74315",
+      "filename": "sora_20260125_180345_d5d6kf8c.mp4",
+      "originalName": "sora_20260125_180345_d5d6kf8c.mp4",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-25T23:04:04.806915",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/video-generator/68a40f583fa1495595ff2f14ad8c49df/sora_20260125_180345_d5d6kf8c.mp4?se=2026-01-26T23%3A03%3A56Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=tGVzk%2BQiffPQ0BIR2iahsJokMobLaVClADJyNcGXRJ0%3D",
+      "sourceAgent": "Sora 2 Video Generator",
+      "type": "agent_generated"
+    }
+  ],
+  "video_test_8baf9cae": [
+    {
+      "id": "1ebaca18-c028-4d19-8414-1c974f6bc34a",
+      "filename": "sora_20260125_181559_q5r8pqfs.mp4",
+      "originalName": "sora_20260125_181559_q5r8pqfs.mp4",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-25T23:16:24.205607",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/video-generator/1dfd8ec421ae48029a3610ac35feefc4/sora_20260125_181559_q5r8pqfs.mp4?se=2026-01-26T23%3A16%3A15Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=7JVmleFEtIoFebDe4QaKlZ/tJ2yrX9Cd85xMk1jJ3lo%3D",
+      "sourceAgent": "Sora 2 Video Generator",
+      "type": "agent_generated"
+    }
+  ],
+  "video_test_8b3a35a3": [
+    {
+      "id": "ebb67413-6d42-4f75-b208-70a92b164b48",
+      "filename": "sora_20260125_183404_vct4chxv.mp4",
+      "originalName": "sora_20260125_183404_vct4chxv.mp4",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-25T23:34:18.948218",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/video-generator/d6f778ec76004e13aab500e06b97a56e/sora_20260125_183404_vct4chxv.mp4?se=2026-01-26T23%3A34%3A14Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=5GbxCGReomsXCy3C1M9dHYLIdAS1ClhO8RNUaz9HKTk%3D",
+      "sourceAgent": "Sora 2 Video Generator",
+      "type": "agent_generated"
+    }
+  ],
+  "video_test_c1b98b8e": [
+    {
+      "id": "6256294b-cd27-4eca-a052-031a1a555105",
+      "filename": "sora_20260125_184051_8pya1sh8.mp4",
+      "originalName": "sora_20260125_184051_8pya1sh8.mp4",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-25T23:41:10.026090",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/video-generator/bf15adf9776b497d8e50f40751bff284/sora_20260125_184051_8pya1sh8.mp4?se=2026-01-26T23%3A41%3A01Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=%2Bd3dtye7AA1EtkCeIKJm1puOca3lWFp1FbzzbUxAYec%3D",
+      "sourceAgent": "Sora 2 Video Generator",
+      "type": "agent_generated"
+    }
+  ],
+  "video_test_7a207eec": [
+    {
+      "id": "d7861608-5c19-4539-ba7d-3480b7d8d3e4",
+      "filename": "sora_20260125_184755_834qj1nr.mp4",
+      "originalName": "sora_20260125_184755_834qj1nr.mp4",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-25T23:48:21.009597",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/video-generator/041b878cb8014002939b5f1ad583ee0e/sora_20260125_184755_834qj1nr.mp4?se=2026-01-26T23%3A48%3A13Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=xWJ6OrlzhkUoa7VKMB3d3z4rCG5yTXj6SRkMffxYeQA%3D",
+      "sourceAgent": "Sora 2 Video Generator",
+      "type": "agent_generated"
+    }
+  ],
+  "video_test_eb1220da": [
+    {
+      "id": "897b2864-7c3e-493c-b3d7-2841e3d58002",
+      "filename": "sora_20260125_185013_34tn1tf2.mp4",
+      "originalName": "sora_20260125_185013_34tn1tf2.mp4",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-25T23:50:24.009367",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/video-generator/e2d547fde5384efea00639d3e585d3b6/sora_20260125_185013_34tn1tf2.mp4?se=2026-01-26T23%3A50%3A19Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=31TV1LQ%2Bd4T9jYA/8PxSTwFcUSg1Szrcj4bBCrd6UsU%3D",
+      "sourceAgent": "Sora 2 Video Generator",
+      "type": "agent_generated"
+    }
+  ],
+  "video_test_12d2ee92": [
+    {
+      "id": "a8258e0d-b7ed-4f16-b918-031683e7924b",
+      "filename": "sora_20260125_185300_t9tww2ef.mp4",
+      "originalName": "sora_20260125_185300_t9tww2ef.mp4",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-25T23:53:19.203200",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/video-generator/8d123826b3974b51b74b8d2b7f1024e5/sora_20260125_185300_t9tww2ef.mp4?se=2026-01-26T23%3A53%3A13Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=HK1ZyAqYK6b6nu0E5OqWW7fOigXT9B2DplrnAGba3c8%3D",
+      "sourceAgent": "Sora 2 Video Generator",
+      "type": "agent_generated"
+    }
+  ]
+}
