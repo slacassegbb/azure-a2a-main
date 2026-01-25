@@ -80,6 +80,21 @@ from a2a.types import (
 from .remote_agent_connection import RemoteAgentConnections, TaskUpdateCallback, TaskCallbackArg
 from .a2a_memory_service import a2a_memory_service
 from .a2a_document_processor import a2a_document_processor
+
+# Extracted models and parsers (refactored from this file)
+from .models import (
+    SessionContext,
+    AgentModeTask,
+    AgentModePlan,
+    NextStep,
+    WorkflowStepType,
+    ParsedWorkflowStep,
+    ParsedWorkflowGroup,
+    ParsedWorkflow,
+    TaskStateEnum,
+    GoalStatus,
+)
+from .workflow_parser import WorkflowParser
 from pydantic import BaseModel, Field
 
 # Tenant utilities for multi-tenancy support
@@ -182,214 +197,10 @@ def _normalize_env_int(raw_value: str | None, default: int) -> int:
     except (TypeError, ValueError):
         return default
 
-class SessionContext(BaseModel):
-    """
-    Session state management for A2A protocol conversations.
-    Tracks conversation context, task states, and agent coordination across multi-agent workflows.
-    """
-    contextId: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    task_id: Optional[str] = None
-    message_id: Optional[str] = None
-    task_state: Optional[str] = None
-    session_active: bool = True
-    retry_count: int = 0
-    agent_mode: bool = False
-    enable_inter_agent_memory: bool = True
-    agent_task_ids: dict[str, str] = Field(default_factory=dict)
-    agent_task_states: dict[str, str] = Field(default_factory=dict)
-    agent_cooldowns: dict[str, float] = Field(default_factory=dict)
-    last_host_turn_text: Optional[str] = Field(default=None)
-    last_host_turn_agent: Optional[str] = Field(default=None)
-    host_turn_history: List[Dict[str, str]] = Field(default_factory=list)
-    # Human-in-the-loop tracking: which agent is waiting for user input
-    pending_input_agent: Optional[str] = Field(default=None, description="Agent name waiting for input_required response")
-    pending_input_task_id: Optional[str] = Field(default=None, description="Task ID of the pending input_required task")
-    # Workflow state for pausing/resuming on input_required
-    pending_workflow: Optional[str] = Field(default=None, description="Workflow definition to resume after HITL completes")
-    pending_workflow_outputs: List[str] = Field(default_factory=list, description="Task outputs collected before HITL pause")
-    pending_workflow_user_message: Optional[str] = Field(default=None, description="Original user message for workflow")
 
-
-# Agent Mode Orchestration Models
-TaskStateEnum = Literal["pending", "running", "completed", "failed", "cancelled"]
-GoalStatus = Literal["incomplete", "completed"]
-
-
-class AgentModeTask(BaseModel):
-    """Individual task within a multi-agent workflow plan."""
-    task_id: str = Field(..., description="Unique A2A task identifier.")
-    task_description: str = Field(..., description="Single remote-agent instruction.")
-    recommended_agent: Optional[str] = Field(None, description="Agent name to execute this task.")
-    output: Optional[Dict[str, Any]] = Field(None, description="A2A remote-agent output payload.")
-    state: TaskStateEnum = Field("pending", description="Current A2A task state.")
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    error_message: Optional[str] = Field(None, description="Error message if task failed.")
-
-
-class AgentModePlan(BaseModel):
-    """Multi-agent workflow plan with task decomposition and state tracking."""
-    goal: str = Field(..., description="User query or objective.")
-    goal_status: GoalStatus = Field("incomplete", description="Completion state of the goal.")
-    tasks: List[AgentModeTask] = Field(default_factory=list, description="List of all tasks in the plan.")
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-
-
-class NextStep(BaseModel):
-    """Orchestrator decision for the next action in a multi-agent workflow."""
-    goal_status: GoalStatus = Field(..., description="Whether the goal is completed or not.")
-    next_task: Optional[Dict[str, Optional[str]]] = Field(
-        None,
-        description='Single task: {"task_description": str, "recommended_agent": str|None}. Use this for sequential execution. Set to null if using next_tasks for parallel execution.'
-    )
-    next_tasks: Optional[List[Dict[str, Optional[str]]]] = Field(
-        None,
-        description='Multiple tasks to execute IN PARALLEL: [{"task_description": str, "recommended_agent": str|None}, ...]. Use this when workflow has parallel steps (e.g., 2a, 2b). Set to null for sequential execution.'
-    )
-    parallel: bool = Field(
-        False,
-        description='Set to true when next_tasks should be executed in parallel (e.g., for workflow steps like 2a, 2b). Set to false for sequential execution.'
-    )
-    reasoning: str = Field(..., description="Short explanation of the decision.")
-
-
-# ============================================================================
-# PARALLEL WORKFLOW SUPPORT
-# ============================================================================
-# New models for parsed workflows with parallel execution support
-# Format: Sequential steps are "1. ...", "2. ...", parallel steps are "2a. ...", "2b. ..."
-
-class WorkflowStepType(str, Enum):
-    """Type of workflow step execution."""
-    SEQUENTIAL = "sequential"
-    PARALLEL = "parallel"
-
-
-@dataclass
-class ParsedWorkflowStep:
-    """A single step within a workflow."""
-    step_label: str  # e.g., "1", "2a", "2b", "3"
-    description: str
-    agent_hint: Optional[str] = None  # Extracted agent name if mentioned in description
-
-
-@dataclass
-class ParsedWorkflowGroup:
-    """A group of steps that execute together (sequential = 1 step, parallel = multiple)."""
-    group_number: int  # The main step number (e.g., 2 for "2a", "2b")
-    group_type: WorkflowStepType
-    steps: List[ParsedWorkflowStep]
-
-
-@dataclass
-class ParsedWorkflow:
-    """Complete parsed workflow with sequential and parallel groups."""
-    groups: List[ParsedWorkflowGroup]
-    
-    def __str__(self) -> str:
-        lines = []
-        for group in self.groups:
-            if group.group_type == WorkflowStepType.PARALLEL:
-                lines.append(f"[Parallel Group {group.group_number}]")
-                for step in group.steps:
-                    lines.append(f"  {step.step_label}. {step.description}")
-            else:
-                step = group.steps[0]
-                lines.append(f"{step.step_label}. {step.description}")
-        return "\n".join(lines)
-
-
-class WorkflowParser:
-    """
-    Parse workflow text into structured groups with parallel execution support.
-    
-    Workflow Text Format:
-    - Sequential steps: "1. Do something", "2. Do another thing"
-    - Parallel steps: "2a. First parallel task", "2b. Second parallel task"
-    
-    Example:
-        1. Use Classification agent to analyze document
-        2a. Use Branding agent to check guidelines
-        2b. Use Legal agent to verify compliance
-        3. Use Reporter agent to synthesize results
-        
-    In this example:
-    - Step 1 runs first (sequential)
-    - Steps 2a and 2b run in parallel
-    - Step 3 runs after both 2a and 2b complete
-    """
-    
-    # Regex to match step labels like "1.", "2a.", "2b.", "10c."
-    STEP_PATTERN = re.compile(r'^(\d+)([a-z])?\.?\s*(.+)$', re.IGNORECASE)
-    
-    @classmethod
-    def parse(cls, workflow_text: str) -> ParsedWorkflow:
-        """Parse workflow text into structured groups."""
-        if not workflow_text or not workflow_text.strip():
-            return ParsedWorkflow(groups=[])
-        
-        lines = workflow_text.strip().split('\n')
-        steps_by_number: Dict[int, List[ParsedWorkflowStep]] = {}
-        
-        for line in lines:
-            line = line.strip()
-            if not line:
-                continue
-                
-            # Try to match step pattern
-            match = cls.STEP_PATTERN.match(line)
-            if match:
-                main_number = int(match.group(1))
-                sub_letter = match.group(2)  # Could be None for "1.", or "a" for "1a."
-                description = match.group(3).strip()
-                
-                # Create step label
-                if sub_letter:
-                    step_label = f"{main_number}{sub_letter.lower()}"
-                else:
-                    step_label = str(main_number)
-                
-                # Extract agent hint if agent name is mentioned
-                agent_hint = cls._extract_agent_hint(description)
-                
-                step = ParsedWorkflowStep(
-                    step_label=step_label,
-                    description=description,
-                    agent_hint=agent_hint
-                )
-                
-                if main_number not in steps_by_number:
-                    steps_by_number[main_number] = []
-                steps_by_number[main_number].append(step)
-        
-        # Convert to groups
-        groups = []
-        for main_number in sorted(steps_by_number.keys()):
-            steps = steps_by_number[main_number]
-            
-            if len(steps) > 1:
-                # Multiple steps with same number = parallel
-                group_type = WorkflowStepType.PARALLEL
-            else:
-                group_type = WorkflowStepType.SEQUENTIAL
-            
-            groups.append(ParsedWorkflowGroup(
-                group_number=main_number,
-                group_type=group_type,
-                steps=steps
-            ))
-        
-        return ParsedWorkflow(groups=groups)
-    
-    @staticmethod
-    def _extract_agent_hint(description: str) -> Optional[str]:
-        """Try to extract agent name from description like 'Use the Classification agent to...'"""
-        # Pattern: "Use (the)? <AgentName> agent"
-        match = re.search(r'[Uu]se\s+(?:the\s+)?(\w+)\s+agent', description)
-        if match:
-            return match.group(1)
-        return None
+# Note: SessionContext, AgentModeTask, AgentModePlan, NextStep, WorkflowStepType,
+# ParsedWorkflowStep, ParsedWorkflowGroup, ParsedWorkflow, and WorkflowParser
+# have been extracted to models.py and workflow_parser.py
 
 
 class FoundryHostAgent2:
