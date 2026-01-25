@@ -3321,6 +3321,95 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
             log_debug(f"Error emitting tool response event: {e}")
             pass
 
+    async def _emit_simple_task_status(
+        self, 
+        agent_name: str, 
+        state: str, 
+        context_id: str, 
+        task_id: str = None
+    ) -> bool:
+        """
+        Emit a simple task status update to the sidebar via WebSocket.
+        
+        This is a lightweight helper for emitting task state changes (submitted, working, 
+        completed, failed) without the complexity of full Task object handling.
+        
+        Args:
+            agent_name: Name of the agent whose status is changing
+            state: Task state string (submitted, working, completed, failed)
+            context_id: Context ID for WebSocket routing
+            task_id: Optional task ID (generates UUID if not provided)
+            
+        Returns:
+            True if event was sent successfully, False otherwise
+        """
+        try:
+            from service.websocket_streamer import get_websocket_streamer
+            streamer = await get_websocket_streamer()
+            if streamer:
+                event_data = {
+                    "taskId": task_id or str(uuid.uuid4()),
+                    "conversationId": context_id,
+                    "contextId": context_id,
+                    "state": state,
+                    "agentName": agent_name,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }
+                log_debug(f"[SIDEBAR] Emitting task_updated for {agent_name}: state={state}")
+                return await streamer._send_event("task_updated", event_data, context_id)
+            else:
+                log_debug(f"No WebSocket streamer available for task status: {agent_name}/{state}")
+                return False
+        except Exception as e:
+            log_debug(f"Error emitting task status {state} for {agent_name}: {e}")
+            return False
+
+    async def _emit_file_artifact_event(
+        self,
+        filename: str,
+        uri: str,
+        context_id: str,
+        agent_name: str,
+        content_type: str = "image/png",
+        size: int = 0
+    ) -> bool:
+        """
+        Emit a file artifact event to notify the UI of a new file from an agent.
+        
+        Args:
+            filename: Name of the file
+            uri: URI/URL where the file can be accessed
+            context_id: Context ID for WebSocket routing (use host context)
+            agent_name: Name of the agent that produced the file
+            content_type: MIME type of the file
+            size: File size in bytes (0 if unknown)
+            
+        Returns:
+            True if event was sent successfully, False otherwise
+        """
+        try:
+            from service.websocket_streamer import get_websocket_streamer
+            streamer = await get_websocket_streamer()
+            if streamer:
+                file_info = {
+                    "file_id": str(uuid.uuid4()),
+                    "filename": filename,
+                    "uri": uri,
+                    "size": size,
+                    "content_type": content_type,
+                    "source_agent": agent_name,
+                    "contextId": context_id
+                }
+                await streamer.stream_file_uploaded(file_info, context_id)
+                log_debug(f"File uploaded event sent: {filename} from {agent_name}")
+                return True
+            else:
+                log_debug(f"No WebSocket streamer available for file event: {filename}")
+                return False
+        except Exception as e:
+            log_debug(f"Error emitting file artifact event: {e}")
+            return False
+
     async def _emit_granular_agent_event(self, agent_name: str, status_text: str, context_id: str = None):
         """Emit granular agent activity event to WebSocket for thinking box visibility."""
         try:
@@ -4568,32 +4657,7 @@ Answer with just JSON:
             # EMIT INITIAL STATUS: "submitted" - task has been sent to remote agent
             # This is for the SIDEBAR to show the agent is starting work
             # ========================================================================
-            try:
-                async def emit_submitted_status():
-                    print(f"🔵 [SUBMITTED] emit_submitted_status() CALLED for {agent_name}", flush=True)
-                    from service.websocket_streamer import get_websocket_streamer
-                    streamer = await get_websocket_streamer()
-                    print(f"🔵 [SUBMITTED] Got streamer: {streamer is not None}", flush=True)
-                    if streamer:
-                        task_id = taskId or str(uuid.uuid4())
-                        event_data = {
-                            "taskId": task_id,
-                            "conversationId": contextId,
-                            "contextId": contextId,
-                            "state": "submitted",
-                            "agentName": agent_name,
-                            "timestamp": datetime.now(timezone.utc).isoformat(),
-                        }
-                        print(f"📡 [SIDEBAR] Emitting task_updated for {agent_name}: state=submitted", flush=True)
-                        result = await streamer._send_event("task_updated", event_data, contextId)
-                        print(f"📡 [SIDEBAR] _send_event returned: {result}", flush=True)
-                    else:
-                        print(f"❌ [SUBMITTED] No streamer available!", flush=True)
-                
-                asyncio.create_task(emit_submitted_status())
-            except Exception as e:
-                print(f"❌ [SUBMITTED] Exception: {e}", flush=True)
-                log_debug(f"Error emitting submitted status: {e}")
+            asyncio.create_task(self._emit_simple_task_status(agent_name, "submitted", contextId, taskId))
             
             try:
                 # CRITICAL: Store HOST's contextId for use in callbacks
@@ -4618,33 +4682,8 @@ Answer with just JSON:
                     # ========================================================================
                     if not _working_emitted["emitted"]:
                         _working_emitted["emitted"] = True
-                        print(f"🟡 [WORKING] First callback! Will emit working status for {agent_name}", flush=True)
-                        async def emit_working_status():
-                            try:
-                                print(f"🟡 [WORKING] emit_working_status() CALLED for {agent_name}", flush=True)
-                                from service.websocket_streamer import get_websocket_streamer
-                                streamer = await get_websocket_streamer()
-                                print(f"🟡 [WORKING] Got streamer: {streamer is not None}", flush=True)
-                                if streamer:
-                                    event_data = {
-                                        "taskId": taskId or str(uuid.uuid4()),
-                                        "conversationId": contextId,
-                                        "contextId": contextId,
-                                        "state": "working",
-                                        "agentName": agent_name,
-                                        "timestamp": datetime.now(timezone.utc).isoformat(),
-                                    }
-                                    print(f"📡 [SIDEBAR] Emitting task_updated for {agent_name}: state=working", flush=True)
-                                    result = await streamer._send_event("task_updated", event_data, contextId)
-                                    print(f"📡 [SIDEBAR] _send_event result: {result}", flush=True)
-                                else:
-                                    print(f"❌ [WORKING] No streamer available!", flush=True)
-                            except Exception as e:
-                                print(f"❌ [WORKING] Exception: {e}", flush=True)
-                                log_debug(f"Error emitting working status: {e}")
-                        asyncio.create_task(emit_working_status())
-                    else:
-                        print(f"🟡 [WORKING] Already emitted, skipping", flush=True)
+                        log_debug(f"[WORKING] First callback - emitting working status for {agent_name}")
+                        asyncio.create_task(self._emit_simple_task_status(agent_name, "working", contextId, taskId))
                     
                     # Emit granular events based on the type of update
                     if hasattr(event, 'kind'):
@@ -4678,25 +4717,14 @@ Answer with just JSON:
                                                         source_agent=agent_name
                                                     )
                                                     # Emit file_uploaded event - USE HOST'S contextId for routing!
-                                                    async def emit_file_event(part_data=part.root.data, uri=artifact_uri):
-                                                        try:
-                                                            from service.websocket_streamer import get_websocket_streamer
-                                                            streamer = await get_websocket_streamer()
-                                                            if streamer:
-                                                                file_info = {
-                                                                    "file_id": str(uuid.uuid4()),
-                                                                    "filename": part_data.get("file-name", "agent-artifact.png"),
-                                                                    "uri": uri,
-                                                                    "size": part_data.get("file-size", 0),
-                                                                    "content_type": "image/png",
-                                                                    "source_agent": agent_name,
-                                                                    "contextId": host_context_id  # ← USE HOST CONTEXT
-                                                                }
-                                                                await streamer.stream_file_uploaded(file_info, host_context_id)  # ← USE HOST CONTEXT
-                                                                log_debug(f"File uploaded event sent for streaming artifact: {file_info['filename']}")
-                                                        except Exception as e:
-                                                            log_debug(f"Error emitting file_uploaded event: {e}")
-                                                    asyncio.create_task(emit_file_event())
+                                                    asyncio.create_task(self._emit_file_artifact_event(
+                                                        filename=part.root.data.get("file-name", "agent-artifact.png"),
+                                                        uri=artifact_uri,
+                                                        context_id=host_context_id,
+                                                        agent_name=agent_name,
+                                                        content_type="image/png",
+                                                        size=part.root.data.get("file-size", 0)
+                                                    ))
                                             # Check for image artifacts in FilePart
                                             elif hasattr(part, 'root') and hasattr(part.root, 'file'):
                                                 file_obj = part.root.file
@@ -4718,25 +4746,14 @@ Answer with just JSON:
                                                             source_agent=agent_name
                                                         )
                                                         # Emit file_uploaded event - USE HOST'S contextId for routing!
-                                                        async def emit_file_event_fp():
-                                                            try:
-                                                                from service.websocket_streamer import get_websocket_streamer
-                                                                streamer = await get_websocket_streamer()
-                                                                if streamer:
-                                                                    file_info = {
-                                                                        "file_id": str(uuid.uuid4()),
-                                                                        "filename": file_name,
-                                                                        "uri": file_uri,
-                                                                        "size": 0,
-                                                                        "content_type": mime_type,
-                                                                        "source_agent": agent_name,
-                                                                        "contextId": host_context_id  # ← USE HOST CONTEXT
-                                                                    }
-                                                                    await streamer.stream_file_uploaded(file_info, host_context_id)  # ← USE HOST CONTEXT
-                                                                    log_debug(f"File uploaded event sent for streaming FilePart: {file_info['filename']}")
-                                                            except Exception as e:
-                                                                log_debug(f"Error emitting file_uploaded event for FilePart: {e}")
-                                                        asyncio.create_task(emit_file_event_fp())
+                                                        asyncio.create_task(self._emit_file_artifact_event(
+                                                            filename=file_name,
+                                                            uri=str(file_uri),
+                                                            context_id=host_context_id,
+                                                            agent_name=agent_name,
+                                                            content_type=mime_type,
+                                                            size=0
+                                                        ))
                                 elif hasattr(event.status, 'state'):
                                     state = event.status.state
                                     if hasattr(state, 'value'):
@@ -4826,37 +4843,13 @@ Answer with just JSON:
                 session_context.agent_task_states[agent_name] = state_val
                 
                 # Handle task states
-                print(f"🔍 Checking task state: {task.status.state} == TaskState.completed? {task.status.state == TaskState.completed}")
-                print(f"🔍 task.status.state type: {type(task.status.state)}, TaskState.completed type: {type(TaskState.completed)}")
+                log_debug(f"Checking task state: {task.status.state}")
                 if task.status.state == TaskState.completed:
                     # ========================================================================
                     # EMIT COMPLETED STATUS for sidebar
                     # ========================================================================
-                    print(f"🟢 [COMPLETED] Task completed! Will emit completed status for {agent_name}", flush=True)
-                    async def emit_completed_status(ag_name=agent_name, ctx_id=contextId):
-                        try:
-                            print(f"🟢 [COMPLETED] emit_completed_status() CALLED for {ag_name}", flush=True)
-                            from service.websocket_streamer import get_websocket_streamer
-                            streamer = await get_websocket_streamer()
-                            print(f"🟢 [COMPLETED] Got streamer: {streamer is not None}", flush=True)
-                            if streamer:
-                                event_data = {
-                                    "taskId": taskId or str(uuid.uuid4()),
-                                    "conversationId": ctx_id,
-                                    "contextId": ctx_id,
-                                    "state": "completed",
-                                    "agentName": ag_name,
-                                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                                }
-                                print(f"📡 [SIDEBAR] Emitting task_updated for {ag_name}: state=completed", flush=True)
-                                result = await streamer._send_event("task_updated", event_data, ctx_id)
-                                print(f"📡 [SIDEBAR] _send_event result: {result}", flush=True)
-                            else:
-                                print(f"❌ [COMPLETED] No streamer available!", flush=True)
-                        except Exception as e:
-                            print(f"❌ [COMPLETED] Exception: {e}", flush=True)
-                            log_debug(f"Error emitting completed status: {e}")
-                    asyncio.create_task(emit_completed_status())
+                    log_debug(f"Task completed - emitting completed status for {agent_name}")
+                    asyncio.create_task(self._emit_simple_task_status(agent_name, "completed", contextId, taskId))
                     
                     # Emit workflow message for completed task
                     asyncio.create_task(self._emit_granular_agent_event(agent_name, f"{agent_name} has completed the task successfully", contextId))
@@ -4864,10 +4857,9 @@ Answer with just JSON:
                     response_parts = []
                     
                     # DEBUG: Check what's in the task
-                    print(f"✅ Task completed - checking contents:")
-                    print(f"  • task.status.message exists: {task.status.message is not None}")
+                    log_debug(f"Task completed - message exists: {task.status.message is not None}")
                     if task.status.message:
-                        print(f"  • task.status.message.parts count: {len(task.status.message.parts) if task.status.message.parts else 0}")
+                        log_debug(f"Task completed - parts count: {len(task.status.message.parts) if task.status.message.parts else 0}")
                     print(f"  • task.artifacts exists: {task.artifacts is not None}")
                     if task.artifacts:
                         print(f"  • task.artifacts count: {len(task.artifacts)}")
