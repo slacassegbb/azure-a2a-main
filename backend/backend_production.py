@@ -14,11 +14,13 @@ from pathlib import Path
 # Resolve important backend directories up front so path-dependent imports work
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
-UPLOADS_DIR = BASE_DIR / "uploads"
+RUNTIME_DIR = BASE_DIR / ".runtime"
+UPLOADS_DIR = RUNTIME_DIR / "uploads"
 HOSTS_DIR = BASE_DIR / "hosts"
 
 # Ensure critical directories exist when the backend boots
 DATA_DIR.mkdir(parents=True, exist_ok=True)
+RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
 UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 
 # Ensure backend directory is on sys.path for consistent imports regardless of cwd
@@ -1346,7 +1348,7 @@ Read-Host "Press Enter to close this window"
                 session_id = request.headers.get("X-Session-ID")
             
             # Create voice recordings directory (session-scoped if session_id provided)
-            voice_dir = BASE_DIR / "voice_recordings"
+            voice_dir = RUNTIME_DIR / "voice_recordings"
             if session_id:
                 voice_dir = voice_dir / session_id
             voice_dir.mkdir(parents=True, exist_ok=True)

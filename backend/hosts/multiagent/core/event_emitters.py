@@ -21,8 +21,8 @@ from typing import Any, Optional
 
 from a2a.types import AgentCard, Task
 
-from .utils import get_context_id, get_task_id
-from .remote_agent_connection import TaskCallbackArg
+from ..utils import get_context_id, get_task_id
+from ..remote_agent_connection import TaskCallbackArg
 
 # Import logging utilities
 import sys

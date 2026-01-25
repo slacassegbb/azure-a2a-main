@@ -9,6 +9,7 @@ import platform
 import subprocess
 from functools import partial
 from datetime import datetime, timezone
+from pathlib import Path
 import json
 
 # Utils - using the user's proven working imports
@@ -18,9 +19,12 @@ from .content_understanding_client import AzureContentUnderstandingClient
 # Import the A2A memory service
 from .a2a_memory_service import a2a_memory_service
 
-# Paths - from user's original code
-image_path = 'images'
-markdown_path = 'markdown'
+# Runtime directory for generated files
+RUNTIME_DIR = Path(__file__).resolve().parents[2] / ".runtime"
+
+# Paths - from user's original code (now under .runtime/)
+image_path = str(RUNTIME_DIR / 'images')
+markdown_path = str(RUNTIME_DIR / 'markdown')
 json_path = 'json'
 
 # File extensions - from user's original code
