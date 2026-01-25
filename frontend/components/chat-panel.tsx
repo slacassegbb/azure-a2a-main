@@ -1072,23 +1072,15 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
         // Only process assistant messages to avoid duplicating user messages
         if (data.role === "assistant" || data.role === "system") {
           const textContent = data.content.find((c: any) => c.type === "text")?.content || ""
-          // Get image parts - map to ensure mediaType is included
-          const imageContents = data.content.filter((c: any) => c.type === "image").map((c: any) => ({
-            uri: c.uri,
-            fileName: c.fileName || "Generated image",
-            fileSize: c.fileSize,
-            storageType: c.storageType,
-            mediaType: c.mediaType || "image/png",
-          }))
+          // Get image parts
+          const imageContents = data.content.filter((c: any) => c.type === "image")
           // Get video parts - either type="video" OR type="file" with video/* mimeType
           const videoContents = data.content.filter((c: any) => 
             c.type === "video" || (c.type === "file" && c.mimeType?.startsWith("video/"))
           ).map((c: any) => ({
             uri: c.uri,
-            fileName: c.fileName || "Generated video",
-            fileSize: c.fileSize,
-            storageType: c.storageType,
-            mediaType: c.mediaType || c.mimeType || "video/mp4",
+            fileName: c.name || c.fileName || "Generated video",
+            mediaType: c.mimeType || "video/mp4",
           }))
           console.log("[ChatPanel] Image parts count:", imageContents.length)
           console.log("[ChatPanel] Video parts count:", videoContents.length)
@@ -1662,7 +1654,19 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       const mediaFromSteps = inferenceSteps.filter(step => step.imageUrl)
       if (mediaFromSteps.length > 0) {
         mediaFromSteps.forEach((step, idx) => {
-          const isVideo = step.mediaType?.startsWith("video/")
+          // Determine mediaType: use step.mediaType if available, otherwise infer from file extension
+          let mediaType = step.mediaType
+          if (!mediaType && step.imageUrl) {
+            // Extract extension from URL (before any query params)
+            const urlWithoutParams = step.imageUrl.split('?')[0]
+            const ext = urlWithoutParams.split('.').pop()?.toLowerCase()
+            if (ext === 'mp4' || ext === 'webm' || ext === 'mov' || ext === 'avi' || ext === 'mkv') {
+              mediaType = `video/${ext === 'mov' ? 'quicktime' : ext}`
+            } else {
+              mediaType = 'image/png'
+            }
+          }
+          const isVideo = mediaType?.startsWith("video/")
           const mediaMsg: Message = {
             id: `media_${responseId}_${idx}_${Date.now()}`,
             role: "assistant",
@@ -1671,7 +1675,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
             attachments: [{
               uri: step.imageUrl!,
               fileName: step.imageName || (isVideo ? "Generated video" : "Generated image"),
-              mediaType: step.mediaType || "image/png",
+              mediaType: mediaType || "image/png",
             }],
           }
           messagesToAdd.push(mediaMsg)
@@ -2215,9 +2219,14 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                       {message.attachments && message.attachments.length > 0 && (
                         <div className="flex flex-col gap-3 mb-3">
                           {message.attachments.map((attachment, attachmentIndex) => {
-                            const isImage = (attachment.mediaType || "").startsWith("image/")
-                            const isVideo = (attachment.mediaType || "").startsWith("video/")
+                            // Check mediaType first, then fall back to URL extension detection
+                            const urlWithoutParams = (attachment.uri || "").split('?')[0].toLowerCase()
+                            const isVideoByExt = /\.(mp4|webm|mov|avi|mkv)$/.test(urlWithoutParams)
+                            const isImageByExt = /\.(png|jpe?g|gif|webp|svg|bmp)$/.test(urlWithoutParams)
+                            const isImage = (attachment.mediaType || "").startsWith("image/") || (!attachment.mediaType && isImageByExt)
+                            const isVideo = (attachment.mediaType || "").startsWith("video/") || (!attachment.mediaType && isVideoByExt) || isVideoByExt
                             
+                            // Check video FIRST (so .mp4 URLs don't get treated as images)
                             if (isVideo) {
                               return (
                                 <div key={`${message.id}-attachment-${attachmentIndex}`} className="flex flex-col gap-2">
@@ -2325,7 +2334,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                       {message.images && message.images.length > 0 && (
                         <div className="flex flex-col gap-3 mb-3">
                           {message.images.map((image, imageIndex) => {
-                            const isVideo = image.mimeType?.startsWith('video/')
+                            const isVideo = image.mimeType?.startsWith('video/') || image.uri.match(/\.(mp4|webm|mov)(\?|$)/i)
                             return (
                               <div key={`${message.id}-image-${imageIndex}`} className="flex flex-col gap-2">
                                 {isVideo ? (
