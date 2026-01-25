@@ -44,12 +44,16 @@ backend/data/sessions.json
 backend/data/agent_registry.json
 # Keep these files but consider adding them if they contain sensitive data
 
-# Generated media and uploads
+# Runtime data (generated files, uploads, etc.)
+backend/.runtime/
+
+# Legacy paths (now under .runtime/)
 backend/images/
 backend/markdown/
 backend/pdf/
 backend/uploads/
 backend/voice_recordings/
+backend/host_agent_files/
 remote_agents/azurefoundry_image_generator/static/outputs/
 
 # Service logs

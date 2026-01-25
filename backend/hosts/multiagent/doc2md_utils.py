@@ -25,6 +25,10 @@ import uuid
 # For LibreOffice Doc Conversion to PDF
 import subprocess
 
+# Runtime directory for generated files
+RUNTIME_DIR = Path(__file__).resolve().parents[2] / ".runtime"
+PDF_OUTPUT_DIR = str(RUNTIME_DIR / "pdf")
+
 # Azure OpenAI configuration for image processing is now sourced from environment variables
 _GPT_ENV_VARS = {
     "AZURE_OPENAI_GPT_API_BASE": "Base URL for the Azure AI Foundry project (e.g. https://<host>/api/projects/<project>)",
@@ -99,12 +103,12 @@ def convert_to_pdf(input_path):
     file_suffix = pathlib.Path(input_path).suffix.lower()
     
     if file_suffix in supported_conversion_types:
-        ensure_directory_exists('pdf')  
+        ensure_directory_exists(PDF_OUTPUT_DIR)  
         
         # Extract just the filename (not path) to avoid issues with absolute paths
         base_filename = os.path.basename(input_path)
         filename_no_ext = os.path.splitext(base_filename)[0]
-        output_file = os.path.join('pdf', filename_no_ext + '.pdf')
+        output_file = os.path.join(PDF_OUTPUT_DIR, filename_no_ext + '.pdf')
     
         print('Converting', input_path, 'to', output_file)
         if os.path.exists(output_file):

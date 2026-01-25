@@ -27,7 +27,7 @@ if str(backend_dir) not in sys.path:
 
 from log_config import log_debug, log_info, log_error
 
-from .remote_agent_connection import RemoteAgentConnections
+from ..remote_agent_connection import RemoteAgentConnections
 
 
 class AgentRegistry:

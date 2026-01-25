@@ -23,7 +23,7 @@ if str(backend_dir) not in sys.path:
 
 from a2a.types import Artifact, DataPart
 
-from .a2a_memory_service import a2a_memory_service
+from ..a2a_memory_service import a2a_memory_service
 from utils.tenant import get_tenant_from_context
 
 

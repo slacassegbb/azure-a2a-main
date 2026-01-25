@@ -1,0 +1,105 @@
+[
+  {
+    "name": "AI Foundry Classification Triage Agent",
+    "description": "An intelligent incident classification and triage agent powered by Azure AI Foundry. Specializes in analyzing customer issues, classifying incidents into proper categories, assessing priority levels, and routing cases to appropriate teams using ServiceNow standards.",
+    "version": "1.0.0",
+    "url": "http://localhost:8009/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "incident_classification",
+        "name": "Incident Classification",
+        "description": "Classify customer incidents into categories such as Fraud, Technical Issues, Payment Issues, Card Issues, Account Services, Security, and Inquiries",
+        "examples": [
+          "I lost my card while traveling",
+          "There is an unauthorized charge on my account",
+          "I cannot log into my banking app",
+          "My payment failed to go through"
+        ],
+        "tags": [
+          "classification",
+          "incident",
+          "triage",
+          "categorization"
+        ]
+      },
+      {
+        "id": "priority_assessment",
+        "name": "Priority Assessment",
+        "description": "Determine urgency, impact, and priority levels for incidents using ServiceNow standard mapping",
+        "examples": [
+          "Assess priority for fraud incident",
+          "Determine urgency for account blocked",
+          "Evaluate impact of system outage",
+          "Calculate priority matrix for technical issue"
+        ],
+        "tags": [
+          "priority",
+          "urgency",
+          "impact",
+          "assessment",
+          "servicenow"
+        ]
+      },
+      {
+        "id": "routing_triage",
+        "name": "Routing & Triage",
+        "description": "Route incidents to appropriate teams and provide triage recommendations based on classification",
+        "examples": [
+          "Route fraud case to security team",
+          "Escalate critical payment issue",
+          "Assign technical issue to IT support",
+          "Triage account service request"
+        ],
+        "tags": [
+          "routing",
+          "triage",
+          "escalation",
+          "team-assignment"
+        ]
+      },
+      {
+        "id": "field_mapping",
+        "name": "ServiceNow Field Mapping",
+        "description": "Map incident details to proper ServiceNow fields including category, subcategory, description, and metadata",
+        "examples": [
+          "Map incident to ServiceNow fields",
+          "Generate proper short description",
+          "Categorize into subcategory",
+          "Create structured ticket data"
+        ],
+        "tags": [
+          "servicenow",
+          "mapping",
+          "fields",
+          "metadata"
+        ]
+      },
+      {
+        "id": "keyword_analysis",
+        "name": "Keyword Analysis",
+        "description": "Analyze customer messages for classification keywords and context cues to determine incident type",
+        "examples": [
+          "Analyze message for fraud keywords",
+          "Identify technical issue indicators",
+          "Extract payment problem signals",
+          "Detect security concerns"
+        ],
+        "tags": [
+          "keywords",
+          "analysis",
+          "context",
+          "nlp"
+        ]
+      }
+    ]
+  }
+]

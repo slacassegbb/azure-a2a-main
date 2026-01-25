@@ -8,6 +8,7 @@ through multi-agent conversations with hybrid local/Azure Blob storage.
 import os
 import uuid
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Optional, Dict, Any
 
 from a2a.types import (
@@ -18,6 +19,9 @@ from a2a.types import (
 )
 
 from log_config import log_debug, log_error
+
+# Runtime directory for file storage
+RUNTIME_DIR = Path(__file__).resolve().parents[2] / ".runtime"
 
 # Import the models and utils we need
 from .models import SessionContext
@@ -49,7 +53,7 @@ class DummyToolContext:
         self._azure_blob_client = azure_blob_client
         
         # Local filesystem storage for smaller artifacts
-        self.storage_dir = os.path.join(os.getcwd(), "host_agent_files")
+        self.storage_dir = str(RUNTIME_DIR / "host_agent_files")
         os.makedirs(self.storage_dir, exist_ok=True)
         
         # Base URL for artifact retrieval (configurable per deployment)
