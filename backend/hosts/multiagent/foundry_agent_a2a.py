@@ -4725,6 +4725,111 @@ Answer with just JSON:
 
         return "\n".join(lines)
 
+    async def _handle_pending_input_agent(
+        self,
+        session_context: Any,
+        message_parts: list,
+        context_id: str,
+        event_logger: Any
+    ) -> Optional[list]:
+        """
+        Handle Human-In-The-Loop (HITL) routing when an agent is waiting for input_required response.
+        
+        If an agent previously returned input_required, route the user's response directly
+        to that agent instead of going through normal orchestration. Also handles resuming
+        paused workflows after the agent completes.
+        
+        Args:
+            session_context: The session context with pending agent state
+            message_parts: The user's message parts
+            context_id: The context/session ID
+            event_logger: Event logger for tracking
+            
+        Returns:
+            Response list if HITL was handled, None if no pending agent (fall through to normal flow)
+        """
+        if not session_context.pending_input_agent:
+            return None
+            
+        pending_agent = session_context.pending_input_agent
+        pending_task_id = session_context.pending_input_task_id
+        pending_workflow = session_context.pending_workflow
+        pending_workflow_outputs = session_context.pending_workflow_outputs or []
+        
+        log_info(f"🔄 [HITL] Found pending input_required agent: '{pending_agent}' (task_id: {pending_task_id})")
+        log_info(f"🔄 [HITL] Routing user response directly to waiting agent instead of orchestration")
+        if pending_workflow:
+            log_info(f"🔄 [HITL] Workflow will resume after agent completes ({len(pending_workflow_outputs)} outputs collected)")
+        
+        # Clear the pending state before routing
+        session_context.pending_input_agent = None
+        session_context.pending_input_task_id = None
+        
+        # Extract user message from parts
+        hitl_user_message = ""
+        for part in message_parts:
+            if hasattr(part, 'root') and part.root.kind == 'text':
+                hitl_user_message = part.root.text
+                break
+        
+        # Helper to extract clean text from responses
+        def clean_response(resp):
+            if isinstance(resp, list):
+                return [self._extract_text_from_response(r) for r in resp]
+            return [self._extract_text_from_response(resp)]
+        
+        try:
+            tool_context = DummyToolContext(session_context, self._azure_blob_client)
+            hitl_response = await self.send_message(
+                agent_name=pending_agent,
+                message=hitl_user_message,
+                tool_context=tool_context,
+                suppress_streaming=False
+            )
+            log_info(f"🔄 [HITL] Response from agent '{pending_agent}': {str(hitl_response)[:200]}...")
+            
+            # Check if agent is STILL requesting input (multi-turn HITL)
+            if session_context.pending_input_agent:
+                log_info(f"🔄 [HITL] Agent still requires more input - staying paused")
+                return clean_response(hitl_response)
+            
+            # Agent completed! Check if we need to resume a paused workflow
+            if pending_workflow:
+                log_info(f"▶️ [HITL] Agent completed - RESUMING WORKFLOW")
+                
+                # Add this agent's response to the collected outputs
+                hitl_outputs = clean_response(hitl_response)
+                all_outputs = pending_workflow_outputs + hitl_outputs
+                
+                # Clear workflow pause state
+                session_context.pending_workflow = None
+                session_context.pending_workflow_outputs = []
+                session_context.pending_workflow_user_message = None
+                
+                log_info(f"▶️ [HITL] Resuming workflow with {len(all_outputs)} total outputs")
+                
+                # Continue the workflow from where we left off
+                remaining_outputs = await self._agent_mode_orchestration_loop(
+                    user_message="Continue the workflow. The previous step has completed.",
+                    context_id=context_id,
+                    session_context=session_context,
+                    event_logger=event_logger,
+                    workflow=pending_workflow
+                )
+                
+                # Clean any remaining outputs too
+                clean_remaining = [self._extract_text_from_response(out) for out in remaining_outputs]
+                return all_outputs + clean_remaining
+            
+            return clean_response(hitl_response)
+            
+        except Exception as e:
+            log_error(f"🔄 [HITL] Error routing to pending agent '{pending_agent}': {e}")
+            import traceback
+            traceback.print_exc()
+            # Return None to fall through to normal processing
+            return None
+
     @staticmethod
     def _load_file_bytes(file_part: Any, context_id: Optional[str] = None) -> tuple[Optional[bytes], Optional[str]]:
         """
@@ -6117,90 +6222,15 @@ Answer with just JSON:
             log_foundry_debug(f"Agent mode set to: {agent_mode}, Inter-agent memory: {enable_inter_agent_memory}")
             
             # HUMAN-IN-THE-LOOP: Check if an agent is waiting for input_required response
-            # If so, route this message directly to that agent instead of normal orchestration
-            if session_context.pending_input_agent:
-                pending_agent = session_context.pending_input_agent
-                pending_task_id = session_context.pending_input_task_id
-                pending_workflow = session_context.pending_workflow
-                pending_workflow_outputs = session_context.pending_workflow_outputs or []
+            hitl_result = await self._handle_pending_input_agent(
+                session_context=session_context,
+                message_parts=message_parts,
+                context_id=context_id,
+                event_logger=event_logger
+            )
+            if hitl_result is not None:
+                return hitl_result
                 
-                log_info(f"🔄 [HITL] Found pending input_required agent: '{pending_agent}' (task_id: {pending_task_id})")
-                log_info(f"🔄 [HITL] Routing user response directly to waiting agent instead of orchestration")
-                if pending_workflow:
-                    log_info(f"🔄 [HITL] Workflow will resume after agent completes ({len(pending_workflow_outputs)} outputs collected)")
-                
-                # Clear the pending state before routing
-                session_context.pending_input_agent = None
-                session_context.pending_input_task_id = None
-                
-                # Extract user message from parts
-                hitl_user_message = ""
-                for part in message_parts:
-                    if hasattr(part, 'root') and part.root.kind == 'text':
-                        hitl_user_message = part.root.text
-                        break
-                
-                # Route directly to the waiting agent
-                try:
-                    tool_context = DummyToolContext(session_context, self._azure_blob_client)
-                    hitl_response = await self.send_message(
-                        agent_name=pending_agent,
-                        message=hitl_user_message,
-                        tool_context=tool_context,
-                        suppress_streaming=False
-                    )
-                    log_info(f"🔄 [HITL] Response from agent '{pending_agent}': {str(hitl_response)[:200]}...")
-                    
-                    # Helper to extract clean text from responses
-                    def clean_response(resp):
-                        if isinstance(resp, list):
-                            return [self._extract_text_from_response(r) for r in resp]
-                        return [self._extract_text_from_response(resp)]
-                    
-                    # Check if agent is STILL requesting input (multi-turn HITL)
-                    if session_context.pending_input_agent:
-                        log_info(f"🔄 [HITL] Agent still requires more input - staying paused")
-                        # Keep the pending workflow state for next turn
-                        return clean_response(hitl_response)
-                    
-                    # Agent completed! Check if we need to resume a paused workflow
-                    if pending_workflow:
-                        log_info(f"▶️ [HITL] Agent completed - RESUMING WORKFLOW")
-                        
-                        # Add this agent's response to the collected outputs (properly extract text)
-                        hitl_outputs = clean_response(hitl_response)
-                        all_outputs = pending_workflow_outputs + hitl_outputs
-                        
-                        # Clear workflow pause state
-                        session_context.pending_workflow = None
-                        session_context.pending_workflow_outputs = []
-                        session_context.pending_workflow_user_message = None
-                        
-                        log_info(f"▶️ [HITL] Resuming workflow with {len(all_outputs)} total outputs")
-                        
-                        # Continue the workflow from where we left off
-                        # The orchestrator will pick up from the next step
-                        remaining_outputs = await self._agent_mode_orchestration_loop(
-                            user_message="Continue the workflow. The previous step has completed.",
-                            context_id=context_id,
-                            session_context=session_context,
-                            event_logger=event_logger,
-                            workflow=pending_workflow
-                        )
-                        
-                        # Clean any remaining outputs too
-                        clean_remaining = []
-                        for out in remaining_outputs:
-                            clean_remaining.append(self._extract_text_from_response(out))
-                        
-                        return all_outputs + clean_remaining
-                    
-                    return clean_response(hitl_response)
-                except Exception as e:
-                    log_error(f"🔄 [HITL] Error routing to pending agent '{pending_agent}': {e}")
-                    # Fall through to normal processing if routing fails
-                    import traceback
-                    traceback.print_exc()
             # Reset any cached parts from prior turns so we don't resend stale attachments
             if hasattr(session_context, "_latest_processed_parts"):
                 file_count_before = len(session_context._latest_processed_parts)
@@ -6497,26 +6527,10 @@ Answer with just JSON:
             # If no valid response text found, surface tool output as fallback
             if not responses and last_tool_output:
                 log_foundry_debug(f"No response text found, using tool output as fallback")
-
-                def _flatten_tool_output(output):
-                    if isinstance(output, list):
-                        joined = "\n\n".join(str(item) for item in output)
-                        normalized = self._normalize_function_response_text(joined)
-                        if isinstance(normalized, list):
-                            return [str(item) for item in normalized]
-                        return [normalized if isinstance(normalized, str) else str(normalized)]
-
-                    if isinstance(output, str):
-                        normalized = self._normalize_function_response_text(output)
-                        return [normalized if isinstance(normalized, str) else str(normalized)]
-
-                    return [str(output)]
-
                 # Extract response from tool outputs
-                if last_tool_output and len(last_tool_output) > 0:
-                    for tool_output in last_tool_output:
-                        if isinstance(tool_output, dict) and 'output' in tool_output:
-                            responses.append(tool_output['output'])
+                for tool_output in last_tool_output:
+                    if isinstance(tool_output, dict) and 'output' in tool_output:
+                        responses.append(tool_output['output'])
             
             log_foundry_debug(f"After response processing - responses count: {len(responses) if responses else 0}")
             if responses:
@@ -6665,67 +6679,6 @@ Answer with just JSON:
                 ))
                 
                 log_foundry_debug(f"About to return final_responses: {final_responses} (FIRST PATH)")
-                
-                # FIXED: Don't stream here if host manager is handling it to prevent duplicates
-                # The host manager will stream the response, so we skip streaming here
-                log_debug(f"Skipping foundry agent direct streaming - host manager will handle response streaming")
-                # Stream the host agent's final aggregated response to WebSocket
-                # NOTE: Disabled to prevent duplicate messages - host manager handles streaming
-                if False and context_id not in self._host_responses_sent:
-                    self._host_responses_sent.add(context_id)
-                    try:
-                        from websocket_streamer import get_websocket_streamer
-                        
-                        try:
-                            streamer = await get_websocket_streamer()
-                            if streamer:
-                                # Combine all final responses into a single message
-                                final_response_text = ""
-                                if final_responses:
-                                    final_response_text = "\n\n".join([str(response) for response in final_responses])
-                                
-                                # Send as host agent message event
-                                event_data = {
-                                    "messageId": str(uuid.uuid4()),
-                                    "conversationId": context_id or "",
-                                    "contextId": context_id or "",
-                                    "role": "assistant",
-                                    "content": [
-                                        {
-                                            "type": "text",
-                                            "content": final_response_text.strip(),
-                                            "mediaType": "text/plain"
-                                        }
-                                    ],
-                                    "direction": "incoming",
-                                    "agentName": "foundry-host-agent",  # Host agent name
-                                    "timestamp": __import__('datetime').datetime.now(timezone.utc).isoformat(),
-                                    "source": "run_conversation_with_parts"  # Track which method sent this
-                                }
-                                
-                                # Stream the final aggregated response
-                                success = await streamer._send_event("message", event_data, context_id)
-                                if success:
-                                    log_debug(f"Host agent final response event streamed: {event_data}")
-                                else:
-                                    log_debug("Failed to stream host agent final response event")
-                            else:
-                                log_debug("WebSocket streamer not available for host agent final response")
-                        except Exception as e:
-                            log_debug(f"Error streaming host agent final response to WebSocket: {e}")
-                            # Don't let WebSocket errors break the main flow
-                            pass
-                        
-                    except ImportError:
-                        # WebSocket module not available, continue without streaming
-                        log_debug("WebSocket module not available for host agent response")
-                        pass
-                    except Exception as e:
-                        log_debug(f"Error setting up host agent response streaming: {e}")
-                        # Don't let WebSocket errors break the main flow
-                        pass
-                else:
-                    log_debug(f"Host agent response already sent for context {context_id}, skipping duplicate")
                 
                 return final_responses
         
