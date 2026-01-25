@@ -4425,6 +4425,89 @@ Answer with just JSON:
             pass
         return 0
 
+    @staticmethod
+    def _infer_file_role(explicit_role: Optional[str], name_hint: Optional[str]) -> Optional[str]:
+        """
+        Infer file role (base, mask, overlay) from filename for image editing workflows.
+        
+        Role assignment rules:
+        1. If explicit_role is provided, use it
+        2. Generated/edited files (generated_*, edit_*) get no role (kept separate)
+        3. Files with "mask" in name → mask role
+        4. Files with "_base" in name → base role  
+        5. Image files and logos → overlay role
+        6. Everything else → no role
+        
+        Args:
+            explicit_role: Role explicitly set on the file
+            name_hint: Filename to infer role from
+            
+        Returns:
+            Role string (base, mask, overlay) or None
+        """
+        if explicit_role:
+            return str(explicit_role).lower()
+
+        if not name_hint:
+            return None
+
+        name_lower = str(name_hint).lower()
+
+        # Generated/edited outputs get no role - kept as separate artifacts
+        if "generated_" in name_lower or "edit_" in name_lower:
+            return None
+
+        # Mask files
+        if "mask" in name_lower or name_lower.endswith("-mask.png") or name_lower.endswith("_mask.png"):
+            return "mask"
+
+        # Base files
+        if name_lower.endswith("-base.png") or name_lower.endswith("_base.png") or "_base" in name_lower:
+            return "base"
+
+        # Image files default to overlay
+        image_exts = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".tif", ".tiff", ".heic", ".heif", ".jfif", ".apng")
+        if name_lower.endswith(image_exts) or "logo" in name_lower:
+            return "overlay"
+
+        return None
+
+    @staticmethod
+    def _normalize_uri(value: Optional[str]) -> Optional[str]:
+        """
+        Normalize a URI for comparison/deduplication.
+        
+        Strips whitespace, removes query parameters, and lowercases.
+        """
+        if not value:
+            return None
+        normalized = str(value).strip()
+        if not normalized:
+            return None
+        base, _, _ = normalized.partition("?")
+        return base.lower()
+
+    @staticmethod
+    def _apply_role_to_part(part: Any, role: Optional[str]) -> None:
+        """
+        Apply a role to a part's metadata for image editing workflows.
+        
+        Handles both DataPart and FilePart structures.
+        """
+        if not role:
+            return
+        normalized_role = str(role).lower()
+        target = part.root if isinstance(part, Part) else part
+        if isinstance(target, DataPart) and isinstance(target.data, dict):
+            target.data["role"] = normalized_role
+            meta = target.data.get("metadata") or {}
+            meta["role"] = normalized_role
+            target.data["metadata"] = meta
+        elif isinstance(target, FilePart):
+            meta = target.metadata or {}
+            meta["role"] = normalized_role
+            target.metadata = meta
+
     def _get_retry_count(self, session_context: SessionContext) -> int:
         """Get current retry count for this session"""
         return session_context.retry_count
@@ -6845,66 +6928,12 @@ Answer with just JSON:
             else:
                 rval.append(result)
 
-        def _infer_role(explicit_role: Optional[str], name_hint: Optional[str]) -> Optional[str]:
-            if explicit_role:
-                return str(explicit_role).lower()
-
-            if not name_hint:
-                return None
-
-            name_lower = str(name_hint).lower()
-
-            # Check for generated/edited outputs FIRST (before role keywords)
-            # This ensures generated masks/overlays/bases are ALL kept for display, not deduplicated
-            # The receiving agent will use the FIRST file as base (fallback behavior)
-            if "generated_" in name_lower or "edit_" in name_lower:
-                return None  # No role = kept as separate artifact, agent uses first as base
-
-            # Only assign roles to USER-UPLOADED files (for editing workflows)
-            if "mask" in name_lower or name_lower.endswith("-mask.png") or name_lower.endswith("_mask.png"):
-                return "mask"
-
-            if (
-                name_lower.endswith("-base.png")
-                or name_lower.endswith("_base.png")
-                or "_base" in name_lower
-            ):
-                return "base"
-
-            image_exts = (
-                ".png",
-                ".jpg",
-                ".jpeg",
-                ".gif",
-                ".bmp",
-                ".webp",
-                ".tif",
-                ".tiff",
-                ".heic",
-                ".heif",
-                ".jfif",
-                ".apng",
-            )
-
-            if name_lower.endswith(image_exts) or "logo" in name_lower:
-                return "overlay"
-
-            return None
-
+        # URI tracking for deduplication
         uri_to_parts: Dict[str, List[Any]] = {}
         assigned_roles: Dict[str, str] = {}
 
-        def _normalize_uri(value: Optional[str]) -> Optional[str]:
-            if not value:
-                return None
-            normalized = str(value).strip()
-            if not normalized:
-                return None
-            base, _, _ = normalized.partition("?")
-            return base.lower()
-
         def _register_part_uri(part: Any, uri: Optional[str]) -> None:
-            normalized_uri = _normalize_uri(uri)
+            normalized_uri = self._normalize_uri(uri)
             if not normalized_uri:
                 return
             uri_to_parts.setdefault(normalized_uri, []).append(part)
@@ -6912,25 +6941,10 @@ Answer with just JSON:
         def _register_role(uri: Optional[str], role: Optional[str]) -> None:
             if not role:
                 return
-            normalized_uri = _normalize_uri(uri)
+            normalized_uri = self._normalize_uri(uri)
             if not normalized_uri:
                 return
             assigned_roles[normalized_uri] = str(role).lower()
-
-        def _apply_role_to_part(part: Any, role: Optional[str]) -> None:
-            if not role:
-                return
-            normalized_role = str(role).lower()
-            target = part.root if isinstance(part, Part) else part
-            if isinstance(target, DataPart) and isinstance(target.data, dict):
-                target.data["role"] = normalized_role
-                meta = target.data.get("metadata") or {}
-                meta["role"] = normalized_role
-                target.data["metadata"] = meta
-            elif isinstance(target, FilePart):
-                meta = target.metadata or {}
-                meta["role"] = normalized_role
-                target.metadata = meta
 
         # Use centralized utility for URI extraction
         def _local_extract_uri(part: Any) -> Optional[str]:
@@ -6946,7 +6960,7 @@ Answer with just JSON:
                     artifact_uri = item.data.get("artifact-uri")
                     existing_role = item.data.get("role") or (item.data.get("metadata") or {}).get("role")
                     name_hint = item.data.get("file-name") or item.data.get("name") or item.data.get("artifact-id")
-                    role_value = _infer_role(existing_role, name_hint)
+                    role_value = self._infer_file_role(existing_role, name_hint)
 
                     if role_value and str(role_value).lower() != (existing_role or "").lower():
                         item.data["role"] = role_value
@@ -7038,17 +7052,17 @@ Answer with just JSON:
         if pending_file_parts:
             latest_parts.extend(pending_file_parts)
 
-        base_uri_hint = _normalize_uri((refine_payload or {}).get("image_url"))
-        mask_uri_hint = _normalize_uri((refine_payload or {}).get("mask_url"))
+        base_uri_hint = self._normalize_uri((refine_payload or {}).get("image_url"))
+        mask_uri_hint = self._normalize_uri((refine_payload or {}).get("mask_url"))
 
         if base_uri_hint or mask_uri_hint:
             for part in flattened_parts:
-                candidate_uri = _normalize_uri(_local_extract_uri(part))
+                candidate_uri = self._normalize_uri(_local_extract_uri(part))
                 if base_uri_hint and candidate_uri == base_uri_hint:
-                    _apply_role_to_part(part, "base")
+                    self._apply_role_to_part(part, "base")
                     _register_role(candidate_uri, "base")
                 if mask_uri_hint and candidate_uri == mask_uri_hint:
-                    _apply_role_to_part(part, "mask")
+                    self._apply_role_to_part(part, "mask")
                     _register_role(candidate_uri, "mask")
 
         for uri_value, parts_list in uri_to_parts.items():
@@ -7061,23 +7075,23 @@ Answer with just JSON:
             is_generated_artifact = "generated_" in file_name_from_uri or "edit_" in file_name_from_uri
             
             if is_generated_artifact:
-                print(f"🔍 Skipping default 'overlay' role for generated artifact: {file_name_from_uri}")
+                log_debug(f"Skipping default 'overlay' role for generated artifact: {file_name_from_uri}")
                 # Don't assign any role - keep generated artifacts separate for display
                 continue
             
             # For other files (user uploads, logos, etc.), assign overlay as default
             for part in parts_list:
-                _apply_role_to_part(part, "overlay")
+                self._apply_role_to_part(part, "overlay")
             assigned_roles[uri_value] = "overlay"
 
         def _apply_assigned_roles(parts: Iterable[Any]) -> None:
             for part in parts:
-                uri = _normalize_uri(_local_extract_uri(part))
+                uri = self._normalize_uri(_local_extract_uri(part))
                 if not uri:
                     continue
                 role_for_uri = assigned_roles.get(uri)
                 if role_for_uri:
-                    _apply_role_to_part(part, role_for_uri)
+                    self._apply_role_to_part(part, role_for_uri)
 
         _apply_assigned_roles(flattened_parts)
         _apply_assigned_roles(latest_parts)
