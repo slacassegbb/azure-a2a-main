@@ -111,7 +111,7 @@ from .instructions import (
 from .event_emitters import EventEmitters
 from .agent_registry import AgentRegistry
 from .streaming_handlers import StreamingHandlers
-from .memory_service import MemoryService
+from .memory_operations import MemoryOperations
 from pydantic import BaseModel, Field
 
 # Tenant utilities for multi-tenancy support
@@ -161,7 +161,7 @@ tracer = trace.get_tracer(__name__)
 # Agent registry methods have been extracted to agent_registry.py
 
 
-class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryService):
+class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryOperations):
     def __init__(
         self,
         remote_agent_addresses: List[str],

@@ -1,5 +1,5 @@
 """
-Memory Service - Memory search and artifact creation methods for FoundryHostAgent2.
+MemoryOperations - Memory search and artifact creation methods for FoundryHostAgent2.
 
 This module contains methods related to:
 - Searching relevant memory interactions
@@ -27,7 +27,7 @@ from .a2a_memory_service import a2a_memory_service
 from utils.tenant import get_tenant_from_context
 
 
-class MemoryService:
+class MemoryOperations:
     """
     Mixin class providing memory service methods.
     
