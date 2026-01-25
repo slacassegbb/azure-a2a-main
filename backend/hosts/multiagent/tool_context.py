@@ -19,30 +19,9 @@ from a2a.types import (
 
 from log_config import log_debug, log_error
 
-# Import the models we need
+# Import the models and utils we need
 from .models import SessionContext
-
-
-def _normalize_env_bool(raw_value: str | None, default: bool) -> bool:
-    """Parse boolean environment variable with support for common true/false representations."""
-    if raw_value is None:
-        return default
-    normalized = raw_value.strip().strip('"').strip("'").lower()
-    if normalized in {"1", "true", "yes", "y", "on"}:
-        return True
-    if normalized in {"0", "false", "no", "n", "off"}:
-        return False
-    return default
-
-
-def _normalize_env_int(raw_value: str | None, default: int) -> int:
-    """Parse integer environment variable with support for quoted values."""
-    if raw_value is None:
-        return default
-    try:
-        return int(raw_value.strip().strip('"').strip("'"))
-    except (TypeError, ValueError):
-        return default
+from .utils import normalize_env_bool, normalize_env_int
 
 
 class DummyToolContext:
@@ -292,8 +271,8 @@ class DummyToolContext:
     def _should_use_azure_blob(self, file_size_bytes: int) -> bool:
         """Determine whether to use Azure Blob based on file size and configuration."""
         raw_threshold = os.getenv('AZURE_BLOB_SIZE_THRESHOLD')
-        size_threshold = _normalize_env_int(raw_threshold, 1024 * 1024)
-        force_azure = _normalize_env_bool(os.getenv('FORCE_AZURE_BLOB'), False)
+        size_threshold = normalize_env_int(raw_threshold, 1024 * 1024)
+        force_azure = normalize_env_bool(os.getenv('FORCE_AZURE_BLOB'), False)
         has_azure_config = self._azure_blob_client is not None
  
         print(f"Azure Blob decision factors:")
