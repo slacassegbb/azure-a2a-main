@@ -2595,7 +2595,6 @@ Use the above output from the previous workflow step to complete your task."""
             List of response strings from executed tasks for final synthesis
         """
         log_debug(f"🎯 [Agent Mode] Starting orchestration loop for goal: {user_message[:100]}...")
-        log_debug(f"📋 [Agent Mode] Workflow parameter received: {workflow[:100] if workflow else 'None'}")
         
         # Reset host token usage for this workflow
         self.host_token_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
@@ -2613,20 +2612,13 @@ Use the above output from the previous workflow step to complete your task."""
         # =====================================================================
         
         # Handle conversation continuity - distinguish new goals from follow-up clarifications
-        # FIXED: Don't treat workflow iterations as follow-ups - they should continue in one loop
         if context_id in self._active_conversations and not workflow:
-            # User is providing additional information for an existing goal (only for non-workflow mode)
             original_goal = self._active_conversations[context_id]
             goal_text = f"{original_goal}\n\n[Additional Information Provided]: {user_message}"
-            print(f"🔄 [Agent Mode] Follow-up detected - appending to original goal")
         else:
-            # Fresh conversation OR workflow mode - establish goal
             goal_text = user_message
             if context_id not in self._active_conversations:
                 self._active_conversations[context_id] = user_message
-                print(f"🆕 [Agent Mode] New conversation started")
-            else:
-                print(f"🔄 [Agent Mode] Continuing workflow - NOT treating as follow-up")
         
         # Use the class method for extracting clean text from A2A response objects
         extract_text_from_response = self._extract_text_from_response
@@ -2634,20 +2626,11 @@ Use the above output from the previous workflow step to complete your task."""
         # Initialize execution plan with empty task list
         plan = AgentModePlan(goal=goal_text, goal_status="incomplete")
         iteration = 0
-        max_iterations = 20  # Safety limit to prevent infinite loops
-        workflow_step_count = 0  # Will be set if workflow is provided
+        max_iterations = 20
+        workflow_step_count = 0
         
         # Accumulate outputs from all completed tasks
         all_task_outputs = []
-        
-        # Log initial plan
-        print(f"\n{'='*80}")
-        log_debug(f"📋 [Agent Mode] INITIAL PLAN")
-        print(f"{'='*80}")
-        print(f"Goal: {plan.goal}")
-        print(f"Status: {plan.goal_status}")
-        print(f"Tasks: {len(plan.tasks)} (empty initially)")
-        print(f"{'='*80}\n")
         
         # System prompt that guides the orchestrator's decision-making
         # This is the "brain" that decides which agents to use and when
@@ -2734,15 +2717,10 @@ Do NOT skip steps. Do NOT mark goal as completed until ALL workflow steps are do
 """
             system_prompt += workflow_section
             log_debug(f"📋 [Agent Mode] ✅ Injected workflow into planner prompt ({len(workflow)} chars)")
-            log_debug(f"📋 [Agent Mode] Workflow section preview:\n{workflow_section[:500]}...")
-        else:
-            log_debug(f"📋 [Agent Mode] ❌ No workflow to inject (workflow is None or empty)")
         
         # Add workflow-specific completion logic if workflow is present
         if workflow and workflow.strip():
-            # Count the workflow steps to make it explicit
             workflow_step_count = len([line for line in workflow.strip().split('\n') if line.strip() and (line.strip()[0].isdigit() or line.strip().startswith('-'))])
-            print(f"📊 [Agent Mode] Detected {workflow_step_count} steps in workflow")
             log_debug(f"📊 [Agent Mode] Workflow step count: {workflow_step_count}")
             
             system_prompt += f"""
@@ -2813,10 +2791,6 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
             
             # Get next step from orchestrator
             try:
-                # Log system prompt for debugging (first 2000 chars)
-                print(f"🔍 [Agent Mode] System prompt being sent to Azure OpenAI (first 2000 chars):\n{system_prompt[:2000]}...")
-                print(f"🔍 [Agent Mode] System prompt contains 'MANDATORY WORKFLOW': {'MANDATORY WORKFLOW' in system_prompt}")
-                
                 next_step = await self._call_azure_openai_structured(
                     system_prompt=system_prompt,
                     user_prompt=user_prompt,
@@ -2824,49 +2798,16 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                     context_id=context_id
                 )
                 
-                print(f"🤖 [Agent Mode] Orchestrator decision: {next_step.reasoning}")
-                print(f"🤖 [Agent Mode] Goal status: {next_step.goal_status}")
+                log_debug(f"🤖 [Agent Mode] Orchestrator: {next_step.reasoning[:100]}... | status={next_step.goal_status}")
                 await self._emit_status_event(f"Reasoning: {next_step.reasoning}", context_id)
                 
                 # Update plan status
                 plan.goal_status = next_step.goal_status
                 plan.updated_at = datetime.now(timezone.utc)
                 
-                # Log plan state after orchestrator decision
-                print(f"\n{'='*80}")
-                log_debug(f"📋 [Agent Mode] PLAN STATE (Iteration {iteration})")
-                print(f"{'='*80}")
-                print(f"Goal: {plan.goal}")
-                print(f"Goal Status: {plan.goal_status}")
-                print(f"Total Tasks: {len(plan.tasks)}")
-                for i, task in enumerate(plan.tasks, 1):
-                    print(f"\n  Task {i}:")
-                    print(f"    Description: {task.task_description}")
-                    print(f"    Agent: {task.recommended_agent or 'None'}")
-                    print(f"    State: {task.state}")
-                    if task.error_message:
-                        print(f"    Error: {task.error_message}")
-                    if task.output:
-                        output_preview = str(task.output).replace('\n', ' ')[:100]
-                        print(f"    Output: {output_preview}...")
-                print(f"\n  Next Step Reasoning: {next_step.reasoning}")
-                print(f"  🔀 Parallel Flag: {next_step.parallel}")
-                if next_step.next_tasks:
-                    print(f"  🔀 Next Tasks (list): {len(next_step.next_tasks)} tasks")
-                    for idx, task in enumerate(next_step.next_tasks, 1):
-                        print(f"    {idx}. {task.get('task_description', 'N/A')} → {task.get('recommended_agent', 'N/A')}")
-                elif next_step.next_task:
-                    print(f"  Next Task (single): {next_step.next_task.get('task_description', 'N/A')}")
-                    print(f"  Target Agent: {next_step.next_task.get('recommended_agent', 'N/A')}")
-                print(f"{'='*80}\n")
-                
                 if next_step.goal_status == "completed":
                     completed_tasks_count = len([t for t in plan.tasks if t.state == "completed"])
-                    log_info(f"✅ [Agent Mode] Goal marked as completed after {iteration} iterations")
-                    log_info(f"📊 [Agent Mode] Completed tasks: {completed_tasks_count} / Expected workflow steps: {workflow_step_count if workflow and workflow.strip() else 'N/A'}")
-                    if workflow and workflow.strip() and completed_tasks_count < workflow_step_count:
-                        print(f"⚠️  [Agent Mode] WARNING: Only {completed_tasks_count} tasks completed but workflow has {workflow_step_count} steps!")
-                        print(f"⚠️  [Agent Mode] LLM reasoning: {next_step.reasoning}")
+                    log_info(f"✅ [Agent Mode] Goal completed after {iteration} iterations ({completed_tasks_count} tasks)")
                     await self._emit_status_event("Goal achieved! Generating final response...", context_id)
                     break
                 
@@ -2879,7 +2820,6 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                 is_parallel = next_step.parallel and next_step.next_tasks
                 
                 if is_parallel and next_step.next_tasks:
-                    # PARALLEL EXECUTION: Multiple tasks via next_tasks
                     log_info(f"🔀 [Agent Mode] PARALLEL execution: {len(next_step.next_tasks)} tasks")
                     await self._emit_status_event(f"Executing {len(next_step.next_tasks)} tasks in parallel...", context_id)
                     for task_dict in next_step.next_tasks:
@@ -2959,17 +2899,12 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                     
                     # Run all tasks in parallel
                     try:
-                        log_info(f"🔀 [Agent Mode] About to call asyncio.gather with {len(pydantic_tasks)} tasks")
                         results = await async_lib.gather(
                             *[execute_task_parallel(t) for t in pydantic_tasks],
                             return_exceptions=True
                         )
-                        log_info(f"🔀 [Agent Mode] asyncio.gather completed, got {len(results)} results")
                     except Exception as gather_error:
-                        log_error(f"[Agent Mode] ERROR in asyncio.gather: {gather_error}")
-                        log_error(f"[Agent Mode] Error type: {type(gather_error)}")
-                        import traceback
-                        log_error(f"[Agent Mode] Traceback:\n{traceback.format_exc()}")
+                        log_error(f"[Agent Mode] asyncio.gather failed: {gather_error}")
                         raise
                     
                     # Process results
@@ -2977,30 +2912,25 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                     for i, result in enumerate(results):
                         task = pydantic_tasks[i]
                         if isinstance(result, Exception):
-                            log_error(f"[Agent Mode] Parallel task exception: {result}")
                             task.state = "failed"
                             task.error_message = str(result)
                         elif isinstance(result, dict):
                             if result.get("hitl_pause"):
                                 hitl_pause = True
-                                # Store for HITL resumption
                                 if result.get("output"):
                                     all_task_outputs.append(result["output"])
                             elif result.get("output"):
                                 all_task_outputs.append(result["output"])
-                            elif result.get("error"):
-                                log_error(f"[Agent Mode] Task error: {result['error']}")
                         task.updated_at = datetime.now(timezone.utc)
                     
                     # If any task triggered HITL pause, pause the workflow
                     if hitl_pause:
-                        log_info(f"⏸️ [Agent Mode] HITL pause triggered during parallel execution")
                         session_context.pending_workflow = workflow
                         session_context.pending_workflow_outputs = all_task_outputs.copy()
                         session_context.pending_workflow_user_message = user_message
                         return all_task_outputs
                     
-                    log_info(f"✅ [Agent Mode] All {len(pydantic_tasks)} parallel tasks completed")
+                    log_info(f"✅ [Agent Mode] {len(pydantic_tasks)} parallel tasks completed")
                     
                 else:
                     # ============================================
@@ -3010,12 +2940,7 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                     task.state = "running"
                     task.updated_at = datetime.now(timezone.utc)
                     
-                    log_debug(f"📋 [Agent Mode] Sequential task: {task.task_description}")
-                    # Removed duplicate "Executing:" emit - already emitted in _execute_orchestrated_task
-                    
                     try:
-                        # For sequential tasks, pass only the LAST task output (from the immediately previous step)
-                        # Don't pass all accumulated outputs - that would grow context exponentially
                         previous_output = [all_task_outputs[-1]] if all_task_outputs else None
                         
                         result = await self._execute_orchestrated_task(
@@ -3025,11 +2950,10 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                             workflow=workflow,
                             user_message=user_message,
                             extract_text_fn=extract_text_from_response,
-                            previous_task_outputs=previous_output  # ✅ Only LAST output
+                            previous_task_outputs=previous_output
                         )
                         
                         if result.get("hitl_pause"):
-                            # HITL pause - return immediately
                             if result.get("output"):
                                 all_task_outputs.append(result["output"])
                             session_context.pending_workflow = workflow
@@ -3047,20 +2971,6 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                     
                     finally:
                         task.updated_at = datetime.now(timezone.utc)
-                        
-                        # Log task completion
-                        print(f"\n{'~'*80}")
-                        log_info(f"✅ [Agent Mode] TASK COMPLETED")
-                        print(f"{'~'*80}")
-                        print(f"Task ID: {task.task_id}")
-                        print(f"Description: {task.task_description}")
-                        print(f"Agent: {task.recommended_agent or 'None'}")
-                        print(f"Final State: {task.state}")
-                        if task.error_message:
-                            print(f"Error: {task.error_message}")
-                        if task.output:
-                            print(f"Output: {json.dumps(task.output, indent=2, default=str)[:500]}...")
-                        print(f"{'~'*80}\n")
                 
             except Exception as e:
                 log_error(f"[Agent Mode] Orchestration error: {e}")
@@ -3068,32 +2978,14 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                 break
         
         if iteration >= max_iterations:
-            print(f"⚠️ [Agent Mode] Reached maximum iterations ({max_iterations})")
+            log_debug(f"⚠️ [Agent Mode] Reached max iterations ({max_iterations})")
             await self._emit_status_event("Maximum iterations reached, completing...", context_id)
         
-        # Log final plan summary
-        print(f"\n{'='*80}")
-        print(f"🎬 [Agent Mode] FINAL PLAN SUMMARY")
-        print(f"{'='*80}")
-        print(f"Goal: {plan.goal}")
-        print(f"Final Status: {plan.goal_status}")
-        print(f"Total Iterations: {iteration}")
-        print(f"Total Tasks Created: {len(plan.tasks)}")
-        print(f"\nTask Breakdown:")
-        for i, task in enumerate(plan.tasks, 1):
-            print(f"  {i}. [{task.state.upper()}] {task.task_description[:60]}...")
-            print(f"     Agent: {task.recommended_agent or 'None'}")
-        print(f"\nTask Outputs Collected: {len(all_task_outputs)}")
-        print(f"{'='*80}\n")
-        
-        # Generate final response from all outputs
-        print(f"🎬 [Agent Mode] Orchestration complete. {len(all_task_outputs)} task outputs collected")
-        print(f"🎟️ [Host Agent] Final token usage: {self.host_token_usage}")
+        log_info(f"🎬 [Agent Mode] Complete: {len(all_task_outputs)} outputs, {iteration} iterations, {len(plan.tasks)} tasks")
         
         # Emit host token usage to frontend
         try:
             from service.websocket_streamer import get_websocket_streamer
-            import asyncio
             
             async def emit_host_tokens():
                 streamer = await get_websocket_streamer()
@@ -3102,14 +2994,13 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                         "agentName": "foundry-host-agent",
                         "tokenUsage": self.host_token_usage,
                         "state": "completed",
-                        "timestamp": __import__('datetime').datetime.now(timezone.utc).isoformat()
+                        "timestamp": datetime.now(timezone.utc).isoformat()
                     }
                     await streamer._send_event("host_token_usage", event_data, context_id)
-                    print(f"📡 [Host Agent] Emitted token usage to frontend: {self.host_token_usage['total_tokens']} tokens")
             
             asyncio.create_task(emit_host_tokens())
-        except Exception as e:
-            print(f"⚠️ [Host Agent] Error emitting token usage: {e}")
+        except Exception:
+            pass  # Don't let token emission failures break the flow
         
         return all_task_outputs
 
