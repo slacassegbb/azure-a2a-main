@@ -4508,6 +4508,79 @@ Answer with just JSON:
             meta["role"] = normalized_role
             target.metadata = meta
 
+    @staticmethod
+    def _build_mask_parts(
+        file_id: str,
+        mime_type: str,
+        artifact_uri: Optional[str],
+        artifact_info: dict,
+        file_bytes: Optional[bytes],
+        artifact_response: Optional[DataPart],
+    ) -> tuple[DataPart, FilePart]:
+        """
+        Build DataPart + FilePart for a mask file artifact.
+        
+        Consolidates mask-specific metadata and file part construction
+        that was previously duplicated in convert_part.
+        
+        Args:
+            file_id: Filename/identifier
+            mime_type: MIME type of the file
+            artifact_uri: URI where artifact is stored (if available)
+            artifact_info: Artifact metadata dict from save_artifact
+            file_bytes: Raw file bytes (fallback if no URI)
+            artifact_response: Existing DataPart from save_artifact (if any)
+            
+        Returns:
+            Tuple of (DataPart with metadata, FilePart with URI or bytes)
+        """
+        # Build or update the metadata DataPart
+        if isinstance(artifact_response, DataPart) and hasattr(artifact_response, 'data'):
+            artifact_response.data['description'] = artifact_response.data.get('description', 'image mask attachment')
+            artifact_response.data['skip-document-processing'] = True
+            artifact_response.data['role'] = 'mask'
+            metadata = artifact_response.data.get('metadata') or {}
+            metadata['role'] = 'mask'
+            artifact_response.data['metadata'] = metadata
+            mask_metadata_part = artifact_response
+            artifact_uri = artifact_uri or artifact_response.data.get('artifact-uri')
+        else:
+            # Create new DataPart with mask metadata
+            mask_metadata_part = DataPart(data={
+                'artifact-id': artifact_info.get('artifact_id') or str(uuid.uuid4()),
+                'artifact-uri': artifact_uri or artifact_info.get('artifact_uri'),
+                'storage-type': artifact_info.get('storage_type', 'unknown'),
+                'file-name': artifact_info.get('file_name') or file_id,
+                'description': 'image mask attachment',
+                'skip-document-processing': True,
+                'role': 'mask',
+                'metadata': {'role': 'mask'},
+            })
+
+        # Build the FilePart - prefer URI, fallback to embedded bytes
+        if artifact_uri:
+            mask_file_part = FilePart(
+                kind="file",
+                file=FileWithUri(
+                    name=file_id,
+                    mimeType=mime_type,
+                    uri=artifact_uri,
+                    role="mask",
+                ),
+            )
+        else:
+            mask_file_part = FilePart(
+                kind="file",
+                file=FileWithBytes(
+                    name=file_id,
+                    mimeType=mime_type,
+                    bytes=file_bytes or b'',
+                    role="mask",
+                )
+            )
+
+        return mask_metadata_part, mask_file_part
+
     def _get_retry_count(self, session_context: SessionContext) -> int:
         """Get current retry count for this session"""
         return session_context.retry_count
@@ -7331,19 +7404,11 @@ Answer with just JSON:
             
             log_debug(f"File validation passed, proceeding with artifact creation")
             
-            file_id_lower = (file_id or "").lower()
-            is_mask_artifact = (
-                file_id_lower.endswith("-mask.png")
-                or file_id_lower.endswith("_mask.png")
-                or "-mask" in file_id_lower
-                or "_mask" in file_id_lower
-            )
-            if not file_role_attr and file_id_lower.endswith("_base.png"):
-                file_role_attr = "base"
-            if not file_role_attr and not is_mask_artifact:
-                image_exts = (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tif", ".tiff")
-                if any(file_id_lower.endswith(ext) for ext in image_exts):
-                    file_role_attr = "overlay"
+            # Use unified role inference (replaces duplicate inline logic)
+            if not file_role_attr:
+                file_role_attr = self._infer_file_role(None, file_id)
+            
+            is_mask_artifact = (file_role_attr == "mask")
 
             artifact_info: dict[str, Any] = {
                 'file_name': file_id,
@@ -7409,66 +7474,29 @@ Answer with just JSON:
             
             if is_mask_artifact:
                 log_debug(f"Skipping document processing for mask artifact: {file_id}")
-                mask_metadata_part: Optional[DataPart] = None
-                mask_file_part: Optional[FilePart] = None
-
+                
+                # Get artifact URI from response or info
+                artifact_uri = None
                 if isinstance(artifact_response, DataPart) and hasattr(artifact_response, 'data'):
-                    artifact_response.data['description'] = artifact_response.data.get('description', 'image mask attachment')
-                    artifact_response.data['skip-document-processing'] = True
-                    artifact_response.data['role'] = 'mask'
-                    metadata = artifact_response.data.get('metadata') or {}
-                    metadata['role'] = 'mask'
-                    artifact_response.data['metadata'] = metadata
-                    mask_metadata_part = artifact_response
-
                     artifact_uri = artifact_response.data.get('artifact-uri')
-                    if artifact_uri:
-                        mask_file_part = FilePart(
-                            kind="file",
-                            file=FileWithUri(
-                                name=file_id,
-                                mimeType=artifact_response.data.get('media-type', getattr(part.root.file, 'mimeType', 'application/octet-stream')),
-                                uri=artifact_uri,
-                                role="mask",
-                            ),
-                        )
-                else:
+                if not artifact_uri:
                     artifact_uri = artifact_info.get('artifact_uri') or getattr(part.root.file, 'uri', None)
-                    metadata = {
-                        'artifact-id': artifact_info.get('artifact_id') or str(uuid.uuid4()),
-                        'artifact-uri': artifact_uri,
-                        'storage-type': artifact_info.get('storage_type', 'unknown'),
-                        'file-name': artifact_info.get('file_name'),
-                        'description': 'image mask attachment',
-                        'skip-document-processing': True,
-                        'role': 'mask',
-                        'metadata': {'role': 'mask'},
-                    }
-                    mask_metadata_part = DataPart(data=metadata)
+                
+                # Build mask parts using helper
+                mime_type = getattr(part.root.file, 'mimeType', 'application/octet-stream')
+                if isinstance(artifact_response, DataPart) and hasattr(artifact_response, 'data'):
+                    mime_type = artifact_response.data.get('media-type', mime_type)
+                
+                mask_metadata_part, mask_file_part = self._build_mask_parts(
+                    file_id=file_id,
+                    mime_type=mime_type,
+                    artifact_uri=artifact_uri,
+                    artifact_info=artifact_info,
+                    file_bytes=file_bytes,
+                    artifact_response=artifact_response if isinstance(artifact_response, DataPart) else None,
+                )
 
-                    if artifact_uri:
-                        mask_file_part = FilePart(
-                            kind="file",
-                            file=FileWithUri(
-                                name=file_id,
-                                mimeType=getattr(part.root.file, 'mimeType', 'application/octet-stream'),
-                                uri=artifact_uri,
-                                role="mask",
-                            ),
-                        )
-
-                if mask_file_part is None:
-                    log_debug(f"No accessible URI for mask; embedding bytes for {file_id}")
-                    mask_file_part = FilePart(
-                        kind="file",
-                        file=FileWithBytes(
-                            name=file_id,
-                            mimeType=getattr(part.root.file, 'mimeType', 'application/octet-stream'),
-                            bytes=file_bytes,
-                            role="mask",
-                        )
-                    )
-
+                # Store parts in session context for later access
                 session_context = getattr(tool_context, "state", None)
                 if session_context is not None:
                     latest_parts = getattr(session_context, "_latest_processed_parts", None)
