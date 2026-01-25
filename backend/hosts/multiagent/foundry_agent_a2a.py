@@ -6911,7 +6911,7 @@ Answer with just JSON:
             if hasattr(session_context, "agent_mode") and session_context.agent_mode:
                 # Agent mode: Preserve existing files from previous agents
                 latest_parts = getattr(session_context, "_latest_processed_parts", [])
-                print(f"📎 [Agent Mode] Preserving {len(latest_parts)} existing file parts from previous agents")
+                log_debug(f"📎 [Agent Mode] Preserving {len(latest_parts)} existing file parts from previous agents")
             else:
                 # User mode: Start fresh for each response
                 latest_parts: List[Any] = []
@@ -7001,7 +7001,7 @@ Answer with just JSON:
                         file_part_kwargs = {"file": FileWithUri(**file_with_uri_kwargs)}
                         if role_value:
                             file_part_kwargs["metadata"] = {"role": role_value}
-                            print(f"🎭 Creating FilePart with metadata role='{role_value}' for {file_with_uri_kwargs['name']}")
+                            log_debug(f"🎭 Creating FilePart with metadata role='{role_value}' for {file_with_uri_kwargs['name']}")
                         
                         file_part = FilePart(**file_part_kwargs)
                         flattened_parts.append(file_part)
@@ -7026,8 +7026,8 @@ Answer with just JSON:
                     # This is artifact metadata from an agent - wrap in DataPart
                     artifact_uri = item.get("artifact-uri", "")
                     log_debug(f"📦 [DEBUG] Wrapping artifact dict in DataPart:")
-                    print(f"   artifact-uri (first 150 chars): {artifact_uri[:150]}")
-                    print(f"   Has SAS token (?): {'?' in artifact_uri}")
+                    log_debug(f"   artifact-uri (first 150 chars): {artifact_uri[:150]}")
+                    log_debug(f"   Has SAS token (?): {'?' in artifact_uri}")
                     artifact_data_part = DataPart(data=item)
                     flattened_parts.append(artifact_data_part)
                     # Don't add to latest_parts here - it will be added via extend below to avoid duplicates
@@ -7100,13 +7100,13 @@ Answer with just JSON:
         log_foundry_debug(f"convert_parts returning {len(flattened_parts)} parts:")
         for idx, part in enumerate(flattened_parts):
             if isinstance(part, (TextPart, DataPart, FilePart)):
-                print(f"  • Part {idx}: {type(part).__name__} (kind={getattr(part, 'kind', 'N/A')})")
+                log_debug(f"  • Part {idx}: {type(part).__name__} (kind={getattr(part, 'kind', 'N/A')})")
             elif isinstance(part, dict):
-                print(f"  • Part {idx}: dict with keys={list(part.keys())}")
+                log_debug(f"  • Part {idx}: dict with keys={list(part.keys())}")
             elif isinstance(part, str):
-                print(f"  • Part {idx}: string (length={len(part)})")
+                log_debug(f"  • Part {idx}: string (length={len(part)})")
             else:
-                print(f"  • Part {idx}: {type(part)}")
+                log_debug(f"  • Part {idx}: {type(part)}")
 
         return flattened_parts
 
@@ -7209,17 +7209,17 @@ Answer with just JSON:
             # Skip token_usage DataParts - already extracted earlier, not for main chat
             if isinstance(data, dict) and data.get('type') == 'token_usage':
                 return None
-            print(f"DataPart data: {data} (type: {type(data)})")
+            log_debug(f"DataPart data: {data} (type: {type(data)})")
             # IMPORTANT: Preserve DataPart wrapper for metadata types that need to flow through
             # (video_metadata, image_metadata, etc.) so they can be detected by artifact processing
             if isinstance(data, dict) and data.get('type') in ('video_metadata', 'image_metadata'):
-                print(f"📎 [VideoRemix] Preserving DataPart wrapper for {data.get('type')} with video_id={data.get('video_id')}")
+                log_debug(f"📎 [VideoRemix] Preserving DataPart wrapper for {data.get('type')} with video_id={data.get('video_id')}")
                 return part  # Return the full Part(root=DataPart(...)) to preserve structure
             return data
         elif hasattr(part, 'root') and part.root.kind == 'file':
             # A2A protocol compliant file handling with enterprise security
             file_id = part.root.file.name
-            print(f"🔍 FILE DEBUG: Starting file processing for: {file_id}")
+            log_debug(f"🔍 FILE DEBUG: Starting file processing for: {file_id}")
             
             file_bytes = None
             summary_text = None
@@ -7228,7 +7228,7 @@ Answer with just JSON:
             
             # Check if this is an uploaded file with URI
             if hasattr(part.root.file, 'uri') and part.root.file.uri:
-                print(f"🔍 FILE DEBUG: Found URI: {part.root.file.uri}")
+                log_debug(f"🔍 FILE DEBUG: Found URI: {part.root.file.uri}")
                 # This is an uploaded file, read from uploads directory
                 if part.root.file.uri.startswith('/uploads/'):
                     file_uuid = part.root.file.uri.split('/')[-1]
@@ -7239,7 +7239,7 @@ Answer with just JSON:
                     if context_id and '::' in context_id:
                         session_id = context_id.split('::')[0]
                     
-                    print(f"🔍 FILE DEBUG: Looking for file with UUID: {file_uuid} in {upload_dir} (session: {session_id})")
+                    log_debug(f"🔍 FILE DEBUG: Looking for file with UUID: {file_uuid} in {upload_dir} (session: {session_id})")
                     
                     # Find the actual file with this UUID (may have extension)
                     try:
@@ -7249,43 +7249,43 @@ Answer with just JSON:
                         if session_id:
                             session_upload_dir = os.path.join(upload_dir, session_id)
                             if os.path.exists(session_upload_dir):
-                                print(f"🔍 FILE DEBUG: Checking session-scoped directory: {session_upload_dir}")
+                                log_debug(f"🔍 FILE DEBUG: Checking session-scoped directory: {session_upload_dir}")
                                 uploaded_files = os.listdir(session_upload_dir)
                                 for uploaded_filename in uploaded_files:
                                     if uploaded_filename.startswith(file_uuid):
                                         file_path = os.path.join(session_upload_dir, uploaded_filename)
-                                        print(f"🔍 FILE DEBUG: Reading file from session dir: {file_path}")
+                                        log_debug(f"🔍 FILE DEBUG: Reading file from session dir: {file_path}")
                                         with open(file_path, 'rb') as f:
                                             file_bytes = f.read()
-                                        print(f"📄 FILE DEBUG: Loaded uploaded file: {len(file_bytes)} bytes from {file_path}")
+                                        log_debug(f"📄 FILE DEBUG: Loaded uploaded file: {len(file_bytes)} bytes from {file_path}")
                                         break
                         
                         # Fall back to flat directory (legacy format)
                         if file_bytes is None and os.path.exists(upload_dir):
-                            print(f"🔍 FILE DEBUG: Falling back to flat directory: {upload_dir}")
+                            log_debug(f"🔍 FILE DEBUG: Falling back to flat directory: {upload_dir}")
                             uploaded_files = os.listdir(upload_dir)
-                            print(f"🔍 FILE DEBUG: Found {len(uploaded_files)} entries")
+                            log_debug(f"🔍 FILE DEBUG: Found {len(uploaded_files)} entries")
                             
                             for uploaded_filename in uploaded_files:
                                 # Skip directories (session folders)
                                 if os.path.isdir(os.path.join(upload_dir, uploaded_filename)):
                                     continue
-                                print(f"🔍 FILE DEBUG: Checking file: {uploaded_filename}")
+                                log_debug(f"🔍 FILE DEBUG: Checking file: {uploaded_filename}")
                                 if uploaded_filename.startswith(file_uuid):
                                     file_path = os.path.join(upload_dir, uploaded_filename)
-                                    print(f"🔍 FILE DEBUG: Reading file: {file_path}")
+                                    log_debug(f"🔍 FILE DEBUG: Reading file: {file_path}")
                                     with open(file_path, 'rb') as f:
                                         file_bytes = f.read()
-                                    print(f"📄 FILE DEBUG: Loaded uploaded file: {len(file_bytes)} bytes from {file_path}")
+                                    log_debug(f"📄 FILE DEBUG: Loaded uploaded file: {len(file_bytes)} bytes from {file_path}")
                                     break
                         
                         if file_bytes is None:
-                            print(f"❌ FILE DEBUG: Uploaded file not found for UUID: {file_uuid}")
+                            log_debug(f"❌ FILE DEBUG: Uploaded file not found for UUID: {file_uuid}")
                             return f"Error: Could not find uploaded file {file_id}"
                     except Exception as e:
-                        print(f"❌ FILE DEBUG: Error reading uploaded file: {e}")
+                        log_debug(f"❌ FILE DEBUG: Error reading uploaded file: {e}")
                         import traceback
-                        print(f"❌ FILE DEBUG: Traceback: {traceback.format_exc()}")
+                        log_debug(f"❌ FILE DEBUG: Traceback: {traceback.format_exc()}")
                         return f"Error: Could not read uploaded file {file_id}: {str(e)}"
             else:
                 # Try to get bytes from the file part (legacy format)
@@ -7298,11 +7298,11 @@ Answer with just JSON:
                             # bytes field is already binary data
                             file_bytes = part.root.file.bytes
                     else:
-                        print(f"❌ No file bytes or URI found in file part")
+                        log_debug(f"❌ No file bytes or URI found in file part")
                         return f"Error: No file data found for {file_id}"
                 except Exception as e:
-                    print(f"❌ Error decoding file bytes: {e}")
-                    print(f"❌ FILE DEBUG: Decoding traceback: {traceback.format_exc()}")
+                    log_debug(f"❌ Error decoding file bytes: {e}")
+                    log_debug(f"❌ FILE DEBUG: Decoding traceback: {traceback.format_exc()}")
                     return f"Error: Failed to decode file {file_id}: {str(e)}"
             
             if not file_bytes:
@@ -7315,21 +7315,21 @@ Answer with just JSON:
                             resp = http_client.get(http_uri)
                             resp.raise_for_status()
                             file_bytes = resp.content
-                        print(f"✅ FILE DEBUG: Downloaded file from URI: {len(file_bytes)} bytes")
+                        log_debug(f"✅ FILE DEBUG: Downloaded file from URI: {len(file_bytes)} bytes")
                     except Exception as download_err:
-                        print(f"❌ FILE DEBUG: Failed to fetch remote file {http_uri}: {download_err}")
+                        log_debug(f"❌ FILE DEBUG: Failed to fetch remote file {http_uri}: {download_err}")
                         return f"Error: Could not load file data for {file_id}: {download_err}"
 
                     # Continue processing - don't return early, let document processor handle it
                 else:
-                    print(f"❌ No file bytes loaded and no valid URI")
+                    log_debug(f"❌ No file bytes loaded and no valid URI")
                     return f"Error: Could not load file data for {file_id}"
             
             # Enhanced security: Validate file before processing
             if len(file_bytes) > 50 * 1024 * 1024:  # 50MB limit
                 return DataPart(data={'error': 'File too large', 'max_size': '50MB'})
             
-            print(f"File validation passed, proceeding with artifact creation")
+            log_debug(f"File validation passed, proceeding with artifact creation")
             
             file_id_lower = (file_id or "").lower()
             is_mask_artifact = (
@@ -7354,10 +7354,10 @@ Answer with just JSON:
             
             # Use save_artifact following A2A best practices (pure A2A implementation)
             if hasattr(tool_context, 'save_artifact'):
-                print(f"tool_context has save_artifact method")
+                log_debug(f"tool_context has save_artifact method")
                 try:
                     # Create A2A-native file part without Google ADK dependencies
-                    print(f"Creating A2A-native file part with {len(file_bytes)} bytes")
+                    log_debug(f"Creating A2A-native file part with {len(file_bytes)} bytes")
                     
                     # Create a simple file part structure compatible with A2A protocol
                     a2a_file_part = {
@@ -7370,9 +7370,9 @@ Answer with just JSON:
                             **({'role': str(file_role_attr)} if file_role_attr else {}),
                         }
                     }
-                    print(f"Successfully created A2A file part")
+                    log_debug(f"Successfully created A2A file part")
                     
-                    print(f"Calling save_artifact...")
+                    log_debug(f"Calling save_artifact...")
                     # save_artifact now returns A2A compliant DataPart with artifact metadata
                     artifact_response = await tool_context.save_artifact(file_id, a2a_file_part)
                     tool_context.actions.skip_summarization = True
@@ -7398,17 +7398,17 @@ Answer with just JSON:
                                 artifact_data = tool_context._artifacts[artifact_id]
                                 if 'file_bytes' in artifact_data:
                                     artifact_info['file_bytes'] = artifact_data['file_bytes']
-                                    print(f"Added file bytes to artifact_info for local file: {len(artifact_data['file_bytes'])} bytes")
+                                    log_debug(f"Added file bytes to artifact_info for local file: {len(artifact_data['file_bytes'])} bytes")
                 except Exception as e:
-                    print(f"Exception in save_artifact process: {e}")
+                    log_debug(f"Exception in save_artifact process: {e}")
                     import traceback
                     log_error(f"Full traceback: {traceback.format_exc()}")
                     artifact_response = DataPart(data={'error': f'Failed to process file: {str(e)}'})
             else:
-                print(f"ERROR: tool_context has no save_artifact method")
+                log_debug(f"ERROR: tool_context has no save_artifact method")
             
             if is_mask_artifact:
-                print(f"Skipping document processing for mask artifact: {file_id}")
+                log_debug(f"Skipping document processing for mask artifact: {file_id}")
                 mask_metadata_part: Optional[DataPart] = None
                 mask_file_part: Optional[FilePart] = None
 
@@ -7458,7 +7458,7 @@ Answer with just JSON:
                         )
 
                 if mask_file_part is None:
-                    print(f"No accessible URI for mask; embedding bytes for {file_id}")
+                    log_debug(f"No accessible URI for mask; embedding bytes for {file_id}")
                     mask_file_part = FilePart(
                         kind="file",
                         file=FileWithBytes(
@@ -7486,7 +7486,7 @@ Answer with just JSON:
 
             # Process the file content and store in A2A memory service
             try:
-                print(f"FILE DEBUG: Calling document processor for {file_id}")
+                log_debug(f"FILE DEBUG: Calling document processor for {file_id}")
                 # Extract session_id for tenant isolation
                 session_id = get_tenant_from_context(context_id) if context_id else None
                 processing_result = await a2a_document_processor.process_file_part(
@@ -7497,7 +7497,7 @@ Answer with just JSON:
                 
                 if processing_result and isinstance(processing_result, dict) and processing_result.get("success"):
                     content = processing_result.get("content", "")
-                    print(f"FILE DEBUG: Document processing successful, content length: {len(content)}")
+                    log_debug(f"FILE DEBUG: Document processing successful, content length: {len(content)}")
                     
                     # Emit completion status event
                     if context_id:
@@ -7510,16 +7510,16 @@ Answer with just JSON:
                         artifact_response.data['content_preview'] = content[:500] + "..." if len(content) > 500 else content
                 else:
                     error = processing_result.get("error", "Unknown error") if isinstance(processing_result, dict) else "Processing failed"
-                    print(f"FILE DEBUG: Document processing failed: {error}")
+                    log_debug(f"FILE DEBUG: Document processing failed: {error}")
                     summary_text = f"File: {file_id} (processing failed: {error})"
             except Exception as e:
-                print(f"❌ FILE DEBUG: Error processing uploaded file: {e}")
+                log_debug(f"❌ FILE DEBUG: Error processing uploaded file: {e}")
                 import traceback
-                print(f"❌ FILE DEBUG: Processing traceback: {traceback.format_exc()}")
+                log_debug(f"❌ FILE DEBUG: Processing traceback: {traceback.format_exc()}")
                 summary_text = f"File: {file_id} (processing error: {str(e)})"
             
             if isinstance(artifact_response, DataPart):
-                print(f"save_artifact completed, returning response with data: {artifact_response.data}")
+                log_debug(f"save_artifact completed, returning response with data: {artifact_response.data}")
                 
                 # IMPORTANT: For non-mask files, also create and store a FilePart so remote agents can access the file
                 # Remote agents need FilePart objects with URIs, not just DataPart metadata
@@ -7544,7 +7544,7 @@ Answer with just JSON:
                             setattr(session_context, "_latest_processed_parts", latest_parts)
                         latest_parts.append(artifact_response)  # DataPart for host
                         latest_parts.append(Part(root=file_part_for_remote))  # FilePart for remote agents
-                        print(f"✅ Stored both DataPart and FilePart for non-mask file {file_id} with role={file_role_attr}")
+                        log_debug(f"✅ Stored both DataPart and FilePart for non-mask file {file_id} with role={file_role_attr}")
                 
                 return artifact_response
             
