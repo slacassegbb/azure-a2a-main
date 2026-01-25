@@ -694,6 +694,23 @@ class FoundryHostManager(ApplicationManager):
                     elif hasattr(msg, "parts"):
                         text_parts = []
                         image_parts = []
+                        
+                        # First pass: collect video_metadata from DataParts (for video_id tracking)
+                        video_metadata_by_uri = {}
+                        for part in msg.parts:
+                            root = part.root if hasattr(part, 'root') else part
+                            if isinstance(root, DataPart) and isinstance(root.data, dict):
+                                if root.data.get("type") == "video_metadata":
+                                    uri = root.data.get("uri")
+                                    if uri:
+                                        video_metadata_by_uri[uri] = {
+                                            "video_id": root.data.get("video_id"),
+                                            "generation_id": root.data.get("generation_id"),
+                                            "original_video_id": root.data.get("original_video_id"),
+                                        }
+                                        log_debug(f"Collected video metadata for URI: video_id={root.data.get('video_id')}")
+                        
+                        # Second pass: process all parts
                         for part in msg.parts:
                             log_debug(f"Processing part: {type(part)}, has root: {hasattr(part, 'root')}")
                             root = part.root if hasattr(part, 'root') else part
@@ -719,7 +736,11 @@ class FoundryHostManager(ApplicationManager):
                                         else:
                                             part_type = "image"
                                             default_name = "image.png"
-                                        image_parts.append({
+                                        
+                                        # Look up video metadata by URI (for video_id)
+                                        metadata = video_metadata_by_uri.get(file_uri, {})
+                                        
+                                        file_part_data = {
                                             "type": part_type,
                                             "uri": file_uri,
                                             "fileName": file_name if file_name != 'agent-artifact' else default_name,
@@ -727,10 +748,25 @@ class FoundryHostManager(ApplicationManager):
                                             "mediaType": mime_type or ("video/mp4" if part_type == "video" else "image/png"),
                                             "storageType": "azure_blob",
                                             "status": "completed",
-                                        })
+                                        }
+                                        
+                                        # Add video metadata if available (for remix functionality)
+                                        if metadata.get("video_id"):
+                                            file_part_data["videoId"] = metadata["video_id"]
+                                            log_debug(f"Added videoId to file part: {metadata['video_id']}")
+                                        if metadata.get("generation_id"):
+                                            file_part_data["generationId"] = metadata["generation_id"]
+                                        if metadata.get("original_video_id"):
+                                            file_part_data["originalVideoId"] = metadata["original_video_id"]
+                                        
+                                        image_parts.append(file_part_data)
                                     else:
                                         log_debug(f"FilePart has no URI, skipping: {file_obj}")
                             elif isinstance(root, DataPart) and isinstance(root.data, dict):
+                                # Skip video_metadata DataParts (already processed in first pass)
+                                if root.data.get("type") == "video_metadata":
+                                    continue
+                                    
                                 artifact_uri = root.data.get("artifact-uri")
                                 log_debug(f"Found DataPart with dict, has artifact-uri: {bool(artifact_uri)}")
                                 if artifact_uri:
@@ -754,8 +790,8 @@ class FoundryHostManager(ApplicationManager):
                                         "status": root.data.get("status"),
                                         "sourceUrl": root.data.get("source-url"),
                                     })
-                                elif root.data.get("type") != "token_usage":
-                                    # Only add non-token_usage DataParts as text
+                                elif root.data.get("type") not in ["token_usage", "video_metadata"]:
+                                    # Only add non-token_usage and non-video_metadata DataParts as text
                                     text_parts.append(json.dumps(root.data))
                         if text_parts:
                             event_data["content"].append({

@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
-import { Paperclip, Mic, MicOff, Send, Bot, User, Paintbrush, Copy, ThumbsUp, ThumbsDown, Loader2, Phone, PhoneOff, Plus, Pencil, X } from "lucide-react"
+import { Paperclip, Mic, MicOff, Send, Bot, User, Paintbrush, Copy, ThumbsUp, ThumbsDown, Loader2, Phone, PhoneOff, Plus, Pencil, X, Sparkles } from "lucide-react"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { useEventHub } from "@/hooks/use-event-hub"
@@ -142,6 +142,10 @@ type Message = {
     fileSize?: number
     mediaType?: string
     storageType?: string
+    // Video remix metadata (for Sora videos)
+    videoId?: string
+    generationId?: string
+    originalVideoId?: string
   }[]
   // Images from DataPart artifacts (loaded from conversation history)
   images?: {
@@ -632,6 +636,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
   const [processedMessageIds, setProcessedMessageIds] = useState<Set<string>>(new Set())
   const [uploadedFiles, setUploadedFiles] = useState<any[]>([])
   const [refineTarget, setRefineTarget] = useState<any | null>(null)
+  const [remixTarget, setRemixTarget] = useState<{ videoId: string; uri: string; fileName?: string } | null>(null)
   const [maskAttachment, setMaskAttachment] = useState<any | null>(null)
   const [maskUploadInFlight, setMaskUploadInFlight] = useState(false)
   const [maskEditorOpen, setMaskEditorOpen] = useState(false)
@@ -1126,15 +1131,30 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                 id: attachmentId,
                 role: "assistant",
                 agent: agentName,
-                attachments: allImageAttachments.map((img: any) => ({
-                  uri: img.uri,
-                  fileName: img.fileName,
-                  fileSize: img.fileSize,
-                  storageType: img.storageType,
-                  mediaType: img.mediaType || "image/png",
-                })),
+                attachments: allImageAttachments.map((img: any) => {
+                  // Debug: Log each attachment being mapped
+                  console.log('[VideoRemix] Mapping attachment:', {
+                    fileName: img.fileName,
+                    mediaType: img.mediaType,
+                    videoId: img.videoId,
+                    generationId: img.generationId,
+                    originalVideoId: img.originalVideoId,
+                    uri: img.uri?.slice(-50) // Last 50 chars of URI
+                  })
+                  return {
+                    uri: img.uri,
+                    fileName: img.fileName,
+                    fileSize: img.fileSize,
+                    storageType: img.storageType,
+                    mediaType: img.mediaType || "image/png",
+                    videoId: img.videoId,  // For video remix functionality
+                    generationId: img.generationId,
+                    originalVideoId: img.originalVideoId,
+                  }
+                }),
               }
               console.log("[ChatPanel] Adding attachment message:", attachmentMessage)
+              console.log("[VideoRemix] Attachments with videoId:", attachmentMessage.attachments?.filter(a => a.videoId))
               setMessages(prev => [...prev, attachmentMessage])
               
               // Add ALL agent-generated artifacts/files to file history (session-scoped)
@@ -2067,6 +2087,25 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
 
       const existingUris = new Set(parts.filter(p => p.root?.kind === 'file').map(p => p.root.file.uri))
 
+      // Add remix context if remixTarget is set (for video remix functionality)
+      console.log('[VideoRemix] Checking remixTarget before send:', remixTarget)
+      if (remixTarget?.videoId) {
+        const remixData = {
+          type: 'video_remix_request',
+          video_id: remixTarget.videoId,
+          source_uri: remixTarget.uri,
+          file_name: remixTarget.fileName,
+        }
+        console.log('[VideoRemix] Adding remix context to message parts:', remixData)
+        parts.push({
+          root: {
+            kind: 'data',
+            data: remixData
+          }
+        })
+        console.log('[VideoRemix] Parts after adding remix context:', parts.length, 'parts total')
+      }
+
       if (refineTarget?.imageUrl && !existingUris.has(refineTarget.imageUrl)) {
         const baseOriginalName = refineTarget.imageMeta?.fileName || `refine-${Date.now()}.png`
         const baseStem = baseOriginalName.replace(/\.[^.]+$/, '')
@@ -2139,6 +2178,10 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
     setInput("")
     setUploadedFiles([])
     setRefineTarget(null)
+    if (remixTarget) {
+      console.log('[VideoRemix] Clearing remixTarget after send:', remixTarget.videoId)
+    }
+    setRemixTarget(null)
     setMentionedUserNames(new Set()) // Clear tracked user mentions
     setMaskAttachment(null)
     
@@ -2226,11 +2269,27 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                             const isImage = (attachment.mediaType || "").startsWith("image/") || (!attachment.mediaType && isImageByExt)
                             const isVideo = (attachment.mediaType || "").startsWith("video/") || (!attachment.mediaType && isVideoByExt) || isVideoByExt
                             
+                            // Debug: Log full type detection for each attachment
+                            console.log('[VideoRemix] Type detection for attachment:', {
+                              index: attachmentIndex,
+                              fileName: attachment.fileName,
+                              mediaType: attachment.mediaType,
+                              uri: attachment.uri?.slice(-60),
+                              urlWithoutParams: urlWithoutParams?.slice(-60),
+                              isVideoByExt,
+                              isImageByExt,
+                              isVideo,
+                              isImage,
+                              videoId: attachment.videoId,
+                              willRenderAs: isVideo ? 'VIDEO' : isImage ? 'IMAGE' : 'LINK'
+                            })
+                            
                             // Check video FIRST (so .mp4 URLs don't get treated as images)
                             if (isVideo) {
+                              console.log('[VideoRemix] ✓ Rendering as VIDEO:', attachment.fileName)
                               return (
                                 <div key={`${message.id}-attachment-${attachmentIndex}`} className="flex flex-col gap-2">
-                                  <div className="overflow-hidden rounded-lg border border-border bg-background">
+                                  <div className="relative overflow-hidden rounded-lg border border-border bg-background">
                                     <video
                                       src={attachment.uri}
                                       controls
@@ -2238,15 +2297,56 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                                     >
                                       Your browser does not support the video tag.
                                     </video>
-                                    <div className="px-3 py-2 text-xs text-muted-foreground border-t border-border bg-muted/50">
-                                      {attachment.fileName || "Video attachment"}
+                                    <div className="px-3 py-2 text-xs text-muted-foreground border-t border-border bg-muted/50 flex items-center justify-between">
+                                      <span>{attachment.fileName || "Video attachment"}</span>
+                                      {attachment.videoId && (
+                                        <span className="text-xs opacity-60">ID: {attachment.videoId.slice(-8)}</span>
+                                      )}
                                     </div>
+                                    {/* Remix button overlay for videos with videoId */}
+                                    {attachment.videoId && message.role === "assistant" && (
+                                      <div className="absolute bottom-12 right-2">
+                                        <Button
+                                          variant={remixTarget?.videoId === attachment.videoId ? "destructive" : "default"}
+                                          size="sm"
+                                          className={`shadow-lg ${
+                                            remixTarget?.videoId === attachment.videoId 
+                                              ? '' 
+                                              : 'bg-purple-500 hover:bg-purple-600 text-white'
+                                          }`}
+                                          title={remixTarget?.videoId === attachment.videoId ? "Cancel remix" : "Remix this video"}
+                                          onClick={(e) => {
+                                            e.preventDefault()
+                                            e.stopPropagation()
+                                            if (remixTarget?.videoId === attachment.videoId) {
+                                              console.log('[VideoRemix] Cancelled remix for video:', attachment.videoId)
+                                              setRemixTarget(null)
+                                            } else {
+                                              const target = {
+                                                videoId: attachment.videoId!,
+                                                uri: attachment.uri,
+                                                fileName: attachment.fileName,
+                                              }
+                                              console.log('[VideoRemix] Selected video for remix:', target)
+                                              setRemixTarget(target)
+                                            }
+                                          }}
+                                        >
+                                          {remixTarget?.videoId === attachment.videoId ? (
+                                            <><X size={14} className="mr-1" /> Cancel</>
+                                          ) : (
+                                            <><Sparkles size={14} className="mr-1" /> Remix</>
+                                          )}
+                                        </Button>
+                                      </div>
+                                    )}
                                   </div>
                                 </div>
                               )
                             }
                             
                             if (isImage) {
+                              console.log('[VideoRemix] ✓ Rendering as IMAGE:', attachment.fileName)
                               return (
                                 <div key={`${message.id}-attachment-${attachmentIndex}`} className="relative flex flex-col gap-2">
                                   <a
@@ -2316,6 +2416,12 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                               )
                             }
 
+                            // Fallback: render as link (neither image nor video)
+                            console.log('[VideoRemix] ⚠ Rendering as LINK (fallback):', {
+                              fileName: attachment.fileName,
+                              mediaType: attachment.mediaType,
+                              uri: attachment.uri?.slice(-60)
+                            })
                             return (
                               <a
                                 key={`${message.id}-attachment-${attachmentIndex}`}
@@ -2335,6 +2441,14 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                         <div className="flex flex-col gap-3 mb-3">
                           {message.images.map((image, imageIndex) => {
                             const isVideo = image.mimeType?.startsWith('video/') || image.uri.match(/\.(mp4|webm|mov)(\?|$)/i)
+                            console.log('[VideoRemix] Rendering message.images item:', {
+                              index: imageIndex,
+                              fileName: image.fileName,
+                              mimeType: image.mimeType,
+                              uri: image.uri?.slice(-60),
+                              isVideo,
+                              willRenderAs: isVideo ? 'VIDEO' : 'IMAGE'
+                            })
                             return (
                               <div key={`${message.id}-image-${imageIndex}`} className="flex flex-col gap-2">
                                 {isVideo ? (

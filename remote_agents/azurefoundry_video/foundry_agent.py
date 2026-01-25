@@ -392,6 +392,48 @@ IMPORTANT: Video generation can take 60-120 seconds. Be patient.""",
         }
         tools.append(generate_video_tool)
         
+        # Add remix_video tool for modifying existing videos
+        remix_video_tool = {
+            "type": "function",
+            "function": {
+                "name": "remix_video",
+                "description": """Remix an existing video by applying a new text prompt to modify its appearance.
+                
+Use this to transform previously generated videos by changing:
+- Color palette and grading
+- Lighting and atmosphere
+- Visual style and effects
+- Mood and tone
+- Scene modifications while preserving the core content
+
+The remix preserves the original video's structure, duration, and motion while applying the requested changes.
+
+Examples of remix prompts:
+- "Shift the color palette to teal, sand, and rust with warm backlight"
+- "Convert to black and white noir style with high contrast"
+- "Add golden hour lighting with warm sunset tones"
+- "Apply a dreamy soft-focus effect with pastel colors"
+
+IMPORTANT: You need the video_id from a previously generated video.""",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "video_id": {
+                            "type": "string",
+                            "description": "The ID of the previously generated video to remix. This is returned from generate_video calls."
+                        },
+                        "prompt": {
+                            "type": "string",
+                            "description": "Text description of the modifications to apply. Focus on visual style, color palette, lighting, or atmospheric changes."
+                        }
+                    },
+                    "required": ["video_id", "prompt"],
+                    "additionalProperties": False
+                }
+            }
+        }
+        tools.append(remix_video_tool)
+        
         # Add Bing search tool if available
         try:
             bing_connection = project_client.connections.get(name="aiagentworkshopbinggrounding")
@@ -816,6 +858,144 @@ IMPORTANT: Video generation can take 60-120 seconds. Be patient.""",
         except Exception as e:
             logger.error(f"Error generating video: {e}")
             return "", f"❌ Error generating video: {str(e)}"
+
+    async def remix_video(
+        self,
+        video_id: str,
+        prompt: str,
+        output_dir: str = "generated_videos"
+    ):
+        """
+        Remix an existing video with a new text prompt.
+        
+        Args:
+            video_id: The ID of the previously generated video (format: video_xxx)
+            prompt: Text description of modifications to apply (color, style, lighting, etc.)
+            output_dir: Directory to save the remixed video
+            
+        Returns:
+            Tuple of (output_path, response_text)
+        """
+        try:
+            logger.info(f"🎨 Starting video remix with ID: {video_id}")
+            logger.info(f"📝 Remix prompt: {prompt}")
+            
+            # Ensure output directory exists
+            os.makedirs(output_dir, exist_ok=True)
+            
+            # Get Sora endpoint and token
+            base_url, token = await self._get_sora_credentials()
+            
+            # Create OpenAI client with token
+            from openai import OpenAI
+            client = OpenAI(
+                base_url=base_url,
+                api_key=token,
+            )
+            
+            # Call remix API
+            logger.info("Calling Sora remix API...")
+            video = client.videos.remix(
+                video_id=video_id,
+                prompt=prompt
+            )
+            
+            logger.info(f"Remix initiated: {video}")
+            
+            # Extract the new video ID from the response
+            if hasattr(video, 'id'):
+                new_video_id = video.id
+            elif isinstance(video, dict):
+                new_video_id = video.get('id')
+            else:
+                new_video_id = str(video)
+            
+            logger.info(f"New remixed video ID: {new_video_id}")
+            
+            # Poll for completion (remix uses same polling as generation)
+            max_wait = 180  # 3 minutes max
+            poll_interval = 5
+            elapsed = 0
+            
+            while elapsed < max_wait:
+                await asyncio.sleep(poll_interval)
+                elapsed += poll_interval
+                
+                # Check status using the new video ID
+                video_response = await self._sora_api_request(
+                    method="GET",
+                    endpoint=f"/video/generations/{new_video_id}"
+                )
+                
+                video_status = video_response.get("status", "unknown")
+                logger.info(f"⏳ Remix status ({elapsed}s): {video_status}")
+                
+                if video_status == "succeeded":
+                    logger.info("✅ Video remix completed successfully!")
+                    
+                    # Save the remixed video
+                    timestamp = int(time.time())
+                    short_vid = new_video_id.replace('video_', '')[-8:] if new_video_id else str(uuid.uuid4())[:8]
+                    output_filename = f"sora_remix_{timestamp}_{short_vid}.mp4"
+                    output_path = os.path.join(output_dir, output_filename)
+                    
+                    # Get generation ID for download
+                    generations = video_response.get("generations", [])
+                    if not generations:
+                        raise ValueError("No generations found in remix response")
+                    
+                    generation_id = generations[0].get("id")
+                    logger.info(f"📥 Remixed Video ID: {new_video_id}, Generation ID: {generation_id}")
+                    
+                    # Download the remixed video
+                    logger.info(f"Downloading remixed video to: {output_path}")
+                    video_content = await self._download_video_content(generation_id)
+                    saved_path = Path(output_path)
+                    with open(saved_path, "wb") as f:
+                        f.write(video_content)
+                    
+                    logger.info(f"✅ Remixed video saved: {output_path}")
+                    
+                    # Upload to blob storage
+                    blob_url = self._upload_to_blob(saved_path)
+                    response_text = f"✅ Video remixed successfully!\n\n**Original Video ID:** `{video_id}`\n**New Video ID:** `{new_video_id}`\n**Remix Prompt:** {prompt}"
+                    
+                    if blob_url:
+                        artifact_record: Dict[str, Any] = {
+                            "artifact-uri": blob_url,
+                            "file-name": saved_path.name,
+                            "mime": "video/mp4",
+                            "storage-type": "azure_blob",
+                            "status": "stored",
+                            "provider": "sora",
+                            "model": "sora-remix",
+                            "video_id": new_video_id,
+                            "generation_id": generation_id,
+                            "original_video_id": video_id,
+                            "local-path": str(saved_path),
+                            "file-size": len(video_content),
+                        }
+                        self._latest_artifacts.append(artifact_record)
+                        logger.info(f"🎬 Created remix artifact: {saved_path.name}")
+                        response_text += f"\n**Video URL:** [View Remixed Video]({blob_url})"
+                    else:
+                        response_text += f"\n**Saved to:** {output_path}"
+                    
+                    response_text += "\n\n💡 *You can remix this video again with a different prompt!*"
+                    return output_path, response_text
+                
+                elif video_status == "failed":
+                    error_msg = video_response.get('error', 'Unknown error')
+                    logger.error(f"Video remix failed: {error_msg}")
+                    return "", f"❌ Video remix failed: {error_msg}"
+            
+            # Timeout
+            logger.warning(f"Video remix timed out after {max_wait}s")
+            return "", f"⏱️ Video remix timed out. The video may still be processing. Video ID: {new_video_id}"
+            
+        except Exception as e:
+            logger.error(f"Error remixing video: {e}")
+            return "", f"❌ Error remixing video: {str(e)}"
 
     async def generate_video_stream(
         self,
@@ -1267,14 +1447,15 @@ IMPORTANT: Video generation can take 60-120 seconds. Be patient.""",
         return f"""
 You are a **Sora 2 Video Generation Specialist** powered by Azure AI Foundry.
 
-You create stunning AI-generated videos using Azure OpenAI's Sora 2 model through the generate_video function.
+You create stunning AI-generated videos using Azure OpenAI's Sora 2 model through the generate_video and remix_video functions.
 
 ## Core Responsibilities
 
 1. **Video Generation** – When users request a video, IMMEDIATELY call the generate_video function with their prompt
-2. **Prompt Enhancement** – Improve basic prompts with cinematographic details before generating
-3. **Creative Consultation** – Suggest improvements to make videos more cinematic and engaging
-4. **Technical Guidance** – Explain Sora 2 capabilities and best practices
+2. **Video Remixing** – Modify existing videos by calling remix_video with a video_id and transformation prompt
+3. **Prompt Enhancement** – Improve basic prompts with cinematographic details before generating
+4. **Creative Consultation** – Suggest improvements to make videos more cinematic and engaging
+5. **Technical Guidance** – Explain Sora 2 capabilities and best practices
 
 ## CRITICAL: When to Call generate_video
 
@@ -1286,9 +1467,20 @@ You create stunning AI-generated videos using Azure OpenAI's Sora 2 model throug
 
 **DO NOT just provide prompt suggestions - GENERATE THE VIDEO!**
 
+## CRITICAL: When to Call remix_video
+
+**ALWAYS call remix_video when:**
+- User asks to "remix", "modify", "change", or "transform" an existing video
+- User wants to adjust colors, lighting, mood, or visual style of a previous video
+- User references a video_id and requests changes
+- User says things like "make it darker", "change the colors", "add effects" to an existing video
+
+**After generating a video, ALWAYS provide the video_id to the user so they can remix it!**
+
 ## Sora 2 Capabilities
 
 - **Text-to-Video**: Generate videos from text descriptions  
+- **Video Remixing**: Transform existing videos with new prompts (color, lighting, style, mood)
 - **Resolutions**: 1280x720 (landscape, default) or 720x1280 (portrait)
 - **Durations**: 4, 8, or 12 seconds (default: 8)
 - **Audio**: Includes audio generation in output videos
@@ -1305,25 +1497,48 @@ Before calling generate_video, enhance basic prompts with:
 6. **Atmosphere/Mood**: Cinematic, dreamy, energetic, peaceful, mysterious
 7. **Camera Motion**: Pan, zoom, dolly, static, smooth tracking
 
-## Example Flow
+## Remix Examples
+
+**Good remix prompts:**
+- "Shift the color palette to teal, sand, and rust with warm backlight"
+- "Convert to black and white noir style with high contrast"
+- "Add golden hour lighting with warm sunset tones"
+- "Apply a dreamy soft-focus effect with pastel colors"
+- "Make it darker and more moody with blue tones"
+
+## Example Flow - Generation
 
 **User:** "Generate a video of a dog running"
 
 **You should:**
 1. Enhance the prompt internally
 2. Immediately call generate_video with: "A cinematic tracking shot of a golden retriever joyfully running through a sunlit meadow at sunset. The camera follows alongside the dog at eye level. Golden hour lighting creates warm tones and long shadows on the grass, which sways gently in the breeze. The mood is energetic and peaceful. Smooth camera motion captures the dog's playful energy."
-3. After generation completes, explain what you created
+3. After generation completes, provide the video_id and explain what you created
+
+## Example Flow - Remix
+
+**User:** "Make that video darker and add blue tones"
+
+**You should:**
+1. Use the video_id from the previous generation
+2. Call remix_video with video_id and prompt: "Shift to a darker atmosphere with deep blue and teal color grading. Add moody, twilight lighting with cooler tones throughout."
+3. After remix completes, provide the new video_id
 
 ## Function Call Parameters
 
-When calling generate_video:
+**generate_video:**
 - **prompt** (required): Detailed, enhanced description
 - **size** (optional): "1280x720" (landscape, default) or "720x1280" (portrait)  
 - **duration** (optional): 4, 8 (default), or 12 seconds
 
+**remix_video:**
+- **video_id** (required): ID from a previously generated video (format: video_xxx)
+- **prompt** (required): Description of visual modifications (color, lighting, style, mood)
+
 ## Limitations
 
 - Video generation takes 60-120 seconds
+- Remix takes 60-120 seconds
 - Complex physics may not render perfectly
 - Spatial reasoning (left/right) can be challenging
 - Very specific text or logos are difficult
@@ -1664,6 +1879,39 @@ Current date and time: {datetime.datetime.now().isoformat()}
                         }
                     except Exception as e:
                         logger.error(f"Error generating video: {e}")
+                        return {
+                            "tool_call_id": tool_call.id,
+                            "output": json.dumps({
+                                "success": False,
+                                "error": str(e)
+                            })
+                        }
+                
+                # Handle remix_video function call
+                if function_name == "remix_video":
+                    try:
+                        args_dict = json.loads(arguments) if isinstance(arguments, str) else arguments
+                        logger.info(f"Calling remix_video with args: {args_dict}")
+                        
+                        # Call the remix_video method
+                        output_path, response_text = await self.remix_video(
+                            video_id=args_dict.get("video_id"),
+                            prompt=args_dict.get("prompt")
+                        )
+                        
+                        # Return success with remixed video info
+                        result = {
+                            "success": True,
+                            "message": response_text,
+                            "output_path": output_path
+                        }
+                        
+                        return {
+                            "tool_call_id": tool_call.id,
+                            "output": json.dumps(result)
+                        }
+                    except Exception as e:
+                        logger.error(f"Error remixing video: {e}")
                         return {
                             "tool_call_id": tool_call.id,
                             "output": json.dumps({

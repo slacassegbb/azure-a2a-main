@@ -225,6 +225,20 @@ class FoundryTemplateAgentExecutor(AgentExecutor):
                         )
                         artifact_parts.append(Part(root=FilePart(file=file_with_uri)))
                         logger.info(f"🎬 Created FilePart for video: {artifact.get('file-name')}")
+                        
+                        # Also send video metadata as DataPart (for video_id tracking for remix)
+                        video_id = artifact.get("video_id")
+                        if video_id:
+                            video_metadata = {
+                                "type": "video_metadata",
+                                "video_id": video_id,
+                                "generation_id": artifact.get("generation_id"),
+                                "original_video_id": artifact.get("original_video_id"),  # For remixed videos
+                                "uri": artifact["artifact-uri"],
+                                "file_name": artifact.get("file-name", "video.mp4"),
+                            }
+                            artifact_parts.append(Part(root=DataPart(data=video_metadata)))
+                            logger.info(f"📎 Added video metadata with video_id: {video_id}")
                     else:
                         # For other artifacts, use DataPart
                         artifact_parts.append(Part(root=DataPart(data=artifact)))
