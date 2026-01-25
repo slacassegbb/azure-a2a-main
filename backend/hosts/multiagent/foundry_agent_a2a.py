@@ -363,8 +363,6 @@ class FoundryHostAgent2:
         Args:
             session_agents: List of agent dicts with url, name, description, skills, etc.
         """
-        print(f"🔵 [SET_SESSION_AGENTS] Starting with {len(session_agents)} agents to register")
-        
         # Clear existing agents
         self.cards.clear()
         self.remote_agent_connections.clear()
@@ -374,19 +372,14 @@ class FoundryHostAgent2:
         for agent_data in session_agents:
             agent_url = agent_data.get('url')
             agent_name = agent_data.get('name', 'Unknown')
-            print(f"🔵 [SET_SESSION_AGENTS] Processing agent: {agent_name}")
-            print(f"🔵 [SET_SESSION_AGENTS] Agent URL: {agent_url}")
             if agent_url:
                 try:
-                    print(f"🔵 [SET_SESSION_AGENTS] Calling retrieve_card for {agent_name}...")
                     await self.retrieve_card(agent_url)
-                    print(f"✅ [SET_SESSION_AGENTS] Session agent registered: {agent_name}")
+                    log_debug(f"Session agent registered: {agent_name}")
                 except Exception as e:
-                    print(f"⚠️ [SET_SESSION_AGENTS] Failed to register session agent {agent_url}: {e}")
-                    import traceback
-                    print(f"⚠️ [SET_SESSION_AGENTS] Traceback: {traceback.format_exc()}")
+                    log_error(f"Failed to register session agent {agent_url}: {e}")
         
-        print(f"📋 [SET_SESSION_AGENTS] Session now has {len(self.cards)} agents: {list(self.cards.keys())}")
+        log_debug(f"Session has {len(self.cards)} agents: {list(self.cards.keys())}")
 
     def _find_agent_registry_path(self) -> Path:
         """Resolve the agent registry path within the backend/data directory."""
@@ -524,9 +517,7 @@ class FoundryHostAgent2:
                     azure_storage_connection_string,
                     api_version="2023-11-03",
                 )
-                print("✅ Azure Blob Storage initialized with connection string (sync client)")
-                print(f"Connection string starts with: {azure_storage_connection_string[:50]}...")
-                print(f"Azure storage account: {self._azure_blob_client.account_name}")
+                log_debug("Azure Blob Storage initialized with connection string")
             elif azure_storage_account_name:
                 from azure.storage.blob import BlobServiceClient
                 account_url = f"https://{azure_storage_account_name}.blob.core.windows.net"
@@ -535,26 +526,20 @@ class FoundryHostAgent2:
                     credential=self.credential,
                     api_version="2023-11-03",
                 )
-                print(f"✅ Azure Blob Storage initialized with managed identity (sync client): {account_url}")
+                log_debug(f"Azure Blob Storage initialized with managed identity: {account_url}")
             else:
-                print("❌ Azure Blob Storage not configured - using local storage only")
-                print(f"AZURE_STORAGE_CONNECTION_STRING: {azure_storage_connection_string}")
-                print(f"AZURE_STORAGE_ACCOUNT_NAME: {azure_storage_account_name}")
+                log_debug("Azure Blob Storage not configured - using local storage")
                 self._azure_blob_container = None
             
             if self._azure_blob_client:
-                print(f"🪣 Target Azure Blob container: {self._azure_blob_container}")
+                log_debug(f"Target Azure Blob container: {self._azure_blob_container}")
                 loop = asyncio.get_running_loop()
                 loop.create_task(self._verify_blob_connection())
-            else:
-                print("ℹ️ Azure Blob client not initialized; uploads will use local storage")
 
         except ImportError as e:
-            print("❌ Azure Storage SDK not installed - using local storage only")
-            print(f"ImportError details: {e}")
+            log_debug(f"Azure Storage SDK not installed - using local storage: {e}")
         except Exception as e:
-            print(f"❌ Failed to initialize Azure Blob Storage: {e}")
-            log_error(f"Exception type: {type(e).__name__}")
+            log_error(f"Failed to initialize Azure Blob Storage: {e}")
             self._azure_blob_client = None
 
     async def _verify_blob_connection(self):
@@ -3287,32 +3272,23 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
     def _emit_task_event(self, task: TaskCallbackArg, agent_card: AgentCard):
         """Emit event for task callback, with enhanced agent name context for UI status tracking."""
         agent_name = agent_card.name
-        log_debug(f"🔔 [EMIT_TASK_EVENT] Called for agent: {agent_name}")
-        print(f"🎯 [_emit_task_event] CALLED for agent: {agent_name}, task.kind: {getattr(task, 'kind', 'NO KIND')}")
-        log_debug(f"Agent capabilities: {agent_card.capabilities if hasattr(agent_card, 'capabilities') else 'None'}")
         
         # WORKFLOW MODE: Suppress redundant status events from remote agents
-        # The workflow orchestrator already emits clean status updates
         contextId = get_context_id(task, None)
         if contextId:
             try:
                 session_ctx = self.get_session_context(contextId)
                 if session_ctx.agent_mode:
-                    # In workflow/agent mode, suppress intermediate "working" and "submitted" status updates
-                    # Only allow "completed" and "failed" events through (final states)
                     if hasattr(task, 'kind') and task.kind == 'status-update':
                         if hasattr(task, 'status') and task.status:
                             state_obj = getattr(task.status, 'state', 'working')
                             task_state = state_obj.value if hasattr(state_obj, 'value') else str(state_obj)
                             
-                            # Suppress intermediate states in workflow mode - orchestrator handles these
+                            # Suppress intermediate states in workflow mode
                             if task_state in ['working', 'submitted', 'pending']:
-                                log_debug(f"[WORKFLOW MODE] Suppressing intermediate '{task_state}' event from {agent_name}")
-                                return task  # Return without emitting event
-                    
-                    log_debug(f"[WORKFLOW MODE] Allowing event from {agent_name}: {getattr(task, 'kind', 'unknown')}")
-            except Exception as e:
-                log_debug(f"Error checking workflow mode in _emit_task_event: {e}")
+                                return task
+            except Exception:
+                pass
         
         content = None
         task_id = None
@@ -3320,20 +3296,12 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
         
         # Extract task state and ID
         if hasattr(task, 'kind') and task.kind == 'status-update':
-            print(f"🔍 [_emit_task_event] Processing status-update event")
             task_id = get_task_id(task, None)
-            # Extract state from status object, handling enum types
             if hasattr(task, 'status') and task.status:
                 state_obj = getattr(task.status, 'state', 'working')
-                if hasattr(state_obj, 'value'):
-                    task_state = state_obj.value  # Extract enum value
-                else:
-                    task_state = str(state_obj)
+                task_state = state_obj.value if hasattr(state_obj, 'value') else str(state_obj)
             else:
                 task_state = 'working'
-            
-            log_debug(f"Status update extracted: {task_state} for {agent_card.name}")
-            print(f"✨ [_emit_task_event] Extracted task_state: {task_state} for {agent_name}")
             
             if hasattr(task, 'status') and task.status and task.status.message:
                 content = task.status.message
@@ -3399,24 +3367,19 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                 contextId=contextId or str(uuid.uuid4()),
             )
         
-        # Create Event object like ADK version, but with enhanced agent context
+        # Create Event object and stream to WebSocket
         if content:
             from datetime import datetime as dt, timezone as tz
             event_obj = type('Event', (), {
                 'id': str(uuid.uuid4()),
-                'actor': agent_card.name,  # Use the actual agent name
+                'actor': agent_card.name,
                 'content': content,
                 'timestamp': dt.now(tz.utc).timestamp(),
             })()
             
-            # Add to host manager events if available
             if hasattr(self, '_host_manager') and self._host_manager:
                 self._host_manager.add_event(event_obj)
-                log_debug(f"Added event to host manager for agent: {agent_card.name}")
             
-            # Stream A2A-compliant task events to WebSocket with agent context
-            # CONSOLIDATED: Single event emission point for remote agent status
-            log_debug(f"Streaming A2A task event to WebSocket for agent: {agent_card.name}, state: {task_state}")
             try:
                 import asyncio
 
@@ -3426,10 +3389,9 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
 
                         streamer = await get_websocket_streamer()
                         if not streamer:
-                            log_debug("⚠️ WebSocket streamer not available for task event")
                             return
 
-                        # Extract text content from message parts if available
+                        # Extract text content from message parts
                         text_content = ""
                         if content and hasattr(content, 'parts'):
                             for part in content.parts:
@@ -3437,19 +3399,14 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                                     text_content = part.root.text
                                     break
                         
-                        # WORKFLOW MODE: Suppress full response text in workflow activity panel
-                        # The orchestrator will display the full response - avoid duplicates
+                        # Suppress full response in workflow mode (orchestrator displays it)
                         try:
                             session_ctx = self.get_session_context(contextId)
                             if session_ctx.agent_mode and text_content and task_state == 'completed':
-                                log_debug(f"[WORKFLOW MODE] Suppressing full response text from {agent_card.name} - orchestrator will display")
-                                text_content = ""  # Clear the content to avoid duplicate display
-                        except Exception as e:
-                            log_debug(f"Error checking workflow mode for content suppression: {e}")
+                                text_content = ""
+                        except Exception:
+                            pass
 
-                        # CONSOLIDATED: Include ALL relevant data in single task_updated event
-                        # This is the ONLY event emitted for remote agent status updates
-                        # Use stored host context if available, otherwise fall back to event's context
                         routing_context_id = (getattr(self, '_current_host_context_id', None) or 
                                              contextId or 
                                              getattr(self, 'default_contextId', str(uuid.uuid4())))
@@ -3462,51 +3419,31 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                             "artifactsCount": len(getattr(task, 'artifacts', [])),
                             "agentName": agent_card.name,
                             "timestamp": datetime.now(timezone.utc).isoformat(),
-                            # Include message content so frontend has everything in one event
                             "content": text_content if text_content else None,
                         }
                         
-                        # Add token usage if available for this agent
                         if agent_card.name in self.agent_token_usage:
                             event_data["tokenUsage"] = self.agent_token_usage[agent_card.name]
 
                         event_type = "task_updated"
-                        if hasattr(task, 'kind') and task.kind == 'status-update':
-                            event_type = "task_updated"
-                        elif not hasattr(task, 'kind'):
+                        if not hasattr(task, 'kind'):
                             event_type = "task_created"
-
-                        # DEBUG: Log what we're sending to the frontend
-                        print(f"📡 [A2A STREAM] Emitting {event_type} for {agent_card.name}: state={task_state}")
                         
-                        success = await streamer._send_event(event_type, event_data, routing_context_id)
-                        if success:
-                            log_debug(f"✅ A2A task event streamed: {agent_card.name} -> {task_state}")
-                        else:
-                            log_debug(f"❌ Failed to stream A2A task event: {agent_card.name} -> {task_state}")
-                        
-                        # REMOVED: Secondary remote_agent_activity emission
-                        # All data is now included in the task_updated event above
+                        await streamer._send_event(event_type, event_data, routing_context_id)
                         
                     except Exception as e:
-                        log_debug(f"❌ Error streaming A2A task event: {e}")
-                        import traceback
-                        traceback.print_exc()
+                        log_error(f"Error streaming A2A task event: {e}")
 
                 asyncio.create_task(stream_task_event())
 
-            except Exception as e:
-                log_debug(f"❌ Error setting up A2A task event streaming: {e}")
+            except Exception:
                 pass
 
     def _emit_agent_registration_event(self, agent_card: AgentCard):
         """Emit agent registration event to WebSocket for UI sidebar visibility."""
-        log_debug(f"Emitting agent registration event for: {agent_card.name}")
         try:
             import asyncio
             
-            # Agent registration happens outside of any specific conversation
-            # so we use a generic "system" context for routing
             routing_context_id = "system_agent_registry"
             
             async def stream_registration_event():
@@ -3515,7 +3452,6 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
 
                     streamer = await get_websocket_streamer()
                     if not streamer:
-                        log_debug(f"⚠️ WebSocket streamer not available for agent registration")
                         return
 
                     event_data = {
@@ -3526,40 +3462,28 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                         "agentPath": getattr(agent_card, 'url', ''),
                     }
 
-                    success = await streamer._send_event("agent_registered", event_data, routing_context_id)
-                    if success:
-                        log_debug(f"✅ Agent registration event streamed to WebSocket for {agent_card.name}")
-                    else:
-                        log_debug(f"❌ Failed to stream agent registration event to WebSocket for {agent_card.name}")
+                    await streamer._send_event("agent_registered", event_data, routing_context_id)
                 except Exception as e:
-                    log_debug(f"❌ Error streaming agent registration event: {e}")
-                    import traceback
-                    traceback.print_exc()
+                    log_error(f"Error streaming agent registration event: {e}")
             
-            # Create background task for WebSocket streaming
             asyncio.create_task(stream_registration_event())
             
-        except Exception as e:
-            log_debug(f"❌ Error setting up agent registration event streaming: {e}")
+        except Exception:
             pass
 
     def _display_task_status_update(self, status_text: str, event: TaskCallbackArg):
         """Display a task status update in the UI as a message."""
-        log_debug(f"_display_task_status_update called with: {status_text}")
         try:
-            # Create a message to display in the UI
             from a2a.types import Message, TextPart, Part
             import uuid
             
             message_id = str(uuid.uuid4())
             context_id = getattr(event, 'contextId', getattr(self._current_task, 'contextId', str(uuid.uuid4())))
-            log_debug(f"Created message_id: {message_id}, context_id: {context_id}")
             
-            # Create a message with the status update
             status_message = Message(
                 messageId=message_id,
                 contextId=context_id,
-                role="agent",  # Use agent role for status updates
+                role="agent",
                 parts=[Part(root=TextPart(text=f"[Status] {status_text}"))]
             )
             
