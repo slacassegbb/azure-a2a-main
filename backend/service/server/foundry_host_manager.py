@@ -697,18 +697,24 @@ class FoundryHostManager(ApplicationManager):
                         
                         # First pass: collect video_metadata from DataParts (for video_id tracking)
                         video_metadata_by_uri = {}
-                        for part in msg.parts:
+                        log_debug(f"[VideoRemix] Starting first pass over {len(msg.parts)} parts")
+                        for idx, part in enumerate(msg.parts):
                             root = part.root if hasattr(part, 'root') else part
+                            log_debug(f"[VideoRemix] Part {idx}: type={type(root).__name__}")
                             if isinstance(root, DataPart) and isinstance(root.data, dict):
+                                log_debug(f"[VideoRemix] Part {idx} is DataPart with keys: {list(root.data.keys())}")
                                 if root.data.get("type") == "video_metadata":
                                     uri = root.data.get("uri")
+                                    log_debug(f"[VideoRemix] Found video_metadata! uri={uri}, video_id={root.data.get('video_id')}")
                                     if uri:
                                         video_metadata_by_uri[uri] = {
                                             "video_id": root.data.get("video_id"),
                                             "generation_id": root.data.get("generation_id"),
                                             "original_video_id": root.data.get("original_video_id"),
                                         }
-                                        log_debug(f"Collected video metadata for URI: video_id={root.data.get('video_id')}")
+                                        log_debug(f"[VideoRemix] Collected video metadata for URI: video_id={root.data.get('video_id')}")
+                        
+                        log_debug(f"[VideoRemix] After first pass: {len(video_metadata_by_uri)} video metadata entries")
                         
                         # Second pass: process all parts
                         for part in msg.parts:
@@ -722,23 +728,28 @@ class FoundryHostManager(ApplicationManager):
                                 if file_obj:
                                     file_uri = getattr(file_obj, 'uri', None)
                                     if file_uri:
-                                        log_debug(f"Found FilePart with URI: {file_uri}")
+                                        log_debug(f"[VideoRemix] Found FilePart with URI: {file_uri[-80:]}")
                                         # Determine type based on mimeType or file extension
                                         mime_type = getattr(file_obj, 'mimeType', '')
                                         file_name = getattr(file_obj, 'name', 'agent-artifact')
+                                        log_debug(f"[VideoRemix] FilePart: mimeType={mime_type}, name={file_name}")
                                         # Check mimeType first, then fall back to extension
                                         if mime_type.startswith('video/'):
                                             part_type = "video"
                                             default_name = "video.mp4"
+                                            log_debug(f"[VideoRemix] Detected as VIDEO via mimeType")
                                         elif any(ext in file_uri.lower() for ext in ['.mp4', '.webm', '.mov', '.avi']):
                                             part_type = "video"
                                             default_name = "video.mp4"
+                                            log_debug(f"[VideoRemix] Detected as VIDEO via extension")
                                         else:
                                             part_type = "image"
                                             default_name = "image.png"
+                                            log_debug(f"[VideoRemix] Detected as IMAGE (fallback)")
                                         
                                         # Look up video metadata by URI (for video_id)
                                         metadata = video_metadata_by_uri.get(file_uri, {})
+                                        log_debug(f"[VideoRemix] Looking up metadata for URI, found: {metadata}")
                                         
                                         file_part_data = {
                                             "type": part_type,
@@ -753,12 +764,13 @@ class FoundryHostManager(ApplicationManager):
                                         # Add video metadata if available (for remix functionality)
                                         if metadata.get("video_id"):
                                             file_part_data["videoId"] = metadata["video_id"]
-                                            log_debug(f"Added videoId to file part: {metadata['video_id']}")
+                                            log_debug(f"[VideoRemix] Added videoId to file part: {metadata['video_id']}")
                                         if metadata.get("generation_id"):
                                             file_part_data["generationId"] = metadata["generation_id"]
                                         if metadata.get("original_video_id"):
                                             file_part_data["originalVideoId"] = metadata["original_video_id"]
                                         
+                                        log_debug(f"[VideoRemix] Final file_part_data: videoId={file_part_data.get('videoId')}, mediaType={file_part_data.get('mediaType')}")
                                         image_parts.append(file_part_data)
                                     else:
                                         log_debug(f"FilePart has no URI, skipping: {file_obj}")
