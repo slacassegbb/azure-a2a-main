@@ -1939,6 +1939,56 @@ Return the name of the best agent for this task (exact match from the list above
         log_info(f"🎉 [Workflow] All {len(parsed_workflow.groups)} groups completed, collected {len(all_task_outputs)} outputs")
         return all_task_outputs
     
+    def _make_step_result(
+        self,
+        step_label: str,
+        agent: str | None,
+        state: str,
+        output: str | None = None,
+        error: str | None = None,
+        hitl_pause: bool = False
+    ) -> Dict[str, Any]:
+        """Create a standardized workflow step result dict."""
+        result = {
+            "step_label": step_label,
+            "agent": agent,
+            "state": state,
+            "error": error,
+            "output": output
+        }
+        if hitl_pause:
+            result["hitl_pause"] = True
+        return result
+    
+    def _deduplicate_workflow_files(self, session_context: SessionContext) -> None:
+        """Deduplicate files for multi-step workflows to prevent context explosion."""
+        if not hasattr(session_context, '_latest_processed_parts'):
+            return
+        if len(session_context._latest_processed_parts) <= 1:
+            return
+            
+        from collections import defaultdict
+        
+        MAX_GENERATED_FILES = 3
+        editing_roles = {}
+        generated_artifacts = []
+        
+        for part in reversed(session_context._latest_processed_parts):
+            role = None
+            if isinstance(part, DataPart) and isinstance(part.data, dict):
+                role = part.data.get('role')
+            elif hasattr(part, 'root') and isinstance(part.root, DataPart) and isinstance(part.root.data, dict):
+                role = part.root.data.get('role')
+            
+            if role in ['base', 'mask', 'overlay']:
+                if role not in editing_roles:
+                    editing_roles[role] = part
+            else:
+                if len(generated_artifacts) < MAX_GENERATED_FILES:
+                    generated_artifacts.append(part)
+        
+        session_context._latest_processed_parts = list(editing_roles.values()) + generated_artifacts
+    
     async def _execute_workflow_step_with_state(
         self,
         step: ParsedWorkflowStep,
@@ -1949,36 +1999,14 @@ Return the name of the best agent for this task (exact match from the list above
         extract_text_fn
     ) -> Dict[str, Any]:
         """
-        Execute a single workflow step with full state tracking via AgentModeTask.
+        Execute a single workflow step with full state tracking.
         
-        This mirrors the task execution logic from the dynamic orchestration loop,
-        including HITL detection, artifact collection, and proper error handling.
-        
-        Args:
-            step: The parsed workflow step
-            task: The AgentModeTask to update with execution state
-            session_context: Session state
-            context_id: Conversation identifier
-            user_message: Original user message
-            extract_text_fn: Function to extract text from responses
-            
-        Returns:
-            Dict with execution result, agent info, and flags (e.g., hitl_pause)
+        Includes HITL detection, artifact collection, and proper error handling.
         """
-        log_debug(f"🚀 [Workflow] Executing step {step.step_label}: {step.description}")
-        
         # Resolve agent (by hint or LLM selection)
-        agent_name = None
-        
-        if step.agent_hint:
-            # Try exact match first
-            for card_name in self.cards.keys():
-                if step.agent_hint.lower() in card_name.lower():
-                    agent_name = card_name
-                    break
+        agent_name = self._resolve_agent_for_step(step)
         
         if not agent_name:
-            # Fall back to LLM agent selection
             available_agents = [{"name": card.name, "description": card.description} for card in self.cards.values()]
             agent_name = await self._select_agent_for_task(step.description, available_agents, context_id)
         
@@ -1986,61 +2014,25 @@ Return the name of the best agent for this task (exact match from the list above
             task.state = "failed"
             task.error_message = "No suitable agent found"
             task.updated_at = datetime.now(timezone.utc)
-            log_error(f"[Workflow] No suitable agent found for step {step.step_label}")
-            return {
-                "step_label": step.step_label,
-                "agent": None,
-                "state": "failed",
-                "error": "No suitable agent found",
-                "output": None
-            }
+            return self._make_step_result(step.step_label, None, "failed", error="No suitable agent found")
         
         # Update task with resolved agent
         task.recommended_agent = agent_name
         task.updated_at = datetime.now(timezone.utc)
         
-        log_debug(f"� [Workflow] Selected agent: {agent_name}")
         await self._emit_granular_agent_event(
             agent_name=agent_name,
             status_text=f"Starting: {step.description[:50]}...",
             context_id=context_id
         )
         
-        # File deduplication for multi-step workflows (same as dynamic orchestration)
-        if hasattr(session_context, '_latest_processed_parts') and len(session_context._latest_processed_parts) > 1:
-            from collections import defaultdict
-            old_count = len(session_context._latest_processed_parts)
-            
-            MAX_GENERATED_FILES = 3
-            editing_roles = defaultdict(lambda: None)
-            generated_artifacts = []
-            
-            for part in reversed(session_context._latest_processed_parts):
-                role = None
-                if isinstance(part, DataPart) and isinstance(part.data, dict):
-                    role = part.data.get('role')
-                elif hasattr(part, 'root') and isinstance(part.root, DataPart) and isinstance(part.root.data, dict):
-                    role = part.root.data.get('role')
-                
-                if role in ['base', 'mask', 'overlay']:
-                    if role not in editing_roles:
-                        editing_roles[role] = part
-                else:
-                    if len(generated_artifacts) < MAX_GENERATED_FILES:
-                        generated_artifacts.append(part)
-            
-            deduplicated_parts = list(editing_roles.values()) + generated_artifacts
-            session_context._latest_processed_parts = deduplicated_parts
-            print(f"📎 [Workflow] File management: {old_count} files → {len(deduplicated_parts)} files")
+        # Deduplicate files for multi-step workflows
+        self._deduplicate_workflow_files(session_context)
         
         try:
-            # Create task message with context
             task_message = f"{step.description}\n\nContext: {user_message}"
-            
-            # Create dummy tool context
             dummy_context = DummyToolContext(session_context, self._azure_blob_client)
             
-            # Call the agent
             responses = await self.send_message(
                 agent_name=agent_name,
                 message=task_message,
@@ -2048,115 +2040,105 @@ Return the name of the best agent for this task (exact match from the list above
                 suppress_streaming=False
             )
             
-            if responses and len(responses) > 0:
-                response_obj = responses[0] if isinstance(responses, list) else responses
-                
-                # Check for HITL (input_required)
-                if session_context.pending_input_agent:
-                    log_info(f"⏸️ [Workflow] Agent '{agent_name}' returned input_required")
-                    task.state = "input_required"
-                    task.updated_at = datetime.now(timezone.utc)
-                    
-                    output_text = extract_text_fn(response_obj)
-                    return {
-                        "step_label": step.step_label,
-                        "agent": agent_name,
-                        "state": "input_required",
-                        "output": output_text,
-                        "hitl_pause": True
-                    }
-                
-                # Handle A2A Task response with proper state extraction
-                if isinstance(response_obj, Task):
-                    task.state = response_obj.status.state
-                    task.output = {
-                        "task_id": response_obj.id,
-                        "state": response_obj.status.state,
-                        "result": response_obj.result if hasattr(response_obj, 'result') else None,
-                        "artifacts": [a.model_dump() for a in response_obj.artifacts] if response_obj.artifacts else []
-                    }
-                    task.updated_at = datetime.now(timezone.utc)
-                    
-                    if task.state == "failed":
-                        task.error_message = response_obj.status.message or "Task failed"
-                        log_error(f"[Workflow] Task failed: {task.error_message}")
-                        return {
-                            "step_label": step.step_label,
-                            "agent": agent_name,
-                            "state": "failed",
-                            "error": task.error_message,
-                            "output": None
-                        }
-                    
-                    # Collect artifacts
-                    output_text = str(response_obj.result) if response_obj.result else ""
-                    if response_obj.artifacts:
-                        artifact_descriptions = []
-                        for artifact in response_obj.artifacts:
-                            if hasattr(artifact, 'parts'):
-                                for part in artifact.parts:
-                                    if not hasattr(session_context, '_latest_processed_parts'):
-                                        session_context._latest_processed_parts = []
-                                    session_context._latest_processed_parts.append(part)
-                                    
-                                    if hasattr(part, 'root'):
-                                        if hasattr(part.root, 'file'):
-                                            file_info = part.root.file
-                                            file_name = getattr(file_info, 'name', 'unknown')
-                                            artifact_descriptions.append(f"[File: {file_name}]")
-                                        elif hasattr(part.root, 'text'):
-                                            artifact_descriptions.append(part.root.text)
-                        
-                        if artifact_descriptions:
-                            output_text = f"{output_text}\n\nArtifacts:\n" + "\n".join(artifact_descriptions)
-                    
-                    log_info(f"✅ [Workflow] Step {step.step_label} completed by {agent_name}")
-                    return {
-                        "step_label": step.step_label,
-                        "agent": agent_name,
-                        "state": "completed",
-                        "error": None,
-                        "output": output_text
-                    }
-                else:
-                    # Simple string response
-                    task.state = "completed"
-                    output_text = extract_text_fn(response_obj)
-                    task.output = {"result": output_text}
-                    task.updated_at = datetime.now(timezone.utc)
-                    
-                    log_info(f"✅ [Workflow] Step {step.step_label} completed by {agent_name}")
-                    return {
-                        "step_label": step.step_label,
-                        "agent": agent_name,
-                        "state": "completed",
-                        "error": None,
-                        "output": output_text
-                    }
-            else:
+            if not responses:
                 task.state = "failed"
                 task.error_message = "No response from agent"
                 task.updated_at = datetime.now(timezone.utc)
-                return {
-                    "step_label": step.step_label,
-                    "agent": agent_name,
-                    "state": "failed",
-                    "error": "No response from agent",
-                    "output": None
-                }
+                return self._make_step_result(step.step_label, agent_name, "failed", error="No response from agent")
+            
+            response_obj = responses[0] if isinstance(responses, list) else responses
+            
+            # Check for HITL (input_required)
+            if session_context.pending_input_agent:
+                task.state = "input_required"
+                task.updated_at = datetime.now(timezone.utc)
+                output_text = extract_text_fn(response_obj)
+                return self._make_step_result(step.step_label, agent_name, "input_required", output=output_text, hitl_pause=True)
+            
+            # Process response
+            output_text = self._process_workflow_response(response_obj, task, session_context, extract_text_fn)
+            
+            if task.state == "failed":
+                return self._make_step_result(step.step_label, agent_name, "failed", error=task.error_message)
+            
+            return self._make_step_result(step.step_label, agent_name, "completed", output=output_text)
                 
         except Exception as e:
             task.state = "failed"
             task.error_message = str(e)
             task.updated_at = datetime.now(timezone.utc)
             log_error(f"[Workflow] Error executing step {step.step_label}: {e}")
-            return {
-                "step_label": step.step_label,
-                "agent": agent_name,
-                "state": "failed",
-                "error": str(e),
-                "output": None
+            return self._make_step_result(step.step_label, agent_name, "failed", error=str(e))
+    
+    def _resolve_agent_for_step(self, step: ParsedWorkflowStep) -> str | None:
+        """Resolve agent name from step hint."""
+        if not step.agent_hint:
+            return None
+        for card_name in self.cards.keys():
+            if step.agent_hint.lower() in card_name.lower():
+                return card_name
+        return None
+    
+    def _process_workflow_response(
+        self,
+        response_obj: Any,
+        task: AgentModeTask,
+        session_context: SessionContext,
+        extract_text_fn
+    ) -> str:
+        """Process workflow response and update task state. Returns output text."""
+        if isinstance(response_obj, Task):
+            task.state = response_obj.status.state
+            task.output = {
+                "task_id": response_obj.id,
+                "state": response_obj.status.state,
+                "result": response_obj.result if hasattr(response_obj, 'result') else None,
+                "artifacts": [a.model_dump() for a in response_obj.artifacts] if response_obj.artifacts else []
             }
+            task.updated_at = datetime.now(timezone.utc)
+            
+            if task.state == "failed":
+                task.error_message = response_obj.status.message or "Task failed"
+                return ""
+            
+            output_text = str(response_obj.result) if response_obj.result else ""
+            
+            # Collect artifacts
+            if response_obj.artifacts:
+                artifact_texts = self._collect_artifacts(response_obj.artifacts, session_context)
+                if artifact_texts:
+                    output_text = f"{output_text}\n\nArtifacts:\n" + "\n".join(artifact_texts)
+            
+            return output_text
+        else:
+            # Simple string response
+            task.state = "completed"
+            output_text = extract_text_fn(response_obj)
+            task.output = {"result": output_text}
+            task.updated_at = datetime.now(timezone.utc)
+            return output_text
+    
+    def _collect_artifacts(self, artifacts: list, session_context: SessionContext) -> List[str]:
+        """Collect artifacts from response and add to session context. Returns descriptions."""
+        artifact_descriptions = []
+        
+        if not hasattr(session_context, '_latest_processed_parts'):
+            session_context._latest_processed_parts = []
+        
+        for artifact in artifacts:
+            if not hasattr(artifact, 'parts'):
+                continue
+            for part in artifact.parts:
+                session_context._latest_processed_parts.append(part)
+                
+                if hasattr(part, 'root'):
+                    if hasattr(part.root, 'file'):
+                        file_name = getattr(part.root.file, 'name', 'unknown')
+                        artifact_descriptions.append(f"[File: {file_name}]")
+                    elif hasattr(part.root, 'text'):
+                        artifact_descriptions.append(part.root.text)
+        
+        return artifact_descriptions
 
     async def _execute_orchestrated_task(
         self,
