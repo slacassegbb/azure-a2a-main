@@ -721,55 +721,43 @@ IMPORTANT: You need the video_id from a previously generated video.""",
         os.makedirs(output_dir, exist_ok=True)
         
         try:
-            # Check if we have a reference image - requires multipart form upload
+            # Get Sora endpoint and token
+            base_url, token = self._get_sora_auth()
+            
+            # Create OpenAI client with token
+            from openai import OpenAI
+            client = OpenAI(
+                base_url=base_url,
+                api_key=token,
+            )
+            
+            # Prepare parameters for video creation
+            create_params = {
+                "model": "sora-2",  # Use sora-2 as per documentation
+                "prompt": prompt,
+                "size": size,
+                "seconds": str(seconds),  # Azure API expects string, not integer
+            }
+            
+            # Check if we have a reference image
             if input_reference_path and os.path.exists(input_reference_path):
                 logger.info(f"Using reference image: {input_reference_path}")
-                
                 # Resize image to match video dimensions (Sora 2 requirement)
                 resized_image_data = self._resize_image_for_video(input_reference_path, size)
-                
-                # Parse size string to width and height
-                width, height = map(int, size.split("x"))
-                
-                # For image-to-video, use multipart form upload with resized image
-                files = {
-                    "input_reference": ("reference_image.png", resized_image_data, "image/png")
-                }
-                form_data = {
-                    "model": "sora",
-                    "prompt": prompt,
-                    "width": str(width),
-                    "height": str(height),
-                    "n_seconds": str(seconds),
-                }
-                
-                # Create the video generation job with multipart form
-                logger.info("Submitting video generation request to Sora (with reference image)...")
-                video_response = await self._sora_api_request("POST", "/video/generations/jobs", json_data=form_data, files=files)
-            else:
-                # Parse size string to width and height
-                width, height = map(int, size.split("x"))
-                
-                # Text-to-video: use JSON body
-                create_body = {
-                    "model": "sora",
-                    "prompt": prompt,
-                    "width": width,
-                    "height": height,
-                    "n_seconds": seconds,
-                }
-                
-                # Create the video generation job
-                logger.info("Submitting video generation request to Sora 2...")
-                video_response = await self._sora_api_request("POST", "/video/generations/jobs", json_data=create_body)
+                create_params["input_reference"] = resized_image_data
             
-            video_id = video_response.get("id")
-            video_status = video_response.get("status")
+            # Create the video using OpenAI SDK
+            logger.info(f"Submitting video generation request via SDK...")
+            logger.info(f"Parameters: model={create_params['model']}, size={size}, seconds={create_params['seconds']}")
+            video = client.videos.create(**create_params)
+            
+            video_id = video.id
+            video_status = video.status
             
             logger.info(f"Video creation started. ID: {video_id}")
             logger.info(f"Initial status: {video_status}")
             
-            # Poll for completion
+            # Poll for completion using SDK
             poll_count = 0
             max_polls = 90  # Maximum 30 minutes (90 * 20 seconds)
             
@@ -782,39 +770,30 @@ IMPORTANT: You need the video_id from a previously generated video.""",
                 
                 await asyncio.sleep(20)
                 
-                # Retrieve the latest status
-                video_response = await self._sora_api_request("GET", f"/video/generations/jobs/{video_id}")
-                video_status = video_response.get("status")
+                # Retrieve the latest status using SDK
+                video = client.videos.retrieve(video_id)
+                video_status = video.status
             
             # Check final status
             if video_status in ["completed", "succeeded"]:
                 logger.info("="*60)
                 logger.info("🎉 VIDEO GENERATION COMPLETED!")
                 logger.info(f"📹 VIDEO ID: {video_id}")
-                logger.info(f"📄 Full response: {video_response}")
+                logger.info(f"📄 Video object: {video}")
                 logger.info("="*60)
                 
                 # Generate filename with video_id for easy reference
                 timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-                # Extract short video id (last 8 chars) for filename
-                short_vid = video_id.replace('video_', '')[-8:] if video_id else str(uuid.uuid4())[:8]
+                # Extract short video id (last 8 chars) for filename - handle both video_ and task_ prefixes
+                short_vid = video_id.replace('video_', '').replace('task_', '')[-8:] if video_id else str(uuid.uuid4())[:8]
                 output_filename = f"sora_{timestamp}_{short_vid}.mp4"
                 output_path = os.path.join(output_dir, output_filename)
-                
-                # Get the generation ID from the response (needed for download)
-                generations = video_response.get("generations", [])
-                if not generations:
-                    raise ValueError("No generations found in response")
-                
-                generation_id = generations[0].get("id")
-                logger.info(f"📥 Task ID: {video_id}, Generation ID: {generation_id}")
-                
-                # Download using the generation ID (gen_xxx format)
-                logger.info(f"Downloading video to: {output_path}")
-                video_content = await self._download_video_content(generation_id)
                 saved_path = Path(output_path)
-                with open(saved_path, "wb") as f:
-                    f.write(video_content)
+                
+                # Download using OpenAI SDK's download_content method
+                logger.info(f"Downloading video to: {output_path}")
+                video_content = client.videos.download_content(video_id, variant="video")
+                video_content.write_to_file(str(saved_path))
                 
                 logger.info(f"✅ Video saved successfully: {output_path}")
                 logger.info(f"💡 To remix this video, use Video ID: {video_id}")
@@ -824,6 +803,7 @@ IMPORTANT: You need the video_id from a previously generated video.""",
                 response_text = f"✅ Video generated successfully!\n\n**Video ID (for remix):** `{video_id}`\n**Duration:** {seconds} seconds\n**Resolution:** {size}"
                 
                 if blob_url:
+                    file_size = saved_path.stat().st_size if saved_path.exists() else 0
                     artifact_record: Dict[str, Any] = {
                         "artifact-uri": blob_url,
                         "file-name": saved_path.name,
@@ -831,25 +811,24 @@ IMPORTANT: You need the video_id from a previously generated video.""",
                         "storage-type": "azure_blob",
                         "status": "stored",
                         "provider": "sora",
-                        "model": "sora",
-                        "video_id": video_id,
-                        "generation_id": generation_id,
+                        "model": "sora-2",
+                        "video_id": video_id,  # This is the ID to use for remix
                         "local-path": str(saved_path),
-                        "file-size": len(video_content),
+                        "file-size": file_size,
                     }
                     self._latest_artifacts.append(artifact_record)
                     logger.info(f"🎬 Created video artifact: {saved_path.name}, blob_url={blob_url[:80]}...")
                     response_text += f"\n**Video URL:** [View Video]({blob_url})"
                 else:
-                    response_text += f"\n**Saved to:** {output_path}"
+                    response_text += f"\n**Saved to:** {str(output_path)}"
                 
                 response_text += "\n\n💡 *Copy the Video ID above to use with the Remix feature!*"
-                return output_path, response_text
+                return str(output_path), response_text
             
             elif video_status == "failed":
-                error_msg = video_response.get('error', 'Unknown error')
-                logger.error(f"Video generation failed: {error_msg}")
-                return "", f"❌ Video generation failed: {error_msg}"
+                error_info = getattr(video, 'error', 'Unknown error')
+                logger.error(f"Video generation failed: {error_info}")
+                return "", f"❌ Video generation failed: {error_info}"
             
             else:
                 logger.warning(f"Video generation ended with status: {video_status}")
@@ -857,6 +836,8 @@ IMPORTANT: You need the video_id from a previously generated video.""",
                 
         except Exception as e:
             logger.error(f"Error generating video: {e}")
+            import traceback
+            traceback.print_exc()
             return "", f"❌ Error generating video: {str(e)}"
 
     async def remix_video(
@@ -1194,23 +1175,66 @@ IMPORTANT: You need the video_id from a previously generated video.""",
         os.makedirs(output_dir, exist_ok=True)
         
         try:
-            # Create remix request - POST to /videos/{video_id}/remix
-            # The SDK's client.videos.remix(video_id=...) maps to this endpoint
-            # Only prompt is needed in body - model is implied by the source video
-            remix_body = {
-                "prompt": prompt,
-            }
+            # Azure returns task_XXX format but OpenAI SDK expects video_XXX format
+            # Check if we need to convert the format
+            original_video_id = video_id
+            if video_id.startswith("task_"):
+                # Try with video_ prefix for OpenAI SDK compatibility
+                sdk_video_id = video_id.replace("task_", "video_", 1)
+                logger.info(f"Converting Azure task ID format: {video_id} -> {sdk_video_id} for SDK")
+            else:
+                sdk_video_id = video_id
             
-            logger.info("Submitting remix request to Sora 2...")
-            logger.info(f"Endpoint: /videos/{video_id}/remix")
-            logger.info(f"Request body: {remix_body}")
-            video_response = await self._sora_api_request("POST", f"/video/generations/jobs/{video_id}/remix", json_data=remix_body)
+            # Get Sora endpoint and token
+            base_url, token = self._get_sora_auth()
             
-            new_video_id = video_response.get("id")
-            video_status = video_response.get("status")
+            # Create OpenAI client with token
+            from openai import OpenAI
+            client = OpenAI(
+                base_url=base_url,
+                api_key=token,
+            )
+            
+            # Use the OpenAI SDK's remix method (Sora 2 API)
+            logger.info("Calling Sora 2 remix API via OpenAI SDK...")
+            logger.info(f"Original Video ID: {original_video_id}")
+            logger.info(f"SDK Video ID: {sdk_video_id}")
+            logger.info(f"Remix prompt: {prompt}")
+            
+            try:
+                video_response = client.videos.remix(
+                    video_id=sdk_video_id,
+                    prompt=prompt
+                )
+            except Exception as e:
+                # If SDK format fails, try with original Azure task_ format via direct API
+                logger.warning(f"SDK remix failed: {e}")
+                logger.info(f"Retrying with direct API call using original task ID: {original_video_id}")
+                
+                remix_body = {"prompt": prompt}
+                video_response = await self._sora_api_request(
+                    "POST", 
+                    f"/video/generations/jobs/{original_video_id}/remix", 
+                    json_data=remix_body
+                )
+                # Convert dict response to object-like format for compatibility
+                class VideoResponse:
+                    def __init__(self, data):
+                        self.id = data.get("id")
+                        self.status = data.get("status")
+                        self._data = data
+                
+                video_response = VideoResponse(video_response)
+            
+            # Extract video ID and status from OpenAI SDK response object
+            new_video_id = video_response.id if hasattr(video_response, 'id') else video_response.get("id")
+            video_status = video_response.status if hasattr(video_response, 'status') else video_response.get("status")
             
             logger.info(f"Remix job created. ID: {new_video_id}")
             logger.info(f"Initial status: {video_status}")
+            
+            # Determine if we should use SDK or direct API for polling
+            use_sdk = not new_video_id.startswith("task_")
             
             # Poll for completion
             poll_count = 0
@@ -1224,8 +1248,22 @@ IMPORTANT: You need the video_id from a previously generated video.""",
                     return "", f"Video remix timed out after {max_polls * 20} seconds"
                 
                 await asyncio.sleep(20)
-                video_response = await self._sora_api_request("GET", f"/video/generations/jobs/{new_video_id}")
-                video_status = video_response.get("status")
+                
+                # Use SDK or direct API based on video ID format
+                if use_sdk:
+                    try:
+                        video_response = client.videos.retrieve(new_video_id)
+                        video_status = video_response.status if hasattr(video_response, 'status') else video_response.get("status")
+                    except Exception as e:
+                        logger.warning(f"SDK retrieve failed, falling back to direct API: {e}")
+                        use_sdk = False
+                
+                if not use_sdk:
+                    # Use direct API call for Azure task_ format
+                    response_dict = await self._sora_api_request("GET", f"/video/generations/jobs/{new_video_id}")
+                    video_status = response_dict.get("status")
+                    # Update video_response for later use
+                    video_response._data = response_dict if hasattr(video_response, '_data') else response_dict
                 
                 # Log full response when status changes from in_progress
                 if video_status in ["completed", "succeeded", "failed", "cancelled"]:
@@ -1234,28 +1272,39 @@ IMPORTANT: You need the video_id from a previously generated video.""",
             if video_status in ["completed", "succeeded"]:
                 logger.info("="*60)
                 logger.info("🎉 VIDEO REMIX COMPLETED!")
-                logger.info(f"📹 ORIGINAL VIDEO ID: {video_id}")
+                logger.info(f"📹 ORIGINAL VIDEO ID: {original_video_id}")
                 logger.info(f"📹 NEW REMIX VIDEO ID: {new_video_id}")
                 logger.info("="*60)
                 
-                # Get generation ID for download
-                generations = video_response.get("generations", [])
-                if not generations:
-                    return "", "❌ No generations found in remix response"
-                generation_id = generations[0].get("id")
-                logger.info(f"📥 Task ID: {new_video_id}, Generation ID: {generation_id}")
+                # Download the video
+                logger.info(f"Downloading remixed video...")
                 
                 timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
                 # Extract short video id (last 8 chars) for filename
-                short_vid = new_video_id.replace('video_', '')[-8:] if new_video_id else str(uuid.uuid4())[:8]
+                short_vid = new_video_id.replace('video_', '').replace('task_', '')[-8:] if new_video_id else str(uuid.uuid4())[:8]
                 output_filename = f"sora_remix_{timestamp}_{short_vid}.mp4"
                 output_path = os.path.join(output_dir, output_filename)
-                
-                logger.info(f"Downloading remixed video to: {output_path}")
-                video_content = await self._download_video_content(generation_id)
                 saved_path = Path(output_path)
-                with open(saved_path, "wb") as f:
-                    f.write(video_content)
+                
+                # Try SDK download first, fall back to direct API if needed
+                try:
+                    if use_sdk:
+                        video_content = client.videos.download_content(new_video_id, variant="video")
+                        video_content.write_to_file(str(saved_path))
+                    else:
+                        raise Exception("Using direct API download for task_ format")
+                except Exception as e:
+                    logger.info(f"SDK download not available, using direct API: {e}")
+                    # For Azure task_ format, get generation_id and download directly
+                    response_data = video_response._data if hasattr(video_response, '_data') else {}
+                    generations = response_data.get("generations", [])
+                    if not generations:
+                        return "", "❌ No generations found in remix response"
+                    generation_id = generations[0].get("id")
+                    logger.info(f"Downloading using generation_id: {generation_id}")
+                    video_content_bytes = await self._download_video_content(generation_id)
+                    with open(saved_path, "wb") as f:
+                        f.write(video_content_bytes)
                 
                 logger.info(f"✅ Remixed video saved: {output_path}")
                 logger.info(f"💡 To remix again, use Video ID: {new_video_id}")
@@ -1265,6 +1314,9 @@ IMPORTANT: You need the video_id from a previously generated video.""",
                 response_text = f"✅ Video remixed successfully!\n\n**Original Video ID:** `{video_id}`\n**New Remix Video ID (for further remix):** `{new_video_id}`"
                 
                 if blob_url:
+                    # Get file size for artifact
+                    file_size = saved_path.stat().st_size if saved_path.exists() else 0
+                    
                     artifact_record: Dict[str, Any] = {
                         "artifact-uri": blob_url,
                         "file-name": saved_path.name,
@@ -1274,10 +1326,9 @@ IMPORTANT: You need the video_id from a previously generated video.""",
                         "provider": "sora",
                         "model": "sora",
                         "video_id": new_video_id,
-                        "generation_id": generation_id,
-                        "original_video_id": video_id,
+                        "original_video_id": video_id,  # Store original video ID for tracking
                         "local-path": str(saved_path),
-                        "file-size": len(video_content),
+                        "file-size": file_size,
                     }
                     self._latest_artifacts.append(artifact_record)
                     logger.info(f"🎬 Created remix artifact: {saved_path.name}, blob_url={blob_url[:80]}...")
@@ -1286,7 +1337,7 @@ IMPORTANT: You need the video_id from a previously generated video.""",
                     response_text += f"\n**Saved to:** {output_path}"
                 
                 response_text += "\n\n💡 *You can use the New Remix Video ID to create another remix!*"
-                return output_path, response_text
+                return str(output_path), response_text
             
             elif video_status == "failed":
                 error_obj = video_response.get('error', {})

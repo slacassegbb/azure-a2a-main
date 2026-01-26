@@ -1132,6 +1132,10 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
             uri: c.uri,
             fileName: c.name || c.fileName || "Generated video",
             mediaType: c.mimeType || "video/mp4",
+            // Extract video metadata for remix functionality
+            videoId: c.videoId,
+            generationId: c.generationId,
+            originalVideoId: c.originalVideoId,
           }))
           console.log("[ChatPanel] Image parts count:", imageContents.length)
           console.log("[ChatPanel] Video parts count:", videoContents.length)
@@ -1635,9 +1639,15 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
         effectiveConversationId
       })
       if (inferenceSteps.length > 0) {
+        // CRITICAL: Clear live workflow state IMMEDIATELY before creating the permanent workflow message
+        // This prevents the brief moment where both the live workflow AND the permanent one are visible
+        const stepsCopy = [...inferenceSteps] // Copy steps BEFORE clearing them
+        setIsInferencing(false)
+        setInferenceSteps([])
+        setActiveNode(null)
+        
         // Show workflow for ANY agent response when we have steps
         setProcessedMessageIds(prev => new Set([...prev, summaryId]))
-        const stepsCopy = [...inferenceSteps] // Copy steps before they get cleared
         const summaryMessage: Message = {
           id: summaryId,
           role: "system",
@@ -1724,14 +1734,9 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
           console.log('[Voice Live] Response injected successfully')
         }
       }
-
-      // Clear inference state BEFORE adding messages to avoid duplicate workflow display
-      // (live workflow + inference_summary message both showing at once)
-      if (messagesToAdd.length > 0) {
-        setIsInferencing(false)
-        setInferenceSteps([])
-        setActiveNode(null)
-      }
+      
+      // NOTE: Inference state is cleared earlier (when creating the workflow summary)
+      // to prevent brief moment where both live and permanent workflows are visible
       
       // Add messages only if we have any
       if (messagesToAdd.length > 0) {

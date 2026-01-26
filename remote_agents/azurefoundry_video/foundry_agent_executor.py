@@ -294,12 +294,21 @@ class FoundryTemplateAgentExecutor(AgentExecutor):
     def _convert_parts_to_text(self, parts: List[Part]) -> str:
         """Convert message parts to plain text, saving any files locally."""
         texts: List[str] = []
+        video_remix_id = None
+        
         for part in parts:
             p = part.root
             if isinstance(p, TextPart):
                 texts.append(p.text)
             elif isinstance(p, DataPart):
                 if isinstance(p.data, dict):
+                    # Check for video remix request
+                    if p.data.get("type") == "video_remix_request":
+                        video_remix_id = p.data.get("video_id")
+                        logger.info(f"🎬 Video remix request detected with video_id: {video_remix_id}")
+                        # Don't add to texts - we'll append it specially below
+                        continue
+                    
                     uri = p.data.get("artifact-uri")
                     file_name = p.data.get("file-name", "file")
                     if uri:
@@ -320,7 +329,16 @@ class FoundryTemplateAgentExecutor(AgentExecutor):
                     texts.append(f"[Saved {fname} to {path}]")
                 except Exception as ex:
                     texts.append(f"[Error saving file: {ex}]")
-        return " ".join(texts)
+        
+        result = " ".join(texts)
+        
+        # If this is a remix request, append the video_id info at the end
+        # so the agent can use the remix_video function
+        if video_remix_id:
+            result += f"\n\nIMPORTANT: Use the remix_video function with video_id='{video_remix_id}' to remix the previous video with the requested changes."
+            logger.info(f"📝 Appended remix instruction with video_id: {video_remix_id}")
+        
+        return result
 
     async def execute(
         self,
