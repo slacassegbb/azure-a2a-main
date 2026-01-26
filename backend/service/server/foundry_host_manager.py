@@ -741,7 +741,8 @@ class FoundryHostManager(ApplicationManager):
                             "mediaType": "text/plain",
                         })
 
-                    if not any(item.get("type") == "image" for item in event_data["content"]):
+                    # Check if any image OR video content was already added
+                    if not any(item.get("type") in ("image", "video") for item in event_data["content"]):
                         pending_images = self._pending_artifacts.pop(context_id, [])
                         for image_part in pending_images:
                             event_data["content"].append(image_part)

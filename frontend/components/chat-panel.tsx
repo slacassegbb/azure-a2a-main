@@ -842,8 +842,9 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                 role: (msg.role === 'user' || msg.role === 'assistant' || msg.role === 'agent') ? 
                       (msg.role === 'agent' ? 'assistant' : msg.role) : 'assistant',
                 content: content,
-                images: images.length > 0 ? images : undefined,
-                // Convert media files to attachments format for rendering (JSX looks for attachments, not images)
+                // NOTE: Don't set 'images' here - use 'attachments' only to avoid duplicate rendering
+                // The JSX has two render paths: one for message.images and one for message.attachments
+                // We only want to use attachments
                 attachments: images.length > 0 ? images.map(img => {
                   // Use the actual mimeType from the file, or infer from extension
                   let mediaType = img.mimeType || 'image/png'
@@ -868,6 +869,48 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
               }
             })
             
+            // Debug: Log all converted messages to understand duplication
+            console.log('[ChatPanel] Converted messages from API:', convertedMessages.map(m => ({
+              id: m.id,
+              role: m.role,
+              hasContent: !!m.content,
+              contentPreview: m.content?.substring(0, 50),
+              attachmentCount: m.attachments?.length || 0,
+              attachments: m.attachments?.map(a => a.fileName)
+            })))
+            
+            // Merge consecutive assistant messages (fixes duplicate attachments on page reload)
+            // When attachments are sent separately from text, they create separate messages
+            // Merge them so attachments appear with their associated text
+            const mergedMessages: Message[] = []
+            for (let i = 0; i < convertedMessages.length; i++) {
+              const msg = convertedMessages[i]
+              const prevMsg = mergedMessages[mergedMessages.length - 1]
+              
+              console.log(`[ChatPanel] Checking message ${i}:`, {
+                role: msg.role,
+                hasContent: !!msg.content,
+                hasAttachments: !!msg.attachments?.length,
+                attachmentCount: msg.attachments?.length,
+                prevRole: prevMsg?.role,
+                prevHasContent: !!prevMsg?.content
+              })
+              
+              // If current message is assistant with only attachments and PREVIOUS was also assistant with text
+              // Merge the attachments INTO the previous message
+              if (msg.role === 'assistant' && msg.attachments?.length && !msg.content && 
+                  prevMsg && prevMsg.role === 'assistant' && prevMsg.content) {
+                // Merge attachments into previous message
+                console.log('[ChatPanel] ✓ MERGING attachment message into PREVIOUS text message')
+                prevMsg.attachments = [...(prevMsg.attachments || []), ...(msg.attachments || [])]
+                // Skip current message (it's merged into previous)
+                continue
+              }
+              mergedMessages.push(msg)
+            }
+            
+            console.log('[ChatPanel] After merge:', mergedMessages.length, 'messages (was', convertedMessages.length, ')')
+            
             // Load stored workflows from localStorage and inject them
             try {
               const storageKey = `workflow_${conversationId}`
@@ -878,11 +921,12 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                 const messagesWithWorkflows: Message[] = []
                 let workflowIndex = 0
                 
-                for (let i = 0; i < convertedMessages.length; i++) {
-                  const msg = convertedMessages[i]
+                for (let i = 0; i < mergedMessages.length; i++) {
+                  const msg = mergedMessages[i]
                   
-                  // Insert workflow before assistant responses
-                  if (msg.role === 'assistant' && workflowIndex < workflows.length) {
+                  // Insert workflow before assistant responses WITH CONTENT
+                  // Don't insert workflow before attachment-only messages
+                  if (msg.role === 'assistant' && msg.content && workflowIndex < workflows.length) {
                     const workflow = workflows[workflowIndex]
                     messagesWithWorkflows.push({
                       id: workflow.id,
@@ -895,13 +939,15 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                   messagesWithWorkflows.push(msg)
                 }
                 
-                setMessages(messagesWithWorkflows.filter(m => m.content || m.images?.length || m.type === 'inference_summary'))
+                setMessages(messagesWithWorkflows.filter(m => m.content || m.images?.length || m.attachments?.length || m.type === 'inference_summary'))
+                console.log('[ChatPanel] Final messages set (with workflows):', messagesWithWorkflows.length, 'messages, attachments:', messagesWithWorkflows.filter(m => m.attachments?.length).map(m => ({ id: m.id, attachmentCount: m.attachments?.length })))
               } else {
-                setMessages(convertedMessages.filter(m => m.content || m.images?.length))
+                setMessages(mergedMessages.filter(m => m.content || m.images?.length || m.attachments?.length))
+                console.log('[ChatPanel] Final messages set (no workflows):', mergedMessages.length, 'messages, attachments:', mergedMessages.filter(m => m.attachments?.length).map(m => ({ id: m.id, attachmentCount: m.attachments?.length })))
               }
             } catch (err) {
               console.error('[ChatPanel] Failed to load workflows from localStorage:', err)
-              setMessages(convertedMessages.filter(m => m.content || m.images?.length))
+              setMessages(mergedMessages.filter(m => m.content || m.images?.length || m.attachments?.length))
             }
             
             if (DEBUG) console.log("[ChatPanel] Converted messages:", convertedMessages.length)
@@ -1123,63 +1169,25 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
           const filteredDerived = derivedImageAttachments.filter(att => !existingUris.has(att.uri))
           // Combine images and videos into all attachments
           const allImageAttachments = [...imageContents, ...filteredDerived, ...videoContents]
+          
+          // NOTE: We no longer add attachmentMessage immediately here.
+          // Instead, we pass attachments through final_response so they appear
+          // AFTER the workflow, not before it.
+          
+          // Add agent-generated artifacts/files to file history (session-scoped)
           if (allImageAttachments.length > 0) {
-            const attachmentId = `${data.messageId}_attachments`
-            if (!processedMessageIds.has(attachmentId)) {
-              setProcessedMessageIds(prev => new Set([...prev, attachmentId]))
-              const attachmentMessage: Message = {
-                id: attachmentId,
-                role: "assistant",
-                agent: agentName,
-                attachments: allImageAttachments.map((img: any) => {
-                  // Debug: Log each attachment being mapped
-                  console.log('[VideoRemix] Mapping attachment:', {
-                    fileName: img.fileName,
-                    mediaType: img.mediaType,
-                    videoId: img.videoId,
-                    generationId: img.generationId,
-                    originalVideoId: img.originalVideoId,
-                    uri: img.uri?.slice(-50) // Last 50 chars of URI
-                  })
-                  return {
-                    uri: img.uri,
-                    fileName: img.fileName,
-                    fileSize: img.fileSize,
-                    storageType: img.storageType,
-                    mediaType: img.mediaType || "image/png",
-                    videoId: img.videoId,  // For video remix functionality
-                    generationId: img.generationId,
-                    originalVideoId: img.originalVideoId,
-                  }
-                }),
+            allImageAttachments.forEach((artifact: any) => {
+              if ((window as any).addFileToHistory) {
+                (window as any).addFileToHistory({
+                  file_id: artifact.uri,
+                  filename: artifact.fileName || artifact.filename || "Agent artifact",
+                  size: artifact.fileSize || artifact.size || 0,
+                  content_type: artifact.mediaType || artifact.content_type || artifact.mime_type || "application/octet-stream",
+                  uri: artifact.uri,
+                })
+                console.log("[ChatPanel] Added agent artifact to file history:", artifact.fileName || artifact.filename)
               }
-              console.log("[ChatPanel] Adding attachment message:", attachmentMessage)
-              console.log("[VideoRemix] Attachments with videoId:", attachmentMessage.attachments?.filter(a => a.videoId))
-              setMessages(prev => [...prev, attachmentMessage])
-              
-              // Add ALL agent-generated artifacts/files to file history (session-scoped)
-              // This ensures any file returned by a remote agent is visible in file history
-              allImageAttachments.forEach((artifact: any) => {
-                if ((window as any).addFileToHistory) {
-                  (window as any).addFileToHistory({
-                    file_id: artifact.uri, // Use URI as unique ID
-                    filename: artifact.fileName || artifact.filename || "Agent artifact",
-                    size: artifact.fileSize || artifact.size || 0,
-                    content_type: artifact.mediaType || artifact.content_type || artifact.mime_type || "application/octet-stream",
-                    uri: artifact.uri,
-                  })
-                  console.log("[ChatPanel] Added agent artifact to file history:", artifact.fileName || artifact.filename)
-                }
-              })
-              
-              // Broadcast attachment message to other users so they can see artifacts
-              sendMessage({
-                type: "shared_message",
-                message: attachmentMessage
-              })
-            } else {
-              console.log("[ChatPanel] Attachment message already processed, skipping:", attachmentId)
-            }
+            })
           }
           
           console.log("[ChatPanel] Processing assistant message:", {
@@ -1195,7 +1203,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
           setStreamingMessageId(null)
           
           // Emit final_response for internal processing - this is converted from message event
-          // Include images from the message content so they appear inline with the text
+          // Include attachments so they appear AFTER the workflow, not before
           emit("final_response", {
             inferenceId: data.conversationId || data.messageId,
             conversationId: data.conversationId || data.contextId,
@@ -1204,12 +1212,18 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
               role: data.role === "user" ? "user" : "assistant",
               content: textContent,
               agent: agentName,
-              // Include image content from the message so it appears inline
-              images: imageContents.map((img: any) => ({
-                uri: img.uri,
-                fileName: img.fileName || "Generated image",
-              })),
             },
+            // Pass full attachment data for adding AFTER workflow
+            attachments: allImageAttachments.map((img: any) => ({
+              uri: img.uri,
+              fileName: img.fileName,
+              fileSize: img.fileSize,
+              storageType: img.storageType,
+              mediaType: img.mediaType || "image/png",
+              videoId: img.videoId,
+              generationId: img.generationId,
+              originalVideoId: img.originalVideoId,
+            })),
           })
         } else {
           console.log("[ChatPanel] Skipping user message echo from backend:", data)
@@ -1571,7 +1585,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       setActiveNode(data.agent)
     }
 
-    const handleFinalResponse = (data: { inferenceId: string; message: Omit<Message, "id">; conversationId?: string; messageId?: string }) => {
+    const handleFinalResponse = (data: { inferenceId: string; message: Omit<Message, "id">; conversationId?: string; messageId?: string; attachments?: any[] }) => {
       console.log("[ChatPanel] Final response received:", data)
       
       // Use messageId from backend if available, otherwise generate unique ID based on timestamp
@@ -1638,13 +1652,18 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
           const storageKey = `workflow_${effectiveConversationId}`
           const existingData = localStorage.getItem(storageKey)
           const workflows = existingData ? JSON.parse(existingData) : []
-          workflows.push({
-            id: summaryId,
-            steps: stepsCopy,
-            timestamp: Date.now()
-          })
-          localStorage.setItem(storageKey, JSON.stringify(workflows))
-          console.log('[ChatPanel] Workflow persisted to:', storageKey)
+          // Check if this workflow already exists (by id) to avoid duplicates
+          if (!workflows.some((w: any) => w.id === summaryId)) {
+            workflows.push({
+              id: summaryId,
+              steps: stepsCopy,
+              timestamp: Date.now()
+            })
+            localStorage.setItem(storageKey, JSON.stringify(workflows))
+            console.log('[ChatPanel] Workflow persisted to:', storageKey)
+          } else {
+            console.log('[ChatPanel] Workflow already exists, skipping save:', summaryId)
+          }
         } catch (err) {
           console.error('[ChatPanel] Failed to persist workflow to localStorage:', err)
         }
@@ -1657,51 +1676,31 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
           role: data.message.role === "user" ? "user" : "assistant",
           content: data.message.content,
           agent: data.message.agent,
-          // Include images from the message so they appear inline with the response
-          images: data.message.images || [],
-          // Convert images to attachments format for rendering (images show refine buttons, attachments property is what JSX renders)
-          attachments: (data.message.images || []).map((img: any) => ({
-            uri: img.uri,
-            fileName: img.fileName || "Generated image",
-            mediaType: img.mediaType || "image/png",
-          })),
         }
         messagesToAdd.push(finalMessage)
       }
 
-      // Add any images/videos from inference steps as separate messages AFTER the final response
-      // This ensures media appear below the workflow and response, not above
-      const mediaFromSteps = inferenceSteps.filter(step => step.imageUrl)
-      if (mediaFromSteps.length > 0) {
-        mediaFromSteps.forEach((step, idx) => {
-          // Determine mediaType: use step.mediaType if available, otherwise infer from file extension
-          let mediaType = step.mediaType
-          if (!mediaType && step.imageUrl) {
-            // Extract extension from URL (before any query params)
-            const urlWithoutParams = step.imageUrl.split('?')[0]
-            const ext = urlWithoutParams.split('.').pop()?.toLowerCase()
-            if (ext === 'mp4' || ext === 'webm' || ext === 'mov' || ext === 'avi' || ext === 'mkv') {
-              mediaType = `video/${ext === 'mov' ? 'quicktime' : ext}`
-            } else {
-              mediaType = 'image/png'
-            }
-          }
-          const isVideo = mediaType?.startsWith("video/")
-          const mediaMsg: Message = {
-            id: `media_${responseId}_${idx}_${Date.now()}`,
-            role: "assistant",
-            agent: step.agent,
-            content: "",
-            attachments: [{
-              uri: step.imageUrl!,
-              fileName: step.imageName || (isVideo ? "Generated video" : "Generated image"),
-              mediaType: mediaType || "image/png",
-            }],
-          }
-          messagesToAdd.push(mediaMsg)
-          console.log("[ChatPanel] Adding media from inference steps after final response:", mediaMsg)
-        })
+      // Add attachments AFTER the text message (so order is: workflow -> text -> video/images)
+      if (data.attachments && data.attachments.length > 0) {
+        const attachmentId = `${responseId}_attachments`
+        const attachmentMessage: Message = {
+          id: attachmentId,
+          role: "assistant",
+          agent: data.message.agent,
+          attachments: data.attachments,
+        }
+        messagesToAdd.push(attachmentMessage)
+        console.log("[ChatPanel] Adding attachment message after text:", attachmentMessage)
+        
+        // Broadcast attachment message to other users
+        // (done after adding to messagesToAdd so the order is preserved)
       }
+
+      // NOTE: We no longer add media from inference steps as separate messages here.
+      // Media (images/videos) are already added via handleMessage() -> attachmentMessage
+      // when the WebSocket 'message' event arrives with video/image content.
+      // Adding them here would create DUPLICATES.
+      // The inference steps with imageUrl are only used for the workflow panel thumbnail preview.
 
       // Check if this is a Voice Live response that needs to be injected back
       if (voiceLive.isConnected && isHostAgent && data.message.content) {
@@ -1726,6 +1725,14 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
         }
       }
 
+      // Clear inference state BEFORE adding messages to avoid duplicate workflow display
+      // (live workflow + inference_summary message both showing at once)
+      if (messagesToAdd.length > 0) {
+        setIsInferencing(false)
+        setInferenceSteps([])
+        setActiveNode(null)
+      }
+      
       // Add messages only if we have any
       if (messagesToAdd.length > 0) {
         setMessages((prev) => [...prev, ...messagesToAdd])
@@ -1739,14 +1746,6 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
             })
           }
         })
-      }
-      
-      // Clear inference steps after final response (for any agent)
-      // This ensures the workflow is captured before clearing
-      if (messagesToAdd.length > 0) {
-        setIsInferencing(false)
-        setInferenceSteps([])
-        setActiveNode(null)
       }
 
       // Broadcast inference ended to all other clients
@@ -2219,6 +2218,10 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
             >
               <div className="flex flex-col gap-4 p-4">
             {messages.map((message, index) => {
+              // Debug: Log each message being rendered
+              if (index === 0) {
+                console.log('[ChatPanel] RENDERING messages:', JSON.stringify(messages.map(m => ({ id: m.id, role: m.role, type: m.type, hasContent: !!m.content, attachmentCount: m.attachments?.length || 0 }))))
+              }
               // Skip streaming message - it will be rendered separately after workflow
               if (message.id === streamingMessageId) {
                 return null
