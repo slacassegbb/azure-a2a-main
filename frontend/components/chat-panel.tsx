@@ -758,6 +758,21 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
               // DEBUG: Log the raw message parts to trace image persistence issues
               console.log(`[ChatPanel] Message ${index} parts:`, JSON.stringify(msg.parts, null, 2).substring(0, 500))
               
+              // FIRST PASS: Collect video metadata from DataParts (video_id mappings)
+              const videoMetadata: { [uri: string]: string } = {}
+              if (msg.parts && Array.isArray(msg.parts)) {
+                for (const part of msg.parts) {
+                  // Extract video_metadata from DataParts
+                  if (part.kind === 'data' && part.data?.type === 'video_metadata' && part.data?.video_id) {
+                    const videoId = part.data.video_id
+                    console.log(`[ChatPanel] Found video_metadata DataPart with video_id: ${videoId}`)
+                    // Store for association with video file (we'll match by filename or use as fallback)
+                    videoMetadata['__latest__'] = videoId
+                  }
+                }
+              }
+              
+              // SECOND PASS: Extract content and files, applying video metadata
               if (msg.parts && Array.isArray(msg.parts)) {
                 for (const part of msg.parts) {
                   // A2A flattened format (most common): { kind: 'text', text: '...' }
@@ -792,10 +807,10 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                       if (isImage || isVideo) {
                         const mediaType = isVideo ? 'video' : 'image'
                         console.log(`[ChatPanel] Found FilePart ${mediaType}: ${uri.substring(0, 80)}...`)
-                        // Extract videoId if present (for remix functionality)
-                        const videoId = (part as any).videoId || undefined
+                        // Extract videoId - check part directly first, then use metadata from DataPart
+                        let videoId = (part as any).videoId || videoMetadata['__latest__'] || undefined
                         if (videoId) {
-                          console.log(`[ChatPanel] Found videoId: ${videoId}`)
+                          console.log(`[ChatPanel] Assigned videoId to video: ${videoId}`)
                         }
                         images.push({ 
                           uri: uri, 
@@ -817,10 +832,10 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                       if (isImage || isVideo) {
                         const mediaType = isVideo ? 'video' : 'image'
                         console.log(`[ChatPanel] Found nested FilePart ${mediaType}: ${uri.substring(0, 80)}...`)
-                        // Extract videoId if present (for remix functionality)
-                        const videoId = (part.root as any).videoId || undefined
+                        // Extract videoId - check part directly first, then use metadata from DataPart
+                        let videoId = (part.root as any).videoId || videoMetadata['__latest__'] || undefined
                         if (videoId) {
-                          console.log(`[ChatPanel] Found videoId (nested): ${videoId}`)
+                          console.log(`[ChatPanel] Assigned videoId to nested video: ${videoId}`)
                         }
                         images.push({ 
                           uri: uri, 
