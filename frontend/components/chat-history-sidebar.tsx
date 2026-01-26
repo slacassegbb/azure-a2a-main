@@ -205,7 +205,7 @@ export function ChatHistorySidebar({ isCollapsed, onToggle }: Props) {
             <div className="flex h-16 items-center justify-between p-2">
               <div className="flex items-center gap-3 min-w-0 flex-1">
                 <img 
-                  src="/a2a_logo.png" 
+                  src="/a2a_transparent.png" 
                   alt="A2A Logo" 
                   className="h-8 object-contain"
                 />
