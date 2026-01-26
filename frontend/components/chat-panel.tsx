@@ -152,6 +152,7 @@ type Message = {
     uri: string
     fileName?: string
     mimeType?: string
+    videoId?: string // For video remix functionality
   }[]
 }
 
@@ -752,7 +753,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
             const convertedMessages: Message[] = apiMessages.map((msg, index) => {
               // Extract text content from parts - handle A2A format
               let content = ''
-              let images: { uri: string; fileName?: string; mimeType?: string }[] = []
+              let images: { uri: string; fileName?: string; mimeType?: string; videoId?: string }[] = []
               
               // DEBUG: Log the raw message parts to trace image persistence issues
               console.log(`[ChatPanel] Message ${index} parts:`, JSON.stringify(msg.parts, null, 2).substring(0, 500))
@@ -791,7 +792,17 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                       if (isImage || isVideo) {
                         const mediaType = isVideo ? 'video' : 'image'
                         console.log(`[ChatPanel] Found FilePart ${mediaType}: ${uri.substring(0, 80)}...`)
-                        images.push({ uri: uri, fileName: part.file.name || `Generated ${mediaType}`, mimeType: mimeType })
+                        // Extract videoId if present (for remix functionality)
+                        const videoId = (part as any).videoId || undefined
+                        if (videoId) {
+                          console.log(`[ChatPanel] Found videoId: ${videoId}`)
+                        }
+                        images.push({ 
+                          uri: uri, 
+                          fileName: part.file.name || `Generated ${mediaType}`, 
+                          mimeType: mimeType,
+                          videoId: videoId
+                        })
                       }
                     }
                   }
@@ -806,7 +817,17 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                       if (isImage || isVideo) {
                         const mediaType = isVideo ? 'video' : 'image'
                         console.log(`[ChatPanel] Found nested FilePart ${mediaType}: ${uri.substring(0, 80)}...`)
-                        images.push({ uri: uri, fileName: part.root.file.name || `Generated ${mediaType}`, mimeType: mimeType })
+                        // Extract videoId if present (for remix functionality)
+                        const videoId = (part.root as any).videoId || undefined
+                        if (videoId) {
+                          console.log(`[ChatPanel] Found videoId (nested): ${videoId}`)
+                        }
+                        images.push({ 
+                          uri: uri, 
+                          fileName: part.root.file.name || `Generated ${mediaType}`, 
+                          mimeType: mimeType,
+                          videoId: videoId
+                        })
                       }
                     }
                   }
@@ -863,6 +884,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                     uri: img.uri,
                     fileName: img.fileName || "Generated file",
                     mediaType: mediaType,
+                    videoId: img.videoId, // Preserve videoId for remix functionality
                   }
                 }) : undefined,
                 agent: (msg.role === 'assistant' || msg.role === 'agent') ? 'Assistant' : undefined
