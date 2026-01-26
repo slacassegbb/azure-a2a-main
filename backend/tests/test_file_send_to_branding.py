@@ -12,7 +12,7 @@ from pathlib import Path
 
 BACKEND_URL = "http://localhost:12000"
 WEBSOCKET_URL = "ws://localhost:8080/events"
-TEST_IMAGE = "/Users/simonlacasse/Downloads/sl-a2a-main2/a2a_logo.png"
+TEST_IMAGE = "/Users/simonlacasse/Downloads/sl-a2a-main2/a2a_transparent.png"
 
 
 async def test_send_file_to_branding():

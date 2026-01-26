@@ -1636,9 +1636,15 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
         agentName: data.message.agent,
         summaryId,
         inferenceId: data.inferenceId,
-        effectiveConversationId
+        effectiveConversationId,
+        alreadyProcessedInference: processedMessageIds.has(`workflow_${data.inferenceId}`)
       })
-      if (inferenceSteps.length > 0) {
+      // Only create ONE workflow summary per inferenceId
+      // Check if we've already created a workflow for this inference
+      const workflowKey = `workflow_${data.inferenceId}`
+      const alreadyCreatedWorkflow = processedMessageIds.has(workflowKey)
+      
+      if (inferenceSteps.length > 0 && !alreadyCreatedWorkflow) {
         // CRITICAL: Clear live workflow state IMMEDIATELY before creating the permanent workflow message
         // This prevents the brief moment where both the live workflow AND the permanent one are visible
         const stepsCopy = [...inferenceSteps] // Copy steps BEFORE clearing them
@@ -1646,8 +1652,8 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
         setInferenceSteps([])
         setActiveNode(null)
         
-        // Show workflow for ANY agent response when we have steps
-        setProcessedMessageIds(prev => new Set([...prev, summaryId]))
+        // Mark this inference as having a workflow created
+        setProcessedMessageIds(prev => new Set([...prev, summaryId, workflowKey]))
         const summaryMessage: Message = {
           id: summaryId,
           role: "system",
@@ -2376,11 +2382,11 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                                       {/* Refine button */}
                                       <Button
                                         variant={refineTarget?.imageUrl === attachment.uri ? "destructive" : "default"}
-                                        size="icon"
-                                        className={`h-8 w-8 rounded-full shadow-lg ${
+                                        size="sm"
+                                        className={`shadow-lg ${
                                           refineTarget?.imageUrl === attachment.uri 
                                             ? '' 
-                                            : 'bg-blue-500 hover:bg-blue-600 text-white'
+                                            : 'bg-purple-500 hover:bg-purple-600 text-white'
                                         }`}
                                         title={refineTarget?.imageUrl === attachment.uri ? "Cancel refine" : "Refine this image"}
                                         onClick={(e) => {
@@ -2398,7 +2404,11 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                                           }
                                         }}
                                       >
-                                        {refineTarget?.imageUrl === attachment.uri ? <X size={16} /> : <Pencil size={16} />}
+                                        {refineTarget?.imageUrl === attachment.uri ? (
+                                          <><X size={14} className="mr-1" /> Cancel</>
+                                        ) : (
+                                          <><Sparkles size={14} className="mr-1" /> Refine</>
+                                        )}
                                       </Button>
                                       {/* Paint mask button - only visible when refine is active */}
                                       {refineTarget?.imageUrl === attachment.uri && (
