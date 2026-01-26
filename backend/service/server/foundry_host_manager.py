@@ -133,202 +133,93 @@ class FoundryHostManager(ApplicationManager):
         return c
 
     def foundry_content_to_message(self, resp, context_id, task_id=None):
-        log_debug(f"foundry_content_to_message called with resp type: {type(resp)}")
-        log_debug(f"Response content: {resp}")
+        """
+        Convert response to A2A Message format.
         
+        The response can be:
+        - Message object (already formatted, from agent artifacts with FileParts)
+        - FilePart (direct file from agent) 
+        - dict with 'artifact-uri' (legacy artifact format)
+        - string (text response)
+        
+        KEY FIX: Message.kind = 'message', so we check for Message (has 'parts' + kind='message')
+        BEFORE checking raw 'kind' attribute, otherwise "Unknown raw kind: message" error.
+        """
         parts = []
         
-        # Handle FilePart directly (preferred format for file artifacts)
-        if isinstance(resp, FilePart):
-            file_obj = getattr(resp, 'file', None)
-            uri = getattr(file_obj, 'uri', None) if file_obj else None
-            log_debug(f"Processing as direct FilePart - uri: {uri[:80] if uri else 'none'}...")
-            parts.append(Part(root=resp))
+        def _build_message(role='agent') -> Message:
             return Message(
-                role='agent',
+                role=role,
                 parts=parts,
                 contextId=context_id,
                 taskId=task_id,
                 messageId=str(uuid.uuid4()),
             )
         
-        # Handle list of dicts (artifact wrapper)
-        if isinstance(resp, list) and resp and isinstance(resp[0], dict) and 'kind' in resp[0]:
-            log_debug(f"Processing as list of dicts with kind")
-            items = resp
-        # Handle single dict with 'kind'
-        elif isinstance(resp, dict) and 'kind' in resp:
-            log_debug(f"Processing as single dict with kind")
-            items = [resp]
-        # Handle single dict with artifact metadata - CONVERT TO FilePart (not DataPart)
-        # This ensures all file references use the standard A2A FilePart format
-        elif isinstance(resp, dict) and ('artifact-uri' in resp or 'artifact-id' in resp):
-            artifact_uri = resp.get('artifact-uri', '')
-            log_debug(f"Processing as artifact dict - converting to FilePart: {artifact_uri[:150] if artifact_uri else 'no-uri'}")
-            if artifact_uri:
-                # Use utility to create proper FilePart
+        def _part_to_wrapper(p) -> Part:
+            """Wrap a raw A2A part in Part() if needed."""
+            if isinstance(p, Part):
+                return p
+            kind = getattr(p, 'kind', None)
+            if kind == 'text':
+                return Part(root=TextPart(text=getattr(p, 'text', '')))
+            elif kind == 'data':
+                return Part(root=DataPart(data=getattr(p, 'data', {})))
+            elif kind == 'file':
+                return Part(root=FilePart(file=getattr(p, 'file', None)))
+            return Part(root=TextPart(text=str(p)))
+        
+        # --- Priority 1: Already a Message (contains FileParts from agents) ---
+        if hasattr(resp, 'parts') and hasattr(resp, 'kind') and resp.kind == 'message':
+            for part in resp.parts:
+                root = getattr(part, 'root', part)
+                parts.append(_part_to_wrapper(root))
+            return _build_message(role=getattr(resp, 'role', 'agent'))
+        
+        # --- Priority 2: Direct FilePart ---
+        if isinstance(resp, FilePart):
+            parts.append(Part(root=resp))
+            return _build_message()
+        
+        # --- Priority 3: Part wrapper ---
+        if hasattr(resp, 'root') and hasattr(resp.root, 'kind'):
+            parts.append(_part_to_wrapper(resp.root))
+            return _build_message()
+        
+        # --- Priority 4: Legacy artifact dict -> convert to FilePart ---
+        if isinstance(resp, dict) and ('artifact-uri' in resp or 'artifact-id' in resp):
+            uri = resp.get('artifact-uri', '')
+            if uri:
                 file_part = create_file_part(
-                    uri=artifact_uri,
+                    uri=uri,
                     name=resp.get('file-name', 'artifact'),
-                    mime_type=resp.get('media-type', resp.get('mime', 'image/png'))
+                    mime_type=resp.get('media-type', 'image/png')
                 )
                 parts.append(Part(root=file_part))
             else:
-                # Fallback for artifact-id without URI (shouldn't happen, but be safe)
-                log_debug(f"WARNING: artifact dict without URI, using DataPart fallback")
                 parts.append(Part(root=DataPart(data=resp)))
-            return Message(
-                role='agent',
-                parts=parts,
-                contextId=context_id,
-                taskId=task_id,
-                messageId=str(uuid.uuid4()),
-            )
-        # Handle A2A Part object directly (e.g., from HITL flow)
-        elif hasattr(resp, 'root') and hasattr(resp.root, 'kind'):
-            root = resp.root
-            kind = root.kind
-            log_debug(f"Processing as A2A Part object with kind: {kind}")
-            if kind == 'text':
-                text_content = getattr(root, 'text', '')
-                log_debug(f"Part text: {text_content[:200]}...")
-                parts.append(Part(root=TextPart(text=text_content)))
-            elif kind == 'data':
-                data_content = getattr(root, 'data', {})
-                log_debug(f"Part data: {data_content}")
-                parts.append(Part(root=DataPart(data=data_content)))
-            elif kind == 'file':
-                log_debug(f"Part file: {getattr(root, 'file', None)}")
-                parts.append(Part(root=FilePart(file=getattr(root, 'file', None))))
-            else:
-                log_debug(f"Unknown Part kind: {kind}")
-                parts.append(Part(root=TextPart(text=str(root))))
-            return Message(
-                role='agent',
-                parts=parts,
-                contextId=context_id,
-                taskId=task_id,
-                messageId=str(uuid.uuid4()),
-            )
-        # Handle Message object (must check BEFORE hasattr(resp, 'kind') because Message.kind = 'message')
-        elif hasattr(resp, 'parts') and hasattr(resp, 'kind') and resp.kind == 'message':
-            log_debug(f"Processing as Message object with {len(resp.parts) if resp.parts else 0} parts")
+            return _build_message()
+        
+        # --- Priority 5: Raw A2A types (TextPart, DataPart, FilePart) ---
+        if hasattr(resp, 'kind') and resp.kind in ('text', 'data', 'file'):
+            parts.append(_part_to_wrapper(resp))
+            return _build_message()
+        
+        # --- Priority 6: Object with 'parts' (generic Message-like) ---
+        if hasattr(resp, 'parts') and resp.parts:
             for part in resp.parts:
                 root = getattr(part, 'root', part)
-                kind = getattr(root, 'kind', None)
-                if kind == 'text':
-                    text_content = getattr(root, 'text', str(root))
-                    log_debug(f"Text part: {text_content[:200]}...")
-                    parts.append(Part(root=TextPart(text=text_content)))
-                elif kind == 'data':
-                    data_content = getattr(root, 'data', {})
-                    log_debug(f"Data part: {data_content}")
-                    parts.append(Part(root=DataPart(data=data_content)))
-                elif kind == 'file':
-                    log_debug(f"File part: {getattr(root, 'file', None)}")
-                    parts.append(Part(root=FilePart(file=getattr(root, 'file', None))))
-                else:
-                    log_debug(f"Unknown part kind: {kind}, content: {str(root)[:200]}...")
-                    parts.append(Part(root=TextPart(text=str(root))))
-            return Message(
-                role=getattr(resp, 'role', 'agent'),
-                parts=parts,
-                contextId=context_id,
-                taskId=task_id,
-                messageId=str(uuid.uuid4()),
-            )
-        # Handle TextPart, DataPart, FilePart directly (unwrapped from Part)
-        elif hasattr(resp, 'kind'):
-            kind = resp.kind
-            log_debug(f"Processing as raw A2A type with kind: {kind}")
-            if kind == 'text':
-                text_content = getattr(resp, 'text', '')
-                log_debug(f"TextPart text: {text_content[:200]}...")
-                parts.append(Part(root=TextPart(text=text_content)))
-            elif kind == 'data':
-                data_content = getattr(resp, 'data', {})
-                log_debug(f"DataPart data: {data_content}")
-                parts.append(Part(root=DataPart(data=data_content)))
-            elif kind == 'file':
-                log_debug(f"FilePart file: {getattr(resp, 'file', None)}")
-                parts.append(Part(root=FilePart(file=getattr(resp, 'file', None))))
-            else:
-                log_debug(f"Unknown raw kind: {kind}")
-                parts.append(Part(root=TextPart(text=str(resp))))
-            return Message(
-                role='agent',
-                parts=parts,
-                contextId=context_id,
-                taskId=task_id,
-                messageId=str(uuid.uuid4()),
-            )
-        # Handle objects with 'parts' attribute (generic Message-like objects)
-        elif hasattr(resp, 'parts'):
-            log_debug(f"Processing as generic parts object with {len(resp.parts) if resp.parts else 0} parts")
-            for part in resp.parts:
-                root = getattr(part, 'root', part)
-                kind = getattr(root, 'kind', None)
-                if kind == 'text':
-                    text_content = getattr(root, 'text', str(root))
-                    log_debug(f"Text part: {text_content[:200]}...")
-                    parts.append(Part(root=TextPart(text=text_content)))
-                elif kind == 'data':
-                    data_content = getattr(root, 'data', {})
-                    log_debug(f"Data part: {data_content}")
-                    parts.append(Part(root=DataPart(data=data_content)))
-                elif kind == 'file':
-                    log_debug(f"File part: {getattr(root, 'file', None)}")
-                    parts.append(Part(root=FilePart(file=getattr(root, 'file', None))))
-                else:
-                    log_debug(f"Unknown part kind: {kind}, content: {str(root)[:200]}...")
-                    parts.append(Part(root=TextPart(text=str(root))))
-            return Message(
-                role=getattr(resp, 'role', 'agent'),
-                parts=parts,
-                contextId=context_id,
-                taskId=task_id,
-                messageId=str(uuid.uuid4()),
-            )
-        elif isinstance(resp, str):
-            # Plain string response
-            log_debug(f"Processing as plain string: {resp[:200]}...")
-            return Message(
-                role='agent',
-                parts=[Part(root=TextPart(text=resp))],
-                contextId=context_id,
-                taskId=task_id,
-                messageId=str(uuid.uuid4()),
-            )
-        else:
-            # Fallback: treat as plain text but warn
-            log_debug(f"WARNING: Unknown response type {type(resp)}, stringifying: {str(resp)[:200]}...")
-            return Message(
-                role='agent',
-                parts=[Part(root=TextPart(text=str(resp)))],
-                contextId=context_id,
-                taskId=task_id,
-                messageId=str(uuid.uuid4()),
-            )
-        # If we got here, items is a list of dicts with 'kind'
-        log_debug(f"Processing {len(items)} items with kind")
-        for i, item in enumerate(items):
-            log_debug(f"Item {i}: {item}")
-            if item['kind'] == 'text':
-                log_debug(f"Text item: {item['text'][:200]}...")
-                parts.append(Part(root=TextPart(text=item['text'])))
-            elif item['kind'] == 'data':
-                log_debug(f"Data item: {item['data']}")
-                parts.append(Part(root=DataPart(data=item['data'])))
-            elif item['kind'] == 'file':
-                log_debug(f"File item: {item['file']}")
-                parts.append(Part(root=FilePart(file=item['file'])))
-        return Message(
-            role='agent',
-            parts=parts,
-            contextId=context_id,
-            taskId=task_id,
-            messageId=str(uuid.uuid4()),
-        )
+                parts.append(_part_to_wrapper(root))
+            return _build_message(role=getattr(resp, 'role', 'agent'))
+        
+        # --- Priority 7: Plain string ---
+        if isinstance(resp, str):
+            parts.append(Part(root=TextPart(text=resp)))
+            return _build_message()
+        
+        # --- Fallback: stringify ---
+        parts.append(Part(root=TextPart(text=str(resp))))
+        return _build_message()
 
     async def process_message(self, message: Message, agent_mode: bool = None, enable_inter_agent_memory: bool = False, workflow: str = None):
         await self.ensure_host_agent_initialized()

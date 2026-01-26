@@ -2954,145 +2954,77 @@ Answer with just JSON:
         span: Any,
         artifact_info: Dict[int, Dict[str, str]] = None
     ):
-        """Store User→Host A2A protocol exchange"""
-        log_debug(f"🚀 _store_user_host_interaction: STARTING")
-        print(f"- user_message_text: {user_message_text[:100]}...")
-        print(f"- host_response count: {len(host_response)}")
-        print(f"- context_id: {context_id}")
-        print(f"- user_message_parts type: {type(user_message_parts)}")
-        print(f"- user_message_parts length: {len(user_message_parts) if user_message_parts else 0}")
+        """
+        Store User→Host A2A protocol exchange for memory/search.
         
+        KEY FIX: Skip Message objects in response list - they contain FileParts
+        which are handled separately and can't be JSON serialized directly.
+        """
         try:
-            log_debug(f"📝 Step 1: About to create A2A Message object...")
-            
-            # Create real A2A Message object for outbound
-            log_debug(f"📝 Step 1a: Creating outbound_message with uuid...")
-            message_id = str(uuid.uuid4())
-            log_debug(f"📝 Step 1b: Generated messageId: {message_id}")
-            
-            log_debug(f"📝 Step 1c: About to create Message object...")
-            # Clean file bytes from parts before storing in memory
+            # Clean file bytes from parts before storing
             cleaned_parts = self._clean_file_bytes_from_parts(user_message_parts, artifact_info)
-            log_debug(f"📝 Step 1d: Cleaned {len(user_message_parts)} parts for memory storage")
             
+            # Create outbound message (user request)
             outbound_message = Message(
-                messageId=message_id,
+                messageId=str(uuid.uuid4()),
                 contextId=context_id,
                 taskId=None,
-                role="user",  # User→Host message
-                parts=cleaned_parts  # Use cleaned A2A Parts without file bytes
+                role="user",
+                parts=cleaned_parts
             )
-            print(f"✅ Step 1: Created outbound_message successfully")
             
-            # Create real A2A MessageSendParams
-            log_debug(f"📝 Step 2: About to create MessageSendParams...")
-            request_id = str(uuid.uuid4())
-            log_debug(f"📝 Step 2a: Generated request ID: {request_id}")
-            
-            log_debug(f"📝 Step 2b: About to create MessageSendConfiguration...")
-            config = MessageSendConfiguration(
-                acceptedOutputModes=["text", "text/plain", "image/png"]
-            )
-            print(f"✅ Step 2c: Created MessageSendConfiguration")
-            
-            log_debug(f"📝 Step 2d: About to create MessageSendParams...")
             outbound_request = MessageSendParams(
-                id=request_id,
+                id=str(uuid.uuid4()),
                 message=outbound_message,
-                configuration=config
+                configuration=MessageSendConfiguration(acceptedOutputModes=["text", "text/plain", "image/png"])
             )
-            print(f"✅ Step 2: Created MessageSendParams successfully")
             
-            # Create real A2A Message object for inbound response
-            log_debug(f"📝 Step 3: Creating inbound response parts...")
+            # Create inbound message (host response)
             response_parts = []
-            for i, response in enumerate(host_response):
-                # Skip artifact dicts - they're for UI display, not for memory storage
+            for response in host_response:
+                # Skip artifact dicts - for UI display only
                 if isinstance(response, dict) and ('artifact-uri' in response or 'artifact-id' in response):
-                    log_debug(f"📝 Step 3.{i+1}: Skipping artifact dict (not storing in memory)")
                     continue
                 
-                # Skip Message objects - they contain FileParts which are handled separately
+                # Skip Message objects - FileParts handled separately, can't JSON serialize
                 if hasattr(response, 'parts') and hasattr(response, 'kind') and response.kind == 'message':
-                    log_debug(f"📝 Step 3.{i+1}: Skipping Message object (FileParts handled separately)")
                     continue
-                    
-                log_debug(f"📝 Step 3.{i+1}: Creating Part for response {i+1}")
-                # Convert non-string responses to JSON string
+                
+                # Convert response to text
                 if isinstance(response, str):
                     text = response
                 elif hasattr(response, 'model_dump'):
-                    # Handle Pydantic models
                     text = json.dumps(response.model_dump(mode='json'), ensure_ascii=False)
                 else:
                     text = json.dumps(response, ensure_ascii=False)
-                text_part = TextPart(text=text)  # Don't pass kind - it's inferred from the class
-                part = Part(root=text_part)
-                response_parts.append(part)
-                print(f"✅ Step 3.{i+1}: Created Part successfully")
+                response_parts.append(Part(root=TextPart(text=text)))
             
-            log_debug(f"📝 Step 4: Creating inbound Message...")
-            inbound_message_id = str(uuid.uuid4())
             inbound_message = Message(
-                messageId=inbound_message_id,
+                messageId=str(uuid.uuid4()),
                 contextId=context_id,
                 taskId=None,
-                role="agent",  # Host→User response (A2A uses 'agent' not 'assistant')
+                role="agent",
                 parts=response_parts
             )
-            print(f"✅ Step 4: Created inbound Message successfully")
             
-            # Test model_dump before calling memory service
-            try:
-                outbound_dict = outbound_request.model_dump()
-                print(f"✅ Step 5a: outbound_request.model_dump() worked")
-            except Exception as e:
-                return
-                
-            try:
-                inbound_dict = inbound_message.model_dump()
-            except Exception as e:
-                return
-            
-            # Store the User→Host A2A interaction using real A2A objects
-            log_debug(f"📝 Step 6: Storing User→Host interaction in memory...")
-            
-            # Extract session_id for tenant isolation
+            # Store interaction
             session_id = get_tenant_from_context(context_id) if context_id else None
-            
             if not session_id:
-                log_debug(f"[A2A Memory] Warning: No session_id available, skipping user-host interaction storage for tenant isolation")
                 return
             
-            # Create interaction data structure like the working Host→Remote Agent code
             interaction_data = {
                 "interaction_id": str(uuid.uuid4()),
                 "agent_name": "host_agent",
                 "processing_time_seconds": 1.0,
                 "timestamp": datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z',
-                "outbound_payload": outbound_dict,
-                "inbound_payload": inbound_dict
+                "outbound_payload": outbound_request.model_dump(),
+                "inbound_payload": inbound_message.model_dump()
             }
             
-            # Store in memory service with session_id for tenant isolation
-            success = await a2a_memory_service.store_interaction(interaction_data, session_id=session_id)
-            
-            if success:
-                print(f"✅ Step 6: User→Host interaction stored successfully (session: {session_id})")
-                log_success(f"🎉 User→Host A2A interaction now available for semantic search")
-            else:
-                print(f"❌ Step 6: Failed to store User→Host interaction")
-                print(f"⚠️ User→Host interaction storage failed")
+            await a2a_memory_service.store_interaction(interaction_data, session_id=session_id)
                 
         except Exception as e:
-            print(f"❌ EXCEPTION in _store_user_host_interaction: {e}")
-            log_error(f"Exception type: {type(e).__name__}")
-            import traceback
-            log_error(f"Full traceback: {traceback.format_exc()}")
-            span.add_event("user_host_memory_store_error", {
-                "context_id": context_id,
-                "error": str(e)
-            })
+            log_error(f"_store_user_host_interaction failed: {e}")
 
     def _clean_file_bytes_from_parts(self, parts: List[Part], artifact_info: Dict[int, Dict[str, str]] = None) -> List[Part]:
         """Remove file bytes from A2A Parts to prevent large payloads in memory storage"""
@@ -3948,24 +3880,30 @@ Answer with just JSON:
             return last_tool_output
 
     async def convert_parts(self, parts: List[Part], tool_context: Any, context_id: str = None):
+        """
+        Convert A2A Parts to flattened format suitable for agent delegation.
+        
+        Handles:
+        - DataPart with artifact metadata -> FilePart + DataPart for remote agents
+        - Part wrappers (Part(root=FilePart)) -> unwrap to inner part
+        - TextPart, FilePart, DataPart -> pass through
+        - Dicts with artifact-uri -> wrap in DataPart
+        - Refine-image payloads -> preserve for image editing workflow
+        """
         rval = []
-        log_debug(f"convert_parts: processing {len(parts)} parts")
         session_context = getattr(tool_context, "state", None)
         
         # In agent mode, preserve existing parts; otherwise start fresh
         if session_context is not None:
             if hasattr(session_context, "agent_mode") and session_context.agent_mode:
-                # Agent mode: Preserve existing files from previous agents
                 latest_parts = getattr(session_context, "_latest_processed_parts", [])
-                log_debug(f"📎 [Agent Mode] Preserving {len(latest_parts)} existing file parts from previous agents")
             else:
-                # User mode: Start fresh for each response
                 latest_parts: List[Any] = []
             setattr(session_context, "_latest_processed_parts", latest_parts)
         else:
             latest_parts: List[Any] = []
 
-        for i, p in enumerate(parts):
+        for p in parts:
             result = await self.convert_part(p, tool_context, context_id)
             if result is None:
                 continue
@@ -3974,126 +3912,124 @@ Answer with just JSON:
             else:
                 rval.append(result)
 
-        # URI tracking for deduplication
+        # --- URI/Role tracking for image editing workflow ---
+        # This tracks URIs to avoid duplicates and assigns roles (base/mask/overlay)
         uri_to_parts: Dict[str, List[Any]] = {}
         assigned_roles: Dict[str, str] = {}
 
         def _register_part_uri(part: Any, uri: Optional[str]) -> None:
             normalized_uri = self._normalize_uri(uri)
-            if not normalized_uri:
-                return
-            uri_to_parts.setdefault(normalized_uri, []).append(part)
+            if normalized_uri:
+                uri_to_parts.setdefault(normalized_uri, []).append(part)
 
         def _register_role(uri: Optional[str], role: Optional[str]) -> None:
-            if not role:
-                return
-            normalized_uri = self._normalize_uri(uri)
-            if not normalized_uri:
-                return
-            assigned_roles[normalized_uri] = str(role).lower()
-
-        # Use centralized utility for URI extraction
-        def _local_extract_uri(part: Any) -> Optional[str]:
-            return extract_uri(part)
+            if role:
+                normalized_uri = self._normalize_uri(uri)
+                if normalized_uri:
+                    assigned_roles[normalized_uri] = str(role).lower()
 
         flattened_parts = []
         pending_file_parts: List[FilePart] = []
         refine_payload = None
 
+        # --- Flatten and normalize all items ---
+        # Items can be: DataPart, TextPart, FilePart, Part wrappers, dicts, strings
         for item in rval:
-            if isinstance(item, DataPart):
-                if hasattr(item, "data") and isinstance(item.data, dict):
-                    artifact_uri = item.data.get("artifact-uri")
-                    existing_role = item.data.get("role") or (item.data.get("metadata") or {}).get("role")
-                    name_hint = item.data.get("file-name") or item.data.get("name") or item.data.get("artifact-id")
-                    role_value = self._infer_file_role(existing_role, name_hint)
+            # Unwrap Part wrappers first (Part(root=FilePart))
+            if hasattr(item, 'root') and isinstance(item.root, (TextPart, FilePart, DataPart)):
+                item = item.root  # Unwrap and continue with inner part
+            
+            # --- DataPart with video/image metadata (preserve for frontend) ---
+            # Must check BEFORE artifact-uri check since these don't have artifact-uri
+            if isinstance(item, DataPart) and isinstance(getattr(item, 'data', None), dict):
+                if item.data.get('type') in ('video_metadata', 'image_metadata'):
+                    # Keep the DataPart as-is - it contains video_id for remix
+                    flattened_parts.append(item)
+                    continue
+            
+            # --- DataPart with artifact metadata (needs FilePart conversion) ---
+            if isinstance(item, DataPart) and isinstance(getattr(item, 'data', None), dict):
+                artifact_uri = item.data.get("artifact-uri")
+                existing_role = item.data.get("role") or (item.data.get("metadata") or {}).get("role")
+                name_hint = item.data.get("file-name") or item.data.get("name") or item.data.get("artifact-id")
+                role_value = self._infer_file_role(existing_role, name_hint)
 
-                    if role_value and str(role_value).lower() != (existing_role or "").lower():
-                        item.data["role"] = role_value
-                        metadata_block = item.data.get("metadata") or {}
-                        metadata_block["role"] = role_value
-                        item.data["metadata"] = metadata_block
+                if role_value and str(role_value).lower() != (existing_role or "").lower():
+                    item.data["role"] = role_value
+                    metadata_block = item.data.get("metadata") or {}
+                    metadata_block["role"] = role_value
+                    item.data["metadata"] = metadata_block
 
-                    metadata = {
-                        "artifact-id": item.data.get("artifact-id"),
-                        "storage-type": item.data.get("storage-type"),
-                        "file-name": item.data.get("file-name"),
-                        "artifact-uri": artifact_uri,
+                metadata = {
+                    "artifact-id": item.data.get("artifact-id"),
+                    "storage-type": item.data.get("storage-type"),
+                    "file-name": item.data.get("file-name"),
+                    "artifact-uri": artifact_uri,
+                }
+                existing_meta = (item.data.get("metadata") or {}).copy()
+                if role_value:
+                    metadata["role"] = role_value
+                    existing_meta["role"] = role_value
+                elif existing_role:
+                    metadata["role"] = existing_role
+                    existing_meta["role"] = existing_role
+                metadata["metadata"] = existing_meta
+
+                data_part = DataPart(data=metadata)
+                flattened_parts.append(data_part)
+                _register_part_uri(data_part, artifact_uri)
+                if role_value:
+                    _register_role(artifact_uri, role_value)
+
+                # Also create FilePart for remote agents
+                if artifact_uri:
+                    file_with_uri_kwargs = {
+                        "name": item.data.get("file-name", metadata["artifact-id"]) or metadata["artifact-id"],
+                        "mimeType": item.data.get("media-type", "application/octet-stream"),
+                        "uri": artifact_uri,
                     }
-                    existing_meta = (item.data.get("metadata") or {}).copy()
+                    file_part_kwargs = {"file": FileWithUri(**file_with_uri_kwargs)}
                     if role_value:
-                        metadata["role"] = role_value
-                        existing_meta["role"] = role_value
-                    elif existing_role:
-                        metadata["role"] = existing_role
-                        existing_meta["role"] = existing_role
-                    metadata["metadata"] = existing_meta
-
-                    data_part = DataPart(data=metadata)
-                    flattened_parts.append(data_part)
-                    _register_part_uri(data_part, artifact_uri)
+                        file_part_kwargs["metadata"] = {"role": role_value}
+                    
+                    file_part = FilePart(**file_part_kwargs)
+                    flattened_parts.append(file_part)
+                    pending_file_parts.append(file_part)
+                    _register_part_uri(file_part, artifact_uri)
                     if role_value:
                         _register_role(artifact_uri, role_value)
 
-                    if artifact_uri:
-                        # Create FileWithUri for remote agent processing
-                        file_with_uri_kwargs = {
-                            "name": item.data.get("file-name", metadata["artifact-id"]) or metadata["artifact-id"],
-                            "mimeType": item.data.get("media-type", "application/octet-stream"),
-                            "uri": artifact_uri,
-                        }
-                        
-                        # Create FilePart with metadata containing role (remote agents check p.metadata.role)
-                        file_part_kwargs = {"file": FileWithUri(**file_with_uri_kwargs)}
-                        if role_value:
-                            file_part_kwargs["metadata"] = {"role": role_value}
-                            log_debug(f"🎭 Creating FilePart with metadata role='{role_value}' for {file_with_uri_kwargs['name']}")
-                        
-                        file_part = FilePart(**file_part_kwargs)
-                        flattened_parts.append(file_part)
-                        pending_file_parts.append(file_part)
-                        _register_part_uri(file_part, artifact_uri)
-                        if role_value:
-                            _register_role(artifact_uri, role_value)
-
-                    if "extracted_content" in item.data:
-                        flattened_parts.append(
-                            TextPart(text=str(item.data["extracted_content"]))
-                        )
-                else:
-                    flattened_parts.append(TextPart(text=str(item.data)))
-            elif isinstance(item, (TextPart, FilePart, DataPart)):
+                if "extracted_content" in item.data:
+                    flattened_parts.append(TextPart(text=str(item.data["extracted_content"])))
+            
+            # --- Simple TextPart/FilePart (pass through) ---
+            elif isinstance(item, (TextPart, FilePart)):
                 flattened_parts.append(item)
-                _register_part_uri(item, _local_extract_uri(item))
-            elif hasattr(item, 'root') and isinstance(item.root, (TextPart, FilePart, DataPart)):
-                # Handle Part wrappers (e.g., Part(root=FilePart(...)) or Part(root=DataPart(...)))
-                # Extract the inner part and add it to flattened_parts
-                inner_part = item.root
-                flattened_parts.append(inner_part)
-                _register_part_uri(inner_part, _local_extract_uri(inner_part))
-                log_debug(f"📦 Unwrapped Part({type(inner_part).__name__}) for flattening")
+                _register_part_uri(item, extract_uri(item))
+            
+            # --- Simple DataPart without artifact-uri (stringify) ---
+            elif isinstance(item, DataPart):
+                flattened_parts.append(TextPart(text=str(item.data)))
+            
+            # --- Dict (artifact metadata or refine command) ---
             elif isinstance(item, dict):
                 if item.get("kind") == "refine-image":
                     refine_payload = item
                 elif "artifact-uri" in item or "artifact-id" in item:
-                    # This is artifact metadata from an agent - wrap in DataPart
-                    artifact_uri = item.get("artifact-uri", "")
-                    log_debug(f"📦 [DEBUG] Wrapping artifact dict in DataPart:")
-                    log_debug(f"   artifact-uri (first 150 chars): {artifact_uri[:150]}")
-                    log_debug(f"   Has SAS token (?): {'?' in artifact_uri}")
                     artifact_data_part = DataPart(data=item)
                     flattened_parts.append(artifact_data_part)
-                    # Don't add to latest_parts here - it will be added via extend below to avoid duplicates
                     _register_part_uri(artifact_data_part, item.get("artifact-uri"))
                     if item.get("role"):
                         _register_role(item.get("artifact-uri"), item.get("role"))
                 else:
                     text = item.get("response") or item.get("text") or json.dumps(item, ensure_ascii=False)
                     flattened_parts.append(TextPart(text=text))
+            
+            # --- Fallback: stringify ---
             elif item is not None:
                 flattened_parts.append(TextPart(text=str(item)))
 
-        # Add all flattened parts to latest_parts (includes artifacts already wrapped in DataParts above)
+        # Add all flattened parts to latest_parts
         latest_parts.extend(flattened_parts)
 
         if refine_payload:
@@ -4105,12 +4041,13 @@ Answer with just JSON:
         if pending_file_parts:
             latest_parts.extend(pending_file_parts)
 
+        # --- Role assignment for image editing workflow ---
         base_uri_hint = self._normalize_uri((refine_payload or {}).get("image_url"))
         mask_uri_hint = self._normalize_uri((refine_payload or {}).get("mask_url"))
 
         if base_uri_hint or mask_uri_hint:
             for part in flattened_parts:
-                candidate_uri = self._normalize_uri(_local_extract_uri(part))
+                candidate_uri = self._normalize_uri(extract_uri(part))
                 if base_uri_hint and candidate_uri == base_uri_hint:
                     self._apply_role_to_part(part, "base")
                     _register_role(candidate_uri, "base")
@@ -4118,48 +4055,26 @@ Answer with just JSON:
                     self._apply_role_to_part(part, "mask")
                     _register_role(candidate_uri, "mask")
 
+        # Assign default 'overlay' role to unassigned user uploads (not generated artifacts)
         for uri_value, parts_list in uri_to_parts.items():
             if assigned_roles.get(uri_value):
                 continue
             
-            # Check if this is a generated/edited artifact - don't assign default overlay role
-            # Extract filename from URI to check
             file_name_from_uri = uri_value.split('/')[-1].split('?')[0].lower() if uri_value else ""
             is_generated_artifact = "generated_" in file_name_from_uri or "edit_" in file_name_from_uri
             
             if is_generated_artifact:
-                log_debug(f"Skipping default 'overlay' role for generated artifact: {file_name_from_uri}")
-                # Don't assign any role - keep generated artifacts separate for display
-                continue
+                continue  # Don't assign role to agent-generated artifacts
             
-            # For other files (user uploads, logos, etc.), assign overlay as default
             for part in parts_list:
                 self._apply_role_to_part(part, "overlay")
             assigned_roles[uri_value] = "overlay"
 
-        def _apply_assigned_roles(parts: Iterable[Any]) -> None:
-            for part in parts:
-                uri = self._normalize_uri(_local_extract_uri(part))
-                if not uri:
-                    continue
-                role_for_uri = assigned_roles.get(uri)
-                if role_for_uri:
-                    self._apply_role_to_part(part, role_for_uri)
-
-        _apply_assigned_roles(flattened_parts)
-        _apply_assigned_roles(latest_parts)
-
-        # DEBUG: Log what we're returning
-        log_foundry_debug(f"convert_parts returning {len(flattened_parts)} parts:")
-        for idx, part in enumerate(flattened_parts):
-            if isinstance(part, (TextPart, DataPart, FilePart)):
-                log_debug(f"  • Part {idx}: {type(part).__name__} (kind={getattr(part, 'kind', 'N/A')})")
-            elif isinstance(part, dict):
-                log_debug(f"  • Part {idx}: dict with keys={list(part.keys())}")
-            elif isinstance(part, str):
-                log_debug(f"  • Part {idx}: string (length={len(part)})")
-            else:
-                log_debug(f"  • Part {idx}: {type(part)}")
+        # Apply all assigned roles to parts
+        for part in flattened_parts + latest_parts:
+            uri = self._normalize_uri(extract_uri(part))
+            if uri and assigned_roles.get(uri):
+                self._apply_role_to_part(part, assigned_roles[uri])
 
         return flattened_parts
 
@@ -4167,69 +4082,33 @@ Answer with just JSON:
         """
         Convert A2A Part objects into formats suitable for processing and agent delegation.
         
-        Part types and their handling:
+        KEY FIXES for FilePart handling:
+        1. HTTP URIs: If a FilePart already has an HTTP/HTTPS URI (from blob storage),
+           pass it through directly - don't re-download and re-process.
+        2. Metadata preservation: video_metadata/image_metadata DataParts are returned
+           as-is to preserve their structure for downstream processing.
         
-        1. **TextPart**: Simple text content, passed through unchanged
-        
-        2. **FilePart**: Uploaded files requiring processing
-           - Extract text from PDFs, Word docs, etc. using document processor
-           - Store in Azure Blob Storage or local filesystem
-           - Generate artifact URIs for agent access
-           - Handle special cases like image masks for editing
-        
-        3. **DataPart**: Structured data or metadata
-           - JSON objects with agent-specific information
-           - Configuration parameters
-           - File metadata and references
-        
-        File processing workflow:
-        - Validate file size (50MB limit for security)
-        - Determine storage strategy (blob vs local based on size)
-        - Extract text content using Azure AI Document Intelligence
-        - Create artifact with unique ID and accessible URI
-        - Return metadata for agent consumption
-        
-        Special handling for image editing:
-        - Base images: Source image to be edited
-        - Mask images: Transparency mask defining edit regions
-        - Overlay images: Images to composite onto base
-        
-        Args:
-            part: A2A Part object to convert
-            tool_context: Context with artifact storage and session state
-            context_id: Optional conversation context for status updates
-            
-        Returns:
-            Converted part(s) ready for agent consumption or host processing
+        Part types:
+        - TextPart: Pass through, detect [refine-image] markers for editing workflow
+        - DataPart: Return data dict, preserve wrapper for metadata types
+        - FilePart: Upload to blob storage if needed, or pass through if already uploaded
         """
-        # Don't print the entire part (contains large base64 data)
-        if hasattr(part, 'root') and part.root.kind == 'file':
-            file_name = getattr(part.root.file, 'name', 'unknown')
-            mime_type = getattr(part.root.file, 'mimeType', 'unknown')
-            log_debug(f"convert_part: FilePart - name: {file_name}, mimeType: {mime_type}")
-            
-            # Emit status event for file processing
-            if context_id:
-                await self._emit_status_event(f"processing file: {file_name}", context_id)
-        else:
-            log_debug(f"convert_part: {type(part)} - kind: {getattr(part.root, 'kind', 'unknown') if hasattr(part, 'root') else 'no root'}")
-        
-        # Handle dicts coming from streaming conversions or patched remote agents
+        # Handle dicts from streaming or patched remote agents
         if isinstance(part, dict):
-            # Simple heuristic: if it looks like {'kind': 'text', 'text': '...'}
             if part.get('kind') == 'text' and 'text' in part:
-                text_content = part['text']
-                log_debug(f"convert_part: dict text content: {text_content[:200]}...")
-                return text_content
+                return part['text']
             if part.get('kind') == 'data' and 'data' in part:
                 return part['data']
-            # Fallthrough – stringify the dict
             return json.dumps(part)
-
-        # Fallback to standard A2A Part handling
-        if hasattr(part, 'root') and part.root.kind == 'text':
+        
+        if not hasattr(part, 'root'):
+            return str(part)
+        
+        kind = part.root.kind
+        
+        # --- TextPart ---
+        if kind == 'text':
             text_content = part.root.text or ""
-            log_debug(f"convert_part: text part content: {text_content[:200]}...")
 
             # Check for [refine-image] markers (image editing workflow)
             refine_matches = list(re.finditer(r"\[refine-image\]\s+(https?://\S+)", text_content, flags=re.IGNORECASE))
@@ -4238,7 +4117,6 @@ Answer with just JSON:
                 image_url = refine_matches[-1].group(1)
                 mask_url = mask_matches[-1].group(1) if mask_matches else None
 
-                # Strip markers from text
                 cleaned_text = re.sub(r"\[refine-image\]\s+https?://\S+", "", text_content, flags=re.IGNORECASE)
                 cleaned_text = re.sub(r"\[refine-mask\]\s+https?://\S+", "", cleaned_text, flags=re.IGNORECASE)
 
@@ -4247,42 +4125,40 @@ Answer with just JSON:
                     refine_data["mask_url"] = mask_url
 
                 self._store_parts_in_session(tool_context, DataPart(data=refine_data))
-                log_debug(f"convert_part: captured refine request with image_url={image_url}")
-
                 return cleaned_text.strip() or "Refine the previous image."
 
             return text_content
-        elif hasattr(part, 'root') and part.root.kind == 'data':
+        
+        # --- DataPart ---
+        elif kind == 'data':
             data = part.root.data
-            # Skip token_usage DataParts - already extracted earlier, not for main chat
+            # Skip token_usage - already extracted elsewhere
             if isinstance(data, dict) and data.get('type') == 'token_usage':
                 return None
-            log_debug(f"DataPart data: {data} (type: {type(data)})")
-            # IMPORTANT: Preserve DataPart wrapper for metadata types that need to flow through
-            # (video_metadata, image_metadata, etc.) so they can be detected by artifact processing
+            # Preserve wrapper for metadata types (video_metadata, image_metadata)
             if isinstance(data, dict) and data.get('type') in ('video_metadata', 'image_metadata'):
-                log_debug(f"📎 [VideoRemix] Preserving DataPart wrapper for {data.get('type')} with video_id={data.get('video_id')}")
-                return part  # Return the full Part(root=DataPart(...)) to preserve structure
+                return part  # Keep full structure for artifact processing
             return data
-        elif hasattr(part, 'root') and part.root.kind == 'file':
-            # A2A protocol compliant file handling
+        
+        # --- FilePart ---
+        elif kind == 'file':
             file_id = part.root.file.name
-            log_debug(f"Processing file: {file_id}")
             
-            # Check if this is a FilePart with an HTTP URI (returned from agent, already on blob storage)
-            # In this case, pass through without re-downloading/re-processing
+            # KEY FIX: Pass through FileParts that already have HTTP URIs (blob storage)
+            # These come from agents that uploaded files - no need to re-process
             file_uri = getattr(part.root.file, 'uri', None)
             if file_uri and str(file_uri).startswith(('http://', 'https://')):
-                log_debug(f"📤 FilePart already has HTTP URI, passing through: {file_id}")
-                # Return the FilePart directly so it can be detected by the artifact handling
-                return part.root  # Return the FilePart directly
+                return part.root  # Return FilePart directly
+            
+            # Emit status for file processing
+            if context_id:
+                await self._emit_status_event(f"processing file: {file_id}", context_id)
             
             file_role_attr = getattr(part.root.file, 'role', None)
             
             # Load file bytes from URI, inline bytes, or HTTP download
             file_bytes, load_error = self._load_file_bytes(part.root.file, context_id)
             if load_error:
-                log_debug(f"File load error: {load_error}")
                 return f"Error: {load_error}"
             
             # Security: Validate file size (50MB limit)
