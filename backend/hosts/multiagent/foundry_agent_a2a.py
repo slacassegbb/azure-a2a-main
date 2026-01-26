@@ -463,20 +463,33 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
                     ))
                 
                 # Separate send_message calls for parallel execution
-                send_message_calls = [tc for tc in tool_calls_to_execute if tc.function.name == "send_message_sync"]
-                other_calls = [tc for tc in tool_calls_to_execute if tc.function.name != "send_message_sync"]
+                # Note: Tool is named "send_message" in tool definition, also accept "send_message_sync" for compatibility
+                send_message_calls = [tc for tc in tool_calls_to_execute if tc.function.name in ("send_message", "send_message_sync")]
+                other_calls = [tc for tc in tool_calls_to_execute if tc.function.name not in ("send_message", "send_message_sync")]
                 tool_outputs = []
+                
+                # Log tool call counts for debugging
+                log_foundry_debug(f"🔧 Tool iteration {tool_iteration}: {len(send_message_calls)} send_message calls, {len(other_calls)} other calls")
+                for i, tc in enumerate(send_message_calls):
+                    args = json.loads(tc.function.arguments) if tc.function.arguments else {}
+                    log_foundry_debug(f"   send_message[{i}]: agent={args.get('agent_name')}, msg={args.get('message', '')[:50]}...")
                 
                 # Execute send_message calls in PARALLEL if there are multiple
                 if len(send_message_calls) > 1:
+                    log_foundry_debug(f"🚀 PARALLEL EXECUTION: Executing {len(send_message_calls)} send_message calls in parallel")
                     async def execute_send_message(tool_call):
                         """Execute a single send_message call and return result"""
                         try:
                             arguments = json.loads(tool_call.function.arguments) if tool_call.function.arguments else {}
                             agent_name = arguments.get("agent_name")
+                            # EXPLICIT FILE ROUTING: Extract file_uris and video_metadata
+                            file_uris = arguments.get("file_uris", None)
+                            video_metadata = arguments.get("video_metadata", None)
                             result = await self.send_message_sync(
                                 agent_name=agent_name,
-                                message=arguments.get("message")
+                                message=arguments.get("message"),
+                                file_uris=file_uris,
+                                video_metadata=video_metadata
                             )
                             result_str = self._format_agent_response_for_model(result, agent_name)
                             return {"tool_call_id": tool_call.id, "output": result_str}
@@ -504,9 +517,14 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
                     try:
                         arguments = json.loads(tool_call.function.arguments) if tool_call.function.arguments else {}
                         agent_name = arguments.get("agent_name")
+                        # EXPLICIT FILE ROUTING: Extract file_uris and video_metadata
+                        file_uris = arguments.get("file_uris", None)
+                        video_metadata = arguments.get("video_metadata", None)
                         result = await self.send_message_sync(
                             agent_name=agent_name,
-                            message=arguments.get("message")
+                            message=arguments.get("message"),
+                            file_uris=file_uris,
+                            video_metadata=video_metadata
                         )
                         result_str = self._format_agent_response_for_model(result, agent_name)
                         tool_outputs.append({"tool_call_id": tool_call.id, "output": result_str})
@@ -518,7 +536,8 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
                 for tool_call in other_calls:
                     function_name = tool_call.function.name
                     try:
-                        if function_name == "list_remote_agents_sync":
+                        # Accept both "list_remote_agents" and "list_remote_agents_sync" for compatibility
+                        if function_name in ("list_remote_agents", "list_remote_agents_sync"):
                             result = self.list_remote_agents_sync()
                         else:
                             result = {"error": f"Unknown function: {function_name}"}
@@ -684,49 +703,68 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
                 # Create dummy tool context
                 tool_context = type('obj', (object,), {'state': session_context})()
                 
+                # EXPLICIT FILE ROUTING: Extract file_uris and video_metadata from arguments
+                file_uris = arguments.get("file_uris", None)
+                video_metadata = arguments.get("video_metadata", None)
+                
                 task = self.send_message(
                     agent_name=arguments["agent_name"],
                     message=arguments["message"],
                     tool_context=tool_context,
-                    suppress_streaming=True
+                    suppress_streaming=True,
+                    file_uris=file_uris,
+                    video_metadata=video_metadata
                 )
                 tasks.append((tool_call, task))
             
             # Execute in parallel
             results = await asyncio.gather(*[task for _, task in tasks], return_exceptions=True)
             
-            for (tool_call, _), result in zip(tasks, results):
+            for i, ((tool_call, _), result) in enumerate(zip(tasks, results)):
+                arguments = json.loads(tool_call["function"]["arguments"]) if isinstance(tool_call["function"]["arguments"], str) else tool_call["function"]["arguments"]
+                agent_name = arguments.get("agent_name", "unknown")
+                
                 if isinstance(result, Exception):
-                    output = {"error": str(result)}
+                    output_str = json.dumps({"error": str(result), "agent": agent_name})
                 else:
-                    output = result
+                    # Format output so GPT-4 sees file URIs for explicit routing
+                    output_str = self._format_agent_response_for_model(result, agent_name)
                 
                 tool_outputs.append({
                     "type": "function_call_output",
                     "call_id": tool_call["id"],
-                    "output": json.dumps(output)
+                    "output": output_str
                 })
         else:
             # Sequential execution for agent mode
             for tool_call in send_message_calls:
                 arguments = json.loads(tool_call["function"]["arguments"]) if isinstance(tool_call["function"]["arguments"], str) else tool_call["function"]["arguments"]
+                agent_name = arguments.get("agent_name", "unknown")
                 
                 tool_context = type('obj', (object,), {'state': session_context})()
                 
+                # EXPLICIT FILE ROUTING: Extract file_uris and video_metadata from arguments
+                file_uris = arguments.get("file_uris", None)
+                video_metadata = arguments.get("video_metadata", None)
+                
                 try:
-                    output = await self.send_message(
+                    result = await self.send_message(
                         agent_name=arguments["agent_name"],
                         message=arguments["message"],
                         tool_context=tool_context,
-                        suppress_streaming=True
+                        suppress_streaming=True,
+                        file_uris=file_uris,
+                        video_metadata=video_metadata
                     )
+                    # Format output so GPT-4 sees file URIs for explicit routing
+                    output_str = self._format_agent_response_for_model(result, agent_name)
                 except Exception as e:
-                    output = {"error": str(e)}
+                    output_str = json.dumps({"error": str(e), "agent": agent_name})
                 
                 tool_outputs.append({
                     "type": "function_call_output",
                     "call_id": tool_call["id"],
-                    "output": json.dumps(output)
+                    "output": output_str
                 })
         
         # Execute other tool calls sequentially
@@ -829,17 +867,29 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
     
     # Note: list_remote_agents_sync has been extracted to agent_registry.py
     
-    async def send_message_sync(self, agent_name: str, message: str):
+    async def send_message_sync(
+        self,
+        agent_name: str,
+        message: str,
+        file_uris: Optional[List[str]] = None,
+        video_metadata: Optional[Dict[str, Any]] = None
+    ):
         """
         Async wrapper for send_message - for use with AsyncFunctionTool.
         
         Azure AI Agents SDK's AsyncFunctionTool.execute() checks if the function
         is async (using inspect.iscoroutinefunction) and awaits it if needed.
         Since send_message is async, this wrapper must also be async.
+        
+        EXPLICIT FILE ROUTING (Option 3):
+        - file_uris: List of file URIs from previous agent responses to pass along
+        - video_metadata: Dict with video_id for remix operations
         """
         print(f"\n🔥🔥🔥 [SEND_MESSAGE_SYNC] CALLED by Azure SDK!")
         print(f"🔥 agent_name: {agent_name}")
         print(f"🔥 message: {message[:100]}...")
+        print(f"🔥 file_uris: {file_uris}")
+        print(f"🔥 video_metadata: {video_metadata}")
         
         # Use the current host context ID - NO FALLBACK to UUID!
         context_id_to_use = getattr(self, '_current_host_context_id', None)
@@ -871,26 +921,31 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
         
         # Call the async send_message - SDK will await it
         # NOTE: suppress_streaming=False allows status updates to flow to sidebar
+        # EXPLICIT FILE ROUTING: Pass file_uris and video_metadata
         return await self.send_message(
             agent_name=agent_name,
             message=message,
             tool_context=tool_context,
-            suppress_streaming=False  # Enable streaming for sidebar status updates!
+            suppress_streaming=False,  # Enable streaming for sidebar status updates!
+            file_uris=file_uris,
+            video_metadata=video_metadata
         )
 
     def _format_agent_response_for_model(self, response_parts: list, agent_name: str) -> str:
         """
         Format the response parts from send_message into clean text for the model.
         
-        The model expects readable text as tool output, not complex nested JSON.
-        This extracts text content from response_parts and formats it cleanly.
+        This extracts text content and FILE URIs from response_parts so GPT-4 can
+        explicitly pass them to subsequent agent calls via the file_uris parameter.
+        
+        CRITICAL: Include full file URIs so GPT-4 can route files between agents.
         
         Args:
             response_parts: List of Part objects from send_message
             agent_name: Name of the agent that responded
             
         Returns:
-            Clean text string suitable for tool output
+            JSON string with response text, file URIs, and video metadata
         """
         import json
         
@@ -902,8 +957,8 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
             })
         
         text_parts = []
-        file_parts = []
-        data_parts = []
+        files = []  # Full file info with URIs for explicit passing
+        video_metadata = None  # For video_id tracking
         
         for part in response_parts:
             try:
@@ -922,20 +977,36 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
                         text_parts.append(part['text'])
                     elif 'content' in part:
                         text_parts.append(str(part['content']))
-                    else:
-                        # Data part
-                        data_parts.append(part)
                 
-                # Check for file content
+                # Check for file content - extract FULL URI for explicit passing
                 if hasattr(part_root, 'file') or hasattr(part, 'file'):
                     file_obj = getattr(part_root, 'file', None) or getattr(part, 'file', None)
                     if file_obj:
                         file_name = getattr(file_obj, 'name', 'unknown_file')
-                        file_parts.append(file_name)
+                        file_uri = getattr(file_obj, 'uri', None)
+                        file_mime = getattr(file_obj, 'mimeType', None)
+                        if file_uri:
+                            files.append({
+                                "name": file_name,
+                                "uri": str(file_uri),
+                                "mimeType": file_mime or "application/octet-stream"
+                            })
+                
+                # Check for DataPart with artifact-uri (alternate file format)
+                if isinstance(part_root, DataPart) and isinstance(getattr(part_root, 'data', None), dict):
+                    data = part_root.data
+                    if data.get('artifact-uri'):
+                        files.append({
+                            "name": data.get('file-name', 'unknown'),
+                            "uri": data.get('artifact-uri'),
+                            "mimeType": data.get('mime', 'application/octet-stream')
+                        })
+                    # Check for video metadata
+                    if data.get('type') == 'video_metadata' and data.get('video_id'):
+                        video_metadata = {"video_id": data.get('video_id')}
                         
             except Exception as e:
                 log_foundry_debug(f"Error processing part: {e}")
-                # Try to convert to string as fallback
                 try:
                     if hasattr(part, 'model_dump'):
                         text_parts.append(str(part.model_dump(mode='json')))
@@ -944,7 +1015,7 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
                 except:
                     pass
         
-        # Build clean response
+        # Build response with explicit file URIs for GPT-4 to pass along
         response_text = "\n\n".join(text_parts) if text_parts else ""
         
         result = {
@@ -953,11 +1024,15 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
             "response": response_text if response_text else "Task completed successfully."
         }
         
-        if file_parts:
-            result["files_generated"] = file_parts
-            
-        if data_parts:
-            result["additional_data"] = len(data_parts)
+        # CRITICAL: Include files with URIs so GPT-4 can explicitly route them
+        if files:
+            result["files"] = files
+            # Also provide a simple list for easy reference
+            result["file_uris"] = [f["uri"] for f in files]
+        
+        # Include video metadata for remix operations
+        if video_metadata:
+            result["video_metadata"] = video_metadata
         
         return json.dumps(result, ensure_ascii=False)
 
@@ -1022,12 +1097,24 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
             {
                 "type": "function",
                 "name": "send_message",
-                "description": "Send a message to a remote agent.",
+                "description": "Send a message to a remote agent. When an agent returns files, include their URIs from the response in file_uris to pass them to the next agent. For video remix operations, include video_metadata with the video_id.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "agent_name": {"type": "string", "description": "The name of the agent to send the task to."},
                         "message": {"type": "string", "description": "The message to send to the agent."},
+                        "file_uris": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Optional: URIs of files to send with the message. Use this to pass files between agents by including URIs from previous agent responses."
+                        },
+                        "video_metadata": {
+                            "type": "object",
+                            "properties": {
+                                "video_id": {"type": "string", "description": "The video_id from a previous video generation, required for remix operations."}
+                            },
+                            "description": "Optional: Video metadata for remix operations. Include video_id from previous video generation responses."
+                        }
                     },
                     "required": ["agent_name", "message"],
                 },
@@ -1640,21 +1727,15 @@ Answer with just JSON:
     @staticmethod
     def _store_parts_in_session(tool_context: Any, *parts: Any) -> None:
         """
-        Store processed parts in session context for later access.
+        DEPRECATED: No longer used with explicit file routing.
         
-        Parts are appended to session_context._latest_processed_parts list.
-        This is used to make file artifacts accessible to remote agents.
+        Previously stored parts in session context for implicit file sharing.
+        Now GPT-4 routes files explicitly via file_uris parameter.
+        
+        This method is kept for backward compatibility but is a no-op.
         """
-        session_context = getattr(tool_context, "state", None)
-        if session_context is None:
-            return
-        latest_parts = getattr(session_context, "_latest_processed_parts", None)
-        if latest_parts is None:
-            latest_parts = []
-            setattr(session_context, "_latest_processed_parts", latest_parts)
-        for p in parts:
-            if p is not None:
-                latest_parts.append(p)
+        # No-op: Explicit file routing via file_uris replaces implicit memory
+        pass
 
     @staticmethod
     def _wrap_item_for_agent(item: Any) -> List[Part]:
@@ -2040,6 +2121,8 @@ Answer with just JSON:
         message: str,
         tool_context: Any,
         suppress_streaming: bool = True,
+        file_uris: Optional[List[str]] = None,
+        video_metadata: Optional[Dict[str, Any]] = None,
     ):
         """
         Send a message to a remote agent and handle the A2A protocol response.
@@ -2052,12 +2135,19 @@ Answer with just JSON:
         - Converts agent responses into formats usable by other agents
         - Stores all interactions in memory for future retrieval
         
+        EXPLICIT FILE ROUTING (Option 3):
+        - Files are passed explicitly via file_uris parameter
+        - GPT-4 sees file URIs in agent responses and decides which to pass
+        - This enables proper parallel execution without shared state issues
+        
         Args:
             agent_name: Name of the target remote agent
             message: The message/task to send to the agent
             tool_context: Context object with session state and artifact storage
             suppress_streaming: If True, don't stream to main chat (used for sub-agent calls)
                                If False, stream to UI (used for direct user-facing responses)
+            file_uris: Optional list of file URIs to include with the message
+            video_metadata: Optional dict with video_id for remix operations
         
         Returns:
             List of response parts (text, files, data) from the remote agent
@@ -2132,29 +2222,48 @@ Answer with just JSON:
             messageId = str(uuid.uuid4())  # Generate fresh message ID for this specific call
 
             prepared_parts: List[Any] = [Part(root=TextPart(text=contextualized_message))]
-            session_parts = []
-            if hasattr(session_context, "_latest_processed_parts"):
-                session_parts = getattr(session_context, "_latest_processed_parts", []) or []
             
-            # DEBUG: Log what we're about to send
+            # EXPLICIT FILE ROUTING (Option 3): Construct parts from arguments
+            # GPT-4 passes file_uris and video_metadata explicitly - no shared state needed
             log_foundry_debug(f"Before sending to {agent_name}:")
-            log_debug(f"  • _latest_processed_parts exists: {hasattr(session_context, '_latest_processed_parts')}")
-            log_debug(f"  • session_parts count: {len(session_parts)}")
+            log_debug(f"  • file_uris: {file_uris}")
+            log_debug(f"  • video_metadata: {video_metadata}")
             log_debug(f"  • agent_mode: {getattr(session_context, 'agent_mode', False)}")
 
-            if session_parts:
-                log_debug(f"📦 Prepared {len(session_parts)} parts for remote agent {agent_name}")
-                for prepared_part in session_parts:
-                    if isinstance(prepared_part, Part):
-                        prepared_parts.append(prepared_part)
-                    elif isinstance(prepared_part, (TextPart, DataPart, FilePart)):
-                        prepared_parts.append(Part(root=prepared_part))
-                    elif isinstance(prepared_part, dict):
-                        prepared_parts.append(Part(root=DataPart(data=prepared_part)))
-                    elif hasattr(prepared_part, "root"):
-                        prepared_parts.append(Part(root=prepared_part.root))
-                    elif prepared_part is not None:
-                        prepared_parts.append(Part(root=TextPart(text=str(prepared_part))))
+            # Add FileParts from explicit file_uris (passed by GPT-4 from previous agent responses)
+            if file_uris:
+                log_debug(f"📦 Adding {len(file_uris)} explicit file URIs for remote agent {agent_name}")
+                for uri in file_uris:
+                    if uri and isinstance(uri, str) and uri.startswith(('http://', 'https://')):
+                        # Construct FilePart from URI
+                        # Extract filename from URI
+                        file_name = uri.split('/')[-1].split('?')[0] if '/' in uri else 'file'
+                        # Guess mime type from extension
+                        ext = file_name.split('.')[-1].lower() if '.' in file_name else ''
+                        mime_map = {
+                            'png': 'image/png', 'jpg': 'image/jpeg', 'jpeg': 'image/jpeg',
+                            'gif': 'image/gif', 'webp': 'image/webp', 'mp4': 'video/mp4',
+                            'pdf': 'application/pdf', 'mp3': 'audio/mpeg', 'wav': 'audio/wav'
+                        }
+                        mime_type = mime_map.get(ext, 'application/octet-stream')
+                        
+                        file_part = FilePart(file=FileWithUri(
+                            uri=uri,
+                            name=file_name,
+                            mimeType=mime_type
+                        ))
+                        prepared_parts.append(Part(root=file_part))
+                        log_debug(f"  • Added FilePart: {file_name} ({mime_type})")
+            
+            # Add video metadata for remix operations (passed by GPT-4)
+            if video_metadata and video_metadata.get('video_id'):
+                video_id = video_metadata['video_id']
+                log_debug(f"📹 Adding video_remix_request with video_id: {video_id}")
+                remix_data_part = DataPart(data={
+                    "type": "video_remix_request",
+                    "video_id": video_id
+                })
+                prepared_parts.append(Part(root=remix_data_part))
 
             request = MessageSendParams(
                 message=Message(
@@ -2358,7 +2467,9 @@ Answer with just JSON:
                 
                 # Handle task states
                 if task.status.state == TaskState.completed:
-                    asyncio.create_task(self._emit_simple_task_status(agent_name, "completed", contextId, taskId))
+                    # NOTE: Don't emit _emit_simple_task_status here - the streaming callback 
+                    # (_default_task_callback -> _emit_task_event) already emits the completion status.
+                    # Emitting here causes DUPLICATE task_updated events with different taskIds.
                     asyncio.create_task(self._emit_granular_agent_event(agent_name, f"{agent_name} has completed the task successfully", contextId))
                     
                     response_parts = []
@@ -3153,37 +3264,11 @@ Answer with just JSON:
             if hitl_result is not None:
                 return hitl_result
                 
-            # Reset any cached parts from prior turns so we don't resend stale attachments
-            if hasattr(session_context, "_latest_processed_parts"):
-                file_count_before = len(session_context._latest_processed_parts)
-                log_foundry_debug(f"_latest_processed_parts has {file_count_before} parts before clearing check")
-                log_foundry_debug(f"session_context.agent_mode = {session_context.agent_mode}")
-                # In agent mode, preserve files so they flow between agents
-                # In user mode, clear stale attachments from previous turns
-                if not session_context.agent_mode:
-                    print(f"⚠️ WARNING: Clearing {file_count_before} file parts because agent_mode is False")
-                    session_context._latest_processed_parts = []
-                    session_context._agent_generated_artifacts = []
-                else:
-                    # Keep files but log for debugging
-                    file_count = len(session_context._latest_processed_parts)
-                    print(f"📎 [Agent Mode] Preserving {file_count} file parts for agent-to-agent communication")
-                    # Log file details for debugging
-                    for idx, part in enumerate(session_context._latest_processed_parts):
-                        if hasattr(part, 'root'):
-                            if isinstance(part.root, FilePart):
-                                file_name = getattr(part.root.file, 'name', 'unknown')
-                                file_role = (part.root.metadata or {}).get("role", "no-role")
-                                print(f"  • File {idx}: {file_name} (role={file_role})")
-                            elif isinstance(part.root, DataPart) and isinstance(part.root.data, dict):
-                                role = part.root.data.get('role', 'no-role')
-                                name = part.root.data.get('file-name', 'unknown')
-                                uri = part.root.data.get('artifact-uri', 'no-uri')
-                                print(f"  • DataPart {idx}: {name} (role={role}, uri={uri[:50]}...)")
-                        elif isinstance(part, dict):
-                            role = part.get('role', 'no-role')
-                            name = part.get('file-name', part.get('name', 'unknown'))
-                            print(f"  • Dict {idx}: {name} (role={role})")
+            # NOTE: EXPLICIT FILE ROUTING - no longer using _latest_processed_parts for file sharing
+            # GPT-4 now receives file URIs in agent responses and passes them explicitly via file_uris parameter
+            # This enables proper parallel execution without shared state issues
+            session_context._agent_generated_artifacts = []
+            log_foundry_debug(f"Using explicit file routing (no _latest_processed_parts)")
             
             log_foundry_debug(f"=================== STARTING MESSAGE PROCESSING ===================")
             log_foundry_debug(f"About to process {len(message_parts)} message parts")
@@ -3247,18 +3332,24 @@ Answer with just JSON:
             for processed in processed_parts:
                 prepared_parts_for_agents.extend(self._wrap_item_for_agent(processed))
 
-            # Store prepared parts for sending to agents (includes user uploads for refinement)
-            session_context._latest_processed_parts = prepared_parts_for_agents
+            # NOTE: No longer storing parts in _latest_processed_parts (EXPLICIT FILE ROUTING)
+            # GPT-4 now routes files explicitly via file_uris parameter in send_message calls
             session_context._agent_generated_artifacts = []
-            log_debug(f"📦 Prepared {len(prepared_parts_for_agents)} parts to attach for remote agents")
+            log_debug(f"📦 Prepared {len(prepared_parts_for_agents)} parts (explicit routing via file_uris)")
             
             # If files were processed, include information about them in the message
+            # EXPLICIT FILE ROUTING: Include URIs so GPT-4 can pass them to agents
             file_info = []
+            file_uris_for_gpt4 = []  # URIs for explicit routing
             file_contents = []
             for result in processed_parts:
                 if isinstance(result, DataPart) and hasattr(result, 'data'):
                     if 'artifact-id' in result.data:
-                        file_info.append(f"File uploaded: {result.data.get('file-name', 'unknown')} (Artifact ID: {result.data['artifact-id']})")
+                        file_name = result.data.get('file-name', 'unknown')
+                        file_uri = result.data.get('artifact-uri', '')
+                        file_info.append(f"File uploaded: {file_name}")
+                        if file_uri:
+                            file_uris_for_gpt4.append({"name": file_name, "uri": file_uri})
                 elif isinstance(result, str) and result.startswith("File:") and "Content:" in result:
                     # This is processed file content from uploaded files
                     print(f"📄 Found processed file content: {len(result)} characters")
@@ -3272,8 +3363,13 @@ Answer with just JSON:
                     await self._emit_status_event(f"all {file_count} files processed successfully", context_id)
             
             # Enhance user message with file information and content
+            # EXPLICIT FILE ROUTING: Include URIs so GPT-4 can pass them to agents via file_uris
             enhanced_message = user_message
-            if file_info:
+            if file_uris_for_gpt4:
+                # Format file URIs in a way GPT-4 can easily extract and use
+                files_json = json.dumps(file_uris_for_gpt4)
+                enhanced_message = f"{user_message}\n\n[USER UPLOADED FILES - use file_uris parameter to pass these to agents: {files_json}]"
+            elif file_info:
                 enhanced_message = f"{user_message}\n\n[Files uploaded: {'; '.join(file_info)}]"
             if file_contents:
                 enhanced_message = f"{enhanced_message}\n\n{''.join(file_contents)}"
@@ -3696,6 +3792,9 @@ Answer with just JSON:
                 for tool_call, function_name, arguments in send_message_tool_calls:
                     agent_name = arguments.get("agent_name")
                     message = arguments.get("message", "")
+                    # EXPLICIT FILE ROUTING: Extract file_uris and video_metadata from arguments
+                    file_uris = arguments.get("file_uris", None)
+                    video_metadata = arguments.get("video_metadata", None)
                     
                     # Add status message for each agent call
                     self._add_status_message_to_conversation(f"🛠️ Executing tool: send_message to {agent_name}", context_id)
@@ -3704,7 +3803,9 @@ Answer with just JSON:
                     # Enhanced agent selection tracking
                     span.add_event("parallel_agent_selected", {
                         "agent_name": agent_name,
-                        "message_preview": message[:50] + "..." if len(message) > 50 else message
+                        "message_preview": message[:50] + "..." if len(message) > 50 else message,
+                        "file_uris_count": len(file_uris) if file_uris else 0,
+                        "has_video_metadata": bool(video_metadata)
                     })
                     
                     # Stream granular tool call to WebSocket for thinking box visibility
@@ -3720,12 +3821,17 @@ Answer with just JSON:
                             "type": "tool_call"
                         })
                     
-                    # FIXED: Use shared session context for parallel execution
-                    # This ensures all parallel agents share the same conversation context
-                    # Note: suppress_streaming=True prevents duplicate responses in chat (only host responds)
-                    # while remote agent streaming for thinking box visibility works through task callback
+                    # EXPLICIT FILE ROUTING: Pass file_uris and video_metadata to send_message
+                    # This enables proper parallel execution without shared state issues
                     tool_context = DummyToolContext(session_context, self._azure_blob_client)
-                    task = self.send_message(agent_name, message, tool_context, suppress_streaming=True)
+                    task = self.send_message(
+                        agent_name, 
+                        message, 
+                        tool_context, 
+                        suppress_streaming=True,
+                        file_uris=file_uris,
+                        video_metadata=video_metadata
+                    )
                     send_message_tasks.append((tool_call, task))
                 
                 # Execute all send_message calls in parallel
@@ -3889,19 +3995,16 @@ Answer with just JSON:
         - TextPart, FilePart, DataPart -> pass through
         - Dicts with artifact-uri -> wrap in DataPart
         - Refine-image payloads -> preserve for image editing workflow
+        
+        NOTE: Parts are stored in _latest_processed_parts for WORKFLOW orchestration only.
+        The send_message method uses EXPLICIT FILE ROUTING via file_uris parameter.
         """
         rval = []
         session_context = getattr(tool_context, "state", None)
         
-        # In agent mode, preserve existing parts; otherwise start fresh
-        if session_context is not None:
-            if hasattr(session_context, "agent_mode") and session_context.agent_mode:
-                latest_parts = getattr(session_context, "_latest_processed_parts", [])
-            else:
-                latest_parts: List[Any] = []
-            setattr(session_context, "_latest_processed_parts", latest_parts)
-        else:
-            latest_parts: List[Any] = []
+        # Initialize _latest_processed_parts for workflow orchestration (not for send_message routing)
+        if session_context is not None and not hasattr(session_context, '_latest_processed_parts'):
+            session_context._latest_processed_parts = []
 
         for p in parts:
             result = await self.convert_part(p, tool_context, context_id)
@@ -4029,17 +4132,23 @@ Answer with just JSON:
             elif item is not None:
                 flattened_parts.append(TextPart(text=str(item)))
 
-        # Add all flattened parts to latest_parts
-        latest_parts.extend(flattened_parts)
+        # Store in _latest_processed_parts for WORKFLOW ORCHESTRATION compatibility
+        # (send_message uses explicit file_uris parameter instead of this storage)
+        session_context = getattr(tool_context, "state", None)
+        if session_context is not None:
+            if not hasattr(session_context, '_latest_processed_parts'):
+                session_context._latest_processed_parts = []
+            # Store file parts for workflow deduplication and artifact collection
+            file_parts_only = [p for p in flattened_parts if isinstance(p, FilePart)]
+            if file_parts_only:
+                session_context._latest_processed_parts.extend(file_parts_only)
 
         if refine_payload:
             refine_part = DataPart(data=refine_payload)
             flattened_parts.append(refine_part)
-            latest_parts.append(refine_part)
 
-        # If we collected file parts, ensure downstream agents can access them
-        if pending_file_parts:
-            latest_parts.extend(pending_file_parts)
+        # NOTE: pending_file_parts are already added to flattened_parts during the loop above
+        # No need to extend again - that would cause duplicates
 
         # --- Role assignment for image editing workflow ---
         base_uri_hint = self._normalize_uri((refine_payload or {}).get("image_url"))
@@ -4071,7 +4180,7 @@ Answer with just JSON:
             assigned_roles[uri_value] = "overlay"
 
         # Apply all assigned roles to parts
-        for part in flattened_parts + latest_parts:
+        for part in flattened_parts:
             uri = self._normalize_uri(extract_uri(part))
             if uri and assigned_roles.get(uri):
                 self._apply_role_to_part(part, assigned_roles[uri])

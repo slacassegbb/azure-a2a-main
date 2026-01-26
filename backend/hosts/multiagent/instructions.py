@@ -42,6 +42,12 @@ Each agent may have a "skills" field listing their specific capabilities. Use th
 - Synthesize agent responses into clear, direct answers
 - Maintain professional, efficient communication
 
+### 📁 FILE ROUTING
+When agents return files, you MUST pass them explicitly to the next agent:
+- Extract `file_uris` from agent responses (e.g., `["https://..."]`)
+- Include in next call: `send_message(..., file_uris=["https://..."])`
+- For video remix: `send_message(..., video_metadata={{"video_id": "..."}})` 
+
 Focus on precision and clarity in agent-to-agent coordination."""
 
 
@@ -126,6 +132,37 @@ You: "The classification agent has reviewed the document and found..."
 - Example: "What do the branding and classification agents say about our guidelines?" → Both can run simultaneously
 
 **⚠️ DEFAULT TO SEQUENTIAL IF UNCLEAR** - If you're not sure whether tasks are independent, execute them sequentially to ensure proper data flow.
+
+---
+
+### 📁 FILE ROUTING BETWEEN AGENTS
+
+**CRITICAL: When agents return files, you MUST explicitly pass them to the next agent using the `file_uris` parameter!**
+
+When an agent returns files in its response, you'll see something like:
+```json
+{{"files": [{{"name": "image.png", "uri": "https://..."}}], "file_uris": ["https://..."]}}
+```
+
+**To pass files to the next agent:**
+```python
+send_message(
+    agent_name="Image Analysis Agent",
+    message="Analyze this image",
+    file_uris=["https://...URI_FROM_PREVIOUS_RESPONSE..."]
+)
+```
+
+**For video remix operations, use video_metadata:**
+```python
+send_message(
+    agent_name="Video Generator Agent", 
+    message="Remix with sunset colors",
+    video_metadata={{"video_id": "task_abc123"}}
+)
+```
+
+**⚠️ If you don't include file_uris, the agent won't receive the files!**
 
 ---
 
