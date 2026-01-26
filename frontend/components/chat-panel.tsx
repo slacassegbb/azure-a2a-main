@@ -2319,7 +2319,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                                     </div>
                                     {/* Remix button overlay for videos with videoId */}
                                     {attachment.videoId && message.role === "assistant" && (
-                                      <div className="absolute bottom-12 right-2">
+                                      <div className="absolute top-2 right-2">
                                         <Button
                                           variant={remixTarget?.videoId === attachment.videoId ? "destructive" : "default"}
                                           size="sm"
@@ -2376,9 +2376,9 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                                       style={{ maxHeight: '500px', objectFit: 'contain', backgroundColor: '#f5f5f5' }}
                                     />
                                   </a>
-                                  {/* Overlay buttons for refine and mask - bottom right corner */}
+                                  {/* Overlay buttons for refine and mask - top right corner */}
                                   {message.role === "assistant" && (
-                                    <div className="absolute bottom-2 right-2 flex flex-col gap-1">
+                                    <div className="absolute top-2 right-2 flex flex-col gap-1">
                                       {/* Refine button */}
                                       <Button
                                         variant={refineTarget?.imageUrl === attachment.uri ? "destructive" : "default"}
