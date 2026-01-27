@@ -526,6 +526,7 @@ class WebSocketManager:
         """Smart broadcast that auto-detects tenant from event data.
         
         Looks for contextId or conversationId in event data to extract tenant.
+        Also broadcasts to collaborative session members who joined this session.
         Skips broadcast if no tenant info found (multi-tenant isolation).
         
         Args:
@@ -549,18 +550,44 @@ class WebSocketManager:
         )
         
         if context_id:
+            sent_count = 0
+            session_id = None
+            
             # First try the raw context_id as tenant (for simple session IDs like "user_3")
             if context_id in self.tenant_connections:
-                return await self.broadcast_to_tenant(event_data, context_id)
+                session_id = context_id
+                sent_count = await self.broadcast_to_tenant(event_data, context_id)
+            else:
+                # Then try extracting tenant from tenant::conversation format
+                tenant_id = get_tenant_from_context(context_id)
+                if tenant_id in self.tenant_connections:
+                    session_id = tenant_id
+                    sent_count = await self.broadcast_to_tenant(event_data, tenant_id)
             
-            # Then try extracting tenant from tenant::conversation format
-            tenant_id = get_tenant_from_context(context_id)
-            if tenant_id in self.tenant_connections:
-                return await self.broadcast_to_tenant(event_data, tenant_id)
+            # Also broadcast to collaborative session members
+            # These are users who joined this session but have different user_ids
+            if session_id:
+                session = collaborative_session_manager.get_session(session_id)
+                if session:
+                    for member_id in session.get_all_member_ids():
+                        # Skip the session owner (already sent via tenant broadcast)
+                        if member_id == session_id:
+                            continue
+                        # Send to member's connections
+                        if member_id in self.user_connections:
+                            for ws in self.user_connections[member_id]:
+                                try:
+                                    await ws.send_text(json.dumps(event_data))
+                                    sent_count += 1
+                                except Exception as e:
+                                    logger.error(f"Failed to send to collaborative member {member_id}: {e}")
+                    if session.member_user_ids:
+                        logger.debug(f"Broadcasted to {len(session.member_user_ids)} collaborative session members")
             
-            # No matching tenant - skip broadcast (proper multi-tenant isolation)
-            logger.debug(f"No tenant connections found for context_id: {context_id[:20]}..., skipping broadcast")
-            return 0
+            if sent_count == 0:
+                logger.debug(f"No tenant connections found for context_id: {context_id[:20]}..., skipping broadcast")
+            
+            return sent_count
         
         # No context_id found - skip broadcast (multi-tenant isolation)
         logger.debug(f"Skipping smart_broadcast - no contextId found in event data")
