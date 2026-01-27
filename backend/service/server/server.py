@@ -43,6 +43,36 @@ from .adk_host_manager import ADKHostManager, get_message_id
 from .application_manager import ApplicationManager
 from .in_memory_manager import InMemoryFakeAgentManager
 
+
+async def trigger_websocket_agent_refresh():
+    """Trigger agent registry refresh on the WebSocket server via HTTP.
+    
+    This is used when backend and WebSocket run in separate containers.
+    Falls back to direct call if in same process.
+    """
+    try:
+        # First try direct call if websocket server is in same process
+        websocket_server = get_websocket_server()
+        if websocket_server:
+            websocket_server.trigger_immediate_sync()
+            log_debug("🔔 Triggered immediate agent registry sync (direct)")
+            return True
+        
+        # Otherwise use HTTP call to WebSocket server
+        websocket_url = os.environ.get("WEBSOCKET_SERVER_URL", "http://localhost:8080")
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(f"{websocket_url}/refresh-agents")
+            if response.status_code == 200:
+                log_debug("🔔 Triggered immediate agent registry sync via HTTP")
+                return True
+            else:
+                log_debug(f"⚠️ HTTP refresh-agents returned {response.status_code}")
+                return False
+    except Exception as e:
+        log_debug(f"⚠️ Failed to trigger agent refresh: {e}")
+        return False
+
+
 def get_context_id(obj, default: str = None) -> str:
     """
     Helper function to get contextId from an object, trying both contextId and context_id fields.
@@ -610,10 +640,7 @@ class ConversationServer:
                     
                     # Trigger immediate WebSocket sync to update UI for all clients
                     try:
-                        websocket_server = get_websocket_server()
-                        if websocket_server:
-                            websocket_server.trigger_immediate_sync()
-                            log_debug("🔔 Triggered immediate agent registry sync after registration")
+                        await trigger_websocket_agent_refresh()
                     except Exception as sync_error:
                         log_debug(f"⚠️ Failed to trigger immediate sync: {sync_error}")
                     
@@ -644,12 +671,11 @@ class ConversationServer:
                 
                 # Trigger immediate WebSocket sync to update UI for all clients
                 try:
-                    websocket_server = get_websocket_server()
-                    if websocket_server:
-                        websocket_server.trigger_immediate_sync()
-                        print(f"[DEBUG] 🔔 Triggered immediate agent registry sync after registration (fallback)")
+                    await trigger_websocket_agent_refresh()
                 except Exception as sync_error:
                     print(f"[DEBUG] ⚠️ Failed to trigger immediate sync (fallback): {sync_error}")
+                
+                return {"success": True, "message": f"Agent {agent_address} registered successfully (fallback)"}
                 
                 return {"success": True, "message": f"Agent {agent_address} registered successfully (fallback)"}
                 
@@ -680,12 +706,7 @@ class ConversationServer:
                     
                     # Trigger immediate WebSocket sync to update UI
                     try:
-                        websocket_server = get_websocket_server()
-                        if websocket_server:
-                            websocket_server.trigger_immediate_sync()
-                            print(f"[DEBUG] 🔔 Triggered immediate agent registry sync after unregistration")
-                        else:
-                            print(f"[DEBUG] ⚠️ WebSocket server not available for immediate sync")
+                        await trigger_websocket_agent_refresh()
                     except Exception as sync_error:
                         print(f"[DEBUG] ⚠️ Failed to trigger immediate sync: {sync_error}")
                     
@@ -1020,6 +1041,24 @@ class ConversationServer:
         
         session_registry = get_session_registry()
         session_registry.enable_agent(session_id, agent)
+        
+        # Broadcast session_agent_enabled event via WebSocket
+        try:
+            websocket_url = os.environ.get("WEBSOCKET_SERVER_URL", "http://localhost:8080")
+            async with httpx.AsyncClient() as client:
+                await client.post(
+                    f"{websocket_url}/events",
+                    json={
+                        "eventType": "session_agent_enabled",
+                        "contextId": session_id,
+                        "agent": agent
+                    },
+                    timeout=5.0
+                )
+                log_debug(f"🔔 Broadcasted session_agent_enabled for {agent.get('name')}")
+        except Exception as e:
+            log_debug(f"⚠️ Failed to broadcast session_agent_enabled: {e}")
+        
         return {'status': 'success', 'agent': agent}
 
     async def _disable_session_agent(self, request: Request):
@@ -1033,6 +1072,25 @@ class ConversationServer:
         
         session_registry = get_session_registry()
         removed = session_registry.disable_agent(session_id, agent_url)
+        
+        # Broadcast session_agent_disabled event via WebSocket
+        if removed:
+            try:
+                websocket_url = os.environ.get("WEBSOCKET_SERVER_URL", "http://localhost:8080")
+                async with httpx.AsyncClient() as client:
+                    await client.post(
+                        f"{websocket_url}/events",
+                        json={
+                            "eventType": "session_agent_disabled",
+                            "contextId": session_id,
+                            "agent_url": agent_url
+                        },
+                        timeout=5.0
+                    )
+                    log_debug(f"🔔 Broadcasted session_agent_disabled for {agent_url}")
+            except Exception as e:
+                log_debug(f"⚠️ Failed to broadcast session_agent_disabled: {e}")
+        
         return {'status': 'success', 'removed': removed}
 
     async def _get_session_agents(self, request: Request):

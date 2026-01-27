@@ -994,13 +994,8 @@ class FoundryHostManager(ApplicationManager):
                 # Trigger immediate WebSocket sync to update UI in real-time
                 # This happens for both new and updated agents
                 try:
-                    from service.websocket_server import get_websocket_server
-                    websocket_server = get_websocket_server()
-                    if websocket_server:
-                        websocket_server.trigger_immediate_sync()
-                        log_debug(f"🔔 Triggered immediate agent registry sync for {agent_card.name}")
-                    else:
-                        log_debug(f"⚠️ WebSocket server not available for immediate sync")
+                    from service.server.server import trigger_websocket_agent_refresh
+                    await trigger_websocket_agent_refresh()
                 except Exception as sync_error:
                     log_debug(f"⚠️ Failed to trigger immediate sync: {sync_error}")
                 
@@ -1037,13 +1032,8 @@ class FoundryHostManager(ApplicationManager):
                 
                 # Trigger immediate WebSocket sync to update UI
                 try:
-                    from service.websocket_server import get_websocket_server
-                    websocket_server = get_websocket_server()
-                    if websocket_server:
-                        websocket_server.trigger_immediate_sync()
-                        log_debug(f"🔔 Triggered immediate agent registry sync after removing {agent_name}")
-                    else:
-                        log_debug(f"⚠️ WebSocket server not available for immediate sync")
+                    from service.server.server import trigger_websocket_agent_refresh
+                    await trigger_websocket_agent_refresh()
                 except Exception as sync_error:
                     log_debug(f"⚠️ Failed to trigger immediate sync: {sync_error}")
             else:
