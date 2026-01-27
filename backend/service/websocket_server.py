@@ -832,6 +832,7 @@ def create_websocket_app() -> FastAPI:
             return
         
         # Send invitation to target user's connections
+        logger.info(f"[Collaborative] Looking for target user {target_user_id} in user_connections. Available users: {list(websocket_manager.user_connections.keys())}")
         if target_user_id in websocket_manager.user_connections:
             invite_message = json.dumps({
                 "eventType": "session_invite_received",
@@ -839,13 +840,16 @@ def create_websocket_app() -> FastAPI:
                 "from_user_id": from_user_id,
                 "from_username": from_username,
                 "session_id": session_id,
-                "timestamp": invitation.created_at.isoformat()
+                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(invitation.created_at))
             })
             for target_ws in websocket_manager.user_connections[target_user_id]:
                 try:
                     await target_ws.send_text(invite_message)
+                    logger.info(f"[Collaborative] Sent invite to {target_user_id} successfully")
                 except Exception as e:
                     logger.error(f"[Collaborative] Failed to send invite to {target_user_id}: {e}")
+        else:
+            logger.warning(f"[Collaborative] Target user {target_user_id} not found in user_connections - storing invitation for later delivery")
         
         # Confirm to sender
         await websocket.send_text(json.dumps({

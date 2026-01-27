@@ -71,6 +71,8 @@ export function SessionInviteButton() {
   // Handle invitation response
   const handleInviteResponse = useCallback((eventData: any) => {
     console.log("[SessionInvite] Invitation response:", eventData)
+    setInvitingUserId(null)  // Stop the spinner
+    setIsOpen(false)  // Close the dialog
     if (eventData.accepted) {
       toast({
         title: "Invitation Accepted!",
