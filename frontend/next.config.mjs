@@ -9,6 +9,8 @@ const nextConfig = {
   images: {
     unoptimized: true,
   },
+  // Disable the Next.js dev indicator (N logo in bottom left)
+  devIndicators: false,
   // Enable standalone output for Docker optimization
   output: 'standalone',
   // File tracing root for Docker optimization
