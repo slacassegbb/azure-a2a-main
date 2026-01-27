@@ -988,7 +988,7 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
 
         <div className="flex-1 overflow-y-auto">
           <div className="flex flex-col gap-2 p-2">
-            {/* Connected Users Section */}
+            {/* Current Session User Section */}
             <Collapsible open={isConnectedUsersOpen} onOpenChange={setIsConnectedUsersOpen}>
                 <div className="mb-4">
                   <CollapsibleTrigger asChild>
@@ -997,7 +997,7 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
                       className="flex items-center gap-2 mb-2 px-1 hover:bg-transparent"
                     >
                       <Users className="h-4 w-4 text-muted-foreground" />
-                      <span className="text-sm font-medium text-muted-foreground">Connected Users</span>
+                      <span className="text-sm font-medium text-muted-foreground">Current Session</span>
                       {isConnectedUsersOpen ? (
                         <ChevronDown className="h-4 w-4 text-muted-foreground" />
                       ) : (

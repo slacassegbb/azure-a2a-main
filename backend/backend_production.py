@@ -103,7 +103,8 @@ class AuthService:
     def __init__(self, users_file: Path | str = DATA_DIR / "users.json"):
         self.users_file = Path(users_file)
         self.users: Dict[str, User] = {}
-        # Track active users (user_data dict keyed by user_id)
+        # Track active WebSocket connections for logging (not used for data retrieval)
+        # Each session manages its own user info via WebSocket
         self.active_users: Dict[str, Dict[str, Any]] = {}
         
         # Load users from JSON file
@@ -332,32 +333,11 @@ class AuthService:
             print(f"[AuthService] Added active user: {user_data.get('name', 'Unknown')} ({user_data.get('email', 'No email')})")
     
     def remove_active_user(self, user_data: Dict[str, Any]):
-        """Remove a user from the active users list."""
+        """Remove a user from the active users list (for logging purposes)."""
         user_id = user_data.get("user_id")
         if user_id and user_id in self.active_users:
             removed_user = self.active_users.pop(user_id)
             print(f"[AuthService] Removed active user: {removed_user.get('name', 'Unknown')} ({removed_user.get('email', 'No email')})")
-    
-    def get_active_users(self) -> List[Dict[str, Any]]:
-        """Get list of currently active users."""
-        active_users_list = []
-        for user_data in self.active_users.values():
-            # Get full user details from our user storage
-            user = self.get_user_by_email(user_data.get("email", ""))
-            if user:
-                active_users_list.append({
-                    "user_id": user.user_id,
-                    "email": user.email,
-                    "name": user.name,
-                    "role": user.role,
-                    "description": user.description,
-                    "skills": user.skills,
-                    "color": user.color,
-                    "created_at": user.created_at.isoformat(),
-                    "last_login": user.last_login.isoformat() if user.last_login else None,
-                    "status": "active"  # Mark as active since they're in the active list
-                })
-        return active_users_list
 
 
 class HTTPXClientWrapper:
@@ -757,17 +737,45 @@ def main():
             }
 
     @app.get("/api/auth/active-users")
-    async def get_active_users():
-        """Get currently active/logged-in users."""
+    async def get_active_users(current_user: dict = Depends(get_current_user)):
+        """Get currently active/logged-in user for this session.
+        
+        For multi-tenancy, this endpoint returns only the current session's user,
+        not all active users across the system.
+        """
         try:
-            active_users = auth_service.get_active_users()
+            # Get full user details for the current session user
+            user = auth_service.get_user_by_email(current_user.get("email", ""))
             
-            return {
-                "success": True,
-                "users": active_users,
-                "total_active": len(active_users)
-            }
+            if user:
+                user_data = {
+                    "user_id": user.user_id,
+                    "email": user.email,
+                    "name": user.name,
+                    "role": user.role,
+                    "description": user.description,
+                    "skills": user.skills,
+                    "color": user.color,
+                    "created_at": user.created_at.isoformat(),
+                    "last_login": user.last_login.isoformat() if user.last_login else None,
+                    "status": "active"
+                }
+                return {
+                    "success": True,
+                    "users": [user_data],  # Only this session's user
+                    "total_active": 1,
+                    "session_isolated": True
+                }
+            else:
+                return {
+                    "success": True,
+                    "users": [],
+                    "total_active": 0,
+                    "session_isolated": True
+                }
             
+        except HTTPException:
+            raise  # Re-raise auth exceptions
         except Exception as e:
             print(f"[ERROR] Get active users error: {e}")
             return {

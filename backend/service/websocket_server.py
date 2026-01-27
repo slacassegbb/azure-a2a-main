@@ -211,9 +211,10 @@ class WebSocketManager:
                     auth_service.add_active_user(user_data)
                     logger.info(f"[WebSocket Auth] Added user to active list: {auth_conn.username}")
                     
-                    # Broadcast user connected event to all clients
-                    await self.broadcast_user_list_update()
-                    logger.info(f"[WebSocket Auth] Broadcasted user_list_update event")
+                    # Send session-specific user info to this connection only
+                    # (multi-tenancy: each session only sees their own user)
+                    await self.send_session_user_update(websocket, auth_conn)
+                    logger.info(f"[WebSocket Auth] Sent session-specific user_list_update to {auth_conn.username}")
                 else:
                     logger.warning("[WebSocket Auth] Auth service not available - cannot track active user")
                 logger.info(f"[WebSocket Auth] Authenticated connection established for user: {auth_conn.username} ({auth_conn.email})")
@@ -302,9 +303,9 @@ class WebSocketManager:
                 auth_service.remove_active_user(auth_conn.user_data)
                 logger.info(f"[WebSocket Auth] Removed user from active list: {auth_conn.username}")
                 
-                # Broadcast user disconnected event to all clients
-                await self.broadcast_user_list_update()
-                logger.info(f"[WebSocket Auth] Broadcasted user_list_update after disconnect")
+                # No need to broadcast to other sessions (multi-tenancy isolation)
+                # Each session only tracks their own user, so no update needed for others
+                logger.info(f"[WebSocket Auth] Session for {auth_conn.username} ended (no broadcast needed - session isolated)")
             
             logger.info(f"Authenticated user {auth_conn.username} disconnected")
         
@@ -317,36 +318,47 @@ class WebSocketManager:
         """Get connection info for a websocket."""
         return self.authenticated_connections.get(websocket)
     
-    def get_authenticated_users(self) -> List[Dict[str, Any]]:
-        """Get list of currently authenticated users."""
-        return [
-            {
-                "user_id": conn.user_id,
-                "username": conn.username,
-                "email": conn.email,
-                "connected_at": conn.connected_at
-            }
-            for conn in self.authenticated_connections.values()
-        ]
-    
-    async def broadcast_user_list_update(self):
-        """Broadcast user list update to all connected clients."""
+    async def send_session_user_update(self, websocket: WebSocket, auth_conn: AuthenticatedConnection):
+        """Send session-specific user info to a specific WebSocket connection.
+        
+        For multi-tenancy, each session only receives their own user info.
+        
+        Args:
+            websocket: The WebSocket connection to send to
+            auth_conn: The authenticated connection info
+        """
         try:
+            user_data = None
             if auth_service:
-                active_users = auth_service.get_active_users()
-                event_data = {
-                    "eventType": "user_list_update",
-                    "data": {
-                        "active_users": active_users,
-                        "total_active": len(active_users)
-                    },
-                    "timestamp": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-                }
-                sent_count = await self.broadcast_event(event_data)
-                logger.info(f"[WebSocket] Broadcasted user_list_update to {sent_count} clients: {len(active_users)} active users")
-                logger.info(f"[WebSocket] Active user IDs: {[u.get('user_id') for u in active_users]}")
+                user = auth_service.get_user_by_email(auth_conn.email)
+                if user:
+                    user_data = {
+                        "user_id": user.user_id,
+                        "email": user.email,
+                        "name": user.name,
+                        "role": user.role,
+                        "description": user.description,
+                        "skills": user.skills,
+                        "color": user.color,
+                        "created_at": user.created_at.isoformat(),
+                        "last_login": user.last_login.isoformat() if user.last_login else None,
+                        "status": "active"
+                    }
+            
+            session_users = [user_data] if user_data else []
+            event_data = {
+                "eventType": "user_list_update",
+                "data": {
+                    "active_users": session_users,
+                    "total_active": len(session_users),
+                    "session_isolated": True
+                },
+                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+            }
+            await websocket.send_text(json.dumps(event_data))
+            logger.info(f"[WebSocket] Sent session user update to {auth_conn.username}: {len(session_users)} user(s)")
         except Exception as e:
-            logger.error(f"Failed to broadcast user list update: {e}")
+            logger.error(f"Failed to send session user update to {auth_conn.username}: {e}")
     
     async def emit_agent_status_update(self, status_event: Dict[str, Any]):
         """Emit agent status update event to all connected clients."""
@@ -686,18 +698,22 @@ def create_websocket_app() -> FastAPI:
             raise HTTPException(status_code=500, detail=str(e))
     
     @app.get("/users")
-    async def get_connected_users():
-        """Get list of currently connected authenticated users."""
+    async def get_connection_stats():
+        """Get WebSocket connection statistics (no user details for privacy).
+        
+        For multi-tenancy, individual user details are not exposed.
+        Use the main API's /api/auth/active-users with authentication instead.
+        """
         try:
-            users = websocket_manager.get_authenticated_users()
             return JSONResponse({
                 "success": True,
-                "users": users,
                 "total_connections": len(websocket_manager.active_connections),
-                "authenticated_connections": len(users)
+                "authenticated_connections": len(websocket_manager.authenticated_connections),
+                "tenant_count": len(websocket_manager.tenant_connections),
+                "message": "User details not exposed for privacy. Use /api/auth/active-users with auth token."
             })
         except Exception as e:
-            logger.error(f"Error getting connected users: {e}")
+            logger.error(f"Error getting connection stats: {e}")
             raise HTTPException(status_code=500, detail=str(e))
 
     @app.get("/agents")

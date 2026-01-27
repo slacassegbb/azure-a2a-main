@@ -29,7 +29,26 @@ export function ConnectedUsers() {
   const fetchActiveUsers = useCallback(async () => {
     try {
       const baseUrl = process.env.NEXT_PUBLIC_A2A_API_URL || "http://localhost:12000"
-      const response = await fetch(`${baseUrl}/api/auth/active-users`)
+      const token = sessionStorage.getItem('auth_token')
+      
+      // If no token, user is not logged in - show empty
+      if (!token) {
+        setUsers([])
+        return
+      }
+      
+      const response = await fetch(`${baseUrl}/api/auth/active-users`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      })
+      
+      if (response.status === 401) {
+        // Token invalid/expired - user not logged in
+        setUsers([])
+        return
+      }
+      
       const data = await response.json()
       
       if (data.success) {
@@ -109,7 +128,7 @@ export function ConnectedUsers() {
   if (loading) {
     return (
       <div className="p-3">
-        <div className="text-sm text-muted-foreground">Loading active users...</div>
+        <div className="text-sm text-muted-foreground">Loading session...</div>
       </div>
     )
   }
@@ -117,7 +136,7 @@ export function ConnectedUsers() {
   if (users.length === 0) {
     return (
       <div className="p-3">
-        <div className="text-sm text-muted-foreground">No users currently active</div>
+        <div className="text-sm text-muted-foreground">Not logged in</div>
       </div>
     )
   }
