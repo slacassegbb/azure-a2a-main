@@ -43,6 +43,7 @@ export class WebSocketClient {
   private config: WebSocketConfig;
   private recentToolCalls: Set<string> = new Set(); // Track recent tool calls to prevent duplicates
   private isInitializing: boolean = false; // Prevent concurrent initialization
+  private pingInterval: NodeJS.Timeout | null = null; // Keepalive ping interval
 
   constructor(config: WebSocketConfig) {
     this.config = {
@@ -52,6 +53,31 @@ export class WebSocketClient {
     };
     
     logDebug(`[WebSocket] Client initialized with URL: ${this.config.url}`);
+  }
+  
+  // Start sending periodic pings to keep connection alive
+  private startPingInterval() {
+    // Clear any existing interval
+    this.stopPingInterval();
+    
+    // Send ping every 30 seconds to keep connection alive
+    this.pingInterval = setInterval(() => {
+      if (this.websocket && this.websocket.readyState === WebSocket.OPEN) {
+        try {
+          this.websocket.send(JSON.stringify({ type: 'ping' }));
+          logDebug('[WebSocket] Sent keepalive ping');
+        } catch (error) {
+          console.error('[WebSocket] Failed to send ping:', error);
+        }
+      }
+    }, 30000); // 30 seconds
+  }
+  
+  private stopPingInterval() {
+    if (this.pingInterval) {
+      clearInterval(this.pingInterval);
+      this.pingInterval = null;
+    }
   }
 
   async initialize(): Promise<boolean> {
@@ -150,6 +176,9 @@ export class WebSocketClient {
             this.isReconnecting = false;
             this.reconnectAttempts = 0;
             
+            // Start keepalive pings
+            this.startPingInterval();
+            
             // Clear any pending reconnection timeout
             if (this.reconnectTimeout) {
               clearTimeout(this.reconnectTimeout);
@@ -203,6 +232,9 @@ export class WebSocketClient {
           this.websocket.onclose = (event) => {
             logDebug(`[WebSocket] Connection closed after successful open: code=${event.code} reason='${event.reason || 'n/a'}' wasClean=${event.wasClean}`);
             this.isConnected = false;
+            
+            // Stop keepalive pings
+            this.stopPingInterval();
             
             // Only attempt to reconnect if not a clean close
             if (event.code !== 1000 && this.reconnectAttempts < this.config.maxReconnectAttempts!) {
@@ -621,6 +653,9 @@ export class WebSocketClient {
   async close(): Promise<void> {
     try {
       this.isInitializing = false; // Reset initialization flag
+      
+      // Stop keepalive pings
+      this.stopPingInterval();
       
       if (this.reconnectTimeout) {
         clearTimeout(this.reconnectTimeout);
