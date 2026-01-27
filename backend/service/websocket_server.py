@@ -344,36 +344,83 @@ class WebSocketManager:
         """Send session-specific user info to a specific WebSocket connection.
         
         For multi-tenancy, each session only receives their own user info.
+        For collaborative sessions, includes all session members.
         
         Args:
             websocket: The WebSocket connection to send to
             auth_conn: The authenticated connection info
         """
         try:
-            user_data = None
-            if auth_service:
-                user = auth_service.get_user_by_email(auth_conn.email)
-                if user:
-                    user_data = {
-                        "user_id": user.user_id,
-                        "email": user.email,
-                        "name": user.name,
-                        "role": user.role,
-                        "description": user.description,
-                        "skills": user.skills,
-                        "color": user.color,
-                        "created_at": user.created_at.isoformat(),
-                        "last_login": user.last_login.isoformat() if user.last_login else None,
-                        "status": "active"
-                    }
+            session_users = []
             
-            session_users = [user_data] if user_data else []
+            # Get this user's tenant/session ID
+            tenant_id = self.connection_tenants.get(websocket)
+            user_id = auth_conn.user_data.get('user_id') if auth_conn.user_data else None
+            
+            # Check if this user is in a collaborative session
+            collaborative_session = None
+            if tenant_id:
+                collaborative_session = collaborative_session_manager.get_session(tenant_id)
+            
+            if collaborative_session:
+                # In a collaborative session - get all members
+                all_member_ids = collaborative_session.get_all_member_ids()
+                logger.info(f"[WebSocket] User {auth_conn.username} is in collaborative session with {len(all_member_ids)} members: {all_member_ids}")
+                
+                for member_id in all_member_ids:
+                    # Try to get user data for each member
+                    member_data = None
+                    if auth_service:
+                        # member_id is like "user_123" - need to find the user
+                        # Check authenticated connections to find the user's email
+                        for conn, conn_info in self.authenticated_connections.items():
+                            conn_user_id = conn_info.user_data.get('user_id') if conn_info.user_data else None
+                            if conn_user_id == member_id:
+                                user = auth_service.get_user_by_email(conn_info.email)
+                                if user:
+                                    member_data = {
+                                        "user_id": user.user_id,
+                                        "email": user.email,
+                                        "name": user.name,
+                                        "role": user.role,
+                                        "description": user.description,
+                                        "skills": user.skills,
+                                        "color": user.color,
+                                        "created_at": user.created_at.isoformat(),
+                                        "last_login": user.last_login.isoformat() if user.last_login else None,
+                                        "status": "active",
+                                        "is_session_owner": member_id == collaborative_session.owner_user_id
+                                    }
+                                break
+                    
+                    if member_data:
+                        session_users.append(member_data)
+            else:
+                # Not in collaborative session - just show this user
+                if auth_service:
+                    user = auth_service.get_user_by_email(auth_conn.email)
+                    if user:
+                        user_data = {
+                            "user_id": user.user_id,
+                            "email": user.email,
+                            "name": user.name,
+                            "role": user.role,
+                            "description": user.description,
+                            "skills": user.skills,
+                            "color": user.color,
+                            "created_at": user.created_at.isoformat(),
+                            "last_login": user.last_login.isoformat() if user.last_login else None,
+                            "status": "active"
+                        }
+                        session_users.append(user_data)
+            
             event_data = {
                 "eventType": "user_list_update",
                 "data": {
                     "active_users": session_users,
                     "total_active": len(session_users),
-                    "session_isolated": True
+                    "session_isolated": True,
+                    "is_collaborative": collaborative_session is not None
                 },
                 "timestamp": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
             }
@@ -969,6 +1016,10 @@ def create_websocket_app() -> FastAPI:
                         for member_ws in websocket_manager.user_connections[member_id]:
                             try:
                                 await member_ws.send_text(member_update)
+                                # Also send updated user list so Session Users panel updates
+                                member_auth = websocket_manager.get_connection_info(member_ws)
+                                if member_auth:
+                                    await websocket_manager.send_session_user_update(member_ws, member_auth)
                             except:
                                 pass
         
