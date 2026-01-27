@@ -1674,11 +1674,11 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
         summaryId,
         inferenceId: data.inferenceId,
         effectiveConversationId,
-        alreadyProcessedInference: processedMessageIds.has(`workflow_${data.inferenceId}`)
+        alreadyProcessedInference: processedMessageIds.has(`workflow_${responseId}`)
       })
-      // Only create ONE workflow summary per inferenceId
-      // Check if we've already created a workflow for this inference
-      const workflowKey = `workflow_${data.inferenceId}`
+      // Only create ONE workflow summary per message (using responseId which is unique per message)
+      // Previously used inferenceId (conversationId) which caused second message workflow to be skipped
+      const workflowKey = `workflow_${responseId}`
       const alreadyCreatedWorkflow = processedMessageIds.has(workflowKey)
       
       if (inferenceSteps.length > 0 && !alreadyCreatedWorkflow) {
