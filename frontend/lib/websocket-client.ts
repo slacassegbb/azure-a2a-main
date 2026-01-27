@@ -171,7 +171,7 @@ export class WebSocketClient {
           
           this.websocket!.onopen = () => {
             clearTimeout(connectionTimeout);
-            logDebug("[WebSocket] Connected successfully");
+            console.log("[WebSocket] CONNECTED successfully");
             this.isConnected = true;
             this.isReconnecting = false;
             this.reconnectAttempts = 0;
@@ -230,7 +230,8 @@ export class WebSocketClient {
           };
           
           this.websocket.onclose = (event) => {
-            logDebug(`[WebSocket] Connection closed after successful open: code=${event.code} reason='${event.reason || 'n/a'}' wasClean=${event.wasClean}`);
+            // Always log close events to help debug connection issues
+            console.log(`[WebSocket] CLOSED: code=${event.code} reason='${event.reason || 'n/a'}' wasClean=${event.wasClean}`);
             this.isConnected = false;
             
             // Stop keepalive pings
@@ -298,6 +299,10 @@ export class WebSocketClient {
 
   private handleEvent(eventData: any) {
     try {
+      // Always log event type for debugging collaborative features
+      const incomingEventType = eventData.eventType || eventData.type || 'unknown';
+      console.log(`[WebSocket] handleEvent called with eventType: ${incomingEventType}`);
+      
       if (DEBUG && typeof eventData === 'object') {
         // Avoid massive spam by eliding big payloads
         const preview = JSON.stringify(eventData).slice(0, 500);
@@ -309,8 +314,8 @@ export class WebSocketClient {
         logDebug(`[WebSocket] Connection state during event handling: readyState=${this.websocket.readyState} isConnected=${this.isConnected}`);
       }
       
-      // Extract event type
-      const eventType = eventData.eventType || 'unknown';
+      // Use the incoming event type for routing
+      const eventType = incomingEventType;
       
       // Handle different event types
       switch (eventType) {
