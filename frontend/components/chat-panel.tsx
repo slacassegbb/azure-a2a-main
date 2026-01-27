@@ -627,6 +627,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
   const [isLoadingMessages, setIsLoadingMessages] = useState(true) // Add loading state
   const [input, setInput] = useState("")
   const [isInputFocused, setIsInputFocused] = useState(false) // Track input focus for Teams-like highlight
+  const [isInputHovered, setIsInputHovered] = useState(false) // Track input hover for gradient bar
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const messagesContainerRef = useRef<HTMLDivElement>(null)
   const [isInferencing, setIsInferencing] = useState(false)
@@ -2810,26 +2811,13 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
             </div>
           )}
           
-          <div className="relative max-w-4xl mx-auto">
+          <div 
+            className="relative max-w-4xl mx-auto"
+            onMouseEnter={() => setIsInputHovered(true)}
+            onMouseLeave={() => setIsInputHovered(false)}
+          >
             {/* Container with Teams-like focus indicator at bottom */}
             <div className="relative bg-muted/30 rounded-3xl transition-all duration-200">
-              {/* Blue highlight bar at bottom - visible on focus or inferencing */}
-              <div 
-                className={`absolute bottom-0 left-4 right-4 h-[3px] rounded-full transition-all duration-300 pointer-events-none ${
-                  isInferencing 
-                    ? 'opacity-100 animate-gradient-flow' 
-                    : isInputFocused 
-                    ? 'opacity-100' 
-                    : 'opacity-0'
-                }`}
-                style={{
-                  backgroundImage: (isInputFocused || isInferencing)
-                    ? 'linear-gradient(90deg, hsl(var(--primary)), hsl(270, 80%, 60%), hsl(var(--primary)))' 
-                    : 'none',
-                  backgroundSize: isInferencing ? '200% 100%' : '100% 100%',
-                  backgroundPosition: '0% 50%'
-                }}
-              />
             <Textarea
               ref={textareaRef}
               value={input}
@@ -3052,10 +3040,27 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
               </Button>
             </div>
             </div>
+            {/* Blue highlight bar at bottom - visible on hover, focus, or inferencing */}
+            <div 
+              className={`mx-4 h-[3px] rounded-full transition-all duration-300 pointer-events-none mt-0.5 ${
+                (isInferencing && inferenceSteps.length > 0)
+                  ? 'opacity-100 animate-gradient-flow' 
+                  : (isInputFocused || isInputHovered)
+                  ? 'opacity-100' 
+                  : 'opacity-0'
+              }`}
+              style={{
+                backgroundImage: (isInputFocused || isInputHovered || (isInferencing && inferenceSteps.length > 0))
+                  ? 'linear-gradient(90deg, hsl(var(--primary)), hsl(270, 80%, 60%), hsl(var(--primary)))' 
+                  : 'none',
+                backgroundSize: (isInferencing && inferenceSteps.length > 0) ? '200% 100%' : '100% 100%',
+                backgroundPosition: '0% 50%'
+              }}
+            />
           </div>
           
           {/* Helper text below input */}
-          <div className="text-center mt-2">
+          <div className="text-center mt-1">
             <p className="text-sm text-foreground">
               Use the Agent Catalog to add agents to your team
             </p>
