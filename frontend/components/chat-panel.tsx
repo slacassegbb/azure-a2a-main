@@ -626,6 +626,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
   const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null)  // Track which message is currently streaming
   const [isLoadingMessages, setIsLoadingMessages] = useState(true) // Add loading state
   const [input, setInput] = useState("")
+  const [isInputFocused, setIsInputFocused] = useState(false) // Track input focus for Teams-like highlight
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const messagesContainerRef = useRef<HTMLDivElement>(null)
   const [isInferencing, setIsInferencing] = useState(false)
@@ -2693,17 +2694,17 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
         </>
       )}
       
-      {/* Layout for empty state - centered welcome message and input together */}
+      {/* Layout for empty state - welcome message positioned above centered input */}
       {!isLoadingMessages && messages.length === 0 && !isInferencing && (
-        <div className="flex-1 flex flex-col items-center justify-center px-4">
-          <div className="w-full max-w-2xl text-center space-y-8">
+        <div className="flex-1 flex items-center justify-center">
+          <div className="absolute top-[40%] left-0 right-0 text-center px-4">
             <TypingWelcomeMessage text="What can I help you with today?" />
           </div>
         </div>
       )}
       
       {/* Chat input area - positioned based on state */}
-      <div className={`${!isLoadingMessages && messages.length === 0 && !isInferencing ? 'absolute bottom-1/3 left-0 right-0 flex items-center justify-center px-4' : 'flex-shrink-0'}`}>
+      <div className={`${!isLoadingMessages && messages.length === 0 && !isInferencing ? 'absolute top-[48%] left-0 right-0 flex justify-center px-4' : 'flex-shrink-0'}`}>
         <div className={`pb-4 pt-2 ${!isLoadingMessages && messages.length === 0 && !isInferencing ? 'w-full max-w-2xl' : 'w-full px-4'}`}>
           {/* File upload previews */}
           {uploadedFiles.length > 0 && (
@@ -2810,10 +2811,30 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
           )}
           
           <div className="relative max-w-4xl mx-auto">
+            {/* Container with Teams-like focus indicator at bottom */}
             <div className="relative bg-muted/30 rounded-3xl transition-all duration-200">
+              {/* Blue highlight bar at bottom - visible on focus or inferencing */}
+              <div 
+                className={`absolute bottom-0 left-4 right-4 h-[3px] rounded-full transition-all duration-300 pointer-events-none ${
+                  isInferencing 
+                    ? 'opacity-100 animate-gradient-flow' 
+                    : isInputFocused 
+                    ? 'opacity-100' 
+                    : 'opacity-0'
+                }`}
+                style={{
+                  backgroundImage: (isInputFocused || isInferencing)
+                    ? 'linear-gradient(90deg, hsl(var(--primary)), hsl(270, 80%, 60%), hsl(var(--primary)))' 
+                    : 'none',
+                  backgroundSize: isInferencing ? '200% 100%' : '100% 100%',
+                  backgroundPosition: '0% 50%'
+                }}
+              />
             <Textarea
               ref={textareaRef}
               value={input}
+              onFocus={() => setIsInputFocused(true)}
+              onBlur={() => setIsInputFocused(false)}
               onChange={(e) => {
                 const newValue = e.target.value
                 setInput(newValue)
