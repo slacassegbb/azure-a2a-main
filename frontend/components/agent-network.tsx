@@ -1036,6 +1036,7 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
                 
                 <CollapsibleContent>
             {/* The list of agents is rendered with rich detail from the registry. */}
+            <div className="space-y-2 pt-2">
             {registeredAgents.map((agent, index) => {
               // Ensure agent has required properties
               const agentName = agent?.name || `Agent ${index + 1}`;
@@ -1412,6 +1413,7 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
                 </Card>
               );
             })}
+            </div>
                 </CollapsibleContent>
               </Collapsible>
           </div>
