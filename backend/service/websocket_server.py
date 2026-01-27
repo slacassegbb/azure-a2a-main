@@ -740,7 +740,7 @@ def create_websocket_app() -> FastAPI:
         auth_conn = websocket_manager.get_connection_info(websocket)
         if not auth_conn:
             await websocket.send_text(json.dumps({
-                "type": "online_users",
+                "eventType": "online_users",
                 "users": [],
                 "error": "Not authenticated"
             }))
@@ -754,7 +754,7 @@ def create_websocket_app() -> FastAPI:
         )
         
         await websocket.send_text(json.dumps({
-            "type": "online_users",
+            "eventType": "online_users",
             "users": online_users
         }))
         logger.info(f"[Collaborative] Sent online users list to {auth_conn.username}: {len(online_users)} users")
@@ -764,7 +764,7 @@ def create_websocket_app() -> FastAPI:
         auth_conn = websocket_manager.get_connection_info(websocket)
         if not auth_conn:
             await websocket.send_text(json.dumps({
-                "type": "session_invite_error",
+                "eventType": "session_invite_error",
                 "error": "Not authenticated"
             }))
             return
@@ -775,7 +775,7 @@ def create_websocket_app() -> FastAPI:
         
         if not target_user_id or not session_id:
             await websocket.send_text(json.dumps({
-                "type": "session_invite_error",
+                "eventType": "session_invite_error",
                 "error": "Missing target_user_id or session_id"
             }))
             return
@@ -794,7 +794,7 @@ def create_websocket_app() -> FastAPI:
         
         if not invitation:
             await websocket.send_text(json.dumps({
-                "type": "session_invite_error",
+                "eventType": "session_invite_error",
                 "error": "Could not create invitation"
             }))
             return
@@ -802,7 +802,7 @@ def create_websocket_app() -> FastAPI:
         # Send invitation to target user's connections
         if target_user_id in websocket_manager.user_connections:
             invite_message = json.dumps({
-                "type": "session_invite_received",
+                "eventType": "session_invite_received",
                 "invitation_id": invitation.invitation_id,
                 "from_user_id": from_user_id,
                 "from_username": from_username,
@@ -817,7 +817,7 @@ def create_websocket_app() -> FastAPI:
         
         # Confirm to sender
         await websocket.send_text(json.dumps({
-            "type": "session_invite_sent",
+            "eventType": "session_invite_sent",
             "invitation_id": invitation.invitation_id,
             "to_user_id": target_user_id
         }))
@@ -835,7 +835,7 @@ def create_websocket_app() -> FastAPI:
         
         if not invitation_id:
             await websocket.send_text(json.dumps({
-                "type": "session_invite_response_error",
+                "eventType": "session_invite_response_error",
                 "error": "Missing invitation_id"
             }))
             return
@@ -844,7 +844,7 @@ def create_websocket_app() -> FastAPI:
         invitation = collaborative_session_manager.get_invitation(invitation_id)
         if not invitation:
             await websocket.send_text(json.dumps({
-                "type": "session_invite_response_error",
+                "eventType": "session_invite_response_error",
                 "error": "Invalid or expired invitation"
             }))
             return
@@ -854,7 +854,7 @@ def create_websocket_app() -> FastAPI:
             session = collaborative_session_manager.accept_invitation(invitation_id, user_id)
             if not session:
                 await websocket.send_text(json.dumps({
-                    "type": "session_invite_response_error",
+                    "eventType": "session_invite_response_error",
                     "error": "Could not accept invitation"
                 }))
                 return
@@ -862,7 +862,7 @@ def create_websocket_app() -> FastAPI:
             success = collaborative_session_manager.decline_invitation(invitation_id, user_id)
             if not success:
                 await websocket.send_text(json.dumps({
-                    "type": "session_invite_response_error",
+                    "eventType": "session_invite_response_error",
                     "error": "Could not decline invitation"
                 }))
                 return
@@ -870,7 +870,7 @@ def create_websocket_app() -> FastAPI:
         # Notify the inviter about the response
         if invitation.from_user_id in websocket_manager.user_connections:
             response_message = json.dumps({
-                "type": "session_invite_response_received",
+                "eventType": "session_invite_response_received",
                 "invitation_id": invitation_id,
                 "from_user_id": user_id,
                 "from_username": auth_conn.username,
@@ -889,7 +889,7 @@ def create_websocket_app() -> FastAPI:
             if session:
                 members = collaborative_session_manager.get_session_members(invitation.session_id)
                 member_update = json.dumps({
-                    "type": "session_members_updated",
+                    "eventType": "session_members_updated",
                     "session_id": invitation.session_id,
                     "members": members
                 })
@@ -929,7 +929,7 @@ def create_websocket_app() -> FastAPI:
             remaining_members = members_before - {user_id}
             members = collaborative_session_manager.get_session_members(session_id)
             member_update = json.dumps({
-                "type": "session_members_updated",
+                "eventType": "session_members_updated",
                 "session_id": session_id,
                 "members": members,
                 "left_user": auth_conn.username
