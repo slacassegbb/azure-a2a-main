@@ -172,6 +172,16 @@ export class WebSocketClient {
           this.websocket!.onopen = () => {
             clearTimeout(connectionTimeout);
             console.log("[WebSocket] CONNECTED successfully");
+            
+            // If this was a reconnection after disconnect, clear collaborative session
+            // This handles the case where backend restarted and session state is lost
+            if (this.isReconnecting) {
+              console.log("[WebSocket] Reconnected after disconnect - clearing collaborative session");
+              sessionStorage.removeItem('a2a_collaborative_session');
+              // Emit event so UI can update
+              this.emit('session_cleared', { reason: 'reconnect' });
+            }
+            
             this.isConnected = true;
             this.isReconnecting = false;
             this.reconnectAttempts = 0;

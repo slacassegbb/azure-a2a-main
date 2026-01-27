@@ -245,6 +245,14 @@ export function ChatLayout() {
       if (DEBUG) console.log("[ChatLayout] Form submitted")
     }
 
+    // Handle session cleared event (triggered on WebSocket reconnect after backend restart)
+    const handleSessionCleared = (data: any) => {
+      console.log("[ChatLayout] Session cleared due to:", data?.reason)
+      // Reload the page to get a fresh state with the user's own session
+      // This ensures users aren't stuck in a stale collaborative session
+      window.location.reload()
+    }
+
     // Subscribe to Event Hub events
     console.log("[ChatLayout] 📡 Subscribing to session_agent_enabled/disabled events")
     subscribe("session_agent_enabled", handleAgentEnabled)
@@ -255,6 +263,7 @@ export function ChatLayout() {
     subscribe("file_uploaded", handleFileUploaded)
     subscribe("form_submitted", handleFormSubmitted)
     subscribe("user_list_update", handleUserListUpdate)
+    subscribe("session_cleared", handleSessionCleared)
 
     if (DEBUG) console.log("[ChatLayout] Subscribed to Event Hub events")
 
@@ -271,6 +280,7 @@ export function ChatLayout() {
       unsubscribe("file_uploaded", handleFileUploaded)
       unsubscribe("form_submitted", handleFormSubmitted)
       unsubscribe("user_list_update", handleUserListUpdate)
+      unsubscribe("session_cleared", handleSessionCleared)
       if (DEBUG) console.log("[ChatLayout] Unsubscribed from Event Hub events")
     }
   }, [subscribe, unsubscribe, emit])
