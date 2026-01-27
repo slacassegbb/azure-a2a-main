@@ -44,6 +44,7 @@ export class WebSocketClient {
   private recentToolCalls: Set<string> = new Set(); // Track recent tool calls to prevent duplicates
   private isInitializing: boolean = false; // Prevent concurrent initialization
   private pingInterval: NodeJS.Timeout | null = null; // Keepalive ping interval
+  private hasEverConnected: boolean = false; // Track if we've ever had a successful connection
 
   constructor(config: WebSocketConfig) {
     this.config = {
@@ -94,6 +95,18 @@ export class WebSocketClient {
     }
     
     this.isInitializing = true;
+    
+    // Clear any stale collaborative session on fresh page load (first connection only)
+    // This prevents cross-pollination after backend restart or browser refresh
+    // Users must receive a new invite to rejoin a collaborative session
+    // We only do this on fresh page load (hasEverConnected === false), not on reconnects
+    if (!this.hasEverConnected) {
+      const wasInCollaborativeSession = sessionStorage.getItem('a2a_collaborative_session');
+      if (wasInCollaborativeSession) {
+        console.log("[WebSocket] Clearing stale collaborative session on fresh page load:", wasInCollaborativeSession);
+        sessionStorage.removeItem('a2a_collaborative_session');
+      }
+    }
     
     try {
       // Close any existing connection first
@@ -185,6 +198,7 @@ export class WebSocketClient {
             this.isConnected = true;
             this.isReconnecting = false;
             this.reconnectAttempts = 0;
+            this.hasEverConnected = true; // Mark that we've successfully connected
             
             // Start keepalive pings
             this.startPingInterval();
