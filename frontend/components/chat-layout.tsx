@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, useCallback } from "react"
 import { AgentNetwork } from "@/components/agent-network"
 import { ChatPanel } from "@/components/chat-panel"
 import { FileHistory } from "@/components/file-history"
@@ -52,24 +52,10 @@ export function ChatLayout() {
     }
   }, [workflow])
 
-  // Check if there are files in history on mount and auto-open if there are
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const sessionId = localStorage.getItem('session-id')
-      if (sessionId) {
-        const storageKey = `file-history-${sessionId}`
-        const savedFiles = localStorage.getItem(storageKey)
-        if (savedFiles) {
-          try {
-            const parsedFiles = JSON.parse(savedFiles)
-            if (parsedFiles.length > 0) {
-              setFileHistoryOpen(true)
-            }
-          } catch (e) {
-            // Ignore parse errors
-          }
-        }
-      }
+  // Callback when file history loads files - auto-open if there are files
+  const handleFilesLoaded = useCallback((count: number) => {
+    if (count > 0) {
+      setFileHistoryOpen(true)
     }
   }, [])
 
@@ -328,10 +314,16 @@ export function ChatLayout() {
                   </CollapsibleTrigger>
                   <CollapsibleContent>
                     <div className="p-2">
-                      <FileHistory />
+                      <FileHistory onFilesLoaded={handleFilesLoaded} />
                     </div>
                   </CollapsibleContent>
                 </Collapsible>
+                {/* Hidden FileHistory to check file count on mount when collapsed */}
+                {!isFileHistoryOpen && (
+                  <div className="hidden">
+                    <FileHistory onFilesLoaded={handleFilesLoaded} />
+                  </div>
+                )}
               </div>
             )}
           </div>

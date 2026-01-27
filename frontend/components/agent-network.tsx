@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Textarea } from "@/components/ui/textarea"
 import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
-import { PanelRightClose, PanelRightOpen, ShieldCheck, ChevronDown, ChevronRight, Globe, Hash, Zap, FileText, ExternalLink, Settings, Clock, CheckCircle, XCircle, AlertCircle, Pause, Brain, Search, MessageSquare, Database, Shield, BarChart3, Gavel, Users, Bot, Trash2, User, ListOrdered, Network } from "lucide-react"
+import { PanelRightClose, PanelRightOpen, ShieldCheck, ChevronDown, ChevronRight, Globe, Hash, Zap, FileText, ExternalLink, Settings, Clock, CheckCircle, XCircle, AlertCircle, Pause, Brain, Search, MessageSquare, Database, Shield, BarChart3, Gavel, Users, Bot, Trash2, User, ListOrdered, Network, RotateCcw } from "lucide-react"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { SimulateAgentRegistration } from "./simulate-agent-registration"
 import { ConnectedUsers } from "./connected-users"
@@ -152,6 +152,9 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
   const [editedInstruction, setEditedInstruction] = useState("")
   const [isLoading, setIsLoading] = useState(false)
   const [isClearingMemory, setIsClearingMemory] = useState(false)
+  
+  // Host agent inferencing state (tracks when host is actively processing)
+  const [isHostInferencing, setIsHostInferencing] = useState(false)
   
   // Collapsible section states
   const [isConnectedUsersOpen, setIsConnectedUsersOpen] = useState(true)
@@ -453,11 +456,26 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
     subscribe('task_updated', handleTaskUpdate)
     subscribe('agent_status_updated', handleAgentStatusUpdate)
     
-    console.log('[AgentNetwork] ✅ Subscribed to task_updated, agent_status_updated')
+    // Track host agent inference state
+    const handleInferenceStarted = () => {
+      console.log('[AgentNetwork] Host inference started')
+      setIsHostInferencing(true)
+    }
+    const handleInferenceEnded = () => {
+      console.log('[AgentNetwork] Host inference ended')
+      setIsHostInferencing(false)
+    }
+    
+    subscribe('shared_inference_started', handleInferenceStarted)
+    subscribe('shared_inference_ended', handleInferenceEnded)
+    
+    console.log('[AgentNetwork] ✅ Subscribed to task_updated, agent_status_updated, shared_inference_*')
 
     return () => {
       unsubscribe('task_updated', handleTaskUpdate)
       unsubscribe('agent_status_updated', handleAgentStatusUpdate)
+      unsubscribe('shared_inference_started', handleInferenceStarted)
+      unsubscribe('shared_inference_ended', handleInferenceEnded)
     }
   }, [isConnected, subscribe, unsubscribe, handleTaskUpdate, handleAgentStatusUpdate])
 
@@ -498,6 +516,42 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
 
     // Default to online/idle
     return { icon: CheckCircle, color: "text-green-400", label: "Online" }
+  }
+
+  // Get host agent status indicator (uses inference state + task tracking)
+  const getHostAgentStatus = () => {
+    // Primary: Use inference state (most reliable for host agent)
+    if (isHostInferencing) {
+      return { bgColor: "bg-yellow-500", label: "Working", animate: true }
+    }
+    
+    // Secondary: Check task-based status from WebSocket events
+    const hostAgentNames = ["foundry-host-agent", "host-agent", "Host Agent"]
+    
+    for (const name of hostAgentNames) {
+      const status = agentStatuses.get(name)
+      if (status?.currentTask) {
+        switch (status.currentTask.state) {
+          case "working":
+            return { bgColor: "bg-yellow-500", label: "Working", animate: true }
+          case "submitted":
+            return { bgColor: "bg-blue-500", label: "Pending", animate: true }
+          case "completed":
+            return { bgColor: "bg-green-500", label: "Completed", animate: false }
+          case "failed":
+          case "rejected":
+            return { bgColor: "bg-red-500", label: "Failed", animate: false }
+          case "canceled":
+            return { bgColor: "bg-gray-500", label: "Canceled", animate: false }
+          case "input-required":
+          case "auth-required":
+            return { bgColor: "bg-orange-500", label: "Waiting", animate: true }
+        }
+      }
+    }
+    
+    // Default to online
+    return { bgColor: "bg-green-500", label: "Online", animate: false }
   }
   
   const toggleAgent = (agentName: string) => {
@@ -678,37 +732,114 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
         ) : (
           // Expanded state - full layout
           <>
-            <div className="flex h-16 items-center justify-between p-2">
-              <span className="font-semibold text-lg ml-2">Network</span>
-              <Button variant="ghost" size="icon" className="h-9 w-9" onClick={onToggle}>
-                <PanelRightClose size={20} />
+            <div className="flex h-10 items-center justify-end p-2">
+              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onToggle}>
+                <PanelRightClose size={18} />
               </Button>
             </div>
 
-            <div className="p-2">
+            <div className="p-2 pt-0">
             <Card>
-              <CardHeader className="p-2 pt-0 md:p-4">
+              <CardHeader className="p-3 pb-2">
                 <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <ShieldCheck className="text-primary h-4 w-4" />
-                    <CardTitle className="text-base">Host Agent</CardTitle>
+                  <div className="flex items-center gap-3">
+                    <div 
+                      className="p-2 rounded-lg flex items-center justify-center"
+                      style={{ backgroundColor: "rgba(59, 130, 246, 0.1)" }}
+                    >
+                      <ShieldCheck className="h-4 w-4" style={{ color: "#3b82f6" }} />
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <CardTitle className="text-sm font-semibold">Host Agent</CardTitle>
+                      {(() => {
+                        const hostStatus = getHostAgentStatus()
+                        return (
+                          <div 
+                            className={`w-2 h-2 rounded-full ${hostStatus.bgColor} ${hostStatus.animate ? 'animate-pulse' : ''}`} 
+                            title={hostStatus.label}
+                          />
+                        )
+                      })()}
+                    </div>
                   </div>
-                  <Dialog open={isSystemPromptDialogOpen} onOpenChange={setIsSystemPromptDialogOpen}>
+                  <div className="flex items-center gap-1">
+                    {/* DAG Network Button */}
+                    <Dialog>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <DialogTrigger asChild>
+                            <Button variant="ghost" size="sm" className="h-7 w-7 p-0">
+                              <Network className="h-3.5 w-3.5" />
+                            </Button>
+                          </DialogTrigger>
+                        </TooltipTrigger>
+                        <TooltipContent side="left">View agent network diagram</TooltipContent>
+                      </Tooltip>
+                      <DialogContent className="max-w-4xl max-h-[85vh]">
+                        <DialogHeader>
+                          <DialogTitle>Agent Network DAG</DialogTitle>
+                        </DialogHeader>
+                        <div className="h-[600px] w-full">
+                          <AgentNetworkDag 
+                            nodes={dagNodes} 
+                            links={dagLinks}
+                            activeNodeId={activeNode}
+                            key="agent-network-dag-stable"
+                          />
+                        </div>
+                      </DialogContent>
+                    </Dialog>
+                    {/* Clear Memory Button */}
                     <Tooltip>
                       <TooltipTrigger asChild>
-                        <DialogTrigger asChild>
-                          <Button 
-                            variant="ghost" 
-                            size="sm" 
-                            onClick={openSystemPromptDialog}
-                            disabled={isLoading}
-                          >
-                            <Settings className="h-4 w-4" />
-                          </Button>
-                        </DialogTrigger>
+                        <Button 
+                          variant="ghost" 
+                          size="sm"
+                          className="h-7 w-7 p-0"
+                          onClick={clearMemory}
+                          disabled={isClearingMemory}
+                        >
+                          <RotateCcw className="h-3.5 w-3.5" />
+                        </Button>
                       </TooltipTrigger>
-                      <TooltipContent side="left">Edit system prompt</TooltipContent>
+                      <TooltipContent side="left">
+                        {isClearingMemory ? "Clearing..." : "Clear memory"}
+                      </TooltipContent>
                     </Tooltip>
+                    {/* Memory Toggle */}
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <div className="flex items-center">
+                          <Switch 
+                            id="inter-agent-memory"
+                            checked={enableInterAgentMemory} 
+                            onCheckedChange={onInterAgentMemoryChange}
+                            className="scale-75"
+                          />
+                        </div>
+                      </TooltipTrigger>
+                      <TooltipContent side="left">
+                        {enableInterAgentMemory ? "Memory enabled" : "Memory disabled"}
+                      </TooltipContent>
+                    </Tooltip>
+                    {/* Settings Button */}
+                    <Dialog open={isSystemPromptDialogOpen} onOpenChange={setIsSystemPromptDialogOpen}>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <DialogTrigger asChild>
+                            <Button 
+                              variant="ghost" 
+                              size="sm" 
+                              className="h-7 w-7 p-0"
+                              onClick={openSystemPromptDialog}
+                              disabled={isLoading}
+                            >
+                              <Settings className="h-3.5 w-3.5" />
+                            </Button>
+                          </DialogTrigger>
+                        </TooltipTrigger>
+                        <TooltipContent side="left">Edit system prompt</TooltipContent>
+                      </Tooltip>
                     <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
                       <DialogHeader>
                         <DialogTitle>Edit System Prompt</DialogTitle>
@@ -759,55 +890,20 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
                       </DialogFooter>
                     </DialogContent>
                   </Dialog>
+                  </div>
                 </div>
               </CardHeader>
-              <CardContent className="p-2 pt-0 md:p-4 md:pt-0">
-                <div className="space-y-3">
-                  {/* Inter-Agent Memory Toggle with Clear Button */}
-                  <div className="flex items-center justify-between py-2">
-                    <div className="flex items-center gap-2">
-                      <Database className="h-4 w-4 text-muted-foreground" />
-                      <Label htmlFor="inter-agent-memory" className="text-sm font-medium cursor-pointer">
-                        Inter-Agent Memory
-                      </Label>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button 
-                            variant="ghost" 
-                            size="icon"
-                            className="h-8 w-8"
-                            onClick={clearMemory}
-                            disabled={isClearingMemory}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent side="left">
-                          {isClearingMemory ? "Clearing..." : "Clear host orchestrator memory"}
-                        </TooltipContent>
-                      </Tooltip>
-                      <Switch 
-                        id="inter-agent-memory"
-                        checked={enableInterAgentMemory} 
-                        onCheckedChange={onInterAgentMemoryChange}
-                      />
-                    </div>
-                  </div>
-                  
-                  {/* Workflow Button - Always visible (auto-detects workflow mode on backend) */}
-                  <div className="pt-3 border-t mt-3 space-y-3">
-                    <div>
-                      <Dialog open={isWorkflowDialogOpen} onOpenChange={setIsWorkflowDialogOpen}>
-                        <DialogTrigger asChild>
-                          <Button 
-                            variant="outline" 
-                            size="sm" 
-                            className="w-full"
-                            onClick={() => {
-                              setEditedWorkflow(workflow)
-                              setIsWorkflowDialogOpen(true)
+              <CardContent className="px-3 pb-3 pt-2">
+                {/* Workflow Button */}
+                <Dialog open={isWorkflowDialogOpen} onOpenChange={setIsWorkflowDialogOpen}>
+                  <DialogTrigger asChild>
+                    <Button 
+                      variant="outline" 
+                      size="sm" 
+                      className="w-full h-8 text-xs"
+                      onClick={() => {
+                        setEditedWorkflow(workflow)
+                        setIsWorkflowDialogOpen(true)
                             }}
                           >
                             <ListOrdered className="h-3 w-3 mr-2" />
@@ -882,13 +978,10 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
                           </DialogContent>
                         </Dialog>
                         {workflow && (
-                          <p className="text-xs text-muted-foreground mt-2">
-                            ✓ Workflow defined ({workflow.split('\n').filter(l => l.trim()).length} steps)
+                          <p className="text-xs text-muted-foreground mt-1">
+                            ✓ {workflow.split('\n').filter(l => l.trim()).length} steps defined
                           </p>
                         )}
-                      </div>
-                  </div>
-                </div>
               </CardContent>
             </Card>
           </div>
@@ -938,31 +1031,6 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
                         )}
                       </Button>
                     </CollapsibleTrigger>
-                    <Dialog>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <DialogTrigger asChild>
-                            <Button variant="ghost" size="icon" className="h-6 w-6">
-                              <Network className="h-3.5 w-3.5" />
-                            </Button>
-                          </DialogTrigger>
-                        </TooltipTrigger>
-                        <TooltipContent side="left">View agent network diagram</TooltipContent>
-                      </Tooltip>
-                      <DialogContent className="max-w-4xl max-h-[85vh]">
-                        <DialogHeader>
-                          <DialogTitle>Agent Network DAG</DialogTitle>
-                        </DialogHeader>
-                        <div className="h-[600px] w-full">
-                          <AgentNetworkDag 
-                            nodes={dagNodes} 
-                            links={dagLinks}
-                            activeNodeId={activeNode}
-                            key="agent-network-dag-stable"
-                          />
-                        </div>
-                      </DialogContent>
-                    </Dialog>
                   </div>
                 </div>
                 
@@ -986,19 +1054,22 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
                         {(() => {
                           const agentDisplayInfo = getAgentDisplayInfo(agentName)
                           const AgentIcon = agentDisplayInfo.icon
+                          // Convert hex to rgba for background (10% opacity like user cards)
+                          const hex = agentDisplayInfo.hex.replace('#', '')
+                          const r = parseInt(hex.substr(0, 2), 16)
+                          const g = parseInt(hex.substr(2, 2), 16)
+                          const b = parseInt(hex.substr(4, 2), 16)
+                          const bgColor = `rgba(${r}, ${g}, ${b}, 0.1)`
+                          
                           return (
-                            <div className={cn(
-                              "h-8 w-8 rounded-full flex items-center justify-center",
-                              agentDisplayInfo.bgColor
-                            )}>
-                              <AgentIcon className={cn("h-4 w-4", agentDisplayInfo.color)} />
+                            <div 
+                              className="p-2 rounded-lg flex items-center justify-center"
+                              style={{ backgroundColor: bgColor }}
+                            >
+                              <AgentIcon className="h-4 w-4" style={{ color: agentDisplayInfo.hex }} />
                             </div>
                           )
                         })()}
-                        {/* Status indicator in bottom-right corner */}
-                        <div className="absolute -bottom-1 -right-1 bg-background border border-border rounded-full p-0.5">
-                          <StatusIcon className={cn("h-3 w-3", statusIndicator.color)} />
-                        </div>
                         {/* Human interaction indicator in bottom-left corner */}
                         {hasHumanInteraction && (
                           <div className="absolute -bottom-1 -left-1 bg-green-500 border border-background rounded-full p-0.5">
@@ -1039,23 +1110,19 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
                             {(() => {
                               const agentDisplayInfo = getAgentDisplayInfo(agentName)
                               const AgentIcon = agentDisplayInfo.icon
-                              const hasHumanInteraction = hasHumanInteractionSkill(agent)
+                              // Convert hex to rgba for background (10% opacity like user cards)
+                              const hex = agentDisplayInfo.hex.replace('#', '')
+                              const r = parseInt(hex.substr(0, 2), 16)
+                              const g = parseInt(hex.substr(2, 2), 16)
+                              const b = parseInt(hex.substr(4, 2), 16)
+                              const bgColor = `rgba(${r}, ${g}, ${b}, 0.1)`
+                              
                               return (
-                                <div className={cn(
-                                  "h-10 w-10 flex-shrink-0 rounded-full flex items-center justify-center",
-                                  agentDisplayInfo.bgColor
-                                )}>
-                                  <AgentIcon className={cn("h-5 w-5", agentDisplayInfo.color)} />
-                                </div>
-                              )
-                            })()}
-                            {/* Status indicator in bottom-right corner */}
-                            {(() => {
-                              const statusIndicator = getStatusIndicator(agentName)
-                              const StatusIcon = statusIndicator.icon
-                              return (
-                                <div className="absolute -bottom-1 -right-1 bg-background border border-border rounded-full p-0.5">
-                                  <StatusIcon className={cn("h-3 w-3", statusIndicator.color)} />
+                                <div 
+                                  className="p-2 rounded-lg flex items-center justify-center"
+                                  style={{ backgroundColor: bgColor }}
+                                >
+                                  <AgentIcon className="h-4 w-4" style={{ color: agentDisplayInfo.hex }} />
                                 </div>
                               )
                             })()}
@@ -1068,56 +1135,73 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
                           </div>
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2">
-                              <h3 className="font-medium text-sm leading-tight">{agentName}</h3>
-                              {/* Status badge next to name */}
+                              <CardTitle className="text-sm font-semibold">{agentName}</CardTitle>
+                              {/* Status dot and label like user card */}
                               {(() => {
                                 const statusIndicator = getStatusIndicator(agentName)
                                 const status = agentStatuses.get(agentName)
+                                const showStatusText = status?.currentTask && status.currentTask.state !== "completed"
                                 
-                                if (status?.currentTask) {
-                                  return (
-                                    <Badge 
-                                      variant="secondary" 
-                                      className={cn(
-                                        "text-xs font-medium",
-                                        status.currentTask.state === "working" && "bg-yellow-100 text-yellow-800",
-                                        status.currentTask.state === "completed" && "bg-green-100 text-green-800",
-                                        (status.currentTask.state === "failed" || status.currentTask.state === "rejected") && "bg-red-100 text-red-800",
-                                        status.currentTask.state === "submitted" && "bg-blue-100 text-blue-800"
-                                      )}
-                                    >
-                                      {statusIndicator.label}
-                                    </Badge>
-                                  )
+                                // Determine dot color based on status
+                                let dotColor = "bg-green-500" // Default online
+                                if (!status) {
+                                  dotColor = "bg-gray-400" // Unknown
+                                } else if (status.connectionStatus === "offline" && !status.currentTask) {
+                                  dotColor = "bg-gray-400" // Offline
+                                } else if (status.currentTask) {
+                                  switch (status.currentTask.state) {
+                                    case "working":
+                                      dotColor = "bg-yellow-500"
+                                      break
+                                    case "completed":
+                                      dotColor = "bg-green-500"
+                                      break
+                                    case "failed":
+                                    case "rejected":
+                                      dotColor = "bg-red-500"
+                                      break
+                                    case "submitted":
+                                      dotColor = "bg-blue-500"
+                                      break
+                                    case "canceled":
+                                      dotColor = "bg-gray-500"
+                                      break
+                                    case "input-required":
+                                    case "auth-required":
+                                      dotColor = "bg-orange-500"
+                                      break
+                                    default:
+                                      dotColor = "bg-gray-400"
+                                  }
                                 }
                                 
                                 return (
-                                  <Badge variant="outline" className="text-xs">
-                                    {statusIndicator.label}
-                                  </Badge>
+                                  <>
+                                    <div className={cn("w-2 h-2 rounded-full flex-shrink-0", dotColor)} title={statusIndicator.label}></div>
+                                    {showStatusText && (
+                                      <span className="text-xs text-muted-foreground">{statusIndicator.label}</span>
+                                    )}
+                                  </>
                                 )
                               })()}
                             </div>
                             {agent.description && (
-                              <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
+                              <div className="text-xs text-muted-foreground mt-1 line-clamp-2">
                                 {agent.description}
-                              </p>
+                              </div>
                             )}
                           </div>
-                          <div className="flex items-center gap-1">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-7 w-7 p-0 hover:bg-primary/10 hover:text-primary"
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                handleRemoveAgent(agentName)
-                              }}
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </Button>
-                            {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-                          </div>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 w-7 p-0 hover:bg-destructive/10 hover:text-destructive flex-shrink-0"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              handleRemoveAgent(agentName)
+                            }}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
                         </div>
                       </CardHeader>
                     </CollapsibleTrigger>

@@ -23,11 +23,12 @@ interface FileRecord {
 interface FileHistoryProps {
   className?: string
   onFileSelect?: (file: FileRecord) => void
+  onFilesLoaded?: (count: number) => void
 }
 
 const SESSION_ID_KEY = 'backendSessionId'
 
-export function FileHistory({ className, onFileSelect }: FileHistoryProps) {
+export function FileHistory({ className, onFileSelect, onFilesLoaded }: FileHistoryProps) {
   const [files, setFiles] = useState<FileRecord[]>([])
   const { subscribe, unsubscribe } = useEventHub()
 
@@ -93,17 +94,28 @@ export function FileHistory({ className, onFileSelect }: FileHistoryProps) {
           
           setFiles(loadedFiles)
           console.log('[FileHistory] Loaded', loadedFiles.length, 'files from backend')
+          
+          // Notify parent about loaded files count
+          if (onFilesLoaded) {
+            onFilesLoaded(loadedFiles.length)
+          }
         } else {
           console.warn('[FileHistory] No files returned from backend:', data.error || 'Unknown error')
+          if (onFilesLoaded) {
+            onFilesLoaded(0)
+          }
         }
       } catch (error) {
         console.error('[FileHistory] Error loading files from backend:', error)
         // Continue with empty files list
+        if (onFilesLoaded) {
+          onFilesLoaded(0)
+        }
       }
     }
     
     loadFilesFromBackend()
-  }, [])
+  }, [onFilesLoaded])
 
   // Function to add a new file to history (will be called from parent)
   // Use useCallback to prevent recreating the function on every render

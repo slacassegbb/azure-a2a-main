@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { User, Clock, Phone, MessageCircle, FileText } from "lucide-react"
+import { User, Clock, Phone, MessageCircle } from "lucide-react"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { useEventHub } from "@/hooks/use-event-hub"
 
@@ -173,18 +173,6 @@ export function ConnectedUsers() {
                         title="Message"
                       >
                         <MessageCircle className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 w-8 p-0"
-                        onClick={() => {
-                          // TODO: Implement file sharing functionality
-                          console.log('Send file to user:', user.name)
-                        }}
-                        title="Send File"
-                      >
-                        <FileText className="h-4 w-4" />
                       </Button>
                     </div>
                   </div>
