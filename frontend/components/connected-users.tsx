@@ -4,9 +4,10 @@ import { useState, useEffect, useCallback } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { User, Clock, Phone, MessageCircle } from "lucide-react"
+import { User, Clock, Phone, MessageCircle, UserPlus } from "lucide-react"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { useEventHub } from "@/hooks/use-event-hub"
+import { SessionInviteButton } from "@/components/session-invite"
 
 type ConnectedUser = {
   user_id: string
@@ -134,15 +135,25 @@ export function ConnectedUsers() {
   }
 
   if (users.length === 0) {
+    // Check if user is logged in (has token)
+    const token = typeof window !== 'undefined' ? sessionStorage.getItem('auth_token') : null
     return (
       <div className="p-3">
-        <div className="text-sm text-muted-foreground">Not logged in</div>
+        <div className="text-sm text-muted-foreground">
+          {token ? "Session loading..." : "Not logged in"}
+        </div>
       </div>
     )
   }
 
   return (
     <div className="space-y-2">
+      {/* Header with invite button */}
+      <div className="flex items-center justify-between px-1 mb-2">
+        <span className="text-xs text-muted-foreground">Session Users</span>
+        <SessionInviteButton />
+      </div>
+      
       {users.map((user) => {
         const { bgColor, iconColor } = getAvatarStyles(user.color)
         const isExpanded = expandedUsers.has(user.user_id)

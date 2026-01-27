@@ -30,6 +30,7 @@ if str(backend_dir) not in sys.path:
 
 from log_config import log_websocket_debug, log_info, log_error, log_warning
 from utils.tenant import get_tenant_from_context, is_tenant_aware_context
+from service.collaborative_sessions import get_session_manager, CollaborativeSessionManager, get_online_users_from_connections
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +73,8 @@ class WebSocketManager:
         self.tenant_connections: Dict[str, Set[WebSocket]] = {}
         # Map WebSocket -> tenant_id for reverse lookup
         self.connection_tenants: Dict[WebSocket, str] = {}
+        # Map user_id -> WebSocket for sending direct messages
+        self.user_connections: Dict[str, WebSocket] = {}
         self.event_history: List[Dict[str, Any]] = []
         # Tenant-scoped event history
         self.tenant_event_history: Dict[str, List[Dict[str, Any]]] = {}
@@ -206,6 +209,12 @@ class WebSocketManager:
                 auth_conn = AuthenticatedConnection(websocket, user_data)
                 self.authenticated_connections[websocket] = auth_conn
                 
+                # Track user_id -> websocket for direct messaging (collaborative sessions)
+                user_id = user_data.get('user_id')
+                if user_id:
+                    self.user_connections[user_id] = websocket
+                    logger.info(f"[WebSocket Auth] Registered user connection: {user_id}")
+                
                 # Add user to active users list in auth service
                 if auth_service:
                     auth_service.add_active_user(user_data)
@@ -215,6 +224,9 @@ class WebSocketManager:
                     # (multi-tenancy: each session only sees their own user)
                     await self.send_session_user_update(websocket, auth_conn)
                     logger.info(f"[WebSocket Auth] Sent session-specific user_list_update to {auth_conn.username}")
+                    
+                    # Send any pending session invitations to this user
+                    await self.send_pending_invitations(websocket, user_id)
                 else:
                     logger.warning("[WebSocket Auth] Auth service not available - cannot track active user")
                 logger.info(f"[WebSocket Auth] Authenticated connection established for user: {auth_conn.username} ({auth_conn.email})")
@@ -297,6 +309,14 @@ class WebSocketManager:
         # Remove from authenticated connections if present
         if websocket in self.authenticated_connections:
             auth_conn = self.authenticated_connections.pop(websocket)
+            user_id = auth_conn.user_data.get('user_id')
+            
+            # Clean up user_connections for collaborative sessions
+            if user_id and user_id in self.user_connections:
+                self.user_connections[user_id].discard(websocket)
+                if not self.user_connections[user_id]:
+                    del self.user_connections[user_id]
+                    logger.info(f"[Collaborative] User {auth_conn.username} has no more active connections")
             
             # Remove user from active users list in auth service
             if auth_service:
@@ -530,6 +550,9 @@ class WebSocketManager:
 # Global WebSocket manager
 websocket_manager = WebSocketManager()
 
+# Global collaborative session manager
+collaborative_session_manager = get_session_manager()
+
 
 def create_websocket_app() -> FastAPI:
     """Create FastAPI app with WebSocket support."""
@@ -664,8 +687,239 @@ def create_websocket_app() -> FastAPI:
             # Handle ping/pong for keepalive
             await websocket.send_text(json.dumps({"type": "pong"}))
         
+        elif message_type == "get_online_users":
+            # Get list of online users for invitation UI
+            await handle_get_online_users(websocket, message)
+        
+        elif message_type == "session_invite":
+            # Handle sending a session invitation
+            await handle_session_invite(websocket, message)
+        
+        elif message_type == "session_invite_response":
+            # Handle responding to an invitation
+            await handle_session_invite_response(websocket, message)
+        
+        elif message_type == "leave_collaborative_session":
+            # Handle leaving a collaborative session
+            await handle_leave_session(websocket, message)
+        
         else:
             logger.warning(f"Unknown message type: {message_type}")
+    
+    # Collaborative Session Handlers
+    async def handle_get_online_users(websocket: WebSocket, message: Dict[str, Any]):
+        """Handle request to get list of online users for invitation."""
+        auth_conn = websocket_manager.get_connection_info(websocket)
+        if not auth_conn:
+            await websocket.send_text(json.dumps({
+                "type": "online_users",
+                "users": [],
+                "error": "Not authenticated"
+            }))
+            return
+        
+        current_user_id = auth_conn.user_data.get('user_id')
+        online_users = get_online_users_from_connections(
+            websocket_manager.user_connections,
+            websocket_manager.authenticated_connections,
+            exclude_user_id=current_user_id
+        )
+        
+        await websocket.send_text(json.dumps({
+            "type": "online_users",
+            "users": online_users
+        }))
+        logger.info(f"[Collaborative] Sent online users list to {auth_conn.username}: {len(online_users)} users")
+    
+    async def handle_session_invite(websocket: WebSocket, message: Dict[str, Any]):
+        """Handle sending a session invitation to another user."""
+        auth_conn = websocket_manager.get_connection_info(websocket)
+        if not auth_conn:
+            await websocket.send_text(json.dumps({
+                "type": "session_invite_error",
+                "error": "Not authenticated"
+            }))
+            return
+        
+        target_user_id = message.get("target_user_id")
+        target_username = message.get("target_username", "")
+        session_id = message.get("session_id")
+        
+        if not target_user_id or not session_id:
+            await websocket.send_text(json.dumps({
+                "type": "session_invite_error",
+                "error": "Missing target_user_id or session_id"
+            }))
+            return
+        
+        from_user_id = auth_conn.user_data.get('user_id')
+        from_username = auth_conn.username
+        
+        # Create the invitation
+        invitation = collaborative_session_manager.create_invitation(
+            session_id=session_id,
+            from_user_id=from_user_id,
+            from_user_name=from_username,
+            to_user_id=target_user_id,
+            to_user_name=target_username
+        )
+        
+        if not invitation:
+            await websocket.send_text(json.dumps({
+                "type": "session_invite_error",
+                "error": "Could not create invitation"
+            }))
+            return
+        
+        # Send invitation to target user's connections
+        if target_user_id in websocket_manager.user_connections:
+            invite_message = json.dumps({
+                "type": "session_invite_received",
+                "invitation_id": invitation.invitation_id,
+                "from_user_id": from_user_id,
+                "from_username": from_username,
+                "session_id": session_id,
+                "timestamp": invitation.created_at.isoformat()
+            })
+            for target_ws in websocket_manager.user_connections[target_user_id]:
+                try:
+                    await target_ws.send_text(invite_message)
+                except Exception as e:
+                    logger.error(f"[Collaborative] Failed to send invite to {target_user_id}: {e}")
+        
+        # Confirm to sender
+        await websocket.send_text(json.dumps({
+            "type": "session_invite_sent",
+            "invitation_id": invitation.invitation_id,
+            "to_user_id": target_user_id
+        }))
+        logger.info(f"[Collaborative] {from_username} invited user {target_user_id} to session {session_id[:8]}...")
+    
+    async def handle_session_invite_response(websocket: WebSocket, message: Dict[str, Any]):
+        """Handle response to a session invitation."""
+        auth_conn = websocket_manager.get_connection_info(websocket)
+        if not auth_conn:
+            return
+        
+        invitation_id = message.get("invitation_id")
+        accepted = message.get("accepted", False)
+        user_id = auth_conn.user_data.get('user_id')
+        
+        if not invitation_id:
+            await websocket.send_text(json.dumps({
+                "type": "session_invite_response_error",
+                "error": "Missing invitation_id"
+            }))
+            return
+        
+        # Get the invitation first to notify inviter
+        invitation = collaborative_session_manager.get_invitation(invitation_id)
+        if not invitation:
+            await websocket.send_text(json.dumps({
+                "type": "session_invite_response_error",
+                "error": "Invalid or expired invitation"
+            }))
+            return
+        
+        # Accept or decline the invitation
+        if accepted:
+            session = collaborative_session_manager.accept_invitation(invitation_id, user_id)
+            if not session:
+                await websocket.send_text(json.dumps({
+                    "type": "session_invite_response_error",
+                    "error": "Could not accept invitation"
+                }))
+                return
+        else:
+            success = collaborative_session_manager.decline_invitation(invitation_id, user_id)
+            if not success:
+                await websocket.send_text(json.dumps({
+                    "type": "session_invite_response_error",
+                    "error": "Could not decline invitation"
+                }))
+                return
+        
+        # Notify the inviter about the response
+        if invitation.from_user_id in websocket_manager.user_connections:
+            response_message = json.dumps({
+                "type": "session_invite_response_received",
+                "invitation_id": invitation_id,
+                "from_user_id": user_id,
+                "from_username": auth_conn.username,
+                "accepted": accepted,
+                "session_id": invitation.session_id
+            })
+            for inviter_ws in websocket_manager.user_connections[invitation.from_user_id]:
+                try:
+                    await inviter_ws.send_text(response_message)
+                except Exception as e:
+                    logger.error(f"[Collaborative] Failed to notify inviter: {e}")
+        
+        if accepted:
+            # Get updated member list and notify all session members
+            session = collaborative_session_manager.get_session(invitation.session_id)
+            if session:
+                members = collaborative_session_manager.get_session_members(invitation.session_id)
+                member_update = json.dumps({
+                    "type": "session_members_updated",
+                    "session_id": invitation.session_id,
+                    "members": members
+                })
+                
+                # Notify all members (including owner)
+                all_members = session.get_all_member_ids()
+                for member_id in all_members:
+                    if member_id in websocket_manager.user_connections:
+                        for member_ws in websocket_manager.user_connections[member_id]:
+                            try:
+                                await member_ws.send_text(member_update)
+                            except:
+                                pass
+        
+        logger.info(f"[Collaborative] User {auth_conn.username} {'accepted' if accepted else 'declined'} invitation {invitation_id}")
+    
+    async def handle_leave_session(websocket: WebSocket, message: Dict[str, Any]):
+        """Handle leaving a collaborative session."""
+        auth_conn = websocket_manager.get_connection_info(websocket)
+        if not auth_conn:
+            return
+        
+        session_id = message.get("session_id")
+        user_id = auth_conn.user_data.get('user_id')
+        
+        if not session_id:
+            return
+        
+        # Get session before leaving to notify remaining members
+        session = collaborative_session_manager.get_session(session_id)
+        members_before = set(session.get_all_member_ids()) if session else set()
+        
+        success = collaborative_session_manager.leave_session(session_id, user_id)
+        
+        if success and members_before:
+            # Notify remaining members (those who were in the session minus the leaving user)
+            remaining_members = members_before - {user_id}
+            members = collaborative_session_manager.get_session_members(session_id)
+            member_update = json.dumps({
+                "type": "session_members_updated",
+                "session_id": session_id,
+                "members": members,
+                "left_user": auth_conn.username
+            })
+            
+            for member_id in remaining_members:
+                if member_id in websocket_manager.user_connections:
+                    for member_ws in websocket_manager.user_connections[member_id]:
+                        try:
+                            await member_ws.send_text(member_update)
+                        except:
+                            pass
+        
+        await websocket.send_text(json.dumps({
+            "type": "left_session",
+            "session_id": session_id
+        }))
+        logger.info(f"[Collaborative] User {auth_conn.username} left session {session_id[:8]}...")
     
     @app.post("/events")
     async def post_event(event_data: Dict[str, Any]):

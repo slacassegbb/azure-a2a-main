@@ -14,6 +14,7 @@ import { PanelRightClose, PanelRightOpen, ShieldCheck, ChevronDown, ChevronRight
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { SimulateAgentRegistration } from "./simulate-agent-registration"
 import { ConnectedUsers } from "./connected-users"
+import { SessionInvitationNotification } from "./session-invite"
 import { VisualWorkflowDesigner } from "./visual-workflow-designer"
 import { AgentNetworkDag } from "./agent-network-dag"
 import { cn } from "@/lib/utils"
@@ -1426,6 +1427,9 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
           </>
         )}
       </div>
+      
+      {/* Session Invitation Notifications - fixed position overlay */}
+      <SessionInvitationNotification />
     </TooltipProvider>
   )
 }
