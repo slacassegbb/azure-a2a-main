@@ -737,6 +737,7 @@ def create_websocket_app() -> FastAPI:
 
     async def handle_get_online_users(websocket: WebSocket, message: Dict[str, Any]):
         """Handle request to get list of online users for invitation."""
+        logger.info("[Collaborative] Received get_online_users request")
         auth_conn = websocket_manager.get_connection_info(websocket)
         if not auth_conn:
             await websocket.send_text(json.dumps({
