@@ -950,7 +950,12 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
             
             // Load stored workflows from localStorage and inject them
             try {
-              const storageKey = `workflow_${conversationId}`
+              // Strip session prefix from conversationId to match how workflows are saved
+              let workflowConversationId = conversationId
+              if (workflowConversationId && workflowConversationId.includes('::')) {
+                workflowConversationId = workflowConversationId.split('::')[1]
+              }
+              const storageKey = `workflow_${workflowConversationId}`
               const storedData = localStorage.getItem(storageKey)
               if (storedData) {
                 const workflows = JSON.parse(storedData)
@@ -977,10 +982,8 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                 }
                 
                 setMessages(messagesWithWorkflows.filter(m => m.content || m.images?.length || m.attachments?.length || m.type === 'inference_summary'))
-                console.log('[ChatPanel] Final messages set (with workflows):', messagesWithWorkflows.length, 'messages, attachments:', messagesWithWorkflows.filter(m => m.attachments?.length).map(m => ({ id: m.id, attachmentCount: m.attachments?.length })))
               } else {
                 setMessages(mergedMessages.filter(m => m.content || m.images?.length || m.attachments?.length))
-                console.log('[ChatPanel] Final messages set (no workflows):', mergedMessages.length, 'messages, attachments:', mergedMessages.filter(m => m.attachments?.length).map(m => ({ id: m.id, attachmentCount: m.attachments?.length })))
               }
             } catch (err) {
               console.error('[ChatPanel] Failed to load workflows from localStorage:', err)
@@ -1667,15 +1670,6 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       // Show workflow whenever we have steps, regardless of which agent responds
       // Use timestamp to ensure uniqueness - each inference should get its own workflow display
       const summaryId = `summary_${data.inferenceId}_${Date.now()}`
-      console.log('[ChatPanel] Workflow save check:', {
-        stepsCount: inferenceSteps.length,
-        isHostAgent,
-        agentName: data.message.agent,
-        summaryId,
-        inferenceId: data.inferenceId,
-        effectiveConversationId,
-        alreadyProcessedInference: processedMessageIds.has(`workflow_${responseId}`)
-      })
       // Only create ONE workflow summary per message (using responseId which is unique per message)
       // Previously used inferenceId (conversationId) which caused second message workflow to be skipped
       const workflowKey = `workflow_${responseId}`
@@ -1713,9 +1707,6 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
               timestamp: Date.now()
             })
             localStorage.setItem(storageKey, JSON.stringify(workflows))
-            console.log('[ChatPanel] Workflow persisted to:', storageKey)
-          } else {
-            console.log('[ChatPanel] Workflow already exists, skipping save:', summaryId)
           }
         } catch (err) {
           console.error('[ChatPanel] Failed to persist workflow to localStorage:', err)
@@ -2266,10 +2257,6 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
             >
               <div className="flex flex-col gap-4 p-4">
             {messages.map((message, index) => {
-              // Debug: Log each message being rendered
-              if (index === 0) {
-                console.log('[ChatPanel] RENDERING messages:', JSON.stringify(messages.map(m => ({ id: m.id, role: m.role, type: m.type, hasContent: !!m.content, attachmentCount: m.attachments?.length || 0 }))))
-              }
               // Skip streaming message - it will be rendered separately after workflow
               if (message.id === streamingMessageId) {
                 return null
