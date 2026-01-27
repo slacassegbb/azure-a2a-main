@@ -48,6 +48,13 @@ export function EventHubProvider({ children }: { children: React.ReactNode }) {
   const [isConnecting, setIsConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const initializationRef = useRef(false);
+  // Use a ref for client in callbacks to avoid re-creating callbacks when client changes
+  const clientRef = useRef<WebSocketClientInterface | null>(null);
+  
+  // Keep clientRef in sync with client state
+  useEffect(() => {
+    clientRef.current = client;
+  }, [client]);
 
   const createClient = useCallback(async (): Promise<WebSocketClientInterface> => {
     // Get configuration from environment variables
@@ -143,32 +150,32 @@ export function EventHubProvider({ children }: { children: React.ReactNode }) {
   }, [client, initializeClient, isConnecting]);
 
   const subscribe = useCallback((eventName: string, callback: EventCallback) => {
-    if (client) {
-      client.subscribe(eventName, callback);
+    if (clientRef.current) {
+      clientRef.current.subscribe(eventName, callback);
     } else {
       if (DEBUG) console.warn(`[EventHubProvider] Cannot subscribe to ${eventName} - no client available`);
     }
-  }, [client]);
+  }, []);
 
   const unsubscribe = useCallback((eventName: string, callback: EventCallback) => {
-    if (client) {
-      client.unsubscribe(eventName, callback);
+    if (clientRef.current) {
+      clientRef.current.unsubscribe(eventName, callback);
     }
-  }, [client]);
+  }, []);
 
   const emit = useCallback((eventName: string, data: any) => {
-    if (client && 'emit' in client && typeof client.emit === 'function') {
-      client.emit(eventName, data);
+    if (clientRef.current && 'emit' in clientRef.current && typeof clientRef.current.emit === 'function') {
+      clientRef.current.emit(eventName, data);
     }
-  }, [client]);
+  }, []);
 
   const sendMessage = useCallback((message: any) => {
-    if (client && 'sendMessage' in client && typeof client.sendMessage === 'function') {
-      return client.sendMessage(message);
+    if (clientRef.current && 'sendMessage' in clientRef.current && typeof clientRef.current.sendMessage === 'function') {
+      return clientRef.current.sendMessage(message);
     }
     if (DEBUG) console.warn('[EventHubProvider] Cannot send message - client does not support sending');
     return false;
-  }, [client]);
+  }, []);
 
   // Initialize client on mount (client-side only)
   useEffect(() => {

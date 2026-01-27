@@ -24,8 +24,8 @@ type ConnectedUser = {
 export function ConnectedUsers() {
   const [users, setUsers] = useState<ConnectedUser[]>([])
   const [expandedUsers, setExpandedUsers] = useState<Set<string>>(new Set())
-  const [loading, setLoading] = useState(false) // Changed to false - we rely on WebSocket
-  const { subscribe, unsubscribe } = useEventHub()
+  const [loading, setLoading] = useState(false)
+  const { subscribe, unsubscribe, sendMessage, isConnected } = useEventHub()
 
   const fetchActiveUsers = useCallback(async () => {
     try {
@@ -76,20 +76,21 @@ export function ConnectedUsers() {
   }, [])
 
   useEffect(() => {
-    // Don't fetch on mount - wait for WebSocket to send initial user_list_update
-    // This avoids querying the backend API's separate AuthService instance
-    
     // Subscribe to real-time user list updates (source of truth)
     subscribe("user_list_update", handleUserListUpdate)
     
-    // Note: Removed polling and Page Visibility API calls
-    // The WebSocket server is the authoritative source for active users
-    // It broadcasts updates when users connect/disconnect
+    // Request the user list after subscribing
+    // This solves the race condition where the backend sends user_list_update
+    // before the component has subscribed
+    if (isConnected) {
+      console.log("[ConnectedUsers] Requesting session users...")
+      sendMessage({ type: "get_session_users" })
+    }
     
     return () => {
       unsubscribe("user_list_update", handleUserListUpdate)
     }
-  }, [subscribe, unsubscribe, handleUserListUpdate])
+  }, [subscribe, unsubscribe, handleUserListUpdate, sendMessage, isConnected])
 
   const toggleUser = (userId: string) => {
     const newExpanded = new Set(expandedUsers)
