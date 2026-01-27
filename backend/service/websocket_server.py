@@ -73,8 +73,8 @@ class WebSocketManager:
         self.tenant_connections: Dict[str, Set[WebSocket]] = {}
         # Map WebSocket -> tenant_id for reverse lookup
         self.connection_tenants: Dict[WebSocket, str] = {}
-        # Map user_id -> WebSocket for sending direct messages
-        self.user_connections: Dict[str, WebSocket] = {}
+        # Map user_id -> set of WebSockets for sending direct messages (user may have multiple tabs)
+        self.user_connections: Dict[str, Set[WebSocket]] = {}
         self.event_history: List[Dict[str, Any]] = []
         # Tenant-scoped event history
         self.tenant_event_history: Dict[str, List[Dict[str, Any]]] = {}
@@ -212,8 +212,10 @@ class WebSocketManager:
                 # Track user_id -> websocket for direct messaging (collaborative sessions)
                 user_id = user_data.get('user_id')
                 if user_id:
-                    self.user_connections[user_id] = websocket
-                    logger.info(f"[WebSocket Auth] Registered user connection: {user_id}")
+                    if user_id not in self.user_connections:
+                        self.user_connections[user_id] = set()
+                    self.user_connections[user_id].add(websocket)
+                    logger.info(f"[WebSocket Auth] Registered user connection: {user_id} (total: {len(self.user_connections[user_id])})")
                 
                 # Add user to active users list in auth service
                 if auth_service:
@@ -379,6 +381,32 @@ class WebSocketManager:
             logger.info(f"[WebSocket] Sent session user update to {auth_conn.username}: {len(session_users)} user(s)")
         except Exception as e:
             logger.error(f"Failed to send session user update to {auth_conn.username}: {e}")
+    
+    async def send_pending_invitations(self, websocket: WebSocket, user_id: str):
+        """Send any pending session invitations to a newly connected user.
+        
+        Args:
+            websocket: The WebSocket connection to send invitations to
+            user_id: The user ID to check for pending invitations
+        """
+        try:
+            session_manager = get_session_manager()
+            pending = session_manager.get_pending_invitations_for_user(user_id)
+            
+            for invitation in pending:
+                event_data = {
+                    "eventType": "session_invite_received",
+                    "invitation_id": invitation.invitation_id,
+                    "from_user_id": invitation.from_user_id,
+                    "from_username": invitation.from_user_name,
+                    "session_id": invitation.session_id,
+                    "expires_in_seconds": max(0, int(invitation.expires_at - time.time())),
+                    "timestamp": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+                }
+                await websocket.send_text(json.dumps(event_data))
+                logger.info(f"[Collaborative] Sent pending invitation {invitation.invitation_id} to {user_id}")
+        except Exception as e:
+            logger.error(f"Failed to send pending invitations to {user_id}: {e}")
     
     async def emit_agent_status_update(self, status_event: Dict[str, Any]):
         """Emit agent status update event to all connected clients."""

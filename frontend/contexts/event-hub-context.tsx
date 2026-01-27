@@ -187,7 +187,7 @@ export function EventHubProvider({ children }: { children: React.ReactNode }) {
 
     // Cleanup on unmount
     return () => {
-      console.log("[EventHubProvider] CLEANUP CALLED - this should only happen on page unload!");
+      if (DEBUG) console.log("[EventHubProvider] Cleaning up WebSocket connection...");
       if (client && 'close' in client && typeof client.close === 'function') {
         client.close();
       }
