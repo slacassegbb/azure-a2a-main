@@ -195,45 +195,77 @@ class WebSocketManager:
         await websocket.accept()
         self.active_connections.add(websocket)
         
-        # Register tenant connection if tenant_id provided
-        if tenant_id:
-            self.register_tenant_connection(websocket, tenant_id)
-        
-        # Handle authentication if token provided
+        # Handle authentication first to get user_id
         user_data = None
+        user_id = None
         if token and auth_service:
             logger.info(f"[WebSocket Auth] Token received, attempting verification...")
             user_data = auth_service.verify_token(token)
             if user_data:
-                logger.info(f"[WebSocket Auth] Token verified successfully for user_id: {user_data.get('user_id')}")
-                auth_conn = AuthenticatedConnection(websocket, user_data)
-                self.authenticated_connections[websocket] = auth_conn
-                
-                # Track user_id -> websocket for direct messaging (collaborative sessions)
                 user_id = user_data.get('user_id')
-                if user_id:
-                    if user_id not in self.user_connections:
-                        self.user_connections[user_id] = set()
-                    self.user_connections[user_id].add(websocket)
-                    logger.info(f"[WebSocket Auth] Registered user connection: {user_id} (total: {len(self.user_connections[user_id])})")
-                
-                # Add user to active users list in auth service
-                if auth_service:
-                    auth_service.add_active_user(user_data)
-                    logger.info(f"[WebSocket Auth] Added user to active list: {auth_conn.username}")
-                    
-                    # Send session-specific user info to this connection only
-                    # (multi-tenancy: each session only sees their own user)
-                    await self.send_session_user_update(websocket, auth_conn)
-                    logger.info(f"[WebSocket Auth] Sent session-specific user_list_update to {auth_conn.username}")
-                    
-                    # Send any pending session invitations to this user
-                    await self.send_pending_invitations(websocket, user_id)
-                else:
-                    logger.warning("[WebSocket Auth] Auth service not available - cannot track active user")
-                logger.info(f"[WebSocket Auth] Authenticated connection established for user: {auth_conn.username} ({auth_conn.email})")
+                logger.info(f"[WebSocket Auth] Token verified successfully for user_id: {user_id}")
+        
+        # Validate and register tenant connection
+        # If tenant_id doesn't match user's own session, validate it's a valid collaborative session
+        actual_tenant_id = tenant_id
+        if tenant_id and user_id:
+            # Check if this is the user's own session (user_id matches tenant_id)
+            if tenant_id == user_id:
+                # User's own session - register normally
+                self.register_tenant_connection(websocket, tenant_id)
             else:
-                logger.warning(f"[WebSocket Auth] Invalid or expired token provided")
+                # Different tenant - check if it's a valid collaborative session they're a member of
+                session = collaborative_session_manager.get_session(tenant_id)
+                if session and session.is_member(user_id):
+                    # Valid collaborative session - register with the collaborative session's tenant
+                    logger.info(f"[WebSocket] User {user_id} connecting to collaborative session {tenant_id[:20]}...")
+                    self.register_tenant_connection(websocket, tenant_id)
+                else:
+                    # Invalid/stale collaborative session - use user's own session instead
+                    logger.warning(f"[WebSocket] User {user_id} tried to connect with invalid collaborative session {tenant_id[:20]}..., using their own session")
+                    actual_tenant_id = user_id
+                    self.register_tenant_connection(websocket, user_id)
+                    # Notify frontend to clear stale session
+                    try:
+                        await websocket.send_text(json.dumps({
+                            "eventType": "session_invalid",
+                            "reason": "collaborative_session_not_found",
+                            "message": "Collaborative session no longer exists. Using your own session."
+                        }))
+                    except:
+                        pass
+        elif tenant_id:
+            # Anonymous user with tenant - register normally
+            self.register_tenant_connection(websocket, tenant_id)
+        
+        # Now complete authentication setup
+        if user_data:
+            auth_conn = AuthenticatedConnection(websocket, user_data)
+            self.authenticated_connections[websocket] = auth_conn
+            
+            # Track user_id -> websocket for direct messaging (collaborative sessions)
+            user_id = user_data.get('user_id')
+            if user_id:
+                if user_id not in self.user_connections:
+                    self.user_connections[user_id] = set()
+                self.user_connections[user_id].add(websocket)
+                logger.info(f"[WebSocket Auth] Registered user connection: {user_id} (total: {len(self.user_connections[user_id])})")
+            
+            # Add user to active users list in auth service
+            if auth_service:
+                auth_service.add_active_user(user_data)
+                logger.info(f"[WebSocket Auth] Added user to active list: {auth_conn.username}")
+                
+                # Send session-specific user info to this connection only
+                # (multi-tenancy: each session only sees their own user)
+                await self.send_session_user_update(websocket, auth_conn)
+                logger.info(f"[WebSocket Auth] Sent session-specific user_list_update to {auth_conn.username}")
+                
+                # Send any pending session invitations to this user
+                await self.send_pending_invitations(websocket, user_id)
+            else:
+                logger.warning("[WebSocket Auth] Auth service not available - cannot track active user")
+            logger.info(f"[WebSocket Auth] Authenticated connection established for user: {auth_conn.username} ({auth_conn.email})")
         elif token and not auth_service:
             logger.warning(f"[WebSocket Auth] Token provided but auth_service is None!")
         elif not token:

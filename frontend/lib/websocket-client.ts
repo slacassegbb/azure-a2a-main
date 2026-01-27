@@ -96,17 +96,10 @@ export class WebSocketClient {
     
     this.isInitializing = true;
     
-    // Clear any stale collaborative session on fresh page load (first connection only)
-    // This prevents cross-pollination after backend restart or browser refresh
-    // Users must receive a new invite to rejoin a collaborative session
-    // We only do this on fresh page load (hasEverConnected === false), not on reconnects
-    if (!this.hasEverConnected) {
-      const wasInCollaborativeSession = sessionStorage.getItem('a2a_collaborative_session');
-      if (wasInCollaborativeSession) {
-        console.log("[WebSocket] Clearing stale collaborative session on fresh page load:", wasInCollaborativeSession);
-        sessionStorage.removeItem('a2a_collaborative_session');
-      }
-    }
+    // NOTE: We do NOT clear collaborative session on fresh page load.
+    // The session should persist across page refreshes.
+    // We only clear it on RECONNECT (when backend restarts and WebSocket auto-reconnects).
+    // See the isReconnecting check in onopen handler.
     
     try {
       // Close any existing connection first
@@ -410,6 +403,13 @@ export class WebSocketClient {
         case 'session_members_updated':
           console.log(`[WebSocket] Received ${eventType} event:`, eventData);
           this.emit(eventType, eventData);
+          break;
+        case 'session_invalid':
+          // Collaborative session no longer exists - clear local storage and reload
+          console.log('[WebSocket] Collaborative session invalid, clearing and reloading:', eventData);
+          sessionStorage.removeItem('a2a_collaborative_session');
+          // Reload to use user's own session
+          window.location.reload();
           break;
         default:
           logDebug(`[WebSocket] Unknown event type: ${eventType}`);
