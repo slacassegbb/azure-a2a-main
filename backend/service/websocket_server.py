@@ -696,11 +696,12 @@ def create_websocket_app() -> FastAPI:
                 }
             }
             
-            # Use smart_broadcast to auto-detect tenant from conversationId
-            # The sender's tenant is tracked via their WebSocket connection
+            # Use smart_broadcast to send to tenant AND collaborative session members
             sender_tenant = websocket_manager.connection_tenants.get(websocket)
             if sender_tenant:
-                await websocket_manager.broadcast_to_tenant(shared_event, sender_tenant)
+                # Add contextId for smart_broadcast to route to collaborative members
+                shared_event["contextId"] = sender_tenant
+                await websocket_manager.smart_broadcast(shared_event, sender_tenant)
             else:
                 logger.debug(f"Skipping shared_message broadcast - no tenant found (multi-tenant isolation)")
             logger.info(f"Shared message broadcasted: {message_data.get('content', '')[:50]}...")
@@ -715,10 +716,12 @@ def create_websocket_app() -> FastAPI:
                 "data": inference_data
             }
             
-            # Broadcast to sender's tenant only
+            # Broadcast to sender's tenant AND collaborative session members
             sender_tenant = websocket_manager.connection_tenants.get(websocket)
             if sender_tenant:
-                await websocket_manager.broadcast_to_tenant(inference_event, sender_tenant)
+                # Add contextId for smart_broadcast to route to collaborative members
+                inference_event["contextId"] = sender_tenant
+                await websocket_manager.smart_broadcast(inference_event, sender_tenant)
             else:
                 logger.debug(f"Skipping shared_inference_started broadcast - no tenant found (multi-tenant isolation)")
             logger.info(f"Shared inference started broadcasted for conversation: {inference_data.get('conversationId')}")
@@ -733,10 +736,12 @@ def create_websocket_app() -> FastAPI:
                 "data": inference_data
             }
             
-            # Broadcast to sender's tenant only
+            # Broadcast to sender's tenant AND collaborative session members
             sender_tenant = websocket_manager.connection_tenants.get(websocket)
             if sender_tenant:
-                await websocket_manager.broadcast_to_tenant(inference_event, sender_tenant)
+                # Add contextId for smart_broadcast to route to collaborative members
+                inference_event["contextId"] = sender_tenant
+                await websocket_manager.smart_broadcast(inference_event, sender_tenant)
             else:
                 logger.debug(f"Skipping shared_inference_ended broadcast - no tenant found (multi-tenant isolation)")
             logger.info(f"Shared inference ended broadcasted for conversation: {inference_data.get('conversationId')}")

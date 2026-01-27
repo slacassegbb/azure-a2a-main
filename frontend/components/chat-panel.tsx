@@ -1428,6 +1428,10 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
     const handleInferenceStep = (data: any) => {
       console.log("[ChatPanel] Inference step received:", data)
       if (data.agent && data.status) {
+        // If we receive inference steps, inference is happening - show the workflow panel
+        // This helps collaborators who join mid-workflow see the progress
+        setIsInferencing(true)
+        
         setInferenceSteps(prev => {
           // Avoid duplicates - update existing or add new
           const existingIndex = prev.findIndex(step => 
@@ -1463,6 +1467,10 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       console.log("[ChatPanel] Remote agent activity received:", data)
       if (data.agentName && data.content) {
         const content = data.content
+        
+        // If we receive agent activity, inference is happening - show the workflow panel
+        // This helps collaborators who join mid-workflow see the progress
+        setIsInferencing(true)
         
         const isNoisyUpdate = content === "task started" ||
                              content === "processing" ||
