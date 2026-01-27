@@ -166,7 +166,7 @@ export function ChatLayout() {
 
     // Handle agent enabled in catalog
     const handleAgentEnabled = (data: any) => {
-      if (DEBUG) console.log("[ChatLayout] Agent enabled:", data.agent?.name)
+      console.log("[ChatLayout] 🎯 Agent enabled event received:", data)
       if (data.agent) {
         const newAgent = {
           id: data.agent.name.toLowerCase().replace(/\s+/g, '-'),
@@ -246,6 +246,7 @@ export function ChatLayout() {
     }
 
     // Subscribe to Event Hub events
+    console.log("[ChatLayout] 📡 Subscribing to session_agent_enabled/disabled events")
     subscribe("session_agent_enabled", handleAgentEnabled)
     subscribe("session_agent_disabled", handleAgentDisabled)
     subscribe("message", handleMessage)

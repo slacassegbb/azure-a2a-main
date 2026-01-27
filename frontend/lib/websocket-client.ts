@@ -373,6 +373,11 @@ export class WebSocketClient {
           console.log('[WebSocket] Received online_users event:', eventData);
           this.emit('online_users', eventData);
           break;
+        case 'session_agent_enabled':
+        case 'session_agent_disabled':
+          console.log(`[WebSocket] Received ${eventType} event:`, eventData);
+          this.emit(eventType, eventData);
+          break;
         case 'session_invite_sent':
         case 'session_invite_error':
         case 'session_invite_received':
