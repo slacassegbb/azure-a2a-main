@@ -24,6 +24,7 @@ function generateSessionId(): string {
  * 
  * For logged-in users: Uses user_id as session (data syncs across devices)
  * For anonymous users: Uses browser-based session ID (isolated per browser)
+ * For collaborative sessions: Uses the shared session ID
  * 
  * @returns The session ID (tenant identifier)
  */
@@ -31,6 +32,13 @@ export function getOrCreateSessionId(): string {
   if (typeof window === 'undefined') {
     // Server-side rendering - return a temporary ID
     return generateSessionId();
+  }
+  
+  // Check if in a collaborative session first (takes priority)
+  const collaborativeSession = sessionStorage.getItem('a2a_collaborative_session');
+  if (collaborativeSession) {
+    console.log('[Session] Using collaborative session:', collaborativeSession);
+    return collaborativeSession;
   }
   
   // Check if user is logged in (JWT token in sessionStorage)
@@ -194,3 +202,66 @@ export function getSessionInfo(): {
     isTenantAware: sessionId !== null
   };
 }
+
+// ============================================
+// Collaborative Session Support
+// ============================================
+
+const COLLABORATIVE_SESSION_KEY = 'a2a_collaborative_session';
+
+/**
+ * Join a collaborative session (switch to another user's session)
+ * 
+ * @param sessionId - The session ID to join (e.g., "user_3")
+ * @param reload - Whether to reload the page after joining (default: true)
+ */
+export function joinCollaborativeSession(sessionId: string, reload: boolean = true): void {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  
+  // Store the collaborative session we're joining
+  sessionStorage.setItem(COLLABORATIVE_SESSION_KEY, sessionId);
+  console.log('[Session] Joining collaborative session:', sessionId);
+  
+  if (reload) {
+    // Reload to pick up the new session
+    window.location.reload();
+  }
+}
+
+/**
+ * Get the active collaborative session if any
+ * 
+ * @returns The collaborative session ID or null
+ */
+export function getCollaborativeSession(): string | null {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+  return sessionStorage.getItem(COLLABORATIVE_SESSION_KEY);
+}
+
+/**
+ * Leave the current collaborative session and return to own session
+ */
+export function leaveCollaborativeSession(reload: boolean = true): void {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  
+  sessionStorage.removeItem(COLLABORATIVE_SESSION_KEY);
+  console.log('[Session] Left collaborative session, returning to own session');
+  
+  if (reload) {
+    window.location.reload();
+  }
+}
+
+/**
+ * Check if currently in a collaborative session
+ */
+export function isInCollaborativeSession(): boolean {
+  return getCollaborativeSession() !== null;
+}
+

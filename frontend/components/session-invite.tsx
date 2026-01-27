@@ -14,7 +14,7 @@ import { Badge } from "@/components/ui/badge"
 import { User, UserPlus, Check, X, Loader2 } from "lucide-react"
 import { useEventHub } from "@/hooks/use-event-hub"
 import { useToast } from "@/hooks/use-toast"
-import { getOrCreateSessionId } from "@/lib/session"
+import { getOrCreateSessionId, joinCollaborativeSession } from "@/lib/session"
 
 type OnlineUser = {
   user_id: string
@@ -293,9 +293,14 @@ export function SessionInvitationNotification() {
 
     if (accepted) {
       toast({
-        title: "Joined Session",
-        description: `You've joined ${invitation.from_username}'s session`,
+        title: "Joining Session...",
+        description: `Switching to ${invitation.from_username}'s session`,
       })
+      
+      // Join the collaborative session - this will reload the page
+      // with the new session ID so we see all their data
+      console.log("[SessionInvite] Joining collaborative session:", invitation.session_id)
+      joinCollaborativeSession(invitation.session_id)
     }
   }
 

@@ -310,10 +310,15 @@ def get_registry() -> AgentRegistry:
 
 
 class SessionAgentRegistry:
-    """In-memory registry for session-enabled agents."""
+    """In-memory registry for session-enabled agents.
+    
+    This registry is intentionally NOT persisted - session agents are cleared
+    on backend restart. Users must re-enable agents from the catalog each session.
+    """
     
     def __init__(self):
         self._sessions: Dict[str, List[Dict[str, Any]]] = {}
+        print("[SessionAgentRegistry] Initialized with empty session agents (cleared on restart)")
     
     def enable_agent(self, session_id: str, agent: Dict[str, Any]) -> bool:
         """Enable an agent for a session."""
@@ -348,6 +353,13 @@ class SessionAgentRegistry:
             a.get('url') == agent_url 
             for a in self._sessions.get(session_id, [])
         )
+    
+    def clear_all(self):
+        """Clear all session agents. Called on server restart."""
+        count = sum(len(agents) for agents in self._sessions.values())
+        session_count = len(self._sessions)
+        self._sessions = {}
+        print(f"[SessionAgentRegistry] Cleared {count} agents from {session_count} sessions")
 
 
 _session_registry = None

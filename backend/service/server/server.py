@@ -155,6 +155,11 @@ class ConversationServer:
         agent_manager = os.environ.get('A2A_HOST', 'FOUNDRY')
         self.manager: ApplicationManager
 
+        # Clear session agents on startup (they should not persist across restarts)
+        session_registry = get_session_registry()
+        session_registry.clear_all()
+        print("[Server] Session agent registry cleared on startup")
+
         # Get API key from environment
         api_key = os.environ.get('GOOGLE_API_KEY', '')
         uses_vertex_ai = (
