@@ -51,9 +51,23 @@ export function EventHubProvider({ children }: { children: React.ReactNode }) {
   // Use a ref for client in callbacks to avoid re-creating callbacks when client changes
   const clientRef = useRef<WebSocketClientInterface | null>(null);
   
+  // Queue for subscriptions made before client is ready
+  const pendingSubscriptionsRef = useRef<Map<string, Set<EventCallback>>>(new Map());
+  
   // Keep clientRef in sync with client state
   useEffect(() => {
     clientRef.current = client;
+    
+    // Apply pending subscriptions when client becomes available
+    if (client && pendingSubscriptionsRef.current.size > 0) {
+      console.log(`[EventHubProvider] Applying ${pendingSubscriptionsRef.current.size} pending subscription types`);
+      pendingSubscriptionsRef.current.forEach((callbacks, eventName) => {
+        callbacks.forEach(callback => {
+          client.subscribe(eventName, callback);
+        });
+      });
+      pendingSubscriptionsRef.current.clear();
+    }
   }, [client]);
 
   const createClient = useCallback(async (): Promise<WebSocketClientInterface> => {
@@ -153,13 +167,25 @@ export function EventHubProvider({ children }: { children: React.ReactNode }) {
     if (clientRef.current) {
       clientRef.current.subscribe(eventName, callback);
     } else {
-      if (DEBUG) console.warn(`[EventHubProvider] Cannot subscribe to ${eventName} - no client available`);
+      // Queue subscription for when client becomes available
+      console.log(`[EventHubProvider] Queuing subscription for ${eventName} (client not ready)`);
+      if (!pendingSubscriptionsRef.current.has(eventName)) {
+        pendingSubscriptionsRef.current.set(eventName, new Set());
+      }
+      pendingSubscriptionsRef.current.get(eventName)!.add(callback);
     }
   }, []);
 
   const unsubscribe = useCallback((eventName: string, callback: EventCallback) => {
     if (clientRef.current) {
       clientRef.current.unsubscribe(eventName, callback);
+    }
+    // Also remove from pending if queued
+    if (pendingSubscriptionsRef.current.has(eventName)) {
+      pendingSubscriptionsRef.current.get(eventName)!.delete(callback);
+      if (pendingSubscriptionsRef.current.get(eventName)!.size === 0) {
+        pendingSubscriptionsRef.current.delete(eventName);
+      }
     }
   }, []);
 
