@@ -34,7 +34,7 @@ export function SessionInviteButton() {
   const [onlineUsers, setOnlineUsers] = useState<OnlineUser[]>([])
   const [loading, setLoading] = useState(false)
   const [invitingUserId, setInvitingUserId] = useState<string | null>(null)
-  const { sendMessage, subscribe, unsubscribe } = useEventHub()
+  const { sendMessage, subscribe, unsubscribe, isConnected } = useEventHub()
   const { toast } = useToast()
 
   // Handle receiving online users list
@@ -97,12 +97,28 @@ export function SessionInviteButton() {
     }
   }, [subscribe, unsubscribe, handleOnlineUsers, handleInviteSent, handleInviteError, handleInviteResponse])
 
-  const fetchOnlineUsers = () => {
+  const fetchOnlineUsers = useCallback(() => {
     setLoading(true)
-    sendMessage({
-      type: "get_online_users"
-    })
-  }
+    
+    // Try to send, with retry logic for connection issues
+    const trySend = (attempts: number = 0) => {
+      const success = sendMessage({
+        type: "get_online_users"
+      })
+      
+      if (!success && attempts < 5) {
+        // WebSocket not ready, retry after a delay
+        console.log(`[SessionInvite] Send failed, retrying in ${(attempts + 1) * 500}ms...`)
+        setTimeout(() => trySend(attempts + 1), (attempts + 1) * 500)
+      } else if (!success) {
+        console.log("[SessionInvite] Failed to send after 5 attempts")
+        setLoading(false)
+        setOnlineUsers([])
+      }
+    }
+    
+    trySend()
+  }, [sendMessage])
 
   const sendInvitation = (user: OnlineUser) => {
     // Get session ID from sessionStorage or localStorage
