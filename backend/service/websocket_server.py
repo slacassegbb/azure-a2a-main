@@ -549,15 +549,18 @@ class WebSocketManager:
         )
         
         if context_id:
+            # First try the raw context_id as tenant (for simple session IDs like "user_3")
+            if context_id in self.tenant_connections:
+                return await self.broadcast_to_tenant(event_data, context_id)
+            
+            # Then try extracting tenant from tenant::conversation format
             tenant_id = get_tenant_from_context(context_id)
-            # Only use tenant broadcast if we have connections for this tenant
             if tenant_id in self.tenant_connections:
                 return await self.broadcast_to_tenant(event_data, tenant_id)
-            else:
-                # Tenant extracted but no registered connections yet - fallback to global broadcast
-                # This handles race condition where events arrive before WebSocket tenant registration completes
-                logger.debug(f"Tenant {tenant_id[:20]}... not registered yet, using global broadcast fallback")
-                return await self.broadcast_event(event_data)
+            
+            # No matching tenant - skip broadcast (proper multi-tenant isolation)
+            logger.debug(f"No tenant connections found for context_id: {context_id[:20]}..., skipping broadcast")
+            return 0
         
         # No context_id found - skip broadcast (multi-tenant isolation)
         logger.debug(f"Skipping smart_broadcast - no contextId found in event data")
