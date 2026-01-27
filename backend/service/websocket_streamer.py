@@ -197,6 +197,10 @@ class WebSocketStreamer:
                     **data
                 }
                 
+                # Add contextId for tenant routing if partition_key provided
+                if partition_key and 'contextId' not in event_payload:
+                    event_payload['contextId'] = partition_key
+                
                 if attempt == 0:
                     log_debug(f"Sending WebSocket event {event_type}: {event_payload}")
                 else:

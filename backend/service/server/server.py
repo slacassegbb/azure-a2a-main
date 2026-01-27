@@ -608,6 +608,15 @@ class ConversationServer:
                         log_debug(f"⚠️ WebSocket streaming error (non-blocking): {e}")
                         # Streaming errors should not block agent registration
                     
+                    # Trigger immediate WebSocket sync to update UI for all clients
+                    try:
+                        websocket_server = get_websocket_server()
+                        if websocket_server:
+                            websocket_server.trigger_immediate_sync()
+                            log_debug("🔔 Triggered immediate agent registry sync after registration")
+                    except Exception as sync_error:
+                        log_debug(f"⚠️ Failed to trigger immediate sync: {sync_error}")
+                    
                     return {"success": True, "message": f"Agent {agent_address} registered successfully"}
                 else:
                     log_debug(f"❌ Self-registration failed for: {agent_address}")
@@ -632,6 +641,15 @@ class ConversationServer:
                 except Exception as e:
                     print(f"[DEBUG] ⚠️ WebSocket streaming error (non-blocking, fallback): {e}")
                     # Streaming errors should not block agent registration
+                
+                # Trigger immediate WebSocket sync to update UI for all clients
+                try:
+                    websocket_server = get_websocket_server()
+                    if websocket_server:
+                        websocket_server.trigger_immediate_sync()
+                        print(f"[DEBUG] 🔔 Triggered immediate agent registry sync after registration (fallback)")
+                except Exception as sync_error:
+                    print(f"[DEBUG] ⚠️ Failed to trigger immediate sync (fallback): {sync_error}")
                 
                 return {"success": True, "message": f"Agent {agent_address} registered successfully (fallback)"}
                 
