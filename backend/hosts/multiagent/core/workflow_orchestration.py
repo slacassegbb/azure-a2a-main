@@ -317,6 +317,52 @@ class WorkflowOrchestration:
         
         session_context._latest_processed_parts = list(editing_roles.values()) + generated_artifacts
     
+    def _extract_file_uris_from_parts(self, parts: List[Any]) -> List[str]:
+        """Extract file URIs from A2A parts for explicit file routing.
+        
+        This enables workflow orchestration to use the same explicit file routing
+        as agent mode, preventing race conditions during parallel execution.
+        
+        Args:
+            parts: List of A2A Part objects that may contain file URIs
+            
+        Returns:
+            List of file URI strings
+        """
+        file_uris = []
+        
+        for part in parts:
+            try:
+                # Handle Part wrapper objects
+                if hasattr(part, 'root'):
+                    inner_part = part.root
+                else:
+                    inner_part = part
+                
+                # Extract URI from FilePart
+                if hasattr(inner_part, 'file'):
+                    file_obj = inner_part.file
+                    if hasattr(file_obj, 'uri') and file_obj.uri:
+                        file_uris.append(file_obj.uri)
+                        log_debug(f"  Extracted URI: {file_obj.uri}")
+                    elif hasattr(file_obj, 'url') and file_obj.url:
+                        file_uris.append(file_obj.url)
+                        log_debug(f"  Extracted URL: {file_obj.url}")
+                
+                # Handle dict format (sometimes used internally)
+                elif isinstance(inner_part, dict):
+                    if inner_part.get('kind') == 'file':
+                        file_data = inner_part.get('file', {})
+                        if 'uri' in file_data:
+                            file_uris.append(file_data['uri'])
+                            log_debug(f"  Extracted URI from dict: {file_data['uri']}")
+            
+            except Exception as e:
+                log_error(f"Error extracting URI from part: {e}")
+                continue
+        
+        return file_uris
+    
     async def _execute_workflow_step_with_state(
         self,
         step: ParsedWorkflowStep,
@@ -357,6 +403,12 @@ class WorkflowOrchestration:
         # Deduplicate files for multi-step workflows
         self._deduplicate_workflow_files(session_context)
         
+        # EXPLICIT FILE ROUTING: Extract file URIs from _latest_processed_parts
+        file_uris = []
+        if hasattr(session_context, '_latest_processed_parts'):
+            file_uris = self._extract_file_uris_from_parts(session_context._latest_processed_parts)
+            log_debug(f"[Workflow] Passing {len(file_uris)} file URIs to {agent_name}")
+        
         try:
             task_message = f"{step.description}\n\nContext: {user_message}"
             dummy_context = DummyToolContext(session_context, self._azure_blob_client)
@@ -365,7 +417,8 @@ class WorkflowOrchestration:
                 agent_name=agent_name,
                 message=task_message,
                 tool_context=dummy_context,
-                suppress_streaming=False
+                suppress_streaming=False,
+                file_uris=file_uris  # Pass explicit file URIs
             )
             
             if not responses:
@@ -544,6 +597,12 @@ Use the above output from the previous workflow step to complete your task."""
         # File deduplication for multi-step workflows
         self._deduplicate_workflow_files(session_context)
         
+        # EXPLICIT FILE ROUTING: Extract file URIs from _latest_processed_parts
+        file_uris = []
+        if hasattr(session_context, '_latest_processed_parts'):
+            file_uris = self._extract_file_uris_from_parts(session_context._latest_processed_parts)
+            log_debug(f"[Agent Mode] Passing {len(file_uris)} file URIs to {recommended_agent}")
+        
         # Create tool context and call agent
         dummy_context = DummyToolContext(session_context, self._azure_blob_client)
         
@@ -551,7 +610,8 @@ Use the above output from the previous workflow step to complete your task."""
             agent_name=recommended_agent,
             message=enhanced_task_message,  # ✅ Now includes previous task outputs!
             tool_context=dummy_context,
-            suppress_streaming=True  # Suppress agent's internal streaming to avoid duplicates in workflow mode
+            suppress_streaming=True,  # Suppress agent's internal streaming to avoid duplicates in workflow mode
+            file_uris=file_uris  # Pass explicit file URIs
         )
         
         if not responses or len(responses) == 0:
