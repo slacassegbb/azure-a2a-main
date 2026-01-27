@@ -14,6 +14,7 @@ import { Badge } from "@/components/ui/badge"
 import { User, UserPlus, Check, X, Loader2 } from "lucide-react"
 import { useEventHub } from "@/hooks/use-event-hub"
 import { useToast } from "@/hooks/use-toast"
+import { getOrCreateSessionId } from "@/lib/session"
 
 type OnlineUser = {
   user_id: string
@@ -121,9 +122,10 @@ export function SessionInviteButton() {
   }, [sendMessage])
 
   const sendInvitation = (user: OnlineUser) => {
-    // Get session ID from sessionStorage or localStorage
-    const sessionId = sessionStorage.getItem('session_id') || localStorage.getItem('anonymous_session_id') || ''
-    
+    // Get session ID using the session management module
+    const sessionId = getOrCreateSessionId()
+    console.log("[SessionInvite] Sending invitation to", user.username, "for session:", sessionId)
+
     if (!sessionId) {
       toast({
         title: "Error",
@@ -134,12 +136,23 @@ export function SessionInviteButton() {
     }
 
     setInvitingUserId(user.user_id)
-    sendMessage({
+    const success = sendMessage({
       type: "session_invite",
       target_user_id: user.user_id,
       target_username: user.username,
       session_id: sessionId
     })
+    
+    console.log("[SessionInvite] sendMessage result:", success)
+    
+    if (!success) {
+      setInvitingUserId(null)
+      toast({
+        title: "Error",
+        description: "Failed to send invitation - WebSocket not connected",
+        variant: "destructive",
+      })
+    }
   }
 
   const handleOpenChange = (open: boolean) => {
