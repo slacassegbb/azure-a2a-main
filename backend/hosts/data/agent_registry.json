@@ -355,5 +355,39 @@
         ]
       }
     ]
+  },
+  {
+    "name": "AI Foundry Image Analysis Agent",
+    "description": "Analyzes images using Azure AI Foundry with GPT-4o vision.",
+    "version": "1.0.0",
+    "url": "http://localhost:9066/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "image_analysis",
+        "name": "Image Analysis",
+        "description": "Analyze images using GPT-4o vision capabilities.",
+        "examples": [
+          "Analyze this vehicle damage photo",
+          "What do you see in this image?",
+          "Describe what is shown in this picture",
+          "What issues or concerns are visible here?",
+          "Tell me about this image"
+        ],
+        "tags": [
+          "vision",
+          "analysis",
+          "ai"
+        ]
+      }
+    ]
   }
 ]

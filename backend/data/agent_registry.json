@@ -1,22 +1,30 @@
 [
   {
-    "name": "AI Foundry Classification Triage Agent",
-    "description": "An intelligent incident classification and triage agent powered by Azure AI Foundry. Specializes in analyzing customer issues, classifying incidents into proper categories, assessing priority levels, and routing cases to appropriate teams using ServiceNow standards.",
-    "version": "1.0.0",
-    "url": "http://localhost:8009/",
+    "additionalInterfaces": null,
+    "capabilities": {
+      "extensions": null,
+      "pushNotifications": null,
+      "stateTransitionHistory": null,
+      "streaming": true
+    },
     "defaultInputModes": [
       "text"
     ],
     "defaultOutputModes": [
       "text"
     ],
-    "capabilities": {
-      "streaming": true
-    },
+    "description": "An intelligent incident classification and triage agent powered by Azure AI Foundry. Specializes in analyzing customer issues, classifying incidents into proper categories, assessing priority levels, and routing cases to appropriate teams using ServiceNow standards.",
+    "documentationUrl": null,
+    "iconUrl": null,
+    "name": "AI Foundry Classification Triage Agent",
+    "preferredTransport": "JSONRPC",
+    "protocolVersion": "0.3.0",
+    "provider": null,
+    "security": null,
+    "securitySchemes": null,
+    "signatures": null,
     "skills": [
       {
-        "id": "incident_classification",
-        "name": "Incident Classification",
         "description": "Classify customer incidents into categories such as Fraud, Technical Issues, Payment Issues, Card Issues, Account Services, Security, and Inquiries",
         "examples": [
           "I lost my card while traveling",
@@ -24,6 +32,11 @@
           "I cannot log into my banking app",
           "My payment failed to go through"
         ],
+        "id": "incident_classification",
+        "inputModes": null,
+        "name": "Incident Classification",
+        "outputModes": null,
+        "security": null,
         "tags": [
           "classification",
           "incident",
@@ -32,8 +45,6 @@
         ]
       },
       {
-        "id": "priority_assessment",
-        "name": "Priority Assessment",
         "description": "Determine urgency, impact, and priority levels for incidents using ServiceNow standard mapping",
         "examples": [
           "Assess priority for fraud incident",
@@ -41,6 +52,11 @@
           "Evaluate impact of system outage",
           "Calculate priority matrix for technical issue"
         ],
+        "id": "priority_assessment",
+        "inputModes": null,
+        "name": "Priority Assessment",
+        "outputModes": null,
+        "security": null,
         "tags": [
           "priority",
           "urgency",
@@ -50,8 +66,6 @@
         ]
       },
       {
-        "id": "routing_triage",
-        "name": "Routing & Triage",
         "description": "Route incidents to appropriate teams and provide triage recommendations based on classification",
         "examples": [
           "Route fraud case to security team",
@@ -59,6 +73,11 @@
           "Assign technical issue to IT support",
           "Triage account service request"
         ],
+        "id": "routing_triage",
+        "inputModes": null,
+        "name": "Routing & Triage",
+        "outputModes": null,
+        "security": null,
         "tags": [
           "routing",
           "triage",
@@ -67,8 +86,6 @@
         ]
       },
       {
-        "id": "field_mapping",
-        "name": "ServiceNow Field Mapping",
         "description": "Map incident details to proper ServiceNow fields including category, subcategory, description, and metadata",
         "examples": [
           "Map incident to ServiceNow fields",
@@ -76,6 +93,11 @@
           "Categorize into subcategory",
           "Create structured ticket data"
         ],
+        "id": "field_mapping",
+        "inputModes": null,
+        "name": "ServiceNow Field Mapping",
+        "outputModes": null,
+        "security": null,
         "tags": [
           "servicenow",
           "mapping",
@@ -84,8 +106,6 @@
         ]
       },
       {
-        "id": "keyword_analysis",
-        "name": "Keyword Analysis",
         "description": "Analyze customer messages for classification keywords and context cues to determine incident type",
         "examples": [
           "Analyze message for fraud keywords",
@@ -93,6 +113,11 @@
           "Extract payment problem signals",
           "Detect security concerns"
         ],
+        "id": "keyword_analysis",
+        "inputModes": null,
+        "name": "Keyword Analysis",
+        "outputModes": null,
+        "security": null,
         "tags": [
           "keywords",
           "analysis",
@@ -100,7 +125,10 @@
           "nlp"
         ]
       }
-    ]
+    ],
+    "supportsAuthenticatedExtendedCard": null,
+    "url": "http://localhost:8009/",
+    "version": "1.0.0"
   },
   {
     "name": "AI Foundry Deep Search Knowledge Agent",
@@ -891,23 +919,32 @@
     "version": "1.0.0"
   },
   {
-    "name": "AI Foundry Image Analysis Agent",
-    "description": "Analyzes images using Azure AI Foundry with GPT-4o vision.",
-    "version": "1.0.0",
-    "url": "http://localhost:9066/",
+    "additionalInterfaces": null,
+    "capabilities": {
+      "extensions": null,
+      "pushNotifications": null,
+      "stateTransitionHistory": null,
+      "streaming": true
+    },
     "defaultInputModes": [
-      "text"
+      "text",
+      "image"
     ],
     "defaultOutputModes": [
       "text"
     ],
-    "capabilities": {
-      "streaming": true
-    },
+    "description": "Analyzes images using Azure AI Foundry with GPT-4o vision.",
+    "documentationUrl": null,
+    "iconUrl": null,
+    "name": "AI Foundry Image Analysis Agent",
+    "preferredTransport": "JSONRPC",
+    "protocolVersion": "0.3.0",
+    "provider": null,
+    "security": null,
+    "securitySchemes": null,
+    "signatures": null,
     "skills": [
       {
-        "id": "image_analysis",
-        "name": "Image Analysis",
         "description": "Analyze images using GPT-4o vision capabilities.",
         "examples": [
           "Analyze this vehicle damage photo",
@@ -916,13 +953,21 @@
           "What issues or concerns are visible here?",
           "Tell me about this image"
         ],
+        "id": "image_analysis",
+        "inputModes": null,
+        "name": "Image Analysis",
+        "outputModes": null,
+        "security": null,
         "tags": [
           "vision",
           "analysis",
           "ai"
         ]
       }
-    ]
+    ],
+    "supportsAuthenticatedExtendedCard": null,
+    "url": "http://localhost:9066/",
+    "version": "1.0.0"
   },
   {
     "name": "AI Foundry Branding & Content Agent",

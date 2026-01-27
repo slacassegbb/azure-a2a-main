@@ -33,11 +33,11 @@ class FoundryImageGeneratorAgentExecutor(AgentExecutor):
     _shared_foundry_agent: Optional[FoundryImageGeneratorAgent] = None
     _agent_lock = asyncio.Lock()
     _last_request_time: float = 0
-    _min_request_interval: float = 5.0  # Increase to 5 seconds minimum between requests
-    _request_semaphore = asyncio.Semaphore(1)  # Max 1 concurrent request
+    _min_request_interval: float = 1.0  # Reduced for parallel execution
+    _request_semaphore = asyncio.Semaphore(3)  # Max 3 concurrent requests for parallel execution
     _api_call_count: int = 0
     _api_call_window_start: float = 0
-    _max_api_calls_per_minute: int = 15  # Much more conservative - 15 calls per minute
+    _max_api_calls_per_minute: int = 30  # Increased for parallel execution
     _startup_complete: bool = False
 
     @classmethod
@@ -88,11 +88,20 @@ class FoundryImageGeneratorAgentExecutor(AgentExecutor):
     async def _get_or_create_thread(
         self,
         context_id: str,
-        agent: Optional[FoundryImageGeneratorAgent] = None
+        agent: Optional[FoundryImageGeneratorAgent] = None,
+        force_new: bool = False
     ) -> str:
         if agent is None:
             agent = await self._get_or_create_agent()
-        # Reuse thread if it exists for this context_id
+        
+        # For parallel execution, always create a new thread to avoid conflicts
+        # Each parallel request gets its own thread to prevent "run is active" errors
+        if force_new:
+            thread = await agent.create_thread()
+            logger.info(f"Created new thread {thread.id} for parallel request (context: {context_id})")
+            return thread.id
+        
+        # Reuse thread if it exists for this context_id (for sequential requests)
         if context_id in self._active_threads:
             return self._active_threads[context_id]
         # Otherwise, create a new thread and store it
@@ -151,7 +160,9 @@ class FoundryImageGeneratorAgentExecutor(AgentExecutor):
         try:
             user_message, attachments = self._convert_parts_to_payload(message_parts)
             agent = await self._get_or_create_agent()
-            thread_id = await self._get_or_create_thread(context_id, agent)
+            # Always use a new thread for each request to support parallel execution
+            # This prevents "run is active" conflicts when multiple requests arrive simultaneously
+            thread_id = await self._get_or_create_thread(context_id, agent, force_new=True)
 
             attempt = 0
             while attempt < 2:
@@ -470,14 +481,10 @@ class FoundryImageGeneratorAgentExecutor(AgentExecutor):
                     FoundryImageGeneratorAgentExecutor._api_call_count = 0
                     FoundryImageGeneratorAgentExecutor._api_call_window_start = time.time()
             
-            # Enforce minimum interval between requests - THIS IS THE KEY FIX
-            time_since_last = current_time - FoundryImageGeneratorAgentExecutor._last_request_time
-            if time_since_last < FoundryImageGeneratorAgentExecutor._min_request_interval:
-                sleep_time = FoundryImageGeneratorAgentExecutor._min_request_interval - time_since_last
-                logger.warning(f"🚦 RATE LIMITING: Waiting {sleep_time:.2f}s between user requests (last request was {time_since_last:.2f}s ago)")
-                await asyncio.sleep(sleep_time)
-            
             FoundryImageGeneratorAgentExecutor._last_request_time = time.time()
+            
+            # Note: With semaphore(3), up to 3 requests can execute in parallel
+            # The _min_request_interval only applies to requests that exceed the semaphore limit
             
             # Now proceed with the actual request processing
             updater = TaskUpdater(event_queue, context.task_id, context.context_id)

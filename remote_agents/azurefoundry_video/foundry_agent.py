@@ -746,10 +746,10 @@ IMPORTANT: You need the video_id from a previously generated video.""",
                 resized_image_data = self._resize_image_for_video(input_reference_path, size)
                 create_params["input_reference"] = resized_image_data
             
-            # Create the video using OpenAI SDK
+            # Create the video using OpenAI SDK (synchronous call wrapped for async)
             logger.info(f"Submitting video generation request via SDK...")
             logger.info(f"Parameters: model={create_params['model']}, size={size}, seconds={create_params['seconds']}")
-            video = client.videos.create(**create_params)
+            video = await asyncio.to_thread(client.videos.create, **create_params)
             
             video_id = video.id
             video_status = video.status
@@ -770,8 +770,8 @@ IMPORTANT: You need the video_id from a previously generated video.""",
                 
                 await asyncio.sleep(20)
                 
-                # Retrieve the latest status using SDK
-                video = client.videos.retrieve(video_id)
+                # Retrieve the latest status using SDK (synchronous call wrapped for async)
+                video = await asyncio.to_thread(client.videos.retrieve, video_id)
                 video_status = video.status
             
             # Check final status
@@ -790,10 +790,10 @@ IMPORTANT: You need the video_id from a previously generated video.""",
                 output_path = os.path.join(output_dir, output_filename)
                 saved_path = Path(output_path)
                 
-                # Download using OpenAI SDK's download_content method
+                # Download using OpenAI SDK's download_content method (synchronous call wrapped for async)
                 logger.info(f"Downloading video to: {output_path}")
-                video_content = client.videos.download_content(video_id, variant="video")
-                video_content.write_to_file(str(saved_path))
+                video_content = await asyncio.to_thread(client.videos.download_content, video_id, variant="video")
+                await asyncio.to_thread(video_content.write_to_file, str(saved_path))
                 
                 logger.info(f"✅ Video saved successfully: {output_path}")
                 logger.info(f"💡 To remix this video, use Video ID: {video_id}")
@@ -874,9 +874,10 @@ IMPORTANT: You need the video_id from a previously generated video.""",
                 api_key=token,
             )
             
-            # Call remix API
+            # Call remix API (synchronous call wrapped for async)
             logger.info("Calling Sora remix API...")
-            video = client.videos.remix(
+            video = await asyncio.to_thread(
+                client.videos.remix,
                 video_id=video_id,
                 prompt=prompt
             )
@@ -1202,7 +1203,8 @@ IMPORTANT: You need the video_id from a previously generated video.""",
             logger.info(f"Remix prompt: {prompt}")
             
             try:
-                video_response = client.videos.remix(
+                video_response = await asyncio.to_thread(
+                    client.videos.remix,
                     video_id=sdk_video_id,
                     prompt=prompt
                 )
@@ -1252,7 +1254,7 @@ IMPORTANT: You need the video_id from a previously generated video.""",
                 # Use SDK or direct API based on video ID format
                 if use_sdk:
                     try:
-                        video_response = client.videos.retrieve(new_video_id)
+                        video_response = await asyncio.to_thread(client.videos.retrieve, new_video_id)
                         video_status = video_response.status if hasattr(video_response, 'status') else video_response.get("status")
                     except Exception as e:
                         logger.warning(f"SDK retrieve failed, falling back to direct API: {e}")
@@ -1289,8 +1291,8 @@ IMPORTANT: You need the video_id from a previously generated video.""",
                 # Try SDK download first, fall back to direct API if needed
                 try:
                     if use_sdk:
-                        video_content = client.videos.download_content(new_video_id, variant="video")
-                        video_content.write_to_file(str(saved_path))
+                        video_content = await asyncio.to_thread(client.videos.download_content, new_video_id, variant="video")
+                        await asyncio.to_thread(video_content.write_to_file, str(saved_path))
                     else:
                         raise Exception("Using direct API download for task_ format")
                 except Exception as e:

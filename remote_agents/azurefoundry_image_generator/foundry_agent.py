@@ -938,7 +938,8 @@ Always validate the prompt for safety before invoking the tool.
                             logger.debug("No base attachment provided; treating as fresh generation")
 
                     try:
-                        openai_result = self._generate_image_via_openai(payload)
+                        # Run synchronous OpenAI call in thread pool for true parallel execution
+                        openai_result = await asyncio.to_thread(self._generate_image_via_openai, payload)
                         if openai_result is not None:
                             openai_result["tool_call_id"] = getattr(tool_call, "id", None)
                             output_payload = json.dumps(openai_result)

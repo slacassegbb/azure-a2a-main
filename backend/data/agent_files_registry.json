@@ -131,6 +131,17 @@
       "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/video-generator/c6555c1c35514a36a4d37c31f0560fc8/sora_remix_20260125_205341_b5070a05.mp4?se=2026-01-27T01%3A53%3A46Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=MmusayOZgKztdfvU5M7zsKH%2B/NCF7euxW%2BQRye9B0b4%3D",
       "sourceAgent": "Sora 2 Video Generator",
       "type": "agent_generated"
+    },
+    {
+      "id": "e001def8-8179-4bff-97c0-db023db5c421",
+      "filename": "sora_20260125_214117_d2db4d55.mp4",
+      "originalName": "sora_20260125_214117_d2db4d55.mp4",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-26T02:41:27.475642",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/video-generator/0ad76376fff0466491e7c9b034460ea1/sora_20260125_214117_d2db4d55.mp4?se=2026-01-27T02%3A41%3A21Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=nMKnnLNcvrSili2lR26FwwscuNrtWW7wv1BQCyGAh1A%3D",
+      "sourceAgent": "Sora 2 Video Generator",
+      "type": "agent_generated"
     }
   ],
   "video_test_46ed6ce3": [
@@ -273,6 +284,1065 @@
       "uploadedAt": "2026-01-26T00:27:50.295840",
       "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/video-generator/9d3c732c6375414a99a8da3c53c49a30/sora_20260125_192737_9s6gzc90.mp4?se=2026-01-27T00%3A27%3A44Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=YG9yowXnRXI9nnYp3%2BEcD5rfUaU6QR/BGaj0/0sqNls%3D",
       "sourceAgent": "Sora 2 Video Generator",
+      "type": "agent_generated"
+    }
+  ],
+  "image_test_de3e77aa": [
+    {
+      "id": "4d29b471-75f8-496b-8539-e51343dffca2",
+      "filename": "generated_3e81da71_0.png",
+      "originalName": "generated_3e81da71_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-26T16:11:32.481731",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/467e3317bd1d40ff85fef5290fc264e8/generated_3e81da71_0.png?se=2026-01-27T16%3A11%3A21Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=oL9D5s50ZEmMDovTrAe/h8n3kL%2BHp2tmCs%2BUDlMmw6g%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    }
+  ],
+  "test_refinement_context": [
+    {
+      "id": "b4ca18ae-21de-438f-bf99-00252149ded1",
+      "filename": "generated_242a5d62_0.png",
+      "originalName": "generated_242a5d62_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-26T16:27:27.400826",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/ccda54caf2454d289be3457fd36ca0ef/generated_242a5d62_0.png?se=2026-01-27T16%3A27%3A22Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=Pz6wyANGFtPaK1SaDV0%2B4Z4723Sv3TYV1xTCLorJYac%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    }
+  ],
+  "refine_test_7081355c": [
+    {
+      "id": "db2e16a1-996b-45f7-87fb-5c056a8610b8",
+      "filename": "generated_8884b627_0.png",
+      "originalName": "generated_8884b627_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-26T16:31:51.047230",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/905caf45c0fe44ae9028e2e31e2b3cfa/generated_8884b627_0.png?se=2026-01-27T16%3A31%3A43Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=b2YsY6lBXJ5y8kegerGhSSDFirJMPxJtNeJC4pWpWc0%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    }
+  ],
+  "refine_test_6febc543": [
+    {
+      "id": "56c6006f-d1f2-4e7a-ac5b-5a433427ecde",
+      "filename": "generated_d7c9df83_0.png",
+      "originalName": "generated_d7c9df83_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-26T16:34:21.725179",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/a3ace1c3ffda441c96287c1d568650cc/generated_d7c9df83_0.png?se=2026-01-27T16%3A34%3A14Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=%2BTHbKW/sLwcaSWoUdZFTvD1jWZ7JV1OL6zmX0e54pgc%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    }
+  ],
+  "refine_test_a5e2f334": [
+    {
+      "id": "565e24ef-f8b3-45af-9004-54907d6fbc1d",
+      "filename": "generated_92c24314_0.png",
+      "originalName": "generated_92c24314_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-26T16:35:54.400657",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/d4f5748a17e247bf933fb3fe0f985338/generated_92c24314_0.png?se=2026-01-27T16%3A35%3A31Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=a49/1gQvbC/A2UNWmLHwbpR5845ilPlB4YR3brOFc08%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    }
+  ],
+  "refine_test_fb21ff6a": [
+    {
+      "id": "848d8dbb-6d84-4791-95de-e13385927a3f",
+      "filename": "generated_4667edd8_0.png",
+      "originalName": "generated_4667edd8_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-26T16:40:37.462348",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/8f0578c3c3034e07b817c8c38f85bef2/generated_4667edd8_0.png?se=2026-01-27T16%3A40%3A29Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=v/TtJ04rPMGsyWVXAFVCxmlFEUVd1jEhcB4vicJ8Fss%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    },
+    {
+      "id": "71406821-5fb3-46fe-b341-49180b516e42",
+      "filename": "edit_f8f8b22e_0.png",
+      "originalName": "edit_f8f8b22e_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-26T16:42:05.492243",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/db837c872ec2402e97bffbf9ba58dceb/edit_f8f8b22e_0.png?se=2026-01-27T16%3A41%3A51Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=Fpnt8hYnUboFt6WpQ/9dvVHmI92uNDlwj36Tn29gvFU%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    },
+    {
+      "id": "833d30dd-6278-44d4-a6c3-0c13ba4717f5",
+      "filename": "edit_9bad4a26_0.png",
+      "originalName": "edit_9bad4a26_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-26T16:48:18.740684",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/d2783c9ad0a54c48b3c991959bee884c/edit_9bad4a26_0.png?se=2026-01-27T16%3A48%3A10Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=zRmKNCxOczA4dSQciSF/yLaf16d2V/u10ac1o6m559U%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    }
+  ],
+  "refine_test_d99e453d": [
+    {
+      "id": "db86265c-953b-48c0-8c16-2231e8ed2862",
+      "filename": "generated_57fe3070_0.png",
+      "originalName": "generated_57fe3070_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-26T16:46:38.775093",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/9053e454d01e429e844bf2f06df4a9bf/generated_57fe3070_0.png?se=2026-01-27T16%3A46%3A25Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=yPEKeuP7RaEQgdeUhDtOoJqIx3Wjysc%2BJI3o0Yn4nHA%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    },
+    {
+      "id": "f77375e5-0836-4e5f-a91b-996fcc81cc27",
+      "filename": "edit_9bad4a26_0.png",
+      "originalName": "edit_9bad4a26_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-26T16:48:24.430628",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/d2783c9ad0a54c48b3c991959bee884c/edit_9bad4a26_0.png?se=2026-01-27T16%3A48%3A10Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=zRmKNCxOczA4dSQciSF/yLaf16d2V/u10ac1o6m559U%3D",
+      "sourceAgent": "foundry-host-agent",
+      "type": "agent_generated"
+    }
+  ],
+  "gen_analysis_test_ed38479f": [
+    {
+      "id": "69e2b54e-5af6-47df-ad53-42cc74697e7e",
+      "filename": "generated_f1661580_0.png",
+      "originalName": "generated_f1661580_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-26T16:54:28.132855",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/632fd0218e3347818f28ad95d5437c09/generated_f1661580_0.png?se=2026-01-27T16%3A54%3A18Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=sbqm1LsKm4kEsoHo4ID2EDy5Fby/WLUw15dlQpj6zG8%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    }
+  ],
+  "gen_analysis_test_4f150ef9": [
+    {
+      "id": "423b3780-d92b-4ad7-b856-b270c1b9d0d1",
+      "filename": "generated_7db144a1_0.png",
+      "originalName": "generated_7db144a1_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-26T16:58:33.771360",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/59a60836653d4afcbe099ad2d0d1e2d6/generated_7db144a1_0.png?se=2026-01-27T16%3A58%3A24Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=C5322O88QG13toPPKLIm5EEibhu8CXmkcYICRNGJ8l8%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    }
+  ],
+  "gen_analysis_test_6e5b4bd5": [
+    {
+      "id": "7008a0d5-40d7-47d7-8d7e-38ba636d98f1",
+      "filename": "generated_aae8380f_0.png",
+      "originalName": "generated_aae8380f_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-26T16:59:08.593207",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/2430bd464d2046fd99836090db59d023/generated_aae8380f_0.png?se=2026-01-27T16%3A59%3A01Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=UObEqnhVEg5pHAQuyxfmjecVUQjdJZNGOjweyHcSs4Q%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    }
+  ],
+  "image_test_4818b23a": [
+    {
+      "id": "8f1620fc-902a-4138-9a45-ce1f68b79ae2",
+      "filename": "generated_09142541_0.png",
+      "originalName": "generated_09142541_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-26T18:31:00.656670",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/d27a7a39b7eb4479b1fccf04870542d6/generated_09142541_0.png?se=2026-01-27T18%3A30%3A54Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=jiJyj28YMSlWfSxx/DLz6rsxmR5qg21LzMRUNVOvecQ%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    }
+  ],
+  "image_test_37fcf4d1": [
+    {
+      "id": "b0e6bfe7-7912-4d10-b47c-864f58465c8c",
+      "filename": "generated_7009bcc0_0.png",
+      "originalName": "generated_7009bcc0_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-26T18:37:03.278277",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/e5aacb79c2874a34b9f232dfec9b777c/generated_7009bcc0_0.png?se=2026-01-27T18%3A36%3A54Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=tHgGaSKqDel9NbCxvER8FmWtgRkAQriARvH%2BnioO/4E%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    }
+  ],
+  "gen_analysis_test_f21ea250": [
+    {
+      "id": "52bbc160-553c-4b2e-808d-96293be9e7b9",
+      "filename": "generated_478350f9_0.png",
+      "originalName": "generated_478350f9_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-26T18:39:00.500180",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/5991831469b94d17b9cc2cbd2de04d7d/generated_478350f9_0.png?se=2026-01-27T18%3A38%3A52Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=a7JgmmBeGhqTp8AVcHJalMN0gWBaD%2BEPhqhFZfNC630%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    }
+  ],
+  "gen_analysis_test_e3669864": [
+    {
+      "id": "b32639da-0afe-4dee-9eb1-c127cca2a1c1",
+      "filename": "generated_23a93889_0.png",
+      "originalName": "generated_23a93889_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-26T18:40:05.966362",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/aa8cb1318e74419da738b09da29117c1/generated_23a93889_0.png?se=2026-01-27T18%3A39%3A57Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=x0cU62sCsPUrmcox/Y10McK6suHgsWllTJMlQqLAv3s%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    }
+  ],
+  "gen_analysis_test_5d940789": [
+    {
+      "id": "27b2e2a4-0814-4d1e-9581-2a2543d4c5f0",
+      "filename": "generated_d0b54973_0.png",
+      "originalName": "generated_d0b54973_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-26T18:43:42.527287",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/b4f0e596295b4bc4adebe29af4c25f25/generated_d0b54973_0.png?se=2026-01-27T18%3A43%3A38Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=JoKtVVUPx9g0hI%2B7TQpurnoGU9fRssfdcpuq3cRk0eE%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    }
+  ],
+  "gen_analysis_test_e98fc143": [
+    {
+      "id": "2294680d-6b43-4d51-8253-6751d4c775a6",
+      "filename": "generated_11695504_0.png",
+      "originalName": "generated_11695504_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-26T18:44:43.803287",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/ede253721a72475ead229197f04b41d9/generated_11695504_0.png?se=2026-01-27T18%3A44%3A36Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=jJPa6QRDYNhEmoeb8JMvUNZKxVRKNL%2Bj%2B8KriRmu//Q%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    }
+  ],
+  "parallel_test_ffc1a31a": [
+    {
+      "id": "60e0cee1-9f2b-4f84-b352-b26b507daf0b",
+      "filename": "generated_10d7abb1_0.png",
+      "originalName": "generated_10d7abb1_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-26T18:47:31.931380",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/295ca3421e694d50bc3e00e42f4e4d81/generated_10d7abb1_0.png?se=2026-01-27T18%3A47%3A26Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=Zi0wzWp%2BL/mkvHlMolPyNvZ0SKJ0sr/WSWMQKfMGv2w%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    },
+    {
+      "id": "9f7bce48-902d-4f81-af2e-601ff3fbd38d",
+      "filename": "generated_b73b9cf5_0.png",
+      "originalName": "generated_b73b9cf5_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-26T18:48:01.422072",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/b185301ed8a84a37a9440c8bc9d71c0c/generated_b73b9cf5_0.png?se=2026-01-27T18%3A47%3A56Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=guasH0QZ6ADUSPRK7ruoEO4njKmN6b0cr%2B9DkIIxJqQ%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    },
+    {
+      "id": "775d08c5-a9ed-4592-a6cf-dac4460559b3",
+      "filename": "generated_b45258a5_0.png",
+      "originalName": "generated_b45258a5_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-26T18:48:56.418170",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/fd8f9e50847d4228aaff65fe7d41e3d8/generated_b45258a5_0.png?se=2026-01-27T18%3A48%3A48Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=KKtEKb59kmfYmX5pPyAWFh5%2BOMG9Lbuog%2B%2BNzuoaNrU%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    }
+  ],
+  "parallel_test_5323487f": [
+    {
+      "id": "50554dfe-89ca-40b1-ad9f-d2d8945d13e3",
+      "filename": "generated_3b62f24d_0.png",
+      "originalName": "generated_3b62f24d_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-26T18:49:56.074624",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/b9f59a5b884142d0924059d6ca2ca03b/generated_3b62f24d_0.png?se=2026-01-27T18%3A49%3A48Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=UwqIRP0VVJzowNcaE2d9cWpI9wf86fXdMxAmL7okMs4%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    },
+    {
+      "id": "d4d74f04-6257-45a5-998e-92ee8f389a23",
+      "filename": "generated_f8d7abb6_0.png",
+      "originalName": "generated_f8d7abb6_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-26T18:50:50.988661",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/da86e77381c340f482efbd4021a68f39/generated_f8d7abb6_0.png?se=2026-01-27T18%3A50%3A44Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=IsqZ10aayJ8z4pyZqyBKH9uW7rYIfWej0heXeBZgAhg%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    },
+    {
+      "id": "48c7577f-751f-4f52-8e38-b96ccf8ebd39",
+      "filename": "generated_8342e54c_0.png",
+      "originalName": "generated_8342e54c_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-26T18:51:32.637119",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/1324bd94f99544f7b682d224681cbee2/generated_8342e54c_0.png?se=2026-01-27T18%3A51%3A24Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=UteggtJ5wq/VYnlWG1%2BdbUoWF2WwYiuI/DwReTA1TUM%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    },
+    {
+      "id": "2d5bf893-ddb0-40c9-95b6-87b30298a472",
+      "filename": "generated_bff46d4b_0.png",
+      "originalName": "generated_bff46d4b_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-26T18:52:29.136438",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/0d2eab86e0f547d0825c3d1888ea163b/generated_bff46d4b_0.png?se=2026-01-27T18%3A52%3A24Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=Dvgwhy4jttjR5VfCennsSj0w1Nrq82jOArW7ARiXu5M%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    },
+    {
+      "id": "8cecc086-ebb0-4463-baf0-332fc788a909",
+      "filename": "generated_7a309dd6_0.png",
+      "originalName": "generated_7a309dd6_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-26T18:53:31.151649",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/7ea1d2fa84b44dd8a787010a5a94e506/generated_7a309dd6_0.png?se=2026-01-27T18%3A53%3A24Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=uG1dpYFpS5Ls55FPmsoYP5n4OOyLERxwpNagIINryAE%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    },
+    {
+      "id": "516f4722-abf0-4b72-a592-5e655d1bc7e4",
+      "filename": "generated_649ae0b8_0.png",
+      "originalName": "generated_649ae0b8_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-26T18:54:34.326835",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/67ed6c5561ab4c209839419a469fa039/generated_649ae0b8_0.png?se=2026-01-27T18%3A54%3A26Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=G1BwhRNP/g7A1gP4HshtOPxvHSj3ZSS4SGpfPW4p0Zw%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    }
+  ],
+  "parallel_test_0626ef6f": [
+    {
+      "id": "1091aedf-5ba0-4999-bc12-70a7ba3ea2c2",
+      "filename": "generated_5f02ad5d_0.png",
+      "originalName": "generated_5f02ad5d_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-26T18:55:27.390071",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/f35014ab812845bf9438d6a03fc5ca3c/generated_5f02ad5d_0.png?se=2026-01-27T18%3A55%3A23Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=i%2BBNIDM0n70EXw1pWJ/gzMx3LlLwjMqoKRu9r5nB1Eg%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    },
+    {
+      "id": "2496ff71-249c-4a67-8d70-e8ea6e6ad343",
+      "filename": "generated_ffd3b981_0.png",
+      "originalName": "generated_ffd3b981_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-26T18:56:23.799518",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/ac7829149ef042c2b32e7006342a90b6/generated_ffd3b981_0.png?se=2026-01-27T18%3A55%3A54Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=jsjANzqEPHoTWoN9%2BPpg6ha3XM8gYWSN2vAbooywEgM%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    },
+    {
+      "id": "e56175e2-0721-43fa-8331-589b63a4cc49",
+      "filename": "generated_ed167cc5_0.png",
+      "originalName": "generated_ed167cc5_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-26T18:57:04.082331",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/242b43581e5648ffa90c94b83ad09fbc/generated_ed167cc5_0.png?se=2026-01-27T18%3A56%3A56Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=P%2BbC5awhiF4LxIGmrZZToACwQZnhXkOYabulJvSivk0%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    }
+  ],
+  "parallel_gen_341e89ce": [
+    {
+      "id": "fbd6ca7c-6739-4772-b604-2a7ef27401ff",
+      "filename": "generated_1d5d66e8_0.png",
+      "originalName": "generated_1d5d66e8_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-26T18:58:08.323817",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/8af726f237674b1a8d30935f4566d47b/generated_1d5d66e8_0.png?se=2026-01-27T18%3A58%3A00Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=eBxk3vNbM3LD2cVQmRjKma/GEg8CbP4L2rDJMYJpxYM%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    },
+    {
+      "id": "9d842871-869e-40ad-b753-d210df5be890",
+      "filename": "generated_ec8ba260_0.png",
+      "originalName": "generated_ec8ba260_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-26T18:58:38.522135",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/4a019cdaba19422192c0ddcfbdf94917/generated_ec8ba260_0.png?se=2026-01-27T18%3A58%3A34Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=/B4FJvTN/deWyuBcdebHDZgFY5vjuRdbilNvqHRssJA%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    },
+    {
+      "id": "413741eb-d30a-43ee-92b9-ac1ef5e43fde",
+      "filename": "generated_7a25824d_0.png",
+      "originalName": "generated_7a25824d_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-26T18:59:36.532750",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/accf1234543c40b0a37a0ffd23b59b64/generated_7a25824d_0.png?se=2026-01-27T18%3A59%3A31Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=ruK7drYw/aufg/yDG0FSAU3I3NswjrDt1fk0hZAkPSs%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    }
+  ],
+  "parallel_gen_788184b6": [
+    {
+      "id": "832aebcc-9e79-4c5b-aa74-41099de234ce",
+      "filename": "generated_5f45f54c_0.png",
+      "originalName": "generated_5f45f54c_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-26T19:28:32.596931",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/faef8aee93704bd89d3dc2bc1e246c10/generated_5f45f54c_0.png?se=2026-01-27T19%3A28%3A26Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=7vmsCTXMp9GTCseofr8F1XPEDA5xQm1B%2BDRp9GTCWBs%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    },
+    {
+      "id": "901415bd-2b86-4589-a16f-59dcca2ea45f",
+      "filename": "generated_5612f943_0.png",
+      "originalName": "generated_5612f943_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-26T19:29:40.797155",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/d901a05cc6c2427296cec5bba119a5f0/generated_5612f943_0.png?se=2026-01-27T19%3A29%3A31Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=9Tr1CyYjiU2Q9JESNRuMvgcacgUJXeoDrxLgoLgaETo%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    },
+    {
+      "id": "712efa05-9752-40be-bce1-8ffec28f65ff",
+      "filename": "generated_27011df3_0.png",
+      "originalName": "generated_27011df3_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-26T19:30:39.301858",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/b8bac46ef70e4fa387a03dd431e14eca/generated_27011df3_0.png?se=2026-01-27T19%3A30%3A30Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=VwUtfvZ3ls92dTf8e5a8BlH20ACzLN2WmdyG8oUtgGg%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    }
+  ],
+  "parallel_test_44eb6efd": [
+    {
+      "id": "395cc60b-327e-44a1-8f38-0043c48a4b56",
+      "filename": "generated_faf41cda_0.png",
+      "originalName": "generated_faf41cda_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-26T19:32:32.793958",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/7ea774c8d90549ec8be809a3772267c6/generated_faf41cda_0.png?se=2026-01-27T19%3A32%3A24Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=DTcOHDaL8tb%2B8IAmsWMo2cNX0cUhsKGzEDV2MqpkD9k%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    },
+    {
+      "id": "0b8dbb29-27f3-461f-86e4-ddb22fdaa01a",
+      "filename": "generated_61aeb82d_0.png",
+      "originalName": "generated_61aeb82d_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-26T19:33:35.914319",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/4467ff6d4f0a4dcf8549d99098ab4d83/generated_61aeb82d_0.png?se=2026-01-27T19%3A33%3A27Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=t%2BBLxFpWxXUUFik7Pgyaof5JHFasBxm4dN0yrqr6LHc%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    },
+    {
+      "id": "0c529061-288b-4d27-a0df-623e3f4334b8",
+      "filename": "generated_9e9059c3_0.png",
+      "originalName": "generated_9e9059c3_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-26T19:34:08.527075",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/a301bdf8f7544afc8e3a9ea56d7a4c17/generated_9e9059c3_0.png?se=2026-01-27T19%3A34%3A03Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=tjqgz2Ue2TbPCZdmuvQqbCv8/34bRlNKbUnpEXCS%2BR0%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    }
+  ],
+  "parallel_test_7dae943e": [
+    {
+      "id": "146863bf-0390-4371-9332-537adba48683",
+      "filename": "generated_45927649_0.png",
+      "originalName": "generated_45927649_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-26T19:34:46.846393",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/6cdd73d5f1a54d5990f1ad0e6006befc/generated_45927649_0.png?se=2026-01-27T19%3A34%3A39Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=DQ0AwO%2Bmh19RMcpAofn84%2B8mpVX1B18rdKd%2BS0o1ZWU%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    },
+    {
+      "id": "ed42e9bb-ff41-499e-9380-b5b9c542e9d5",
+      "filename": "generated_9bd65162_0.png",
+      "originalName": "generated_9bd65162_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-26T19:35:24.127097",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/f1fc826b4cc4493a88bb4fc5f7baad5d/generated_9bd65162_0.png?se=2026-01-27T19%3A35%3A16Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=RFI1p9SN0ECPY34SCcGiEThi7eIdrvEgm6rEiWaluEY%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    },
+    {
+      "id": "1b29a497-86f4-44df-b3b9-dc5f26682822",
+      "filename": "generated_e772e8a7_0.png",
+      "originalName": "generated_e772e8a7_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-26T19:36:26.634399",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/1c875e2f1cda43cd95975846626222cf/generated_e772e8a7_0.png?se=2026-01-27T19%3A36%3A19Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=tMbei%2BsS8aN/lhNgu7AxRTJeSPWMS/st8pAEddswdY0%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    },
+    {
+      "id": "f545e367-a8e4-40f7-b637-ba21d0ecfbba",
+      "filename": "generated_34274d28_0.png",
+      "originalName": "generated_34274d28_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-26T19:37:19.446544",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/3a3cc0dbcea44ec9a148ecabc657a0a2/generated_34274d28_0.png?se=2026-01-27T19%3A37%3A14Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=26KBkTMRZyQuKGv9dm/6LPnToaIjGc6ylvk4f/2KE58%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    }
+  ],
+  "parallel_test_eeb56c8c": [
+    {
+      "id": "c733f0f9-d9ad-4186-bdfc-6589c7c13634",
+      "filename": "generated_ea6f1d0e_0.png",
+      "originalName": "generated_ea6f1d0e_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-26T19:40:16.573110",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/82d20c90641241f2a6f778447a2b864d/generated_ea6f1d0e_0.png?se=2026-01-27T19%3A40%3A08Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=lQN2uPr7YvLkTcL6alOVGBSpD9Jkb%2Bs/lVS%2BiFabPJs%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    }
+  ],
+  "parallel_test_3cb171ff": [
+    {
+      "id": "31c75016-d1ff-4c41-8986-dc55c3664507",
+      "filename": "generated_5b7c527c_0.png",
+      "originalName": "generated_5b7c527c_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-26T19:47:36.930526",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/2949a09b9fc744348f70d07be2bf3dab/generated_5b7c527c_0.png?se=2026-01-27T19%3A47%3A29Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=8PoPZLsatR8JYqzwOWhWufWkMo0n%2BVuqlE2WMp/fBV0%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    },
+    {
+      "id": "03672210-f68b-4331-9019-2c049e35a379",
+      "filename": "generated_4d0045e9_0.png",
+      "originalName": "generated_4d0045e9_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-26T19:48:34.558642",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/a76574a359244ce3bfce831365fc029d/generated_4d0045e9_0.png?se=2026-01-27T19%3A48%3A26Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=fomzjH5oss6wH3MQYLWfCs/R1laktpwq9iJuWDCDvBw%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    },
+    {
+      "id": "b885f8f7-559f-46cf-b575-2f434a4237ca",
+      "filename": "generated_0b661d79_0.png",
+      "originalName": "generated_0b661d79_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-26T19:49:07.794842",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/7b13241f51dd474c88d0c6e3605989d1/generated_0b661d79_0.png?se=2026-01-27T19%3A49%3A00Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=mMI6s9q3TiHHToRE2GlOYeZJpHIN7qsPN6L%2BZ/qHRz4%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    },
+    {
+      "id": "f9f84a91-ced6-4b2b-b895-1b3e638e0a4d",
+      "filename": "generated_7db9c3cc_0.png",
+      "originalName": "generated_7db9c3cc_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-26T20:28:47.695479",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/667bf601d6844f47b989a6d0721f451d/generated_7db9c3cc_0.png?se=2026-01-27T20%3A28%3A39Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=/7NsEUIEzzy%2Bwfe09uvfdm%2BQ%2BRwYg/RvbaCq3XLjvn4%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    }
+  ],
+  "user_3": [
+    {
+      "id": "eea8b463-5386-4993-8069-52b17e74adc0",
+      "filename": "generated_7c8d770a_0.png",
+      "originalName": "generated_7c8d770a_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-26T20:24:42.422122",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/e5b048f968f744ec88127b831f77e7ef/generated_7c8d770a_0.png?se=2026-01-27T20%3A24%3A34Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=QB06hxrCk8BvsGnHdV4Mxmj5LOO41uLPODKNClUZx2A%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    },
+    {
+      "id": "c48452d2-18fe-45ec-b058-175233cf2328",
+      "filename": "generated_7db9c3cc_0.png",
+      "originalName": "generated_7db9c3cc_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-26T20:28:55.960822",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/667bf601d6844f47b989a6d0721f451d/generated_7db9c3cc_0.png?se=2026-01-27T20%3A28%3A39Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=/7NsEUIEzzy%2Bwfe09uvfdm%2BQ%2BRwYg/RvbaCq3XLjvn4%3D",
+      "sourceAgent": "foundry-host-agent",
+      "type": "agent_generated"
+    },
+    {
+      "id": "95bcc08b-e4b9-4bfb-b330-0418e5cf72a7",
+      "filename": "sora_20260126_221011_14cf7923.mp4",
+      "originalName": "sora_20260126_221011_14cf7923.mp4",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-27T03:10:23.608696",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/video-generator/37fe3572e50a41c093ee173c17aafcfb/sora_20260126_221011_14cf7923.mp4?se=2026-01-28T03%3A10%3A15Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=vwXbbLASa7nXOrJXDpHQf31fQiWOKE6K5MSO2gwPd34%3D",
+      "sourceAgent": "Sora 2 Video Generator",
+      "type": "agent_generated"
+    },
+    {
+      "id": "b8d9c2e8-902f-4cd9-a61b-678b399c7abe",
+      "filename": "sora_20260126_221422_c0ad08a9.mp4",
+      "originalName": "sora_20260126_221422_c0ad08a9.mp4",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-27T03:14:33.498032",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/video-generator/98f6ea0041864d0a812f5fd3094021d4/sora_20260126_221422_c0ad08a9.mp4?se=2026-01-28T03%3A14%3A25Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=z0KvS/YS77GiDovRJf7aMWnmPIZ6rDjLZmEpeLNzTRE%3D",
+      "sourceAgent": "Sora 2 Video Generator",
+      "type": "agent_generated"
+    },
+    {
+      "id": "31fa0b9f-b913-466c-95fc-029c82e4b4b4",
+      "filename": "generated_fc6b94cb_0.png",
+      "originalName": "generated_fc6b94cb_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-27T03:16:53.988306",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/2d11782f778143629e0f607bec3cc5fb/generated_fc6b94cb_0.png?se=2026-01-28T03%3A16%3A45Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=WnJjHdFW7RG0/X9%2BuSJQpIpPv8KMki7lCfYgADCr1CA%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    }
+  ],
+  "parallel_test_168f7acd": [
+    {
+      "id": "b33c0a70-95d9-4f76-ac77-4b8eff416d67",
+      "filename": "generated_ce7f8f58_0.png",
+      "originalName": "generated_ce7f8f58_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-26T20:59:29.537609",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/998be324d8f1459dab7a2de2d62c8461/generated_ce7f8f58_0.png?se=2026-01-27T20%3A59%3A21Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=2C0Aibz8/lZXECGlfhNXk6o6eXDmpxqiHgdgbJ2SIqk%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    },
+    {
+      "id": "582e196b-57a5-436a-af98-ac6304962aee",
+      "filename": "generated_1cf76bd0_0.png",
+      "originalName": "generated_1cf76bd0_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-26T21:00:05.784965",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/60f6fea44c3b41d894e2cf41c54f5a23/generated_1cf76bd0_0.png?se=2026-01-27T20%3A59%3A56Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=QeZMZ2K5nZwU/%2B1M3pNXm%2BPnJ9XqKhBMBeoGSWb9p5A%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    },
+    {
+      "id": "f8c38cc2-2ad6-4342-a532-a4543773cf93",
+      "filename": "generated_a0d7fdd9_0.png",
+      "originalName": "generated_a0d7fdd9_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-26T21:01:14.517060",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/1453f18980584c47b63298dec0ccdb78/generated_a0d7fdd9_0.png?se=2026-01-27T21%3A01%3A05Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=88oS7cOViYl3s4DaXUc8yu9TuuDeso/Abcphk1ZV3mU%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    }
+  ],
+  "image_test_a9ce379c": [
+    {
+      "id": "85999337-753c-4ce6-944d-57abe7e59790",
+      "filename": "generated_43195cca_0.png",
+      "originalName": "generated_43195cca_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-26T22:38:08.417140",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/61666b3d85b54206bede2e05744c1b5f/generated_43195cca_0.png?se=2026-01-27T22%3A37%3A57Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=x97SicxIJSz1dKxoCO9I0jKTQg6bgquK9tlyrjpPnOA%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    }
+  ],
+  "99d78a99-e446-4928-91c3-1de5e09efba0": [
+    {
+      "id": "7ad14ed4-1896-4c93-810d-096cb5b0733b",
+      "filename": "generated_6c8e7f48_0.png",
+      "originalName": "generated_6c8e7f48_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-27T00:50:08.811375",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/eabf45f5a3054a9eae9f1fed7020a526/generated_6c8e7f48_0.png?se=2026-01-28T00%3A50%3A03Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=BPPBqVcLVR3qPPpPP51aMrk3Css0UqMVzAqTXHYArZc%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    },
+    {
+      "id": "787c31c1-597e-4e44-9310-96d2290b4e89",
+      "filename": "generated_08a1ad92_0.png",
+      "originalName": "generated_08a1ad92_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-27T00:50:37.136315",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/74d251a0a1bc42889f01686d6cce752f/generated_08a1ad92_0.png?se=2026-01-28T00%3A50%3A33Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=%2BFHdCJb84ECjcnpuqv6r9PGce6q5Ahn2JWserj%2BDjBM%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    },
+    {
+      "id": "1e5a40b1-0f4e-417f-98e9-40ecc92e308e",
+      "filename": "generated_8d72302e_0.png",
+      "originalName": "generated_8d72302e_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-27T00:51:11.370585",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/c1b94acfdc4a4a068f7d7e04c11edcf7/generated_8d72302e_0.png?se=2026-01-28T00%3A51%3A03Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=2kN7U%2BPMPbrCqy1yfd3CzLrw1dQvskdVF0Il3Fw0TdI%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    }
+  ],
+  "15c8c3fe-ec1e-40db-91bd-617a64347025": [
+    {
+      "id": "a3f95657-47a6-450c-84bd-38b749d60781",
+      "filename": "generated_190cfba5_0.png",
+      "originalName": "generated_190cfba5_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-27T00:53:07.261864",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/6b42846910a84be6a78e755c4fe3ca6e/generated_190cfba5_0.png?se=2026-01-28T00%3A52%3A59Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=0EmBI%2Bl%2BkinE5kPvUUIqcZ2rBUONP3ilxxPalb/qIVI%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    },
+    {
+      "id": "a11e4e7f-b8c6-4dcd-9b4e-b0e4c263a20a",
+      "filename": "generated_e2035e37_0.png",
+      "originalName": "generated_e2035e37_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-27T00:53:40.266928",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/b69b6232d32847c299df3cb21136fe57/generated_e2035e37_0.png?se=2026-01-28T00%3A53%3A32Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=gnMd5ECFElavvGxhmRuRmz6YvQm12urBHiRGrs%2Bn9gE%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    },
+    {
+      "id": "554f5ba7-3931-45b6-b12c-191dc51b7484",
+      "filename": "generated_7c4e4cc5_0.png",
+      "originalName": "generated_7c4e4cc5_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-27T00:54:19.299197",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/bf2a9e81ab594f5d94034416bd862b23/generated_7c4e4cc5_0.png?se=2026-01-28T00%3A54%3A11Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=Ai9%2Ba12wLPF6nueekrMkIRXq1DZqgzkI%2BsamME3hBF0%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    }
+  ],
+  "359ef191-6652-4705-a2a9-94446edd2781": [
+    {
+      "id": "e0ed469f-9cb9-48d4-b9fd-fa4e638da94d",
+      "filename": "generated_056c3f8a_0.png",
+      "originalName": "generated_056c3f8a_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-27T00:58:29.238749",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/bf4ab1d651c84cd4ade98233efddaabf/generated_056c3f8a_0.png?se=2026-01-28T00%3A58%3A24Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=mOAx2VwZJXKyrq7ayvFe3TFqCiLr1TDv2balSbbzoT4%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    },
+    {
+      "id": "d50dc83e-973e-4a6f-8ec1-ea60a70afa98",
+      "filename": "generated_bc7e8c68_0.png",
+      "originalName": "generated_bc7e8c68_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-27T00:58:58.486077",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/3c3e638496f142128a77c0e6f026aef2/generated_bc7e8c68_0.png?se=2026-01-28T00%3A58%3A54Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=aEvelmg5ybPy81dbQwzQUmBOUrigLxlO9SV5JnKCaW0%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    },
+    {
+      "id": "9042677a-ad64-4fb4-8ccb-963679780f31",
+      "filename": "generated_3f78452a_0.png",
+      "originalName": "generated_3f78452a_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-27T00:59:30.591009",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/fe1ce8bad46044229ebd9953b8ce2062/generated_3f78452a_0.png?se=2026-01-28T00%3A59%3A23Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=Ka7FVlPxHpzQ0NlVyPqV599ZOgiQI0QQJYPqZPOxVQA%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    }
+  ],
+  "8699259a-cfb6-4c83-8647-ee9fa7c8f8b7": [
+    {
+      "id": "a3a66ae2-c50a-4072-8973-e4dc5d9996f7",
+      "filename": "generated_1fd77866_0.png",
+      "originalName": "generated_1fd77866_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-27T01:05:26.302466",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/b68060c2d7d9427285127d9415b59f53/generated_1fd77866_0.png?se=2026-01-28T01%3A05%3A18Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=p8eK/lIsKfpDsr/PL1acMLMBzPNfR7v58f6tsF%2BgQqs%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    },
+    {
+      "id": "600df15c-198e-46ec-b758-d16a48ff2869",
+      "filename": "generated_2fa6aaa5_0.png",
+      "originalName": "generated_2fa6aaa5_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-27T01:06:26.842153",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/14b5093515af40b3b057e1ce4b8cf944/generated_2fa6aaa5_0.png?se=2026-01-28T01%3A06%3A19Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=hME%2BSgcM7J75zpxo0ZDKI0Eby4Euj3RAzr3U5Q2Eb7k%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    },
+    {
+      "id": "552bd326-160e-4f20-b7b7-2e0a357a715b",
+      "filename": "generated_edd4b1e5_0.png",
+      "originalName": "generated_edd4b1e5_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-27T01:06:55.799897",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/81e2bd04fa7b4667a0ae7d4a464baf41/generated_edd4b1e5_0.png?se=2026-01-28T01%3A06%3A50Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=Nu7%2BRfrh5lVoVMKEUt7i02Fkud19LLnnKf9oqxWvhvU%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    }
+  ],
+  "83b8cf5a-ae96-4fb0-958c-e61c27cec22c": [
+    {
+      "id": "e5cab284-f84c-4295-bf4a-fcba2f71c8c1",
+      "filename": "generated_23450dee_0.png",
+      "originalName": "generated_23450dee_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-27T01:12:46.448385",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/ca84e365eef64fc1a7726704eb3ad8d4/generated_23450dee_0.png?se=2026-01-28T01%3A12%3A38Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=pSE7N1zaVFVNVGAp4Ok233P7HRCd%2B0FUQ67mYWYk8eU%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    },
+    {
+      "id": "b2873a3b-0caa-491d-b8a2-67a8bd64eea9",
+      "filename": "generated_0bab2ca3_0.png",
+      "originalName": "generated_0bab2ca3_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-27T01:13:15.256973",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/3227e658e1e64184b8e6ec00bca7f5fa/generated_0bab2ca3_0.png?se=2026-01-28T01%3A13%3A07Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=QxIL5Spa4kbLeeQY3fEgXJa3OoWw%2BUKsTmi8y6IfTQY%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    },
+    {
+      "id": "26892e4a-f97e-40f8-b6e7-449205cf2f3b",
+      "filename": "generated_f59a268d_0.png",
+      "originalName": "generated_f59a268d_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-27T01:13:50.415551",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/1a113df39d9749d187e7f0d53cea2839/generated_f59a268d_0.png?se=2026-01-28T01%3A13%3A42Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=gyrl4s77YIeG/ErCI2OcQV5WRDL33GFlzH8u6ZEPTRI%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    }
+  ],
+  "1a5f3e2d-3dcc-4629-9291-167ec99096c0": [
+    {
+      "id": "c32349cc-a7ec-44a7-8207-662a7080f8cf",
+      "filename": "generated_1fdfc4c4_0.png",
+      "originalName": "generated_1fdfc4c4_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-27T01:18:38.032974",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/e85218777f474a4186da8566eae8e98f/generated_1fdfc4c4_0.png?se=2026-01-28T01%3A18%3A33Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=0WYhbOTOpQtVmzOiRZrOL8Q4D6wvhi%2BVwj5Bix9idjA%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    },
+    {
+      "id": "48aaa784-95af-4cd7-938b-3b0b6340e65f",
+      "filename": "generated_4a57c71e_0.png",
+      "originalName": "generated_4a57c71e_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-27T01:19:36.264412",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/d131becda1b34581b452f870b25c1fdc/generated_4a57c71e_0.png?se=2026-01-28T01%3A19%3A31Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=bgNTijS6neFkNBKCfmsOv5fpzmSn/nKiGC5ZRsxKk5s%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    },
+    {
+      "id": "b709fc00-6d49-47d1-b616-1ad4797d84ec",
+      "filename": "generated_2d4be7af_0.png",
+      "originalName": "generated_2d4be7af_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-27T01:20:04.753493",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/8629d16139a743aea389d7930e99f14e/generated_2d4be7af_0.png?se=2026-01-28T01%3A20%3A00Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=vseHWtez%2BNLPUlk3lTkzEmtyznZxQhW653kLJRERY8o%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    }
+  ],
+  "ba6932e4-87c7-439f-bb62-b45852bf53f5": [
+    {
+      "id": "9dbe7f3b-8ec0-47c5-b224-cac788545928",
+      "filename": "generated_5fc2dae4_0.png",
+      "originalName": "generated_5fc2dae4_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-27T01:40:28.052203",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/d3055ab4759a4ab1a7811a33ca303963/generated_5fc2dae4_0.png?se=2026-01-28T01%3A40%3A01Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=RTwN6lfrWuAGeaaW0beUD2HO2zWkVe1/x05H2WF3TR4%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    },
+    {
+      "id": "8fd17c80-3276-4c92-8ff3-9841d1055ce9",
+      "filename": "generated_c2ce930e_0.png",
+      "originalName": "generated_c2ce930e_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-27T01:40:28.055326",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/ce8a832966f64cb48bdb72407435b693/generated_c2ce930e_0.png?se=2026-01-28T01%3A40%3A20Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=OpO9clp3g7783N1nAtK9uwAgvh2XuRjDGpqo%2BwhrFBM%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    }
+  ],
+  "7bbec56e-583f-472f-b9ef-b5f37773de23": [
+    {
+      "id": "b7f00dd4-19b1-4230-9a45-837b7a302f61",
+      "filename": "generated_798a45a5_0.png",
+      "originalName": "generated_798a45a5_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-27T01:47:54.710501",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/86b871a27f184e3aa09025936cf5b074/generated_798a45a5_0.png?se=2026-01-28T01%3A47%3A49Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=MNOng9uY4amAWHRqT3OF/gFGcQ5FNP43r70xxdC8KNc%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    },
+    {
+      "id": "39501755-aa24-4b99-bcfb-1f30765f1742",
+      "filename": "generated_518d15a5_0.png",
+      "originalName": "generated_518d15a5_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-27T01:49:04.948450",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/e8b4583d132542d6a2815659d9ed9962/generated_518d15a5_0.png?se=2026-01-28T01%3A48%3A59Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=XPzZyByFy1pcV0yUhb0KeAs9sNzaw%2Bzvnlld0mbAaoQ%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    }
+  ],
+  "8a606caa-62fd-4c7a-bc6b-008c7beed1f4": [
+    {
+      "id": "d6f53968-cb73-49c7-a168-f2907f969cc5",
+      "filename": "generated_27eb100d_0.png",
+      "originalName": "generated_27eb100d_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-27T02:03:28.361438",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/a994012711b846dfbc11c6d1e95ef998/generated_27eb100d_0.png?se=2026-01-28T02%3A03%3A20Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=oPldQVb3%2BpqDfmBSbH0zfsfckvW8kBM/I%2BrPq8tolbk%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    }
+  ],
+  "6c39ed07-0c4d-452f-9032-c9a53b95f267": [
+    {
+      "id": "ee3802c7-68b8-4c02-b446-b03f8f61c797",
+      "filename": "generated_cb0c8735_0.png",
+      "originalName": "generated_cb0c8735_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-27T02:10:21.267488",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/894408288f49433da0b717f8157e2a02/generated_cb0c8735_0.png?se=2026-01-28T02%3A09%3A51Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=E7cTmhOw4mfBanZfYmboHuwp59%2BCCXbghhZ7c3jtBBw%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    },
+    {
+      "id": "ffb92319-9f81-4280-95da-07caddba6329",
+      "filename": "generated_a79004c5_0.png",
+      "originalName": "generated_a79004c5_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-27T02:10:21.269792",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/3865615e295f46afb5112c06116d89c8/generated_a79004c5_0.png?se=2026-01-28T02%3A10%3A10Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=YLiQcTtDwq6Vs5UXCjp3r6MThCsBhwUgkHDOLanEdCw%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    }
+  ],
+  "ec0ab424-0368-4f03-8d27-593cd14d19bc": [
+    {
+      "id": "c3138473-47d8-4842-b85a-fab51e6d77ae",
+      "filename": "generated_c8322991_0.png",
+      "originalName": "generated_c8322991_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-27T02:13:20.507777",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/a0537d5237c14686bf08688f86474b0c/generated_c8322991_0.png?se=2026-01-28T02%3A13%3A12Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=oJPjP26eoKkh3Ym/0Dgr5HfW2GnxsPVNuMDy1aVpoT4%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    },
+    {
+      "id": "055d1802-d009-43bc-a593-5b64a3688adb",
+      "filename": "generated_53dc7c3d_0.png",
+      "originalName": "generated_53dc7c3d_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-27T02:13:20.509492",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/53bca4dd89c64908ad24ff5cf8560f1e/generated_53dc7c3d_0.png?se=2026-01-28T02%3A13%3A13Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=PVFVntq/qNXKIoaKcPgazs0BTi65s7ylmpsb69nMjgk%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    },
+    {
+      "id": "44a1b10c-d7e4-42b0-9b17-af2802c9b995",
+      "filename": "generated_d4efa406_0.png",
+      "originalName": "generated_d4efa406_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-27T02:13:36.966604",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/7be290e9fa184ed3a2bbbc845fe8c428/generated_d4efa406_0.png?se=2026-01-28T02%3A13%3A29Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=xXF/7F16/lrFb%2B/ks0CtLIdfQmNIGVUOU2w3%2BNuZlEc%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    }
+  ],
+  "c70b487b-3302-49d6-877d-7d465f5c5408": [
+    {
+      "id": "5273bbac-1d9d-42c5-81d1-e54fb0a565dc",
+      "filename": "generated_d8fd09f8_0.png",
+      "originalName": "generated_d8fd09f8_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-27T02:16:59.431982",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/bfe2153814c84e36be9282fb17a2edb6/generated_d8fd09f8_0.png?se=2026-01-28T02%3A16%3A50Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=oRiuU3mS7F83rjTKrZ1g4Wz9wrePcR0wTPRGMDPb47w%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    },
+    {
+      "id": "82bff1ec-d314-4d74-ab25-3fd7e298e9fb",
+      "filename": "generated_c8dfc2d1_0.png",
+      "originalName": "generated_c8dfc2d1_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-27T02:16:59.433734",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/ab87491090414682a6ac4451bacfa76e/generated_c8dfc2d1_0.png?se=2026-01-28T02%3A16%3A53Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=GisqijPKjCKaWf6Upa2y1x7DuGYcA7m0FDxa6TYH9SE%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
+      "type": "agent_generated"
+    },
+    {
+      "id": "2638cca3-3361-4766-9560-06309e2227cc",
+      "filename": "generated_0ab5de29_0.png",
+      "originalName": "generated_0ab5de29_0.png",
+      "size": 0,
+      "contentType": "image/png",
+      "uploadedAt": "2026-01-27T02:17:26.570364",
+      "uri": "https://a2astoragefiles.blob.core.windows.net/a2a-files/image-generator/0933a51a82fc4645830a1a9aedb9545f/generated_0ab5de29_0.png?se=2026-01-28T02%3A17%3A18Z&sp=r&spr=https&sv=2025-05-05&sr=b&sig=trxb/3hB7Z/3zj58C3kox/rH1BWB9ui%2BEGXqruAIlcE%3D",
+      "sourceAgent": "AI Foundry Image Generator Agent",
       "type": "agent_generated"
     }
   ]

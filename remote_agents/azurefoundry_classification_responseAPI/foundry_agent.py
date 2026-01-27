@@ -1,9 +1,5 @@
 """
-AI Foundry Classification Triage Agent implementation using R            # Use base_url to include the full path with /openai/v1/
-            self._client = AzureOpenAI(
-                base_url=openai_endpoint,
-                azure_ad_token_provider=token_provider,
-            )es API.
+AI Foundry Classification Triage Agent implementation using Responses API.
 Migrated from Assistants API to Responses API for compatibility with newer models.
 
 NOTE: This version uses Responses API which does NOT have built-in knowledge grounding.
@@ -22,7 +18,7 @@ import logging
 import json
 from typing import Optional, Dict, List
 
-from openai import AzureOpenAI
+from openai import AzureOpenAI, AsyncAzureOpenAI
 from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 import glob
 
@@ -42,7 +38,8 @@ class FoundryClassificationAgent:
         self.credential = DefaultAzureCredential()
         self.agent: Optional[str] = None  # Agent instructions
         self.threads: Dict[str, str] = {}  # thread_id -> session mapping
-        self._client = None
+        self._client = None  # Sync client for file uploads
+        self._async_client = None  # Async client for responses
         self._uploaded_file_ids: List[str] = []
         self.last_token_usage: Optional[Dict[str, int]] = None
         
@@ -76,6 +73,28 @@ class FoundryClassificationAgent:
             )
             
         return self._client
+    
+    def _get_async_client(self) -> AsyncAzureOpenAI:
+        """Get async OpenAI client for streaming responses (non-blocking)."""
+        if self._async_client is None:
+            if "services.ai.azure.com" in self.endpoint:
+                parts = self.endpoint.split("//")[1].split(".")[0]
+                openai_endpoint = f"https://{parts}.openai.azure.com/openai/v1/"
+            else:
+                openai_endpoint = self.endpoint if self.endpoint.endswith("/openai/v1/") else f"{self.endpoint.rstrip('/')}/openai/v1/"
+            
+            token_provider = get_bearer_token_provider(
+                self.credential,
+                "https://cognitiveservices.azure.com/.default"
+            )
+            
+            self._async_client = AsyncAzureOpenAI(
+                base_url=openai_endpoint,
+                azure_ad_token_provider=token_provider,
+                api_version="preview"
+            )
+            
+        return self._async_client
     
     async def _setup_file_search(self, files_directory: str = "documents") -> List[str]:
         """
@@ -183,13 +202,11 @@ Be concise and specific in your classifications."""
         additional_instructions: Optional[str] = None
     ):
         """
-        Run a streaming conversation using Responses API.
+        Run a streaming conversation using Responses API with async client.
         
         NOTE: The PDF is included in the request but is used for vision analysis,
         NOT for knowledge base grounding. This is a limitation of Responses API.
         """
-        client = self._get_client()
-        
         # Build input content with PDF and text
         input_content = []
         
@@ -212,9 +229,10 @@ Be concise and specific in your classifications."""
         if additional_instructions:
             full_instructions += f"\n\n{additional_instructions}"
         
-        # Create response with streaming
+        # Create response with streaming using async client for parallel execution
         try:
-            response = client.responses.create(
+            client = self._get_async_client()
+            response = await client.responses.create(
                 model=os.getenv("MODEL_DEPLOYMENT_NAME", "gpt-4o"),
                 input=[{
                     "role": "user",
@@ -225,10 +243,10 @@ Be concise and specific in your classifications."""
                 max_output_tokens=4000
             )
             
-            # Stream the response
+            # Stream the response using async iteration
             full_response = ""
             event_count = 0
-            for event in response:
+            async for event in response:
                 event_count += 1
                 logger.debug(f"Event {event_count}: type={event.type}")
                 
@@ -276,6 +294,9 @@ Be concise and specific in your classifications."""
     async def cleanup(self):
         """Cleanup resources."""
         logger.info("Cleaning up Classification Agent")
+        if self._async_client:
+            await self._async_client.close()
         self._client = None
+        self._async_client = None
         self._uploaded_file_ids = []
         self.threads = {}

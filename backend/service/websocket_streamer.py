@@ -170,7 +170,7 @@ class WebSocketStreamer:
             logger.error(f"Error during WebSocket streamer cleanup: {e}")
     
     async def _send_event(self, event_type: str, data: Dict[str, Any], partition_key: Optional[str] = None) -> bool:
-        """Send an event via WebSocket.
+        """Send an event via WebSocket with retry logic.
         
         Args:
             event_type: Type of event (e.g., 'message', 'conversation', 'task', 'event')
@@ -185,43 +185,64 @@ class WebSocketStreamer:
             log_debug(f"WebSocket streamer not available for {event_type}")
             return False
         
-        try:
-            # Prepare event payload (same format as Event Hub)
-            event_payload = {
-                "eventType": event_type,
-                "timestamp": datetime.now().isoformat(),
-                **data
-            }
-            
-            log_debug(f"Sending WebSocket event {event_type}: {event_payload}")
-            
-            # Send via HTTP POST to WebSocket server
-            response = await self.http_client.post(
-                self.events_endpoint,
-                json=event_payload,
-                headers={"Content-Type": "application/json"}
-            )
-            
-            if response.status_code == 200:
-                result = response.json()
-                client_count = result.get('clientCount', 0)
-                log_debug(f"✅ Event {event_type} sent successfully to {client_count} WebSocket clients")
-                logger.info(f"✅ Event {event_type} sent successfully to {client_count} WebSocket clients")
-                return True
-            else:
-                response_text = response.text[:500] if hasattr(response, 'text') else 'No response text'
-                logger.error(f"❌ Failed to send {event_type} event: HTTP {response.status_code}, Response: {response_text}")
-                log_debug(f"❌ Failed to send {event_type} event: HTTP {response.status_code}, Response: {response_text}")
-                return False
+        max_retries = 3
+        retry_delay = 0.5  # Start with 0.5s delay
+        
+        for attempt in range(max_retries):
+            try:
+                # Prepare event payload (same format as Event Hub)
+                event_payload = {
+                    "eventType": event_type,
+                    "timestamp": datetime.now().isoformat(),
+                    **data
+                }
                 
-        except Exception as e:
-            import traceback
-            error_details = traceback.format_exc()
-            logger.error(f"❌ Error sending {event_type} event: {e}")
-            logger.error(f"Full traceback: {error_details}")
-            log_debug(f"❌ Error sending {event_type} event: {e}")
-            log_debug(f"Full traceback: {error_details}")
-            return False
+                if attempt == 0:
+                    log_debug(f"Sending WebSocket event {event_type}: {event_payload}")
+                else:
+                    log_debug(f"Retry {attempt}/{max_retries} for WebSocket event {event_type}")
+                
+                # Send via HTTP POST to WebSocket server
+                response = await self.http_client.post(
+                    self.events_endpoint,
+                    json=event_payload,
+                    headers={"Content-Type": "application/json"}
+                )
+                
+                if response.status_code == 200:
+                    result = response.json()
+                    client_count = result.get('clientCount', 0)
+                    log_debug(f"✅ Event {event_type} sent successfully to {client_count} WebSocket clients")
+                    logger.info(f"✅ Event {event_type} sent successfully to {client_count} WebSocket clients")
+                    return True
+                else:
+                    response_text = response.text[:500] if hasattr(response, 'text') else 'No response text'
+                    logger.error(f"❌ Failed to send {event_type} event: HTTP {response.status_code}, Response: {response_text}")
+                    log_debug(f"❌ Failed to send {event_type} event: HTTP {response.status_code}, Response: {response_text}")
+                    return False
+                    
+            except (httpx.ReadError, httpx.ConnectError, httpx.WriteError) as e:
+                # Transient connection errors - retry
+                if attempt < max_retries - 1:
+                    logger.warning(f"⚠️ Connection error sending {event_type} event (attempt {attempt + 1}/{max_retries}): {e}")
+                    await asyncio.sleep(retry_delay)
+                    retry_delay *= 2  # Exponential backoff
+                    continue
+                else:
+                    logger.error(f"❌ Failed to send {event_type} event after {max_retries} attempts: {e}")
+                    log_debug(f"❌ Failed to send {event_type} event after retries: {e}")
+                    return False
+                    
+            except Exception as e:
+                import traceback
+                error_details = traceback.format_exc()
+                logger.error(f"❌ Error sending {event_type} event: {e}")
+                logger.error(f"Full traceback: {error_details}")
+                log_debug(f"❌ Error sending {event_type} event: {e}")
+                log_debug(f"Full traceback: {error_details}")
+                return False
+        
+        return False
 
     # === Message Events ===
     

@@ -3382,13 +3382,16 @@ Answer with just JSON:
             log_debug(f"Enhanced message prepared")
             
             # =====================================================================
-            # MODE DETECTION: Auto-detect based on workflow presence
+            # MODE DETECTION: Use orchestration when workflow OR agent_mode is set
             # =====================================================================
-            use_orchestration = workflow and workflow.strip()
+            # Agent mode enables the LLM planner which can detect and execute
+            # parallel tasks (e.g., "generate 3 images" becomes 3 parallel tasks)
+            use_orchestration = (workflow and workflow.strip()) or agent_mode
             
             if use_orchestration:
-                log_debug(f"🎯 [Workflow Mode] Workflow detected - using orchestration loop")
-                await self._emit_status_event("Starting workflow orchestration...", context_id)
+                mode_type = "Workflow" if (workflow and workflow.strip()) else "Agent"
+                log_debug(f"🎯 [{mode_type} Mode] Using orchestration loop (workflow={bool(workflow)}, agent_mode={agent_mode})")
+                await self._emit_status_event("Starting orchestration...", context_id)
                 
                 # Use agent mode orchestration loop
                 try:

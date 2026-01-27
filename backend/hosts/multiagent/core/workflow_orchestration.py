@@ -777,6 +777,30 @@ When the workflow contains parallel steps (indicated by letter suffixes like 2a.
 - After parallel tasks complete, proceed to the next sequential step (e.g., step 3)
 - If NO parallel steps, use `next_task` (single) and set `parallel=false`
 
+### 🚨 CRITICAL: WHEN TO USE PARALLEL EXECUTION
+**ALWAYS use parallel execution (next_tasks + parallel=true) when:**
+1. User requests MULTIPLE similar items (e.g., "generate 3 images", "create 2 documents")
+2. Workflow steps have letter suffixes (1a, 1b, 1c or 2a, 2b)
+3. Tasks are independent and can run simultaneously
+4. User explicitly says "in parallel", "simultaneously", or "at the same time"
+
+**Example - User says "Generate 3 images: a car, a bike, a backpack":**
+```json
+{
+  "goal_status": "incomplete",
+  "next_task": null,
+  "next_tasks": [
+    {"task_description": "Generate an image of a car", "recommended_agent": "AI Foundry Image Generator Agent"},
+    {"task_description": "Generate an image of a bike", "recommended_agent": "AI Foundry Image Generator Agent"},
+    {"task_description": "Generate an image of a backpack", "recommended_agent": "AI Foundry Image Generator Agent"}
+  ],
+  "parallel": true,
+  "reasoning": "User requested 3 independent images - executing in parallel for efficiency"
+}
+```
+
+**DO NOT bundle multiple items into a single task like "Generate 3 images" - split them into separate parallel tasks!**
+
 MULTI-AGENT STRATEGY:
 - **MAXIMIZE AGENT UTILIZATION**: Break complex goals into specialized subtasks
 - Use multiple agents when their combined expertise adds value

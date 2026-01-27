@@ -36,11 +36,11 @@ class FoundryBrandingAgentExecutor(AgentExecutor):
     _shared_foundry_agent: Optional[FoundryBrandingAgent] = None
     _agent_lock = asyncio.Lock()
     _last_request_time: float = 0
-    _min_request_interval: float = 5.0  # Increase to 5 seconds minimum between requests
-    _request_semaphore = asyncio.Semaphore(1)  # Max 1 concurrent request
+    _min_request_interval: float = 1.0  # Reduced for parallel execution
+    _request_semaphore = asyncio.Semaphore(3)  # Allow 3 concurrent requests for parallel execution
     _api_call_count: int = 0
     _api_call_window_start: float = 0
-    _max_api_calls_per_minute: int = 15  # Much more conservative - 15 calls per minute
+    _max_api_calls_per_minute: int = 30  # Increased for parallel execution
     _startup_complete: bool = False
 
     @classmethod
@@ -91,10 +91,18 @@ class FoundryBrandingAgentExecutor(AgentExecutor):
     async def _get_or_create_thread(
         self,
         context_id: str,
-        agent: Optional[FoundryBrandingAgent] = None
+        agent: Optional[FoundryBrandingAgent] = None,
+        force_new: bool = False
     ) -> str:
         if agent is None:
             agent = await self._get_or_create_agent()
+        # Force new thread for parallel requests to avoid thread conflicts
+        if force_new:
+            thread = await agent.create_thread()
+            thread_id = thread.id
+            logger.info(f"Created new thread {thread_id} for parallel request (context: {context_id})")
+            self._active_threads[context_id] = thread_id
+            return thread_id
         # Reuse thread if it exists for this context_id
         if context_id in self._active_threads:
             return self._active_threads[context_id]
@@ -164,7 +172,8 @@ class FoundryBrandingAgentExecutor(AgentExecutor):
             else:
                 logger.info("🧾 Received empty A2A conversation payload for context %s", context_id)
             agent = await self._get_or_create_agent()
-            thread_id = await self._get_or_create_thread(context_id, agent)
+            # Use force_new=True to create separate threads for parallel requests
+            thread_id = await self._get_or_create_thread(context_id, agent, force_new=True)
             
             # Use streaming to show tool calls in real-time
             responses = []
@@ -311,23 +320,11 @@ class FoundryBrandingAgentExecutor(AgentExecutor):
                 FoundryBrandingAgentExecutor._api_call_count = 0
                 FoundryBrandingAgentExecutor._api_call_window_start = current_time
             
-            # Check if we're approaching the API limit
+            # Log if approaching API limit (but don't block for parallel execution)
             if FoundryBrandingAgentExecutor._api_call_count >= FoundryBrandingAgentExecutor._max_api_calls_per_minute:
-                wait_time = 60 - (current_time - FoundryBrandingAgentExecutor._api_call_window_start)
-                if wait_time > 0:
-                    logger.warning(f"API rate limit protection: waiting {wait_time:.1f}s to reset window")
-                    await asyncio.sleep(wait_time)
-                    # Reset counters
-                    FoundryBrandingAgentExecutor._api_call_count = 0
-                    FoundryBrandingAgentExecutor._api_call_window_start = time.time()
+                logger.warning(f"⚠️ API call count ({FoundryBrandingAgentExecutor._api_call_count}) at limit, requests may be throttled by Azure")
             
-            # Enforce minimum interval between requests - THIS IS THE KEY FIX
-            time_since_last = current_time - FoundryBrandingAgentExecutor._last_request_time
-            if time_since_last < FoundryBrandingAgentExecutor._min_request_interval:
-                sleep_time = FoundryBrandingAgentExecutor._min_request_interval - time_since_last
-                logger.warning(f"🚦 RATE LIMITING: Waiting {sleep_time:.2f}s between user requests (last request was {time_since_last:.2f}s ago)")
-                await asyncio.sleep(sleep_time)
-            
+            FoundryBrandingAgentExecutor._api_call_count += 1
             FoundryBrandingAgentExecutor._last_request_time = time.time()
             
             # Now proceed with the actual request processing
