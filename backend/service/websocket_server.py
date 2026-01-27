@@ -691,6 +691,10 @@ def create_websocket_app() -> FastAPI:
             # Get list of online users for invitation UI
             await handle_get_online_users(websocket, message)
         
+        elif message_type == "get_session_users":
+            # Get current session's user list (re-request after subscribing)
+            await handle_get_session_users(websocket)
+        
         elif message_type == "session_invite":
             # Handle sending a session invitation
             await handle_session_invite(websocket, message)
@@ -707,6 +711,30 @@ def create_websocket_app() -> FastAPI:
             logger.warning(f"Unknown message type: {message_type}")
     
     # Collaborative Session Handlers
+    async def handle_get_session_users(websocket: WebSocket):
+        """Handle request to get current session's user list.
+        
+        This allows the frontend to re-request the user list after subscribing,
+        solving the race condition where the initial user_list_update arrives
+        before the component has subscribed.
+        """
+        auth_conn = websocket_manager.get_connection_info(websocket)
+        if auth_conn:
+            await websocket_manager.send_session_user_update(websocket, auth_conn)
+            logger.info(f"[WebSocket] Sent session users on request to {auth_conn.username}")
+        else:
+            # Not authenticated - send empty list
+            await websocket.send_text(json.dumps({
+                "eventType": "user_list_update",
+                "data": {
+                    "active_users": [],
+                    "total_active": 0,
+                    "session_isolated": True
+                },
+                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+            }))
+            logger.info("[WebSocket] Sent empty session users (not authenticated)")
+
     async def handle_get_online_users(websocket: WebSocket, message: Dict[str, Any]):
         """Handle request to get list of online users for invitation."""
         auth_conn = websocket_manager.get_connection_info(websocket)
