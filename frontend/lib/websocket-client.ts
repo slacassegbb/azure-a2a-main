@@ -364,6 +364,19 @@ export class WebSocketClient {
         case 'user_list_update':
           this.handleUserListUpdateEvent(eventData);
           break;
+        case 'online_users':
+          console.log('[WebSocket] Received online_users event:', eventData);
+          this.emit('online_users', eventData);
+          break;
+        case 'session_invite_sent':
+        case 'session_invite_error':
+        case 'session_invite_received':
+        case 'session_invite_response_received':
+        case 'session_invite_response_error':
+        case 'session_members_updated':
+          console.log(`[WebSocket] Received ${eventType} event:`, eventData);
+          this.emit(eventType, eventData);
+          break;
         default:
           logDebug(`[WebSocket] Unknown event type: ${eventType}`);
           this.emit(eventType, eventData);
