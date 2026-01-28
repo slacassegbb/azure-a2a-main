@@ -223,6 +223,9 @@ export function joinCollaborativeSession(sessionId: string, reload: boolean = tr
   
   // Store the collaborative session we're joining
   sessionStorage.setItem(COLLABORATIVE_SESSION_KEY, sessionId);
+  // Mark as "just joined" to protect against immediate session_started clear
+  // This flag is checked by websocket-client.ts and cleared after first session_started
+  sessionStorage.setItem('a2a_collaborative_session_just_joined', 'true');
   console.log('[Session] Joining collaborative session:', sessionId);
   
   if (reload) {

@@ -398,7 +398,7 @@ export class WebSocketClient {
           break;
         case 'session_started':
           // Check if backend actually restarted by comparing session IDs
-          // Only clear collaborative session if the backend session ID changed
+          // Clear collaborative session on restart UNLESS user just joined
           const BACKEND_SESSION_KEY = 'a2a_backend_session_id';
           const newBackendSessionId = eventData?.data?.sessionId || eventData?.sessionId;
           const storedBackendSessionId = localStorage.getItem(BACKEND_SESSION_KEY);
@@ -407,12 +407,23 @@ export class WebSocketClient {
           
           if (newBackendSessionId) {
             if (storedBackendSessionId && storedBackendSessionId !== newBackendSessionId) {
-              // Backend actually restarted - clear collaborative session
-              const staleSession = sessionStorage.getItem('a2a_collaborative_session');
-              if (staleSession) {
-                console.log('[WebSocket] Backend restarted (session changed), clearing stale collaborative session:', staleSession);
-                sessionStorage.removeItem('a2a_collaborative_session');
+              // Backend actually restarted - check if we should clear collaborative session
+              const justJoined = sessionStorage.getItem('a2a_collaborative_session_just_joined');
+              if (justJoined) {
+                // User just joined a collaborative session - don't clear it
+                console.log('[WebSocket] Backend restarted but user just joined collaborative session, NOT clearing');
+                sessionStorage.removeItem('a2a_collaborative_session_just_joined');
+              } else {
+                // User was already in session before restart - clear stale session
+                const staleSession = sessionStorage.getItem('a2a_collaborative_session');
+                if (staleSession) {
+                  console.log('[WebSocket] Backend restarted (session changed), clearing stale collaborative session:', staleSession);
+                  sessionStorage.removeItem('a2a_collaborative_session');
+                }
               }
+            } else {
+              // Same backend session - just clear the just_joined flag if present
+              sessionStorage.removeItem('a2a_collaborative_session_just_joined');
             }
             // Store/update the backend session ID for future comparisons
             localStorage.setItem(BACKEND_SESSION_KEY, newBackendSessionId);
