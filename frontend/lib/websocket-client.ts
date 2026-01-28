@@ -181,11 +181,16 @@ export class WebSocketClient {
             
             // If this was a reconnection after disconnect, clear collaborative session
             // This handles the case where backend restarted and session state is lost
+            // Note: The backend will also validate and send session_invalid if needed
             if (this.isReconnecting) {
-              console.log("[WebSocket] Reconnected after disconnect - clearing collaborative session");
-              sessionStorage.removeItem('a2a_collaborative_session');
-              // Emit event so UI can update
-              this.emit('session_cleared', { reason: 'reconnect' });
+              const hadSession = sessionStorage.getItem('a2a_collaborative_session');
+              if (hadSession) {
+                console.log("[WebSocket] Reconnected after disconnect - clearing collaborative session");
+                sessionStorage.removeItem('a2a_collaborative_session');
+                // Emit event for logging/debugging, but don't reload here
+                // The backend validation will handle the session properly
+                this.emit('session_cleared', { reason: 'reconnect' });
+              }
             }
             
             this.isConnected = true;
@@ -406,10 +411,16 @@ export class WebSocketClient {
           break;
         case 'session_invalid':
           // Collaborative session no longer exists - clear local storage and reload
-          console.log('[WebSocket] Collaborative session invalid, clearing and reloading:', eventData);
-          sessionStorage.removeItem('a2a_collaborative_session');
-          // Reload to use user's own session
-          window.location.reload();
+          // Only reload if we actually had a collaborative session to clear (prevent loops)
+          const hadCollaborativeSession = sessionStorage.getItem('a2a_collaborative_session');
+          if (hadCollaborativeSession) {
+            console.log('[WebSocket] Collaborative session invalid, clearing and reloading:', eventData);
+            sessionStorage.removeItem('a2a_collaborative_session');
+            // Reload to use user's own session
+            window.location.reload();
+          } else {
+            console.log('[WebSocket] Received session_invalid but no collaborative session stored, ignoring');
+          }
           break;
         default:
           logDebug(`[WebSocket] Unknown event type: ${eventType}`);

@@ -248,9 +248,16 @@ export function ChatLayout() {
     // Handle session cleared event (triggered on WebSocket reconnect after backend restart)
     const handleSessionCleared = (data: any) => {
       console.log("[ChatLayout] Session cleared due to:", data?.reason)
-      // Reload the page to get a fresh state with the user's own session
-      // This ensures users aren't stuck in a stale collaborative session
-      window.location.reload()
+      // Only reload if we actually had a collaborative session
+      // This prevents infinite reload loops
+      const hadSession = sessionStorage.getItem('a2a_collaborative_session')
+      if (hadSession) {
+        sessionStorage.removeItem('a2a_collaborative_session')
+        // Reload the page to get a fresh state with the user's own session
+        window.location.reload()
+      } else {
+        console.log("[ChatLayout] No collaborative session to clear, skipping reload")
+      }
     }
 
     // Subscribe to Event Hub events
