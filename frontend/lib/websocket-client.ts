@@ -410,14 +410,15 @@ export class WebSocketClient {
           this.emit(eventType, eventData);
           break;
         case 'session_invalid':
-          // Collaborative session no longer exists - clear local storage and reload
-          // Only reload if we actually had a collaborative session to clear (prevent loops)
+          // Collaborative session no longer exists - clear local storage
+          // Don't reload - just clear the stale session and continue
+          // The user will now be on their own session
           const hadCollaborativeSession = sessionStorage.getItem('a2a_collaborative_session');
           if (hadCollaborativeSession) {
-            console.log('[WebSocket] Collaborative session invalid, clearing and reloading:', eventData);
+            console.log('[WebSocket] Collaborative session invalid, clearing (no reload):', eventData);
             sessionStorage.removeItem('a2a_collaborative_session');
-            // Reload to use user's own session
-            window.location.reload();
+            // Emit event so UI can show a notification
+            this.emit('session_invalid', eventData);
           } else {
             console.log('[WebSocket] Received session_invalid but no collaborative session stored, ignoring');
           }

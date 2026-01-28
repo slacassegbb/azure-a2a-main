@@ -11,6 +11,7 @@ import { getOrCreateSessionId } from "@/lib/session"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Button } from "@/components/ui/button"
 import { ChevronDown, ChevronRight, FileText } from "lucide-react"
+import { useToast } from "@/hooks/use-toast"
 
 const initialDagNodes = [
   { id: "User", group: "user" },
@@ -23,6 +24,7 @@ const initialDagLinks = [
 
 export function ChatLayout() {
   const DEBUG = process.env.NEXT_PUBLIC_DEBUG_LOGS === 'true'
+  const { toast } = useToast()
   const [isLeftSidebarCollapsed, setLeftSidebarCollapsed] = useState(false)
   const [isRightSidebarCollapsed, setRightSidebarCollapsed] = useState(false)
   const [isFileHistoryOpen, setFileHistoryOpen] = useState(false) // Closed by default
@@ -248,16 +250,24 @@ export function ChatLayout() {
     // Handle session cleared event (triggered on WebSocket reconnect after backend restart)
     const handleSessionCleared = (data: any) => {
       console.log("[ChatLayout] Session cleared due to:", data?.reason)
-      // Only reload if we actually had a collaborative session
-      // This prevents infinite reload loops
+      // Clear the collaborative session but don't reload
+      // The user will continue with their current state but on their own session
       const hadSession = sessionStorage.getItem('a2a_collaborative_session')
       if (hadSession) {
         sessionStorage.removeItem('a2a_collaborative_session')
-        // Reload the page to get a fresh state with the user's own session
-        window.location.reload()
-      } else {
-        console.log("[ChatLayout] No collaborative session to clear, skipping reload")
+        console.log("[ChatLayout] Cleared collaborative session, continuing on own session")
       }
+    }
+
+    // Handle session invalid event (collaborative session no longer exists on backend)
+    const handleSessionInvalid = (data: any) => {
+      console.log("[ChatLayout] Collaborative session invalid:", data?.reason)
+      toast({
+        title: "Collaborative Session Ended",
+        description: "The session you were collaborating on is no longer available. You're now working in your own session.",
+        variant: "default",
+        duration: 6000,
+      })
     }
 
     // Subscribe to Event Hub events
@@ -271,6 +281,7 @@ export function ChatLayout() {
     subscribe("form_submitted", handleFormSubmitted)
     subscribe("user_list_update", handleUserListUpdate)
     subscribe("session_cleared", handleSessionCleared)
+    subscribe("session_invalid", handleSessionInvalid)
 
     if (DEBUG) console.log("[ChatLayout] Subscribed to Event Hub events")
 
@@ -288,9 +299,10 @@ export function ChatLayout() {
       unsubscribe("form_submitted", handleFormSubmitted)
       unsubscribe("user_list_update", handleUserListUpdate)
       unsubscribe("session_cleared", handleSessionCleared)
+      unsubscribe("session_invalid", handleSessionInvalid)
       if (DEBUG) console.log("[ChatLayout] Unsubscribed from Event Hub events")
     }
-  }, [subscribe, unsubscribe, emit])
+  }, [subscribe, unsubscribe, emit, toast])
 
   return (
     <div className="h-full w-full bg-background">
