@@ -394,7 +394,6 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
                             await self.agents_client.runs.cancel(thread_id=thread_id, run_id=run.id)
                             
                             # Wait for cancellation to complete (up to 10 seconds)
-                            import asyncio
                             for _ in range(20):
                                 cancelled_run = await self.agents_client.runs.get(thread_id=thread_id, run_id=run.id)
                                 if cancelled_run.status in ["cancelled", "failed", "completed", "expired"]:
