@@ -1826,6 +1826,12 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
           timestamp: new Date().toISOString()
         }
       })
+      
+      // Always clear inference state at the end of final_response processing
+      // This handles cases where there are no inference steps (e.g., direct host agent responses)
+      setIsInferencing(false)
+      setInferenceSteps([])
+      setActiveNode(null)
     }
 
     subscribe("status_update", handleStatusUpdate)
