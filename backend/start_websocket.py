@@ -31,8 +31,9 @@ def main():
     
     try:
         # Initialize AuthService for WebSocket authentication
+        # Use the lightweight auth_service module to avoid slow Azure SDK imports
         logger.info("📝 Initializing AuthService for WebSocket authentication...")
-        from backend_production import AuthService
+        from service.auth_service import AuthService
         auth_service_instance = AuthService()
         set_auth_service(auth_service_instance)
         logger.info("✅ AuthService initialized successfully")

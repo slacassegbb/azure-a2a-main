@@ -48,8 +48,8 @@ export class WebSocketClient {
 
   constructor(config: WebSocketConfig) {
     this.config = {
-      reconnectInterval: 3000,
-      maxReconnectAttempts: 10,
+      reconnectInterval: 2000,  // Start with 2 seconds
+      maxReconnectAttempts: 50, // Allow up to 50 attempts (~3-5 minutes with backoff)
       ...config
     };
     
@@ -179,19 +179,9 @@ export class WebSocketClient {
             clearTimeout(connectionTimeout);
             console.log("[WebSocket] CONNECTED successfully");
             
-            // If this was a reconnection after disconnect, clear collaborative session
-            // This handles the case where backend restarted and session state is lost
-            // Note: The backend will also validate and send session_invalid if needed
-            if (this.isReconnecting) {
-              const hadSession = sessionStorage.getItem('a2a_collaborative_session');
-              if (hadSession) {
-                console.log("[WebSocket] Reconnected after disconnect - clearing collaborative session");
-                sessionStorage.removeItem('a2a_collaborative_session');
-                // Emit event for logging/debugging, but don't reload here
-                // The backend validation will handle the session properly
-                this.emit('session_cleared', { reason: 'reconnect' });
-              }
-            }
+            // Don't clear collaborative session on reconnect!
+            // The backend validates the session and will send session_invalid if needed.
+            // This preserves the session during normal network blips.
             
             this.isConnected = true;
             this.isReconnecting = false;
@@ -300,7 +290,13 @@ export class WebSocketClient {
     this.isReconnecting = true;
     this.reconnectAttempts++;
     
-    logDebug(`[WebSocket] Scheduling reconnection attempt ${this.reconnectAttempts}/${this.config.maxReconnectAttempts} in ${this.config.reconnectInterval}ms`);
+    // Exponential backoff: start at 2s, max out at 10s
+    // Attempts 1-3: 2s, Attempts 4-6: 4s, Attempts 7+: 6-10s
+    const baseInterval = this.config.reconnectInterval || 2000;
+    const backoffMultiplier = Math.min(Math.floor(this.reconnectAttempts / 3) + 1, 5);
+    const delay = Math.min(baseInterval * backoffMultiplier, 10000);
+    
+    console.log(`[WebSocket] Scheduling reconnection attempt ${this.reconnectAttempts}/${this.config.maxReconnectAttempts} in ${delay}ms`);
     
     this.reconnectTimeout = setTimeout(async () => {
       this.reconnectTimeout = null;
@@ -313,10 +309,10 @@ export class WebSocketClient {
         if (this.reconnectAttempts < this.config.maxReconnectAttempts!) {
           this.scheduleReconnect();
         } else {
-          console.error("[WebSocket] Max reconnection attempts reached");
+          console.error("[WebSocket] Max reconnection attempts reached. Refresh page to retry.");
         }
       }
-    }, this.config.reconnectInterval);
+    }, delay);
   }
 
   private handleEvent(eventData: any) {
