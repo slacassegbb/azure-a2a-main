@@ -111,6 +111,45 @@ export function ChatHistorySidebar({ isCollapsed, onToggle }: Props) {
   // Use Event Hub to listen for WebSocket events
   const { subscribe, unsubscribe } = useEventHub()
 
+  // Handle backend session changes - clear conversation list when backend restarts
+  useEffect(() => {
+    const BACKEND_SESSION_KEY = 'a2a_backend_session_id'
+    
+    const handleSessionStarted = (data: any) => {
+      const newSessionId = data?.data?.sessionId || data?.sessionId
+      if (!newSessionId) {
+        console.log('[ChatHistorySidebar] session_started event but no sessionId found')
+        return
+      }
+      
+      const storedSessionId = localStorage.getItem(BACKEND_SESSION_KEY)
+      
+      if (storedSessionId && storedSessionId !== newSessionId) {
+        // Backend restarted - clear conversation list and reload from server
+        console.log('[ChatHistorySidebar] Backend restarted (session changed), clearing conversations')
+        console.log('[ChatHistorySidebar] Old session:', storedSessionId?.slice(0, 8), '-> New session:', newSessionId.slice(0, 8))
+        setConversations([])
+        // Reload conversations from the (new) backend
+        loadConversations()
+        // If we're currently viewing a conversation, navigate away since it may not exist
+        if (currentConversationId) {
+          console.log('[ChatHistorySidebar] Navigating away from stale conversation')
+          router.push('/')
+        }
+      }
+      
+      // Store the new session ID
+      localStorage.setItem(BACKEND_SESSION_KEY, newSessionId)
+      console.log('[ChatHistorySidebar] Backend session ID stored:', newSessionId.slice(0, 8))
+    }
+
+    subscribe('session_started', handleSessionStarted)
+    
+    return () => {
+      unsubscribe('session_started', handleSessionStarted)
+    }
+  }, [subscribe, unsubscribe, loadConversations, currentConversationId, router])
+
   useEffect(() => {
     console.log('[ChatHistorySidebar] Setting up event listeners...')
     

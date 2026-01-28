@@ -612,12 +612,16 @@ export class WebSocketClient {
   private handleSharedMessageEvent(eventData: any) {
     console.log("[WebSocket] Shared message event received:", eventData);
     
-    // Extract the message data
+    // Extract the message data and conversationId
     const messageData = eventData.data?.message;
+    // conversationId can be at top level or in data (backend sends both for compatibility)
+    const conversationId = eventData.conversationId || eventData.data?.conversationId || "";
+    
     if (messageData) {
       // Emit the shared_message event for the frontend to handle
       this.emit('shared_message', {
         eventType: 'shared_message',
+        conversationId: conversationId,  // Include for conversation filtering
         message: messageData,
         timestamp: eventData.timestamp || new Date().toISOString()
       });
@@ -627,9 +631,13 @@ export class WebSocketClient {
   private handleSharedInferenceStartedEvent(eventData: any) {
     console.log("[WebSocket] Shared inference started event received:", eventData);
     
+    // Extract conversationId from data
+    const conversationId = eventData.data?.conversationId || "";
+    
     // Emit the shared_inference_started event for the frontend to handle
     this.emit('shared_inference_started', {
       eventType: 'shared_inference_started',
+      conversationId: conversationId,  // Include at top level for easy filtering
       data: eventData.data,
       timestamp: eventData.timestamp || new Date().toISOString()
     });
@@ -638,9 +646,13 @@ export class WebSocketClient {
   private handleSharedInferenceEndedEvent(eventData: any) {
     console.log("[WebSocket] Shared inference ended event received:", eventData);
     
+    // Extract conversationId from data
+    const conversationId = eventData.data?.conversationId || "";
+    
     // Emit the shared_inference_ended event for the frontend to handle  
     this.emit('shared_inference_ended', {
       eventType: 'shared_inference_ended',
+      conversationId: conversationId,  // Include at top level for easy filtering
       data: eventData.data,
       timestamp: eventData.timestamp || new Date().toISOString()
     });

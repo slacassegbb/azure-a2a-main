@@ -687,6 +687,46 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       )
     : mentionSuggestions
 
+  // Handle backend session changes - clear messages when backend restarts
+  useEffect(() => {
+    const BACKEND_SESSION_KEY = 'a2a_backend_session_id'
+    
+    const handleSessionStarted = (data: any) => {
+      const newSessionId = data?.data?.sessionId || data?.sessionId
+      if (!newSessionId) {
+        if (DEBUG) console.log('[ChatPanel] session_started event but no sessionId found')
+        return
+      }
+      
+      const storedSessionId = localStorage.getItem(BACKEND_SESSION_KEY)
+      
+      if (storedSessionId && storedSessionId !== newSessionId) {
+        // Backend restarted - clear all local state
+        console.log('[ChatPanel] Backend restarted (session changed), clearing messages and state')
+        console.log('[ChatPanel] Old session:', storedSessionId?.slice(0, 8), '-> New session:', newSessionId.slice(0, 8))
+        setMessages([])
+        setUploadedFiles([])
+        setInferenceSteps([])
+        setIsInferencing(false)
+        // Navigate away from any stale conversation
+        if (conversationId && conversationId !== 'frontend-chat-context') {
+          console.log('[ChatPanel] Navigating away from stale conversation')
+          router.push('/')
+        }
+      }
+      
+      // Store the new session ID
+      localStorage.setItem(BACKEND_SESSION_KEY, newSessionId)
+      if (DEBUG) console.log('[ChatPanel] Backend session ID stored:', newSessionId.slice(0, 8))
+    }
+
+    subscribe('session_started', handleSessionStarted)
+    
+    return () => {
+      unsubscribe('session_started', handleSessionStarted)
+    }
+  }, [subscribe, unsubscribe, conversationId, router])
+
   // Clear uploaded files when connection is lost (backend restart)
   useEffect(() => {
     if (!isConnected && uploadedFiles.length > 0) {
@@ -1372,8 +1412,10 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       console.log("[ChatPanel] Shared inference started:", data)
       
       // Filter by conversationId - only process inference events for the current conversation
-      if (data.data?.conversationId && data.data.conversationId !== conversationId) {
-        console.log("[ChatPanel] Ignoring inference started for different conversation:", data.data.conversationId, "current:", conversationId)
+      // conversationId is now at top level (from WebSocket client normalization)
+      const eventConvId = data.conversationId || data.data?.conversationId || ""
+      if (eventConvId && eventConvId !== conversationId) {
+        console.log("[ChatPanel] Ignoring inference started for different conversation:", eventConvId, "current:", conversationId)
         return
       }
       
@@ -1386,8 +1428,10 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       console.log("[ChatPanel] Shared inference ended:", data)
       
       // Filter by conversationId - only process inference events for the current conversation
-      if (data.data?.conversationId && data.data.conversationId !== conversationId) {
-        console.log("[ChatPanel] Ignoring inference ended for different conversation:", data.data.conversationId, "current:", conversationId)
+      // conversationId is now at top level (from WebSocket client normalization)
+      const eventConvId = data.conversationId || data.data?.conversationId || ""
+      if (eventConvId && eventConvId !== conversationId) {
+        console.log("[ChatPanel] Ignoring inference ended for different conversation:", eventConvId, "current:", conversationId)
         return
       }
       

@@ -766,12 +766,15 @@ def create_websocket_app() -> FastAPI:
         elif message_type == "shared_message":
             # Handle shared message that should be broadcast to tenant's clients
             message_data = message.get("message", {})
+            conversation_id = message.get("conversationId", "")  # Preserve conversationId for filtering
             
             # Create the event to broadcast
             shared_event = {
                 "eventType": "shared_message",
+                "conversationId": conversation_id,  # Include at top level for frontend filtering
                 "data": {
-                    "message": message_data
+                    "message": message_data,
+                    "conversationId": conversation_id  # Also include in data for compatibility
                 }
             }
             

@@ -232,6 +232,8 @@ export function SessionInviteButton() {
 
 export function SessionInvitationNotification() {
   const [pendingInvitations, setPendingInvitations] = useState<SessionInvitation[]>([])
+  // Track which invitations are waiting for backend confirmation before reload
+  const [pendingJoin, setPendingJoin] = useState<{sessionId: string, invitationId: string} | null>(null)
   const { sendMessage, subscribe, unsubscribe } = useEventHub()
   const { toast } = useToast()
 
@@ -261,11 +263,16 @@ export function SessionInvitationNotification() {
     })
   }, [toast])
 
-  // Handle session members updated
+  // Handle session members updated - this confirms the backend processed our acceptance
   const handleMembersUpdated = useCallback((eventData: any) => {
     console.log("[SessionInvite] Session members updated:", eventData)
-    // Could update UI to show current session members
-  }, [])
+    // Check if this is confirmation for our pending join
+    if (pendingJoin && eventData.session_id === pendingJoin.sessionId) {
+      console.log("[SessionInvite] Backend confirmed membership, now joining session:", pendingJoin.sessionId)
+      // Backend has confirmed we're added - now safe to reload
+      joinCollaborativeSession(pendingJoin.sessionId)
+    }
+  }, [pendingJoin])
 
   useEffect(() => {
     subscribe("session_invite_received", handleInviteReceived)
@@ -294,13 +301,23 @@ export function SessionInvitationNotification() {
     if (accepted) {
       toast({
         title: "Joining Session...",
-        description: `Switching to ${invitation.from_username}'s session`,
+        description: `Waiting for server confirmation...`,
       })
       
-      // Join the collaborative session - this will reload the page
-      // with the new session ID so we see all their data
-      console.log("[SessionInvite] Joining collaborative session:", invitation.session_id)
-      joinCollaborativeSession(invitation.session_id)
+      // Set pending join - we'll actually join when we receive session_members_updated
+      // This ensures the backend has processed our acceptance before we reload
+      console.log("[SessionInvite] Waiting for backend confirmation before joining:", invitation.session_id)
+      setPendingJoin({
+        sessionId: invitation.session_id,
+        invitationId: invitation.invitation_id
+      })
+      
+      // Fallback: If we don't get confirmation within 3 seconds, join anyway
+      // This handles edge cases like network issues with the confirmation event
+      setTimeout(() => {
+        console.log("[SessionInvite] Fallback: joining after timeout for session:", invitation.session_id)
+        joinCollaborativeSession(invitation.session_id)
+      }, 3000)
     }
   }
 
