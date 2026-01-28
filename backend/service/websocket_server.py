@@ -1216,12 +1216,19 @@ def create_websocket_app() -> FastAPI:
         connections_info = []
         for ws, auth_conn in websocket_manager.authenticated_connections.items():
             tenant_id = websocket_manager.connection_tenants.get(ws, "unknown")
+            # connected_at might be a float timestamp or datetime
+            connected_at_str = None
+            if auth_conn.connected_at:
+                if isinstance(auth_conn.connected_at, float):
+                    connected_at_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(auth_conn.connected_at))
+                else:
+                    connected_at_str = auth_conn.connected_at.isoformat() if hasattr(auth_conn.connected_at, 'isoformat') else str(auth_conn.connected_at)
             connections_info.append({
                 "username": auth_conn.username,
                 "email": auth_conn.email,
                 "user_id": auth_conn.user_data.get("user_id") if auth_conn.user_data else None,
                 "tenant_id": tenant_id[:50] if tenant_id else None,  # Truncate for readability
-                "connected_at": auth_conn.connected_at.isoformat() if auth_conn.connected_at else None
+                "connected_at": connected_at_str
             })
         
         # Also show collaborative sessions
