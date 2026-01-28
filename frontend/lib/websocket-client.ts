@@ -396,6 +396,17 @@ export class WebSocketClient {
           console.log(`[WebSocket] Received ${eventType} event:`, eventData);
           this.emit(eventType, eventData);
           break;
+        case 'session_started':
+          // Backend restarted - clear any stale collaborative session
+          // This ensures users don't stay connected to sessions that no longer exist
+          const staleSession = sessionStorage.getItem('a2a_collaborative_session');
+          if (staleSession) {
+            console.log('[WebSocket] Backend restarted, clearing stale collaborative session:', staleSession);
+            sessionStorage.removeItem('a2a_collaborative_session');
+          }
+          console.log('[WebSocket] Received session_started event:', eventData);
+          this.emit('session_started', eventData);
+          break;
         case 'session_invite_sent':
         case 'session_invite_error':
         case 'session_invite_received':
