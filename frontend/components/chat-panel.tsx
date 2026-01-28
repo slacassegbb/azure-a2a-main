@@ -1327,6 +1327,12 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
     const handleSharedMessage = (data: any) => {
       console.log("[ChatPanel] Shared message received:", data)
       
+      // Filter by conversationId - only process messages for the current conversation
+      if (data.conversationId && data.conversationId !== conversationId) {
+        console.log("[ChatPanel] Ignoring message for different conversation:", data.conversationId, "current:", conversationId)
+        return
+      }
+      
       if (data.message) {
         const newMessage: Message = {
           id: data.message.id,
@@ -1352,6 +1358,13 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
     // Handle shared inference state changes from other clients
     const handleSharedInferenceStarted = (data: any) => {
       console.log("[ChatPanel] Shared inference started:", data)
+      
+      // Filter by conversationId - only process inference events for the current conversation
+      if (data.data?.conversationId && data.data.conversationId !== conversationId) {
+        console.log("[ChatPanel] Ignoring inference started for different conversation:", data.data.conversationId, "current:", conversationId)
+        return
+      }
+      
       setIsInferencing(true)
       setInferenceSteps([])
       setActiveNode("User Input")
@@ -1359,6 +1372,13 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
 
     const handleSharedInferenceEnded = (data: any) => {
       console.log("[ChatPanel] Shared inference ended:", data)
+      
+      // Filter by conversationId - only process inference events for the current conversation
+      if (data.data?.conversationId && data.data.conversationId !== conversationId) {
+        console.log("[ChatPanel] Ignoring inference ended for different conversation:", data.data.conversationId, "current:", conversationId)
+        return
+      }
+      
       setIsInferencing(false)
       setInferenceSteps([])
       setActiveNode(null)
@@ -1791,6 +1811,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
           if (msg.type !== 'inference_summary' && msg.role === 'assistant') {
             sendMessage({
               type: "shared_message",
+              conversationId: effectiveConversationId,
               message: msg
             })
           }
@@ -2004,6 +2025,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       // Broadcast message to all other connected clients via WebSocket
       sendMessage({
         type: "shared_message",
+        conversationId: conversationId,
         message: userMessage
       })
       
@@ -2083,6 +2105,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
     // Broadcast message to all other connected clients via WebSocket
     sendMessage({
       type: "shared_message",
+      conversationId: actualConversationId,
       message: userMessage
     })
     
