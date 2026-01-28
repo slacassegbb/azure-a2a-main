@@ -1158,7 +1158,19 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
     // Handle real messages from A2A backend
     const handleMessage = (data: any) => {
       console.log("[ChatPanel] Message received:", data)
-      console.log("[ChatPanel] Current messages count:", messages.length)
+      console.log("[ChatPanel] Current conversationId:", conversationId)
+      
+      // Filter by conversationId - only process messages for the current conversation
+      // The backend sends conversationId in format "sessionId::convId" - extract just the convId part
+      let messageConvId = data.conversationId || data.contextId || ""
+      if (messageConvId.includes("::")) {
+        messageConvId = messageConvId.split("::")[1]
+      }
+      
+      if (messageConvId && messageConvId !== conversationId && conversationId !== 'frontend-chat-context') {
+        console.log("[ChatPanel] Ignoring message for different conversation:", messageConvId, "current:", conversationId)
+        return
+      }
       
       // A2A MessageEventData has: messageId, conversationId, role, content[], direction
       if (data.messageId && data.content && data.content.length > 0) {
@@ -1655,12 +1667,36 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
   useEffect(() => {
     const handleStatusUpdate = (data: { inferenceId: string; agent: string; status: string }) => {
       console.log("[ChatPanel] Status update:", data)
+      
+      // Filter by conversationId - only process status updates for the current conversation
+      // inferenceId typically contains "sessionId::conversationId" format
+      let statusConvId = data.inferenceId || ""
+      if (statusConvId.includes("::")) {
+        statusConvId = statusConvId.split("::")[1]
+      }
+      
+      if (statusConvId && statusConvId !== conversationId && conversationId !== 'frontend-chat-context') {
+        console.log("[ChatPanel] Ignoring status update for different conversation:", statusConvId, "current:", conversationId)
+        return
+      }
+      
       setInferenceSteps((prev) => [...prev, { agent: data.agent, status: data.status }])
       setActiveNode(data.agent)
     }
 
     const handleFinalResponse = (data: { inferenceId: string; message: Omit<Message, "id">; conversationId?: string; messageId?: string; attachments?: any[] }) => {
       console.log("[ChatPanel] Final response received:", data)
+      
+      // Filter by conversationId - only process final responses for the current conversation
+      let responseConvId = data.conversationId || data.inferenceId || ""
+      if (responseConvId.includes("::")) {
+        responseConvId = responseConvId.split("::")[1]
+      }
+      
+      if (responseConvId && responseConvId !== conversationId && conversationId !== 'frontend-chat-context') {
+        console.log("[ChatPanel] Ignoring final response for different conversation:", responseConvId, "current:", conversationId)
+        return
+      }
       
       // Use messageId from backend if available, otherwise generate unique ID based on timestamp
       // Don't use content in the key since same content can be sent multiple times
@@ -1841,7 +1877,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       unsubscribe("status_update", handleStatusUpdate)
       unsubscribe("final_response", handleFinalResponse)
     }
-  }, [inferenceSteps, processedMessageIds, subscribe, unsubscribe]) // Include subscribe/unsubscribe so we rewire after client init
+  }, [inferenceSteps, processedMessageIds, subscribe, unsubscribe, conversationId]) // Include conversationId for filtering
 
   const uploadFiles = async (files: FileList | File[]) => {
     if (!files || files.length === 0) return
