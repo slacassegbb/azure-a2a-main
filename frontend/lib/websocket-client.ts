@@ -403,6 +403,8 @@ export class WebSocketClient {
           const newBackendSessionId = eventData?.data?.sessionId || eventData?.sessionId;
           const storedBackendSessionId = localStorage.getItem(BACKEND_SESSION_KEY);
           
+          console.log('[WebSocket] session_started - stored:', storedBackendSessionId?.slice(0,8), 'new:', newBackendSessionId?.slice(0,8));
+          
           if (newBackendSessionId) {
             if (storedBackendSessionId && storedBackendSessionId !== newBackendSessionId) {
               // Backend actually restarted - clear collaborative session
