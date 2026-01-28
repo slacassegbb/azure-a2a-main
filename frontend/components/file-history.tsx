@@ -1,11 +1,10 @@
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { Badge } from "@/components/ui/badge"
 import { Trash2, Download, Eye, ExternalLink } from "lucide-react"
 import { useEventHub } from "@/hooks/use-event-hub"
 import { getOrCreateSessionId } from "@/lib/session"
@@ -217,16 +216,7 @@ export function FileHistory({ className, onFileSelect, onFilesLoaded }: FileHist
 
   return (
     <Card className={className}>
-      <CardHeader className="pb-3">
-        <div className="flex items-center justify-between">
-          <CardTitle className="text-sm font-medium">File History</CardTitle>
-          <Badge variant="secondary">{files.length}</Badge>
-        </div>
-        <CardDescription className="text-xs">
-          Uploaded files across all conversations
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-3">
+      <CardContent className="pt-3 space-y-3">
         {files.length === 0 ? (
           <div className="text-center text-xs text-muted-foreground py-4">
             No files uploaded yet
