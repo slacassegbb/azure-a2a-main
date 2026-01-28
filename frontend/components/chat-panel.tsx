@@ -1620,7 +1620,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       unsubscribe("file_uploaded", handleFileUploaded)
       unsubscribe("outgoing_agent_message", handleOutgoingAgentMessage)
     }
-  }, [subscribe, unsubscribe, emit, sendMessage, processedMessageIds, voiceLive])
+  }, [subscribe, unsubscribe, emit, sendMessage, processedMessageIds, voiceLive, conversationId])
 
   // Check authentication status and show welcome message only when logged in
   useEffect(() => {

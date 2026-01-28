@@ -384,23 +384,52 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
             thread_id = self.thread_ids[context_id]
             
             # Cancel any active runs before creating new message
+            # Azure AI Agents API requires runs to be fully cancelled before adding messages
             try:
                 runs = self.agents_client.runs.list(thread_id=thread_id)
                 async for run in runs:
                     if run.status in ["in_progress", "requires_action", "queued"]:
                         try:
+                            log_debug(f"🛑 Cancelling active run {run.id} (status: {run.status})")
                             await self.agents_client.runs.cancel(thread_id=thread_id, run_id=run.id)
-                        except Exception:
-                            pass
-            except Exception:
-                pass
+                            
+                            # Wait for cancellation to complete (up to 10 seconds)
+                            import asyncio
+                            for _ in range(20):
+                                cancelled_run = await self.agents_client.runs.get(thread_id=thread_id, run_id=run.id)
+                                if cancelled_run.status in ["cancelled", "failed", "completed", "expired"]:
+                                    log_debug(f"✅ Run {run.id} cancelled successfully (final status: {cancelled_run.status})")
+                                    break
+                                await asyncio.sleep(0.5)
+                            else:
+                                log_debug(f"⚠️ Run {run.id} cancellation timed out, proceeding anyway")
+                        except Exception as cancel_error:
+                            log_debug(f"⚠️ Error cancelling run {run.id}: {cancel_error}")
+            except Exception as list_error:
+                log_debug(f"⚠️ Error listing runs: {list_error}")
             
-            # Create message in thread
-            message = await self.agents_client.messages.create(
-                thread_id=thread_id,
-                role=MessageRole.USER,
-                content=user_message
-            )
+            # Create message in thread (with retry using new thread if active run blocks it)
+            try:
+                message = await self.agents_client.messages.create(
+                    thread_id=thread_id,
+                    role=MessageRole.USER,
+                    content=user_message
+                )
+            except Exception as msg_error:
+                if "while a run" in str(msg_error) and "is active" in str(msg_error):
+                    log_debug(f"⚠️ Thread {thread_id} still has active run, creating new thread")
+                    # Create a new thread and retry
+                    thread = await self.agents_client.threads.create()
+                    thread_id = thread.id
+                    self.thread_ids[context_id] = thread_id
+                    message = await self.agents_client.messages.create(
+                        thread_id=thread_id,
+                        role=MessageRole.USER,
+                        content=user_message
+                    )
+                    log_debug(f"✅ Created new thread {thread_id} for context {context_id}")
+                else:
+                    raise
             
             # Stream the run
             full_text = ""
