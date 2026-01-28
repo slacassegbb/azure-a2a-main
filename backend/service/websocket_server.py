@@ -393,6 +393,7 @@ class WebSocketManager:
             collaborative_session = None
             if tenant_id:
                 collaborative_session = collaborative_session_manager.get_session(tenant_id)
+                logger.info(f"[WebSocket] Checking collaborative session for tenant_id={tenant_id}: found={collaborative_session is not None}")
             
             if collaborative_session:
                 # In a collaborative session - get all members
@@ -457,7 +458,8 @@ class WebSocketManager:
                 "timestamp": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
             }
             await websocket.send_text(json.dumps(event_data))
-            logger.info(f"[WebSocket] Sent session user update to {auth_conn.username}: {len(session_users)} user(s)")
+            user_names = [u.get('name', 'unknown') for u in session_users]
+            logger.info(f"[WebSocket] Sent session user update to {auth_conn.username}: {len(session_users)} user(s): {user_names}")
         except Exception as e:
             logger.error(f"Failed to send session user update to {auth_conn.username}: {e}")
     
@@ -1202,9 +1204,41 @@ def create_websocket_app() -> FastAPI:
             "endpoints": {
                 "websocket": "/events (WebSocket)",
                 "post_event": "/events (POST)",
-                "health": "/health (GET)"
+                "health": "/health (GET)",
+                "debug": "/debug/connections (GET)"
             },
             **websocket_manager.get_status()
+        })
+    
+    @app.get("/debug/connections")
+    async def debug_connections():
+        """Debug endpoint to show all connected users and their tenant IDs."""
+        connections_info = []
+        for ws, auth_conn in websocket_manager.authenticated_connections.items():
+            tenant_id = websocket_manager.connection_tenants.get(ws, "unknown")
+            connections_info.append({
+                "username": auth_conn.username,
+                "email": auth_conn.email,
+                "user_id": auth_conn.user_data.get("user_id") if auth_conn.user_data else None,
+                "tenant_id": tenant_id[:50] if tenant_id else None,  # Truncate for readability
+                "connected_at": auth_conn.connected_at.isoformat() if auth_conn.connected_at else None
+            })
+        
+        # Also show collaborative sessions
+        active_sessions = []
+        for session_id, session in collaborative_session_manager.active_sessions.items():
+            active_sessions.append({
+                "session_id": session_id[:50] if session_id else None,
+                "owner": session.owner_user_id,
+                "members": list(session.get_all_member_ids()) if hasattr(session, 'get_all_member_ids') else []
+            })
+        
+        return JSONResponse({
+            "authenticated_connections": connections_info,
+            "total_authenticated": len(connections_info),
+            "collaborative_sessions": active_sessions,
+            "total_sessions": len(active_sessions),
+            "tenants": list(set(websocket_manager.connection_tenants.values()))
         })
     
     return app
