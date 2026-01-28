@@ -397,13 +397,25 @@ export class WebSocketClient {
           this.emit(eventType, eventData);
           break;
         case 'session_started':
-          // Backend restarted - clear any stale collaborative session
-          // This ensures users don't stay connected to sessions that no longer exist
-          const staleSession = sessionStorage.getItem('a2a_collaborative_session');
-          if (staleSession) {
-            console.log('[WebSocket] Backend restarted, clearing stale collaborative session:', staleSession);
-            sessionStorage.removeItem('a2a_collaborative_session');
+          // Check if backend actually restarted by comparing session IDs
+          // Only clear collaborative session if the backend session ID changed
+          const BACKEND_SESSION_KEY = 'a2a_backend_session_id';
+          const newBackendSessionId = eventData?.data?.sessionId || eventData?.sessionId;
+          const storedBackendSessionId = localStorage.getItem(BACKEND_SESSION_KEY);
+          
+          if (newBackendSessionId) {
+            if (storedBackendSessionId && storedBackendSessionId !== newBackendSessionId) {
+              // Backend actually restarted - clear collaborative session
+              const staleSession = sessionStorage.getItem('a2a_collaborative_session');
+              if (staleSession) {
+                console.log('[WebSocket] Backend restarted (session changed), clearing stale collaborative session:', staleSession);
+                sessionStorage.removeItem('a2a_collaborative_session');
+              }
+            }
+            // Store/update the backend session ID for future comparisons
+            localStorage.setItem(BACKEND_SESSION_KEY, newBackendSessionId);
           }
+          
           console.log('[WebSocket] Received session_started event:', eventData);
           this.emit('session_started', eventData);
           break;

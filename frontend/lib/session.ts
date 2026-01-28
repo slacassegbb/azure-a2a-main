@@ -36,6 +36,7 @@ export function getOrCreateSessionId(): string {
   
   // Check if in a collaborative session first (takes priority)
   const collaborativeSession = sessionStorage.getItem('a2a_collaborative_session');
+  console.log('[Session] getOrCreateSessionId called. a2a_collaborative_session =', collaborativeSession);
   if (collaborativeSession) {
     console.log('[Session] Using collaborative session:', collaborativeSession);
     return collaborativeSession;
