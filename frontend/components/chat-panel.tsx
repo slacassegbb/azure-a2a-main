@@ -20,7 +20,7 @@ import remarkGfm from "remark-gfm"
 import rehypeHighlight from "rehype-highlight"
 import { useSearchParams, useRouter } from "next/navigation"
 import { getConversation, updateConversationTitle, createConversation, notifyConversationCreated, type Message as APIMessage } from "@/lib/conversation-api"
-import { createContextId, getOrCreateSessionId, getOwnUserId } from "@/lib/session"
+import { createContextId, getOrCreateSessionId } from "@/lib/session"
 
 // Transform technical status messages into user-friendly display text
 const transformStatusMessage = (message: string, agentName?: string): string => {
@@ -1215,12 +1215,12 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
         return
       }
       
-      // In collaborative sessions, skip messages from other tenants - they will arrive via shared_message
-      // This prevents duplicate message display when both message event and shared_message are received
-      // Use getOwnUserId() to get the user's actual user_id, not the collaborative session ID
-      const myUserId = getOwnUserId()
-      if (messageTenantId && myUserId && messageTenantId !== myUserId) {
-        console.log("[ChatPanel] Ignoring message from different tenant (will receive via shared_message):", messageTenantId, "my user_id:", myUserId)
+      // Filter by session/tenant - only process messages for the current session
+      // In collaborative sessions, getOrCreateSessionId() returns the shared session ID
+      // So both User A and User B will accept events from the shared session
+      const mySessionId = getOrCreateSessionId()
+      if (messageTenantId && mySessionId && messageTenantId !== mySessionId) {
+        console.log("[ChatPanel] Ignoring message from different session:", messageTenantId, "my session:", mySessionId)
         return
       }
       
@@ -1312,9 +1312,10 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
           setMessages(prev => prev.filter(msg => msg.id !== streamingId))
           setStreamingMessageId(null)
           
-          // Determine if this message originated from the current user's session
-          // If not, we should NOT re-broadcast it (to avoid duplicate shared_message loops)
-          const isFromMyTenant = messageTenantId === myUserId || !messageTenantId
+          // Backend-originated messages should NOT be re-broadcast as shared_message
+          // The backend already sent this to all session members via smart_broadcast
+          // Setting isFromMyTenant: false prevents handleFinalResponse from re-broadcasting
+          const shouldBroadcast = false
           
           // Emit final_response for internal processing - this is converted from message event
           // Include attachments so they appear AFTER the workflow, not before
@@ -1322,7 +1323,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
             inferenceId: data.conversationId || data.messageId,
             conversationId: data.conversationId || data.contextId,
             messageId: data.messageId, // Pass through the backend's unique messageId
-            isFromMyTenant: isFromMyTenant, // Flag to control re-broadcasting
+            isFromMyTenant: shouldBroadcast, // false = don't re-broadcast backend messages
             message: {
               role: data.role === "user" ? "user" : "assistant",
               content: textContent,
@@ -1441,11 +1442,11 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
         eventConvId = parts[1]
       }
       
-      // Skip events from other tenants - prevents duplicate workflow displays
-      // Use getOwnUserId() to get the user's actual user_id, not the collaborative session ID
-      const myUserId = getOwnUserId()
-      if (eventTenantId && myUserId && eventTenantId !== myUserId) {
-        console.log("[ChatPanel] Ignoring inference started from different tenant:", eventTenantId, "my user_id:", myUserId)
+      // Filter by session - only process events for the current session
+      // In collaborative sessions, getOrCreateSessionId() returns the shared session ID
+      const mySessionId = getOrCreateSessionId()
+      if (eventTenantId && mySessionId && eventTenantId !== mySessionId) {
+        console.log("[ChatPanel] Ignoring inference started from different session:", eventTenantId, "my session:", mySessionId)
         return
       }
       
@@ -1472,11 +1473,11 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
         eventConvId = parts[1]
       }
       
-      // Skip events from other tenants
-      // Use getOwnUserId() to get the user's actual user_id, not the collaborative session ID
-      const myUserId = getOwnUserId()
-      if (eventTenantId && myUserId && eventTenantId !== myUserId) {
-        console.log("[ChatPanel] Ignoring inference ended from different tenant:", eventTenantId, "my user_id:", myUserId)
+      // Filter by session - only process events for the current session
+      // In collaborative sessions, getOrCreateSessionId() returns the shared session ID
+      const mySessionId = getOrCreateSessionId()
+      if (eventTenantId && mySessionId && eventTenantId !== mySessionId) {
+        console.log("[ChatPanel] Ignoring inference ended from different session:", eventTenantId, "my session:", mySessionId)
         return
       }
       
