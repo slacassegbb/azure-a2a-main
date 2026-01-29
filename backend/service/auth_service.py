@@ -245,8 +245,10 @@ class AuthService:
                 "exp": payload.get("exp")
             }
         except jwt.ExpiredSignatureError:
+            print(f"[AuthService] Token verification failed: TOKEN EXPIRED")
             return None
-        except jwt.JWTError:
+        except jwt.JWTError as e:
+            print(f"[AuthService] Token verification failed: JWT Error - {e}")
             return None
     
     def get_user_by_email(self, email: str) -> Optional[User]:
