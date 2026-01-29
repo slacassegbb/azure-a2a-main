@@ -90,7 +90,7 @@ export function ConnectedUsers() {
     return () => {
       unsubscribe("user_list_update", handleUserListUpdate)
     }
-  }, [subscribe, unsubscribe, handleUserListUpdate, sendMessage, isConnected])
+  }, []) // Only subscribe once on mount, unsubscribe on unmount - don't re-subscribe!
 
   const toggleUser = (userId: string) => {
     const newExpanded = new Set(expandedUsers)
