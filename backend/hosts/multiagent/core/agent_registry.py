@@ -271,5 +271,16 @@ class AgentRegistry:
         """
         log_debug("🔧 [TOOL] list_remote_agents_sync called by SDK!")
         result = self.list_remote_agents()
+        
+        # If no agents are registered, return a helpful message instead of empty list
+        # This prevents Azure AI Agents API from choking on empty responses
+        if not result or len(result) == 0:
+            log_debug("🔧 [TOOL] list_remote_agents_sync returning: [] (no agents registered)")
+            return [{
+                "name": "No Agents Available",
+                "description": "No specialized remote agents are currently registered. The host agent can still respond to general queries.",
+                "status": "info"
+            }]
+        
         log_debug(f"🔧 [TOOL] list_remote_agents_sync returning: {result}")
         return result

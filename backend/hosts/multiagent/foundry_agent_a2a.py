@@ -437,11 +437,14 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
             tool_calls_to_execute = []
             
             # Create the stream with proper error handling
+            # Use "auto" to allow agent to decide whether to call tools or respond directly
+            # The agent will still delegate to other agents when appropriate (per its instructions)
+            # but can also handle simple conversational messages without forcing a tool call
             try:
                 stream = await self.agents_client.runs.stream(
                     thread_id=thread_id,
                     agent_id=self.agent_id,
-                    tool_choice="required"
+                    tool_choice="auto"
                 )
             except Exception as stream_error:
                 log_error(f"Error creating stream: {stream_error}")
