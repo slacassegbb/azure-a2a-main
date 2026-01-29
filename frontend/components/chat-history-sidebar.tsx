@@ -42,11 +42,11 @@ export function ChatHistorySidebar({ isCollapsed, onToggle }: Props) {
     }
   }, [])
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
     if (typeof window !== 'undefined') {
       // If user is in a collaborative session, leave it first
       if (isInCollaborativeSession()) {
-        leaveCollaborativeSession(false, sendMessage) // Don't reload yet, but notify backend
+        await leaveCollaborativeSession(false, sendMessage) // Wait for leave message to be sent
       }
       
       // Clear auth data
