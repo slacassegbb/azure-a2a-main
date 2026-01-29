@@ -1685,6 +1685,23 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
         }
       }
       
+      // Handle the response message if included
+      const responseMessage = data.responseMessage || data.data?.responseMessage
+      if (responseMessage) {
+        console.log("[ChatPanel] Received response message from shared_inference_ended:", responseMessage)
+        
+        // Add the response message if we don't already have it
+        setMessages((prev) => {
+          const exists = prev.some(m => m.id === responseMessage.id)
+          if (exists) {
+            console.log("[ChatPanel] Response message already exists, skipping:", responseMessage.id)
+            return prev
+          }
+          console.log("[ChatPanel] Adding shared response message:", responseMessage.id)
+          return [...prev, responseMessage]
+        })
+      }
+      
       setIsInferencing(false)
       setInferenceSteps([])
       setActiveNode(null)
@@ -2241,7 +2258,10 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
 
       // Only broadcast inference ended if this is from our session
       if (data.isFromMyTenant !== false) {
-        // Broadcast inference ended to all other clients WITH workflow steps
+        // Find the assistant response message we just added (if any)
+        const assistantMessage = messagesToAdd.find(msg => msg.role === 'assistant' && msg.type !== 'inference_summary')
+        
+        // Broadcast inference ended to all other clients WITH workflow steps AND response message
         sendMessage({
           type: "shared_inference_ended",
           data: {
@@ -2249,7 +2269,9 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
             timestamp: new Date().toISOString(),
             // Include workflow steps so other clients can display them
             workflowSteps: stepsToShare,
-            summaryId: `summary_${data.inferenceId}_${Date.now()}`
+            summaryId: `summary_${data.inferenceId}_${Date.now()}`,
+            // Include the response message so other clients can display it
+            responseMessage: assistantMessage || null
           }
         })
       }
