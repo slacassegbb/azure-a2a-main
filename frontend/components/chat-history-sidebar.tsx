@@ -9,7 +9,7 @@ import { cn } from "@/lib/utils"
 import { listConversations, createConversation, deleteConversation, listMessages, notifyConversationCreated, type Conversation } from "@/lib/conversation-api"
 import { LoginDialog } from "@/components/login-dialog"
 import { useEventHub } from "@/hooks/use-event-hub"
-import { getOrCreateSessionId } from "@/lib/session"
+import { getOrCreateSessionId, leaveCollaborativeSession, isInCollaborativeSession } from "@/lib/session"
 
 type Props = {
   isCollapsed: boolean
@@ -43,9 +43,16 @@ export function ChatHistorySidebar({ isCollapsed, onToggle }: Props) {
 
   const handleLogout = () => {
     if (typeof window !== 'undefined') {
+      // If user is in a collaborative session, leave it first
+      if (isInCollaborativeSession()) {
+        leaveCollaborativeSession(false) // Don't reload yet
+      }
+      
+      // Clear auth data
       sessionStorage.removeItem('auth_token')
       sessionStorage.removeItem('user_info')
       setCurrentUser(null)
+      
       // Reload to disconnect authenticated WebSocket connection
       window.location.reload()
     }
