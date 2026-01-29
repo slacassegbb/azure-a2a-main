@@ -1081,6 +1081,17 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
     // This prevents duplicate messages in the workflow
     const handleTaskUpdate = (data: any) => {
       console.log("[ChatPanel] Task update received (for agent registration only):", data)
+      
+      // Filter by conversationId - only process updates for the current conversation
+      let taskConvId = data.conversationId || data.contextId || ""
+      if (taskConvId.includes("::")) {
+        taskConvId = taskConvId.split("::")[1]
+      }
+      if (taskConvId && taskConvId !== conversationId && conversationId !== 'frontend-chat-context') {
+        console.log("[ChatPanel] Ignoring task update for different conversation:", taskConvId, "current:", conversationId)
+        return
+      }
+      
       // A2A TaskEventData has: taskId, conversationId, contextId, state, artifactsCount, agentName, content
       if (data.taskId && data.state) {
         // Use the actual agent name if available, otherwise fall back to generic names
@@ -1104,6 +1115,17 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
     // These are for system-level events, NOT for workflow display
     const handleSystemEvent = (data: any) => {
       console.log("[ChatPanel] System event received:", data)
+      
+      // Filter by conversationId - only process events for the current conversation
+      let eventConvId = data.conversationId || ""
+      if (eventConvId.includes("::")) {
+        eventConvId = eventConvId.split("::")[1]
+      }
+      if (eventConvId && eventConvId !== conversationId && conversationId !== 'frontend-chat-context') {
+        console.log("[ChatPanel] Ignoring system event for different conversation:", eventConvId, "current:", conversationId)
+        return
+      }
+      
       // A2A SystemEventData has: eventId, conversationId, actor, role, content
       if (data.eventId && data.content) {
         // If this is a new agent we haven't seen before, register it
@@ -1123,6 +1145,17 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
     // Handle task creation events
     const handleTaskCreated = (data: any) => {
       console.log("[ChatPanel] Task created:", data)
+      
+      // Filter by conversationId - only process events for the current conversation
+      let taskConvId = data.conversationId || data.contextId || ""
+      if (taskConvId.includes("::")) {
+        taskConvId = taskConvId.split("::")[1]
+      }
+      if (taskConvId && taskConvId !== conversationId && conversationId !== 'frontend-chat-context') {
+        console.log("[ChatPanel] Ignoring task created for different conversation:", taskConvId, "current:", conversationId)
+        return
+      }
+      
       if (data.taskId) {
         emit("status_update", {
           inferenceId: data.taskId,
@@ -1199,6 +1232,12 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
     const handleMessage = (data: any) => {
       console.log("[ChatPanel] Message received:", data)
       console.log("[ChatPanel] Current conversationId:", conversationId)
+      
+      // Guard against messages arriving during conversation switch to prevent race conditions
+      if (isLoadingMessages) {
+        console.log("[ChatPanel] Ignoring message during conversation switch (loading in progress)")
+        return
+      }
       
       // Filter by conversationId - only process messages for the current conversation
       // The backend sends conversationId in format "sessionId::convId" - extract just the convId part
@@ -1396,15 +1435,29 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
     // Handle shared user messages from other clients
     const handleSharedMessage = (data: any) => {
       console.log("[ChatPanel] Shared message received:", data)
-      console.log("[ChatPanel] Current conversationId:", conversationId, "Message conversationId:", data.conversationId)
       
-      // Filter by conversationId - only process messages for the current conversation
-      if (data.conversationId && data.conversationId !== conversationId) {
-        console.log("[ChatPanel] ❌ IGNORING message for different conversation:", data.conversationId, "current:", conversationId)
+      // Guard against messages arriving during conversation switch to prevent race conditions
+      if (isLoadingMessages) {
+        console.log("[ChatPanel] Ignoring shared message during conversation switch (loading in progress)")
         return
       }
       
-      console.log("[ChatPanel] ✅ ACCEPTING message for conversation:", data.conversationId || "(no conversationId)")
+      // Extract conversationId - backend sends it in format "sessionId::convId", strip the tenant prefix
+      let messageConvId = data.conversationId || ""
+      if (messageConvId.includes("::")) {
+        const parts = messageConvId.split("::")
+        messageConvId = parts[1]  // Take just the conv ID part
+      }
+      
+      console.log("[ChatPanel] Current conversationId:", conversationId, "Message conversationId:", messageConvId, "raw:", data.conversationId)
+      
+      // Filter by conversationId - only process messages for the current conversation
+      if (messageConvId && messageConvId !== conversationId && conversationId !== 'frontend-chat-context') {
+        console.log("[ChatPanel] ❌ IGNORING message for different conversation:", messageConvId, "current:", conversationId)
+        return
+      }
+      
+      console.log("[ChatPanel] ✅ ACCEPTING message for conversation:", messageConvId || "(no conversationId)")
       
       if (data.message) {
         const newMessage: Message = {
@@ -1494,6 +1547,20 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
     // Handle conversation events
     const handleConversationCreated = (data: any) => {
       console.log("[ChatPanel] Conversation created:", data)
+      
+      // Filter by session - only process events for the current session
+      // In collaborative sessions, getOrCreateSessionId() returns the shared session ID
+      let eventTenantId = ""
+      const rawConvId = data.conversationId || ""
+      if (rawConvId.includes("::")) {
+        eventTenantId = rawConvId.split("::")[0]
+      }
+      const mySessionId = getOrCreateSessionId()
+      if (eventTenantId && mySessionId && eventTenantId !== mySessionId) {
+        console.log("[ChatPanel] Ignoring conversation created from different session:", eventTenantId, "my session:", mySessionId)
+        return
+      }
+      
       // A2A ConversationCreatedEventData has: conversationId, conversationName, isActive, messageCount
       if (data.conversationId) {
         // Start inference tracking for new conversations
@@ -1506,7 +1573,6 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
         })
         
         // Strip tenant prefix from conversationId (format: "user_3::conv_id" -> "conv_id")
-        const rawConvId = data.conversationId
         const strippedConvId = rawConvId.includes("::") ? rawConvId.split("::")[1] : rawConvId
         
         // Also fix the conversation name if it has the tenant prefix
@@ -1612,6 +1678,18 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
     // Handle remote agent activity events
     const handleRemoteAgentActivity = (data: any) => {
       console.log("[ChatPanel] Remote agent activity received:", data)
+      
+      // Filter by conversationId - only process activity for the current conversation
+      // This prevents workflow steps from other conversations bleeding through
+      let activityConvId = data.conversationId || data.contextId || ""
+      if (activityConvId.includes("::")) {
+        activityConvId = activityConvId.split("::")[1]
+      }
+      if (activityConvId && activityConvId !== conversationId && conversationId !== 'frontend-chat-context') {
+        console.log("[ChatPanel] Ignoring remote activity for different conversation:", activityConvId, "current:", conversationId)
+        return
+      }
+      
       if (data.agentName && data.content) {
         const content = data.content
         
@@ -1666,6 +1744,17 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
     // Handle file uploaded events from agents
     const handleFileUploaded = (data: any) => {
       console.log("[ChatPanel] File uploaded from agent:", data)
+      
+      // Filter by conversationId - only process files for the current conversation
+      let fileConvId = data.conversationId || data.contextId || ""
+      if (fileConvId.includes("::")) {
+        fileConvId = fileConvId.split("::")[1]
+      }
+      if (fileConvId && fileConvId !== conversationId && conversationId !== 'frontend-chat-context') {
+        console.log("[ChatPanel] Ignoring file upload for different conversation:", fileConvId, "current:", conversationId)
+        return
+      }
+      
       if (data?.fileInfo && data.fileInfo.source_agent) {
         const isImage = data.fileInfo.content_type?.startsWith('image/') || 
           ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp'].includes(
@@ -1747,7 +1836,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       unsubscribe("file_uploaded", handleFileUploaded)
       unsubscribe("outgoing_agent_message", handleOutgoingAgentMessage)
     }
-  }, [subscribe, unsubscribe, emit, sendMessage, processedMessageIds, voiceLive, conversationId])
+  }, [subscribe, unsubscribe, emit, sendMessage, processedMessageIds, voiceLive, conversationId, isLoadingMessages])
 
   // Check authentication status and show welcome message only when logged in
   useEffect(() => {
