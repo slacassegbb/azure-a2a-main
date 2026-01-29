@@ -309,29 +309,17 @@ export function getCollaborativeSession(): string | null {
 
 /**
  * Leave the current collaborative session and return to own session
+ * The backend will be notified via WebSocket disconnect
  */
-export async function leaveCollaborativeSession(
+export function leaveCollaborativeSession(
   reload: boolean = true, 
   sendMessage?: (message: any) => void
-): Promise<void> {
+): void {
   if (typeof window === 'undefined') {
     return;
   }
   
-  const sessionId = getCollaborativeSession();
-  
-  // Notify backend to leave the session and wait for confirmation
-  if (sessionId && sendMessage) {
-    sendMessage({
-      type: 'leave_collaborative_session',
-      session_id: sessionId
-    });
-    console.log('[Session] Sent leave_collaborative_session message to backend');
-    
-    // Wait a bit for the message to be sent and processed
-    await new Promise(resolve => setTimeout(resolve, 100));
-  }
-  
+  // Just clear local storage - the WebSocket disconnect will notify the backend
   sessionStorage.removeItem(COLLABORATIVE_SESSION_KEY);
   console.log('[Session] Left collaborative session, returning to own session');
   

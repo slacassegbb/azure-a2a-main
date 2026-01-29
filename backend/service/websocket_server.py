@@ -517,7 +517,9 @@ class WebSocketManager:
         """
         try:
             all_member_ids = collaborative_session.get_all_member_ids()
-            logger.info(f"[WebSocket] Broadcasting user list to collaborative session {collaborative_session.session_id} with {len(all_member_ids)} members")
+            logger.info(f"[WebSocket] Broadcasting user list to collaborative session {collaborative_session.session_id[:20]}...")
+            logger.info(f"[WebSocket] Session members to broadcast to: {all_member_ids}")
+            logger.info(f"[WebSocket] Current user_connections: {list(self.user_connections.keys())}")
             
             # Build the user list from ALL session members (not just connected ones)
             # This ensures users who are refreshing still appear in the list
@@ -584,13 +586,18 @@ class WebSocketManager:
             }
             
             for member_id in all_member_ids:
+                logger.info(f"[WebSocket] Checking member_id={member_id} in user_connections...")
                 if member_id in self.user_connections:
+                    num_connections = len(self.user_connections[member_id])
+                    logger.info(f"[WebSocket] Found {num_connections} connection(s) for member {member_id}")
                     for ws in self.user_connections[member_id]:
                         try:
                             await ws.send_text(json.dumps(event_data))
-                            logger.info(f"[WebSocket] Sent user list update to member {member_id}")
+                            logger.info(f"[WebSocket] ✅ Sent user list update to member {member_id}")
                         except Exception as e:
-                            logger.error(f"[WebSocket] Failed to send user list to {member_id}: {e}")
+                            logger.error(f"[WebSocket] ❌ Failed to send user list to {member_id}: {e}")
+                else:
+                    logger.warning(f"[WebSocket] ⚠️ member_id={member_id} NOT in user_connections! Available: {list(self.user_connections.keys())}")
             
             user_names = [u.get('name', 'unknown') for u in session_users]
             logger.info(f"[WebSocket] Broadcasted user list to session: {len(session_users)} user(s): {user_names}")
@@ -1248,19 +1255,30 @@ def create_websocket_app() -> FastAPI:
     
     async def handle_leave_session(websocket: WebSocket, message: Dict[str, Any]):
         """Handle leaving a collaborative session."""
+        logger.info(f"[Collaborative] ===== handle_leave_session called =====")
+        logger.info(f"[Collaborative] Message: {message}")
+        
         auth_conn = websocket_manager.get_connection_info(websocket)
         if not auth_conn:
+            logger.warning(f"[Collaborative] No auth_conn found!")
             return
         
         session_id = message.get("session_id")
         user_id = auth_conn.user_data.get('user_id')
         
+        logger.info(f"[Collaborative] session_id={session_id}, user_id={user_id}")
+        
         if not session_id:
+            logger.warning(f"[Collaborative] No session_id in message!")
             return
         
         # Get session and member list before leaving
         session = collaborative_session_manager.get_session(session_id)
+        logger.info(f"[Collaborative] Found session: {session is not None}")
+        logger.info(f"[Collaborative] Active sessions: {list(collaborative_session_manager.active_sessions.keys())}")
+        
         if not session:
+            logger.warning(f"[Collaborative] Session {session_id} not found!")
             return
         
         # Get all members before this user leaves
@@ -1275,6 +1293,7 @@ def create_websocket_app() -> FastAPI:
         
         if success:
             logger.info(f"[Collaborative] Successfully left session - broadcasting update to remaining members")
+            logger.info(f"[Collaborative] Current user_connections keys: {list(websocket_manager.user_connections.keys())}")
             
             # Get the updated session (will be None if owner left and session was deleted)
             updated_session = collaborative_session_manager.get_session(session_id)
@@ -1282,10 +1301,12 @@ def create_websocket_app() -> FastAPI:
             if updated_session:
                 # Session still exists - member left, broadcast updated user list
                 logger.info(f"[Collaborative] Session still exists, broadcasting user list to remaining members")
+                logger.info(f"[Collaborative] Updated session members: {updated_session.get_all_member_ids()}")
                 await websocket_manager.broadcast_user_list_to_session(updated_session)
             else:
                 # Session was deleted (owner left) - notify all former members
                 logger.info(f"[Collaborative] Session ended (owner left), notifying all former members")
+                logger.info(f"[Collaborative] Former members to notify: {all_members_before}")
                 # Send empty user list to all former members so they see everyone is gone
                 empty_user_list_event = json.dumps({
                     "eventType": "user_list_update",
@@ -1299,13 +1320,18 @@ def create_websocket_app() -> FastAPI:
                 })
                 
                 for member_id in all_members_before:
-                    if member_id != user_id and member_id in websocket_manager.user_connections:
-                        for member_ws in websocket_manager.user_connections[member_id]:
-                            try:
-                                await member_ws.send_text(empty_user_list_event)
-                                logger.info(f"[Collaborative] Sent empty user list to former member {member_id}")
-                            except Exception as e:
-                                logger.error(f"Failed to notify member {member_id}: {e}")
+                    logger.info(f"[Collaborative] Checking member {member_id}, user_id={user_id}, same={member_id == user_id}")
+                    if member_id != user_id:
+                        if member_id in websocket_manager.user_connections:
+                            logger.info(f"[Collaborative] Member {member_id} has {len(websocket_manager.user_connections[member_id])} connections")
+                            for member_ws in websocket_manager.user_connections[member_id]:
+                                try:
+                                    await member_ws.send_text(empty_user_list_event)
+                                    logger.info(f"[Collaborative] ✅ Sent empty user list to former member {member_id}")
+                                except Exception as e:
+                                    logger.error(f"[Collaborative] ❌ Failed to notify member {member_id}: {e}")
+                        else:
+                            logger.warning(f"[Collaborative] ⚠️ Member {member_id} NOT in user_connections!")
         
         await websocket.send_text(json.dumps({
             "type": "left_session",

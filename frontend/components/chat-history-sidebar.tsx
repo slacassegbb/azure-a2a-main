@@ -42,11 +42,11 @@ export function ChatHistorySidebar({ isCollapsed, onToggle }: Props) {
     }
   }, [])
 
-  const handleLogout = async () => {
+  const handleLogout = () => {
     if (typeof window !== 'undefined') {
-      // If user is in a collaborative session, leave it first
+      // If user is in a collaborative session, leave it first (clears local storage)
       if (isInCollaborativeSession()) {
-        await leaveCollaborativeSession(false, sendMessage) // Wait for leave message to be sent
+        leaveCollaborativeSession(false) // Don't reload yet
       }
       
       // Clear auth data
@@ -54,7 +54,7 @@ export function ChatHistorySidebar({ isCollapsed, onToggle }: Props) {
       sessionStorage.removeItem('user_info')
       setCurrentUser(null)
       
-      // Reload to disconnect authenticated WebSocket connection
+      // Reload - this will disconnect WebSocket which notifies other users
       window.location.reload()
     }
   }
