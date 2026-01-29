@@ -635,6 +635,9 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
   // Track Voice Live call IDs for response injection
   const voiceLiveCallMapRef = useRef<Map<string, string>>(new Map()) // messageId -> call_id
   
+  // Ref for deduplicating message events (avoids stale closure issues in event handlers)
+  const processedMessageIdsRef = useRef<Set<string>>(new Set())
+  
   // Use refs to always get the latest values (avoid stale closure)
   const workflowRef = useRef(workflow)
   const enableInterAgentMemoryRef = useRef(enableInterAgentMemory)
@@ -1168,6 +1171,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
         setIsInferencing(false)
         setInferenceSteps([])
         setProcessedMessageIds(new Set())
+        processedMessageIdsRef.current = new Set() // Also clear ref for deduplication
       }
       
       setIsLoadingMessages(false) // Done loading
@@ -1366,6 +1370,17 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       if (messageTenantId && mySessionId && messageTenantId !== mySessionId) {
         console.log("[ChatPanel] Ignoring message from different session:", messageTenantId, "my session:", mySessionId)
         return
+      }
+      
+      // Deduplicate message events using ref (avoids stale closure issues)
+      // Backend may send same message twice (once to tenant, once to collaborator)
+      if (data.messageId) {
+        if (processedMessageIdsRef.current.has(data.messageId)) {
+          console.log("[ChatPanel] Skipping duplicate message:", data.messageId)
+          return
+        }
+        // Mark as processed immediately (before any async operations)
+        processedMessageIdsRef.current.add(data.messageId)
       }
       
       // A2A MessageEventData has: messageId, conversationId, role, content[], direction
