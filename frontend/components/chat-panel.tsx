@@ -1311,12 +1311,17 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
           setMessages(prev => prev.filter(msg => msg.id !== streamingId))
           setStreamingMessageId(null)
           
+          // Determine if this message originated from the current user's session
+          // If not, we should NOT re-broadcast it (to avoid duplicate shared_message loops)
+          const isFromMyTenant = messageTenantId === mySessionId || !messageTenantId
+          
           // Emit final_response for internal processing - this is converted from message event
           // Include attachments so they appear AFTER the workflow, not before
           emit("final_response", {
             inferenceId: data.conversationId || data.messageId,
             conversationId: data.conversationId || data.contextId,
             messageId: data.messageId, // Pass through the backend's unique messageId
+            isFromMyTenant: isFromMyTenant, // Flag to control re-broadcasting
             message: {
               role: data.role === "user" ? "user" : "assistant",
               content: textContent,
@@ -1770,7 +1775,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       setActiveNode(data.agent)
     }
 
-    const handleFinalResponse = (data: { inferenceId: string; message: Omit<Message, "id">; conversationId?: string; messageId?: string; attachments?: any[] }) => {
+    const handleFinalResponse = (data: { inferenceId: string; message: Omit<Message, "id">; conversationId?: string; messageId?: string; attachments?: any[]; isFromMyTenant?: boolean }) => {
       console.log("[ChatPanel] Final response received:", data)
       
       // Filter by conversationId - only process final responses for the current conversation
@@ -1928,26 +1933,35 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       if (messagesToAdd.length > 0) {
         setMessages((prev) => [...prev, ...messagesToAdd])
         
-        // Broadcast messages to other users (but not inference summaries)
-        messagesToAdd.forEach(msg => {
-          if (msg.type !== 'inference_summary' && msg.role === 'assistant') {
-            sendMessage({
-              type: "shared_message",
-              conversationId: effectiveConversationId,
-              message: msg
-            })
+        // Only broadcast to other users if this message originated from our session
+        // This prevents re-broadcasting messages that were received from collaborative session members
+        if (data.isFromMyTenant !== false) {
+          // Broadcast messages to other users (but not inference summaries)
+          messagesToAdd.forEach(msg => {
+            if (msg.type !== 'inference_summary' && msg.role === 'assistant') {
+              sendMessage({
+                type: "shared_message",
+                conversationId: effectiveConversationId,
+                message: msg
+              })
+            }
+          })
+        } else {
+          console.log("[ChatPanel] Skipping shared_message broadcast - message from different tenant")
+        }
+      }
+
+      // Only broadcast inference ended if this is from our session
+      if (data.isFromMyTenant !== false) {
+        // Broadcast inference ended to all other clients
+        sendMessage({
+          type: "shared_inference_ended",
+          data: {
+            conversationId: data.inferenceId,
+            timestamp: new Date().toISOString()
           }
         })
       }
-
-      // Broadcast inference ended to all other clients
-      sendMessage({
-        type: "shared_inference_ended",
-        data: {
-          conversationId: data.inferenceId,
-          timestamp: new Date().toISOString()
-        }
-      })
       
       // Always clear inference state at the end of final_response processing
       // This handles cases where there are no inference steps (e.g., direct host agent responses)
