@@ -397,10 +397,24 @@ class WebSocketManager:
                 logger.info(f"[WebSocket]   - Connection: user_id={conn_user_id}, tenant={conn_tenant}, username={conn_info.username}")
             
             # Check if this user is in a collaborative session
+            # First check if they own a session (session_id = tenant_id)
+            # Then check if they are a member of any session
             collaborative_session = None
             if tenant_id:
+                # Check if this user owns a collaborative session
                 collaborative_session = collaborative_session_manager.get_session(tenant_id)
                 logger.info(f"[WebSocket] Checking collaborative session for tenant_id={tenant_id}: found={collaborative_session is not None}")
+                
+                # If not the owner, check if this user is a member of any session
+                if not collaborative_session and user_id:
+                    user_session_ids = collaborative_session_manager.get_user_sessions(user_id)
+                    logger.info(f"[WebSocket] User {user_id} is member of sessions: {user_session_ids}")
+                    if user_session_ids:
+                        # Get the first session they're part of (typically only one)
+                        collaborative_session = collaborative_session_manager.get_session(user_session_ids[0])
+                        if collaborative_session:
+                            logger.info(f"[WebSocket] Found collaborative session via membership: {user_session_ids[0]}")
+                
                 if collaborative_session:
                     logger.info(f"[WebSocket] Collaborative session details: owner={collaborative_session.owner_user_id}, members={collaborative_session.member_user_ids}")
             
