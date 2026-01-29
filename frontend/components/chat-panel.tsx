@@ -2682,7 +2682,12 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
 
   // Handle message reactions
   const handleReaction = useCallback((messageId: string, emoji: string) => {
-    if (!currentUser || !isInCollaborativeSession) return
+    console.log('[handleReaction] Called:', { messageId, emoji, currentUser, isInCollaborativeSession })
+    
+    if (!currentUser || !isInCollaborativeSession) {
+      console.log('[handleReaction] Skipped: No currentUser or not in collaborative session')
+      return
+    }
     
     // Find the message and check if user already reacted with this emoji
     const message = messages.find(m => m.id === messageId)
@@ -2731,6 +2736,17 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
     }))
     
     // Send to backend
+    console.log('[handleReaction] Sending to backend:', {
+      type: "message_reaction",
+      data: {
+        message_id: messageId,
+        emoji,
+        action,
+        user_id: currentUser.user_id,
+        username: currentUser.name,
+        session_id: currentSessionId
+      }
+    })
     sendMessage({
       type: "message_reaction",
       data: {
@@ -3379,9 +3395,10 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                   </div>
                   
                   {/* Message reactions - show for collaborative sessions */}
-                  {isInCollaborativeSession && message.reactions && message.reactions.length > 0 && (
-                    <div className="flex flex-wrap gap-1 mt-1">
-                      {message.reactions.map((reaction, idx) => {
+                  {isInCollaborativeSession && (
+                    <div className="flex flex-wrap gap-1 mt-1 items-center">
+                      {/* Existing reactions */}
+                      {message.reactions && message.reactions.map((reaction, idx) => {
                         const hasCurrentUserReacted = currentUser && reaction.users.includes(currentUser.user_id)
                         return (
                           <button
@@ -3399,6 +3416,20 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                           </button>
                         )
                       })}
+                      
+                      {/* Add reaction buttons - always visible in collaborative sessions */}
+                      <div className="inline-flex gap-1 opacity-50 hover:opacity-100 transition-opacity">
+                        {['👍', '❤️', '😂', '😮', '😢', '🎉'].map((emoji) => (
+                          <button
+                            key={emoji}
+                            onClick={() => handleReaction(message.id, emoji)}
+                            className="text-lg hover:scale-125 transition-transform p-1"
+                            title={`React with ${emoji}`}
+                          >
+                            {emoji}
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   )}
                   
