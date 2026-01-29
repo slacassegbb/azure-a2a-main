@@ -2488,10 +2488,12 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       }
 
       // Only broadcast inference ended if this is from our session
+      console.log("[ChatPanel] Checking shared_inference_ended broadcast - isFromMyTenant:", data.isFromMyTenant, "stepsToShare:", stepsToShare?.length)
       if (data.isFromMyTenant !== false) {
         // Find the assistant response message we just added (if any)
         const assistantMessage = messagesToAdd.find(msg => msg.role === 'assistant' && msg.type !== 'inference_summary')
         
+        console.log("[ChatPanel] Broadcasting shared_inference_ended with", stepsToShare?.length || 0, "workflow steps")
         // Broadcast inference ended to all other clients WITH workflow steps AND response message
         sendMessage({
           type: "shared_inference_ended",
@@ -2505,6 +2507,8 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
             responseMessage: assistantMessage || null
           }
         })
+      } else {
+        console.log("[ChatPanel] Skipping shared_inference_ended - not from my tenant")
       }
       
       // Always clear inference state at the end of final_response processing
