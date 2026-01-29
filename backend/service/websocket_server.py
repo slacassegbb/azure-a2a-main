@@ -813,7 +813,7 @@ def create_websocket_app() -> FastAPI:
             if sender_tenant:
                 # Add contextId for smart_broadcast to route to collaborative members
                 shared_event["contextId"] = sender_tenant
-                await websocket_manager.smart_broadcast(shared_event, sender_tenant)
+                await websocket_manager.smart_broadcast(shared_event)
             else:
                 logger.debug(f"Skipping shared_message broadcast - no tenant found (multi-tenant isolation)")
             logger.info(f"Shared message broadcasted: {message_data.get('content', '')[:50]}...")
@@ -833,7 +833,7 @@ def create_websocket_app() -> FastAPI:
             if sender_tenant:
                 # Add contextId for smart_broadcast to route to collaborative members
                 inference_event["contextId"] = sender_tenant
-                await websocket_manager.smart_broadcast(inference_event, sender_tenant)
+                await websocket_manager.smart_broadcast(inference_event)
             else:
                 logger.debug(f"Skipping shared_inference_started broadcast - no tenant found (multi-tenant isolation)")
             logger.info(f"Shared inference started broadcasted for conversation: {inference_data.get('conversationId')}")
@@ -853,7 +853,7 @@ def create_websocket_app() -> FastAPI:
             if sender_tenant:
                 # Add contextId for smart_broadcast to route to collaborative members
                 inference_event["contextId"] = sender_tenant
-                await websocket_manager.smart_broadcast(inference_event, sender_tenant)
+                await websocket_manager.smart_broadcast(inference_event)
             else:
                 logger.debug(f"Skipping shared_inference_ended broadcast - no tenant found (multi-tenant isolation)")
             logger.info(f"Shared inference ended broadcasted for conversation: {inference_data.get('conversationId')}")
