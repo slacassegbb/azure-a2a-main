@@ -389,11 +389,20 @@ class WebSocketManager:
             tenant_id = self.connection_tenants.get(websocket)
             user_id = auth_conn.user_data.get('user_id') if auth_conn.user_data else None
             
+            logger.info(f"[WebSocket] send_session_user_update: tenant_id={tenant_id}, user_id={user_id}")
+            logger.info(f"[WebSocket] Total authenticated_connections: {len(self.authenticated_connections)}")
+            for conn, conn_info in self.authenticated_connections.items():
+                conn_user_id = conn_info.user_data.get('user_id') if conn_info.user_data else None
+                conn_tenant = self.connection_tenants.get(conn)
+                logger.info(f"[WebSocket]   - Connection: user_id={conn_user_id}, tenant={conn_tenant}, username={conn_info.username}")
+            
             # Check if this user is in a collaborative session
             collaborative_session = None
             if tenant_id:
                 collaborative_session = collaborative_session_manager.get_session(tenant_id)
                 logger.info(f"[WebSocket] Checking collaborative session for tenant_id={tenant_id}: found={collaborative_session is not None}")
+                if collaborative_session:
+                    logger.info(f"[WebSocket] Collaborative session details: owner={collaborative_session.owner_user_id}, members={collaborative_session.member_user_ids}")
             
             if collaborative_session:
                 # In a collaborative session - get all members
@@ -446,6 +455,11 @@ class WebSocketManager:
                             "status": "active"
                         }
                         session_users.append(user_data)
+                        logger.info(f"[WebSocket] Added user to session_users (non-collab): {user.email}")
+            
+            # Debug: Log what we're about to send
+            user_ids_to_send = [u.get('user_id', 'unknown') for u in session_users]
+            logger.info(f"[WebSocket] About to send user_list_update with {len(session_users)} users: {user_ids_to_send}")
             
             event_data = {
                 "eventType": "user_list_update",
