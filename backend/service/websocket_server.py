@@ -1067,10 +1067,13 @@ def create_websocket_app() -> FastAPI:
             session = collaborative_session_manager.get_session(invitation.session_id)
             if session:
                 members = collaborative_session_manager.get_session_members(invitation.session_id)
+                # Include the current conversation for auto-navigation
+                current_conversation = collaborative_session_manager.get_current_conversation(invitation.session_id)
                 member_update = json.dumps({
                     "eventType": "session_members_updated",
                     "session_id": invitation.session_id,
-                    "members": members
+                    "members": members,
+                    "current_conversation_id": current_conversation  # For auto-navigation
                 })
                 
                 # Notify all members (including owner)

@@ -269,8 +269,11 @@ export function SessionInvitationNotification() {
     // Check if this is confirmation for our pending join
     if (pendingJoin && eventData.session_id === pendingJoin.sessionId) {
       console.log("[SessionInvite] Backend confirmed membership, now joining session:", pendingJoin.sessionId)
+      // Get the current conversation from the event data for auto-navigation
+      const currentConversation = eventData.current_conversation_id
+      console.log("[SessionInvite] Current conversation for auto-navigation:", currentConversation)
       // Backend has confirmed we're added - now safe to reload
-      joinCollaborativeSession(pendingJoin.sessionId)
+      joinCollaborativeSession(pendingJoin.sessionId, currentConversation)
     }
   }, [pendingJoin])
 

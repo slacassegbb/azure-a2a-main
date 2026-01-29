@@ -56,6 +56,7 @@ class CollaborativeSession:
     owner_user_name: str
     member_user_ids: Set[str] = field(default_factory=set)
     created_at: float = field(default_factory=time.time)
+    current_conversation_id: Optional[str] = None  # Track the current conversation for auto-navigation
     
     def add_member(self, user_id: str):
         self.member_user_ids.add(user_id)
@@ -77,7 +78,8 @@ class CollaborativeSession:
             "owner_user_name": self.owner_user_name,
             "member_user_ids": list(self.member_user_ids),
             "all_member_ids": list(self.get_all_member_ids()),
-            "created_at": self.created_at
+            "created_at": self.created_at,
+            "current_conversation_id": self.current_conversation_id
         }
 
 
@@ -257,6 +259,26 @@ class CollaborativeSessionManager:
         """Remove session from user's tracking."""
         if user_id in self.user_sessions:
             self.user_sessions[user_id].discard(session_id)
+    
+    def update_current_conversation(self, session_id: str, conversation_id: str) -> bool:
+        """Update the current conversation for a session.
+        
+        This is called when a user creates or switches to a new conversation.
+        Allows other members to auto-navigate when joining.
+        """
+        session = self.active_sessions.get(session_id)
+        if session:
+            session.current_conversation_id = conversation_id
+            logger.info(f"Updated current conversation for session {session_id[:8]}... to {conversation_id[:8]}...")
+            return True
+        return False
+    
+    def get_current_conversation(self, session_id: str) -> Optional[str]:
+        """Get the current conversation for a session."""
+        session = self.active_sessions.get(session_id)
+        if session:
+            return session.current_conversation_id
+        return None
     
     def _end_session(self, session_id: str):
         """End a collaborative session."""

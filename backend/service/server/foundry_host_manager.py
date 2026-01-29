@@ -243,6 +243,19 @@ class FoundryHostManager(ApplicationManager):
             conversation = Conversation(conversation_id=context_id, is_active=True)
             self._conversations.append(conversation)
             
+            # Update collaborative session's current conversation for auto-navigation
+            try:
+                from service.collaborative_sessions import get_session_manager
+                session_manager = get_session_manager()
+                # Extract session_id (tenant) from context_id (format: "user_2::conv_id")
+                if "::" in context_id:
+                    session_id = context_id.split("::")[0]
+                    conv_id_only = context_id.split("::")[1]
+                    session_manager.update_current_conversation(session_id, conv_id_only)
+                    log_debug(f"Updated collaborative session {session_id[:8]}... current conversation to {conv_id_only[:8]}...")
+            except Exception as e:
+                log_debug(f"Error updating collaborative session current conversation: {e}")
+            
             # Stream conversation creation to WebSocket
             log_debug("Streaming conversation creation to WebSocket...")
             try:

@@ -239,14 +239,16 @@ export function getSessionInfo(): {
 // ============================================
 
 const COLLABORATIVE_SESSION_KEY = 'a2a_collaborative_session';
+const COLLABORATIVE_CONVERSATION_KEY = 'a2a_collaborative_conversation';
 
 /**
  * Join a collaborative session (switch to another user's session)
  * 
  * @param sessionId - The session ID to join (e.g., "user_3")
+ * @param conversationId - Optional conversation ID to navigate to after joining
  * @param reload - Whether to reload the page after joining (default: true)
  */
-export function joinCollaborativeSession(sessionId: string, reload: boolean = true): void {
+export function joinCollaborativeSession(sessionId: string, conversationId?: string, reload: boolean = true): void {
   if (typeof window === 'undefined') {
     return;
   }
@@ -256,12 +258,41 @@ export function joinCollaborativeSession(sessionId: string, reload: boolean = tr
   // Mark as "just joined" to protect against immediate session_started clear
   // This flag is checked by websocket-client.ts and cleared after first session_started
   sessionStorage.setItem('a2a_collaborative_session_just_joined', 'true');
-  console.log('[Session] Joining collaborative session:', sessionId);
+  
+  // Store the target conversation for auto-navigation after reload
+  if (conversationId) {
+    sessionStorage.setItem(COLLABORATIVE_CONVERSATION_KEY, conversationId);
+    console.log('[Session] Joining collaborative session:', sessionId, 'with conversation:', conversationId);
+  } else {
+    sessionStorage.removeItem(COLLABORATIVE_CONVERSATION_KEY);
+    console.log('[Session] Joining collaborative session:', sessionId);
+  }
   
   if (reload) {
-    // Reload to pick up the new session
-    window.location.reload();
+    // If we have a target conversation, navigate directly to it
+    if (conversationId) {
+      window.location.href = `/?conversationId=${conversationId}`;
+    } else {
+      // Reload to pick up the new session
+      window.location.reload();
+    }
   }
+}
+
+/**
+ * Get and clear the pending collaborative conversation (for auto-navigation)
+ * 
+ * @returns The conversation ID to navigate to, or null
+ */
+export function getAndClearPendingCollaborativeConversation(): string | null {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+  const conversationId = sessionStorage.getItem(COLLABORATIVE_CONVERSATION_KEY);
+  if (conversationId) {
+    sessionStorage.removeItem(COLLABORATIVE_CONVERSATION_KEY);
+  }
+  return conversationId;
 }
 
 /**
