@@ -1723,29 +1723,35 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       if (responseMessage) {
         console.log("[ChatPanel] Received response message from shared_inference_ended:", responseMessage)
         
-        // Add the response message if we don't already have it
-        // Check by content similarity since IDs may differ between message event and shared_inference_ended
-        setMessages((prev) => {
-          const exists = prev.some(m => m.id === responseMessage.id)
-          if (exists) {
-            console.log("[ChatPanel] Response message already exists (by ID), skipping:", responseMessage.id)
-            return prev
-          }
-          
-          // Also check if we have a recent assistant message with the same content
-          const recentAssistants = prev.slice(-3).filter(m => m.role === 'assistant')
-          const hasSameContent = recentAssistants.some(m => 
-            m.content === responseMessage.content && 
-            m.agent === responseMessage.agent
-          )
-          if (hasSameContent) {
-            console.log("[ChatPanel] Response message already exists (by content), skipping")
-            return prev
-          }
-          
-          console.log("[ChatPanel] Adding shared response message:", responseMessage.id)
-          return [...prev, responseMessage]
-        })
+        // Check if we already received a response via the message event
+        const responseReceivedKey = `response_received_${eventConvId || conversationId}`
+        if (processedMessageIds.has(responseReceivedKey)) {
+          console.log("[ChatPanel] Response already received via message event, skipping shared response")
+        } else {
+          // Add the response message if we don't already have it
+          // Check by content similarity since IDs may differ between message event and shared_inference_ended
+          setMessages((prev) => {
+            const exists = prev.some(m => m.id === responseMessage.id)
+            if (exists) {
+              console.log("[ChatPanel] Response message already exists (by ID), skipping:", responseMessage.id)
+              return prev
+            }
+            
+            // Also check if we have a recent assistant message with the same content
+            const recentAssistants = prev.slice(-3).filter(m => m.role === 'assistant')
+            const hasSameContent = recentAssistants.some(m => 
+              m.content === responseMessage.content && 
+              m.agent === responseMessage.agent
+            )
+            if (hasSameContent) {
+              console.log("[ChatPanel] Response message already exists (by content), skipping")
+              return prev
+            }
+            
+            console.log("[ChatPanel] Adding shared response message:", responseMessage.id)
+            return [...prev, responseMessage]
+          })
+        }
       }
       
       setIsInferencing(false)
@@ -2206,6 +2212,8 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       // Only create ONE workflow summary per message (using responseId which is unique per message)
       // Previously used inferenceId (conversationId) which caused second message workflow to be skipped
       const workflowKey = `workflow_${responseId}`
+      // Also track by conversation ID so handleSharedInferenceEnded knows to skip
+      const workflowReceivedKey = `workflow_received_${effectiveConversationId}`
       const alreadyCreatedWorkflow = processedMessageIds.has(workflowKey)
       
       // Copy steps EARLY - before any clearing happens - for sharing with other clients
@@ -2220,7 +2228,8 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
         setActiveNode(null)
         
         // Mark this inference as having a workflow created
-        setProcessedMessageIds(prev => new Set([...prev, summaryId, workflowKey]))
+        // Include workflowReceivedKey so handleSharedInferenceEnded will skip duplicate workflow
+        setProcessedMessageIds(prev => new Set([...prev, summaryId, workflowKey, workflowReceivedKey]))
         const summaryMessage: Message = {
           id: summaryId,
           role: "system",
@@ -2258,6 +2267,11 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
           agent: data.message.agent,
         }
         messagesToAdd.push(finalMessage)
+        
+        // Track that we've received a response for this conversation
+        // This helps handleSharedInferenceEnded skip duplicate responses
+        const responseReceivedKey = `response_received_${effectiveConversationId}`
+        setProcessedMessageIds(prev => new Set([...prev, responseReceivedKey]))
       }
 
       // Add attachments AFTER the text message (so order is: workflow -> text -> video/images)
