@@ -2134,63 +2134,64 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
         return
       }
       
-      setMessages(prev => {
-        // Debug: Check if message exists in current messages
-        const messageExists = prev.find(m => m.id === messageId)
-        console.log('[MessageReaction] Message exists?', !!messageExists, 'Total messages:', prev.length)
-        if (!messageExists) {
-          console.log('[MessageReaction] Available message IDs:', prev.map(m => m.id))
-        }
-        
-        return prev.map(msg => {
-          if (msg.id !== messageId) return msg
+      // Force React to see a new array by creating entirely new message objects
+      setMessages(prevMessages => {
+        const newMessages = prevMessages.map(msg => {
+          if (msg.id !== messageId) {
+            return msg
+          }
           
-          // Create a NEW reactions array to ensure React detects the change
-          const reactions = [...(msg.reactions || [])]
-          const existingReactionIndex = reactions.findIndex(r => r.emoji === emoji)
+          // Found the message - create new reactions array
+          const currentReactions = msg.reactions ? [...msg.reactions] : []
+          const existingIdx = currentReactions.findIndex(r => r.emoji === emoji)
           
           if (action === 'add') {
-            if (existingReactionIndex >= 0) {
-              // Create a NEW reaction object with updated users
-              const existingReaction = reactions[existingReactionIndex]
-              if (!existingReaction.users.includes(userId)) {
-                reactions[existingReactionIndex] = {
-                  emoji,
-                  users: [...existingReaction.users, userId],
-                  usernames: [...existingReaction.usernames, username]
+            if (existingIdx >= 0) {
+              // Update existing reaction with new arrays
+              const existing = currentReactions[existingIdx]
+              if (!existing.users.includes(userId)) {
+                currentReactions[existingIdx] = {
+                  emoji: existing.emoji,
+                  users: [...existing.users, userId],
+                  usernames: [...existing.usernames, username]
                 }
               }
             } else {
-              // Create new reaction
-              reactions.push({
+              // Add new reaction
+              currentReactions.push({
                 emoji,
                 users: [userId],
                 usernames: [username]
               })
             }
           } else if (action === 'remove') {
-            if (existingReactionIndex >= 0) {
-              const existingReaction = reactions[existingReactionIndex]
-              const userIndex = existingReaction.users.indexOf(userId)
-              if (userIndex > -1) {
-                // Create a NEW reaction object with user removed
-                reactions[existingReactionIndex] = {
-                  emoji,
-                  users: existingReaction.users.filter((_, idx) => idx !== userIndex),
-                  usernames: existingReaction.usernames.filter((_, idx) => idx !== userIndex)
+            if (existingIdx >= 0) {
+              const existing = currentReactions[existingIdx]
+              const userIdx = existing.users.indexOf(userId)
+              if (userIdx >= 0) {
+                currentReactions[existingIdx] = {
+                  emoji: existing.emoji,
+                  users: existing.users.filter((_, i) => i !== userIdx),
+                  usernames: existing.usernames.filter((_, i) => i !== userIdx)
                 }
               }
             }
           }
           
-          // Remove empty reactions and return NEW message object
-          const filteredReactions = reactions.filter(r => r.users.length > 0)
+          // Filter out empty reactions
+          const finalReactions = currentReactions.filter(r => r.users.length > 0)
           
+          console.log('[MessageReaction] Updated reactions for message:', messageId, finalReactions)
+          
+          // Return a completely new message object
           return {
             ...msg,
-            reactions: filteredReactions.length > 0 ? filteredReactions : undefined
+            reactions: finalReactions.length > 0 ? finalReactions : undefined
           }
         })
+        
+        // Return a new array reference
+        return [...newMessages]
       })
     }
 
