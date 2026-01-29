@@ -125,6 +125,12 @@ function TypingWelcomeMessage({ text }: { text: string }) {
   )
 }
 
+type MessageReaction = {
+  emoji: string
+  users: string[] // Array of user IDs who reacted
+  usernames: string[] // Array of usernames for display
+}
+
 type Message = {
   id: string
   role: "user" | "assistant" | "system"
@@ -154,6 +160,8 @@ type Message = {
     mimeType?: string
     videoId?: string // For video remix functionality
   }[]
+  // Reactions from users
+  reactions?: MessageReaction[]
 }
 
 const initialMessages: Message[] = []
@@ -2111,6 +2119,57 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       }
     }
 
+    // Handle message reactions
+    const handleMessageReaction = (eventData: any) => {
+      const messageId = eventData.data?.message_id
+      const emoji = eventData.data?.emoji
+      const userId = eventData.data?.user_id
+      const username = eventData.data?.username
+      const action = eventData.data?.action // 'add' or 'remove'
+      
+      if (!messageId || !emoji || !userId || !username) return
+      
+      setMessages(prev => prev.map(msg => {
+        if (msg.id !== messageId) return msg
+        
+        const reactions = msg.reactions || []
+        const existingReaction = reactions.find(r => r.emoji === emoji)
+        
+        if (action === 'add') {
+          if (existingReaction) {
+            // Add user to existing reaction
+            if (!existingReaction.users.includes(userId)) {
+              existingReaction.users.push(userId)
+              existingReaction.usernames.push(username)
+            }
+          } else {
+            // Create new reaction
+            reactions.push({
+              emoji,
+              users: [userId],
+              usernames: [username]
+            })
+          }
+        } else if (action === 'remove') {
+          if (existingReaction) {
+            const userIndex = existingReaction.users.indexOf(userId)
+            if (userIndex > -1) {
+              existingReaction.users.splice(userIndex, 1)
+              existingReaction.usernames.splice(userIndex, 1)
+            }
+          }
+        }
+        
+        // Remove empty reactions
+        const filteredReactions = reactions.filter(r => r.users.length > 0)
+        
+        return {
+          ...msg,
+          reactions: filteredReactions.length > 0 ? filteredReactions : undefined
+        }
+      }))
+    }
+
     // Subscribe to real Event Hub events from A2A backend
     subscribe("task_updated", handleTaskUpdate)
     subscribe("task_created", handleTaskCreated)
@@ -2132,6 +2191,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
     subscribe("shared_file_uploaded", handleSharedFileUploaded)
     subscribe("outgoing_agent_message", handleOutgoingAgentMessage)
     subscribe("typing_indicator", handleTypingIndicator)
+    subscribe("message_reaction", handleMessageReaction)
 
     return () => {
       unsubscribe("task_updated", handleTaskUpdate)
@@ -2154,6 +2214,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       unsubscribe("shared_file_uploaded", handleSharedFileUploaded)
       unsubscribe("outgoing_agent_message", handleOutgoingAgentMessage)
       unsubscribe("typing_indicator", handleTypingIndicator)
+      unsubscribe("message_reaction", handleMessageReaction)
     }
   }, [subscribe, unsubscribe, emit, sendMessage, voiceLive, conversationId, isLoadingMessages, shouldFilterByConversationId])
   // NOTE: Removed processedMessageIds from deps to prevent constant re-subscription
@@ -2604,6 +2665,70 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
     }
   }, [voiceRecording.audioBlob, voiceRecording.isRecording, voiceRecording.isProcessing, handleVoiceTranscription])
 
+  // Handle message reactions
+  const handleReaction = useCallback((messageId: string, emoji: string) => {
+    if (!currentUser || !isInCollaborativeSession) return
+    
+    // Find the message and check if user already reacted with this emoji
+    const message = messages.find(m => m.id === messageId)
+    if (!message) return
+    
+    const existingReaction = message.reactions?.find(r => r.emoji === emoji)
+    const hasReacted = existingReaction?.users.includes(currentUser.user_id)
+    const action = hasReacted ? 'remove' : 'add'
+    
+    // Optimistically update local state
+    setMessages(prev => prev.map(msg => {
+      if (msg.id !== messageId) return msg
+      
+      const reactions = msg.reactions || []
+      const reaction = reactions.find(r => r.emoji === emoji)
+      
+      if (action === 'add') {
+        if (reaction) {
+          if (!reaction.users.includes(currentUser.user_id)) {
+            reaction.users.push(currentUser.user_id)
+            reaction.usernames.push(currentUser.name)
+          }
+        } else {
+          reactions.push({
+            emoji,
+            users: [currentUser.user_id],
+            usernames: [currentUser.name]
+          })
+        }
+      } else {
+        if (reaction) {
+          const userIndex = reaction.users.indexOf(currentUser.user_id)
+          if (userIndex > -1) {
+            reaction.users.splice(userIndex, 1)
+            reaction.usernames.splice(userIndex, 1)
+          }
+        }
+      }
+      
+      const filteredReactions = reactions.filter(r => r.users.length > 0)
+      
+      return {
+        ...msg,
+        reactions: filteredReactions.length > 0 ? filteredReactions : undefined
+      }
+    }))
+    
+    // Send to backend
+    sendMessage({
+      type: "message_reaction",
+      data: {
+        message_id: messageId,
+        emoji,
+        action,
+        user_id: currentUser.user_id,
+        username: currentUser.name,
+        session_id: currentSessionId
+      }
+    })
+  }, [currentUser, isInCollaborativeSession, messages, sendMessage, currentSessionId])
+
   const handleSend = async () => {
     if (isInferencing) return
     if (!input.trim() && !refineTarget) return
@@ -2932,7 +3057,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
               return (
                 <div
                   key={`${message.id}-${index}`}
-                  className={`flex gap-3 ${message.role === "user" ? "justify-end" : "items-start"}`}
+                  className={`group flex gap-3 ${message.role === "user" ? "justify-end" : "items-start"} relative`}
                 >
                   {message.role === "assistant" && (
                     <div className="h-8 w-8 flex-shrink-0 bg-blue-100 rounded-full flex items-center justify-center">
@@ -2943,7 +3068,23 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                     {message.role === "user" && message.username && (
                       <p className="text-xs text-muted-foreground mb-1">{message.username}</p>
                     )}
-                    <div className="flex gap-3">
+                    <div className="flex gap-3 relative">
+                      {/* Reaction picker - shows on hover */}
+                      {isInCollaborativeSession && (
+                        <div className="absolute -top-8 left-0 hidden group-hover:flex items-center gap-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg p-1 z-10">
+                          {['👍', '❤️', '😂', '😮', '😢', '🎉'].map((emoji) => (
+                            <button
+                              key={emoji}
+                              onClick={() => handleReaction(message.id, emoji)}
+                              className="text-lg hover:scale-125 transition-transform p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700"
+                              title={`React with ${emoji}`}
+                            >
+                              {emoji}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      
                       <div
                         className={`rounded-lg p-3 ${message.role === "user" ? "bg-slate-700 text-white max-w-md" : "bg-muted flex-1"
                           }`}
@@ -3221,6 +3362,31 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                       )
                     })()}
                   </div>
+                  
+                  {/* Message reactions - show for collaborative sessions */}
+                  {isInCollaborativeSession && message.reactions && message.reactions.length > 0 && (
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      {message.reactions.map((reaction, idx) => {
+                        const hasCurrentUserReacted = currentUser && reaction.users.includes(currentUser.user_id)
+                        return (
+                          <button
+                            key={`${message.id}-reaction-${idx}`}
+                            onClick={() => handleReaction(message.id, reaction.emoji)}
+                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-sm transition-all hover:scale-105 ${
+                              hasCurrentUserReacted
+                                ? 'bg-blue-100 dark:bg-blue-900 border border-blue-300 dark:border-blue-700'
+                                : 'bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:bg-gray-200 dark:hover:bg-gray-700'
+                            }`}
+                            title={reaction.usernames.join(', ')}
+                          >
+                            <span>{reaction.emoji}</span>
+                            <span className="text-xs text-muted-foreground font-medium">{reaction.users.length}</span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )}
+                  
                     {message.role === "assistant" && (
                       <div className="flex items-center justify-between mt-2 w-full">
                         <p className="text-xs text-muted-foreground">{message.agent || 'Assistant'}</p>

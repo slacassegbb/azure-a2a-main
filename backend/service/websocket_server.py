@@ -1045,6 +1045,10 @@ def create_websocket_app() -> FastAPI:
             # Handle typing indicator - broadcast to session members
             await handle_typing_indicator(websocket, message)
         
+        elif message_type == "message_reaction":
+            # Handle message reactions - broadcast to session members
+            await handle_message_reaction(websocket, message)
+        
         elif message_type == "conversation_title_update":
             # Handle conversation title update that should be broadcast to collaborative session members
             conversation_id = message.get("conversationId", "")
@@ -1604,6 +1608,60 @@ def create_websocket_app() -> FastAPI:
                             await member_ws.send_text(typing_event)
                         except Exception as e:
                             logger.debug(f"Failed to send typing indicator to {member_id}: {e}")
+    
+    async def handle_message_reaction(websocket: WebSocket, message: Dict[str, Any]):
+        """Handle message reaction - broadcast to session members."""
+        auth_conn = websocket_manager.get_connection_info(websocket)
+        if not auth_conn:
+            return
+        
+        user_id = auth_conn.user_data.get('user_id')
+        
+        # Get reaction data
+        data = message.get("data", {})
+        message_id = data.get("message_id")
+        emoji = data.get("emoji")
+        action = data.get("action", "add")  # 'add' or 'remove'
+        username = data.get("username", auth_conn.username)
+        session_id = data.get("session_id")
+        
+        if not message_id or not emoji:
+            logger.warning(f"Invalid reaction data from {user_id}: missing message_id or emoji")
+            return
+        
+        # Get the session this user is in
+        tenant_id = websocket_manager.connection_tenants.get(websocket)
+        if not tenant_id:
+            return
+        
+        # Check if user is in a collaborative session
+        session = collaborative_session_manager.get_session(tenant_id)
+        if not session:
+            # Not in a collaborative session, no one to notify
+            return
+        
+        # Build reaction event
+        reaction_event = json.dumps({
+            "eventType": "message_reaction",
+            "data": {
+                "message_id": message_id,
+                "emoji": emoji,
+                "action": action,
+                "user_id": user_id,
+                "username": username
+            },
+            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+        })
+        
+        # Broadcast to ALL session members (including sender for confirmation)
+        all_members = session.get_all_member_ids()
+        for member_id in all_members:
+            if member_id in websocket_manager.user_connections:
+                for member_ws in websocket_manager.user_connections[member_id]:
+                    try:
+                        await member_ws.send_text(reaction_event)
+                    except Exception as e:
+                        logger.debug(f"Failed to send reaction to {member_id}: {e}")
     
     @app.post("/events")
     async def post_event(event_data: Dict[str, Any]):
