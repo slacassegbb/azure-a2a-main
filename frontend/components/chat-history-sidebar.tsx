@@ -215,11 +215,28 @@ export function ChatHistorySidebar({ isCollapsed, onToggle }: Props) {
       
       console.log('[ChatHistorySidebar] Received WebSocket title update:', { conversationId, title })
       
-      setConversations(prev => prev.map(conv => 
-        conv.conversation_id === conversationId 
-          ? { ...conv, name: title }
-          : conv
-      ))
+      setConversations(prev => {
+        const exists = prev.some(conv => conv.conversation_id === conversationId)
+        if (exists) {
+          // Update existing conversation's title
+          return prev.map(conv => 
+            conv.conversation_id === conversationId 
+              ? { ...conv, name: title }
+              : conv
+          )
+        } else {
+          // Conversation doesn't exist yet - add it with the title
+          // This handles the case where title_update arrives before/without conversation_created
+          console.log('[ChatHistorySidebar] Adding new conversation from title update:', conversationId)
+          return [{
+            conversation_id: conversationId,
+            name: title,
+            is_active: true,
+            task_ids: [],
+            messages: []
+          }, ...prev]
+        }
+      })
     }
 
     subscribe('conversation_title_update', handleWebSocketTitleUpdate)
