@@ -2134,55 +2134,64 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
         return
       }
       
-      setMessages(prev => prev.map(msg => {
-        if (msg.id !== messageId) return msg
-        
-        // Create a NEW reactions array to ensure React detects the change
-        const reactions = [...(msg.reactions || [])]
-        const existingReactionIndex = reactions.findIndex(r => r.emoji === emoji)
-        
-        if (action === 'add') {
-          if (existingReactionIndex >= 0) {
-            // Create a NEW reaction object with updated users
-            const existingReaction = reactions[existingReactionIndex]
-            if (!existingReaction.users.includes(userId)) {
-              reactions[existingReactionIndex] = {
-                emoji,
-                users: [...existingReaction.users, userId],
-                usernames: [...existingReaction.usernames, username]
-              }
-            }
-          } else {
-            // Create new reaction
-            reactions.push({
-              emoji,
-              users: [userId],
-              usernames: [username]
-            })
-          }
-        } else if (action === 'remove') {
-          if (existingReactionIndex >= 0) {
-            const existingReaction = reactions[existingReactionIndex]
-            const userIndex = existingReaction.users.indexOf(userId)
-            if (userIndex > -1) {
-              // Create a NEW reaction object with user removed
-              reactions[existingReactionIndex] = {
-                emoji,
-                users: existingReaction.users.filter((_, idx) => idx !== userIndex),
-                usernames: existingReaction.usernames.filter((_, idx) => idx !== userIndex)
-              }
-            }
-          }
+      setMessages(prev => {
+        // Debug: Check if message exists in current messages
+        const messageExists = prev.find(m => m.id === messageId)
+        console.log('[MessageReaction] Message exists?', !!messageExists, 'Total messages:', prev.length)
+        if (!messageExists) {
+          console.log('[MessageReaction] Available message IDs:', prev.map(m => m.id))
         }
         
-        // Remove empty reactions and return NEW message object
-        const filteredReactions = reactions.filter(r => r.users.length > 0)
-        
-        return {
-          ...msg,
-          reactions: filteredReactions.length > 0 ? filteredReactions : undefined
-        }
-      }))
+        return prev.map(msg => {
+          if (msg.id !== messageId) return msg
+          
+          // Create a NEW reactions array to ensure React detects the change
+          const reactions = [...(msg.reactions || [])]
+          const existingReactionIndex = reactions.findIndex(r => r.emoji === emoji)
+          
+          if (action === 'add') {
+            if (existingReactionIndex >= 0) {
+              // Create a NEW reaction object with updated users
+              const existingReaction = reactions[existingReactionIndex]
+              if (!existingReaction.users.includes(userId)) {
+                reactions[existingReactionIndex] = {
+                  emoji,
+                  users: [...existingReaction.users, userId],
+                  usernames: [...existingReaction.usernames, username]
+                }
+              }
+            } else {
+              // Create new reaction
+              reactions.push({
+                emoji,
+                users: [userId],
+                usernames: [username]
+              })
+            }
+          } else if (action === 'remove') {
+            if (existingReactionIndex >= 0) {
+              const existingReaction = reactions[existingReactionIndex]
+              const userIndex = existingReaction.users.indexOf(userId)
+              if (userIndex > -1) {
+                // Create a NEW reaction object with user removed
+                reactions[existingReactionIndex] = {
+                  emoji,
+                  users: existingReaction.users.filter((_, idx) => idx !== userIndex),
+                  usernames: existingReaction.usernames.filter((_, idx) => idx !== userIndex)
+                }
+              }
+            }
+          }
+          
+          // Remove empty reactions and return NEW message object
+          const filteredReactions = reactions.filter(r => r.users.length > 0)
+          
+          return {
+            ...msg,
+            reactions: filteredReactions.length > 0 ? filteredReactions : undefined
+          }
+        })
+      })
     }
 
     // Subscribe to real Event Hub events from A2A backend
@@ -3394,11 +3403,10 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                     })()}
                   </div>
                   
-                  {/* Message reactions - show for collaborative sessions */}
-                  {isInCollaborativeSession && (
+                  {/* Message reactions - show existing reactions only */}
+                  {isInCollaborativeSession && message.reactions && message.reactions.length > 0 && (
                     <div className="flex flex-wrap gap-1 mt-1 items-center">
-                      {/* Existing reactions */}
-                      {message.reactions && message.reactions.map((reaction, idx) => {
+                      {message.reactions.map((reaction, idx) => {
                         const hasCurrentUserReacted = currentUser && reaction.users.includes(currentUser.user_id)
                         return (
                           <button
@@ -3416,20 +3424,6 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                           </button>
                         )
                       })}
-                      
-                      {/* Add reaction buttons - always visible in collaborative sessions */}
-                      <div className="inline-flex gap-1 opacity-50 hover:opacity-100 transition-opacity">
-                        {['👍', '❤️', '😂', '😮', '😢', '🎉'].map((emoji) => (
-                          <button
-                            key={emoji}
-                            onClick={() => handleReaction(message.id, emoji)}
-                            className="text-lg hover:scale-125 transition-transform p-1"
-                            title={`React with ${emoji}`}
-                          >
-                            {emoji}
-                          </button>
-                        ))}
-                      </div>
                     </div>
                   )}
                   
