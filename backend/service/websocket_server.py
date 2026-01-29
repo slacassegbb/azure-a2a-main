@@ -531,11 +531,10 @@ class WebSocketManager:
                 "contextId": status_event.get("context_id")
             }
             
-            # Broadcast to tenant if contextId present, skip if no context (multi-tenant isolation)
+            # Use smart_broadcast to send to tenant AND collaborative session members
             context_id = status_event.get("context_id")
             if context_id:
-                tenant_id = get_tenant_from_context(context_id)
-                await self.broadcast_to_tenant(event_data, tenant_id)
+                await self.smart_broadcast(event_data)
             else:
                 logger.debug(f"Skipping agent status broadcast - no context_id provided (multi-tenant isolation)")
             print(f"[WEBSOCKET] Emitted agent status update: {status_event.get('agent_name')} -> {status_event.get('status')}")
