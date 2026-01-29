@@ -150,6 +150,33 @@ export function ChatHistorySidebar({ isCollapsed, onToggle }: Props) {
     }
   }, [subscribe, unsubscribe, loadConversations, currentConversationId, router])
 
+  // Listen for conversation title updates from collaborative session members via WebSocket
+  useEffect(() => {
+    const handleWebSocketTitleUpdate = (data: any) => {
+      const conversationId = data?.data?.conversationId || data?.conversationId
+      const title = data?.data?.title || data?.title
+      
+      if (!conversationId || !title) {
+        console.log('[ChatHistorySidebar] conversation_title_update event missing data:', data)
+        return
+      }
+      
+      console.log('[ChatHistorySidebar] Received WebSocket title update:', { conversationId, title })
+      
+      setConversations(prev => prev.map(conv => 
+        conv.conversation_id === conversationId 
+          ? { ...conv, name: title }
+          : conv
+      ))
+    }
+
+    subscribe('conversation_title_update', handleWebSocketTitleUpdate)
+    
+    return () => {
+      unsubscribe('conversation_title_update', handleWebSocketTitleUpdate)
+    }
+  }, [subscribe, unsubscribe])
+
   useEffect(() => {
     console.log('[ChatHistorySidebar] Setting up event listeners...')
     

@@ -881,6 +881,31 @@ def create_websocket_app() -> FastAPI:
             # Handle leaving a collaborative session
             await handle_leave_session(websocket, message)
         
+        elif message_type == "conversation_title_update":
+            # Handle conversation title update that should be broadcast to collaborative session members
+            conversation_id = message.get("conversationId", "")
+            title = message.get("title", "")
+            
+            # Create the event to broadcast
+            title_event = {
+                "eventType": "conversation_title_update",
+                "conversationId": conversation_id,
+                "data": {
+                    "conversationId": conversation_id,
+                    "title": title
+                }
+            }
+            
+            # Broadcast to sender's tenant AND collaborative session members
+            sender_tenant = websocket_manager.connection_tenants.get(websocket)
+            if sender_tenant:
+                # Add contextId for smart_broadcast to route to collaborative members
+                title_event["contextId"] = sender_tenant
+                await websocket_manager.smart_broadcast(title_event)
+                logger.info(f"Conversation title update broadcasted: {conversation_id} -> '{title}'")
+            else:
+                logger.debug(f"Skipping conversation_title_update broadcast - no tenant found")
+        
         else:
             logger.warning(f"Unknown message type: {message_type}")
     
