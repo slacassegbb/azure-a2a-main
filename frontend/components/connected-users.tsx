@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button"
 import { User, Clock, Phone, MessageCircle, UserPlus } from "lucide-react"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { useEventHub } from "@/hooks/use-event-hub"
+import { useToast } from "@/hooks/use-toast"
 import { SessionInviteButton } from "@/components/session-invite"
 import { leaveCollaborativeSession, isInCollaborativeSession } from "@/lib/session"
 
@@ -27,6 +28,7 @@ export function ConnectedUsers() {
   const [expandedUsers, setExpandedUsers] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(false)
   const { subscribe, unsubscribe, sendMessage, isConnected } = useEventHub()
+  const { toast } = useToast()
 
   const fetchActiveUsers = useCallback(async () => {
     try {
@@ -79,16 +81,25 @@ export function ConnectedUsers() {
   // Handle session ended (owner left/logged out)
   const handleSessionEnded = useCallback((eventData: any) => {
     console.log("[ConnectedUsers] Session ended event:", eventData)
-    const reason = eventData.data?.reason
     const message = eventData.data?.message || "Session has ended"
     
     // Only handle if we're in a collaborative session (we're a member, not owner)
     if (isInCollaborativeSession()) {
       console.log("[ConnectedUsers] We're in a collaborative session that just ended, returning to own session")
-      alert(message) // Notify the user
-      leaveCollaborativeSession(true) // Clear local storage and reload to return to own session
+      
+      // Show toast notification
+      toast({
+        title: "Session Ended",
+        description: message,
+        variant: "default",
+      })
+      
+      // Wait a moment for toast to show, then return to own session
+      setTimeout(() => {
+        leaveCollaborativeSession(true) // Clear local storage and reload
+      }, 1500)
     }
-  }, [])
+  }, [toast])
 
   useEffect(() => {
     // Subscribe to real-time user list updates (source of truth)
