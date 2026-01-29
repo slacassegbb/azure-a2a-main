@@ -1213,12 +1213,11 @@ def create_websocket_app() -> FastAPI:
                         for member_ws in websocket_manager.user_connections[member_id]:
                             try:
                                 await member_ws.send_text(member_update)
-                                # Also send updated user list so Session Users panel updates
-                                member_auth = websocket_manager.get_connection_info(member_ws)
-                                if member_auth:
-                                    await websocket_manager.send_session_user_update(member_ws, member_auth)
                             except:
                                 pass
+                
+                # Broadcast updated user list to all session members
+                await websocket_manager.broadcast_user_list_to_session(session)
         
         logger.info(f"[Collaborative] User {auth_conn.username} {'accepted' if accepted else 'declined'} invitation {invitation_id}")
     
