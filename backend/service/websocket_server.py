@@ -1258,18 +1258,41 @@ def create_websocket_app() -> FastAPI:
         if not session_id:
             return
         
-        # Get session before leaving to notify remaining members
+        # Get session and member list before leaving
         session = collaborative_session_manager.get_session(session_id)
+        if not session:
+            return
         
+        # Get all members before this user leaves
+        all_members_before = session.get_all_member_ids()
+        is_owner = user_id == session.owner_user_id
+        
+        # Now actually leave the session
         success = collaborative_session_manager.leave_session(session_id, user_id)
         
-        if success and session:
+        if success:
             logger.info(f"[Collaborative] User {auth_conn.username} left session {session_id[:8]}... - broadcasting update to remaining members")
-            # Broadcast updated user list to remaining members
-            # Get the session again after the user has left to get the updated member list
-            updated_session = collaborative_session_manager.get_session(session_id)
-            if updated_session:
-                await websocket_manager.broadcast_user_list_to_session(updated_session)
+            
+            if is_owner:
+                # Owner left - session is ended, notify all other members that session has ended
+                logger.info(f"[Collaborative] Owner left, session {session_id[:8]} ended - notifying all members")
+                session_ended_event = json.dumps({
+                    "eventType": "session_ended",
+                    "session_id": session_id,
+                    "reason": "owner_left"
+                })
+                for member_id in all_members_before:
+                    if member_id != user_id and member_id in websocket_manager.user_connections:
+                        for member_ws in websocket_manager.user_connections[member_id]:
+                            try:
+                                await member_ws.send_text(session_ended_event)
+                            except Exception as e:
+                                logger.error(f"Failed to notify member {member_id}: {e}")
+            else:
+                # Regular member left - broadcast updated user list to remaining members
+                updated_session = collaborative_session_manager.get_session(session_id)
+                if updated_session:
+                    await websocket_manager.broadcast_user_list_to_session(updated_session)
         
         await websocket.send_text(json.dumps({
             "type": "left_session",
