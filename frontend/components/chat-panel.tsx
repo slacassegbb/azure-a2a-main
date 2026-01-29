@@ -748,6 +748,11 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
   const [selectedMentionIndex, setSelectedMentionIndex] = useState(0)
   const [mentionedUserNames, setMentionedUserNames] = useState<Set<string>>(new Set())
 
+  // Typing indicator state
+  const [typingUsers, setTypingUsers] = useState<Map<string, string>>(new Map()) // user_id -> username
+  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const lastTypingSentRef = useRef<number>(0)
+
   // Build mention suggestions (agents + users)
   const mentionSuggestions = [
     ...registeredAgents.map(agent => ({
@@ -2076,6 +2081,36 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       }
     }
 
+    // Handle typing indicator from other users
+    const handleTypingIndicator = (eventData: any) => {
+      const userId = eventData.data?.user_id
+      const username = eventData.data?.username
+      const isTyping = eventData.data?.is_typing
+      
+      if (!userId || !username) return
+      
+      setTypingUsers(prev => {
+        const newMap = new Map(prev)
+        if (isTyping) {
+          newMap.set(userId, username)
+        } else {
+          newMap.delete(userId)
+        }
+        return newMap
+      })
+      
+      // Auto-remove after 5 seconds (in case stop event is missed)
+      if (isTyping) {
+        setTimeout(() => {
+          setTypingUsers(prev => {
+            const newMap = new Map(prev)
+            newMap.delete(userId)
+            return newMap
+          })
+        }, 5000)
+      }
+    }
+
     // Subscribe to real Event Hub events from A2A backend
     subscribe("task_updated", handleTaskUpdate)
     subscribe("task_created", handleTaskCreated)
@@ -2096,6 +2131,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
     subscribe("file_uploaded", handleFileUploaded)
     subscribe("shared_file_uploaded", handleSharedFileUploaded)
     subscribe("outgoing_agent_message", handleOutgoingAgentMessage)
+    subscribe("typing_indicator", handleTypingIndicator)
 
     return () => {
       unsubscribe("task_updated", handleTaskUpdate)
@@ -2117,6 +2153,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       unsubscribe("file_uploaded", handleFileUploaded)
       unsubscribe("shared_file_uploaded", handleSharedFileUploaded)
       unsubscribe("outgoing_agent_message", handleOutgoingAgentMessage)
+      unsubscribe("typing_indicator", handleTypingIndicator)
     }
   }, [subscribe, unsubscribe, emit, sendMessage, voiceLive, conversationId, isLoadingMessages, shouldFilterByConversationId])
   // NOTE: Removed processedMessageIds from deps to prevent constant re-subscription
@@ -3423,6 +3460,22 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
             </div>
           )}
           
+          {/* Typing indicator - show who's typing */}
+          {typingUsers.size > 0 && (
+            <div className="mb-2 flex items-center gap-2 text-xs text-muted-foreground animate-pulse">
+              <span className="flex items-center gap-1">
+                <span className="inline-flex gap-0.5">
+                  <span className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                  <span className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                  <span className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                </span>
+                <span className="ml-1">
+                  {Array.from(typingUsers.values()).join(', ')} {typingUsers.size === 1 ? 'is' : 'are'} typing...
+                </span>
+              </span>
+            </div>
+          )}
+          
           <div 
             className="relative max-w-4xl mx-auto"
             onMouseEnter={() => setIsInputHovered(true)}
@@ -3434,10 +3487,29 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
               ref={textareaRef}
               value={input}
               onFocus={() => setIsInputFocused(true)}
-              onBlur={() => setIsInputFocused(false)}
+              onBlur={() => {
+                setIsInputFocused(false)
+                // Send typing stopped when losing focus
+                sendMessage({ type: "typing_indicator", is_typing: false })
+              }}
               onChange={(e) => {
                 const newValue = e.target.value
                 setInput(newValue)
+                
+                // Send typing indicator (debounced - max once per second)
+                const now = Date.now()
+                if (newValue.length > 0 && now - lastTypingSentRef.current > 1000) {
+                  sendMessage({ type: "typing_indicator", is_typing: true })
+                  lastTypingSentRef.current = now
+                }
+                
+                // Clear previous timeout and set new one to send "stopped typing"
+                if (typingTimeoutRef.current) {
+                  clearTimeout(typingTimeoutRef.current)
+                }
+                typingTimeoutRef.current = setTimeout(() => {
+                  sendMessage({ type: "typing_indicator", is_typing: false })
+                }, 2000)
                 
                 // Auto-resize textarea
                 const target = e.target as HTMLTextAreaElement

@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { User, Clock, Phone, MessageCircle, UserPlus, UserMinus } from "lucide-react"
+import { User, Clock, Phone, MessageCircle, UserPlus, UserMinus, LogOut } from "lucide-react"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { useEventHub } from "@/hooks/use-event-hub"
 import { useToast } from "@/hooks/use-toast"
@@ -201,6 +201,26 @@ export function ConnectedUsers() {
     })
   }, [isSessionOwner, sendMessage, toast])
 
+  // Handle leaving the session (for members only)
+  const handleLeaveSession = useCallback(() => {
+    if (isSessionOwner) {
+      toast({
+        title: "Cannot Leave",
+        description: "You own this session. Log out to end it for everyone.",
+        variant: "destructive",
+      })
+      return
+    }
+
+    toast({
+      title: "Leaving Session",
+      description: "Returning to your own session...",
+    })
+
+    // Send leave message to backend and return to own session
+    leaveCollaborativeSession(true, sendMessage)
+  }, [isSessionOwner, sendMessage, toast])
+
   const getAvatarStyles = (hexColor: string) => {
     // Convert hex to RGB
     const hex = hexColor.replace('#', '')
@@ -248,10 +268,25 @@ export function ConnectedUsers() {
 
   return (
     <div className="space-y-2">
-      {/* Header with invite button */}
+      {/* Header with invite button and leave button */}
       <div className="flex items-center justify-between px-1 mb-2">
         <span className="text-xs text-muted-foreground">Session Users</span>
-        <SessionInviteButton />
+        <div className="flex items-center gap-1">
+          {/* Leave Session button - only for members (not session owners) */}
+          {!isSessionOwner && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive"
+              onClick={handleLeaveSession}
+              title="Leave this session"
+            >
+              <LogOut className="h-3 w-3 mr-1" />
+              Leave
+            </Button>
+          )}
+          <SessionInviteButton />
+        </div>
       </div>
       
       {users.map((user) => {
