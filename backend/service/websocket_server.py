@@ -371,6 +371,7 @@ class WebSocketManager:
                             collaborative_session = collaborative_session_manager.get_session(user_session_ids[0])
                 
                 # If user was in a collaborative session, notify remaining members
+                # The broadcast includes ALL session members (even disconnected ones with status "reconnecting")
                 if collaborative_session:
                     logger.info(f"[WebSocket Auth] User {auth_conn.username} disconnected from collaborative session {collaborative_session.session_id}")
                     # Broadcast updated user list to all remaining members in the session
@@ -518,12 +519,15 @@ class WebSocketManager:
             all_member_ids = collaborative_session.get_all_member_ids()
             logger.info(f"[WebSocket] Broadcasting user list to collaborative session {collaborative_session.session_id} with {len(all_member_ids)} members")
             
-            # Build the user list from currently connected users
+            # Build the user list from ALL session members (not just connected ones)
+            # This ensures users who are refreshing still appear in the list
             session_users = []
             for member_id in all_member_ids:
                 # Check if this member has an active connection
-                if member_id in self.user_connections and self.user_connections[member_id]:
-                    # User is connected - get their data
+                is_connected = member_id in self.user_connections and self.user_connections[member_id]
+                
+                if is_connected:
+                    # User is connected - get their data from connection
                     for ws in self.user_connections[member_id]:
                         if ws in self.authenticated_connections:
                             conn_info = self.authenticated_connections[ws]
@@ -545,6 +549,27 @@ class WebSocketManager:
                                     }
                                     session_users.append(user_data)
                             break  # Only need one connection per user
+                else:
+                    # User is a member but not currently connected (maybe refreshing)
+                    # Still include them in the list but mark as reconnecting
+                    if auth_service:
+                        user = auth_service.get_user_by_id(member_id)
+                        if user:
+                            user_data = {
+                                "user_id": user.user_id,
+                                "email": user.email,
+                                "name": user.name,
+                                "role": user.role,
+                                "description": user.description,
+                                "skills": user.skills,
+                                "color": user.color,
+                                "created_at": user.created_at.isoformat(),
+                                "last_login": user.last_login.isoformat() if user.last_login else None,
+                                "status": "reconnecting",  # They're a member but temporarily disconnected
+                                "is_session_owner": member_id == collaborative_session.owner_user_id
+                            }
+                            session_users.append(user_data)
+                            logger.info(f"[WebSocket] Member {user.name} is in session but not connected (likely refreshing)")
             
             # Broadcast to all connected members
             event_data = {

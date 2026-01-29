@@ -253,6 +253,13 @@ class AuthService:
         """Get user by email."""
         return self.users.get(email)
     
+    def get_user_by_id(self, user_id: str) -> Optional[User]:
+        """Get user by user_id."""
+        for user in self.users.values():
+            if user.user_id == user_id:
+                return user
+        return None
+    
     def get_all_users(self) -> List[Dict[str, Any]]:
         """Get all users (without password hashes)."""
         return [
