@@ -198,12 +198,17 @@ class WebSocketManager:
         # Handle authentication first to get user_id
         user_data = None
         user_id = None
+        logger.info(f"[WebSocket Auth] Connection attempt - token present: {bool(token)}, auth_service present: {bool(auth_service)}")
         if token and auth_service:
-            logger.info(f"[WebSocket Auth] Token received, attempting verification...")
+            logger.info(f"[WebSocket Auth] Token received (len={len(token)}), attempting verification...")
             user_data = auth_service.verify_token(token)
             if user_data:
                 user_id = user_data.get('user_id')
-                logger.info(f"[WebSocket Auth] Token verified successfully for user_id: {user_id}")
+                logger.info(f"[WebSocket Auth] Token verified successfully for user_id: {user_id}, name: {user_data.get('name')}")
+            else:
+                logger.warning(f"[WebSocket Auth] Token verification FAILED - returned None")
+        elif token and not auth_service:
+            logger.warning(f"[WebSocket Auth] Token present but auth_service is None!")
         
         # Validate and register tenant connection
         # If tenant_id doesn't match user's own session, validate it's a valid collaborative session
@@ -250,6 +255,9 @@ class WebSocketManager:
                     self.user_connections[user_id] = set()
                 self.user_connections[user_id].add(websocket)
                 logger.info(f"[WebSocket Auth] Registered user connection: {user_id} (total: {len(self.user_connections[user_id])})")
+                # Log all user_connections for debugging collaborative session issues
+                all_user_ids = list(self.user_connections.keys())
+                logger.info(f"[WebSocket Auth] 📋 Current user_connections state: {all_user_ids}")
             
             # Add user to active users list in auth service
             if auth_service:
