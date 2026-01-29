@@ -1267,37 +1267,51 @@ def create_websocket_app() -> FastAPI:
         all_members_before = session.get_all_member_ids()
         is_owner = user_id == session.owner_user_id
         
+        logger.info(f"[Collaborative] User {auth_conn.username} (owner={is_owner}) leaving session {session_id[:8]}...")
+        logger.info(f"[Collaborative] Members before leave: {all_members_before}")
+        
         # Now actually leave the session
         success = collaborative_session_manager.leave_session(session_id, user_id)
         
         if success:
-            logger.info(f"[Collaborative] User {auth_conn.username} left session {session_id[:8]}... - broadcasting update to remaining members")
+            logger.info(f"[Collaborative] Successfully left session - broadcasting update to remaining members")
             
-            if is_owner:
-                # Owner left - session is ended, notify all other members that session has ended
-                logger.info(f"[Collaborative] Owner left, session {session_id[:8]} ended - notifying all members")
-                session_ended_event = json.dumps({
-                    "eventType": "session_ended",
-                    "session_id": session_id,
-                    "reason": "owner_left"
+            # Get the updated session (will be None if owner left and session was deleted)
+            updated_session = collaborative_session_manager.get_session(session_id)
+            
+            if updated_session:
+                # Session still exists - member left, broadcast updated user list
+                logger.info(f"[Collaborative] Session still exists, broadcasting user list to remaining members")
+                await websocket_manager.broadcast_user_list_to_session(updated_session)
+            else:
+                # Session was deleted (owner left) - notify all former members
+                logger.info(f"[Collaborative] Session ended (owner left), notifying all former members")
+                # Send empty user list to all former members so they see everyone is gone
+                empty_user_list_event = json.dumps({
+                    "eventType": "user_list_update",
+                    "data": {
+                        "active_users": [],
+                        "total_active": 0,
+                        "session_isolated": True,
+                        "is_collaborative": False
+                    },
+                    "timestamp": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
                 })
+                
                 for member_id in all_members_before:
                     if member_id != user_id and member_id in websocket_manager.user_connections:
                         for member_ws in websocket_manager.user_connections[member_id]:
                             try:
-                                await member_ws.send_text(session_ended_event)
+                                await member_ws.send_text(empty_user_list_event)
+                                logger.info(f"[Collaborative] Sent empty user list to former member {member_id}")
                             except Exception as e:
                                 logger.error(f"Failed to notify member {member_id}: {e}")
-            else:
-                # Regular member left - broadcast updated user list to remaining members
-                updated_session = collaborative_session_manager.get_session(session_id)
-                if updated_session:
-                    await websocket_manager.broadcast_user_list_to_session(updated_session)
         
         await websocket.send_text(json.dumps({
             "type": "left_session",
             "session_id": session_id
         }))
+        logger.info(f"[Collaborative] User {auth_conn.username} leave_session handling complete")
         logger.info(f"[Collaborative] User {auth_conn.username} left session {session_id[:8]}...")
     
     @app.post("/events")
