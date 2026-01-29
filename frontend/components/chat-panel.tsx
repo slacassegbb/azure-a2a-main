@@ -1623,20 +1623,22 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
     const handleSharedInferenceStarted = (data: any) => {
       console.log("[ChatPanel] Shared inference started:", data)
       
-      // In collaborative sessions, always accept shared inference events
-      // The session owner and all joiners share the same session
-      if (isInCollaborativeSession) {
-        console.log("[ChatPanel] Collaborative session - accepting shared_inference_started")
-        setIsInferencing(true)
-        setInferenceSteps([])
-        setActiveNode("User Input")
-        return
+      // Filter by conversationId - only process inference events for the current conversation
+      // conversationId is now at top level (from WebSocket client normalization)
+      let eventConvId = data.conversationId || data.data?.conversationId || ""
+      let eventTenantId = ""
+      if (eventConvId.includes("::")) {
+        const parts = eventConvId.split("::")
+        eventTenantId = parts[0]
+        eventConvId = parts[1]
       }
       
-      // For non-collaborative sessions, filter by conversationId
-      let eventConvId = data.conversationId || data.data?.conversationId || ""
-      if (eventConvId.includes("::")) {
-        eventConvId = eventConvId.split("::")[1]
+      // Filter by session - only process events for the current session
+      // In collaborative sessions, getOrCreateSessionId() returns the shared session ID
+      const mySessionId = getOrCreateSessionId()
+      if (eventTenantId && mySessionId && eventTenantId !== mySessionId) {
+        console.log("[ChatPanel] Ignoring inference started from different session:", eventTenantId, "my session:", mySessionId)
+        return
       }
       
       if (eventConvId && eventConvId !== conversationId) {
@@ -1652,49 +1654,33 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
     const handleSharedInferenceEnded = (data: any) => {
       console.log("[ChatPanel] Shared inference ended:", data)
       
-      // Extract workflow steps and other data
-      const workflowSteps = data.workflowSteps || data.data?.workflowSteps
-      const summaryId = data.summaryId || data.data?.summaryId || `summary_shared_${Date.now()}`
+      // Filter by conversationId - only process inference events for the current conversation
+      // conversationId is now at top level (from WebSocket client normalization)
       let eventConvId = data.conversationId || data.data?.conversationId || ""
+      let eventTenantId = ""
       if (eventConvId.includes("::")) {
-        eventConvId = eventConvId.split("::")[1]
+        const parts = eventConvId.split("::")
+        eventTenantId = parts[0]
+        eventConvId = parts[1]
       }
       
-      // In collaborative sessions, always accept shared inference ended events
-      if (isInCollaborativeSession) {
-        console.log("[ChatPanel] Collaborative session - accepting shared_inference_ended with", workflowSteps?.length || 0, "steps")
-        
-        // Add workflow steps if provided
-        if (workflowSteps && workflowSteps.length > 0) {
-          const summaryMessage: Message = {
-            id: summaryId,
-            role: "system",
-            type: "inference_summary",
-            steps: workflowSteps,
-          }
-          
-          setMessages((prev) => {
-            // Check if we already have this summary
-            const exists = prev.some(m => m.id === summaryId || (m.type === 'inference_summary' && prev.slice(-3).includes(m)))
-            if (exists) {
-              console.log("[ChatPanel] Workflow summary already exists, skipping")
-              return prev
-            }
-            console.log("[ChatPanel] Adding shared workflow summary:", summaryId)
-            return [...prev, summaryMessage]
-          })
-        }
-        
-        setIsInferencing(false)
-        setInferenceSteps([])
+      // Filter by session - only process events for the current session
+      // In collaborative sessions, getOrCreateSessionId() returns the shared session ID
+      const mySessionId = getOrCreateSessionId()
+      if (eventTenantId && mySessionId && eventTenantId !== mySessionId) {
+        console.log("[ChatPanel] Ignoring inference ended from different session:", eventTenantId, "my session:", mySessionId)
         return
       }
       
-      // For non-collaborative sessions, filter by conversationId
-      if (eventConvId && eventConvId !== conversationId) {
+      // In collaborative sessions, auto-navigate to the conversation if different
+      if (shouldFilterByConversationId(eventConvId)) {
         console.log("[ChatPanel] Ignoring inference ended for different conversation:", eventConvId, "current:", conversationId)
         return
       }
+      
+      // If workflow steps are included, create an inference_summary message
+      const workflowSteps = data.workflowSteps || data.data?.workflowSteps
+      const summaryId = data.summaryId || data.data?.summaryId || `summary_shared_${Date.now()}`
       
       // Check if we already processed a workflow for this conversation recently
       // This prevents duplicates when we receive both the direct message event AND shared_inference_ended
@@ -2501,15 +2487,11 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
         }
       }
 
-      // Only broadcast inference ended if this is from our session OR we're in a collaborative session
-      // In collaborative sessions, all members share the same session so we broadcast for everyone
-      const shouldBroadcastEnded = data.isFromMyTenant !== false || isInCollaborativeSession
-      console.log("[ChatPanel] Checking shared_inference_ended broadcast - isFromMyTenant:", data.isFromMyTenant, "isInCollaborativeSession:", isInCollaborativeSession, "stepsToShare:", stepsToShare?.length)
-      if (shouldBroadcastEnded) {
+      // Only broadcast inference ended if this is from our session
+      if (data.isFromMyTenant !== false) {
         // Find the assistant response message we just added (if any)
         const assistantMessage = messagesToAdd.find(msg => msg.role === 'assistant' && msg.type !== 'inference_summary')
         
-        console.log("[ChatPanel] Broadcasting shared_inference_ended with", stepsToShare?.length || 0, "workflow steps")
         // Broadcast inference ended to all other clients WITH workflow steps AND response message
         sendMessage({
           type: "shared_inference_ended",
@@ -2523,8 +2505,6 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
             responseMessage: assistantMessage || null
           }
         })
-      } else {
-        console.log("[ChatPanel] Skipping shared_inference_ended - not from my tenant and not in collaborative session")
       }
       
       // Always clear inference state at the end of final_response processing
