@@ -337,6 +337,9 @@ class WebSocketManager:
         """Remove a WebSocket connection."""
         self.active_connections.discard(websocket)
         
+        # Get tenant/session before unregistering
+        tenant_id = self.connection_tenants.get(websocket)
+        
         # Unregister from tenant connections
         self.unregister_tenant_connection(websocket)
         
@@ -357,9 +360,23 @@ class WebSocketManager:
                 auth_service.remove_active_user(auth_conn.user_data)
                 logger.info(f"[WebSocket Auth] Removed user from active list: {auth_conn.username}")
                 
-                # No need to broadcast to other sessions (multi-tenancy isolation)
-                # Each session only tracks their own user, so no update needed for others
-                logger.info(f"[WebSocket Auth] Session for {auth_conn.username} ended (no broadcast needed - session isolated)")
+                # Check if this user was in a collaborative session
+                collaborative_session = None
+                if tenant_id:
+                    collaborative_session = collaborative_session_manager.get_session(tenant_id)
+                    if not collaborative_session and user_id:
+                        # Check if user was a member of any session
+                        user_session_ids = collaborative_session_manager.get_user_sessions(user_id)
+                        if user_session_ids:
+                            collaborative_session = collaborative_session_manager.get_session(user_session_ids[0])
+                
+                # If user was in a collaborative session, notify remaining members
+                if collaborative_session:
+                    logger.info(f"[WebSocket Auth] User {auth_conn.username} disconnected from collaborative session {collaborative_session.session_id}")
+                    # Broadcast updated user list to all remaining members in the session
+                    await self.broadcast_user_list_to_session(collaborative_session)
+                else:
+                    logger.info(f"[WebSocket Auth] Session for {auth_conn.username} ended (no broadcast needed - session isolated)")
             
             logger.info(f"Authenticated user {auth_conn.username} disconnected")
         
@@ -490,6 +507,70 @@ class WebSocketManager:
             logger.info(f"[WebSocket] Sent session user update to {auth_conn.username}: {len(session_users)} user(s): {user_names}")
         except Exception as e:
             logger.error(f"Failed to send session user update to {auth_conn.username}: {e}")
+    
+    async def broadcast_user_list_to_session(self, collaborative_session):
+        """Broadcast updated user list to all members of a collaborative session.
+        
+        Args:
+            collaborative_session: The collaborative session to broadcast to
+        """
+        try:
+            all_member_ids = collaborative_session.get_all_member_ids()
+            logger.info(f"[WebSocket] Broadcasting user list to collaborative session {collaborative_session.session_id} with {len(all_member_ids)} members")
+            
+            # Build the user list from currently connected users
+            session_users = []
+            for member_id in all_member_ids:
+                # Check if this member has an active connection
+                if member_id in self.user_connections and self.user_connections[member_id]:
+                    # User is connected - get their data
+                    for ws in self.user_connections[member_id]:
+                        if ws in self.authenticated_connections:
+                            conn_info = self.authenticated_connections[ws]
+                            if auth_service:
+                                user = auth_service.get_user_by_email(conn_info.email)
+                                if user:
+                                    user_data = {
+                                        "user_id": user.user_id,
+                                        "email": user.email,
+                                        "name": user.name,
+                                        "role": user.role,
+                                        "description": user.description,
+                                        "skills": user.skills,
+                                        "color": user.color,
+                                        "created_at": user.created_at.isoformat(),
+                                        "last_login": user.last_login.isoformat() if user.last_login else None,
+                                        "status": "active",
+                                        "is_session_owner": member_id == collaborative_session.owner_user_id
+                                    }
+                                    session_users.append(user_data)
+                            break  # Only need one connection per user
+            
+            # Broadcast to all connected members
+            event_data = {
+                "eventType": "user_list_update",
+                "data": {
+                    "active_users": session_users,
+                    "total_active": len(session_users),
+                    "session_isolated": True,
+                    "is_collaborative": True
+                },
+                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+            }
+            
+            for member_id in all_member_ids:
+                if member_id in self.user_connections:
+                    for ws in self.user_connections[member_id]:
+                        try:
+                            await ws.send_text(json.dumps(event_data))
+                            logger.info(f"[WebSocket] Sent user list update to member {member_id}")
+                        except Exception as e:
+                            logger.error(f"[WebSocket] Failed to send user list to {member_id}: {e}")
+            
+            user_names = [u.get('name', 'unknown') for u in session_users]
+            logger.info(f"[WebSocket] Broadcasted user list to session: {len(session_users)} user(s): {user_names}")
+        except Exception as e:
+            logger.error(f"Failed to broadcast user list to session: {e}")
     
     async def send_pending_invitations(self, websocket: WebSocket, user_id: str):
         """Send any pending session invitations to a newly connected user.
