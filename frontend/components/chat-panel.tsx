@@ -2103,7 +2103,8 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       unsubscribe("shared_file_uploaded", handleSharedFileUploaded)
       unsubscribe("outgoing_agent_message", handleOutgoingAgentMessage)
     }
-  }, [subscribe, unsubscribe, emit, sendMessage, processedMessageIds, voiceLive, conversationId, isLoadingMessages, shouldFilterByConversationId])
+  }, [subscribe, unsubscribe, emit, sendMessage, voiceLive, conversationId, isLoadingMessages, shouldFilterByConversationId])
+  // NOTE: Removed processedMessageIds from deps to prevent constant re-subscription
 
   // Check authentication status and show welcome message only when logged in
   useEffect(() => {
