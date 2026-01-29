@@ -362,6 +362,13 @@ class WebSocketManager:
                 if not self.user_connections[user_id]:
                     del self.user_connections[user_id]
                     logger.info(f"[Collaborative] User {auth_conn.username} has no more active connections")
+                    
+                    # If user has no more connections, remove them from any collaborative sessions
+                    # This handles logout scenario - user with no connections is gone for good
+                    user_session_ids = collaborative_session_manager.get_user_sessions(user_id)
+                    for session_id in user_session_ids:
+                        logger.info(f"[Collaborative] Auto-leaving user {auth_conn.username} from session {session_id[:8]} (no more connections)")
+                        collaborative_session_manager.leave_session(session_id, user_id)
             
             # Remove user from active users list in auth service
             if auth_service:
