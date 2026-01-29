@@ -20,6 +20,32 @@ function generateSessionId(): string {
 }
 
 /**
+ * Get the user's own user_id from JWT, ignoring collaborative session.
+ * Used to determine if a message originated from the current user's session.
+ * 
+ * @returns The user's own user_id or null if not logged in
+ */
+export function getOwnUserId(): string | null {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+  
+  const token = sessionStorage.getItem('auth_token');
+  if (token) {
+    try {
+      const payload = JSON.parse(atob(token.split('.')[1]));
+      if (payload.user_id) {
+        return payload.user_id;
+      }
+    } catch (error) {
+      console.warn('[Session] Failed to decode JWT:', error);
+    }
+  }
+  
+  return null;
+}
+
+/**
  * Get or create a session ID for the current browser session.
  * 
  * For logged-in users: Uses user_id as session (data syncs across devices)
