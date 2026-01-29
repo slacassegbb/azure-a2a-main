@@ -20,7 +20,7 @@ import remarkGfm from "remark-gfm"
 import rehypeHighlight from "rehype-highlight"
 import { useSearchParams, useRouter } from "next/navigation"
 import { getConversation, updateConversationTitle, createConversation, notifyConversationCreated, type Message as APIMessage } from "@/lib/conversation-api"
-import { createContextId, getOrCreateSessionId } from "@/lib/session"
+import { createContextId, getOrCreateSessionId, getOwnUserId } from "@/lib/session"
 
 // Transform technical status messages into user-friendly display text
 const transformStatusMessage = (message: string, agentName?: string): string => {
@@ -1217,9 +1217,10 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       
       // In collaborative sessions, skip messages from other tenants - they will arrive via shared_message
       // This prevents duplicate message display when both message event and shared_message are received
-      const mySessionId = getOrCreateSessionId()
-      if (messageTenantId && messageTenantId !== mySessionId) {
-        console.log("[ChatPanel] Ignoring message from different tenant (will receive via shared_message):", messageTenantId, "my session:", mySessionId)
+      // Use getOwnUserId() to get the user's actual user_id, not the collaborative session ID
+      const myUserId = getOwnUserId()
+      if (messageTenantId && myUserId && messageTenantId !== myUserId) {
+        console.log("[ChatPanel] Ignoring message from different tenant (will receive via shared_message):", messageTenantId, "my user_id:", myUserId)
         return
       }
       
@@ -1313,7 +1314,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
           
           // Determine if this message originated from the current user's session
           // If not, we should NOT re-broadcast it (to avoid duplicate shared_message loops)
-          const isFromMyTenant = messageTenantId === mySessionId || !messageTenantId
+          const isFromMyTenant = messageTenantId === myUserId || !messageTenantId
           
           // Emit final_response for internal processing - this is converted from message event
           // Include attachments so they appear AFTER the workflow, not before
@@ -1441,9 +1442,10 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       }
       
       // Skip events from other tenants - prevents duplicate workflow displays
-      const mySessionId = getOrCreateSessionId()
-      if (eventTenantId && eventTenantId !== mySessionId) {
-        console.log("[ChatPanel] Ignoring inference started from different tenant:", eventTenantId)
+      // Use getOwnUserId() to get the user's actual user_id, not the collaborative session ID
+      const myUserId = getOwnUserId()
+      if (eventTenantId && myUserId && eventTenantId !== myUserId) {
+        console.log("[ChatPanel] Ignoring inference started from different tenant:", eventTenantId, "my user_id:", myUserId)
         return
       }
       
@@ -1471,9 +1473,10 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       }
       
       // Skip events from other tenants
-      const mySessionId = getOrCreateSessionId()
-      if (eventTenantId && eventTenantId !== mySessionId) {
-        console.log("[ChatPanel] Ignoring inference ended from different tenant:", eventTenantId)
+      // Use getOwnUserId() to get the user's actual user_id, not the collaborative session ID
+      const myUserId = getOwnUserId()
+      if (eventTenantId && myUserId && eventTenantId !== myUserId) {
+        console.log("[ChatPanel] Ignoring inference ended from different tenant:", eventTenantId, "my user_id:", myUserId)
         return
       }
       
@@ -1499,6 +1502,16 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
           inferenceId: data.conversationId,
           agent: "System",
           status: "new conversation created"
+        })
+        
+        // Notify the sidebar about the new conversation
+        // Convert WebSocket event format to Conversation object format
+        notifyConversationCreated({
+          conversation_id: data.conversationId,
+          name: data.conversationName || `Chat ${data.conversationId.slice(0, 8)}...`,
+          is_active: data.isActive !== false,
+          task_ids: [],
+          messages: []
         })
       }
     }
