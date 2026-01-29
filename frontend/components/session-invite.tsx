@@ -74,6 +74,11 @@ export function SessionInviteButton() {
     setInvitingUserId(null)  // Stop the spinner
     setIsOpen(false)  // Close the dialog
     if (eventData.accepted) {
+      // When someone accepts our invite, WE (the session owner) are now in a collaborative session
+      // Set the sessionStorage so isInCollaborativeSession becomes true
+      const mySessionId = getOrCreateSessionId()
+      sessionStorage.setItem('a2a_collaborative_session', mySessionId)
+      console.log("[SessionInvite] Set collaborative session for owner:", mySessionId)
       toast({
         title: "Invitation Accepted!",
         description: `${eventData.from_username} has joined your session`,
