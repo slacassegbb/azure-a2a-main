@@ -572,7 +572,11 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
   useEffect(() => {
     const checkSessionState = () => {
       const collab = sessionStorage.getItem('a2a_collaborative_session')
-      setIsInCollaborativeSession(!!collab)
+      console.log('[ChatPanel] checkSessionState - collab:', collab, 'current isInCollaborativeSession:', isInCollaborativeSession)
+      if (!!collab !== isInCollaborativeSession) {
+        console.log('[ChatPanel] Updating isInCollaborativeSession to:', !!collab)
+        setIsInCollaborativeSession(!!collab)
+      }
       // Update session ID - this triggers contextId recalculation
       const newSessionId = getOrCreateSessionId()
       setCurrentSessionId(prev => {
@@ -3404,8 +3408,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                     })()}
                   </div>
                   
-                  {/* Message reactions - show existing reactions only */}
-                  {(() => { console.log('[Render] Message:', message.id, 'reactions:', message.reactions, 'isInCollaborativeSession:', isInCollaborativeSession); return null; })()}
+                  {/* Message reactions - show existing reactions only in collaborative sessions */}
                   {isInCollaborativeSession && message.reactions && message.reactions.length > 0 && (
                     <div className="flex flex-wrap gap-1 mt-1 items-center">
                       {message.reactions.map((reaction, idx) => {
