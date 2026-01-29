@@ -602,8 +602,8 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
   }, [conversationId, currentSessionId])
   
   // Helper function to check if we should filter by conversationId
-  // In collaborative sessions, we ALWAYS filter strictly (no 'frontend-chat-context' exception)
-  // This prevents messages from showing up in the wrong conversation
+  // In collaborative sessions, we DON'T filter by conversation - all messages in the shared session are visible
+  // The session ID filtering (done separately) is sufficient for multi-tenancy
   const shouldFilterByConversationId = useCallback((eventConvId: string): boolean => {
     // If no conversationId in the event, accept it (backward compatibility)
     if (!eventConvId) return false
@@ -611,8 +611,11 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
     // If the event is for our current conversation, accept it
     if (eventConvId === conversationId) return false
     
-    // In collaborative sessions, always filter strictly
-    if (isInCollaborativeSession) return true
+    // In collaborative sessions, DON'T filter by conversation ID
+    // All messages from the shared session should be visible to all members
+    // This is critical because User B might be at 'frontend-chat-context' while User A
+    // sends a message in a specific conversation - User B should still see it
+    if (isInCollaborativeSession) return false
     
     // In non-collaborative sessions, allow 'frontend-chat-context' to receive all messages
     // This is for the default home page where no specific conversation is selected
