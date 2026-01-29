@@ -30,6 +30,14 @@ const SESSION_ID_KEY = 'backendSessionId'
 export function FileHistory({ className, onFileSelect, onFilesLoaded }: FileHistoryProps) {
   const [files, setFiles] = useState<FileRecord[]>([])
   const { subscribe, unsubscribe } = useEventHub()
+  
+  // Track current session ID for collaborative session support
+  const [currentSessionId, setCurrentSessionId] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      return getOrCreateSessionId()
+    }
+    return ''
+  })
 
   // Handle backend session changes - clear file history when backend restarts
   useEffect(() => {
@@ -52,10 +60,25 @@ export function FileHistory({ className, onFileSelect, onFilesLoaded }: FileHist
       console.log('[FileHistory] Session ID stored:', newSessionId.slice(0, 8))
     }
 
+    // Handle session members updated - fires when we join a collaborative session
+    const handleSessionMembersUpdated = (data: any) => {
+      console.log('[FileHistory] Session members updated:', data)
+      const newSessionId = getOrCreateSessionId()
+      setCurrentSessionId(prev => {
+        if (prev !== newSessionId) {
+          console.log('[FileHistory] Session ID changed after members update:', prev, '->', newSessionId)
+          return newSessionId
+        }
+        return prev
+      })
+    }
+
     subscribe('session_started', handleSessionStarted)
+    subscribe('session_members_updated', handleSessionMembersUpdated)
     
     return () => {
       unsubscribe('session_started', handleSessionStarted)
+      unsubscribe('session_members_updated', handleSessionMembersUpdated)
     }
   }, [subscribe, unsubscribe])
 
@@ -114,7 +137,7 @@ export function FileHistory({ className, onFileSelect, onFilesLoaded }: FileHist
     }
     
     loadFilesFromBackend()
-  }, [onFilesLoaded])
+  }, [onFilesLoaded, currentSessionId])  // Reload when session changes (joining collaborative session)
 
   // Function to add a new file to history (will be called from parent)
   // Use useCallback to prevent recreating the function on every render

@@ -540,9 +540,87 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
   const router = useRouter()
   const conversationId = searchParams.get('conversationId') || 'frontend-chat-context'
   
+  // Track the current session ID - this changes when joining a collaborative session
+  // We need this as state so React knows to re-render when it changes
+  const [currentSessionId, setCurrentSessionId] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      return getOrCreateSessionId()
+    }
+    return ''
+  })
+  
+  // Track if we're in a collaborative session - needed for strict conversation filtering
+  // In collaborative sessions, we should NOT allow the 'frontend-chat-context' exception
+  // because we receive events from all of the session owner's conversations
+  const [isInCollaborativeSession, setIsInCollaborativeSession] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      return !!sessionStorage.getItem('a2a_collaborative_session')
+    }
+    return false
+  })
+  
+  // Update collaborative session state and session ID when they change
+  // This is critical for proper sync after joining a collaborative session
+  useEffect(() => {
+    const checkSessionState = () => {
+      const collab = sessionStorage.getItem('a2a_collaborative_session')
+      setIsInCollaborativeSession(!!collab)
+      // Update session ID - this triggers contextId recalculation
+      const newSessionId = getOrCreateSessionId()
+      setCurrentSessionId(prev => {
+        if (prev !== newSessionId) {
+          console.log('[ChatPanel] Session ID changed:', prev, '->', newSessionId)
+          return newSessionId
+        }
+        return prev
+      })
+    }
+    
+    // Check on mount
+    checkSessionState()
+    
+    // Also listen for storage events in case it changes in another tab
+    window.addEventListener('storage', checkSessionState)
+    
+    // Check periodically in case sessionStorage was updated programmatically
+    // (storage events don't fire for same-tab changes)
+    const interval = setInterval(checkSessionState, 500)
+    
+    return () => {
+      window.removeEventListener('storage', checkSessionState)
+      clearInterval(interval)
+    }
+  }, [])
+  
   // Create tenant-aware contextId for A2A protocol
   // Format: sessionId::conversationId - enables multi-tenant isolation
-  const contextId = useMemo(() => createContextId(conversationId), [conversationId])
+  // IMPORTANT: Include currentSessionId in deps so it recalculates when joining collaborative session
+  const contextId = useMemo(() => {
+    const newContextId = createContextId(conversationId)
+    console.log('[ChatPanel] contextId recalculated:', newContextId, 'session:', currentSessionId)
+    return newContextId
+  }, [conversationId, currentSessionId])
+  
+  // Helper function to check if we should filter by conversationId
+  // In collaborative sessions, we ALWAYS filter strictly (no 'frontend-chat-context' exception)
+  // This prevents messages from showing up in the wrong conversation
+  const shouldFilterByConversationId = useCallback((eventConvId: string): boolean => {
+    // If no conversationId in the event, accept it (backward compatibility)
+    if (!eventConvId) return false
+    
+    // If the event is for our current conversation, accept it
+    if (eventConvId === conversationId) return false
+    
+    // In collaborative sessions, always filter strictly
+    if (isInCollaborativeSession) return true
+    
+    // In non-collaborative sessions, allow 'frontend-chat-context' to receive all messages
+    // This is for the default home page where no specific conversation is selected
+    if (conversationId === 'frontend-chat-context') return false
+    
+    // Otherwise, filter out events for other conversations
+    return true
+  }, [conversationId, isInCollaborativeSession])
   
   // Voice recording hook
   const voiceRecording = useVoiceRecording()
@@ -720,10 +798,29 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       if (DEBUG) console.log('[ChatPanel] Backend session ID stored:', newSessionId.slice(0, 8))
     }
 
+    // Handle session members updated - fires when we join a collaborative session
+    // This triggers an immediate session ID check (faster than polling)
+    const handleSessionMembersUpdated = (data: any) => {
+      console.log('[ChatPanel] Session members updated:', data)
+      const newSessionId = getOrCreateSessionId()
+      setCurrentSessionId(prev => {
+        if (prev !== newSessionId) {
+          console.log('[ChatPanel] Session ID changed after members update:', prev, '->', newSessionId)
+          return newSessionId
+        }
+        return prev
+      })
+      // Also update collaborative session state
+      const collab = sessionStorage.getItem('a2a_collaborative_session')
+      setIsInCollaborativeSession(!!collab)
+    }
+
     subscribe('session_started', handleSessionStarted)
+    subscribe('session_members_updated', handleSessionMembersUpdated)
     
     return () => {
       unsubscribe('session_started', handleSessionStarted)
+      unsubscribe('session_members_updated', handleSessionMembersUpdated)
     }
   }, [subscribe, unsubscribe, conversationId, router])
 
@@ -1087,7 +1184,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       if (taskConvId.includes("::")) {
         taskConvId = taskConvId.split("::")[1]
       }
-      if (taskConvId && taskConvId !== conversationId && conversationId !== 'frontend-chat-context') {
+      if (shouldFilterByConversationId(taskConvId)) {
         console.log("[ChatPanel] Ignoring task update for different conversation:", taskConvId, "current:", conversationId)
         return
       }
@@ -1121,7 +1218,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       if (eventConvId.includes("::")) {
         eventConvId = eventConvId.split("::")[1]
       }
-      if (eventConvId && eventConvId !== conversationId && conversationId !== 'frontend-chat-context') {
+      if (shouldFilterByConversationId(eventConvId)) {
         console.log("[ChatPanel] Ignoring system event for different conversation:", eventConvId, "current:", conversationId)
         return
       }
@@ -1151,7 +1248,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       if (taskConvId.includes("::")) {
         taskConvId = taskConvId.split("::")[1]
       }
-      if (taskConvId && taskConvId !== conversationId && conversationId !== 'frontend-chat-context') {
+      if (shouldFilterByConversationId(taskConvId)) {
         console.log("[ChatPanel] Ignoring task created for different conversation:", taskConvId, "current:", conversationId)
         return
       }
@@ -1249,7 +1346,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
         messageConvId = parts[1]
       }
       
-      if (messageConvId && messageConvId !== conversationId && conversationId !== 'frontend-chat-context') {
+      if (shouldFilterByConversationId(messageConvId)) {
         console.log("[ChatPanel] Ignoring message for different conversation:", messageConvId, "current:", conversationId)
         return
       }
@@ -1452,7 +1549,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       console.log("[ChatPanel] Current conversationId:", conversationId, "Message conversationId:", messageConvId, "raw:", data.conversationId)
       
       // Filter by conversationId - only process messages for the current conversation
-      if (messageConvId && messageConvId !== conversationId && conversationId !== 'frontend-chat-context') {
+      if (shouldFilterByConversationId(messageConvId)) {
         console.log("[ChatPanel] ❌ IGNORING message for different conversation:", messageConvId, "current:", conversationId)
         return
       }
@@ -1534,14 +1631,87 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
         return
       }
       
-      if (eventConvId && eventConvId !== conversationId) {
+      if (shouldFilterByConversationId(eventConvId)) {
         console.log("[ChatPanel] Ignoring inference ended for different conversation:", eventConvId, "current:", conversationId)
         return
+      }
+      
+      // If workflow steps are included, create an inference_summary message
+      const workflowSteps = data.workflowSteps || data.data?.workflowSteps
+      const summaryId = data.summaryId || data.data?.summaryId || `summary_shared_${Date.now()}`
+      
+      if (workflowSteps && workflowSteps.length > 0) {
+        console.log("[ChatPanel] Received workflow steps from shared_inference_ended:", workflowSteps.length, "steps")
+        
+        // Add the workflow summary message so it appears in the chat
+        const summaryMessage: Message = {
+          id: summaryId,
+          role: "system",
+          type: "inference_summary",
+          steps: workflowSteps,
+        }
+        
+        // Add to messages if not already present (avoid duplicates)
+        setMessages((prev) => {
+          const exists = prev.some(m => m.id === summaryId)
+          if (exists) {
+            console.log("[ChatPanel] Workflow summary already exists, skipping:", summaryId)
+            return prev
+          }
+          console.log("[ChatPanel] Adding shared workflow summary:", summaryId)
+          return [...prev, summaryMessage]
+        })
+        
+        // Also persist to localStorage so it survives refresh
+        try {
+          let workflowConversationId = eventConvId || conversationId
+          if (workflowConversationId.includes('::')) {
+            workflowConversationId = workflowConversationId.split('::')[1]
+          }
+          const storageKey = `workflow_${workflowConversationId}`
+          const existingData = localStorage.getItem(storageKey)
+          const workflows = existingData ? JSON.parse(existingData) : []
+          if (!workflows.some((w: any) => w.id === summaryId)) {
+            workflows.push({
+              id: summaryId,
+              steps: workflowSteps,
+              timestamp: Date.now()
+            })
+            localStorage.setItem(storageKey, JSON.stringify(workflows))
+            console.log("[ChatPanel] Persisted shared workflow to localStorage:", storageKey)
+          }
+        } catch (err) {
+          console.error('[ChatPanel] Failed to persist shared workflow to localStorage:', err)
+        }
       }
       
       setIsInferencing(false)
       setInferenceSteps([])
       setActiveNode(null)
+    }
+
+    // Handle shared file uploads from other collaborative session members
+    const handleSharedFileUploaded = (data: any) => {
+      console.log("[ChatPanel] Shared file uploaded:", data)
+      
+      // Filter by session
+      let eventTenantId = ""
+      const convId = data.conversationId || ""
+      if (convId.includes("::")) {
+        eventTenantId = convId.split("::")[0]
+      }
+      const mySessionId = getOrCreateSessionId()
+      if (eventTenantId && mySessionId && eventTenantId !== mySessionId) {
+        console.log("[ChatPanel] Ignoring shared file from different session:", eventTenantId, "my session:", mySessionId)
+        return
+      }
+      
+      // Add file to file history
+      const fileInfo = data.fileInfo || data.data?.fileInfo
+      if (fileInfo && (window as any).addFileToHistory) {
+        console.log("[ChatPanel] Adding shared file to history:", fileInfo.filename)
+        ;(window as any).addFileToHistory(fileInfo)
+      }
     }
 
     // Handle conversation events
@@ -1685,7 +1855,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       if (activityConvId.includes("::")) {
         activityConvId = activityConvId.split("::")[1]
       }
-      if (activityConvId && activityConvId !== conversationId && conversationId !== 'frontend-chat-context') {
+      if (shouldFilterByConversationId(activityConvId)) {
         console.log("[ChatPanel] Ignoring remote activity for different conversation:", activityConvId, "current:", conversationId)
         return
       }
@@ -1750,7 +1920,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       if (fileConvId.includes("::")) {
         fileConvId = fileConvId.split("::")[1]
       }
-      if (fileConvId && fileConvId !== conversationId && conversationId !== 'frontend-chat-context') {
+      if (shouldFilterByConversationId(fileConvId)) {
         console.log("[ChatPanel] Ignoring file upload for different conversation:", fileConvId, "current:", conversationId)
         return
       }
@@ -1814,6 +1984,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
     subscribe("tool_response", handleToolResponse)
     subscribe("remote_agent_activity", handleRemoteAgentActivity)
     subscribe("file_uploaded", handleFileUploaded)
+    subscribe("shared_file_uploaded", handleSharedFileUploaded)
     subscribe("outgoing_agent_message", handleOutgoingAgentMessage)
 
     return () => {
@@ -1834,9 +2005,10 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       unsubscribe("tool_response", handleToolResponse)
       unsubscribe("remote_agent_activity", handleRemoteAgentActivity)
       unsubscribe("file_uploaded", handleFileUploaded)
+      unsubscribe("shared_file_uploaded", handleSharedFileUploaded)
       unsubscribe("outgoing_agent_message", handleOutgoingAgentMessage)
     }
-  }, [subscribe, unsubscribe, emit, sendMessage, processedMessageIds, voiceLive, conversationId, isLoadingMessages])
+  }, [subscribe, unsubscribe, emit, sendMessage, processedMessageIds, voiceLive, conversationId, isLoadingMessages, shouldFilterByConversationId])
 
   // Check authentication status and show welcome message only when logged in
   useEffect(() => {
@@ -1879,7 +2051,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
         statusConvId = statusConvId.split("::")[1]
       }
       
-      if (statusConvId && statusConvId !== conversationId && conversationId !== 'frontend-chat-context') {
+      if (shouldFilterByConversationId(statusConvId)) {
         console.log("[ChatPanel] Ignoring status update for different conversation:", statusConvId, "current:", conversationId)
         return
       }
@@ -1897,7 +2069,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
         responseConvId = responseConvId.split("::")[1]
       }
       
-      if (responseConvId && responseConvId !== conversationId && conversationId !== 'frontend-chat-context') {
+      if (shouldFilterByConversationId(responseConvId)) {
         console.log("[ChatPanel] Ignoring final response for different conversation:", responseConvId, "current:", conversationId)
         return
       }
@@ -1944,6 +2116,9 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       // Previously used inferenceId (conversationId) which caused second message workflow to be skipped
       const workflowKey = `workflow_${responseId}`
       const alreadyCreatedWorkflow = processedMessageIds.has(workflowKey)
+      
+      // Copy steps EARLY - before any clearing happens - for sharing with other clients
+      const stepsToShare = inferenceSteps.length > 0 ? [...inferenceSteps] : []
       
       if (inferenceSteps.length > 0 && !alreadyCreatedWorkflow) {
         // CRITICAL: Clear live workflow state IMMEDIATELY before creating the permanent workflow message
@@ -2066,12 +2241,15 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
 
       // Only broadcast inference ended if this is from our session
       if (data.isFromMyTenant !== false) {
-        // Broadcast inference ended to all other clients
+        // Broadcast inference ended to all other clients WITH workflow steps
         sendMessage({
           type: "shared_inference_ended",
           data: {
             conversationId: data.inferenceId,
-            timestamp: new Date().toISOString()
+            timestamp: new Date().toISOString(),
+            // Include workflow steps so other clients can display them
+            workflowSteps: stepsToShare,
+            summaryId: `summary_${data.inferenceId}_${Date.now()}`
           }
         })
       }
@@ -2090,7 +2268,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       unsubscribe("status_update", handleStatusUpdate)
       unsubscribe("final_response", handleFinalResponse)
     }
-  }, [inferenceSteps, processedMessageIds, subscribe, unsubscribe, conversationId]) // Include conversationId for filtering
+  }, [inferenceSteps, processedMessageIds, subscribe, unsubscribe, conversationId, shouldFilterByConversationId]) // Include conversationId for filtering
 
   const uploadFiles = async (files: FileList | File[]) => {
     if (!files || files.length === 0) return
@@ -2118,10 +2296,25 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
         if (result.success) {
           setUploadedFiles(prev => [...prev, result])
           
-          // Add to file history
+          // Add to file history locally
           if ((window as any).addFileToHistory) {
             (window as any).addFileToHistory(result)
           }
+          
+          // Broadcast file upload to collaborative session members
+          sendMessage({
+            type: "shared_file_uploaded",
+            conversationId: conversationId,
+            fileInfo: {
+              id: result.file_id || result.filename,
+              filename: result.filename,
+              originalName: result.filename,
+              size: result.size || 0,
+              contentType: result.content_type || 'application/octet-stream',
+              uri: result.uri,
+              uploadedAt: new Date().toISOString()
+            }
+          })
           
           console.log('File uploaded successfully:', result.filename)
         } else {

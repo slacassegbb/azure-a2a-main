@@ -66,6 +66,14 @@ export function ChatLayout() {
   const [registeredAgents, setRegisteredAgents] = useState<any[]>([])
   const [connectedUsers, setConnectedUsers] = useState<any[]>([])
   
+  // Track current session ID - when it changes (e.g., joining collaborative session), reload agents
+  const [currentSessionId, setCurrentSessionId] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      return getOrCreateSessionId()
+    }
+    return ''
+  })
+  
   // Toggle handlers for sidebar collapse
   const handleLeftSidebarToggle = () => {
     if (leftPanelRef.current) {
@@ -270,6 +278,20 @@ export function ChatLayout() {
       })
     }
 
+    // Handle session members updated - this fires when we join a collaborative session
+    // We need to reload agents since we're now in a different session
+    const handleSessionMembersUpdated = (data: any) => {
+      console.log("[ChatLayout] Session members updated:", data)
+      // Check if our session ID changed
+      const newSessionId = getOrCreateSessionId()
+      if (newSessionId !== currentSessionId) {
+        console.log("[ChatLayout] Session ID changed from", currentSessionId, "to", newSessionId, "- reloading agents")
+        setCurrentSessionId(newSessionId)
+        // Reload agents for the new session
+        fetchSessionAgents()
+      }
+    }
+
     // Subscribe to Event Hub events
     console.log("[ChatLayout] 📡 Subscribing to session_agent_enabled/disabled events")
     subscribe("session_agent_enabled", handleAgentEnabled)
@@ -282,6 +304,7 @@ export function ChatLayout() {
     subscribe("user_list_update", handleUserListUpdate)
     subscribe("session_cleared", handleSessionCleared)
     subscribe("session_invalid", handleSessionInvalid)
+    subscribe("session_members_updated", handleSessionMembersUpdated)
 
     if (DEBUG) console.log("[ChatLayout] Subscribed to Event Hub events")
 
@@ -300,9 +323,10 @@ export function ChatLayout() {
       unsubscribe("user_list_update", handleUserListUpdate)
       unsubscribe("session_cleared", handleSessionCleared)
       unsubscribe("session_invalid", handleSessionInvalid)
+      unsubscribe("session_members_updated", handleSessionMembersUpdated)
       if (DEBUG) console.log("[ChatLayout] Unsubscribed from Event Hub events")
     }
-  }, [subscribe, unsubscribe, emit, toast])
+  }, [subscribe, unsubscribe, emit, toast, currentSessionId])
 
   return (
     <div className="h-full w-full bg-background">

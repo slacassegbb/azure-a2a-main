@@ -276,7 +276,7 @@ class WebSocketManager:
         
         # Send recent history to new client (excluding message-related events)
         # Message events are loaded via conversation API, replaying them causes duplicates
-        skip_event_types = {'message', 'shared_message', 'shared_inference_ended'}
+        skip_event_types = {'message', 'shared_message', 'shared_inference_ended', 'shared_file_uploaded'}
         for event in self.event_history[-10:]:  # Send last 10 events
             if event.get('eventType') in skip_event_types:
                 continue
@@ -856,6 +856,30 @@ def create_websocket_app() -> FastAPI:
             else:
                 logger.debug(f"Skipping shared_inference_ended broadcast - no tenant found (multi-tenant isolation)")
             logger.info(f"Shared inference ended broadcasted for conversation: {inference_data.get('conversationId')}")
+        
+        elif message_type == "shared_file_uploaded":
+            # Handle shared file upload event for collaborative sessions
+            file_data = message.get("fileInfo", {})
+            conversation_id = message.get("conversationId", "")
+            
+            # Create the event to broadcast
+            file_event = {
+                "eventType": "shared_file_uploaded",
+                "data": {
+                    "conversationId": conversation_id,
+                    "fileInfo": file_data
+                }
+            }
+            
+            # Broadcast to sender's tenant AND collaborative session members
+            sender_tenant = websocket_manager.connection_tenants.get(websocket)
+            if sender_tenant:
+                # Add contextId for smart_broadcast to route to collaborative members
+                file_event["contextId"] = sender_tenant
+                await websocket_manager.smart_broadcast(file_event)
+            else:
+                logger.debug(f"Skipping shared_file_uploaded broadcast - no tenant found (multi-tenant isolation)")
+            logger.info(f"Shared file uploaded broadcasted for conversation: {conversation_id}")
         
         elif message_type == "ping":
             # Handle ping/pong for keepalive

@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils"
 import { listConversations, createConversation, deleteConversation, listMessages, notifyConversationCreated, type Conversation } from "@/lib/conversation-api"
 import { LoginDialog } from "@/components/login-dialog"
 import { useEventHub } from "@/hooks/use-event-hub"
+import { getOrCreateSessionId } from "@/lib/session"
 
 type Props = {
   isCollapsed: boolean
@@ -102,11 +103,44 @@ export function ChatHistorySidebar({ isCollapsed, onToggle }: Props) {
     }
   }, []) // Empty dependencies since we're not using any external values
 
-  // Load conversations on component mount
+  // Track the current session ID to detect when joining collaborative sessions
+  const [currentSessionId, setCurrentSessionId] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      return getOrCreateSessionId()
+    }
+    return ''
+  })
+
+  // Load conversations on component mount AND when session changes
   useEffect(() => {
-    console.log('[ChatHistorySidebar] Component mounting, loading conversations...')
+    console.log('[ChatHistorySidebar] Component mounting or session changed, loading conversations...')
     loadConversations()
-  }, [loadConversations])
+  }, [loadConversations, currentSessionId])
+
+  // Monitor for session changes (joining collaborative session)
+  useEffect(() => {
+    const checkSessionChange = () => {
+      const newSessionId = getOrCreateSessionId()
+      setCurrentSessionId(prev => {
+        if (prev !== newSessionId) {
+          console.log('[ChatHistorySidebar] Session ID changed:', prev, '->', newSessionId)
+          return newSessionId
+        }
+        return prev
+      })
+    }
+    
+    // Listen for storage events (cross-tab changes)
+    window.addEventListener('storage', checkSessionChange)
+    
+    // Check periodically for same-tab sessionStorage changes
+    const interval = setInterval(checkSessionChange, 500)
+    
+    return () => {
+      window.removeEventListener('storage', checkSessionChange)
+      clearInterval(interval)
+    }
+  }, [])
 
   // Use Event Hub to listen for WebSocket events
   const { subscribe, unsubscribe } = useEventHub()
@@ -143,10 +177,28 @@ export function ChatHistorySidebar({ isCollapsed, onToggle }: Props) {
       console.log('[ChatHistorySidebar] Backend session ID stored:', newSessionId.slice(0, 8))
     }
 
+    // Handle session members updated - fires when we join a collaborative session
+    const handleSessionMembersUpdated = (data: any) => {
+      console.log('[ChatHistorySidebar] Session members updated:', data)
+      // Check if our session ID changed
+      const newSessionId = getOrCreateSessionId()
+      setCurrentSessionId(prev => {
+        if (prev !== newSessionId) {
+          console.log('[ChatHistorySidebar] Session ID changed after members update:', prev, '->', newSessionId)
+          // Small delay to let session storage settle
+          setTimeout(() => loadConversations(), 100)
+          return newSessionId
+        }
+        return prev
+      })
+    }
+
     subscribe('session_started', handleSessionStarted)
+    subscribe('session_members_updated', handleSessionMembersUpdated)
     
     return () => {
       unsubscribe('session_started', handleSessionStarted)
+      unsubscribe('session_members_updated', handleSessionMembersUpdated)
     }
   }, [subscribe, unsubscribe, loadConversations, currentConversationId, router])
 
@@ -172,10 +224,18 @@ export function ChatHistorySidebar({ isCollapsed, onToggle }: Props) {
 
     subscribe('conversation_title_update', handleWebSocketTitleUpdate)
     
+    // Reload conversations after subscribing to catch any updates we missed during mount
+    // Small delay to ensure subscriptions are fully set up
+    const reloadTimeout = setTimeout(() => {
+      console.log('[ChatHistorySidebar] Reloading conversations after subscriptions ready')
+      loadConversations()
+    }, 500)
+    
     return () => {
       unsubscribe('conversation_title_update', handleWebSocketTitleUpdate)
+      clearTimeout(reloadTimeout)
     }
-  }, [subscribe, unsubscribe])
+  }, [subscribe, unsubscribe, loadConversations])
 
   useEffect(() => {
     console.log('[ChatHistorySidebar] Setting up event listeners...')
