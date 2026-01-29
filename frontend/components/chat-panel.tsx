@@ -2127,20 +2127,30 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       const username = eventData.data?.username
       const action = eventData.data?.action // 'add' or 'remove'
       
-      if (!messageId || !emoji || !userId || !username) return
+      console.log('[MessageReaction] Received:', { messageId, emoji, userId, username, action })
+      
+      if (!messageId || !emoji || !userId || !username) {
+        console.warn('[MessageReaction] Missing required fields')
+        return
+      }
       
       setMessages(prev => prev.map(msg => {
         if (msg.id !== messageId) return msg
         
-        const reactions = msg.reactions || []
-        const existingReaction = reactions.find(r => r.emoji === emoji)
+        // Create a NEW reactions array to ensure React detects the change
+        const reactions = [...(msg.reactions || [])]
+        const existingReactionIndex = reactions.findIndex(r => r.emoji === emoji)
         
         if (action === 'add') {
-          if (existingReaction) {
-            // Add user to existing reaction
+          if (existingReactionIndex >= 0) {
+            // Create a NEW reaction object with updated users
+            const existingReaction = reactions[existingReactionIndex]
             if (!existingReaction.users.includes(userId)) {
-              existingReaction.users.push(userId)
-              existingReaction.usernames.push(username)
+              reactions[existingReactionIndex] = {
+                emoji,
+                users: [...existingReaction.users, userId],
+                usernames: [...existingReaction.usernames, username]
+              }
             }
           } else {
             // Create new reaction
@@ -2151,16 +2161,21 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
             })
           }
         } else if (action === 'remove') {
-          if (existingReaction) {
+          if (existingReactionIndex >= 0) {
+            const existingReaction = reactions[existingReactionIndex]
             const userIndex = existingReaction.users.indexOf(userId)
             if (userIndex > -1) {
-              existingReaction.users.splice(userIndex, 1)
-              existingReaction.usernames.splice(userIndex, 1)
+              // Create a NEW reaction object with user removed
+              reactions[existingReactionIndex] = {
+                emoji,
+                users: existingReaction.users.filter((_, idx) => idx !== userIndex),
+                usernames: existingReaction.usernames.filter((_, idx) => idx !== userIndex)
+              }
             }
           }
         }
         
-        // Remove empty reactions
+        // Remove empty reactions and return NEW message object
         const filteredReactions = reactions.filter(r => r.users.length > 0)
         
         return {
