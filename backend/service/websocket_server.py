@@ -1033,6 +1033,10 @@ def create_websocket_app() -> FastAPI:
             # Handle leaving a collaborative session
             await handle_leave_session(websocket, message)
         
+        elif message_type == "user_logout":
+            # Handle user logging out - clean up all their sessions
+            await handle_user_logout(websocket)
+        
         elif message_type == "conversation_title_update":
             # Handle conversation title update that should be broadcast to collaborative session members
             conversation_id = message.get("conversationId", "")
@@ -1319,17 +1323,17 @@ def create_websocket_app() -> FastAPI:
                 logger.info(f"[Collaborative] Updated session members: {updated_session.get_all_member_ids()}")
                 await websocket_manager.broadcast_user_list_to_session(updated_session)
             else:
-                # Session was deleted (owner left) - notify all former members
+                # Session was deleted (owner left) - notify all former members to return to their own sessions
                 logger.info(f"[Collaborative] Session ended (owner left), notifying all former members")
                 logger.info(f"[Collaborative] Former members to notify: {all_members_before}")
-                # Send empty user list to all former members so they see everyone is gone
-                empty_user_list_event = json.dumps({
-                    "eventType": "user_list_update",
+                
+                # Send session_ended event - frontend will handle returning to own session
+                session_ended_event = json.dumps({
+                    "eventType": "session_ended",
                     "data": {
-                        "active_users": [],
-                        "total_active": 0,
-                        "session_isolated": True,
-                        "is_collaborative": False
+                        "session_id": session_id,
+                        "reason": "owner_left",
+                        "message": f"Session ended - {auth_conn.username} left the session"
                     },
                     "timestamp": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
                 })
@@ -1341,8 +1345,8 @@ def create_websocket_app() -> FastAPI:
                             logger.info(f"[Collaborative] Member {member_id} has {len(websocket_manager.user_connections[member_id])} connections")
                             for member_ws in websocket_manager.user_connections[member_id]:
                                 try:
-                                    await member_ws.send_text(empty_user_list_event)
-                                    logger.info(f"[Collaborative] ✅ Sent empty user list to former member {member_id}")
+                                    await member_ws.send_text(session_ended_event)
+                                    logger.info(f"[Collaborative] ✅ Sent session_ended to former member {member_id}")
                                 except Exception as e:
                                     logger.error(f"[Collaborative] ❌ Failed to notify member {member_id}: {e}")
                         else:
@@ -1354,6 +1358,85 @@ def create_websocket_app() -> FastAPI:
         }))
         logger.info(f"[Collaborative] User {auth_conn.username} leave_session handling complete")
         logger.info(f"[Collaborative] User {auth_conn.username} left session {session_id[:8]}...")
+    
+    async def handle_user_logout(websocket: WebSocket):
+        """Handle user logging out - clean up all their collaborative sessions.
+        
+        This handles both cases:
+        1. User owns sessions (as session owner) - end those sessions and notify members
+        2. User is a member of sessions (joined someone else's) - leave those sessions
+        """
+        logger.info(f"[Collaborative] ===== handle_user_logout called =====")
+        
+        auth_conn = websocket_manager.get_connection_info(websocket)
+        if not auth_conn:
+            logger.warning(f"[Collaborative] No auth_conn found for logout!")
+            return
+        
+        user_id = auth_conn.user_data.get('user_id')
+        username = auth_conn.username
+        
+        if not user_id:
+            logger.warning(f"[Collaborative] No user_id found for logout!")
+            return
+        
+        logger.info(f"[Collaborative] User {username} ({user_id}) logging out - checking for sessions to clean up")
+        
+        # Get all sessions this user is part of (as owner or member)
+        user_session_ids = collaborative_session_manager.get_user_sessions(user_id)
+        logger.info(f"[Collaborative] User is in {len(user_session_ids)} session(s): {[s[:8] for s in user_session_ids]}")
+        
+        for session_id in user_session_ids:
+            session = collaborative_session_manager.get_session(session_id)
+            if not session:
+                logger.warning(f"[Collaborative] Session {session_id[:8]} not found, skipping")
+                continue
+            
+            # Get all members before leaving/ending
+            all_members_before = session.get_all_member_ids()
+            is_owner = user_id == session.owner_user_id
+            
+            logger.info(f"[Collaborative] Processing session {session_id[:8]}: is_owner={is_owner}, members={all_members_before}")
+            
+            # Leave the session (this will delete it if user is owner)
+            success = collaborative_session_manager.leave_session(session_id, user_id)
+            
+            if success:
+                # Get the updated session (will be None if owner left and session was deleted)
+                updated_session = collaborative_session_manager.get_session(session_id)
+                
+                if updated_session:
+                    # Session still exists - member left, broadcast updated user list
+                    logger.info(f"[Collaborative] Session still exists, broadcasting user list to remaining members")
+                    await websocket_manager.broadcast_user_list_to_session(updated_session)
+                else:
+                    # Session was deleted (owner left) - notify all former members to return to their own sessions
+                    logger.info(f"[Collaborative] Session ended (owner logged out), notifying {len(all_members_before) - 1} former member(s)")
+                    
+                    # Send session_ended event - frontend will handle returning to own session
+                    session_ended_event = json.dumps({
+                        "eventType": "session_ended",
+                        "data": {
+                            "session_id": session_id,
+                            "reason": "owner_left",
+                            "message": f"Session ended - {username} logged out"
+                        },
+                        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+                    })
+                    
+                    for member_id in all_members_before:
+                        if member_id != user_id:
+                            if member_id in websocket_manager.user_connections:
+                                for member_ws in websocket_manager.user_connections[member_id]:
+                                    try:
+                                        await member_ws.send_text(session_ended_event)
+                                        logger.info(f"[Collaborative] ✅ Sent session_ended to former member {member_id}")
+                                    except Exception as e:
+                                        logger.error(f"[Collaborative] ❌ Failed to notify member {member_id}: {e}")
+                            else:
+                                logger.warning(f"[Collaborative] ⚠️ Member {member_id} NOT in user_connections!")
+        
+        logger.info(f"[Collaborative] User {username} logout session cleanup complete")
     
     @app.post("/events")
     async def post_event(event_data: Dict[str, Any]):
