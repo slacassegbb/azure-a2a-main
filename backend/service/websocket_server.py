@@ -1037,6 +1037,10 @@ def create_websocket_app() -> FastAPI:
             # Handle user logging out - clean up all their sessions
             await handle_user_logout(websocket)
         
+        elif message_type == "kick_user":
+            # Handle session owner kicking a user from their session
+            await handle_kick_user(websocket, message)
+        
         elif message_type == "conversation_title_update":
             # Handle conversation title update that should be broadcast to collaborative session members
             conversation_id = message.get("conversationId", "")
@@ -1437,6 +1441,122 @@ def create_websocket_app() -> FastAPI:
                                 logger.warning(f"[Collaborative] ⚠️ Member {member_id} NOT in user_connections!")
         
         logger.info(f"[Collaborative] User {username} logout session cleanup complete")
+    
+    async def handle_kick_user(websocket: WebSocket, message: Dict[str, Any]):
+        """Handle session owner kicking a user from their session."""
+        logger.info(f"[Collaborative] ===== handle_kick_user called =====")
+        
+        auth_conn = websocket_manager.get_connection_info(websocket)
+        if not auth_conn:
+            logger.warning(f"[Collaborative] No auth_conn found for kick!")
+            return
+        
+        owner_user_id = auth_conn.user_data.get('user_id')
+        owner_username = auth_conn.username
+        target_user_id = message.get("target_user_id")
+        session_id = message.get("session_id")
+        
+        if not target_user_id or not session_id:
+            logger.warning(f"[Collaborative] Missing target_user_id or session_id in kick message")
+            await websocket.send_text(json.dumps({
+                "type": "kick_result",
+                "success": False,
+                "error": "Missing target_user_id or session_id"
+            }))
+            return
+        
+        # Get the session
+        session = collaborative_session_manager.get_session(session_id)
+        if not session:
+            logger.warning(f"[Collaborative] Session {session_id} not found for kick")
+            await websocket.send_text(json.dumps({
+                "type": "kick_result",
+                "success": False,
+                "error": "Session not found"
+            }))
+            return
+        
+        # Verify the requester is the session owner
+        if session.owner_user_id != owner_user_id:
+            logger.warning(f"[Collaborative] User {owner_username} tried to kick from session they don't own")
+            await websocket.send_text(json.dumps({
+                "type": "kick_result",
+                "success": False,
+                "error": "Only the session owner can kick users"
+            }))
+            return
+        
+        # Can't kick yourself
+        if target_user_id == owner_user_id:
+            await websocket.send_text(json.dumps({
+                "type": "kick_result",
+                "success": False,
+                "error": "Cannot kick yourself from your own session"
+            }))
+            return
+        
+        # Check if target user is actually in this session
+        if target_user_id not in session.get_all_member_ids():
+            await websocket.send_text(json.dumps({
+                "type": "kick_result",
+                "success": False,
+                "error": "User is not in this session"
+            }))
+            return
+        
+        # Get target user info for the notification message
+        target_username = target_user_id  # Default to user_id
+        for member_ws in websocket_manager.user_connections.get(target_user_id, set()):
+            member_conn = websocket_manager.get_connection_info(member_ws)
+            if member_conn:
+                target_username = member_conn.username
+                break
+        
+        logger.info(f"[Collaborative] Owner {owner_username} kicking {target_username} from session {session_id[:8]}")
+        
+        # Send kicked event to the target user BEFORE removing them
+        kicked_event = json.dumps({
+            "eventType": "session_ended",
+            "data": {
+                "session_id": session_id,
+                "reason": "kicked",
+                "message": f"You were removed from the session by {owner_username}"
+            },
+            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+        })
+        
+        if target_user_id in websocket_manager.user_connections:
+            for target_ws in websocket_manager.user_connections[target_user_id]:
+                try:
+                    await target_ws.send_text(kicked_event)
+                    logger.info(f"[Collaborative] ✅ Sent kicked event to {target_username}")
+                except Exception as e:
+                    logger.error(f"[Collaborative] ❌ Failed to notify kicked user: {e}")
+        
+        # Remove user from session
+        success = collaborative_session_manager.leave_session(session_id, target_user_id)
+        
+        if success:
+            logger.info(f"[Collaborative] ✅ Successfully kicked {target_username} from session")
+            
+            # Broadcast updated user list to remaining members
+            updated_session = collaborative_session_manager.get_session(session_id)
+            if updated_session:
+                await websocket_manager.broadcast_user_list_to_session(updated_session)
+            
+            await websocket.send_text(json.dumps({
+                "type": "kick_result",
+                "success": True,
+                "kicked_user_id": target_user_id,
+                "kicked_username": target_username
+            }))
+        else:
+            logger.warning(f"[Collaborative] Failed to kick {target_username} - leave_session returned False")
+            await websocket.send_text(json.dumps({
+                "type": "kick_result",
+                "success": False,
+                "error": "Failed to remove user from session"
+            }))
     
     @app.post("/events")
     async def post_event(event_data: Dict[str, Any]):

@@ -4,12 +4,12 @@ import { useState, useEffect, useCallback } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { User, Clock, Phone, MessageCircle, UserPlus } from "lucide-react"
+import { User, Clock, Phone, MessageCircle, UserPlus, UserMinus } from "lucide-react"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { useEventHub } from "@/hooks/use-event-hub"
 import { useToast } from "@/hooks/use-toast"
 import { SessionInviteButton } from "@/components/session-invite"
-import { leaveCollaborativeSession, isInCollaborativeSession } from "@/lib/session"
+import { leaveCollaborativeSession, isInCollaborativeSession, getOrCreateSessionId } from "@/lib/session"
 
 type ConnectedUser = {
   user_id: string
@@ -21,14 +21,34 @@ type ConnectedUser = {
   color: string
   last_seen: string
   status: string
+  is_owner?: boolean  // Added to track session owner
 }
 
 export function ConnectedUsers() {
   const [users, setUsers] = useState<ConnectedUser[]>([])
   const [expandedUsers, setExpandedUsers] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(false)
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null)
+  const [isSessionOwner, setIsSessionOwner] = useState(false)
   const { subscribe, unsubscribe, sendMessage, isConnected } = useEventHub()
   const { toast } = useToast()
+
+  // Get current user info on mount
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const userInfo = sessionStorage.getItem('user_info')
+      if (userInfo) {
+        try {
+          const parsed = JSON.parse(userInfo)
+          setCurrentUserId(parsed.user_id)
+          // User is session owner if they're NOT in a collaborative session (they own their own session)
+          setIsSessionOwner(!isInCollaborativeSession())
+        } catch (e) {
+          console.error('Failed to parse user info:', e)
+        }
+      }
+    }
+  }, [])
 
   const fetchActiveUsers = useCallback(async () => {
     try {
@@ -101,12 +121,32 @@ export function ConnectedUsers() {
     }
   }, [toast])
 
+  // Handle kick result (feedback for session owner)
+  const handleKickResult = useCallback((eventData: any) => {
+    console.log("[ConnectedUsers] Kick result:", eventData)
+    if (eventData.success) {
+      toast({
+        title: "User Removed",
+        description: `${eventData.kicked_username} has been removed from the session`,
+      })
+    } else {
+      toast({
+        title: "Failed to Remove User",
+        description: eventData.error || "An error occurred",
+        variant: "destructive",
+      })
+    }
+  }, [toast])
+
   useEffect(() => {
     // Subscribe to real-time user list updates (source of truth)
     subscribe("user_list_update", handleUserListUpdate)
     
-    // Subscribe to session ended events (owner left/logged out)
+    // Subscribe to session ended events (owner left/logged out/kicked)
     subscribe("session_ended", handleSessionEnded)
+    
+    // Subscribe to kick result events (feedback for session owner)
+    subscribe("kick_result", handleKickResult)
     
     // Request the user list after subscribing
     // This solves the race condition where the backend sends user_list_update
@@ -119,6 +159,7 @@ export function ConnectedUsers() {
     return () => {
       unsubscribe("user_list_update", handleUserListUpdate)
       unsubscribe("session_ended", handleSessionEnded)
+      unsubscribe("kick_result", handleKickResult)
     }
   }, []) // Only subscribe once on mount, unsubscribe on unmount - don't re-subscribe!
 
@@ -131,6 +172,34 @@ export function ConnectedUsers() {
     }
     setExpandedUsers(newExpanded)
   }
+
+  // Handle kicking a user from the session (owner only)
+  const handleKickUser = useCallback((targetUserId: string, targetUserName: string) => {
+    if (!isSessionOwner) {
+      toast({
+        title: "Not Allowed",
+        description: "Only the session owner can remove users",
+        variant: "destructive",
+      })
+      return
+    }
+
+    // Get the session ID (our own session since we're the owner)
+    const sessionId = getOrCreateSessionId()
+    
+    console.log(`[ConnectedUsers] Kicking user ${targetUserName} (${targetUserId}) from session ${sessionId}`)
+    
+    sendMessage({
+      type: "kick_user",
+      target_user_id: targetUserId,
+      session_id: sessionId
+    })
+    
+    toast({
+      title: "Removing User",
+      description: `Removing ${targetUserName} from session...`,
+    })
+  }, [isSessionOwner, sendMessage, toast])
 
   const getAvatarStyles = (hexColor: string) => {
     // Convert hex to RGB
@@ -235,6 +304,18 @@ export function ConnectedUsers() {
                       >
                         <MessageCircle className="h-4 w-4" />
                       </Button>
+                      {/* Kick button - only show for session owner, not on themselves */}
+                      {isSessionOwner && user.user_id !== currentUserId && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 w-8 p-0 text-destructive hover:text-destructive hover:bg-destructive/10"
+                          onClick={() => handleKickUser(user.user_id, user.name)}
+                          title="Remove from session"
+                        >
+                          <UserMinus className="h-4 w-4" />
+                        </Button>
+                      )}
                     </div>
                   </div>
                 </CardHeader>
