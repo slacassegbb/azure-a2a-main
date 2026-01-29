@@ -323,10 +323,10 @@ export function leaveCollaborativeSession(
   // Notify backend to leave the session
   if (sessionId && sendMessage) {
     sendMessage({
-      type: 'leave_session',
+      type: 'leave_collaborative_session',
       session_id: sessionId
     });
-    console.log('[Session] Sent leave_session message to backend');
+    console.log('[Session] Sent leave_collaborative_session message to backend');
   }
   
   sessionStorage.removeItem(COLLABORATIVE_SESSION_KEY);
