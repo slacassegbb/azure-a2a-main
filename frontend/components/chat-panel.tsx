@@ -1203,12 +1203,23 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       // Filter by conversationId - only process messages for the current conversation
       // The backend sends conversationId in format "sessionId::convId" - extract just the convId part
       let messageConvId = data.conversationId || data.contextId || ""
+      let messageTenantId = ""
       if (messageConvId.includes("::")) {
-        messageConvId = messageConvId.split("::")[1]
+        const parts = messageConvId.split("::")
+        messageTenantId = parts[0]
+        messageConvId = parts[1]
       }
       
       if (messageConvId && messageConvId !== conversationId && conversationId !== 'frontend-chat-context') {
         console.log("[ChatPanel] Ignoring message for different conversation:", messageConvId, "current:", conversationId)
+        return
+      }
+      
+      // In collaborative sessions, skip messages from other tenants - they will arrive via shared_message
+      // This prevents duplicate message display when both message event and shared_message are received
+      const mySessionId = getOrCreateSessionId()
+      if (messageTenantId && messageTenantId !== mySessionId) {
+        console.log("[ChatPanel] Ignoring message from different tenant (will receive via shared_message):", messageTenantId, "my session:", mySessionId)
         return
       }
       
@@ -1416,7 +1427,21 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       
       // Filter by conversationId - only process inference events for the current conversation
       // conversationId is now at top level (from WebSocket client normalization)
-      const eventConvId = data.conversationId || data.data?.conversationId || ""
+      let eventConvId = data.conversationId || data.data?.conversationId || ""
+      let eventTenantId = ""
+      if (eventConvId.includes("::")) {
+        const parts = eventConvId.split("::")
+        eventTenantId = parts[0]
+        eventConvId = parts[1]
+      }
+      
+      // Skip events from other tenants - prevents duplicate workflow displays
+      const mySessionId = getOrCreateSessionId()
+      if (eventTenantId && eventTenantId !== mySessionId) {
+        console.log("[ChatPanel] Ignoring inference started from different tenant:", eventTenantId)
+        return
+      }
+      
       if (eventConvId && eventConvId !== conversationId) {
         console.log("[ChatPanel] Ignoring inference started for different conversation:", eventConvId, "current:", conversationId)
         return
@@ -1432,7 +1457,21 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       
       // Filter by conversationId - only process inference events for the current conversation
       // conversationId is now at top level (from WebSocket client normalization)
-      const eventConvId = data.conversationId || data.data?.conversationId || ""
+      let eventConvId = data.conversationId || data.data?.conversationId || ""
+      let eventTenantId = ""
+      if (eventConvId.includes("::")) {
+        const parts = eventConvId.split("::")
+        eventTenantId = parts[0]
+        eventConvId = parts[1]
+      }
+      
+      // Skip events from other tenants
+      const mySessionId = getOrCreateSessionId()
+      if (eventTenantId && eventTenantId !== mySessionId) {
+        console.log("[ChatPanel] Ignoring inference ended from different tenant:", eventTenantId)
+        return
+      }
+      
       if (eventConvId && eventConvId !== conversationId) {
         console.log("[ChatPanel] Ignoring inference ended for different conversation:", eventConvId, "current:", conversationId)
         return
