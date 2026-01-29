@@ -2382,6 +2382,13 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
     if (currentMessages.length === 0 && actualConversationId !== 'frontend-chat-context') {
       const newTitle = generateTitleFromMessage(input)
       updateConversationTitle(actualConversationId, newTitle)
+      
+      // Also broadcast title update to collaborative session members via WebSocket
+      sendMessage({
+        type: "conversation_title_update",
+        conversationId: actualConversationId,
+        title: newTitle
+      })
     }
 
       // Send message to A2A backend via HTTP API using correct A2A Message format

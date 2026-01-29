@@ -5,6 +5,7 @@ import "./globals.css"
 import { cn } from "@/lib/utils"
 import { ThemeProvider } from "@/components/theme-provider"
 import { EventHubProvider } from "@/contexts/event-hub-context"
+import { SessionDebug } from "@/components/session-debug"
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-sans" })
 
@@ -26,6 +27,7 @@ export default function RootLayout({
           <EventHubProvider>
             {/* The wrapper around children has been removed to allow full-width content. */}
             {children}
+            <SessionDebug />
           </EventHubProvider>
         </ThemeProvider>
       </body>
