@@ -1041,6 +1041,10 @@ def create_websocket_app() -> FastAPI:
             # Handle session owner kicking a user from their session
             await handle_kick_user(websocket, message)
         
+        elif message_type == "typing_indicator":
+            # Handle typing indicator - broadcast to session members
+            await handle_typing_indicator(websocket, message)
+        
         elif message_type == "conversation_title_update":
             # Handle conversation title update that should be broadcast to collaborative session members
             conversation_id = message.get("conversationId", "")
@@ -1557,6 +1561,49 @@ def create_websocket_app() -> FastAPI:
                 "success": False,
                 "error": "Failed to remove user from session"
             }))
+    
+    async def handle_typing_indicator(websocket: WebSocket, message: Dict[str, Any]):
+        """Handle typing indicator - broadcast to other session members."""
+        auth_conn = websocket_manager.get_connection_info(websocket)
+        if not auth_conn:
+            return
+        
+        user_id = auth_conn.user_data.get('user_id')
+        username = auth_conn.username
+        is_typing = message.get("is_typing", False)
+        
+        # Get the session this user is in
+        tenant_id = websocket_manager.connection_tenants.get(websocket)
+        if not tenant_id:
+            return
+        
+        # Check if user is in a collaborative session
+        session = collaborative_session_manager.get_session(tenant_id)
+        if not session:
+            # Not in a collaborative session, no one to notify
+            return
+        
+        # Build typing indicator event
+        typing_event = json.dumps({
+            "eventType": "typing_indicator",
+            "data": {
+                "user_id": user_id,
+                "username": username,
+                "is_typing": is_typing
+            },
+            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+        })
+        
+        # Broadcast to all session members EXCEPT the sender
+        all_members = session.get_all_member_ids()
+        for member_id in all_members:
+            if member_id != user_id:  # Don't send to self
+                if member_id in websocket_manager.user_connections:
+                    for member_ws in websocket_manager.user_connections[member_id]:
+                        try:
+                            await member_ws.send_text(typing_event)
+                        except Exception as e:
+                            logger.debug(f"Failed to send typing indicator to {member_id}: {e}")
     
     @app.post("/events")
     async def post_event(event_data: Dict[str, Any]):
