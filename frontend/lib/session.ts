@@ -97,6 +97,10 @@ export function clearSession(): void {
   localStorage.removeItem('auth_token');
   sessionStorage.removeItem('auth_token');
   sessionStorage.removeItem('user_info');
+  // Clear collaborative session data
+  sessionStorage.removeItem('a2a_collaborative_session');
+  sessionStorage.removeItem('a2a_collaborative_session_just_joined');
+  localStorage.removeItem('a2a_backend_session_id');
   console.log('[Session] Session and auth cleared');
 }
 

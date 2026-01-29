@@ -144,6 +144,20 @@ export class WebSocketClient {
         if (typeof window !== 'undefined') {
           const params: string[] = [];
           
+          // Check for stale collaborative session BEFORE connecting
+          // If we have a collaborative session but the backend session ID changed, clear it
+          const BACKEND_SESSION_KEY = 'a2a_backend_session_id';
+          const storedBackendSessionId = localStorage.getItem(BACKEND_SESSION_KEY);
+          const collaborativeSession = sessionStorage.getItem('a2a_collaborative_session');
+          const justJoined = sessionStorage.getItem('a2a_collaborative_session_just_joined');
+          
+          // If we have a collaborative session but DON'T have a backend session stored,
+          // it means this is a fresh browser session connecting with stale data - clear it
+          if (collaborativeSession && !storedBackendSessionId && !justJoined) {
+            console.log('[WebSocket] Clearing stale collaborative session (no backend session stored):', collaborativeSession);
+            sessionStorage.removeItem('a2a_collaborative_session');
+          }
+          
           // Add authentication token if available
           const token = sessionStorage.getItem('auth_token');
           console.log('[WebSocket] Auth token present:', !!token, token ? `(${token.substring(0, 20)}...)` : '(none)');
