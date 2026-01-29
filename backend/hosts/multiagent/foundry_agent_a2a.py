@@ -436,43 +436,87 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
             status = "completed"
             tool_calls_to_execute = []
             
-            stream = await self.agents_client.runs.stream(
-                thread_id=thread_id,
-                agent_id=self.agent_id,
-                tool_choice="required"
-            )
+            # Create the stream with proper error handling
+            try:
+                stream = await self.agents_client.runs.stream(
+                    thread_id=thread_id,
+                    agent_id=self.agent_id,
+                    tool_choice="required"
+                )
+            except Exception as stream_error:
+                log_error(f"Error creating stream: {stream_error}")
+                # Return a graceful error response instead of crashing
+                return {
+                    "id": None,
+                    "text": f"I apologize, but I encountered an error processing your request: {str(stream_error)}",
+                    "tool_calls": [],
+                    "status": "failed",
+                    "usage": None
+                }
             
             async with stream as event_handler:
-                async for event in event_handler:
-                    if hasattr(event, 'event') and hasattr(event, 'data'):
-                        event_type = event.event
-                        event_data = event.data
-                    elif isinstance(event, tuple):
-                        event_type, event_data, *_ = event
-                    else:
-                        event_data = event
-                        event_type = type(event).__name__
-                    
-                    if isinstance(event_data, MessageDeltaChunk):
-                        chunk = event_data.text
-                        if chunk:
-                            full_text += chunk
-                            await self._emit_text_chunk(chunk, context_id)
-                    
-                    elif isinstance(event_data, ThreadRun):
-                        run_id = event_data.id
-                        status = event_data.status
-                        status_str = str(status).lower() if status else ""
-                        if "requires_action" in status_str and hasattr(event_data, 'required_action'):
-                            required_action = event_data.required_action
-                            if required_action and hasattr(required_action, 'submit_tool_outputs'):
-                                tool_calls_to_execute = required_action.submit_tool_outputs.tool_calls
-                    
-                    elif event_type == AgentStreamEvent.ERROR:
-                        raise Exception(f"Streaming error: {event_data}")
-                    
-                    elif event_type == AgentStreamEvent.DONE:
-                        break
+                try:
+                    async for event in event_handler:
+                        if hasattr(event, 'event') and hasattr(event, 'data'):
+                            event_type = event.event
+                            event_data = event.data
+                        elif isinstance(event, tuple):
+                            event_type, event_data, *_ = event
+                        else:
+                            event_data = event
+                            event_type = type(event).__name__
+                        
+                        if isinstance(event_data, MessageDeltaChunk):
+                            chunk = event_data.text
+                            if chunk:
+                                full_text += chunk
+                                await self._emit_text_chunk(chunk, context_id)
+                        
+                        elif isinstance(event_data, ThreadRun):
+                            run_id = event_data.id
+                            status = event_data.status
+                            status_str = str(status).lower() if status else ""
+                            if "requires_action" in status_str and hasattr(event_data, 'required_action'):
+                                required_action = event_data.required_action
+                                if required_action and hasattr(required_action, 'submit_tool_outputs'):
+                                    tool_calls_to_execute = required_action.submit_tool_outputs.tool_calls
+                        
+                        elif event_type == AgentStreamEvent.ERROR:
+                            raise Exception(f"Streaming error: {event_data}")
+                        
+                        elif event_type == AgentStreamEvent.DONE:
+                            break
+                except json.JSONDecodeError as json_err:
+                    log_error(f"JSON decode error in stream processing: {json_err}")
+                    # If we got some text before the error, return it
+                    if full_text:
+                        return {
+                            "id": run_id,
+                            "text": full_text,
+                            "tool_calls": [],
+                            "status": "completed",
+                            "usage": None
+                        }
+                    # Otherwise return a graceful error
+                    return {
+                        "id": None,
+                        "text": "I apologize, but I encountered a technical issue processing the response. Please try again.",
+                        "tool_calls": [],
+                        "status": "failed",
+                        "usage": None
+                    }
+                except Exception as stream_proc_error:
+                    log_error(f"Error processing stream: {stream_proc_error}")
+                    if full_text:
+                        return {
+                            "id": run_id,
+                            "text": full_text,
+                            "tool_calls": [],
+                            "status": "completed",
+                            "usage": None
+                        }
+                    raise
+
             
             # MULTI-TURN TOOL EXECUTION LOOP
             max_tool_iterations = 30
