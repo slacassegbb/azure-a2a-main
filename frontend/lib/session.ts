@@ -310,23 +310,26 @@ export function getCollaborativeSession(): string | null {
 /**
  * Leave the current collaborative session and return to own session
  */
-export function leaveCollaborativeSession(
+export async function leaveCollaborativeSession(
   reload: boolean = true, 
   sendMessage?: (message: any) => void
-): void {
+): Promise<void> {
   if (typeof window === 'undefined') {
     return;
   }
   
   const sessionId = getCollaborativeSession();
   
-  // Notify backend to leave the session
+  // Notify backend to leave the session and wait for confirmation
   if (sessionId && sendMessage) {
     sendMessage({
       type: 'leave_collaborative_session',
       session_id: sessionId
     });
     console.log('[Session] Sent leave_collaborative_session message to backend');
+    
+    // Wait a bit for the message to be sent and processed
+    await new Promise(resolve => setTimeout(resolve, 100));
   }
   
   sessionStorage.removeItem(COLLABORATIVE_SESSION_KEY);
