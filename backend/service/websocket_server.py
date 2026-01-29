@@ -1260,28 +1260,16 @@ def create_websocket_app() -> FastAPI:
         
         # Get session before leaving to notify remaining members
         session = collaborative_session_manager.get_session(session_id)
-        members_before = set(session.get_all_member_ids()) if session else set()
         
         success = collaborative_session_manager.leave_session(session_id, user_id)
         
-        if success and members_before:
-            # Notify remaining members (those who were in the session minus the leaving user)
-            remaining_members = members_before - {user_id}
-            members = collaborative_session_manager.get_session_members(session_id)
-            member_update = json.dumps({
-                "eventType": "session_members_updated",
-                "session_id": session_id,
-                "members": members,
-                "left_user": auth_conn.username
-            })
-            
-            for member_id in remaining_members:
-                if member_id in websocket_manager.user_connections:
-                    for member_ws in websocket_manager.user_connections[member_id]:
-                        try:
-                            await member_ws.send_text(member_update)
-                        except:
-                            pass
+        if success and session:
+            logger.info(f"[Collaborative] User {auth_conn.username} left session {session_id[:8]}... - broadcasting update to remaining members")
+            # Broadcast updated user list to remaining members
+            # Get the session again after the user has left to get the updated member list
+            updated_session = collaborative_session_manager.get_session(session_id)
+            if updated_session:
+                await websocket_manager.broadcast_user_list_to_session(updated_session)
         
         await websocket.send_text(json.dumps({
             "type": "left_session",

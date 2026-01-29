@@ -310,9 +310,23 @@ export function getCollaborativeSession(): string | null {
 /**
  * Leave the current collaborative session and return to own session
  */
-export function leaveCollaborativeSession(reload: boolean = true): void {
+export function leaveCollaborativeSession(
+  reload: boolean = true, 
+  sendMessage?: (message: any) => void
+): void {
   if (typeof window === 'undefined') {
     return;
+  }
+  
+  const sessionId = getCollaborativeSession();
+  
+  // Notify backend to leave the session
+  if (sessionId && sendMessage) {
+    sendMessage({
+      type: 'leave_session',
+      session_id: sessionId
+    });
+    console.log('[Session] Sent leave_session message to backend');
   }
   
   sessionStorage.removeItem(COLLABORATIVE_SESSION_KEY);

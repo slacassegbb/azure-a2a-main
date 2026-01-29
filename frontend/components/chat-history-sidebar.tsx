@@ -25,6 +25,7 @@ export function ChatHistorySidebar({ isCollapsed, onToggle }: Props) {
   const router = useRouter()
   const searchParams = useSearchParams()
   const currentConversationId = searchParams.get("conversationId")
+  const { sendMessage } = useEventHub()
 
   // Check authentication status
   useEffect(() => {
@@ -45,7 +46,7 @@ export function ChatHistorySidebar({ isCollapsed, onToggle }: Props) {
     if (typeof window !== 'undefined') {
       // If user is in a collaborative session, leave it first
       if (isInCollaborativeSession()) {
-        leaveCollaborativeSession(false) // Don't reload yet
+        leaveCollaborativeSession(false, sendMessage) // Don't reload yet, but notify backend
       }
       
       // Clear auth data
