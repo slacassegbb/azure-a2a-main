@@ -250,10 +250,13 @@ class FoundryHostManager(ApplicationManager):
                 
                 streamer = await get_websocket_streamer()
                 if streamer:
+                    # Extract just the conversation ID for the name (not the tenant prefix)
+                    conv_id_only = context_id.split("::")[-1] if "::" in context_id else context_id
+                    
                     # Send in A2A ConversationCreatedEventData format
                     event_data = {
                         "conversationId": context_id,
-                        "conversationName": f"Chat {context_id[:8]}...",
+                        "conversationName": f"Chat {conv_id_only[:8]}...",
                         "isActive": True,
                         "messageCount": 0
                     }

@@ -1505,11 +1505,21 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
           status: "new conversation created"
         })
         
+        // Strip tenant prefix from conversationId (format: "user_3::conv_id" -> "conv_id")
+        const rawConvId = data.conversationId
+        const strippedConvId = rawConvId.includes("::") ? rawConvId.split("::")[1] : rawConvId
+        
+        // Also fix the conversation name if it has the tenant prefix
+        let convName = data.conversationName || `Chat ${strippedConvId.slice(0, 8)}...`
+        if (convName.includes("::")) {
+          convName = `Chat ${strippedConvId.slice(0, 8)}...`
+        }
+        
         // Notify the sidebar about the new conversation
         // Convert WebSocket event format to Conversation object format
         notifyConversationCreated({
-          conversation_id: data.conversationId,
-          name: data.conversationName || `Chat ${data.conversationId.slice(0, 8)}...`,
+          conversation_id: strippedConvId,
+          name: convName,
           is_active: data.isActive !== false,
           task_ids: [],
           messages: []
