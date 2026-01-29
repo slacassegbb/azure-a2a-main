@@ -600,10 +600,14 @@ class WebSocketManager:
                     logger.info(f"[WebSocket] Found {num_connections} connection(s) for member {member_id}")
                     for ws in self.user_connections[member_id]:
                         try:
-                            await ws.send_text(json.dumps(event_data))
-                            logger.info(f"[WebSocket] ✅ Sent user list update to member {member_id}")
+                            message_to_send = json.dumps(event_data)
+                            logger.info(f"[WebSocket] 📤 About to send to {member_id}: eventType={event_data['eventType']}, {len(session_users)} users")
+                            await ws.send_text(message_to_send)
+                            logger.info(f"[WebSocket] ✅ Successfully sent user list update to member {member_id}")
                         except Exception as e:
                             logger.error(f"[WebSocket] ❌ Failed to send user list to {member_id}: {e}")
+                            import traceback
+                            logger.error(f"[WebSocket] Traceback: {traceback.format_exc()}")
                 else:
                     logger.warning(f"[WebSocket] ⚠️ member_id={member_id} NOT in user_connections! Available: {list(self.user_connections.keys())}")
             
