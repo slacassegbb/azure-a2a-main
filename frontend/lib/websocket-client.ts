@@ -416,13 +416,14 @@ export class WebSocketClient {
           const BACKEND_SESSION_KEY = 'a2a_backend_session_id';
           const newBackendSessionId = eventData?.data?.sessionId || eventData?.sessionId;
           const storedBackendSessionId = localStorage.getItem(BACKEND_SESSION_KEY);
+          const justJoined = sessionStorage.getItem('a2a_collaborative_session_just_joined');
+          const currentCollabSession = sessionStorage.getItem('a2a_collaborative_session');
           
-          console.log('[WebSocket] session_started - stored:', storedBackendSessionId?.slice(0,8), 'new:', newBackendSessionId?.slice(0,8));
+          console.log('[WebSocket] session_started - stored:', storedBackendSessionId?.slice(0,8), 'new:', newBackendSessionId?.slice(0,8), 'justJoined:', justJoined, 'collabSession:', currentCollabSession);
           
           if (newBackendSessionId) {
             if (storedBackendSessionId && storedBackendSessionId !== newBackendSessionId) {
               // Backend actually restarted - check if we should clear collaborative session
-              const justJoined = sessionStorage.getItem('a2a_collaborative_session_just_joined');
               if (justJoined) {
                 // User just joined a collaborative session - don't clear it
                 console.log('[WebSocket] Backend restarted but user just joined collaborative session, NOT clearing');
@@ -437,6 +438,9 @@ export class WebSocketClient {
               }
             } else {
               // Same backend session - just clear the just_joined flag if present
+              if (justJoined) {
+                console.log('[WebSocket] Same backend session, clearing just_joined flag')
+              }
               sessionStorage.removeItem('a2a_collaborative_session_just_joined');
             }
             // Store/update the backend session ID for future comparisons
