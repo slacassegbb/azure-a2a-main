@@ -1378,12 +1378,15 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
     // Handle shared user messages from other clients
     const handleSharedMessage = (data: any) => {
       console.log("[ChatPanel] Shared message received:", data)
+      console.log("[ChatPanel] Current conversationId:", conversationId, "Message conversationId:", data.conversationId)
       
       // Filter by conversationId - only process messages for the current conversation
       if (data.conversationId && data.conversationId !== conversationId) {
-        console.log("[ChatPanel] Ignoring message for different conversation:", data.conversationId, "current:", conversationId)
+        console.log("[ChatPanel] ❌ IGNORING message for different conversation:", data.conversationId, "current:", conversationId)
         return
       }
+      
+      console.log("[ChatPanel] ✅ ACCEPTING message for conversation:", data.conversationId || "(no conversationId)")
       
       if (data.message) {
         const newMessage: Message = {
