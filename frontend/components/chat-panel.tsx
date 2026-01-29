@@ -602,8 +602,8 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
   }, [conversationId, currentSessionId])
   
   // Helper function to check if we should filter by conversationId
-  // In collaborative sessions, we DON'T filter by conversation - all messages in the shared session are visible
-  // The session ID filtering (done separately) is sufficient for multi-tenancy
+  // Each event should only be shown in its corresponding conversation view
+  // Returns true if the event should be FILTERED OUT (not shown)
   const shouldFilterByConversationId = useCallback((eventConvId: string): boolean => {
     // If no conversationId in the event, accept it (backward compatibility)
     if (!eventConvId) return false
@@ -611,11 +611,15 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
     // If the event is for our current conversation, accept it
     if (eventConvId === conversationId) return false
     
-    // In collaborative sessions, DON'T filter by conversation ID
-    // All messages from the shared session should be visible to all members
-    // This is critical because User B might be at 'frontend-chat-context' while User A
-    // sends a message in a specific conversation - User B should still see it
-    if (isInCollaborativeSession) return false
+    // In collaborative sessions on the home page, auto-navigate to the conversation
+    // This keeps session members in sync - when User A sends a message, User B goes there too
+    if (isInCollaborativeSession && conversationId === 'frontend-chat-context' && eventConvId) {
+      console.log("[ChatPanel] Collaborative session: auto-navigating from home to conversation:", eventConvId)
+      router.push(`/?conversationId=${eventConvId}`)
+      // Return true to filter THIS event - after navigation, future events will be accepted
+      // The page will reload with the correct conversationId and load messages from API
+      return true
+    }
     
     // In non-collaborative sessions, allow 'frontend-chat-context' to receive all messages
     // This is for the default home page where no specific conversation is selected
@@ -623,7 +627,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
     
     // Otherwise, filter out events for other conversations
     return true
-  }, [conversationId, isInCollaborativeSession])
+  }, [conversationId, isInCollaborativeSession, router])
   
   // Voice recording hook
   const voiceRecording = useVoiceRecording()
@@ -1349,6 +1353,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
         messageConvId = parts[1]
       }
       
+      // In collaborative sessions, auto-navigate to the conversation if different
       if (shouldFilterByConversationId(messageConvId)) {
         console.log("[ChatPanel] Ignoring message for different conversation:", messageConvId, "current:", conversationId)
         return
@@ -1552,6 +1557,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       console.log("[ChatPanel] Current conversationId:", conversationId, "Message conversationId:", messageConvId, "raw:", data.conversationId)
       
       // Filter by conversationId - only process messages for the current conversation
+      // In collaborative sessions, auto-navigate to the conversation if different
       if (shouldFilterByConversationId(messageConvId)) {
         console.log("[ChatPanel] ❌ IGNORING message for different conversation:", messageConvId, "current:", conversationId)
         return
@@ -1634,6 +1640,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
         return
       }
       
+      // In collaborative sessions, auto-navigate to the conversation if different
       if (shouldFilterByConversationId(eventConvId)) {
         console.log("[ChatPanel] Ignoring inference ended for different conversation:", eventConvId, "current:", conversationId)
         return
@@ -1643,48 +1650,71 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       const workflowSteps = data.workflowSteps || data.data?.workflowSteps
       const summaryId = data.summaryId || data.data?.summaryId || `summary_shared_${Date.now()}`
       
+      // Check if we already processed a workflow for this conversation recently
+      // This prevents duplicates when we receive both the direct message event AND shared_inference_ended
+      // Use a workflow key based on conversation ID to track
+      const workflowKey = `workflow_received_${eventConvId || conversationId}`
+      
       if (workflowSteps && workflowSteps.length > 0) {
         console.log("[ChatPanel] Received workflow steps from shared_inference_ended:", workflowSteps.length, "steps")
         
-        // Add the workflow summary message so it appears in the chat
-        const summaryMessage: Message = {
-          id: summaryId,
-          role: "system",
-          type: "inference_summary",
-          steps: workflowSteps,
-        }
-        
-        // Add to messages if not already present (avoid duplicates)
-        setMessages((prev) => {
-          const exists = prev.some(m => m.id === summaryId)
-          if (exists) {
-            console.log("[ChatPanel] Workflow summary already exists, skipping:", summaryId)
-            return prev
+        // Check if we already have a recent workflow for this conversation (within last 5 seconds)
+        // This handles the case where message event arrived before shared_inference_ended
+        const recentWorkflow = processedMessageIds.has(workflowKey)
+        if (recentWorkflow) {
+          console.log("[ChatPanel] Already have workflow for this conversation, skipping shared workflow")
+        } else {
+          // Add the workflow summary message so it appears in the chat
+          const summaryMessage: Message = {
+            id: summaryId,
+            role: "system",
+            type: "inference_summary",
+            steps: workflowSteps,
           }
-          console.log("[ChatPanel] Adding shared workflow summary:", summaryId)
-          return [...prev, summaryMessage]
-        })
-        
-        // Also persist to localStorage so it survives refresh
-        try {
-          let workflowConversationId = eventConvId || conversationId
-          if (workflowConversationId.includes('::')) {
-            workflowConversationId = workflowConversationId.split('::')[1]
+          
+          // Add to messages if not already present (avoid duplicates)
+          setMessages((prev) => {
+            // Check if we already have any inference_summary for the most recent exchange
+            // by looking for a summary that was added in the last few messages
+            const recentSummaries = prev.slice(-5).filter(m => m.type === 'inference_summary')
+            if (recentSummaries.length > 0) {
+              console.log("[ChatPanel] Recent workflow summary exists, skipping shared:", recentSummaries[0].id)
+              return prev
+            }
+            
+            const exists = prev.some(m => m.id === summaryId)
+            if (exists) {
+              console.log("[ChatPanel] Workflow summary already exists, skipping:", summaryId)
+              return prev
+            }
+            console.log("[ChatPanel] Adding shared workflow summary:", summaryId)
+            return [...prev, summaryMessage]
+          })
+          
+          // Mark that we've received a workflow for this conversation
+          setProcessedMessageIds(prev => new Set([...prev, workflowKey]))
+          
+          // Also persist to localStorage so it survives refresh
+          try {
+            let workflowConversationId = eventConvId || conversationId
+            if (workflowConversationId.includes('::')) {
+              workflowConversationId = workflowConversationId.split('::')[1]
+            }
+            const storageKey = `workflow_${workflowConversationId}`
+            const existingData = localStorage.getItem(storageKey)
+            const workflows = existingData ? JSON.parse(existingData) : []
+            if (!workflows.some((w: any) => w.id === summaryId)) {
+              workflows.push({
+                id: summaryId,
+                steps: workflowSteps,
+                timestamp: Date.now()
+              })
+              localStorage.setItem(storageKey, JSON.stringify(workflows))
+              console.log("[ChatPanel] Persisted shared workflow to localStorage:", storageKey)
+            }
+          } catch (err) {
+            console.error('[ChatPanel] Failed to persist shared workflow to localStorage:', err)
           }
-          const storageKey = `workflow_${workflowConversationId}`
-          const existingData = localStorage.getItem(storageKey)
-          const workflows = existingData ? JSON.parse(existingData) : []
-          if (!workflows.some((w: any) => w.id === summaryId)) {
-            workflows.push({
-              id: summaryId,
-              steps: workflowSteps,
-              timestamp: Date.now()
-            })
-            localStorage.setItem(storageKey, JSON.stringify(workflows))
-            console.log("[ChatPanel] Persisted shared workflow to localStorage:", storageKey)
-          }
-        } catch (err) {
-          console.error('[ChatPanel] Failed to persist shared workflow to localStorage:', err)
         }
       }
       
@@ -1694,12 +1724,25 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
         console.log("[ChatPanel] Received response message from shared_inference_ended:", responseMessage)
         
         // Add the response message if we don't already have it
+        // Check by content similarity since IDs may differ between message event and shared_inference_ended
         setMessages((prev) => {
           const exists = prev.some(m => m.id === responseMessage.id)
           if (exists) {
-            console.log("[ChatPanel] Response message already exists, skipping:", responseMessage.id)
+            console.log("[ChatPanel] Response message already exists (by ID), skipping:", responseMessage.id)
             return prev
           }
+          
+          // Also check if we have a recent assistant message with the same content
+          const recentAssistants = prev.slice(-3).filter(m => m.role === 'assistant')
+          const hasSameContent = recentAssistants.some(m => 
+            m.content === responseMessage.content && 
+            m.agent === responseMessage.agent
+          )
+          if (hasSameContent) {
+            console.log("[ChatPanel] Response message already exists (by content), skipping")
+            return prev
+          }
+          
           console.log("[ChatPanel] Adding shared response message:", responseMessage.id)
           return [...prev, responseMessage]
         })
@@ -1753,17 +1796,20 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       
       // A2A ConversationCreatedEventData has: conversationId, conversationName, isActive, messageCount
       if (data.conversationId) {
-        // Start inference tracking for new conversations
-        setIsInferencing(true)
-        setInferenceSteps([])
-        emit("status_update", {
-          inferenceId: data.conversationId,
-          agent: "System",
-          status: "new conversation created"
-        })
-        
         // Strip tenant prefix from conversationId (format: "user_3::conv_id" -> "conv_id")
         const strippedConvId = rawConvId.includes("::") ? rawConvId.split("::")[1] : rawConvId
+        
+        // Only start inference tracking if we're on the home page or viewing this conversation
+        // This prevents "Processing..." from showing when viewing a different conversation
+        if (conversationId === 'frontend-chat-context' || conversationId === strippedConvId) {
+          setIsInferencing(true)
+          setInferenceSteps([])
+          emit("status_update", {
+            inferenceId: data.conversationId,
+            agent: "System",
+            status: "new conversation created"
+          })
+        }
         
         // Also fix the conversation name if it has the tenant prefix
         let convName = data.conversationName || `Chat ${strippedConvId.slice(0, 8)}...`
@@ -1830,6 +1876,17 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
     // Handle inference step events (tool calls, remote agent activities)
     const handleInferenceStep = (data: any) => {
       console.log("[ChatPanel] Inference step received:", data)
+      
+      // Filter by conversationId - only process steps for the current conversation
+      let stepConvId = data.conversationId || data.contextId || ""
+      if (stepConvId.includes("::")) {
+        stepConvId = stepConvId.split("::")[1]
+      }
+      if (shouldFilterByConversationId(stepConvId)) {
+        console.log("[ChatPanel] Ignoring inference step for different conversation:", stepConvId, "current:", conversationId)
+        return
+      }
+      
       if (data.agent && data.status) {
         // If we receive inference steps, inference is happening - show the workflow panel
         // This helps collaborators who join mid-workflow see the progress
@@ -1851,6 +1908,17 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
     // Handle tool call events
     const handleToolCall = (data: any) => {
       console.log("[ChatPanel] Tool call received:", data)
+      
+      // Filter by conversationId - only process tool calls for the current conversation
+      let toolConvId = data.conversationId || data.contextId || ""
+      if (toolConvId.includes("::")) {
+        toolConvId = toolConvId.split("::")[1]
+      }
+      if (shouldFilterByConversationId(toolConvId)) {
+        console.log("[ChatPanel] Ignoring tool call for different conversation:", toolConvId, "current:", conversationId)
+        return
+      }
+      
       if (data.toolName && data.agentName) {
         const status = `🛠️ ${data.agentName} is using ${data.toolName}...`
         setInferenceSteps(prev => [...prev, { 
@@ -1875,6 +1943,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       if (activityConvId.includes("::")) {
         activityConvId = activityConvId.split("::")[1]
       }
+      // In collaborative sessions, auto-navigate to the conversation if different
       if (shouldFilterByConversationId(activityConvId)) {
         console.log("[ChatPanel] Ignoring remote activity for different conversation:", activityConvId, "current:", conversationId)
         return
@@ -2071,6 +2140,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
         statusConvId = statusConvId.split("::")[1]
       }
       
+      // In collaborative sessions, auto-navigate to the conversation if different
       if (shouldFilterByConversationId(statusConvId)) {
         console.log("[ChatPanel] Ignoring status update for different conversation:", statusConvId, "current:", conversationId)
         return
@@ -2089,6 +2159,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
         responseConvId = responseConvId.split("::")[1]
       }
       
+      // In collaborative sessions, auto-navigate to the conversation if different
       if (shouldFilterByConversationId(responseConvId)) {
         console.log("[ChatPanel] Ignoring final response for different conversation:", responseConvId, "current:", conversationId)
         return
