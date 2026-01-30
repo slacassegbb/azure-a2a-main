@@ -3127,7 +3127,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                       {/* Reaction picker - shows on hover */}
                       {isInCollaborativeSession && (
                         <div className="absolute -top-8 left-0 hidden group-hover:flex items-center gap-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg p-1 z-10">
-                          {['👍', '❤️', '😂', '😮', '😢', '🎉'].map((emoji) => (
+                          {['👍', '👎', '❤️', '😂', '😮', '😢', '🎉'].map((emoji) => (
                             <button
                               key={emoji}
                               onClick={() => handleReaction(message.id, emoji)}
