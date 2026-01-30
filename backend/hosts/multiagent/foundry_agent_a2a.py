@@ -3842,6 +3842,29 @@ Answer with just JSON:
             log_foundry_debug(f"Tool handling loop completed. Final status: {response['status']}, iterations: {tool_iteration}")
             await self._emit_status_event("AI processing completed, finalizing response", context_id)
             
+            # Handle FAILED status - provide user-friendly error message
+            status_str = str(response.get('status', '')).lower()
+            if 'failed' in status_str:
+                error_message = response.get('error', response.get('last_error', 'Unknown error'))
+                log_debug(f"⚠️ Response FAILED: {error_message}")
+                
+                # Provide a user-friendly error response
+                error_response = (
+                    "I apologize, but I encountered an issue processing your request. "
+                    "This may be due to:\n"
+                    "- No remote agents are currently connected\n"
+                    "- A temporary service issue\n"
+                    "- The request timed out\n\n"
+                    "Please try again or check that the required agents are running."
+                )
+                
+                # Still yield a response so the frontend doesn't hang
+                yield Message(
+                    role="agent",
+                    parts=[TextPart(text=error_response)]
+                )
+                return
+            
             # Get response text
             responses = []
             if response.get('text'):

@@ -506,11 +506,17 @@ class FoundryHostManager(ApplicationManager):
         log_debug(f"FoundryHostAgent responses: {responses}")
         
         if not responses:
-            log_debug("WARNING: No responses from FoundryHostAgent - this will cause no messages to be sent to frontend!")
-            # Remove from pending since we're not going to get a response
+            log_debug("WARNING: No responses from FoundryHostAgent - providing fallback response")
+            # Provide a fallback response instead of leaving the frontend hanging
+            from a2a.types import Message as A2AMessage, TextPart
+            fallback_response = A2AMessage(
+                role="agent",
+                parts=[TextPart(text="I apologize, but I wasn't able to process your request. Please try again or check that remote agents are connected.")]
+            )
+            # Remove from pending since we're providing a response now
             if message_id in self._pending_message_ids:
                 self._pending_message_ids.remove(message_id)
-            return []
+            return [fallback_response]
         # Build mapping of agent names from tool call events
         # These are used for status_agent_name to send correct task_updated events to frontend
         print(f"📋 [TOOL_EVENTS] Processing {len(tool_call_events)} tool call events")
