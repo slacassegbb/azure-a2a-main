@@ -218,13 +218,31 @@ export function FileHistory({ className, onFileSelect, onFilesLoaded, conversati
       const existingIndex = prev.findIndex(f => f.filename === fileRecord.filename)
       
       if (existingIndex !== -1) {
-        // Replace existing file with new version (more recent upload)
-        console.log('[FileHistory] Replacing existing file:', fileRecord.filename)
+        const existingFile = prev[existingIndex]
+        
+        // IMPORTANT: Preserve advanced status (processing, analyzed) - don't let late events overwrite
+        // Status priority: analyzed > processing > error > uploading > uploaded
+        const statusPriority: Record<string, number> = {
+          'analyzed': 5,
+          'processing': 4,
+          'error': 3,
+          'uploading': 2,
+          'uploaded': 1
+        }
+        const existingPriority = statusPriority[existingFile.status || 'uploaded'] || 0
+        const newPriority = statusPriority[fileRecord.status || 'uploaded'] || 0
+        
+        // Only update status if new status has higher priority
+        const preservedStatus = newPriority >= existingPriority ? fileRecord.status : existingFile.status
+        
+        console.log('[FileHistory] Replacing existing file:', fileRecord.filename, 
+          'existingStatus:', existingFile.status, 'newStatus:', fileRecord.status, 'preserved:', preservedStatus)
+        
         const updated = [...prev]
-        updated[existingIndex] = fileRecord
+        updated[existingIndex] = { ...fileRecord, status: preservedStatus }
         // Move it to the front (most recent)
         updated.splice(existingIndex, 1)
-        return [fileRecord, ...updated].slice(0, 50)
+        return [{ ...fileRecord, status: preservedStatus }, ...updated].slice(0, 50)
       }
       
       // Add new file and keep last 50
@@ -426,10 +444,8 @@ export function FileHistory({ className, onFileSelect, onFilesLoaded, conversati
           // Replace temp record with real record
           setFiles(prev => prev.map(f => f.id === tempId ? realRecord : f))
 
-          // Add to global file history (for chat-panel compatibility)
-          if ((window as any).addFileToHistory) {
-            (window as any).addFileToHistory(uploadResult)
-          }
+          // NOTE: Don't call addFileToHistory here - we already added via setFiles above
+          // addFileToHistory would overwrite with status='uploaded' and break the processing flow
 
           // Broadcast to collaborative session members
           if (sendMessage) {
