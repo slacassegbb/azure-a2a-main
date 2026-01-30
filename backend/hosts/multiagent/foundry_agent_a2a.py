@@ -35,7 +35,6 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional, Iterable, Literal
 import httpx
 from dotenv import load_dotenv
-from openai import AsyncAzureOpenAI
 
 # OpenTelemetry for distributed tracing and monitoring
 from opentelemetry import trace
@@ -44,20 +43,11 @@ from azure.monitor.opentelemetry import configure_azure_monitor
 # Azure authentication - supports multiple credential types for flexibility
 from azure.identity import DefaultAzureCredential, ChainedTokenCredential, AzureCliCredential, ManagedIdentityCredential, EnvironmentCredential, ClientSecretCredential
 
-# Azure AI Foundry Agent Service - Official SDK for enterprise agents
+# Azure AI Projects Client - for connecting to Azure AI Foundry
 from azure.ai.projects.aio import AIProjectClient
-from azure.ai.agents.models import (
-    AsyncFunctionTool,
-    AsyncToolSet,
-    MessageDeltaChunk,
-    ThreadMessage,
-    ThreadRun,
-    RunStep,
-    AgentStreamEvent,
-    MessageRole,
-    FilePurpose,
-    BingGroundingTool,  # For Bing web search grounding
-)
+
+# Note: We use the OpenAI SDK's Responses API directly (openai_client.responses.create)
+# Tools are defined as dicts in OpenAI format, not azure-ai-projects models
 
 # A2A Protocol SDK for agent-to-agent communication
 from a2a.client import A2ACardResolver
@@ -230,8 +220,13 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
         self.agents: str = ''
         self.session_contexts: Dict[str, SessionContext] = {}
         
-        # FOUNDRY AGENT SERVICE: Store thread IDs for conversation management
-        self.thread_ids: Dict[str, str] = {}  # context_id -> thread_id
+        # RESPONSES API: Store response IDs for multi-turn context chaining
+        self._response_ids: Dict[str, str] = {}  # context_id -> last_response_id
+        
+        # Model configuration (set in create_agent)
+        self.model_name: Optional[str] = None
+        self.agent_instructions: Optional[str] = None
+        self.agent_tools: Optional[List[Dict[str, Any]]] = None
         
         # REMOVED: self.default_contextId = str(uuid.uuid4())
         # We NEVER want to use a UUID fallback - context_id must come from the request
@@ -287,49 +282,6 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
         
         if self._create_agent_at_startup:
             loop.create_task(self._create_agent_at_startup_task())
-    
-    async def _initialize_function_tools(self):
-        """
-        Initialize function tools for the agent.
-        
-        Returns AsyncToolSet configured with:
-        - Function tools for agent coordination (list_remote_agents, send_message, search_memory)
-        - BingGroundingTool for web search (if BING_CONNECTION_ID is configured)
-        """
-        # Define the functions that the agent can call
-        # AsyncFunctionTool expects a LIST of functions, not a dict
-        user_functions = [
-            self.list_remote_agents_sync,
-            self.send_message_sync,
-            self.search_memory_sync,  # Memory search tool
-        ]
-        
-        # Create async function tool
-        functions = AsyncFunctionTool(user_functions)
-        
-        # Create toolset and add functions
-        toolset = AsyncToolSet()
-        toolset.add(functions)
-        
-        # Add Bing Grounding Tool for web search if connection is configured
-        bing_connection_id = os.environ.get("BING_CONNECTION_ID")
-        if bing_connection_id:
-            try:
-                bing_tool = BingGroundingTool(connection_id=bing_connection_id)
-                toolset.add(bing_tool)
-                print(f"🔍 Added BingGroundingTool with connection: {bing_connection_id[:50]}...")
-            except Exception as e:
-                print(f"⚠️ Failed to add BingGroundingTool: {e}")
-                print(f"   Web search will not be available")
-        else:
-            print(f"ℹ️ BING_CONNECTION_ID not set - web search disabled")
-            print(f"   To enable: Set BING_CONNECTION_ID to your Grounding with Bing connection ID")
-            print(f"   Format: /subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.CognitiveServices/accounts/<account>/projects/<project>/connections/<connection>")
-        
-        # Enable automatic function call execution (synchronous method)
-        self.agents_client.enable_auto_function_calls(toolset)
-        
-        return toolset
 
     # Note: set_session_agents, _find_agent_registry_path, _load_agent_registry,
     # _save_agent_registry, _agent_card_to_dict, _update_agent_registry have been
@@ -364,16 +316,23 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
         Format agent tools for Responses API.
         
         Returns tools in the Responses API format for function calling.
-        Uses _get_tools() to get the tool definitions.
+        Uses self.agent_tools if available (which includes web_search),
+        otherwise falls back to _get_tools().
         
         Returns:
             List of tool definitions in Responses API format
         """
-        # Use _get_tools() which has the correct tool definitions
-        tools = self._get_tools()
-        print(f"🔧 [TOOLS] _format_tools_for_responses_api returning {len(tools)} tools")
+        # Use self.agent_tools which includes web_search added in create_agent()
+        if hasattr(self, 'agent_tools') and self.agent_tools:
+            tools = self.agent_tools
+        else:
+            # Fallback to _get_tools() if agent_tools not set yet
+            tools = self._get_tools()
+            
+        print(f"🔧 [TOOLS] _format_tools_for_responses_api returning {len(tools)} tools:")
         for tool in tools:
-            print(f"  • Tool: {tool.get('name', 'unknown')}")
+            tool_name = tool.get('name', tool.get('type', 'unknown'))
+            print(f"  • Tool: {tool_name}")
         return tools
 
     async def _create_response_with_streaming(
@@ -386,7 +345,13 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
         event_logger=None
     ) -> Dict[str, Any]:
         """
-        Create a response using Azure AI Foundry Agent Service with streaming.
+        Create a response using Azure AI Foundry Responses API with streaming.
+        
+        This is the core method for the Responses API pattern:
+        - Uses openai_client.responses.create() with model, tools, instructions
+        - Supports streaming for real-time UI updates
+        - Handles tool calls (function calls) in a loop
+        - Uses previous_response_id for multi-turn context
         
         Returns:
             Dict with keys: id, text, tool_calls, status, usage
@@ -396,79 +361,28 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
             if not self.agent:
                 await self.create_agent()
             
-            # Get or create thread for this context
-            if context_id not in self.thread_ids:
-                thread = await self.agents_client.threads.create()
-                self.thread_ids[context_id] = thread.id
+            # Track previous response for multi-turn context
+            previous_response_id = self._response_ids.get(context_id)
             
-            thread_id = self.thread_ids[context_id]
-            
-            # Cancel any active runs before creating new message
-            # Azure AI Agents API requires runs to be fully cancelled before adding messages
-            try:
-                runs = self.agents_client.runs.list(thread_id=thread_id)
-                async for run in runs:
-                    if run.status in ["in_progress", "requires_action", "queued"]:
-                        try:
-                            log_debug(f"🛑 Cancelling active run {run.id} (status: {run.status})")
-                            await self.agents_client.runs.cancel(thread_id=thread_id, run_id=run.id)
-                            
-                            # Wait for cancellation to complete (up to 10 seconds)
-                            for _ in range(20):
-                                cancelled_run = await self.agents_client.runs.get(thread_id=thread_id, run_id=run.id)
-                                if cancelled_run.status in ["cancelled", "failed", "completed", "expired"]:
-                                    log_debug(f"✅ Run {run.id} cancelled successfully (final status: {cancelled_run.status})")
-                                    break
-                                await asyncio.sleep(0.5)
-                            else:
-                                log_debug(f"⚠️ Run {run.id} cancellation timed out, proceeding anyway")
-                        except Exception as cancel_error:
-                            log_debug(f"⚠️ Error cancelling run {run.id}: {cancel_error}")
-            except Exception as list_error:
-                log_debug(f"⚠️ Error listing runs: {list_error}")
-            
-            # Create message in thread (with retry using new thread if active run blocks it)
-            try:
-                message = await self.agents_client.messages.create(
-                    thread_id=thread_id,
-                    role=MessageRole.USER,
-                    content=user_message
-                )
-            except Exception as msg_error:
-                if "while a run" in str(msg_error) and "is active" in str(msg_error):
-                    log_debug(f"⚠️ Thread {thread_id} still has active run, creating new thread")
-                    # Create a new thread and retry
-                    thread = await self.agents_client.threads.create()
-                    thread_id = thread.id
-                    self.thread_ids[context_id] = thread_id
-                    message = await self.agents_client.messages.create(
-                        thread_id=thread_id,
-                        role=MessageRole.USER,
-                        content=user_message
-                    )
-                    log_debug(f"✅ Created new thread {thread_id} for context {context_id}")
-                else:
-                    raise
-            
-            # Stream the run
+            # Stream the response
             full_text = ""
-            run_id = None
+            response_id = None
             status = "completed"
             tool_calls_to_execute = []
             
-            # Create the stream with proper error handling
-            # Use "auto" to allow agent to decide whether to call tools or respond directly
-            # The agent will still delegate to other agents when appropriate (per its instructions)
-            # but can also handle simple conversational messages without forcing a tool call
             try:
-                stream = await self.agents_client.runs.stream(
-                    thread_id=thread_id,
-                    agent_id=self.agent_id,
-                    tool_choice="auto"
+                # Create the streaming response using Responses API with Azure Agent reference
+                # Agent contains model, instructions, and tools (including Bing Grounding)
+                stream = await self.openai_client.responses.create(
+                    input=user_message,
+                    previous_response_id=previous_response_id,
+                    extra_body={"agent": {"name": self.agent.name, "type": "agent_reference"}},
+                    stream=True,
                 )
             except Exception as stream_error:
                 log_error(f"Error creating stream: {stream_error}")
-                # Return a graceful error response instead of crashing
+                import traceback
+                traceback.print_exc()
                 return {
                     "id": None,
                     "text": f"I apologize, but I encountered an error processing your request: {str(stream_error)}",
@@ -477,283 +391,203 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
                     "usage": None
                 }
             
-            async with stream as event_handler:
-                try:
-                    async for event in event_handler:
-                        if hasattr(event, 'event') and hasattr(event, 'data'):
-                            event_type = event.event
-                            event_data = event.data
-                        elif isinstance(event, tuple):
-                            event_type, event_data, *_ = event
-                        else:
-                            event_data = event
-                            event_type = type(event).__name__
+            # Process the streaming response
+            try:
+                async for event in stream:
+                    event_type = event.type
+                    
+                    if event_type == "response.created":
+                        response_id = event.response.id
+                        self._response_ids[context_id] = response_id  # Track for multi-turn
+                        log_debug(f"📝 Response created: {response_id}")
+                    
+                    elif event_type == "response.output_text.delta":
+                        chunk = event.delta
+                        if chunk:
+                            full_text += chunk
+                            await self._emit_text_chunk(chunk, context_id)
+                    
+                    elif event_type == "response.output_item.done":
+                        # Check for function call outputs
+                        if hasattr(event, 'item') and event.item.type == "function_call":
+                            tool_call = event.item
+                            tool_calls_to_execute.append(tool_call)
+                            print(f"🔧 [FUNCTION CALL] name={tool_call.name}, arguments={tool_call.arguments}")
+                    
+                    elif event_type == "response.completed":
+                        log_debug(f"✅ Response completed")
+                        break
+                    
+                    elif event_type == "error":
+                        log_error(f"Stream error: {event}")
+                        status = "failed"
+                        break
                         
-                        if isinstance(event_data, MessageDeltaChunk):
-                            chunk = event_data.text
-                            if chunk:
-                                full_text += chunk
-                                await self._emit_text_chunk(chunk, context_id)
-                        
-                        elif isinstance(event_data, ThreadRun):
-                            run_id = event_data.id
-                            status = event_data.status
-                            status_str = str(status).lower() if status else ""
-                            if "requires_action" in status_str and hasattr(event_data, 'required_action'):
-                                required_action = event_data.required_action
-                                if required_action and hasattr(required_action, 'submit_tool_outputs'):
-                                    tool_calls_to_execute = required_action.submit_tool_outputs.tool_calls
-                        
-                        elif event_type == AgentStreamEvent.ERROR:
-                            raise Exception(f"Streaming error: {event_data}")
-                        
-                        elif event_type == AgentStreamEvent.DONE:
-                            break
-                except json.JSONDecodeError as json_err:
-                    log_error(f"JSON decode error in stream processing: {json_err}")
-                    # If we got some text before the error, return it
-                    if full_text:
-                        return {
-                            "id": run_id,
-                            "text": full_text,
-                            "tool_calls": [],
-                            "status": "completed",
-                            "usage": None
-                        }
-                    # Otherwise return a graceful error
+            except Exception as stream_proc_error:
+                log_error(f"Error processing stream: {stream_proc_error}")
+                if full_text:
                     return {
-                        "id": None,
-                        "text": "I apologize, but I encountered a technical issue processing the response. Please try again.",
+                        "id": response_id,
+                        "text": full_text,
                         "tool_calls": [],
-                        "status": "failed",
+                        "status": "completed",
                         "usage": None
                     }
-                except Exception as stream_proc_error:
-                    log_error(f"Error processing stream: {stream_proc_error}")
-                    if full_text:
-                        return {
-                            "id": run_id,
-                            "text": full_text,
-                            "tool_calls": [],
-                            "status": "completed",
-                            "usage": None
-                        }
-                    raise
+                raise
 
-            
             # MULTI-TURN TOOL EXECUTION LOOP
             max_tool_iterations = 30
             tool_iteration = 0
             
-            def status_requires_action(s):
-                return s and "requires_action" in str(s).lower()
-            
-            while status_requires_action(status) and tool_calls_to_execute and tool_iteration < max_tool_iterations:
+            while tool_calls_to_execute and tool_iteration < max_tool_iterations:
                 tool_iteration += 1
+                log_debug(f"🔧 Tool iteration {tool_iteration}: {len(tool_calls_to_execute)} calls")
                 
-                # Emit tool call events for UI visibility
-                for tool_call in tool_calls_to_execute:
-                    asyncio.create_task(self._emit_granular_agent_event(
-                        "foundry-host-agent", f"🛠️ Calling: {tool_call.function.name}", context_id
-                    ))
-                
-                # Separate send_message calls for parallel execution
-                # Note: Tool is named "send_message" in tool definition, also accept "send_message_sync" for compatibility
-                send_message_calls = [tc for tc in tool_calls_to_execute if tc.function.name in ("send_message", "send_message_sync")]
-                other_calls = [tc for tc in tool_calls_to_execute if tc.function.name not in ("send_message", "send_message_sync")]
+                # Execute each tool call
                 tool_outputs = []
-                
-                # Log tool call counts for debugging
-                log_foundry_debug(f"🔧 Tool iteration {tool_iteration}: {len(send_message_calls)} send_message calls, {len(other_calls)} other calls")
-                for i, tc in enumerate(send_message_calls):
-                    args = json.loads(tc.function.arguments) if tc.function.arguments else {}
-                    log_foundry_debug(f"   send_message[{i}]: agent={args.get('agent_name')}, msg={args.get('message', '')[:50]}...")
-                
-                # Execute send_message calls in PARALLEL if there are multiple
-                if len(send_message_calls) > 1:
-                    log_foundry_debug(f"🚀 PARALLEL EXECUTION: Executing {len(send_message_calls)} send_message calls in parallel")
-                    async def execute_send_message(tool_call):
-                        """Execute a single send_message call and return result"""
-                        try:
-                            arguments = json.loads(tool_call.function.arguments) if tool_call.function.arguments else {}
-                            agent_name = arguments.get("agent_name")
-                            # EXPLICIT FILE ROUTING: Extract file_uris and video_metadata
-                            file_uris = arguments.get("file_uris", None)
-                            video_metadata = arguments.get("video_metadata", None)
-                            result = await self.send_message_sync(
-                                agent_name=agent_name,
-                                message=arguments.get("message"),
-                                file_uris=file_uris,
-                                video_metadata=video_metadata
-                            )
-                            result_str = self._format_agent_response_for_model(result, agent_name)
-                            return {"tool_call_id": tool_call.id, "output": result_str}
-                        except Exception as e:
-                            log_error(f"send_message_sync error: {e}")
-                            return {"tool_call_id": tool_call.id, "output": json.dumps({"error": str(e)})}
+                for tool_call in tool_calls_to_execute:
+                    # Emit tool call event for UI
+                    asyncio.create_task(self._emit_granular_agent_event(
+                        "foundry-host-agent", f"🛠️ Calling: {tool_call.name}", context_id
+                    ))
                     
-                    parallel_results = await asyncio.gather(
-                        *[execute_send_message(tc) for tc in send_message_calls],
-                        return_exceptions=True
-                    )
-                    
-                    for idx, result in enumerate(parallel_results):
-                        if isinstance(result, Exception):
-                            if idx < len(send_message_calls):
-                                tool_outputs.append({
-                                    "tool_call_id": send_message_calls[idx].id,
-                                    "output": json.dumps({"error": str(result)})
-                                })
-                        else:
-                            tool_outputs.append(result)
-                
-                elif len(send_message_calls) == 1:
-                    tool_call = send_message_calls[0]
+                    # Execute the tool
                     try:
-                        arguments = json.loads(tool_call.function.arguments) if tool_call.function.arguments else {}
-                        agent_name = arguments.get("agent_name")
-                        # EXPLICIT FILE ROUTING: Extract file_uris and video_metadata
-                        file_uris = arguments.get("file_uris", None)
-                        video_metadata = arguments.get("video_metadata", None)
-                        result = await self.send_message_sync(
-                            agent_name=agent_name,
-                            message=arguments.get("message"),
-                            file_uris=file_uris,
-                            video_metadata=video_metadata
+                        result = await self._execute_single_tool_call(
+                            tool_call.name,
+                            tool_call.arguments,
+                            context_id,
+                            session_context
                         )
-                        result_str = self._format_agent_response_for_model(result, agent_name)
-                        tool_outputs.append({"tool_call_id": tool_call.id, "output": result_str})
-                    except Exception as e:
-                        log_error(f"send_message_sync error: {e}")
-                        tool_outputs.append({"tool_call_id": tool_call.id, "output": json.dumps({"error": str(e)})})
+                        tool_outputs.append({
+                            "tool_call_id": tool_call.call_id,
+                            "output": str(result)
+                        })
+                    except Exception as tool_error:
+                        log_error(f"Tool execution error: {tool_error}")
+                        tool_outputs.append({
+                            "tool_call_id": tool_call.call_id,
+                            "output": f"Error: {str(tool_error)}"
+                        })
                 
-                # Execute other (non-send_message) tool calls sequentially
-                for tool_call in other_calls:
-                    function_name = tool_call.function.name
-                    try:
-                        # Accept both "list_remote_agents" and "list_remote_agents_sync" for compatibility
-                        if function_name in ("list_remote_agents", "list_remote_agents_sync"):
-                            result = self.list_remote_agents_sync()
-                        elif function_name in ("search_memory", "search_memory_sync"):
-                            # Execute memory search
-                            arguments = json.loads(tool_call.function.arguments) if isinstance(tool_call.function.arguments, str) else tool_call.function.arguments
-                            query = arguments.get("query", "")
-                            top_k = arguments.get("top_k", 5)
-                            result = await self.search_memory_sync(query=query, top_k=top_k)
-                        else:
-                            result = {"error": f"Unknown function: {function_name}"}
-                        
-                        # Convert result to JSON string
-                        if hasattr(result, 'model_dump'):
-                            result_str = json.dumps(result.model_dump(mode='json'))
-                        elif isinstance(result, str):
-                            result_str = result
-                        else:
-                            result_str = json.dumps(result)
-                        
-                        tool_outputs.append({"tool_call_id": tool_call.id, "output": result_str})
-                    except Exception as e:
-                        log_error(f"Tool {function_name} error: {e}")
-                        tool_outputs.append({"tool_call_id": tool_call.id, "output": json.dumps({"error": str(e)})})
+                # Continue the conversation with tool outputs
+                tool_calls_to_execute = []
                 
-                # Submit tool outputs and continue streaming
                 try:
-                    stream = await self.agents_client.runs.submit_tool_outputs_stream(
-                        thread_id=thread_id,
-                        run_id=run_id,
-                        tool_outputs=tool_outputs
-                    )
-                except TypeError as e:
-                    # If it requires event_handler, provide one
-                    if "event_handler" in str(e):
-                        from azure.ai.agents.models import AsyncAgentEventHandler
-                        
-                        class ResponseCapturingHandler(AsyncAgentEventHandler):
-                            def __init__(self):
-                                super().__init__()
-                                self.response_text = ""
-                                self.final_status = None
-                                self.tool_calls = []
-                            
-                            async def on_message_delta(self, delta):
-                                if hasattr(delta, 'text') and delta.text:
-                                    self.response_text += delta.text
-                                    await self._emit_text_chunk(delta.text, context_id)
-                            
-                            async def on_thread_run(self, run):
-                                self.final_status = run.status
-                                status_str = str(run.status).lower() if run.status else ""
-                                if "requires_action" in status_str and hasattr(run, 'required_action'):
-                                    required_action = run.required_action
-                                    if required_action and hasattr(required_action, 'submit_tool_outputs'):
-                                        self.tool_calls = required_action.submit_tool_outputs.tool_calls or []
-                        
-                        handler = ResponseCapturingHandler()
-                        handler._emit_text_chunk = self._emit_text_chunk
-                        
-                        result = await self.agents_client.runs.submit_tool_outputs_stream(
-                            thread_id=thread_id,
-                            run_id=run_id,
-                            tool_outputs=tool_outputs,
-                            event_handler=handler
-                        )
-                        
-                        await handler.until_done()
-                        
-                        full_text += handler.response_text
-                        if handler.final_status:
-                            status = handler.final_status
-                        
-                        tool_calls_to_execute = handler.tool_calls if handler.tool_calls else []
-                        stream = None
-                    else:
-                        raise
-                
-                # If we have a stream, process it
-                if stream is not None:
-                    tool_calls_to_execute = []
+                    # Use previous_response_id to chain responses 
+                    # Tool outputs are submitted by setting input to function call outputs
+                    function_call_outputs = []
+                    for output in tool_outputs:
+                        function_call_outputs.append({
+                            "type": "function_call_output",
+                            "call_id": output["tool_call_id"],
+                            "output": output["output"]
+                        })
                     
-                    async with stream as event_handler:
-                        async for event in event_handler:
-                            if hasattr(event, 'event') and hasattr(event, 'data'):
-                                event_type = event.event
-                                event_data = event.data
-                            elif isinstance(event, tuple):
-                                event_type, event_data, *_ = event
-                            else:
-                                event_data = event
-                                event_type = type(event).__name__
+                    # Continue conversation with agent reference
+                    continue_stream = await self.openai_client.responses.create(
+                        input=function_call_outputs,  # Pass tool outputs as input
+                        previous_response_id=response_id,  # Chain to previous response
+                        extra_body={"agent": {"name": self.agent.name, "type": "agent_reference"}},
+                        stream=True,
+                    )
+                    
+                    async for event in continue_stream:
+                        event_type = event.type
+                        
+                        if event_type == "response.created":
+                            response_id = event.response.id
+                            self._response_ids[context_id] = response_id
+                        
+                        elif event_type == "response.output_text.delta":
+                            chunk = event.delta
+                            if chunk:
+                                full_text += chunk
+                                await self._emit_text_chunk(chunk, context_id)
+                        
+                        elif event_type == "response.output_item.done":
+                            if hasattr(event, 'item') and event.item.type == "function_call":
+                                tool_calls_to_execute.append(event.item)
+                        
+                        elif event_type == "response.completed":
+                            break
                             
-                            if isinstance(event_data, MessageDeltaChunk):
-                                chunk = event_data.text
-                                if chunk:
-                                    full_text += chunk
-                                    await self._emit_text_chunk(chunk, context_id)
-                            
-                            elif isinstance(event_data, ThreadRun):
-                                run_id = event_data.id
-                                status = event_data.status
-                                
-                                status_str = str(status).lower() if status else ""
-                                if "requires_action" in status_str and hasattr(event_data, 'required_action'):
-                                    required_action = event_data.required_action
-                                    if required_action and hasattr(required_action, 'submit_tool_outputs'):
-                                        tool_calls_to_execute = required_action.submit_tool_outputs.tool_calls
-                            
-                            elif event_type == AgentStreamEvent.DONE:
-                                break
+                except Exception as continue_error:
+                    log_error(f"Error continuing conversation: {continue_error}")
+                    import traceback
+                    traceback.print_exc()
+                    break
             
             return {
-                "id": run_id,
+                "id": response_id,
                 "text": full_text,
                 "tool_calls": [],
-                "status": status,
+                "status": "completed",
                 "usage": None
             }
             
         except Exception as e:
             log_error(f"Error in _create_response_with_streaming: {e}")
             raise
+
+    async def _execute_single_tool_call(
+        self,
+        function_name: str,
+        arguments_json: str,
+        context_id: str,
+        session_context: SessionContext
+    ) -> str:
+        """
+        Execute a single tool call and return the result as a string.
+        
+        This is called from _create_response_with_streaming to handle
+        function calls from the Responses API.
+        
+        Args:
+            function_name: Name of the function to call
+            arguments_json: JSON string of arguments
+            context_id: Conversation context ID
+            session_context: Session state
+            
+        Returns:
+            Result as a string (JSON or plain text)
+        """
+        try:
+            # Parse arguments
+            arguments = json.loads(arguments_json) if isinstance(arguments_json, str) else arguments_json
+            
+            if function_name in ("send_message", "send_message_sync"):
+                # Call remote agent
+                agent_name = arguments.get("agent_name")
+                message = arguments.get("message")
+                file_uris = arguments.get("file_uris")
+                video_metadata = arguments.get("video_metadata")
+                
+                result = await self.send_message_sync(
+                    agent_name=agent_name,
+                    message=message,
+                    file_uris=file_uris,
+                    video_metadata=video_metadata
+                )
+                return self._format_agent_response_for_model(result, agent_name)
+            
+            elif function_name in ("list_remote_agents", "list_remote_agents_sync"):
+                result = self.list_remote_agents_sync()
+                return json.dumps(result) if not isinstance(result, str) else result
+            
+            elif function_name in ("search_memory", "search_memory_sync"):
+                query = arguments.get("query", "")
+                top_k = arguments.get("top_k", 5)
+                result = await self.search_memory_sync(query=query, top_k=top_k)
+                return result if isinstance(result, str) else json.dumps(result)
+            
+            else:
+                # Unknown function - web_search is handled natively by the model
+                return json.dumps({"error": f"Unknown function: {function_name}"})
+                
+        except Exception as e:
+            log_error(f"Error executing tool {function_name}: {e}")
+            return json.dumps({"error": str(e)})
 
     async def _execute_tool_calls_from_response(
         self,
@@ -887,6 +721,7 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
                     import traceback
                     traceback.print_exc()
                     output = json.dumps({"error": str(e), "results": []})
+            # Note: web_search is now handled by native BingGroundingTool
             else:
                 output = {"error": f"Unknown function: {function_name}"}
             
@@ -902,24 +737,26 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
     # Note: init_remote_agent_addresses, retrieve_card, register_agent_card
     # have been extracted to agent_registry.py
 
-    async def create_agent(self) -> Any:
+    async def create_agent(self) -> bool:
         """
-        Create an agent using Azure AI Foundry Agent Service.
+        Create an Azure Agent Service agent with Bing Grounding support.
         
-        This creates a persistent agent that:
-        - Appears in Azure AI Foundry portal
-        - Has full Application Insights telemetry
-        - Supports streaming responses
-        - Has managed conversation state (threads)
+        This creates a persistent agent in Azure AI Foundry that can be used
+        with the Responses API. The agent is configured with:
+        - Function tools (list_remote_agents, send_message, search_memory)
+        - BingGroundingAgentTool for web search
+        
+        The agent is then referenced in Responses API calls using:
+        extra_body={"agent": {"name": agent.name, "type": "agent_reference"}}
         
         Returns:
-            Agent object from Azure AI Foundry
+            True if agent created successfully
         """
         if self.agent:
-            log_foundry_debug(f"Agent already exists, reusing agent ID: {self.agent_id}")
-            return self.agent
+            log_foundry_debug(f"Agent already initialized: {self.agent.name}")
+            return True
         
-        log_foundry_debug(f"Creating new agent with Azure AI Foundry Agent Service...")
+        log_foundry_debug(f"Creating Azure Agent Service agent...")
         log_foundry_debug(f"AZURE_AI_FOUNDRY_PROJECT_ENDPOINT = {os.environ.get('AZURE_AI_FOUNDRY_PROJECT_ENDPOINT', 'NOT SET')}")
         log_foundry_debug(f"AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME = {os.environ.get('AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME', 'NOT SET')}")
         
@@ -933,6 +770,16 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
             # Ensure project client is initialized
             await self._ensure_project_client()
             
+            # Import Azure AI Projects models for agent creation
+            from azure.ai.projects.models import (
+                BingGroundingAgentTool,
+                BingGroundingSearchToolParameters,
+                BingGroundingSearchConfiguration,
+                PromptAgentDefinition,
+                FunctionTool,
+            )
+            
+            # Configuration
             model_name = os.environ["AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME"]
             instructions = self.root_instruction('foundry-host-agent')
             
@@ -941,33 +788,74 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
             print(f"  - name: foundry-host-agent")
             print(f"  - instructions length: {len(instructions)}")
             
-            # Initialize function tools
-            toolset = await self._initialize_function_tools()
+            # Get Bing connection ID
+            self.bing_connection_id = os.environ.get("BING_CONNECTION_ID")
+            if self.bing_connection_id:
+                print(f"🔍 Bing connection ID loaded: {self.bing_connection_id[:50]}...")
+            else:
+                print(f"⚠️ BING_CONNECTION_ID not set - web search disabled")
             
-            log_foundry_debug(f"  - tools: initialized with AsyncFunctionTool")
+            # Create tools list - convert to NEW SDK FunctionTool format
+            tools_list = []
             
-            # Create agent using Foundry Agent Service SDK
-            log_foundry_debug("Calling agents_client.create_agent()...")
-            self.agent = await self.agents_client.create_agent(
+            print(f"🔧 Converting function tools to NEW SDK format...")
+            # Get function definitions from _get_tools()
+            # These are in Responses API format: {"type": "function", "name": "...", "description": "...", "parameters": {...}}
+            old_tools = self._get_tools()
+            
+            # Convert each tool to FunctionTool
+            for tool_def in old_tools:
+                if tool_def.get('type') == 'function':
+                    # Responses API format - name, description, parameters are at top level
+                    function_tool = FunctionTool(
+                        name=tool_def['name'],
+                        description=tool_def['description'],
+                        parameters=tool_def['parameters']
+                    )
+                    tools_list.append(function_tool)
+            
+            print(f"🔧 Added {len(tools_list)} function tools")
+            
+            # Add Bing Grounding Tool if connection ID is available
+            if self.bing_connection_id:
+                bing_tool = BingGroundingAgentTool(
+                    bing_grounding=BingGroundingSearchToolParameters(
+                        search_configurations=[
+                            BingGroundingSearchConfiguration(
+                                project_connection_id=self.bing_connection_id,
+                                count=5
+                            )
+                        ]
+                    )
+                )
+                tools_list.append(bing_tool)
+                print(f"🔍 Added BingGroundingAgentTool to tools list")
+                print(f"   Connection ID: {self.bing_connection_id[:50]}...")
+                log_foundry_debug(f"🔍 Added BingGroundingAgentTool to tools list")
+            else:
+                print(f"⚠️ NO Bing connection ID found!")
+            
+            print(f"🔧 Creating agent with {len(tools_list)} total tools (Azure Agent Service)")
+            
+            # Create agent using Azure AI Projects SDK
+            agent_definition = PromptAgentDefinition(
                 model=model_name,
-                name="foundry-host-agent",
                 instructions=instructions,
-                toolset=toolset,
+                tools=tools_list
             )
             
-            self.agent_id = self.agent.id
-            log_foundry_debug(f"✅ Agent created successfully! ID: {self.agent_id}")
+            self.agent = await self.project_client.agents.create_version(
+                agent_name="foundry-host-agent",
+                definition=agent_definition,
+                description="Multi-agent orchestrator with Bing web search grounding"
+            )
             
-            # Debug: Log what tools the agent has
-            if hasattr(self.agent, 'tools'):
-                print(f"🔧 Agent tools: {self.agent.tools}")
-            else:
-                print(f"🔧 Agent object attributes: {[a for a in dir(self.agent) if not a.startswith('_')]}")
+            print(f"✅ Azure Agent created successfully!")
+            log_foundry_debug(f"✅ Agent created successfully! ID: {self.agent.id}")
+            log_foundry_debug(f"🔧 Agent object attributes: {dir(self.agent)}")
+            print(f"🎉 Agent visible in Azure AI Foundry portal: {self.agent.id}")
             
-            logger.info(f"Created Foundry Host agent: {self.agent_id}")
-            print(f"🎉 Agent visible in Azure AI Foundry portal: {self.agent_id}")
-            
-            return self.agent
+            return True
             
         except Exception as e:
             log_foundry_debug(f"❌ Exception in create_agent(): {type(e).__name__}: {e}")
@@ -1214,6 +1102,9 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
                 "results": []
             })
 
+    # Note: web_search_sync was removed - Bing search is now handled by native BingGroundingTool
+    # which is added to the toolset in _initialize_function_tools()
+
     def _format_agent_response_for_model(self, response_parts: list, agent_name: str) -> str:
         """
         Format the response parts from send_message into clean text for the model.
@@ -1320,42 +1211,28 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
         return json.dumps(result, ensure_ascii=False)
 
     async def _update_agent_instructions(self):
-        """Update the agent's instructions with the current agent list"""
+        """
+        Update the agent's instructions with the current agent list.
+        
+        With the Responses API, we don't have a persistent agent to update.
+        Instead, we just update the cached instructions that get passed
+        to each responses.create() call.
+        """
         if not self.agent:
-            print(f"⚠️ No agent exists to update")
+            print(f"⚠️ No agent initialized to update")
             return
             
         try:
             print(f"🔄 Updating agent instructions with {len(self.cards)} registered agents...")
             
-            headers = await self._get_auth_headers()
-            endpoint = os.environ["AZURE_AI_FOUNDRY_PROJECT_ENDPOINT"]
-            agent_id = self.agent['id']
-            api_url = f"{endpoint}/assistants/{agent_id}"
+            # Update the cached instructions with current agent list
+            self.agent_instructions = self.root_instruction('foundry-host-agent')
             
-            # Get updated instructions with current agent list
-            updated_instructions = self.root_instruction('foundry-host-agent')
+            # Also update the tools list in case agents changed
+            self.agent_tools = self._get_tools()
             
-            # Prepare the update payload
-            payload = {
-                "instructions": updated_instructions
-            }
-            
-            # Make the HTTP request to update the assistant
-            async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    api_url,
-                    headers=headers,
-                    json=payload,
-                    params={"api-version": "2025-05-15-preview"},
-                    timeout=30.0
-                )
-                
-                if response.status_code == 200:
-                    print(f"✅ Agent instructions updated successfully!")
-                    print(f"   Agent now knows about: {', '.join(self.cards.keys())}")
-                else:
-                    print(f"❌ Failed to update agent instructions: {response.status_code} - {response.text}")
+            print(f"✅ Agent instructions updated successfully!")
+            print(f"   Agent now knows about: {', '.join(self.cards.keys())}")
                     
         except Exception as e:
             print(f"❌ Error updating agent instructions: {e}")
@@ -1422,6 +1299,7 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
                     "required": ["query"],
                 },
             },
+            # Note: Bing web search is now handled by native BingGroundingTool (added in _initialize_function_tools)
         ]
 
     def root_instruction(self, current_agent: str, agent_mode: bool = False) -> str:
@@ -1469,6 +1347,7 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
             
             # Get Azure credential token
             from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+            from openai import AsyncAzureOpenAI
             credential = DefaultAzureCredential()
             token_provider = get_bearer_token_provider(credential, "https://cognitiveservices.azure.com/.default")
             
@@ -1527,6 +1406,7 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
             base_endpoint = endpoint.split('/api/projects')[0] if '/api/projects' in endpoint else endpoint
             
             from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+            from openai import AsyncAzureOpenAI
             credential = DefaultAzureCredential()
             token_provider = get_bearer_token_provider(credential, "https://cognitiveservices.azure.com/.default")
             
@@ -3543,13 +3423,13 @@ Answer with just JSON:
             log_debug(f"Step: About to ensure agent exists...")
             log_foundry_debug(f"Current agent state: {self.agent is not None}")
             if self.agent:
-                log_foundry_debug(f"Agent exists with ID: {self.agent.get('id', 'unknown')}")
+                log_foundry_debug(f"Agent ready with model: {self.model_name}")
             else:
                 print("⚠️ Agent not created at startup, creating now (lazy creation)...")
                 log_foundry_debug(f"Calling create_agent()...")
                 await self.create_agent()
                 log_foundry_debug(f"create_agent() completed")
-            log_debug(f"Step: Agent ready with ID: {self.agent.get('id', 'unknown') if self.agent else 'STILL_NULL'}")
+            log_debug(f"Step: Agent ready with model: {self.model_name if self.agent else 'STILL_NULL'}")
             
             session_context = self.get_session_context(context_id)
             # Set agent mode in session context
@@ -3784,7 +3664,7 @@ Answer with just JSON:
                 context_id=context_id,
                 session_context=session_context,
                 tools=tools,
-                instructions=self.agent.get('instructions', ''),
+                instructions=self.agent_instructions or '',
                 event_logger=event_logger
             )
             
@@ -3831,7 +3711,7 @@ Answer with just JSON:
                         context_id=context_id,
                         session_context=session_context,
                         tools=tools,
-                        instructions=self.agent.get('instructions', ''),
+                        instructions=self.agent_instructions or '',
                         event_logger=event_logger
                     )
                     log_foundry_debug(f"Created follow-up response after tool execution: {response['id']}, status: {response['status']}")
@@ -3841,28 +3721,6 @@ Answer with just JSON:
             
             log_foundry_debug(f"Tool handling loop completed. Final status: {response['status']}, iterations: {tool_iteration}")
             await self._emit_status_event("AI processing completed, finalizing response", context_id)
-            
-            # Handle FAILED status - provide user-friendly error message
-            status_str = str(response.get('status', '')).lower()
-            if 'failed' in status_str:
-                error_message = response.get('error', response.get('last_error', 'Unknown error'))
-                log_debug(f"⚠️ Response FAILED: {error_message}")
-                
-                # Provide a user-friendly error response
-                error_response = (
-                    "I apologize, but I encountered an issue processing your request. "
-                    "This may be due to:\n"
-                    "- No remote agents are currently connected\n"
-                    "- A temporary service issue\n"
-                    "- The request timed out\n\n"
-                    "Please try again or check that the required agents are running."
-                )
-                
-                # Return error message so the frontend doesn't hang
-                return [Message(
-                    role="agent",
-                    parts=[TextPart(text=error_response)]
-                )]
             
             # Get response text
             responses = []

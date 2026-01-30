@@ -237,6 +237,7 @@ if (Test-Path $envFilePath) {
         'AZURE_STORAGE_ACCOUNT_NAME',
         'AZURE_BLOB_CONTAINER',
         'AZURE_TENANT_ID'
+        # Note: BING_SEARCH_API_KEY is optional, not required
     )
     
     $missingVars = @()
@@ -605,6 +606,7 @@ if ($backendExists) {
             "AZURE_SEARCH_ADMIN_KEY=secretref:search-key" `
             "AZURE_CU_API_KEY=secretref:openai-key" `
             "VOICE_LIVE_API_KEY=secretref:azure-ai-token" `
+            "BING_SEARCH_API_KEY=$($envVars['BING_SEARCH_API_KEY'])" `
         --output none
     
     Write-Host "✅ Backend updated with environment variables" -ForegroundColor Green
@@ -790,6 +792,7 @@ properties:
             "AZURE_SEARCH_ADMIN_KEY=secretref:search-key" `
             "AZURE_CU_API_KEY=secretref:openai-key" `
             "VOICE_LIVE_API_KEY=secretref:azure-ai-token" `
+            "BING_SEARCH_API_KEY=$($envVars['BING_SEARCH_API_KEY'])" `
         --output none
     
     Write-Host "✅ Environment variables configured" -ForegroundColor Green
