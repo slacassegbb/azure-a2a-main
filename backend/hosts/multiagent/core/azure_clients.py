@@ -106,10 +106,11 @@ class AzureClients:
             self._project_client_loop = current_loop
             log_foundry_debug("✅ AIProjectClient initialized")
         
-        if self.agents_client is None:
-            log_foundry_debug("🔧 Getting AgentsClient from project...")
-            self.agents_client = self.project_client.agents
-            log_foundry_debug("✅ AgentsClient ready")
+        # Initialize OpenAI client for Responses API
+        if not hasattr(self, 'openai_client') or self.openai_client is None:
+            log_foundry_debug("🔧 Getting OpenAI client from project...")
+            self.openai_client = self.project_client.get_openai_client()
+            log_foundry_debug("✅ OpenAI client ready for Responses API")
 
     def _init_azure_blob_client(self):
         """Initialize Azure Blob Storage client if environment variables are configured."""
