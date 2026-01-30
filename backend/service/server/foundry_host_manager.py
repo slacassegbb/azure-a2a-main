@@ -508,8 +508,8 @@ class FoundryHostManager(ApplicationManager):
         if not responses:
             log_debug("WARNING: No responses from FoundryHostAgent - providing fallback response")
             # Provide a fallback response instead of leaving the frontend hanging
-            from a2a.types import Message as A2AMessage, TextPart
-            fallback_response = A2AMessage(
+            # Message and TextPart are already imported at top of file
+            fallback_response = Message(
                 role="agent",
                 parts=[TextPart(text="I apologize, but I wasn't able to process your request. Please try again or check that remote agents are connected.")]
             )

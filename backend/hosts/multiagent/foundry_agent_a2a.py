@@ -3858,12 +3858,11 @@ Answer with just JSON:
                     "Please try again or check that the required agents are running."
                 )
                 
-                # Still yield a response so the frontend doesn't hang
-                yield Message(
+                # Return error message so the frontend doesn't hang
+                return [Message(
                     role="agent",
                     parts=[TextPart(text=error_response)]
-                )
-                return
+                )]
             
             # Get response text
             responses = []
