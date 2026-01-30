@@ -481,7 +481,10 @@ async def process_file_part(file_part, artifact_info=None, session_id: str = Non
             f.write(file_bytes)
         
         # Process the file using the user's proven working logic
-        processed_content = process_file(temp_file_path)
+        # Run in thread pool to avoid blocking the async event loop
+        import asyncio
+        loop = asyncio.get_event_loop()
+        processed_content = await loop.run_in_executor(None, process_file, temp_file_path)
         
         # Clean up temporary file
         try:
