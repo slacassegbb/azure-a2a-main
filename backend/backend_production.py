@@ -966,6 +966,11 @@ Read-Host "Press Enter to close this window"
             
             files = []
             
+            # Get processed filenames from Azure Search (fast single query)
+            from hosts.multiagent.a2a_memory_service import a2a_memory_service
+            processed_filenames = a2a_memory_service.get_processed_filenames(session_id)
+            print(f"[INFO] Found {len(processed_filenames)} processed files in memory for session {session_id}")
+            
             # Try blob storage first
             try:
                 from azure.storage.blob import BlobServiceClient
@@ -990,9 +995,9 @@ Read-Host "Press Enter to close this window"
                 container_name = os.getenv('AZURE_BLOB_CONTAINER', 'a2a-files')
                 container_client = blob_service_client.get_container_client(container_name)
                 
-                # List ALL blobs (uploads + image-generator + any other paths)
-                # We'll filter by checking blob metadata for session_id if available
-                for blob in container_client.list_blobs():
+                # List blobs for this session - filter by path prefix for speed
+                prefix = f"uploads/{session_id}/"
+                for blob in container_client.list_blobs(name_starts_with=prefix):
                     # Skip if 0 bytes (empty/failed uploads)
                     if blob.size == 0:
                         print(f"[DEBUG] Skipping 0-byte blob: {blob.name}")
@@ -1000,26 +1005,15 @@ Read-Host "Press Enter to close this window"
                     
                     # Parse blob path to extract file_id and filename
                     parts = blob.name.split('/')
-                    if len(parts) >= 3:
-                        # Could be: uploads/{session_id}/{file_id}/{filename}
-                        #        or: image-generator/{artifact_id}/{filename}
-                        #        or: other paths
+                    if len(parts) >= 4:
+                        # uploads/{session_id}/{file_id}/{filename}
+                        file_id = parts[2]
+                        filename = parts[3]
                         
-                        # Extract file_id and filename based on path structure
-                        if parts[0] == 'uploads' and len(parts) >= 4:
-                            # uploads/{session_id}/{file_id}/{filename}
-                            blob_session_id = parts[1]
-                            # Only include files from current session
-                            if blob_session_id != session_id:
-                                continue
-                            file_id = parts[2]
-                            filename = parts[3]
-                        else:
-                            # Other paths (image-generator, etc.) - use second-to-last as file_id
-                            file_id = parts[-2] if len(parts) >= 2 else parts[0]
-                            filename = parts[-1]
+                        # Get status from Azure Search (processed files are "in memory")
+                        file_status = "analyzed" if filename in processed_filenames else "uploaded"
                         
-                        # Generate fresh SAS URL for ALL files
+                        # Generate fresh SAS URL
                         blob_url = None
                         if connection_string:
                             from azure.storage.blob import generate_blob_sas, BlobSasPermissions
@@ -1052,7 +1046,8 @@ Read-Host "Press Enter to close this window"
                             "size": blob.size,
                             "contentType": blob.content_settings.content_type if blob.content_settings else "application/octet-stream",
                             "uploadedAt": blob.last_modified.isoformat() if blob.last_modified else None,
-                            "uri": blob_url or blob.name
+                            "uri": blob_url or blob.name,
+                            "status": file_status
                         })
                 
                 print(f"[INFO] Listed {len(files)} files from blob storage for session: {session_id}")
@@ -1068,15 +1063,20 @@ Read-Host "Press Enter to close this window"
                             # Try to extract file_id from parent directory structure
                             rel_path = file_path.relative_to(local_dir)
                             file_id = str(rel_path.parent) if rel_path.parent != Path('.') else str(uuid.uuid4())
+                            filename = file_path.name
+                            
+                            # Get status from Azure Search (processed files are "in memory")
+                            file_status = "analyzed" if filename in processed_filenames else "uploaded"
                             
                             files.append({
                                 "id": file_id,
-                                "filename": file_path.name,
-                                "originalName": file_path.name,
+                                "filename": filename,
+                                "originalName": filename,
                                 "size": file_path.stat().st_size,
                                 "contentType": "application/octet-stream",
                                 "uploadedAt": datetime.fromtimestamp(file_path.stat().st_mtime, UTC).isoformat(),
-                                "uri": f"/uploads/{session_id}/{file_id}"
+                                "uri": f"/uploads/{session_id}/{file_id}",
+                                "status": file_status
                             })
                 
                 print(f"[INFO] Listed {len(files)} files from local filesystem for session: {session_id}")
@@ -1214,6 +1214,140 @@ Read-Host "Press Enter to close this window"
                 "error": str(e),
                 "message": "Delete operation completed with errors (this is OK for expired files)"
             }
+
+    @app.post("/api/files/process")
+    async def process_file(request: Request):
+        """Process an uploaded file through document processing and store results in memory.
+        
+        This endpoint extracts text/content from documents, analyzes images,
+        and stores the results in the A2A memory service for semantic search.
+        """
+        try:
+            # Extract session_id from header
+            session_id = request.headers.get("X-Session-ID")
+            if not session_id:
+                return {"success": False, "error": "Missing X-Session-ID header"}
+            
+            # Parse request body
+            body = await request.json()
+            file_id = body.get("file_id")
+            filename = body.get("filename")
+            uri = body.get("uri")
+            content_type = body.get("content_type", "application/octet-stream")
+            
+            if not file_id or not filename:
+                return {"success": False, "error": "Missing file_id or filename"}
+            
+            print(f"[INFO] Processing file: {filename} (id: {file_id}, session: {session_id})")
+            
+            # Try to get file bytes from blob storage or local filesystem
+            file_bytes = None
+            
+            # Try Azure Blob Storage first
+            if uri and "blob.core.windows.net" in uri:
+                try:
+                    import httpx
+                    async with httpx.AsyncClient() as client:
+                        response = await client.get(uri, timeout=60.0)
+                        if response.status_code == 200:
+                            file_bytes = response.content
+                            print(f"[INFO] Downloaded {len(file_bytes)} bytes from Azure Blob")
+                except Exception as blob_err:
+                    print(f"[WARN] Could not download from blob: {blob_err}")
+            
+            # Try local filesystem
+            if file_bytes is None:
+                local_path = UPLOADS_DIR / session_id / file_id
+                if local_path.exists():
+                    for file_path in local_path.iterdir():
+                        if file_path.is_file():
+                            with open(file_path, 'rb') as f:
+                                file_bytes = f.read()
+                            print(f"[INFO] Read {len(file_bytes)} bytes from local filesystem")
+                            break
+            
+            if file_bytes is None:
+                return {"success": False, "error": "Could not retrieve file content"}
+            
+            # Import the document processor
+            try:
+                from hosts.multiagent.a2a_document_processor import process_file_part
+                
+                # Create a file-like object for processing
+                class FilePart:
+                    def __init__(self, name, data):
+                        self.name = name
+                        self.data = data
+                
+                file_part = FilePart(filename, file_bytes)
+                artifact_info = {
+                    "file_name": filename,
+                    "id": file_id,
+                    "content_type": content_type
+                }
+                
+                # Process the file
+                result = await process_file_part(file_part, artifact_info, session_id=session_id)
+                
+                if result.get("success"):
+                    print(f"[INFO] Document processing completed for: {filename}")
+                    
+                    # Update blob metadata to mark as analyzed
+                    try:
+                        connection_string = os.getenv('AZURE_BLOB_CONNECTION_STRING')
+                        container_name = os.getenv('AZURE_BLOB_CONTAINER', 'a2a-files')
+                        if connection_string:
+                            from azure.storage.blob import BlobServiceClient
+                            blob_service_client = BlobServiceClient.from_connection_string(connection_string)
+                            
+                            # Try different blob paths
+                            blob_paths = [
+                                f"uploads/{session_id}/{file_id}/{filename}",
+                                f"image-generator/{file_id}/{filename}",
+                            ]
+                            
+                            for blob_path in blob_paths:
+                                try:
+                                    blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob_path)
+                                    if blob_client.exists():
+                                        blob_client.set_blob_metadata({"status": "analyzed"})
+                                        print(f"[INFO] Set blob metadata status=analyzed for: {blob_path}")
+                                        break
+                                except Exception:
+                                    continue
+                    except Exception as meta_err:
+                        print(f"[WARN] Could not set blob metadata: {meta_err}")
+                    
+                    return {
+                        "success": True,
+                        "file_id": file_id,
+                        "filename": filename,
+                        "content_length": len(result.get("content", "")),
+                        "file_type": result.get("file_type"),
+                        "message": "Document processed and stored in memory"
+                    }
+                else:
+                    error_msg = result.get("error", "Unknown processing error")
+                    print(f"[WARN] Document processing failed for {filename}: {error_msg}")
+                    return {
+                        "success": False,
+                        "error": error_msg
+                    }
+                    
+            except ImportError as e:
+                print(f"[ERROR] Could not import document processor: {e}")
+                return {"success": False, "error": "Document processor not available"}
+            except Exception as process_err:
+                print(f"[ERROR] Document processing error: {process_err}")
+                import traceback
+                traceback.print_exc()
+                return {"success": False, "error": str(process_err)}
+        
+        except Exception as e:
+            print(f"[ERROR] Error in process_file endpoint: {e}")
+            import traceback
+            traceback.print_exc()
+            return {"success": False, "error": str(e)}
 
     # Add voice upload endpoint with transcription
     @app.post("/upload-voice")

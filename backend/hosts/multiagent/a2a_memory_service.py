@@ -282,8 +282,80 @@ class A2AMemoryService:
             log_memory_debug(f"Traceback: {traceback.format_exc()}")
             return []
 
+    def _chunk_text(self, text: str, chunk_size: int = 6000, overlap: int = 500) -> List[Dict[str, Any]]:
+        """Split text into overlapping chunks for embedding.
+        
+        Args:
+            text: The text to chunk
+            chunk_size: Maximum characters per chunk (~1500 tokens)
+            overlap: Number of overlapping characters between chunks
+            
+        Returns:
+            List of dicts with 'text', 'chunk_index', 'total_chunks', 'start_char', 'end_char'
+        """
+        if len(text) <= chunk_size:
+            return [{
+                'text': text,
+                'chunk_index': 0,
+                'total_chunks': 1,
+                'start_char': 0,
+                'end_char': len(text)
+            }]
+        
+        chunks = []
+        start = 0
+        chunk_index = 0
+        
+        while start < len(text):
+            end = start + chunk_size
+            
+            # Try to break at a natural boundary (paragraph, sentence, or word)
+            if end < len(text):
+                # Look for paragraph break
+                para_break = text.rfind('\n\n', start + chunk_size // 2, end)
+                if para_break > start:
+                    end = para_break + 2
+                else:
+                    # Look for sentence break
+                    sentence_break = max(
+                        text.rfind('. ', start + chunk_size // 2, end),
+                        text.rfind('.\n', start + chunk_size // 2, end),
+                        text.rfind('? ', start + chunk_size // 2, end),
+                        text.rfind('! ', start + chunk_size // 2, end)
+                    )
+                    if sentence_break > start:
+                        end = sentence_break + 2
+                    else:
+                        # Look for word break
+                        word_break = text.rfind(' ', start + chunk_size // 2, end)
+                        if word_break > start:
+                            end = word_break + 1
+            
+            chunk_text = text[start:end].strip()
+            if chunk_text:
+                chunks.append({
+                    'text': chunk_text,
+                    'chunk_index': chunk_index,
+                    'start_char': start,
+                    'end_char': min(end, len(text))
+                })
+                chunk_index += 1
+            
+            # Move start position with overlap
+            start = end - overlap if end < len(text) else len(text)
+        
+        # Update total_chunks in all chunks
+        total = len(chunks)
+        for chunk in chunks:
+            chunk['total_chunks'] = total
+        
+        return chunks
+
     async def store_interaction(self, interaction_data: Dict[str, Any], session_id: str = None) -> bool:
         """Store A2A protocol payloads in the search index with tenant isolation.
+        
+        For large documents, automatically chunks content into multiple search documents
+        with overlapping text for better semantic search coverage.
         
         Args:
             interaction_data: Dict containing agent_name, outbound_payload, inbound_payload, etc.
@@ -307,61 +379,149 @@ class A2AMemoryService:
             return False
 
         try:
-            log_memory_debug("Creating searchable text...")
-            # Create searchable text for embedding from A2A payloads
+            # Get the inbound payload content (this is where document text lives)
+            inbound_payload = interaction_data.get('inbound_payload', {})
+            outbound_payload = interaction_data.get('outbound_payload', {})
+            
+            # Extract content for chunking (usually in 'content' field for documents)
+            content_to_chunk = ""
+            if isinstance(inbound_payload, dict):
+                content_to_chunk = inbound_payload.get('content', '')
+            elif isinstance(inbound_payload, str):
+                content_to_chunk = inbound_payload
+            
+            # Threshold for chunking: ~24K chars = ~6K tokens
+            CHUNK_THRESHOLD = 24000
+            
+            if len(content_to_chunk) > CHUNK_THRESHOLD:
+                # Large document - use chunking strategy
+                log_memory_debug(f"Large document detected ({len(content_to_chunk)} chars), using chunking strategy")
+                return await self._store_chunked_document(interaction_data, session_id, content_to_chunk)
+            else:
+                # Small document - store as single document (original behavior)
+                return await self._store_single_document(interaction_data, session_id)
+
+        except Exception as e:
+            log_memory_debug(f"Error storing A2A payloads: {str(e)}")
+            import traceback
+            log_memory_debug(f"Traceback: {traceback.format_exc()}")
+            return False
+
+    async def _store_single_document(self, interaction_data: Dict[str, Any], session_id: str) -> bool:
+        """Store a single (small) document without chunking."""
+        try:
             outbound_str = str(interaction_data.get('outbound_payload', ''))
             inbound_str = str(interaction_data.get('inbound_payload', ''))
             
             log_memory_debug(f"Outbound payload length: {len(outbound_str)}")
             log_memory_debug(f"Inbound payload length: {len(inbound_str)}")
             
+            # Truncate for embedding if needed (safety net)
+            MAX_EMBEDDING_CHARS = 28000
+            embed_inbound = inbound_str[:MAX_EMBEDDING_CHARS] if len(inbound_str) > MAX_EMBEDDING_CHARS else inbound_str
+            embed_outbound = outbound_str[:MAX_EMBEDDING_CHARS] if len(outbound_str) > MAX_EMBEDDING_CHARS else outbound_str
+            
             searchable_text = f"""
-            Outbound A2A payload: {outbound_str}
-            Inbound A2A payload: {inbound_str}
             Agent: {interaction_data.get('agent_name', '')}
+            Outbound: {embed_outbound}
+            Inbound: {embed_inbound}
             """
             
-            log_memory_debug(f"Searchable text length: {len(searchable_text)}")
-            log_memory_debug("About to create embedding...")
-
-            # Create embedding
             embedding = await self._create_embedding(searchable_text.strip())
-            log_memory_debug(f"Embedding created, length: {len(embedding)}")
-            if not embedding:
-                log_memory_debug("Failed to create embedding")
-                return False
-            if len(embedding) != vector_dimension:
-                log_memory_debug(
-                    f"Embedding dimension {len(embedding)} does not match configured vector dimension {vector_dimension}."
-                )
-                log_memory_debug("To resolve, set AZURE_SEARCH_VECTOR_DIMENSION to the embedding size and restart the service.")
+            if not embedding or len(embedding) != vector_dimension:
+                log_memory_debug("Failed to create valid embedding")
                 return False
 
-            log_memory_debug("Preparing document for indexing...")
-            # Prepare document for indexing with session_id for tenant isolation
             document = {
                 "id": interaction_data.get('interaction_id', str(uuid.uuid4())),
-                "session_id": session_id,  # Tenant isolation field
+                "session_id": session_id,
                 "agent_name": interaction_data.get('agent_name', ''),
                 "processing_time_seconds": interaction_data.get('processing_time_seconds', 0.0),
                 "timestamp": interaction_data.get('timestamp', datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'),
-                
                 "outbound_payload": json.dumps(interaction_data.get('outbound_payload', {})),
                 "inbound_payload": json.dumps(interaction_data.get('inbound_payload', {})),
-                
                 "interaction_vector": embedding
             }
             
-            log_memory_debug(f"Document prepared with ID: {document['id']} for session: {session_id}")
-            log_memory_debug("About to upload to search index...")
-
-            # Upload to search index
             self.search_client.upload_documents([document])
-            log_success(f"Successfully stored A2A payloads {document['id']} for session {session_id}")
+            log_success(f"Successfully stored document {document['id']} for session {session_id}")
             return True
 
         except Exception as e:
-            log_memory_debug(f"Error storing A2A payloads: {str(e)}")
+            log_memory_debug(f"Error storing single document: {str(e)}")
+            return False
+
+    async def _store_chunked_document(self, interaction_data: Dict[str, Any], session_id: str, content: str) -> bool:
+        """Store a large document as multiple chunks with overlapping text."""
+        try:
+            base_id = interaction_data.get('interaction_id', str(uuid.uuid4()))
+            agent_name = interaction_data.get('agent_name', '')
+            filename = interaction_data.get('filename', '')
+            timestamp = interaction_data.get('timestamp', datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z')
+            outbound_payload = interaction_data.get('outbound_payload', {})
+            inbound_payload = interaction_data.get('inbound_payload', {})
+            
+            # Chunk the content with overlap
+            chunks = self._chunk_text(content, chunk_size=6000, overlap=500)
+            log_memory_debug(f"Document split into {len(chunks)} chunks")
+            
+            documents_to_upload = []
+            
+            for chunk in chunks:
+                chunk_id = f"{base_id}_chunk_{chunk['chunk_index']}"
+                
+                # Create embedding for this chunk
+                searchable_text = f"""
+                Document: {filename}
+                Agent: {agent_name}
+                Chunk {chunk['chunk_index'] + 1} of {chunk['total_chunks']}:
+                {chunk['text']}
+                """
+                
+                embedding = await self._create_embedding(searchable_text.strip())
+                if not embedding or len(embedding) != vector_dimension:
+                    log_memory_debug(f"Failed to create embedding for chunk {chunk['chunk_index']}")
+                    continue
+                
+                # Create chunk-specific inbound payload
+                chunk_inbound = {
+                    "type": inbound_payload.get("type", "document_chunk") if isinstance(inbound_payload, dict) else "document_chunk",
+                    "content": chunk['text'],
+                    "chunk_index": chunk['chunk_index'],
+                    "total_chunks": chunk['total_chunks'],
+                    "start_char": chunk['start_char'],
+                    "end_char": chunk['end_char'],
+                    "parent_document_id": base_id,
+                    "filename": filename,
+                    "processed_at": inbound_payload.get("processed_at") if isinstance(inbound_payload, dict) else timestamp
+                }
+                
+                document = {
+                    "id": chunk_id,
+                    "session_id": session_id,
+                    "agent_name": agent_name,
+                    "processing_time_seconds": 0.0,
+                    "timestamp": timestamp,
+                    "outbound_payload": json.dumps(outbound_payload),
+                    "inbound_payload": json.dumps(chunk_inbound),
+                    "interaction_vector": embedding
+                }
+                
+                documents_to_upload.append(document)
+            
+            if documents_to_upload:
+                # Upload all chunks in batch
+                self.search_client.upload_documents(documents_to_upload)
+                log_success(f"Successfully stored {len(documents_to_upload)} chunks for document {base_id} (session: {session_id})")
+                return True
+            else:
+                log_memory_debug("No chunks were successfully processed")
+                return False
+
+        except Exception as e:
+            log_memory_debug(f"Error storing chunked document: {str(e)}")
+            import traceback
+            log_memory_debug(f"Traceback: {traceback.format_exc()}")
             return False
 
     async def search_similar_interactions(
@@ -532,6 +692,47 @@ class A2AMemoryService:
             import traceback
             log_memory_debug(f"Traceback: {traceback.format_exc()}")
             return False
+
+    def get_processed_filenames(self, session_id: str) -> set:
+        """Get all filenames that have been processed and stored in memory for a session.
+        
+        This is much faster than querying blob metadata for each file.
+        Returns a set of filenames that are "in memory" (analyzed).
+        """
+        if not self.search_client or not session_id:
+            return set()
+        
+        try:
+            # Query all documents for this session
+            filter_expr = f"session_id eq '{session_id}'"
+            
+            results = self.search_client.search(
+                search_text="*",
+                select=["inbound_payload"],
+                filter=filter_expr,
+                top=1000  # Should be more than enough for file count
+            )
+            
+            filenames = set()
+            for result in results:
+                try:
+                    inbound = result.get("inbound_payload", "{}")
+                    if isinstance(inbound, str):
+                        inbound = json.loads(inbound)
+                    
+                    # Extract filename from inbound_payload
+                    filename = inbound.get("filename", "")
+                    if filename:
+                        filenames.add(filename)
+                except (json.JSONDecodeError, AttributeError):
+                    continue
+            
+            log_memory_debug(f"Found {len(filenames)} processed files in memory for session {session_id}")
+            return filenames
+            
+        except Exception as e:
+            log_memory_debug(f"Error getting processed filenames: {str(e)}")
+            return set()
 
 # Create singleton instance
 a2a_memory_service = A2AMemoryService()

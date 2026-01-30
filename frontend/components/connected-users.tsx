@@ -30,8 +30,14 @@ export function ConnectedUsers() {
   const [loading, setLoading] = useState(false)
   const [currentUserId, setCurrentUserId] = useState<string | null>(null)
   const [isSessionOwner, setIsSessionOwner] = useState(false)
+  const [mounted, setMounted] = useState(false)  // Track if component is mounted (client-side)
   const { subscribe, unsubscribe, sendMessage, isConnected } = useEventHub()
   const { toast } = useToast()
+
+  // Mark as mounted on client-side
+  useEffect(() => {
+    setMounted(true)
+  }, [])
 
   // Get current user info on mount
   useEffect(() => {
@@ -255,8 +261,16 @@ export function ConnectedUsers() {
   }
 
   if (users.length === 0) {
-    // Check if user is logged in (has token)
-    const token = typeof window !== 'undefined' ? sessionStorage.getItem('auth_token') : null
+    // Only check token after mounting (client-side) to avoid hydration mismatch
+    if (!mounted) {
+      return (
+        <div className="p-3">
+          <div className="text-sm text-muted-foreground">Loading...</div>
+        </div>
+      )
+    }
+    
+    const token = sessionStorage.getItem('auth_token')
     return (
       <div className="p-3">
         <div className="text-sm text-muted-foreground">

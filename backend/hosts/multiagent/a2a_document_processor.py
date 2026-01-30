@@ -509,6 +509,7 @@ async def process_file_part(file_part, artifact_info=None, session_id: str = Non
             },
             "inbound_payload": {
                 "type": "document_processing_result",
+                "filename": filename,  # Include filename for memory service lookup
                 "content": processed_content,
                 "processed_at": datetime.now(timezone.utc).isoformat(),
                 "success": True

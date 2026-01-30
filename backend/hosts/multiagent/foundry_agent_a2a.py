@@ -270,7 +270,8 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
 
         self._azure_blob_client = None
         self._init_azure_blob_client()
-        self._clear_memory_on_startup()
+        # Note: Memory is no longer auto-cleared on startup to preserve file analysis status
+        # Use the "Clear memory" button in the UI to manually clear when needed
         self._messages = []
         self._host_responses_sent = set()
         self._host_manager = None
@@ -297,6 +298,7 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
         user_functions = [
             self.list_remote_agents_sync,
             self.send_message_sync,
+            self.search_memory_sync,  # NEW: Memory search tool
         ]
         
         # Create async function tool
@@ -614,6 +616,12 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
                         # Accept both "list_remote_agents" and "list_remote_agents_sync" for compatibility
                         if function_name in ("list_remote_agents", "list_remote_agents_sync"):
                             result = self.list_remote_agents_sync()
+                        elif function_name in ("search_memory", "search_memory_sync"):
+                            # Execute memory search
+                            arguments = json.loads(tool_call.function.arguments) if isinstance(tool_call.function.arguments, str) else tool_call.function.arguments
+                            query = arguments.get("query", "")
+                            top_k = arguments.get("top_k", 5)
+                            result = await self.search_memory_sync(query=query, top_k=top_k)
                         else:
                             result = {"error": f"Unknown function: {function_name}"}
                         
@@ -851,13 +859,23 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
             
             if function_name == "list_remote_agents":
                 output = self.list_remote_agents()
+            elif function_name in ("search_memory", "search_memory_sync"):
+                # Execute memory search
+                try:
+                    query = arguments.get("query", "")
+                    top_k = arguments.get("top_k", 5)
+                    output = await self.search_memory_sync(query=query, top_k=top_k)
+                except Exception as e:
+                    import traceback
+                    traceback.print_exc()
+                    output = json.dumps({"error": str(e), "results": []})
             else:
                 output = {"error": f"Unknown function: {function_name}"}
             
             tool_outputs.append({
                 "type": "function_call_output",
                 "call_id": tool_call["id"],
-                "output": json.dumps(output)
+                "output": json.dumps(output) if isinstance(output, dict) else output
             })
         
         log_foundry_debug(f"Tool execution complete - {len(tool_outputs)} outputs")
@@ -1005,6 +1023,178 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
             file_uris=file_uris,
             video_metadata=video_metadata
         )
+
+    async def search_memory_sync(
+        self,
+        query: str,
+        top_k: int = 5
+    ):
+        """
+        Async function for searching uploaded documents and past conversations.
+        
+        This tool allows the host orchestrator to access memory (uploaded documents,
+        past interactions) and include relevant context in its responses.
+        
+        Benefits over auto-injection:
+        - Host decides WHEN to search (not every message)
+        - Can search multiple times with different queries
+        - More control over what context is used
+        - Only uses tokens when actually needed
+        
+        Args:
+            query: The search query string
+            top_k: Number of results to return (default 5)
+            
+        Returns:
+            JSON string with search results containing relevant excerpts
+        """
+        import json
+        import traceback
+        
+        print(f"\n🧠🧠🧠 [SEARCH_MEMORY_SYNC] CALLED by Azure SDK!")
+        print(f"🧠 query: {query}")
+        print(f"🧠 top_k: {top_k}")
+        
+        # Ensure top_k is an integer
+        try:
+            top_k = int(top_k) if top_k else 5
+        except (ValueError, TypeError):
+            top_k = 5
+        
+        # Get current context ID
+        context_id = getattr(self, '_current_host_context_id', None)
+        print(f"🧠 context_id: {context_id}")
+        
+        if not context_id:
+            print(f"🧠 ERROR: No active context!")
+            return json.dumps({
+                "error": "No active context",
+                "results": []
+            })
+        
+        try:
+            # Search memory using the same service remote agents use
+            print(f"🧠 Calling _search_relevant_memory...")
+            memory_results = await self._search_relevant_memory(
+                query=query,
+                context_id=context_id,
+                agent_name=None,  # Search all sources
+                top_k=top_k
+            )
+            print(f"🧠 _search_relevant_memory returned: {len(memory_results) if memory_results else 0} results")
+            
+            if not memory_results:
+                log_debug(f"🧠 [SEARCH_MEMORY] No results found for query: {query}")
+                return json.dumps({
+                    "status": "success",
+                    "query": query,
+                    "results_count": 0,
+                    "message": "No relevant information found in memory for this query.",
+                    "results": []
+                })
+            
+            log_debug(f"🧠 [SEARCH_MEMORY] Found {len(memory_results)} results")
+            
+            # Format results for the model
+            formatted_results = []
+            for i, result in enumerate(memory_results, 1):
+                try:
+                    source = result.get('agent_name', 'Unknown')
+                    timestamp = result.get('timestamp', 'Unknown')
+                    chunk_info = None  # Will store chunk metadata if available
+                    
+                    # Extract content
+                    content = ""
+                    if 'inbound_payload' in result and result['inbound_payload']:
+                        inbound = result['inbound_payload']
+                        if isinstance(inbound, str):
+                            try:
+                                inbound = json.loads(inbound)
+                            except json.JSONDecodeError:
+                                inbound = {}
+                        
+                        # Document content (from uploads)
+                        if isinstance(inbound, dict) and 'content' in inbound:
+                            content = str(inbound['content'])
+                            # Check if there's a filename for better source attribution
+                            if 'filename' in inbound:
+                                source = f"{inbound['filename']}"
+                            # Check for chunk metadata
+                            if 'chunk_index' in inbound and 'total_chunks' in inbound:
+                                chunk_info = f"(Section {inbound['chunk_index'] + 1} of {inbound['total_chunks']})"
+                        # A2A message content
+                        elif isinstance(inbound, dict) and 'parts' in inbound:
+                            parts_content = []
+                            for part in inbound['parts']:
+                                if isinstance(part, dict):
+                                    if 'text' in part:
+                                        parts_content.append(str(part['text']))
+                                    elif 'root' in part and isinstance(part['root'], dict) and 'text' in part['root']:
+                                        parts_content.append(str(part['root']['text']))
+                            if parts_content:
+                                content = " ".join(parts_content)
+                    
+                    if content:
+                        # Truncate very long content but keep enough for context
+                        if len(content) > 3000:
+                            content = content[:3000] + "... [truncated]"
+                        
+                        result_entry = {
+                            "rank": i,
+                            "source": source,
+                            "content": content,
+                            "relevance": "high" if i <= 3 else "medium"
+                        }
+                        # Add chunk info if available
+                        if chunk_info:
+                            result_entry["section"] = chunk_info
+                        
+                        formatted_results.append(result_entry)
+                
+                except Exception as e:
+                    print(f"⚠️ Error processing memory result {i}: {e}")
+                    continue
+            
+            # Build source citations for the response with section info
+            source_citations = []
+            for r in formatted_results:
+                if r["source"] != "Unknown":
+                    citation = r["source"]
+                    if "section" in r:
+                        citation += f" {r['section']}"
+                    source_citations.append(citation)
+            
+            unique_sources = list(set(r["source"] for r in formatted_results if r["source"] != "Unknown"))
+            sources_text = ""
+            if source_citations:
+                # Deduplicate but preserve section info
+                seen = set()
+                unique_citations = []
+                for c in source_citations:
+                    if c not in seen:
+                        seen.add(c)
+                        unique_citations.append(c)
+                sources_text = "\n\n📄 **Sources:** " + " | ".join(unique_citations[:5])  # Limit to 5 citations
+            
+            print(f"🧠 Returning {len(formatted_results)} formatted results from sources: {unique_sources}")
+            return json.dumps({
+                "status": "success",
+                "query": query,
+                "results_count": len(formatted_results),
+                "message": f"Found {len(formatted_results)} relevant excerpts from uploaded documents and past conversations.",
+                "sources": unique_sources,
+                "sources_citation": sources_text,
+                "instruction": "IMPORTANT: Include the sources at the end of your response to cite where the information came from.",
+                "results": formatted_results
+            }, indent=2)
+        
+        except Exception as e:
+            print(f"❌ [SEARCH_MEMORY] Exception: {e}")
+            traceback.print_exc()
+            return json.dumps({
+                "error": str(e),
+                "results": []
+            })
 
     def _format_agent_response_for_model(self, response_parts: list, agent_name: str) -> str:
         """
@@ -1192,6 +1382,26 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
                         }
                     },
                     "required": ["agent_name", "message"],
+                },
+            },
+            {
+                "type": "function",
+                "name": "search_memory",
+                "description": "Search uploaded documents and past conversations for relevant information. Use this when the user asks about previously uploaded documents (PDFs, Word docs, etc.) or past interactions. Returns relevant excerpts from memory that can help answer the user's question.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "The search query. Be specific - e.g., 'patent claims', 'financial data from Q3 report', 'user's previous question about X'."
+                        },
+                        "top_k": {
+                            "type": "integer",
+                            "description": "Number of results to return. Default is 5. Use higher values (8-10) for comprehensive searches.",
+                            "default": 5
+                        }
+                    },
+                    "required": ["query"],
                 },
             },
         ]
