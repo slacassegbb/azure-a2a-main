@@ -371,14 +371,12 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
             tool_calls_to_execute = []
             
             try:
-                # Create the streaming response using Responses API
+                # Create the streaming response using Responses API with Azure Agent reference
+                # Agent contains model, instructions, and tools (including Bing Grounding)
                 stream = await self.openai_client.responses.create(
-                    model=self.model_name,
                     input=user_message,
-                    instructions=instructions,
-                    tools=tools,
-                    tool_choice="auto",
                     previous_response_id=previous_response_id,
+                    extra_body={"agent": {"name": self.agent.name, "type": "agent_reference"}},
                     stream=True,
                 )
             except Exception as stream_error:
@@ -486,13 +484,11 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
                             "output": output["output"]
                         })
                     
+                    # Continue conversation with agent reference
                     continue_stream = await self.openai_client.responses.create(
-                        model=self.model_name,
                         input=function_call_outputs,  # Pass tool outputs as input
-                        instructions=instructions,
-                        tools=tools,
-                        tool_choice="auto",
                         previous_response_id=response_id,  # Chain to previous response
+                        extra_body={"agent": {"name": self.agent.name, "type": "agent_reference"}},
                         stream=True,
                     )
                     
@@ -743,25 +739,24 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
 
     async def create_agent(self) -> bool:
         """
-        Initialize the host agent for Azure AI Foundry Responses API.
+        Create an Azure Agent Service agent with Bing Grounding support.
         
-        With the Responses API, we don't create a persistent agent in the portal.
-        Instead, we configure the model, instructions, and tools that will be
-        passed to each responses.create() call.
+        This creates a persistent agent in Azure AI Foundry that can be used
+        with the Responses API. The agent is configured with:
+        - Function tools (list_remote_agents, send_message, search_memory)
+        - BingGroundingAgentTool for web search
         
-        This method:
-        - Initializes the OpenAI client from the project
-        - Sets up the model deployment name
-        - Prepares the system instructions
+        The agent is then referenced in Responses API calls using:
+        extra_body={"agent": {"name": agent.name, "type": "agent_reference"}}
         
         Returns:
-            True if initialization successful
+            True if agent created successfully
         """
         if self.agent:
-            log_foundry_debug(f"Agent already initialized: {self.model_name}")
+            log_foundry_debug(f"Agent already initialized: {self.agent.name}")
             return True
         
-        log_foundry_debug(f"Initializing host agent for Azure AI Foundry Responses API...")
+        log_foundry_debug(f"Creating Azure Agent Service agent...")
         log_foundry_debug(f"AZURE_AI_FOUNDRY_PROJECT_ENDPOINT = {os.environ.get('AZURE_AI_FOUNDRY_PROJECT_ENDPOINT', 'NOT SET')}")
         log_foundry_debug(f"AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME = {os.environ.get('AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME', 'NOT SET')}")
         
@@ -772,38 +767,93 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
             raise ValueError("AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME environment variable is required")
         
         try:
-            # Ensure project client and OpenAI client are initialized
+            # Ensure project client is initialized
             await self._ensure_project_client()
             
-            # Store model configuration
-            self.model_name = os.environ["AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME"]
-            self.agent_instructions = self.root_instruction('foundry-host-agent')
+            # Import Azure AI Projects models for agent creation
+            from azure.ai.projects.models import (
+                BingGroundingAgentTool,
+                BingGroundingSearchToolParameters,
+                BingGroundingSearchConfiguration,
+                PromptAgentDefinition,
+                FunctionTool,
+            )
             
-            log_foundry_debug(f"Agent configuration:")
-            print(f"  - model: {self.model_name}")
+            # Configuration
+            model_name = os.environ["AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME"]
+            instructions = self.root_instruction('foundry-host-agent')
+            
+            log_foundry_debug(f"Agent parameters:")
+            print(f"  - model: {model_name}")
             print(f"  - name: foundry-host-agent")
-            print(f"  - instructions length: {len(self.agent_instructions)}")
+            print(f"  - instructions length: {len(instructions)}")
             
-            # Get tools configuration
-            self.agent_tools = self._get_tools()
+            # Get Bing connection ID
+            self.bing_connection_id = os.environ.get("BING_CONNECTION_ID")
+            if self.bing_connection_id:
+                print(f"🔍 Bing connection ID loaded: {self.bing_connection_id[:50]}...")
+            else:
+                print(f"⚠️ BING_CONNECTION_ID not set - web search disabled")
             
-            # Add web_search tool for Bing Grounding
-            # The Responses API supports native web search
-            if os.environ.get("BING_CONNECTION_NAME"):
-                # Add native web search tool 
-                self.agent_tools.append({"type": "web_search"})
-                log_foundry_debug("  - Added web_search tool for Bing Grounding")
+            # Create tools list - convert to NEW SDK FunctionTool format
+            tools_list = []
             
-            log_foundry_debug(f"  - tools: {len(self.agent_tools)} total")
-            for tool in self.agent_tools:
-                tool_name = tool.get('name', tool.get('type', 'unknown'))
-                print(f"    • {tool_name}")
+            print(f"🔧 Converting function tools to NEW SDK format...")
+            # Get function definitions from _get_tools()
+            # These are in Responses API format: {"type": "function", "name": "...", "description": "...", "parameters": {...}}
+            old_tools = self._get_tools()
             
-            # Mark agent as initialized
-            self.agent = True  # Simple flag to indicate initialization
+            # Convert each tool to FunctionTool
+            for tool_def in old_tools:
+                if tool_def.get('type') == 'function':
+                    # Responses API format - name, description, parameters are at top level
+                    function_tool = FunctionTool(
+                        name=tool_def['name'],
+                        description=tool_def['description'],
+                        parameters=tool_def['parameters']
+                    )
+                    tools_list.append(function_tool)
             
-            logger.info(f"Host agent initialized for Responses API with model: {self.model_name}")
-            print(f"✅ Host agent ready for Responses API")
+            print(f"🔧 Added {len(tools_list)} function tools")
+            
+            # Add Bing Grounding Tool if connection ID is available
+            if self.bing_connection_id:
+                bing_tool = BingGroundingAgentTool(
+                    bing_grounding=BingGroundingSearchToolParameters(
+                        search_configurations=[
+                            BingGroundingSearchConfiguration(
+                                project_connection_id=self.bing_connection_id,
+                                count=5
+                            )
+                        ]
+                    )
+                )
+                tools_list.append(bing_tool)
+                print(f"🔍 Added BingGroundingAgentTool to tools list")
+                print(f"   Connection ID: {self.bing_connection_id[:50]}...")
+                log_foundry_debug(f"🔍 Added BingGroundingAgentTool to tools list")
+            else:
+                print(f"⚠️ NO Bing connection ID found!")
+            
+            print(f"🔧 Creating agent with {len(tools_list)} total tools (Azure Agent Service)")
+            
+            # Create agent using Azure AI Projects SDK
+            agent_definition = PromptAgentDefinition(
+                model=model_name,
+                instructions=instructions,
+                tools=tools_list
+            )
+            
+            self.agent = await self.project_client.agents.create_version(
+                agent_name="foundry-host-agent",
+                definition=agent_definition,
+                description="Multi-agent orchestrator with Bing web search grounding"
+            )
+            
+            print(f"✅ Azure Agent created successfully!")
+            log_foundry_debug(f"✅ Agent created successfully! ID: {self.agent.id}")
+            log_foundry_debug(f"🔧 Agent object attributes: {dir(self.agent)}")
+            print(f"🎉 Agent visible in Azure AI Foundry portal: {self.agent.id}")
             
             return True
             
