@@ -641,6 +641,13 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
     return true
   }, [conversationId, isInCollaborativeSession, router])
   
+  // Use ref for shouldFilterByConversationId to avoid re-running event subscription effect
+  // when isInCollaborativeSession changes. This prevents workflow bar state from resetting.
+  const shouldFilterByConversationIdRef = useRef(shouldFilterByConversationId)
+  useEffect(() => {
+    shouldFilterByConversationIdRef.current = shouldFilterByConversationId
+  }, [shouldFilterByConversationId])
+  
   // Voice recording hook
   const voiceRecording = useVoiceRecording()
   
@@ -1212,7 +1219,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       if (taskConvId.includes("::")) {
         taskConvId = taskConvId.split("::")[1]
       }
-      if (shouldFilterByConversationId(taskConvId)) {
+      if (shouldFilterByConversationIdRef.current(taskConvId)) {
         console.log("[ChatPanel] Ignoring task update for different conversation:", taskConvId, "current:", conversationId)
         return
       }
@@ -1246,7 +1253,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       if (eventConvId.includes("::")) {
         eventConvId = eventConvId.split("::")[1]
       }
-      if (shouldFilterByConversationId(eventConvId)) {
+      if (shouldFilterByConversationIdRef.current(eventConvId)) {
         console.log("[ChatPanel] Ignoring system event for different conversation:", eventConvId, "current:", conversationId)
         return
       }
@@ -1276,7 +1283,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       if (taskConvId.includes("::")) {
         taskConvId = taskConvId.split("::")[1]
       }
-      if (shouldFilterByConversationId(taskConvId)) {
+      if (shouldFilterByConversationIdRef.current(taskConvId)) {
         console.log("[ChatPanel] Ignoring task created for different conversation:", taskConvId, "current:", conversationId)
         return
       }
@@ -1375,7 +1382,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       }
       
       // In collaborative sessions, auto-navigate to the conversation if different
-      if (shouldFilterByConversationId(messageConvId)) {
+      if (shouldFilterByConversationIdRef.current(messageConvId)) {
         console.log("[ChatPanel] Ignoring message for different conversation:", messageConvId, "current:", conversationId)
         return
       }
@@ -1590,7 +1597,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       
       // Filter by conversationId - only process messages for the current conversation
       // In collaborative sessions, auto-navigate to the conversation if different
-      if (shouldFilterByConversationId(messageConvId)) {
+      if (shouldFilterByConversationIdRef.current(messageConvId)) {
         console.log("[ChatPanel] ❌ IGNORING message for different conversation:", messageConvId, "current:", conversationId)
         return
       }
@@ -1673,7 +1680,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       }
       
       // In collaborative sessions, auto-navigate to the conversation if different
-      if (shouldFilterByConversationId(eventConvId)) {
+      if (shouldFilterByConversationIdRef.current(eventConvId)) {
         console.log("[ChatPanel] Ignoring inference ended for different conversation:", eventConvId, "current:", conversationId)
         return
       }
@@ -1920,7 +1927,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       if (stepConvId.includes("::")) {
         stepConvId = stepConvId.split("::")[1]
       }
-      if (shouldFilterByConversationId(stepConvId)) {
+      if (shouldFilterByConversationIdRef.current(stepConvId)) {
         console.log("[ChatPanel] Ignoring inference step for different conversation:", stepConvId, "current:", conversationId)
         return
       }
@@ -1952,7 +1959,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       if (toolConvId.includes("::")) {
         toolConvId = toolConvId.split("::")[1]
       }
-      if (shouldFilterByConversationId(toolConvId)) {
+      if (shouldFilterByConversationIdRef.current(toolConvId)) {
         console.log("[ChatPanel] Ignoring tool call for different conversation:", toolConvId, "current:", conversationId)
         return
       }
@@ -1982,7 +1989,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
         activityConvId = activityConvId.split("::")[1]
       }
       // In collaborative sessions, auto-navigate to the conversation if different
-      if (shouldFilterByConversationId(activityConvId)) {
+      if (shouldFilterByConversationIdRef.current(activityConvId)) {
         console.log("[ChatPanel] Ignoring remote activity for different conversation:", activityConvId, "current:", conversationId)
         return
       }
@@ -2047,7 +2054,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       if (fileConvId.includes("::")) {
         fileConvId = fileConvId.split("::")[1]
       }
-      if (shouldFilterByConversationId(fileConvId)) {
+      if (shouldFilterByConversationIdRef.current(fileConvId)) {
         console.log("[ChatPanel] Ignoring file upload for different conversation:", fileConvId, "current:", conversationId)
         return
       }
@@ -2245,7 +2252,9 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       unsubscribe("typing_indicator", handleTypingIndicator)
       unsubscribe("message_reaction", handleMessageReaction)
     }
-  }, [subscribe, unsubscribe, emit, sendMessage, voiceLive, conversationId, isLoadingMessages, shouldFilterByConversationId])
+  }, [subscribe, unsubscribe, emit, sendMessage, voiceLive, conversationId, isLoadingMessages])
+  // NOTE: Removed shouldFilterByConversationId from deps - using ref instead to prevent
+  // effect re-runs when isInCollaborativeSession changes (which was resetting workflow bar state)
   // NOTE: Removed processedMessageIds from deps to prevent constant re-subscription
 
   // Check authentication status and show welcome message only when logged in
@@ -2290,7 +2299,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       }
       
       // In collaborative sessions, auto-navigate to the conversation if different
-      if (shouldFilterByConversationId(statusConvId)) {
+      if (shouldFilterByConversationIdRef.current(statusConvId)) {
         console.log("[ChatPanel] Ignoring status update for different conversation:", statusConvId, "current:", conversationId)
         return
       }
@@ -2309,7 +2318,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       }
       
       // In collaborative sessions, auto-navigate to the conversation if different
-      if (shouldFilterByConversationId(responseConvId)) {
+      if (shouldFilterByConversationIdRef.current(responseConvId)) {
         console.log("[ChatPanel] Ignoring final response for different conversation:", responseConvId, "current:", conversationId)
         return
       }
@@ -2521,7 +2530,8 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       unsubscribe("status_update", handleStatusUpdate)
       unsubscribe("final_response", handleFinalResponse)
     }
-  }, [inferenceSteps, processedMessageIds, subscribe, unsubscribe, conversationId, shouldFilterByConversationId]) // Include conversationId for filtering
+  }, [inferenceSteps, processedMessageIds, subscribe, unsubscribe, conversationId]) // Include conversationId for filtering
+  // NOTE: Removed shouldFilterByConversationId - using ref instead
 
   const uploadFiles = async (files: FileList | File[]) => {
     if (!files || files.length === 0) return
