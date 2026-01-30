@@ -220,6 +220,10 @@ export function FileHistory({ className, onFileSelect, onFilesLoaded, conversati
       if (existingIndex !== -1) {
         const existingFile = prev[existingIndex]
         
+        // IMPORTANT: Preserve the existing ID so that in-flight operations (like processing)
+        // can still find the file by their original ID reference
+        const preservedId = existingFile.id
+        
         // IMPORTANT: Preserve advanced status (processing, analyzed) - don't let late events overwrite
         // Status priority: analyzed > processing > error > uploading > uploaded
         const statusPriority: Record<string, number> = {
@@ -235,14 +239,18 @@ export function FileHistory({ className, onFileSelect, onFilesLoaded, conversati
         // Only update status if new status has higher priority
         const preservedStatus = newPriority >= existingPriority ? fileRecord.status : existingFile.status
         
-        console.log('[FileHistory] Replacing existing file:', fileRecord.filename, 
-          'existingStatus:', existingFile.status, 'newStatus:', fileRecord.status, 'preserved:', preservedStatus)
+        console.log('[FileHistory] Updating existing file:', fileRecord.filename, 
+          'preservedId:', preservedId, 'existingStatus:', existingFile.status, 
+          'newStatus:', fileRecord.status, 'preserved:', preservedStatus)
+        
+        // Merge new data but preserve ID and status
+        const mergedRecord = { ...existingFile, ...fileRecord, id: preservedId, status: preservedStatus }
         
         const updated = [...prev]
-        updated[existingIndex] = { ...fileRecord, status: preservedStatus }
+        updated[existingIndex] = mergedRecord
         // Move it to the front (most recent)
         updated.splice(existingIndex, 1)
-        return [{ ...fileRecord, status: preservedStatus }, ...updated].slice(0, 50)
+        return [mergedRecord, ...updated].slice(0, 50)
       }
       
       // Add new file and keep last 50
