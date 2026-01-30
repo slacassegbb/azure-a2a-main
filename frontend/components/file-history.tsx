@@ -279,6 +279,10 @@ export function FileHistory({ className, onFileSelect, onFilesLoaded, conversati
     ))
     
     try {
+      console.log('[FileHistory] Starting document processing for:', file.filename)
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), 120000) // 2 minute timeout
+      
       const processResponse = await fetch(`${backendUrl}/api/files/process`, {
         method: 'POST',
         headers: {
@@ -291,10 +295,14 @@ export function FileHistory({ className, onFileSelect, onFilesLoaded, conversati
           uri: file.uri,
           content_type: file.contentType,
           size: file.size
-        })
+        }),
+        signal: controller.signal
       })
-
+      clearTimeout(timeoutId)
+      
+      console.log('[FileHistory] Processing response status:', processResponse.status)
       const processResult = await processResponse.json()
+      console.log('[FileHistory] Processing result:', processResult)
 
       if (processResult.success) {
         // Update status to 'analyzed'
@@ -319,10 +327,12 @@ export function FileHistory({ className, onFileSelect, onFilesLoaded, conversati
         ))
         console.warn('[FileHistory] Document processing failed:', processResult.error)
       }
-    } catch (processError) {
-      console.error('[FileHistory] Document processing request failed:', processError)
+    } catch (processError: any) {
+      const isTimeout = processError?.name === 'AbortError'
+      const errorMessage = isTimeout ? 'Processing timeout (>2min)' : 'Processing failed'
+      console.error('[FileHistory] Document processing request failed:', processError?.message || processError)
       setFiles(prev => prev.map(f => 
-        f.id === file.id ? { ...f, status: 'error' as FileStatus, error: 'Processing failed' } : f
+        f.id === file.id ? { ...f, status: 'error' as FileStatus, error: errorMessage } : f
       ))
     }
   }
@@ -439,8 +449,12 @@ export function FileHistory({ className, onFileSelect, onFilesLoaded, conversati
             })
           }
 
-          // Trigger document processing
+          // Trigger document processing with timeout
           try {
+            console.log('[FileHistory] Starting document processing for:', uploadResult.filename)
+            const controller = new AbortController()
+            const timeoutId = setTimeout(() => controller.abort(), 120000) // 2 minute timeout
+            
             const processResponse = await fetch(`${backendUrl}/api/files/process`, {
               method: 'POST',
               headers: {
@@ -453,10 +467,14 @@ export function FileHistory({ className, onFileSelect, onFilesLoaded, conversati
                 uri: uploadResult.uri,
                 content_type: uploadResult.content_type || file.type,
                 size: uploadResult.size || file.size
-              })
+              }),
+              signal: controller.signal
             })
-
+            clearTimeout(timeoutId)
+            
+            console.log('[FileHistory] Processing response status:', processResponse.status)
             const processResult = await processResponse.json()
+            console.log('[FileHistory] Processing result:', processResult)
 
             if (processResult.success) {
               // Update status to 'analyzed'
@@ -481,11 +499,13 @@ export function FileHistory({ className, onFileSelect, onFilesLoaded, conversati
               ))
               console.warn('[FileHistory] Document processing failed:', processResult.error)
             }
-          } catch (processError) {
+          } catch (processError: any) {
             // Processing request failed but file is uploaded
-            console.error('[FileHistory] Document processing request failed:', processError)
+            const isTimeout = processError?.name === 'AbortError'
+            const errorMessage = isTimeout ? 'Processing timeout (>2min)' : 'Processing failed'
+            console.error('[FileHistory] Document processing request failed:', processError?.message || processError)
             setFiles(prev => prev.map(f => 
-              f.id === uploadResult.file_id ? { ...f, status: 'error' as FileStatus, error: 'Processing failed' } : f
+              f.id === uploadResult.file_id ? { ...f, status: 'error' as FileStatus, error: errorMessage } : f
             ))
           }
 
