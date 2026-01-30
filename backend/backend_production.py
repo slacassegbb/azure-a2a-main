@@ -1108,6 +1108,113 @@ Read-Host "Press Enter to close this window"
                 "error": str(e)
             }
 
+    @app.delete("/api/files/{file_id}")
+    async def delete_file(file_id: str, request: Request):
+        """Delete a file from blob storage and local filesystem.
+        
+        Gracefully handles expired/missing files - always returns success
+        even if the file doesn't exist (idempotent operation).
+        """
+        try:
+            # Extract session_id from header
+            session_id = request.headers.get("X-Session-ID")
+            if not session_id:
+                return {"success": False, "error": "Missing X-Session-ID header"}
+            
+            deleted_from_blob = False
+            deleted_from_local = False
+            
+            # Try to delete from blob storage
+            try:
+                from azure.storage.blob import BlobServiceClient
+                from azure.identity import DefaultAzureCredential
+                
+                # Get Azure connection details
+                connection_string = os.getenv('AZURE_STORAGE_CONNECTION_STRING')
+                storage_account_name = os.getenv('AZURE_STORAGE_ACCOUNT_NAME')
+                
+                if storage_account_name and not connection_string:
+                    # Use managed identity
+                    account_url = f"https://{storage_account_name}.blob.core.windows.net"
+                    credential = DefaultAzureCredential()
+                    blob_service_client = BlobServiceClient(account_url, credential=credential)
+                elif connection_string:
+                    # Use connection string
+                    blob_service_client = BlobServiceClient.from_connection_string(connection_string)
+                else:
+                    raise Exception("No Azure Storage configuration found")
+                
+                container_name = os.getenv('AZURE_BLOB_CONTAINER', 'a2a-files')
+                container_client = blob_service_client.get_container_client(container_name)
+                
+                # Search for blobs matching this file_id
+                # Could be: uploads/{session_id}/{file_id}/* or image-generator/{file_id}/*
+                deleted_count = 0
+                for blob in container_client.list_blobs():
+                    # Check if this blob matches the file_id
+                    if file_id in blob.name:
+                        parts = blob.name.split('/')
+                        # Verify it's actually the file_id we want (not just a substring match)
+                        if file_id in parts:
+                            try:
+                                blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob.name)
+                                blob_client.delete_blob()
+                                deleted_count += 1
+                                print(f"[INFO] Deleted blob: {blob.name}")
+                            except Exception as delete_err:
+                                # Ignore errors (file might be expired/already deleted)
+                                print(f"[WARN] Could not delete blob {blob.name}: {delete_err}")
+                
+                if deleted_count > 0:
+                    deleted_from_blob = True
+                    print(f"[INFO] Deleted {deleted_count} blob(s) for file_id: {file_id}")
+                else:
+                    print(f"[INFO] No blobs found for file_id: {file_id} (might be expired/already deleted)")
+                
+            except Exception as blob_error:
+                # Don't fail if blob storage is unavailable or file doesn't exist
+                print(f"[WARN] Blob storage delete failed (this is OK): {blob_error}")
+            
+            # Try to delete from local filesystem
+            try:
+                local_dir = UPLOADS_DIR / session_id
+                if local_dir.exists():
+                    for file_path in local_dir.rglob("*"):
+                        if file_id in str(file_path):
+                            try:
+                                if file_path.is_file():
+                                    file_path.unlink()
+                                    deleted_from_local = True
+                                    print(f"[INFO] Deleted local file: {file_path}")
+                                elif file_path.is_dir():
+                                    import shutil
+                                    shutil.rmtree(file_path)
+                                    deleted_from_local = True
+                                    print(f"[INFO] Deleted local directory: {file_path}")
+                            except Exception as delete_err:
+                                print(f"[WARN] Could not delete local file {file_path}: {delete_err}")
+            except Exception as local_error:
+                print(f"[WARN] Local filesystem delete failed (this is OK): {local_error}")
+            
+            # Always return success (idempotent operation)
+            return {
+                "success": True,
+                "deleted_from_blob": deleted_from_blob,
+                "deleted_from_local": deleted_from_local,
+                "message": "File deleted successfully" if (deleted_from_blob or deleted_from_local) else "File not found (might be expired or already deleted)"
+            }
+        
+        except Exception as e:
+            # Even on error, return success to prevent UI errors
+            print(f"[ERROR] Error deleting file: {e}")
+            import traceback
+            traceback.print_exc()
+            return {
+                "success": True,  # Still return success
+                "error": str(e),
+                "message": "Delete operation completed with errors (this is OK for expired files)"
+            }
+
     # Add voice upload endpoint with transcription
     @app.post("/upload-voice")
     async def upload_voice(file: UploadFile = File(...), request: Request = None):

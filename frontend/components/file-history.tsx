@@ -176,8 +176,68 @@ export function FileHistory({ className, onFileSelect, onFilesLoaded }: FileHist
     (window as any).addFileToHistory = addFileToHistory
   }, [addFileToHistory])
 
-  const removeFile = (fileId: string) => {
+  const removeFile = async (fileId: string) => {
+    // Optimistically remove from UI
     setFiles(prev => prev.filter(file => file.id !== fileId))
+    
+    // Try to delete from backend (blob storage + local filesystem)
+    try {
+      const sessionId = getOrCreateSessionId()
+      const backendUrl = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
+      
+      const response = await fetch(`${backendUrl}/api/files/${fileId}`, {
+        method: 'DELETE',
+        headers: {
+          'X-Session-ID': sessionId
+        }
+      })
+      
+      const data = await response.json()
+      
+      if (data.success) {
+        console.log('[FileHistory] File deleted:', data.message)
+      } else {
+        console.warn('[FileHistory] File delete returned error (but UI already updated):', data.error)
+      }
+    } catch (error) {
+      // Don't show error to user - file is already removed from UI
+      // This is expected for expired/missing files
+      console.log('[FileHistory] File delete request failed (this is OK for expired files):', error)
+    }
+  }
+
+  const clearAllFiles = async () => {
+    // Optimistically clear UI
+    const filesToDelete = [...files]
+    setFiles([])
+    
+    // Try to delete all files from backend
+    try {
+      const sessionId = getOrCreateSessionId()
+      const backendUrl = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
+      
+      // Delete all files in parallel
+      const deletePromises = filesToDelete.map(file =>
+        fetch(`${backendUrl}/api/files/${file.id}`, {
+          method: 'DELETE',
+          headers: {
+            'X-Session-ID': sessionId
+          }
+        })
+        .then(res => res.json())
+        .catch(err => {
+          console.log(`[FileHistory] Failed to delete ${file.filename}:`, err)
+          return { success: true } // Treat as success
+        })
+      )
+      
+      const results = await Promise.all(deletePromises)
+      const successCount = results.filter(r => r.success).length
+      console.log(`[FileHistory] Cleared ${successCount}/${filesToDelete.length} files`)
+      
+    } catch (error) {
+      console.log('[FileHistory] Clear all failed (but UI already updated):', error)
+    }
   }
 
   const clearHistory = () => {
@@ -249,9 +309,23 @@ export function FileHistory({ className, onFileSelect, onFilesLoaded }: FileHist
             No files uploaded yet
           </div>
         ) : (
-          <ScrollArea className="h-56">
-            <div className="space-y-1">
-              {files.map((file) => {
+          <>
+            {/* Header with Clear All button */}
+            <div className="flex items-center justify-between px-2 pb-2">
+              <span className="text-xs font-medium text-muted-foreground">
+                {files.length} {files.length === 1 ? 'file' : 'files'}
+              </span>
+              <button
+                onClick={clearAllFiles}
+                className="text-xs text-muted-foreground hover:text-destructive transition-colors"
+                title="Clear all files"
+              >
+                Clear All
+              </button>
+            </div>
+            <ScrollArea className="h-56">
+              <div className="space-y-1">
+                {files.map((file) => {
                 // Check if file is an image
                 const isImage = file.contentType.startsWith('image/') || 
                   ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp'].includes(
@@ -316,6 +390,7 @@ export function FileHistory({ className, onFileSelect, onFilesLoaded }: FileHist
               })}
             </div>
           </ScrollArea>
+          </>
         )}
       </div>
     </div>
