@@ -1,11 +1,9 @@
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
-import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Separator } from "@/components/ui/separator"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { Trash2, Download, Eye, ExternalLink } from "lucide-react"
+import { Trash2 } from "lucide-react"
 import { useEventHub } from "@/hooks/use-event-hub"
 import { getOrCreateSessionId } from "@/lib/session"
 
@@ -238,99 +236,91 @@ export function FileHistory({ className, onFileSelect, onFilesLoaded }: FileHist
   }
 
   return (
-    <Card className={className}>
-      <CardContent className="pt-3 space-y-3">
+    <div className={`${className}`}>
+      <div className="pt-3 px-2 space-y-2">
         {files.length === 0 ? (
           <div className="text-center text-xs text-muted-foreground py-4">
             No files uploaded yet
           </div>
         ) : (
-          <>
-            <ScrollArea className="h-48">
-              <div className="space-y-2">
-                {files.map((file, index) => {
-                  // Check if file is an image
-                  const isImage = file.contentType.startsWith('image/') || 
-                    ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp'].includes(
-                      file.filename.toLowerCase().split('.').pop() || ''
-                    )
-                  
-                  return (
-                    <div key={file.id}>
-                      <div className="flex items-start gap-2 p-2 rounded-md hover:bg-primary/10 transition-colors">
-                        {/* Show thumbnail for images, icon for other files */}
-                        {isImage && file.uri ? (
-                          <div className="flex-shrink-0 w-10 h-10 rounded overflow-hidden border border-gray-200 bg-gray-100">
+          <ScrollArea className="h-56">
+            <div className="space-y-1">
+              {files.map((file) => {
+                // Check if file is an image
+                const isImage = file.contentType.startsWith('image/') || 
+                  ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp'].includes(
+                    file.filename.toLowerCase().split('.').pop() || ''
+                  )
+                
+                // Check if file is a video
+                const isVideo = file.contentType.startsWith('video/') || 
+                  ['mp4', 'mov', 'avi', 'mkv', 'webm'].includes(
+                    file.filename.toLowerCase().split('.').pop() || ''
+                  )
+                
+                return (
+                  <div key={file.id}>
+                    <div className="flex items-center gap-3 p-2 rounded-lg hover:bg-muted/50 transition-colors group cursor-pointer"
+                         onClick={() => file.uri && window.open(file.uri, '_blank')}>
+                      {/* Show thumbnail for images/videos, icon for other files */}
+                      {(isImage || isVideo) && file.uri ? (
+                        <div className="flex-shrink-0 w-12 h-12 rounded-lg overflow-hidden bg-muted/50 border border-border/50">
+                          {isVideo ? (
+                            <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-purple-500/20 to-blue-500/20">
+                              <span className="text-xl">🎥</span>
+                            </div>
+                          ) : (
                             <img 
                               src={file.uri} 
                               alt={file.originalName}
                               className="w-full h-full object-cover"
                               onError={(e) => {
-                                // Fallback to emoji if image fails to load
+                                // Fallback to gradient with emoji if image fails to load
                                 e.currentTarget.style.display = 'none'
-                                e.currentTarget.parentElement!.innerHTML = '<span class="flex items-center justify-center w-full h-full text-sm">🖼️</span>'
+                                e.currentTarget.parentElement!.innerHTML = '<div class="w-full h-full flex items-center justify-center bg-gradient-to-br from-blue-500/20 to-cyan-500/20"><span class="text-xl">🖼️</span></div>'
                               }}
                             />
-                          </div>
-                        ) : (
-                          <span className="text-sm mt-0.5">{getFileIcon(file.filename, file.contentType)}</span>
-                        )}
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-1">
-                            {file.uri ? (
-                              <a
-                                href={file.uri}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="text-xs font-medium truncate hover:underline hover:text-primary flex items-center gap-1 group"
-                                title={`${file.originalName} - Click to open in new tab`}
-                              >
-                                <span className="truncate">{file.originalName}</span>
-                                <ExternalLink size={10} className="flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" />
-                              </a>
-                            ) : (
-                              <span className="text-xs font-medium truncate" title={file.originalName}>
-                                {file.originalName}
-                              </span>
-                            )}
-                          </div>
-                          <div className="flex items-center gap-2 mt-1">
-                            <span className="text-xs text-muted-foreground">
-                              {formatFileSize(file.size)}
-                            </span>
-                            <span className="text-xs text-muted-foreground">
-                              {formatDate(file.uploadedAt)}
-                            </span>
-                          </div>
-                        </div>
-                        <div className="flex gap-1">
-                          {onFileSelect && (
-                            <button
-                              onClick={() => onFileSelect(file)}
-                              className="p-1 hover:bg-primary/10 rounded text-muted-foreground hover:text-primary"
-                              title="View file"
-                            >
-                              <Eye size={12} />
-                            </button>
                           )}
-                          <button
-                            onClick={() => removeFile(file.id)}
-                            className="p-1 hover:bg-primary/10 rounded text-muted-foreground hover:text-primary"
-                            title="Remove from history"
-                          >
-                            <Trash2 size={12} />
-                          </button>
+                        </div>
+                      ) : (
+                        <div className="flex-shrink-0 w-12 h-12 rounded-lg flex items-center justify-center bg-muted/50 border border-border/50">
+                          <span className="text-xl">{getFileIcon(file.filename, file.contentType)}</span>
+                        </div>
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-medium truncate text-foreground group-hover:text-primary transition-colors" title={file.originalName}>
+                          {file.originalName}
+                        </div>
+                        <div className="flex items-center gap-2 mt-0.5">
+                          <span className="text-xs text-muted-foreground">
+                            {formatFileSize(file.size)}
+                          </span>
+                          <span className="text-xs text-muted-foreground">•</span>
+                          <span className="text-xs text-muted-foreground">
+                            {formatDate(file.uploadedAt)}
+                          </span>
                         </div>
                       </div>
-                      {index < files.length - 1 && <Separator className="my-1" />}
+                      <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            removeFile(file.id)
+                          }}
+                          className="p-1.5 hover:bg-destructive/10 rounded-md text-muted-foreground hover:text-destructive transition-colors"
+                          title="Remove from history"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
                     </div>
-                  )
-                })}
-              </div>
-            </ScrollArea>
-          </>
+                  </div>
+                )
+              })}
+            </div>
+          </ScrollArea>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   )
 }
