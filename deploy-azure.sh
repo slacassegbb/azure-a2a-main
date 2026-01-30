@@ -187,6 +187,8 @@ if [ -f ".env" ]; then
     DEFAULT_SEARCH_ENDPOINT=$(grep "AZURE_SEARCH_SERVICE_ENDPOINT" .env | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
     DEFAULT_SEARCH_ADMIN_KEY=$(grep "AZURE_SEARCH_ADMIN_KEY" .env | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
     DEFAULT_SEARCH_INDEX_NAME=$(grep "AZURE_SEARCH_INDEX_NAME" .env | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
+    # Bing Search API (Web Search)
+    DEFAULT_BING_SEARCH_KEY=$(grep "BING_SEARCH_API_KEY" .env | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
 fi
 
 read -p "Azure AI Foundry Project Endpoint [$DEFAULT_AI_ENDPOINT]: " AZURE_AI_ENDPOINT
@@ -227,6 +229,13 @@ echo ""
 
 read -p "Azure Search Index Name [$DEFAULT_SEARCH_INDEX_NAME]: " AZURE_SEARCH_INDEX
 AZURE_SEARCH_INDEX=${AZURE_SEARCH_INDEX:-$DEFAULT_SEARCH_INDEX_NAME}
+
+# Bing Search API (Web Search) configuration
+echo ""
+echo -e "${CYAN}🌐 Bing Search API (Web Search) Configuration${NC}"
+read -s -p "Bing Search API Key (optional, press Enter to skip): " BING_SEARCH_KEY
+BING_SEARCH_KEY=${BING_SEARCH_KEY:-$DEFAULT_BING_SEARCH_KEY}
+echo ""
 
 echo ""
 
@@ -359,6 +368,7 @@ if [ -n "$BACKEND_EXISTS" ]; then
             "AZURE_SEARCH_SERVICE_ENDPOINT=$AZURE_SEARCH_ENDPOINT" \
             "AZURE_SEARCH_ADMIN_KEY=$AZURE_SEARCH_KEY" \
             "AZURE_SEARCH_INDEX_NAME=$AZURE_SEARCH_INDEX" \
+            "BING_SEARCH_API_KEY=$BING_SEARCH_KEY" \
             "A2A_HOST=FOUNDRY" \
             "VERBOSE_LOGGING=true" \
         --output none
@@ -390,6 +400,7 @@ else
             "AZURE_SEARCH_SERVICE_ENDPOINT=$AZURE_SEARCH_ENDPOINT" \
             "AZURE_SEARCH_ADMIN_KEY=$AZURE_SEARCH_KEY" \
             "AZURE_SEARCH_INDEX_NAME=$AZURE_SEARCH_INDEX" \
+            "BING_SEARCH_API_KEY=$BING_SEARCH_KEY" \
             "A2A_HOST=FOUNDRY" \
             "VERBOSE_LOGGING=true" \
         --output none

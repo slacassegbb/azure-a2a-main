@@ -316,16 +316,23 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
         Format agent tools for Responses API.
         
         Returns tools in the Responses API format for function calling.
-        Uses _get_tools() to get the tool definitions.
+        Uses self.agent_tools if available (which includes web_search),
+        otherwise falls back to _get_tools().
         
         Returns:
             List of tool definitions in Responses API format
         """
-        # Use _get_tools() which has the correct tool definitions
-        tools = self._get_tools()
-        print(f"🔧 [TOOLS] _format_tools_for_responses_api returning {len(tools)} tools")
+        # Use self.agent_tools which includes web_search added in create_agent()
+        if hasattr(self, 'agent_tools') and self.agent_tools:
+            tools = self.agent_tools
+        else:
+            # Fallback to _get_tools() if agent_tools not set yet
+            tools = self._get_tools()
+            
+        print(f"🔧 [TOOLS] _format_tools_for_responses_api returning {len(tools)} tools:")
         for tool in tools:
-            print(f"  • Tool: {tool.get('name', 'unknown')}")
+            tool_name = tool.get('name', tool.get('type', 'unknown'))
+            print(f"  • Tool: {tool_name}")
         return tools
 
     async def _create_response_with_streaming(
@@ -1154,42 +1161,28 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
         return json.dumps(result, ensure_ascii=False)
 
     async def _update_agent_instructions(self):
-        """Update the agent's instructions with the current agent list"""
+        """
+        Update the agent's instructions with the current agent list.
+        
+        With the Responses API, we don't have a persistent agent to update.
+        Instead, we just update the cached instructions that get passed
+        to each responses.create() call.
+        """
         if not self.agent:
-            print(f"⚠️ No agent exists to update")
+            print(f"⚠️ No agent initialized to update")
             return
             
         try:
             print(f"🔄 Updating agent instructions with {len(self.cards)} registered agents...")
             
-            headers = await self._get_auth_headers()
-            endpoint = os.environ["AZURE_AI_FOUNDRY_PROJECT_ENDPOINT"]
-            agent_id = self.agent['id']
-            api_url = f"{endpoint}/assistants/{agent_id}"
+            # Update the cached instructions with current agent list
+            self.agent_instructions = self.root_instruction('foundry-host-agent')
             
-            # Get updated instructions with current agent list
-            updated_instructions = self.root_instruction('foundry-host-agent')
+            # Also update the tools list in case agents changed
+            self.agent_tools = self._get_tools()
             
-            # Prepare the update payload
-            payload = {
-                "instructions": updated_instructions
-            }
-            
-            # Make the HTTP request to update the assistant
-            async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    api_url,
-                    headers=headers,
-                    json=payload,
-                    params={"api-version": "2025-05-15-preview"},
-                    timeout=30.0
-                )
-                
-                if response.status_code == 200:
-                    print(f"✅ Agent instructions updated successfully!")
-                    print(f"   Agent now knows about: {', '.join(self.cards.keys())}")
-                else:
-                    print(f"❌ Failed to update agent instructions: {response.status_code} - {response.text}")
+            print(f"✅ Agent instructions updated successfully!")
+            print(f"   Agent now knows about: {', '.join(self.cards.keys())}")
                     
         except Exception as e:
             print(f"❌ Error updating agent instructions: {e}")
@@ -3380,13 +3373,13 @@ Answer with just JSON:
             log_debug(f"Step: About to ensure agent exists...")
             log_foundry_debug(f"Current agent state: {self.agent is not None}")
             if self.agent:
-                log_foundry_debug(f"Agent exists with ID: {self.agent.get('id', 'unknown')}")
+                log_foundry_debug(f"Agent ready with model: {self.model_name}")
             else:
                 print("⚠️ Agent not created at startup, creating now (lazy creation)...")
                 log_foundry_debug(f"Calling create_agent()...")
                 await self.create_agent()
                 log_foundry_debug(f"create_agent() completed")
-            log_debug(f"Step: Agent ready with ID: {self.agent.get('id', 'unknown') if self.agent else 'STILL_NULL'}")
+            log_debug(f"Step: Agent ready with model: {self.model_name if self.agent else 'STILL_NULL'}")
             
             session_context = self.get_session_context(context_id)
             # Set agent mode in session context
@@ -3621,7 +3614,7 @@ Answer with just JSON:
                 context_id=context_id,
                 session_context=session_context,
                 tools=tools,
-                instructions=self.agent.get('instructions', ''),
+                instructions=self.agent_instructions or '',
                 event_logger=event_logger
             )
             
@@ -3668,7 +3661,7 @@ Answer with just JSON:
                         context_id=context_id,
                         session_context=session_context,
                         tools=tools,
-                        instructions=self.agent.get('instructions', ''),
+                        instructions=self.agent_instructions or '',
                         event_logger=event_logger
                     )
                     log_foundry_debug(f"Created follow-up response after tool execution: {response['id']}, status: {response['status']}")
