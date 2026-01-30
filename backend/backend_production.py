@@ -990,16 +990,36 @@ Read-Host "Press Enter to close this window"
                 container_name = os.getenv('AZURE_BLOB_CONTAINER', 'a2a-files')
                 container_client = blob_service_client.get_container_client(container_name)
                 
-                # List blobs for this user's session
-                prefix = f"uploads/{session_id}/"
-                for blob in container_client.list_blobs(name_starts_with=prefix):
-                    # Parse blob path: uploads/{session_id}/{file_id}/{filename}
+                # List ALL blobs (uploads + image-generator + any other paths)
+                # We'll filter by checking blob metadata for session_id if available
+                for blob in container_client.list_blobs():
+                    # Skip if 0 bytes (empty/failed uploads)
+                    if blob.size == 0:
+                        print(f"[DEBUG] Skipping 0-byte blob: {blob.name}")
+                        continue
+                    
+                    # Parse blob path to extract file_id and filename
                     parts = blob.name.split('/')
-                    if len(parts) >= 4:
-                        file_id = parts[2]
-                        filename = parts[3]
+                    if len(parts) >= 3:
+                        # Could be: uploads/{session_id}/{file_id}/{filename}
+                        #        or: image-generator/{artifact_id}/{filename}
+                        #        or: other paths
                         
-                        # Generate SAS URL if using connection string
+                        # Extract file_id and filename based on path structure
+                        if parts[0] == 'uploads' and len(parts) >= 4:
+                            # uploads/{session_id}/{file_id}/{filename}
+                            blob_session_id = parts[1]
+                            # Only include files from current session
+                            if blob_session_id != session_id:
+                                continue
+                            file_id = parts[2]
+                            filename = parts[3]
+                        else:
+                            # Other paths (image-generator, etc.) - use second-to-last as file_id
+                            file_id = parts[-2] if len(parts) >= 2 else parts[0]
+                            filename = parts[-1]
+                        
+                        # Generate fresh SAS URL for ALL files
                         blob_url = None
                         if connection_string:
                             from azure.storage.blob import generate_blob_sas, BlobSasPermissions
@@ -1012,13 +1032,14 @@ Read-Host "Press Enter to close this window"
                                     break
                             
                             if account_key:
+                                # Generate fresh 7-day SAS token
                                 sas_token = generate_blob_sas(
                                     account_name=blob_service_client.account_name,
                                     container_name=container_name,
                                     blob_name=blob.name,
                                     account_key=account_key,
                                     permission=BlobSasPermissions(read=True),
-                                    expiry=datetime.now(UTC) + timedelta(hours=24),
+                                    expiry=datetime.now(UTC) + timedelta(days=7),  # 7 days instead of 24 hours
                                     version="2023-11-03"
                                 )
                                 blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob.name)
@@ -1031,7 +1052,7 @@ Read-Host "Press Enter to close this window"
                             "size": blob.size,
                             "contentType": blob.content_settings.content_type if blob.content_settings else "application/octet-stream",
                             "uploadedAt": blob.last_modified.isoformat() if blob.last_modified else None,
-                            "uri": blob_url or f"/uploads/{session_id}/{file_id}"
+                            "uri": blob_url or blob.name
                         })
                 
                 print(f"[INFO] Listed {len(files)} files from blob storage for session: {session_id}")

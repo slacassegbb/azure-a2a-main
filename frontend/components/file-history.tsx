@@ -189,25 +189,31 @@ export function FileHistory({ className, onFileSelect, onFilesLoaded }: FileHist
     const type = contentType.toLowerCase()
     
     if (type.startsWith('image/') || ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp'].includes(ext)) {
-      return '🖼️'
+      return { icon: '🖼️', gradient: 'from-blue-500/20 to-cyan-500/20' }
     } else if (type.startsWith('audio/') || ['mp3', 'wav', 'm4a', 'flac', 'aac'].includes(ext)) {
-      return '🎵'
+      return { icon: '🎵', gradient: 'from-pink-500/20 to-rose-500/20' }
     } else if (type.startsWith('video/') || ['mp4', 'mov', 'avi', 'mkv', 'webm'].includes(ext)) {
-      return '🎥'
+      return { icon: '🎥', gradient: 'from-purple-500/20 to-blue-500/20' }
     } else if (type === 'application/pdf' || ext === 'pdf') {
-      return '📄'
+      return { icon: '📄', gradient: 'from-red-500/20 to-orange-500/20' }
     } else if (['doc', 'docx'].includes(ext)) {
-      return '📝'
+      return { icon: '📝', gradient: 'from-blue-500/20 to-indigo-500/20' }
     } else if (['xls', 'xlsx'].includes(ext)) {
-      return '📊'
+      return { icon: '📊', gradient: 'from-green-500/20 to-emerald-500/20' }
     } else if (['ppt', 'pptx'].includes(ext)) {
-      return '📽️'
+      return { icon: '📽️', gradient: 'from-orange-500/20 to-amber-500/20' }
     } else if (['txt', 'md'].includes(ext)) {
-      return '📋'
-    } else if (['zip', 'rar', '7z'].includes(ext)) {
-      return '📦'
+      return { icon: '📋', gradient: 'from-slate-500/20 to-gray-500/20' }
+    } else if (['zip', 'rar', '7z', 'tar', 'gz'].includes(ext)) {
+      return { icon: '📦', gradient: 'from-amber-500/20 to-yellow-500/20' }
+    } else if (['js', 'ts', 'py', 'java', 'c', 'cpp', 'cs', 'go', 'rs', 'rb'].includes(ext)) {
+      return { icon: '💻', gradient: 'from-violet-500/20 to-purple-500/20' }
+    } else if (['json', 'xml', 'yaml', 'yml', 'toml'].includes(ext)) {
+      return { icon: '⚙️', gradient: 'from-teal-500/20 to-cyan-500/20' }
+    } else if (['html', 'css', 'scss', 'sass'].includes(ext)) {
+      return { icon: '🌐', gradient: 'from-sky-500/20 to-blue-500/20' }
     } else {
-      return '📄'
+      return { icon: '📄', gradient: 'from-gray-500/20 to-slate-500/20' }
     }
   }
 
@@ -252,39 +258,30 @@ export function FileHistory({ className, onFileSelect, onFilesLoaded }: FileHist
                     file.filename.toLowerCase().split('.').pop() || ''
                   )
                 
-                // Check if file is a video
-                const isVideo = file.contentType.startsWith('video/') || 
-                  ['mp4', 'mov', 'avi', 'mkv', 'webm'].includes(
-                    file.filename.toLowerCase().split('.').pop() || ''
-                  )
+                // Get file icon and gradient for non-image files
+                const fileStyle = getFileIcon(file.filename, file.contentType)
                 
                 return (
                   <div key={file.id}>
                     <div className="flex items-center gap-3 p-2 rounded-lg hover:bg-muted/50 transition-colors group cursor-pointer"
                          onClick={() => file.uri && window.open(file.uri, '_blank')}>
-                      {/* Show thumbnail for images/videos, icon for other files */}
-                      {(isImage || isVideo) && file.uri ? (
-                        <div className="flex-shrink-0 w-12 h-12 rounded-lg overflow-hidden bg-muted/50 border border-border/50">
-                          {isVideo ? (
-                            <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-purple-500/20 to-blue-500/20">
-                              <span className="text-xl">🎥</span>
-                            </div>
-                          ) : (
-                            <img 
-                              src={file.uri} 
-                              alt={file.originalName}
-                              className="w-full h-full object-cover"
-                              onError={(e) => {
-                                // Fallback to gradient with emoji if image fails to load
-                                e.currentTarget.style.display = 'none'
-                                e.currentTarget.parentElement!.innerHTML = '<div class="w-full h-full flex items-center justify-center bg-gradient-to-br from-blue-500/20 to-cyan-500/20"><span class="text-xl">🖼️</span></div>'
-                              }}
-                            />
-                          )}
+                      {/* Show thumbnail for images, styled icon for other files */}
+                      {isImage && file.uri ? (
+                        <div className="flex-shrink-0 w-12 h-12 rounded-lg overflow-hidden border border-border/50">
+                          <img 
+                            src={file.uri} 
+                            alt={file.originalName}
+                            className="w-full h-full object-cover"
+                            onError={(e) => {
+                              // Fallback to gradient with emoji if image fails to load
+                              e.currentTarget.style.display = 'none'
+                              e.currentTarget.parentElement!.innerHTML = '<div class="w-full h-full flex items-center justify-center bg-gradient-to-br from-blue-500/20 to-cyan-500/20"><span class="text-xl">🖼️</span></div>'
+                            }}
+                          />
                         </div>
                       ) : (
-                        <div className="flex-shrink-0 w-12 h-12 rounded-lg flex items-center justify-center bg-muted/50 border border-border/50">
-                          <span className="text-xl">{getFileIcon(file.filename, file.contentType)}</span>
+                        <div className={`flex-shrink-0 w-12 h-12 rounded-lg flex items-center justify-center bg-gradient-to-br ${fileStyle.gradient} border border-border/50`}>
+                          <span className="text-xl">{fileStyle.icon}</span>
                         </div>
                       )}
                       <div className="flex-1 min-w-0">
