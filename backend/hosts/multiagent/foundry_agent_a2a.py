@@ -56,6 +56,7 @@ from azure.ai.agents.models import (
     AgentStreamEvent,
     MessageRole,
     FilePurpose,
+    BingGroundingTool,  # For Bing web search grounding
 )
 
 # A2A Protocol SDK for agent-to-agent communication
@@ -291,14 +292,16 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
         """
         Initialize function tools for the agent.
         
-        Returns AsyncFunctionTool configured with our agent coordination functions.
+        Returns AsyncToolSet configured with:
+        - Function tools for agent coordination (list_remote_agents, send_message, search_memory)
+        - BingGroundingTool for web search (if BING_CONNECTION_ID is configured)
         """
         # Define the functions that the agent can call
         # AsyncFunctionTool expects a LIST of functions, not a dict
         user_functions = [
             self.list_remote_agents_sync,
             self.send_message_sync,
-            self.search_memory_sync,  # NEW: Memory search tool
+            self.search_memory_sync,  # Memory search tool
         ]
         
         # Create async function tool
@@ -307,6 +310,21 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
         # Create toolset and add functions
         toolset = AsyncToolSet()
         toolset.add(functions)
+        
+        # Add Bing Grounding Tool for web search if connection is configured
+        bing_connection_id = os.environ.get("BING_CONNECTION_ID")
+        if bing_connection_id:
+            try:
+                bing_tool = BingGroundingTool(connection_id=bing_connection_id)
+                toolset.add(bing_tool)
+                print(f"🔍 Added BingGroundingTool with connection: {bing_connection_id[:50]}...")
+            except Exception as e:
+                print(f"⚠️ Failed to add BingGroundingTool: {e}")
+                print(f"   Web search will not be available")
+        else:
+            print(f"ℹ️ BING_CONNECTION_ID not set - web search disabled")
+            print(f"   To enable: Set BING_CONNECTION_ID to your Grounding with Bing connection ID")
+            print(f"   Format: /subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.CognitiveServices/accounts/<account>/projects/<project>/connections/<connection>")
         
         # Enable automatic function call execution (synchronous method)
         self.agents_client.enable_auto_function_calls(toolset)
