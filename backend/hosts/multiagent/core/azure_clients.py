@@ -24,7 +24,6 @@ if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
 from azure.ai.projects.aio import AIProjectClient
-from azure.ai.agents.aio import AgentsClient  # Proper AgentsClient with enable_auto_function_calls
 
 from log_config import (
     log_debug,
@@ -107,15 +106,11 @@ class AzureClients:
             self._project_client_loop = current_loop
             log_foundry_debug("✅ AIProjectClient initialized")
         
-        if self.agents_client is None:
-            log_foundry_debug("🔧 Creating AgentsClient with enable_auto_function_calls support...")
-            # Use the proper AgentsClient from azure-ai-agents (not project_client.agents)
-            # This gives us access to enable_auto_function_calls() method
-            self.agents_client = AgentsClient(
-                endpoint=self.endpoint,
-                credential=self.credential,
-            )
-            log_foundry_debug("✅ AgentsClient ready (with auto function call support)")
+        # Initialize OpenAI client for Responses API
+        if not hasattr(self, 'openai_client') or self.openai_client is None:
+            log_foundry_debug("🔧 Getting OpenAI client from project...")
+            self.openai_client = self.project_client.get_openai_client()
+            log_foundry_debug("✅ OpenAI client ready for Responses API")
 
     def _init_azure_blob_client(self):
         """Initialize Azure Blob Storage client if environment variables are configured."""
