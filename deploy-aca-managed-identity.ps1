@@ -599,6 +599,7 @@ if ($backendExists) {
             "AZURE_BLOB_SIZE_THRESHOLD=$($envVars['AZURE_BLOB_SIZE_THRESHOLD'])" `
             "AZURE_CONTENT_UNDERSTANDING_ENDPOINT=$($envVars['AZURE_CONTENT_UNDERSTANDING_ENDPOINT'])" `
             "AZURE_CONTENT_UNDERSTANDING_API_VERSION=$($envVars['AZURE_CONTENT_UNDERSTANDING_API_VERSION'])" `
+            "BING_CONNECTION_ID=$($envVars['BING_CONNECTION_ID'])" `
             "AZURE_OPENAI_GPT_API_KEY=secretref:openai-key" `
             "AZURE_OPENAI_EMBEDDINGS_KEY=secretref:openai-embed-key" `
             "AZURE_SEARCH_ADMIN_KEY=secretref:search-key" `
@@ -783,6 +784,7 @@ properties:
             "AZURE_BLOB_SIZE_THRESHOLD=$($envVars['AZURE_BLOB_SIZE_THRESHOLD'])" `
             "AZURE_CONTENT_UNDERSTANDING_ENDPOINT=$($envVars['AZURE_CONTENT_UNDERSTANDING_ENDPOINT'])" `
             "AZURE_CONTENT_UNDERSTANDING_API_VERSION=$($envVars['AZURE_CONTENT_UNDERSTANDING_API_VERSION'])" `
+            "BING_CONNECTION_ID=$($envVars['BING_CONNECTION_ID'])" `
             "AZURE_OPENAI_GPT_API_KEY=secretref:openai-key" `
             "AZURE_OPENAI_EMBEDDINGS_KEY=secretref:openai-embed-key" `
             "AZURE_SEARCH_ADMIN_KEY=secretref:search-key" `

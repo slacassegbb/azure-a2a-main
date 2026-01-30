@@ -137,6 +137,11 @@ $azureSearchKey = Read-Host "Azure Search Admin Key"
 $azureSearchIndex = Read-Host "Azure Search Index Name (e.g., microsoft-results)"
 
 Write-Host ""
+Write-Host "🌐 Bing Grounding (Web Search) Configuration" -ForegroundColor Cyan
+Write-Host "  (Optional - leave blank to disable web search capability)" -ForegroundColor Yellow
+$bingConnectionId = Read-Host "Bing Connection ID"
+
+Write-Host ""
 
 # Generate timestamp for image tags
 $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
@@ -267,6 +272,7 @@ if ($backendExists) {
             "AZURE_SEARCH_SERVICE_ENDPOINT=$azureSearchEndpoint" `
             "AZURE_SEARCH_ADMIN_KEY=$azureSearchKey" `
             "AZURE_SEARCH_INDEX_NAME=$azureSearchIndex" `
+            "BING_CONNECTION_ID=$bingConnectionId" `
             "A2A_HOST=FOUNDRY" `
             "VERBOSE_LOGGING=true" `
         --output none
@@ -298,6 +304,7 @@ if ($backendExists) {
             "AZURE_SEARCH_SERVICE_ENDPOINT=$azureSearchEndpoint" `
             "AZURE_SEARCH_ADMIN_KEY=$azureSearchKey" `
             "AZURE_SEARCH_INDEX_NAME=$azureSearchIndex" `
+            "BING_CONNECTION_ID=$bingConnectionId" `
             "A2A_HOST=FOUNDRY" `
             "VERBOSE_LOGGING=true" `
         --output none

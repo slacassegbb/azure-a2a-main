@@ -13,6 +13,7 @@ name: Deploy to Azure Container Apps
 # - AZURE_SEARCH_SERVICE_ENDPOINT: Azure Search service endpoint (for memory service)
 # - AZURE_SEARCH_ADMIN_KEY: Azure Search admin key
 # - AZURE_SEARCH_INDEX_NAME: Azure Search index name (e.g., microsoft-results)
+# - BING_CONNECTION_ID: (Optional) Bing Grounding connection ID for web search
 
 on:
   push:
@@ -134,6 +135,7 @@ jobs:
               "AZURE_SEARCH_SERVICE_ENDPOINT=${{ secrets.AZURE_SEARCH_SERVICE_ENDPOINT }}" \
               "AZURE_SEARCH_ADMIN_KEY=${{ secrets.AZURE_SEARCH_ADMIN_KEY }}" \
               "AZURE_SEARCH_INDEX_NAME=${{ secrets.AZURE_SEARCH_INDEX_NAME }}" \
+              "BING_CONNECTION_ID=${{ secrets.BING_CONNECTION_ID }}" \
               "WEBSOCKET_SERVER_URL=https://websocket-uami.ambitioussky-6c709152.westus2.azurecontainerapps.io" \
               "A2A_HOST=FOUNDRY" \
               "VERBOSE_LOGGING=true"

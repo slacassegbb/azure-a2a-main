@@ -187,6 +187,8 @@ if [ -f ".env" ]; then
     DEFAULT_SEARCH_ENDPOINT=$(grep "AZURE_SEARCH_SERVICE_ENDPOINT" .env | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
     DEFAULT_SEARCH_ADMIN_KEY=$(grep "AZURE_SEARCH_ADMIN_KEY" .env | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
     DEFAULT_SEARCH_INDEX_NAME=$(grep "AZURE_SEARCH_INDEX_NAME" .env | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
+    # Bing Grounding configuration
+    DEFAULT_BING_CONNECTION_ID=$(grep "BING_CONNECTION_ID" .env | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
 fi
 
 read -p "Azure AI Foundry Project Endpoint [$DEFAULT_AI_ENDPOINT]: " AZURE_AI_ENDPOINT
@@ -227,6 +229,13 @@ echo ""
 
 read -p "Azure Search Index Name [$DEFAULT_SEARCH_INDEX_NAME]: " AZURE_SEARCH_INDEX
 AZURE_SEARCH_INDEX=${AZURE_SEARCH_INDEX:-$DEFAULT_SEARCH_INDEX_NAME}
+
+# Bing Grounding (Web Search) configuration
+echo ""
+echo -e "${CYAN}🌐 Bing Grounding (Web Search) Configuration${NC}"
+echo -e "${YELLOW}  (Optional - leave blank to disable web search capability)${NC}"
+read -p "Bing Connection ID [$DEFAULT_BING_CONNECTION_ID]: " BING_CONNECTION_ID
+BING_CONNECTION_ID=${BING_CONNECTION_ID:-$DEFAULT_BING_CONNECTION_ID}
 
 echo ""
 
@@ -359,6 +368,7 @@ if [ -n "$BACKEND_EXISTS" ]; then
             "AZURE_SEARCH_SERVICE_ENDPOINT=$AZURE_SEARCH_ENDPOINT" \
             "AZURE_SEARCH_ADMIN_KEY=$AZURE_SEARCH_KEY" \
             "AZURE_SEARCH_INDEX_NAME=$AZURE_SEARCH_INDEX" \
+            "BING_CONNECTION_ID=$BING_CONNECTION_ID" \
             "A2A_HOST=FOUNDRY" \
             "VERBOSE_LOGGING=true" \
         --output none
@@ -390,6 +400,7 @@ else
             "AZURE_SEARCH_SERVICE_ENDPOINT=$AZURE_SEARCH_ENDPOINT" \
             "AZURE_SEARCH_ADMIN_KEY=$AZURE_SEARCH_KEY" \
             "AZURE_SEARCH_INDEX_NAME=$AZURE_SEARCH_INDEX" \
+            "BING_CONNECTION_ID=$BING_CONNECTION_ID" \
             "A2A_HOST=FOUNDRY" \
             "VERBOSE_LOGGING=true" \
         --output none
