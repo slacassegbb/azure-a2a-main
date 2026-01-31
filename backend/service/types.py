@@ -60,6 +60,7 @@ class GetEventResponse(JSONRPCResponse):
 
 class ListConversationResponse(JSONRPCResponse):
     result: list[Conversation] | None = None
+    message_user_map: dict[str, str] = Field(default_factory=dict)  # messageId -> userId mapping
 
 
 class PendingMessageResponse(JSONRPCResponse):

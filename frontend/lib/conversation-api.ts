@@ -24,10 +24,16 @@ export interface Message {
   taskId?: string
 }
 
+// Result from listConversations including user mapping
+export interface ListConversationsResult {
+  conversations: Conversation[]
+  messageUserMap: Record<string, string>  // messageId -> userId
+}
+
 /**
  * List all conversations for the current session
  */
-export async function listConversations(): Promise<Conversation[]> {
+export async function listConversations(): Promise<ListConversationsResult> {
   try {
     // Import session management
     const { getOrCreateSessionId } = await import('./session')
@@ -58,12 +64,13 @@ export async function listConversations(): Promise<Conversation[]> {
     console.log('[ConversationAPI] Raw response data:', JSON.stringify(data, null, 2))
     
     const conversations = data.result || []
-    console.log('[ConversationAPI] Parsed conversations:', conversations)
+    const messageUserMap = data.message_user_map || {}
+    console.log('[ConversationAPI] Parsed conversations:', conversations.length, 'messageUserMap entries:', Object.keys(messageUserMap).length)
     
-    return conversations
+    return { conversations, messageUserMap }
   } catch (error) {
     console.error('[ConversationAPI] Failed to list conversations:', error)
-    return []
+    return { conversations: [], messageUserMap: {} }
   }
 }
 
@@ -101,22 +108,27 @@ export async function createConversation(): Promise<Conversation | null> {
 /**
  * Get a specific conversation with its embedded messages
  */
-export async function getConversation(conversationId: string): Promise<Conversation | null> {
+export interface GetConversationResult {
+  conversation: Conversation | null
+  messageUserMap: Record<string, string>
+}
+
+export async function getConversation(conversationId: string): Promise<GetConversationResult> {
   try {
     console.log('[ConversationAPI] Getting conversation:', conversationId)
-    const conversations = await listConversations()
+    const { conversations, messageUserMap } = await listConversations()
     const conversation = conversations.find(conv => conv.conversation_id === conversationId)
     
     if (conversation) {
       console.log('[ConversationAPI] Found conversation with', conversation.messages?.length || 0, 'embedded messages')
-      return conversation
+      return { conversation, messageUserMap }
     } else {
       console.log('[ConversationAPI] Conversation not found:', conversationId)
-      return null
+      return { conversation: null, messageUserMap }
     }
   } catch (error) {
     console.error('[ConversationAPI] Failed to get conversation:', error)
-    return null
+    return { conversation: null, messageUserMap: {} }
   }
 }
 

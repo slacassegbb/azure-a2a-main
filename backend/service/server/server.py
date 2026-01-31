@@ -43,6 +43,9 @@ from .adk_host_manager import ADKHostManager, get_message_id
 from .application_manager import ApplicationManager
 from .in_memory_manager import InMemoryFakeAgentManager
 
+# In-memory mapping of messageId -> userId for user color lookup
+message_user_map: Dict[str, str] = {}
+
 
 async def trigger_websocket_agent_refresh():
     """Trigger agent registry refresh on the WebSocket server via HTTP.
@@ -323,6 +326,7 @@ class ConversationServer:
         agent_mode = message_data.get('params', {}).get('agentMode', None)
         enable_inter_agent_memory = message_data.get('params', {}).get('enableInterAgentMemory', False)
         workflow = message_data.get('params', {}).get('workflow')
+        user_id = message_data.get('params', {}).get('userId')  # Extract userId for color lookup
         log_debug(f"_send_message: Agent Mode = {agent_mode}, Inter-Agent Memory = {enable_inter_agent_memory}, Workflow = {workflow[:50] if workflow else None}")
         
         # DEBUG: Log the contextId from frontend
@@ -346,6 +350,14 @@ class ConversationServer:
         message = Message(**transformed_params)
         log_debug(f"Message created with {len(message.parts)} parts: {[type(p).__name__ for p in message.parts]}")
         message = self.manager.sanitize_message(message)
+        
+        # Store userId mapping for this message (for user color lookup later)
+        msg_id = get_message_id(message)
+        print(f"[DEBUG] _send_message: user_id={user_id}, msg_id={msg_id}")
+        if user_id and msg_id:
+            message_user_map[msg_id] = user_id
+            print(f"[DEBUG] Stored userId mapping: {msg_id} -> {user_id}, map now has {len(message_user_map)} entries")
+            log_debug(f"_send_message: Stored userId mapping: {msg_id} -> {user_id}")
         
         log_debug(f"_send_message: Processing message asynchronously for contextId: {get_context_id(message)}")
         
@@ -499,13 +511,13 @@ class ConversationServer:
                         )
                         filtered_conversations.append(conv_copy)
                 
-                return ListConversationResponse(result=filtered_conversations)
+                return ListConversationResponse(result=filtered_conversations, message_user_map=message_user_map)
             
             # No session filter - return all conversations
-            return ListConversationResponse(result=all_conversations)
+            return ListConversationResponse(result=all_conversations, message_user_map=message_user_map)
         except Exception as e:
             log_debug(f"Error in _list_conversation: {e}")
-            return ListConversationResponse(result=self.manager.conversations)
+            return ListConversationResponse(result=self.manager.conversations, message_user_map=message_user_map)
 
     async def _delete_conversation(self, request: Request):
         """Delete a conversation by ID.

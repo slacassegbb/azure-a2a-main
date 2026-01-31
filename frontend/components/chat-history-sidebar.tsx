@@ -70,7 +70,7 @@ export function ChatHistorySidebar({ isCollapsed, onToggle }: Props) {
       setIsLoading(true)
       setError(null)
       console.log('[ChatHistorySidebar] Loading conversations...')
-      const conversations = await listConversations()
+      const { conversations } = await listConversations()
       console.log('[ChatHistorySidebar] Received conversations:', conversations)
       
       // For each conversation without a name, try to get the first message as title

@@ -138,6 +138,8 @@ type Message = {
   agent?: string
   type?: "inference_summary"
   steps?: { agent: string; status: string; imageUrl?: string; imageName?: string }[]
+  // User ID for looking up user info
+  userId?: string
   // Just username for showing who sent the message
   username?: string
   // User color for the avatar
@@ -910,11 +912,24 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       if (conversationId && conversationId !== 'frontend-chat-context') {
         try {
           if (DEBUG) console.log("[ChatPanel] Loading conversation:", conversationId)
-          const conversation = await getConversation(conversationId)
+          const { conversation, messageUserMap } = await getConversation(conversationId)
+          
+          // Fetch all users for color lookup (connectedUsers may not have all users)
+          let allUsers: any[] = []
+          try {
+            const baseUrl = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
+            const usersResponse = await fetch(`${baseUrl}/api/auth/users`)
+            const usersData = await usersResponse.json()
+            allUsers = usersData.users || []
+            console.log('[ChatPanel] Fetched', allUsers.length, 'users for color lookup')
+          } catch (e) {
+            console.error('[ChatPanel] Failed to fetch users for color lookup:', e)
+          }
           
           if (conversation && conversation.messages) {
             const apiMessages = conversation.messages
             if (DEBUG) console.log("[ChatPanel] Retrieved", apiMessages.length, "messages for conversation", conversationId)
+            if (DEBUG) console.log("[ChatPanel] messageUserMap has", Object.keys(messageUserMap).length, "entries")
             
             if (apiMessages.length > 0) {
               if (DEBUG) console.log("[ChatPanel] First message sample:", apiMessages[0])
@@ -1046,11 +1061,27 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                 console.log(`[ChatPanel] Message ${index} has ${images.length} files (images/videos)`)
               }
               
+              // Look up userId from messageUserMap and get color from allUsers (fetched above)
+              const messageId = msg.messageId || `api_msg_${index}`
+              const senderUserId = messageUserMap[messageId]
+              const senderUser = senderUserId ? allUsers.find(u => u.user_id === senderUserId) : null
+              const senderColor = senderUser?.color
+              
+              // Debug: log the lookup
+              if (msg.role === 'user') {
+                console.log(`[ChatPanel] Message ${messageId}: senderUserId=${senderUserId}, allUsers=${allUsers.length}, senderUser=${senderUser?.name}, color=${senderColor}`)
+              }
+              
               return {
-                id: msg.messageId || `api_msg_${index}`,
+                id: messageId,
                 role: (msg.role === 'user' || msg.role === 'assistant' || msg.role === 'agent') ? 
                       (msg.role === 'agent' ? 'assistant' : msg.role) : 'assistant',
                 content: content,
+                // Include user info for user messages (for avatar colors)
+                ...(msg.role === 'user' && senderUserId && {
+                  userId: senderUserId,
+                  userColor: senderColor,
+                }),
                 // NOTE: Don't set 'images' here - use 'attachments' only to avoid duplicate rendering
                 // The JSX has two render paths: one for message.images and one for message.attachments
                 // We only want to use attachments
@@ -1612,7 +1643,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
           username: data.message.username,
           userColor: data.message.userColor,
           agent: data.message.agent,
-          attachments: data.message.attachments // Include attachments (images, files)
+          attachments: data.message.attachments
         }
         
         // Add the message to our local state if we don't already have it
@@ -3026,7 +3057,8 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
             role: 'user',
             parts: parts,
             enableInterAgentMemory: enableInterAgentMemory,  // Include inter-agent memory flag
-            workflow: workflow ? workflow.trim() : undefined  // Backend auto-detects mode from workflow presence
+            workflow: workflow ? workflow.trim() : undefined,  // Backend auto-detects mode from workflow presence
+            userId: currentUser?.user_id,  // Store userId for color lookup when loading messages
           }
         })
       })
@@ -3115,8 +3147,8 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                   className={`group flex gap-3 ${message.role === "user" ? "justify-end" : "items-start"} relative`}
                 >
                   {message.role === "assistant" && (
-                    <div className="h-8 w-8 flex-shrink-0 bg-blue-100 rounded-full flex items-center justify-center">
-                      <Bot size={18} className="text-blue-600" />
+                    <div className="h-8 w-8 flex-shrink-0 bg-blue-500/10 rounded-lg flex items-center justify-center">
+                      <Bot size={16} className="text-blue-500" />
                     </div>
                   )}
                   <div className={`flex flex-col ${message.role === "user" ? "items-start" : "items-start"}`}>
@@ -3370,33 +3402,52 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                         </div>
                       )}
                       {message.content && message.content.trim().length > 0 && (
-                        <div className="text-sm prose prose-sm max-w-none dark:prose-invert">
+                        <div className="chat-message-content prose prose-sm max-w-none dark:prose-invert text-[13px]">
                           <ReactMarkdown
                             remarkPlugins={[remarkGfm]}
                             rehypePlugins={[rehypeHighlight]}
                             components={{
-                              p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
+                              p: ({ children }) => <p className="mb-1.5 last:mb-0 leading-relaxed text-[13px]">{children}</p>,
+                              strong: ({ children }) => <strong className="font-semibold text-foreground">{children}</strong>,
+                              em: ({ children }) => <em className="italic">{children}</em>,
                               code: ({ node, inline, className, children, ...props }: any) => 
                                 inline ? (
-                                  <code className="bg-black/10 dark:bg-white/10 px-1 py-0.5 rounded text-xs" {...props}>
+                                  <code className="bg-black/10 dark:bg-white/10 px-1.5 py-0.5 rounded text-[11px] font-mono" {...props}>
                                     {children}
                                   </code>
                                 ) : (
-                                  <code className="block bg-black/10 dark:bg-white/10 p-2 rounded text-xs overflow-x-auto" {...props}>
+                                  <code className="block bg-zinc-900 dark:bg-zinc-950 text-zinc-100 p-3 rounded-lg text-[11px] overflow-x-auto font-mono leading-relaxed" {...props}>
                                     {children}
                                   </code>
                                 ),
-                              pre: ({ children }) => <div className="my-2">{children}</div>,
-                              ul: ({ children }) => <ul className="mb-2 last:mb-0 pl-4">{children}</ul>,
-                              ol: ({ children }) => <ol className="mb-2 last:mb-0 pl-4">{children}</ol>,
-                              li: ({ children }) => <li className="mb-1">{children}</li>,
-                              h1: ({ children }) => <h1 className="text-base font-bold mb-2">{children}</h1>,
-                              h2: ({ children }) => <h2 className="text-sm font-bold mb-2">{children}</h2>,
-                              h3: ({ children }) => <h3 className="text-sm font-semibold mb-1">{children}</h3>,
+                              pre: ({ children }) => <div className="my-2 rounded-lg overflow-hidden">{children}</div>,
+                              ul: ({ children }) => <ul className="my-1.5 pl-4 space-y-0.5 list-disc marker:text-muted-foreground text-[13px]">{children}</ul>,
+                              ol: ({ children }) => <ol className="my-1.5 pl-4 space-y-0.5 list-decimal marker:text-muted-foreground text-[13px]">{children}</ol>,
+                              li: ({ children }) => <li className="leading-relaxed pl-0.5 text-[13px]">{children}</li>,
+                              h1: ({ children }) => <h1 className="text-[15px] font-bold mt-3 mb-1.5 pb-1 border-b border-border text-foreground">{children}</h1>,
+                              h2: ({ children }) => <h2 className="text-[14px] font-bold mt-3 mb-1.5 text-foreground">{children}</h2>,
+                              h3: ({ children }) => <h3 className="text-[13px] font-semibold mt-2 mb-1 text-foreground">{children}</h3>,
+                              h4: ({ children }) => <h4 className="text-[13px] font-medium mt-2 mb-1 text-muted-foreground">{children}</h4>,
                               blockquote: ({ children }) => (
-                                <blockquote className="border-l-2 border-gray-300 dark:border-gray-600 pl-2 my-2 italic">
+                                <blockquote className="border-l-4 border-primary/30 bg-muted/30 pl-3 py-1.5 my-2 rounded-r italic text-[13px]">
                                   {children}
                                 </blockquote>
+                              ),
+                              hr: () => <hr className="my-3 border-border" />,
+                              table: ({ children }) => (
+                                <div className="my-2 overflow-x-auto rounded-lg border border-border">
+                                  <table className="w-full text-[13px]">{children}</table>
+                                </div>
+                              ),
+                              thead: ({ children }) => <thead className="bg-muted/50">{children}</thead>,
+                              tbody: ({ children }) => <tbody className="divide-y divide-border">{children}</tbody>,
+                              tr: ({ children }) => <tr className="hover:bg-muted/30 transition-colors">{children}</tr>,
+                              th: ({ children }) => <th className="px-2 py-1.5 text-left font-semibold text-foreground text-[13px]">{children}</th>,
+                              td: ({ children }) => <td className="px-2 py-1.5 text-muted-foreground text-[13px]">{children}</td>,
+                              a: ({ children, href }) => (
+                                <a href={href} target="_blank" rel="noopener noreferrer" className="text-primary underline underline-offset-2 hover:text-primary/80">
+                                  {children}
+                                </a>
                               ),
                             }}
                           >
@@ -3406,13 +3457,15 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                       )}
                     </div>
                     {message.role === "user" && (() => {
-                      const { bgColor, iconColor } = getAvatarStyles(message.userColor)
+                      // Use message.userColor if available (from API), otherwise fall back to currentUser.color
+                      const avatarColor = message.userColor || currentUser?.color
+                      const { bgColor, iconColor } = getAvatarStyles(avatarColor)
                       return (
                         <div 
-                          className="h-8 w-8 flex-shrink-0 rounded-full flex items-center justify-center"
+                          className="h-8 w-8 flex-shrink-0 rounded-lg flex items-center justify-center"
                           style={{ backgroundColor: bgColor }}
                         >
-                          <User size={18} style={{ color: iconColor }} />
+                          <User size={16} style={{ color: iconColor }} />
                         </div>
                       )
                     })()}
@@ -3512,44 +3565,63 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
               const streamingMsg = messages.find(m => m.id === streamingMessageId)!
               return (
                 <div className="flex gap-3 items-start">
-                  <div className="h-8 w-8 flex-shrink-0 bg-blue-100 rounded-full flex items-center justify-center">
-                    <Bot size={18} className="text-blue-600" />
+                  <div className="h-8 w-8 flex-shrink-0 bg-blue-500/10 rounded-lg flex items-center justify-center">
+                    <Bot size={16} className="text-blue-500" />
                   </div>
                   <div className="flex flex-col items-start flex-1">
                     <div className="rounded-lg p-3 bg-muted w-full">
-                      <div className="text-sm prose prose-sm max-w-none dark:prose-invert">
+                      <div className="chat-message-content prose prose-sm max-w-none dark:prose-invert text-[13px]">
                         <ReactMarkdown
                           remarkPlugins={[remarkGfm]}
                           rehypePlugins={[rehypeHighlight]}
                           components={{
-                            p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
+                            p: ({ children }) => <p className="mb-1.5 last:mb-0 leading-relaxed text-[13px]">{children}</p>,
+                            strong: ({ children }) => <strong className="font-semibold text-foreground">{children}</strong>,
+                            em: ({ children }) => <em className="italic">{children}</em>,
                             code: ({ node, inline, className, children, ...props }: any) => 
                               inline ? (
-                                <code className="bg-black/10 dark:bg-white/10 px-1 py-0.5 rounded text-xs" {...props}>
+                                <code className="bg-black/10 dark:bg-white/10 px-1.5 py-0.5 rounded text-[11px] font-mono" {...props}>
                                   {children}
                                 </code>
                               ) : (
-                                <code className="block bg-black/10 dark:bg-white/10 p-2 rounded text-xs overflow-x-auto" {...props}>
+                                <code className="block bg-zinc-900 dark:bg-zinc-950 text-zinc-100 p-3 rounded-lg text-[11px] overflow-x-auto font-mono leading-relaxed" {...props}>
                                   {children}
                                 </code>
                               ),
-                            pre: ({ children }) => <div className="my-2">{children}</div>,
-                            ul: ({ children }) => <ul className="mb-2 last:mb-0 pl-4">{children}</ul>,
-                            ol: ({ children }) => <ol className="mb-2 last:mb-0 pl-4">{children}</ol>,
-                            li: ({ children }) => <li className="mb-1">{children}</li>,
-                            h1: ({ children }) => <h1 className="text-base font-bold mb-2">{children}</h1>,
-                            h2: ({ children }) => <h2 className="text-sm font-bold mb-2">{children}</h2>,
-                            h3: ({ children }) => <h3 className="text-sm font-semibold mb-1">{children}</h3>,
+                            pre: ({ children }) => <div className="my-2 rounded-lg overflow-hidden">{children}</div>,
+                            ul: ({ children }) => <ul className="my-1.5 pl-4 space-y-0.5 list-disc marker:text-muted-foreground text-[13px]">{children}</ul>,
+                            ol: ({ children }) => <ol className="my-1.5 pl-4 space-y-0.5 list-decimal marker:text-muted-foreground text-[13px]">{children}</ol>,
+                            li: ({ children }) => <li className="leading-relaxed pl-0.5 text-[13px]">{children}</li>,
+                            h1: ({ children }) => <h1 className="text-[15px] font-bold mt-3 mb-1.5 pb-1 border-b border-border text-foreground">{children}</h1>,
+                            h2: ({ children }) => <h2 className="text-[14px] font-bold mt-3 mb-1.5 text-foreground">{children}</h2>,
+                            h3: ({ children }) => <h3 className="text-[13px] font-semibold mt-2 mb-1 text-foreground">{children}</h3>,
+                            h4: ({ children }) => <h4 className="text-[13px] font-medium mt-2 mb-1 text-muted-foreground">{children}</h4>,
                             blockquote: ({ children }) => (
-                              <blockquote className="border-l-2 border-gray-300 dark:border-gray-600 pl-2 my-2 italic">
+                              <blockquote className="border-l-4 border-primary/30 bg-muted/30 pl-3 py-1.5 my-2 rounded-r italic text-[13px]">
                                 {children}
                               </blockquote>
+                            ),
+                            hr: () => <hr className="my-3 border-border" />,
+                            table: ({ children }) => (
+                              <div className="my-2 overflow-x-auto rounded-lg border border-border">
+                                <table className="w-full text-[13px]">{children}</table>
+                              </div>
+                            ),
+                            thead: ({ children }) => <thead className="bg-muted/50">{children}</thead>,
+                            tbody: ({ children }) => <tbody className="divide-y divide-border">{children}</tbody>,
+                            tr: ({ children }) => <tr className="hover:bg-muted/30 transition-colors">{children}</tr>,
+                            th: ({ children }) => <th className="px-2 py-1.5 text-left font-semibold text-foreground text-[13px]">{children}</th>,
+                            td: ({ children }) => <td className="px-2 py-1.5 text-muted-foreground text-[13px]">{children}</td>,
+                            a: ({ children, href }) => (
+                              <a href={href} target="_blank" rel="noopener noreferrer" className="text-primary underline underline-offset-2 hover:text-primary/80">
+                                {children}
+                              </a>
                             ),
                           }}
                         >
                           {streamingMsg.content || ""}
                         </ReactMarkdown>
-                        <span className="inline-block w-2 h-4 bg-blue-600 animate-pulse ml-1" />
+                        <span className="inline-block w-1.5 h-3.5 bg-blue-600 animate-pulse ml-1" />
                       </div>
                     </div>
                   </div>
