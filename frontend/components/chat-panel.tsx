@@ -3152,9 +3152,6 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                     </div>
                   )}
                   <div className={`flex flex-col ${message.role === "user" ? "items-start" : "items-start"}`}>
-                    {message.role === "user" && message.username && (
-                      <p className="text-xs text-muted-foreground mb-1">{message.username}</p>
-                    )}
                     <div className="flex gap-3 relative">
                       {/* Reaction picker - shows on hover */}
                       {isInCollaborativeSession && (
