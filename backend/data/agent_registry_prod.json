@@ -1371,5 +1371,126 @@
         ]
       }
     ]
+  },
+  {
+    "name": "AI Foundry Stripe Agent",
+    "description": "An intelligent payment processing agent powered by Azure AI Foundry with Stripe integration via MCP. Specializes in customer management, payment intents, subscriptions, invoices, products, pricing, and balance inquiries using real-time Stripe data.",
+    "version": "1.0.0",
+    "url": "https://azurefoundry-stripe.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "stripe_customers",
+        "name": "Stripe Customer Management",
+        "description": "Create, search, update, and manage customer records in Stripe. Access customer details, payment methods, and subscription history.",
+        "examples": [
+          "List all my Stripe customers",
+          "Create a new customer with email john@example.com",
+          "Search for customers with the name Smith",
+          "Get customer details for cus_123abc"
+        ],
+        "tags": [
+          "stripe",
+          "customers",
+          "payments",
+          "crm"
+        ]
+      },
+      {
+        "id": "stripe_payments",
+        "name": "Stripe Payment Processing",
+        "description": "Create and manage payment intents, process charges, handle refunds, and track payment status in Stripe.",
+        "examples": [
+          "Create a payment intent for $100",
+          "List recent payment intents",
+          "Show me all successful payments",
+          "Check the status of payment intent pi_xyz"
+        ],
+        "tags": [
+          "stripe",
+          "payments",
+          "charges",
+          "refunds",
+          "payment-intents"
+        ]
+      },
+      {
+        "id": "stripe_subscriptions",
+        "name": "Stripe Subscription Management",
+        "description": "Create, update, cancel, and manage recurring subscriptions. Handle subscription schedules and billing cycles.",
+        "examples": [
+          "List all active subscriptions",
+          "Create a subscription for customer cus_123",
+          "Cancel subscription sub_abc",
+          "Update subscription to a different plan"
+        ],
+        "tags": [
+          "stripe",
+          "subscriptions",
+          "recurring",
+          "billing"
+        ]
+      },
+      {
+        "id": "stripe_products_prices",
+        "name": "Stripe Products & Pricing",
+        "description": "Manage your product catalog and pricing in Stripe. Create products, set prices, and manage pricing tiers.",
+        "examples": [
+          "List all products",
+          "Create a new product called Premium Plan",
+          "Set up a $29/month price for a product",
+          "Show me all active prices"
+        ],
+        "tags": [
+          "stripe",
+          "products",
+          "prices",
+          "catalog",
+          "pricing"
+        ]
+      },
+      {
+        "id": "stripe_invoices",
+        "name": "Stripe Invoice Management",
+        "description": "Create, send, and manage invoices in Stripe. Track invoice status, payments, and handle invoice items.",
+        "examples": [
+          "List all unpaid invoices",
+          "Create an invoice for customer cus_123",
+          "Send invoice inv_abc to the customer",
+          "Show me overdue invoices"
+        ],
+        "tags": [
+          "stripe",
+          "invoices",
+          "billing",
+          "accounts-receivable"
+        ]
+      },
+      {
+        "id": "stripe_balance",
+        "name": "Stripe Balance & Payouts",
+        "description": "Check your Stripe balance, view available and pending funds, and manage payouts to your bank account.",
+        "examples": [
+          "What is my current Stripe balance?",
+          "Show me available funds",
+          "List recent payouts",
+          "How much is pending in my account?"
+        ],
+        "tags": [
+          "stripe",
+          "balance",
+          "payouts",
+          "funds"
+        ]
+      }
+    ]
   }
 ]

@@ -1494,5 +1494,82 @@
     "supportsAuthenticatedExtendedCard": null,
     "url": "http://localhost:8020/",
     "version": "1.0.0"
+  },
+  {
+    "additionalInterfaces": null,
+    "capabilities": {
+      "extensions": null,
+      "pushNotifications": null,
+      "stateTransitionHistory": null,
+      "streaming": true
+    },
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "description": "Intelligent agent for Stripe payment processing - customers, payments, subscriptions, invoices, and balance.",
+    "documentationUrl": null,
+    "iconUrl": null,
+    "name": "AI Foundry Stripe Agent",
+    "preferredTransport": "JSONRPC",
+    "protocolVersion": "0.3.0",
+    "provider": null,
+    "security": null,
+    "securitySchemes": null,
+    "signatures": null,
+    "skills": [
+      {
+        "description": "Create, search, update, and manage customer records in Stripe.",
+        "examples": [
+          "List all my Stripe customers"
+        ],
+        "id": "stripe_customers",
+        "inputModes": null,
+        "name": "Stripe Customer Management",
+        "outputModes": null,
+        "security": null,
+        "tags": [
+          "stripe",
+          "customers",
+          "payments"
+        ]
+      },
+      {
+        "description": "Create payment intents, process charges, and handle refunds.",
+        "examples": [
+          "Create a payment intent for $100"
+        ],
+        "id": "stripe_payments",
+        "inputModes": null,
+        "name": "Stripe Payment Processing",
+        "outputModes": null,
+        "security": null,
+        "tags": [
+          "stripe",
+          "payments",
+          "charges"
+        ]
+      },
+      {
+        "description": "Check balance and view available funds.",
+        "examples": [
+          "What is my current Stripe balance?"
+        ],
+        "id": "stripe_balance",
+        "inputModes": null,
+        "name": "Stripe Balance",
+        "outputModes": null,
+        "security": null,
+        "tags": [
+          "stripe",
+          "balance"
+        ]
+      }
+    ],
+    "supportsAuthenticatedExtendedCard": null,
+    "url": "http://localhost:9030/",
+    "version": "1.0.0"
   }
 ]
