@@ -99,7 +99,7 @@ def test_with_quickbooks_server():
         endpoint=os.environ["AZURE_AI_FOUNDRY_PROJECT_ENDPOINT"],
     )
     
-    mcp_url = "https://b216cb9d1f7a.ngrok-free.app/sse"
+    mcp_url = "https://mcp-quickbooks.ambitioussky-6c709152.westus2.azurecontainerapps.io/sse"
     
     mcp_tool = McpTool(
         server_label="QuickBooks",

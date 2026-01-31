@@ -1269,5 +1269,107 @@
       "test prep"
     ],
     "avatar": "/placeholder.svg?height=32&width=32"
+  },
+  {
+    "name": "AI Foundry QuickBooks Agent",
+    "description": "An intelligent accounting agent powered by Azure AI Foundry with QuickBooks Online integration via MCP. Specializes in financial queries, customer management, invoice handling, and accounting reports using real-time QuickBooks data.",
+    "version": "1.0.0",
+    "url": "https://azurefoundry-quickbooks.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "quickbooks_queries",
+        "name": "QuickBooks Queries",
+        "description": "Execute SQL-like queries against QuickBooks Online data including customers, invoices, accounts, and vendors",
+        "examples": [
+          "Show me all customers",
+          "List invoices from last month",
+          "Query accounts receivable",
+          "Find vendors with outstanding bills"
+        ],
+        "tags": [
+          "quickbooks",
+          "queries",
+          "data",
+          "search"
+        ]
+      },
+      {
+        "id": "financial_reports",
+        "name": "Financial Reports",
+        "description": "Generate financial reports including Profit & Loss, Balance Sheet, and Cash Flow statements",
+        "examples": [
+          "Generate a profit and loss report",
+          "Show me the balance sheet",
+          "What's our cash flow this quarter?",
+          "Run a financial summary report"
+        ],
+        "tags": [
+          "reports",
+          "financial",
+          "accounting",
+          "statements"
+        ]
+      },
+      {
+        "id": "customer_management",
+        "name": "Customer Management",
+        "description": "Search, create, update, and manage customer records in QuickBooks",
+        "examples": [
+          "Find customer by name",
+          "Create a new customer",
+          "Update customer contact info",
+          "Show customer details"
+        ],
+        "tags": [
+          "customers",
+          "crm",
+          "management",
+          "contacts"
+        ]
+      },
+      {
+        "id": "invoice_management",
+        "name": "Invoice Management",
+        "description": "Search, create, and manage invoices in QuickBooks Online",
+        "examples": [
+          "Show unpaid invoices",
+          "Create an invoice for customer",
+          "Find invoice by number",
+          "List overdue invoices"
+        ],
+        "tags": [
+          "invoices",
+          "billing",
+          "payments",
+          "accounts-receivable"
+        ]
+      },
+      {
+        "id": "company_info",
+        "name": "Company Information",
+        "description": "Retrieve company details and settings from QuickBooks",
+        "examples": [
+          "Get company information",
+          "What's our company address?",
+          "Show company settings",
+          "What subscription do we have?"
+        ],
+        "tags": [
+          "company",
+          "settings",
+          "info",
+          "configuration"
+        ]
+      }
+    ]
   }
 ]

@@ -190,7 +190,7 @@ class FoundryQuickBooksAgent:
         
         # Start with MCP tools using the new McpTool class - FIXED FOR AZURE FOUNDRY
         logger.info("🔍 CREATING MCP TOOL CONNECTION...")
-        logger.info(f"   Server URL: https://b216cb9d1f7a.ngrok-free.app/sse")
+        logger.info(f"   Server URL: https://mcp-quickbooks.ambitioussky-6c709152.westus2.azurecontainerapps.io/sse")
         logger.info(f"   Server Label: QuickBooks")
         
         try:
@@ -208,7 +208,7 @@ class FoundryQuickBooksAgent:
                         "Accept": "text/event-stream"
                     }
                     async with httpx.AsyncClient(timeout=10.0) as client:
-                        async with client.stream("GET", "https://b216cb9d1f7a.ngrok-free.app/sse", headers=headers) as response:
+                        async with client.stream("GET", "https://mcp-quickbooks.ambitioussky-6c709152.westus2.azurecontainerapps.io/sse", headers=headers) as response:
                             logger.info(f"   MCP Server Response: {response.status_code}")
                             logger.info(f"   Response Headers: {dict(response.headers)}")
                             
@@ -254,8 +254,8 @@ class FoundryQuickBooksAgent:
             
             # Create MCP tool - ALL 15 tools work with simplified flat schemas!
             logger.info("🔧 CREATING McpTool OBJECT...")
-            # QuickBooks MCP server via ngrok
-            self._mcp_server_url = "https://b216cb9d1f7a.ngrok-free.app/sse"
+            # QuickBooks MCP server via Azure Container Apps
+            self._mcp_server_url = "https://mcp-quickbooks.ambitioussky-6c709152.westus2.azurecontainerapps.io/sse"
             logger.info(f"🔧 Using MCP server URL: {self._mcp_server_url}")
             mcp_tool = McpTool(
                 server_label="QuickBooks",
