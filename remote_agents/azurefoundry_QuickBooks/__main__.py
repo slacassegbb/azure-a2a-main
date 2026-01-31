@@ -193,7 +193,7 @@ def create_a2a_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
 
     # Create agent card
     agent_card = AgentCard(
-        name='QuickBooks Online Agent',
+        name='AI Foundry QuickBooks Agent',
         description="An intelligent agent specialized in QuickBooks Online accounting. Can manage customers, invoices, bills, vendors, employees, and generate financial reports. Also supports web search and document search capabilities.",
         url=resolve_agent_url(resolved_host_for_url, port),
         version='1.0.0',
@@ -368,7 +368,7 @@ async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_p
 
     resolved_host_for_ui_card = host if host != "0.0.0.0" else DEFAULT_HOST
     agent_card = AgentCard(
-        name='QuickBooks Online Agent',
+        name='AI Foundry QuickBooks Agent',
         description="An intelligent QuickBooks Online agent for accounting and financial management.",
         url=resolve_agent_url(resolved_host_for_ui_card, a2a_port),
         version='1.0.0',
@@ -584,7 +584,7 @@ async def main_async(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
     resolved_host_for_url = host if host != "0.0.0.0" else DEFAULT_HOST
 
     agent_card = AgentCard(
-        name='QuickBooks Online Agent',
+        name='AI Foundry QuickBooks Agent',
         description="An intelligent QuickBooks Online agent for accounting and financial management. Manage customers, invoices, bills, vendors, employees, and generate financial reports.",
         url=resolve_agent_url(resolved_host_for_url, port),
         version='1.0.0',
