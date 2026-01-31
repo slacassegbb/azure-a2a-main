@@ -777,12 +777,12 @@ export function FileHistory({ className, onFileSelect, onFilesLoaded, conversati
                               className="w-full h-full object-cover"
                               onError={(e) => {
                                 e.currentTarget.style.display = 'none'
-                                e.currentTarget.parentElement!.innerHTML = '<div class="w-full h-full flex items-center justify-center bg-gradient-to-br from-blue-500/20 to-cyan-500/20"><span class="text-lg">🖼️</span></div>'
+                                e.currentTarget.parentElement!.innerHTML = '<div class="w-full h-full flex items-center justify-center"><span class="text-lg">🖼️</span></div>'
                               }}
                             />
                           </div>
                         ) : (
-                          <div className={`w-10 h-10 rounded-md flex items-center justify-center bg-gradient-to-br ${fileStyle.gradient} border border-border/50`}>
+                          <div className="w-10 h-10 rounded-md flex items-center justify-center">
                             <span className="text-lg">{fileStyle.icon}</span>
                           </div>
                         )}
