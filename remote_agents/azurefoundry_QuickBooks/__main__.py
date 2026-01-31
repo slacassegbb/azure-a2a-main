@@ -22,7 +22,7 @@ from starlette.routing import Route
 from a2a.server.apps import A2AStarletteApplication
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.tasks import InMemoryTaskStore
-from a2a.types import AgentCard, AgentSkill
+from a2a.types import AgentCapabilities, AgentCard, AgentSkill
 
 load_dotenv()
 
@@ -199,7 +199,7 @@ def create_a2a_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
         version='1.0.0',
         defaultInputModes=['text'],
         defaultOutputModes=['text'],
-        capabilities={"streaming": True},
+        capabilities=AgentCapabilities(streaming=True),
         skills=skills,
     )
 
@@ -374,7 +374,7 @@ async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_p
         version='1.0.0',
         defaultInputModes=['text'],
         defaultOutputModes=['text'],
-        capabilities={"streaming": True},
+        capabilities=AgentCapabilities(streaming=True),
         skills=skills,
     )
     start_background_registration(agent_card)
@@ -590,7 +590,7 @@ async def main_async(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
         version='1.0.0',
         defaultInputModes=['text'],
         defaultOutputModes=['text'],
-        capabilities={"streaming": True},
+        capabilities=AgentCapabilities(streaming=True),
         skills=skills,
     )
     
