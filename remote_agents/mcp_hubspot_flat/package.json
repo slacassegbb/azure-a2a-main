@@ -1,0 +1,14 @@
+{
+  "name": "mcp-hubspot-flat",
+  "version": "1.0.0",
+  "description": "Flattened HubSpot MCP server for Azure AI Foundry compatibility",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0"
+  }
+}

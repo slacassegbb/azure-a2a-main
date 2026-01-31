@@ -1492,5 +1492,113 @@
         ]
       }
     ]
+  },
+  {
+    "name": "AI Foundry HubSpot Agent",
+    "description": "A CRM agent powered by Azure AI Foundry that integrates with HubSpot. Provides access to contacts, companies, deals, and activities. Can search, create, and update CRM records.",
+    "version": "1.0.0",
+    "url": "https://azurefoundry-hubspot.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "crm_query",
+        "name": "CRM Data Query",
+        "description": "Query and search HubSpot CRM data including contacts, companies, deals, and activities",
+        "examples": [
+          "List all my HubSpot contacts",
+          "Show me all companies in HubSpot",
+          "Find deals worth over $10,000",
+          "Search for contacts at Acme Corp"
+        ],
+        "tags": [
+          "hubspot",
+          "crm",
+          "contacts",
+          "companies",
+          "deals",
+          "search"
+        ]
+      },
+      {
+        "id": "contact_management",
+        "name": "Contact Management",
+        "description": "Create, update, and manage contacts in HubSpot CRM",
+        "examples": [
+          "Create a new contact John Smith at john@example.com",
+          "Update contact email address",
+          "Add a note to a contact",
+          "Find contact by email"
+        ],
+        "tags": [
+          "hubspot",
+          "contacts",
+          "create",
+          "update",
+          "notes"
+        ]
+      },
+      {
+        "id": "company_management",
+        "name": "Company Management",
+        "description": "Create, update, and manage companies in HubSpot CRM",
+        "examples": [
+          "Create a new company called TechCorp",
+          "List all companies",
+          "Update company domain",
+          "Find company by name"
+        ],
+        "tags": [
+          "hubspot",
+          "companies",
+          "create",
+          "update",
+          "organizations"
+        ]
+      },
+      {
+        "id": "deal_management",
+        "name": "Deal Management",
+        "description": "Create, update, and track deals and sales opportunities in HubSpot",
+        "examples": [
+          "Create a new deal for $50,000",
+          "List all open deals",
+          "Update deal stage to closed won",
+          "Show deals in negotiation stage"
+        ],
+        "tags": [
+          "hubspot",
+          "deals",
+          "sales",
+          "pipeline",
+          "opportunities"
+        ]
+      },
+      {
+        "id": "data_analysis",
+        "name": "CRM Data Analysis",
+        "description": "Analyze CRM data, generate summaries, and provide insights",
+        "examples": [
+          "How many contacts do I have?",
+          "Summarize my deal pipeline",
+          "Show contact activity history",
+          "What's my total deal value?"
+        ],
+        "tags": [
+          "hubspot",
+          "analytics",
+          "insights",
+          "summary",
+          "reports"
+        ]
+      }
+    ]
   }
 ]
