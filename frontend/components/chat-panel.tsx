@@ -3144,7 +3144,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
               return (
                 <div
                   key={`${message.id}-${index}`}
-                  className={`group flex gap-3 ${message.role === "user" ? "justify-end" : "items-start"} relative`}
+                  className={`flex gap-3 ${message.role === "user" ? "justify-end" : "items-start"} relative`}
                 >
                   {message.role === "assistant" && (
                     <div className="h-8 w-8 flex-shrink-0 bg-blue-500/10 rounded-lg flex items-center justify-center">
@@ -3152,7 +3152,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                     </div>
                   )}
                   <div className={`flex flex-col ${message.role === "user" ? "items-start" : "items-start"}`}>
-                    <div className="flex gap-3 relative">
+                    <div className="group flex gap-3 relative">
                       {/* Reaction picker - shows on hover */}
                       {isInCollaborativeSession && (
                         <div className="absolute -top-8 left-0 hidden group-hover:flex items-center gap-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg p-1 z-10">
