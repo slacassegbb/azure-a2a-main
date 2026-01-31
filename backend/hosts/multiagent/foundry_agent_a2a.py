@@ -2374,9 +2374,25 @@ Answer with just JSON:
             if not client:
                 raise ValueError(f"Client not available for {agent_name}")
 
+            # Ensure message is clean text, not a JSON structure
+            clean_message = message
+            if isinstance(message, str) and message.strip().startswith('{') and 'contextId' in message:
+                # This looks like a stringified A2A message - extract just the text
+                try:
+                    import json
+                    msg_obj = json.loads(message)
+                    if isinstance(msg_obj, dict) and 'parts' in msg_obj:
+                        for part in msg_obj['parts']:
+                            if isinstance(part, dict) and part.get('kind') == 'text' and 'text' in part:
+                                clean_message = part['text']
+                                print(f"⚠️ Cleaned JSON message structure to text: {clean_message[:100]}...")
+                                break
+                except:
+                    pass  # Keep original if parsing fails
+
             # Add conversation context to message (this can be optimized further)
             contextualized_message = await self._add_context_to_message(
-                message,
+                clean_message,
                 session_context,
                 thread_id=None,
                 target_agent_name=agent_name,
@@ -2934,7 +2950,7 @@ Answer with just JSON:
                         # Get the actual content - try multiple possible locations
                         content_summary = ""
                         
-                        # Method 1: Look for direct content field in inbound response
+                        # Method 1: Look for content in inbound payload
                         if 'inbound_payload' in result and result['inbound_payload']:
                             inbound = result['inbound_payload']
                             
@@ -2949,7 +2965,23 @@ Answer with just JSON:
                             if isinstance(inbound, dict) and 'content' in inbound:
                                 content_summary = str(inbound['content'])
                             
-                            # Try parts array (A2A Message structure)
+                            # Try Task structure: status.message.parts (A2A Task format)
+                            elif isinstance(inbound, dict) and 'status' in inbound:
+                                status = inbound['status']
+                                if isinstance(status, dict) and 'message' in status:
+                                    message = status['message']
+                                    if isinstance(message, dict) and 'parts' in message:
+                                        parts_content = []
+                                        for part in message['parts']:
+                                            if isinstance(part, dict):
+                                                if 'text' in part:
+                                                    parts_content.append(str(part['text']))
+                                                elif 'kind' in part and part['kind'] == 'text' and 'text' in part:
+                                                    parts_content.append(str(part['text']))
+                                        if parts_content:
+                                            content_summary = " ".join(parts_content)
+                            
+                            # Try parts array at root (A2A Message structure)
                             elif isinstance(inbound, dict) and 'parts' in inbound:
                                 parts_content = []
                                 for part in inbound['parts']:
@@ -2971,26 +3003,35 @@ Answer with just JSON:
                                 except json.JSONDecodeError:
                                     outbound = {}
                             
+                            # Try message.parts structure (A2A response format)
                             if isinstance(outbound, dict) and 'message' in outbound and 'parts' in outbound['message']:
                                 parts_content = []
                                 for part in outbound['message']['parts']:
-                                    if isinstance(part, dict) and 'root' in part and 'text' in part['root']:
-                                        parts_content.append(str(part['root']['text']))
+                                    if isinstance(part, dict):
+                                        # Try direct text field
+                                        if 'text' in part:
+                                            parts_content.append(str(part['text']))
+                                        # Try root.text structure
+                                        elif 'root' in part and isinstance(part['root'], dict) and 'text' in part['root']:
+                                            parts_content.append(str(part['root']['text']))
+                                        # Try kind=text structure
+                                        elif part.get('kind') == 'text' and 'text' in part:
+                                            parts_content.append(str(part['text']))
                                 if parts_content:
                                     content_summary = " ".join(parts_content)
                         
-                        # Method 3: Fallback - try to extract any text from the raw result
+                        # Method 3: Skip - don't dump raw JSON, just skip if we can't extract text
                         if not content_summary:
-                            # Convert entire result to string and look for meaningful content
-                            result_str = str(result)
-                            if len(result_str) > 50:  # Only if there's substantial content
-                                content_summary = result_str
+                            # Skip this memory result - we couldn't extract meaningful text
+                            print(f"⚠️ Skipping memory result {i} from {agent_name} - no clean text extracted")
+                            continue
                         
                         # Add to context if we found content
                         if content_summary:
-                            # Truncate long content for context efficiency
-                            if len(content_summary) > self.memory_summary_max_chars:
-                                content_summary = content_summary[: self.memory_summary_max_chars] + "..."
+                            # Truncate long content for context efficiency (limit to 500 chars)
+                            max_chars = min(self.memory_summary_max_chars, 500)
+                            if len(content_summary) > max_chars:
+                                content_summary = content_summary[:max_chars] + "..."
                             context_parts.append(f"  {i}. From {agent_name}: {content_summary}")
                         else:
                             print(f"⚠️ No content found in memory result {i} from {agent_name}")
@@ -3086,11 +3127,28 @@ Answer with just JSON:
                 print(f"❌ Error accessing thread context: {e}")
         
         # Combine context with original message
+        # IMPORTANT: Ensure message is clean text, not JSON structure
+        clean_message = message
+        if isinstance(message, str):
+            # Check if message looks like a JSON/dict structure that was stringified
+            if message.strip().startswith('{') and 'contextId' in message:
+                # This is a raw message structure, try to extract just the text
+                try:
+                    import json
+                    msg_obj = json.loads(message)
+                    if isinstance(msg_obj, dict) and 'parts' in msg_obj:
+                        for part in msg_obj['parts']:
+                            if isinstance(part, dict) and part.get('kind') == 'text' and 'text' in part:
+                                clean_message = part['text']
+                                break
+                except:
+                    pass  # Keep original if parsing fails
+        
         if context_parts:
             full_context = "\n".join(context_parts)
-            return f"{full_context}\n\nCurrent request: {message}"
+            return f"{full_context}\n\nCurrent request: {clean_message}"
         else:
-            return message
+            return clean_message
 
     async def _store_a2a_interaction_background(
         self, 
