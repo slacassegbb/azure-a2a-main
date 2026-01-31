@@ -92,3 +92,136 @@ body {
     @apply bg-background text-foreground;
   }
 }
+
+/* Enhanced Chat Message Formatting */
+.chat-message-content {
+  @apply text-[13px] leading-relaxed;
+  font-size: 13px !important;
+}
+
+.chat-message-content p,
+.chat-message-content li,
+.chat-message-content td,
+.chat-message-content th {
+  font-size: 13px !important;
+}
+
+.chat-message-content strong {
+  @apply font-semibold text-foreground;
+}
+
+.chat-message-content em {
+  @apply italic;
+}
+
+/* Improved list indentation for financial reports */
+.chat-message-content ul,
+.chat-message-content ol {
+  @apply my-1.5;
+}
+
+.chat-message-content li {
+  @apply mb-0.5;
+}
+
+/* Nested list styling - for hierarchical data like P&L reports */
+.chat-message-content ul ul,
+.chat-message-content ol ol,
+.chat-message-content ul ol,
+.chat-message-content ol ul {
+  @apply ml-4 mt-0.5 mb-0;
+}
+
+/* Table styling for tabular data */
+.chat-message-content table {
+  @apply w-full border-collapse my-3 text-sm;
+}
+
+.chat-message-content th {
+  @apply border border-border bg-muted px-3 py-2 text-left font-semibold;
+}
+
+.chat-message-content td {
+  @apply border border-border px-3 py-2;
+}
+
+.chat-message-content tr:hover {
+  @apply bg-muted/50;
+}
+
+/* Section headers for reports - adjusted for smaller base font */
+.chat-message-content h1 {
+  @apply text-base font-bold mt-3 mb-2 pb-1 border-b border-border;
+  font-size: 15px !important;
+}
+
+.chat-message-content h2 {
+  @apply text-sm font-bold mt-3 mb-1.5 text-primary;
+  font-size: 14px !important;
+}
+
+.chat-message-content h3 {
+  @apply text-sm font-semibold mt-2 mb-1 text-muted-foreground;
+  font-size: 13px !important;
+}
+
+.chat-message-content h4 {
+  @apply text-sm font-medium mt-2 mb-1;
+  font-size: 13px !important;
+}
+
+/* Horizontal rules for section breaks */
+.chat-message-content hr {
+  @apply my-3 border-border;
+}
+
+/* Money/number alignment helper */
+.chat-message-content .amount,
+.chat-message-content code:not(pre code) {
+  @apply font-mono text-xs;
+}
+
+/* Blockquote for summaries/totals */
+.chat-message-content blockquote {
+  @apply border-l-4 border-primary/30 bg-muted/30 pl-4 py-2 my-3 rounded-r;
+}
+
+.chat-message-content blockquote p {
+  @apply mb-0;
+}
+
+/* Definition list style for key-value pairs */
+.chat-message-content dl {
+  @apply my-2;
+}
+
+.chat-message-content dt {
+  @apply font-semibold text-foreground;
+}
+
+.chat-message-content dd {
+  @apply ml-4 text-muted-foreground mb-1;
+}
+
+/* Better paragraph spacing */
+.chat-message-content p {
+  @apply mb-2 last:mb-0;
+}
+
+.chat-message-content p + p {
+  @apply mt-2;
+}
+
+/* Links */
+.chat-message-content a {
+  @apply text-primary underline underline-offset-2 hover:text-primary/80;
+}
+
+/* Code block improvements */
+.chat-message-content pre {
+  @apply my-3 rounded-lg overflow-hidden;
+}
+
+.chat-message-content pre code {
+  @apply block p-4 overflow-x-auto text-xs leading-relaxed;
+}

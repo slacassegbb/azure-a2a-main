@@ -1362,5 +1362,137 @@
       "test prep"
     ],
     "avatar": "/placeholder.svg?height=32&width=32"
+  },
+  {
+    "additionalInterfaces": null,
+    "capabilities": {
+      "extensions": null,
+      "pushNotifications": null,
+      "stateTransitionHistory": null,
+      "streaming": true
+    },
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "description": "An intelligent QuickBooks Online agent for accounting and financial management. Manage customers, invoices, bills, vendors, employees, and generate financial reports.",
+    "documentationUrl": null,
+    "iconUrl": null,
+    "name": "QuickBooks Online Agent",
+    "preferredTransport": "JSONRPC",
+    "protocolVersion": "0.3.0",
+    "provider": null,
+    "security": null,
+    "securitySchemes": null,
+    "signatures": null,
+    "skills": [
+      {
+        "description": "Search, create, update, and manage customer records in QuickBooks Online. Access customer details, contact information, and transaction history.",
+        "examples": [
+          "Show me all customers with Tech in their name",
+          "Create a new customer for XYZ Corporation",
+          "Get details for customer ABC Corp",
+          "Update the email for customer John Smith",
+          "List all active customers"
+        ],
+        "id": "quickbooks_customers",
+        "inputModes": null,
+        "name": "QuickBooks Customer Management",
+        "outputModes": null,
+        "security": null,
+        "tags": [
+          "quickbooks",
+          "customers",
+          "crm",
+          "contacts"
+        ]
+      },
+      {
+        "description": "Create, search, and manage invoices in QuickBooks Online. Track payments, view invoice details, and manage accounts receivable.",
+        "examples": [
+          "Show me all unpaid invoices",
+          "Create an invoice for customer ABC Corp for $500",
+          "Get details for invoice #1001",
+          "What invoices are overdue?"
+        ],
+        "id": "quickbooks_invoices",
+        "inputModes": null,
+        "name": "QuickBooks Invoice Management",
+        "outputModes": null,
+        "security": null,
+        "tags": [
+          "quickbooks",
+          "invoices",
+          "billing",
+          "accounts receivable"
+        ]
+      },
+      {
+        "description": "Manage bills, purchases, and expenses in QuickBooks Online. Track vendor payments, record expenses, and manage accounts payable.",
+        "examples": [
+          "Show me all bills due this week",
+          "Create a bill from vendor Office Supplies Inc",
+          "Record a payment for bill #2001",
+          "List all purchases this month"
+        ],
+        "id": "quickbooks_bills",
+        "inputModes": null,
+        "name": "QuickBooks Bills & Expenses",
+        "outputModes": null,
+        "security": null,
+        "tags": [
+          "quickbooks",
+          "bills",
+          "expenses",
+          "accounts payable",
+          "vendors"
+        ]
+      },
+      {
+        "description": "Generate financial reports including Profit & Loss, Balance Sheet, and custom queries. Access company information and financial summaries.",
+        "examples": [
+          "Show me the Profit and Loss report",
+          "Get the Balance Sheet",
+          "What is our company information?",
+          "Query all accounts receivable over $1000"
+        ],
+        "id": "quickbooks_reports",
+        "inputModes": null,
+        "name": "QuickBooks Financial Reports",
+        "outputModes": null,
+        "security": null,
+        "tags": [
+          "quickbooks",
+          "reports",
+          "financial",
+          "accounting",
+          "P&L"
+        ]
+      },
+      {
+        "description": "Escalate complex issues to human experts or facilitate human-in-the-loop interactions when automated responses are insufficient.",
+        "examples": [
+          "Escalate this issue to a human expert",
+          "I need to speak with a person",
+          "Connect me with a human agent"
+        ],
+        "id": "human_interaction",
+        "inputModes": null,
+        "name": "Human Expert Escalation",
+        "outputModes": null,
+        "security": null,
+        "tags": [
+          "human-interaction",
+          "escalation",
+          "expert",
+          "human-capable"
+        ]
+      }
+    ],
+    "supportsAuthenticatedExtendedCard": null,
+    "url": "http://localhost:8020/",
+    "version": "1.0.0"
   }
 ]

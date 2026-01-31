@@ -357,7 +357,7 @@ export function ChatLayout() {
                     >
                       <div className="flex items-center gap-2">
                         <FileText className="h-4 w-4" />
-                        <span>File History</span>
+                        <span>Shared Files</span>
                       </div>
                       {isFileHistoryOpen ? (
                         <ChevronDown className="h-4 w-4" />

@@ -64,7 +64,7 @@ export function SessionDebug() {
 
       // Load conversations
       try {
-        const convs = await listConversations()
+        const { conversations: convs } = await listConversations()
         setConversations(convs)
       } catch (e) {
         console.error('Failed to load conversations for debug:', e)
