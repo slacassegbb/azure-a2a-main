@@ -48,7 +48,23 @@ class RemoteAgentConnections:
         # Use provided callback or fall back to instance callback
         callback = task_callback or self.task_callback
         capabilities = getattr(self.card, 'capabilities', None)
-        streaming_supported = bool(getattr(capabilities, 'streaming', False)) if capabilities else False
+        
+        # Debug: Log capabilities to understand the structure
+        print(f"🔍 [STREAMING DEBUG] Agent: {self.card.name}")
+        print(f"🔍 [STREAMING DEBUG] Capabilities type: {type(capabilities)}")
+        print(f"🔍 [STREAMING DEBUG] Capabilities value: {capabilities}")
+        
+        # Check for streaming support - handle both dict and object cases
+        streaming_supported = False
+        if capabilities:
+            if isinstance(capabilities, dict):
+                streaming_supported = bool(capabilities.get('streaming', False))
+                print(f"🔍 [STREAMING DEBUG] Dict access: streaming={streaming_supported}")
+            elif hasattr(capabilities, 'streaming'):
+                streaming_supported = bool(getattr(capabilities, 'streaming', False))
+                print(f"🔍 [STREAMING DEBUG] Attr access: streaming={streaming_supported}")
+        
+        print(f"🔍 [STREAMING DEBUG] Final streaming_supported: {streaming_supported}")
 
         if streaming_supported:
             try:

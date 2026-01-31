@@ -571,21 +571,44 @@ Current date: {datetime.datetime.now().isoformat()}
             # Check for new tool calls in real-time (only show what we can actually detect)
             try:
                 run_steps = client.run_steps.list(thread_id, run.id)
+                step_count = 0
                 for run_step in run_steps:
+                    step_count += 1
+                    # Use run_step.id to track unique tool calls (not tool_type which is always "mcp" for MCP tools)
+                    step_id = getattr(run_step, 'id', f'step_{step_count}')
+                    logger.info(f"   📋 Run step {step_count} (id={step_id}): type={getattr(run_step, 'type', 'N/A')}, status={getattr(run_step, 'status', 'N/A')}")
+                    if hasattr(run_step, "step_details"):
+                        logger.info(f"      step_details.type={getattr(run_step.step_details, 'type', 'N/A')}")
                     if (hasattr(run_step, "step_details") and
                         hasattr(run_step.step_details, "type") and
                         run_step.step_details.type == "tool_calls" and
                         hasattr(run_step.step_details, "tool_calls")):
-                        for tool_call in run_step.step_details.tool_calls:
-                            if tool_call and hasattr(tool_call, "type"):
-                                tool_type = tool_call.type
-                                if tool_type not in tool_calls_yielded:
+                        logger.info(f"      Found tool_calls: {len(run_step.step_details.tool_calls)} calls")
+                        for idx, tool_call in enumerate(run_step.step_details.tool_calls):
+                            if tool_call:
+                                # Use a unique key combining step_id and tool call index
+                                tool_call_id = getattr(tool_call, 'id', f'{step_id}_call_{idx}')
+                                tool_type = getattr(tool_call, 'type', 'unknown')
+                                # Log all attributes of MCP tool call for debugging
+                                logger.info(f"      Tool call {idx}: type={tool_type}, id={tool_call_id}")
+                                logger.info(f"      Tool call attributes: {dir(tool_call)}")
+                                # For MCP tools, try to get the mcp attribute
+                                if hasattr(tool_call, 'mcp'):
+                                    mcp_details = tool_call.mcp
+                                    logger.info(f"      MCP details: {mcp_details}")
+                                    logger.info(f"      MCP attributes: {dir(mcp_details)}")
+                                
+                                if tool_call_id not in tool_calls_yielded:
                                     # Show actual tool calls that we can detect
                                     tool_description = self._get_tool_description(tool_type, tool_call)
+                                    logger.info(f"      🛠️ Yielding: {tool_description}")
                                     yield f"🛠️ Remote agent executing: {tool_description}"
-                                    tool_calls_yielded.add(tool_type)
+                                    tool_calls_yielded.add(tool_call_id)
+                if step_count == 0:
+                    logger.info(f"   📋 No run steps found yet")
             except Exception as e:
                 # Continue if we can't get run steps yet
+                logger.warning(f"   ⚠️ Error getting run steps: {e}")
                 pass
 
             try:
@@ -1224,7 +1247,56 @@ Current date: {datetime.datetime.now().isoformat()}
     def _get_tool_description(self, tool_type: str, tool_call) -> str:
         """Helper to get a more meaningful tool description from the tool call."""
         try:
-            # Try to get the actual function name from the tool call
+            # Handle MCP tool calls - Azure AI Foundry MCP tool calls have name, server_label, arguments
+            # directly on the tool_call object (which is a dict-like MutableMapping)
+            if tool_type == "mcp":
+                tool_name = None
+                server_label = None
+                
+                # MCP tool calls are dict-like, try both dict access and attribute access
+                if hasattr(tool_call, 'get'):
+                    tool_name = tool_call.get('name')
+                    server_label = tool_call.get('server_label')
+                if not tool_name and hasattr(tool_call, 'name'):
+                    tool_name = tool_call.name
+                if not server_label and hasattr(tool_call, 'server_label'):
+                    server_label = tool_call.server_label
+                
+                logger.info(f"      MCP tool: name={tool_name}, server_label={server_label}")
+                
+                if tool_name:
+                    # Parse QuickBooks tool names (qbo_*)
+                    if tool_name.startswith("qbo_"):
+                        tool_parts = tool_name.replace("qbo_", "").split("_")
+                        action = tool_parts[0] if tool_parts else "executing"
+                        entity = "_".join(tool_parts[1:]) if len(tool_parts) > 1 else "data"
+                        
+                        if action == "search":
+                            return f"Searching QuickBooks {entity.replace('_', ' ')}"
+                        elif action == "get":
+                            return f"Getting QuickBooks {entity.replace('_', ' ')}"
+                        elif action == "create":
+                            return f"Creating QuickBooks {entity.replace('_', ' ')}"
+                        elif action == "update":
+                            return f"Updating QuickBooks {entity.replace('_', ' ')}"
+                        elif action == "delete":
+                            return f"Deleting QuickBooks {entity.replace('_', ' ')}"
+                        elif action == "query":
+                            return "Executing QuickBooks query"
+                        elif action == "company":
+                            return "Getting QuickBooks company info"
+                        elif action == "report":
+                            return "Generating QuickBooks report"
+                        else:
+                            return f"QuickBooks: {tool_name.replace('qbo_', '').replace('_', ' ').title()}"
+                    else:
+                        return f"Executing {tool_name}"
+                elif server_label:
+                    return f"Calling {server_label} API"
+                else:
+                    return "Executing QuickBooks operation"
+            
+            # Try to get the actual function name from the tool call (for non-MCP tools)
             if hasattr(tool_call, 'function') and hasattr(tool_call.function, 'name'):
                 function_name = tool_call.function.name
                 # Try to get arguments if available
