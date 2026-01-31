@@ -196,6 +196,7 @@ class FoundryAgentExecutor(AgentExecutor):
                         seen_tools.add(tool_description)
                         tools_called.append(tool_description)
                         # Emit tool call in real-time
+                        logger.info(f"📡 Sending task_updater.update_status(working) for: {tool_description}")
                         tool_event_msg = new_agent_text_message(
                             f"🛠️ Remote agent executing: {tool_description}", context_id=context_id
                         )
@@ -203,6 +204,7 @@ class FoundryAgentExecutor(AgentExecutor):
                             TaskState.working,
                             message=tool_event_msg
                         )
+                        logger.info(f"✅ task_updater.update_status sent for: {tool_description}")
                 # Check if this is a processing message
                 elif event.startswith("🤖") or event.startswith("🧠") or event.startswith("🔍") or event.startswith("📝"):
                     # Emit processing message in real-time
