@@ -119,12 +119,168 @@ class HTTPXClientWrapper:
 httpx_client_wrapper = HTTPXClientWrapper()
 agent_server = None
 websocket_streamer = None
+workflow_scheduler = None
+
+
+async def execute_scheduled_workflow(workflow_name: str, session_id: str, timeout: int = 300):
+    """Execute a workflow for the scheduler. Returns result dict."""
+    global agent_server
+    
+    from service.workflow_service import WorkflowService
+    from service.agent_registry import get_registry, get_session_registry
+    import threading
+    import asyncio
+    import time
+    
+    workflow_service = WorkflowService()
+    
+    # Find workflow by name
+    workflow = workflow_service.get_workflow_by_name(workflow_name)
+    if not workflow:
+        return {"success": False, "error": f"Workflow '{workflow_name}' not found"}
+    
+    # --- ENABLE AGENTS FOR SCHEDULER SESSION ---
+    # The scheduler session doesn't have agents enabled like a user browser session.
+    # We need to look up required agents from the global registry and enable them.
+    global_registry = get_registry()
+    session_registry = get_session_registry()
+    
+    # Extract unique agent names from workflow steps
+    agent_names_needed = []
+    for step in (workflow.steps or []):
+        name = step.get('agentName') or step.get('agent')
+        if name and name not in agent_names_needed:
+            agent_names_needed.append(name)
+    
+    print(f"[SCHEDULER] Workflow '{workflow_name}' needs agents: {agent_names_needed}")
+    
+    # Look up each agent in global registry and enable for scheduler session
+    missing_agents = []
+    enabled_count = 0
+    for agent_name in agent_names_needed:
+        agent_config = global_registry.get_agent(agent_name)
+        if agent_config:
+            # Enable this agent for the scheduler session
+            was_enabled = session_registry.enable_agent(session_id, agent_config)
+            if was_enabled:
+                enabled_count += 1
+                print(f"[SCHEDULER] ✅ Enabled agent '{agent_name}' for session {session_id}")
+            else:
+                print(f"[SCHEDULER] ℹ️ Agent '{agent_name}' already enabled for session {session_id}")
+        else:
+            missing_agents.append(agent_name)
+            print(f"[SCHEDULER] ❌ Agent '{agent_name}' NOT FOUND in global registry!")
+    
+    if missing_agents:
+        return {
+            "success": False, 
+            "error": f"Missing agents in registry: {', '.join(missing_agents)}. Available agents can be found in the Agent Catalog."
+        }
+    
+    print(f"[SCHEDULER] Enabled {enabled_count} agents for session {session_id}")
+    # --- END ENABLE AGENTS ---
+    
+    # Build workflow text
+    print(f"[SCHEDULER] 📝 Building workflow text from {len(workflow.steps or [])} steps...")
+    sorted_steps = sorted(workflow.steps or [], key=lambda s: s.get('order', 0))
+    workflow_lines = []
+    for i, step in enumerate(sorted_steps):
+        agent_name = step.get('agentName') or step.get('agent') or 'Unknown Agent'
+        default_desc = 'Use the ' + agent_name + ' agent'
+        description = step.get('description', default_desc)
+        workflow_lines.append(f"{i+1}. [{agent_name}] {description}")
+    workflow_text = "\n".join(workflow_lines)
+    
+    initial_message = f'Execute the "{workflow.name}" workflow.'
+    conversation_id = str(uuid.uuid4())
+    message_id = f"msg_{uuid.uuid4().hex[:8]}"
+    context_id = f"{session_id}::{conversation_id}"
+    
+    print(f"[SCHEDULER] 📝 Workflow text:\n{workflow_text}")
+    print(f"[SCHEDULER] 📨 Context ID: {context_id}")
+    
+    if not agent_server:
+        print(f"[SCHEDULER] ❌ agent_server is None!")
+        return {"success": False, "error": "Agent server is None"}
+    
+    if not hasattr(agent_server, 'manager'):
+        print(f"[SCHEDULER] ❌ agent_server has no 'manager' attribute!")
+        return {"success": False, "error": "Agent server has no manager"}
+    
+    print(f"[SCHEDULER] ✅ agent_server.manager exists: {type(agent_server.manager)}")
+    
+    from a2a.types import Message, Part, TextPart, Role
+    
+    message = Message(
+        messageId=message_id,
+        contextId=context_id,
+        role=Role.user,
+        parts=[Part(root=TextPart(text=initial_message))]
+    )
+    
+    print(f"[SCHEDULER] 📩 Message created: {initial_message}")
+    
+    # Use a shorter timeout for testing (60 seconds instead of 300)
+    effective_timeout = min(timeout, 120)
+    print(f"[SCHEDULER] ⏱️ Timeout set to {effective_timeout}s")
+    
+    try:
+        start_time = time.time()
+        
+        print(f"[SCHEDULER] ⏳ Calling agent_server.manager.process_message()...")
+        print(f"[SCHEDULER] ⏳ This may take a while if agents are being called...")
+        
+        # Await directly since we're already in an async context on the main loop
+        responses = await asyncio.wait_for(
+            agent_server.manager.process_message(
+                message, 
+                agent_mode=None,
+                enable_inter_agent_memory=True,
+                workflow=workflow_text,
+                workflow_goal=workflow.goal
+            ),
+            timeout=effective_timeout
+        )
+        
+        elapsed_time = time.time() - start_time
+        print(f"[SCHEDULER] ✅ Workflow execution completed in {elapsed_time:.1f}s")
+        
+        result_text = ""
+        if responses:
+            if isinstance(responses, list):
+                result_text = "\n\n".join(str(r) for r in responses)
+            else:
+                result_text = str(responses)
+        
+        print(f"[SCHEDULER] 📄 Result length: {len(result_text)} chars")
+        if len(result_text) > 500:
+            print(f"[SCHEDULER] 📄 Result preview: {result_text[:500]}...")
+        else:
+            print(f"[SCHEDULER] 📄 Result: {result_text}")
+        
+        return {
+            "success": True,
+            "completed": True,
+            "workflow_name": workflow.name,
+            "execution_time_seconds": round(elapsed_time, 2),
+            "result": result_text
+        }
+        
+    except asyncio.TimeoutError:
+        elapsed = time.time() - start_time
+        print(f"[SCHEDULER] ⏰ TIMEOUT after {elapsed:.1f}s (limit was {effective_timeout}s)")
+        return {"success": False, "error": f"Workflow execution timed out after {effective_timeout} seconds"}
+    except Exception as e:
+        print(f"[SCHEDULER] ❌ Error executing workflow: {e}")
+        import traceback
+        traceback.print_exc()
+        return {"success": False, "error": str(e)}
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """FastAPI lifespan context manager for startup and shutdown."""
-    global websocket_streamer, agent_server
+    global websocket_streamer, agent_server, workflow_scheduler
     
     print("[INFO] Starting A2A Backend API...")
     
@@ -156,12 +312,36 @@ async def lifespan(app: FastAPI):
         print(f"[ERROR] Error details: {str(e)}")
         # Continue startup even if this fails
     
+    # Initialize the workflow scheduler
+    try:
+        from service.scheduler_service import get_workflow_scheduler, initialize_scheduler, APSCHEDULER_AVAILABLE
+        if APSCHEDULER_AVAILABLE:
+            workflow_scheduler = get_workflow_scheduler()
+            workflow_scheduler.set_workflow_executor(execute_scheduled_workflow)
+            await workflow_scheduler.start()
+            print(f"[INFO] Workflow scheduler started with {len(workflow_scheduler.schedules)} schedules")
+        else:
+            print("[WARNING] APScheduler not installed - scheduled workflows disabled")
+            print("[INFO] Install with: pip install apscheduler")
+    except Exception as e:
+        print(f"[WARNING] Failed to initialize workflow scheduler: {type(e).__name__}: {e}")
+        # Continue startup even if scheduler fails
+    
     print("[INFO] A2A Backend API startup complete")
     
     yield
     
     # Cleanup
     print("[INFO] Shutting down A2A Backend API...")
+    
+    # Stop workflow scheduler
+    if workflow_scheduler:
+        try:
+            await workflow_scheduler.stop()
+            print("[INFO] Workflow scheduler stopped")
+        except Exception as e:
+            print(f"[WARNING] Error stopping workflow scheduler: {e}")
+    
     await httpx_client_wrapper.stop()
     await cleanup_websocket_streamer()
     print("[INFO] A2A Backend API shutdown complete")
@@ -852,6 +1032,24 @@ def main():
         if not agent_server or not hasattr(agent_server, 'manager'):
             raise HTTPException(status_code=503, detail="Agent server not available")
         
+        # Enable agents in session registry from global registry
+        # This ensures the workflow's agents are available for this session
+        from service.agent_registry import get_registry, get_session_registry
+        registry = get_registry()
+        session_registry = get_session_registry()
+        
+        # Extract agent names from workflow steps
+        agent_names = [step.get('agentName') for step in sorted_steps if step.get('agentName')]
+        print(f"[WorkflowRun] 🔧 Enabling {len(agent_names)} agents for session {session_id}: {agent_names}")
+        
+        for agent_name in agent_names:
+            agent_config = registry.get_agent(agent_name)
+            if agent_config:
+                session_registry.enable_agent(session_id, agent_config)
+                print(f"[WorkflowRun] ✅ Enabled agent: {agent_name} with URL: {agent_config.get('url', 'N/A')}")
+            else:
+                print(f"[WorkflowRun] ⚠️ Agent not found in registry: {agent_name}")
+        
         # Create the message
         from a2a.types import Message, Part, TextPart, Role
         
@@ -960,6 +1158,370 @@ def main():
             import traceback
             traceback.print_exc()
             raise HTTPException(status_code=500, detail=f"Failed to start workflow: {str(e)}")
+
+    # ==================== WORKFLOW SCHEDULER ENDPOINTS ====================
+    
+    from service.scheduler_service import (
+        get_workflow_scheduler, 
+        ScheduleType, 
+        ScheduledWorkflow,
+        initialize_scheduler
+    )
+    
+    # Request models for scheduler
+    class CreateScheduleRequest(BaseModel):
+        workflow_id: str
+        workflow_name: str
+        session_id: str
+        schedule_type: str  # "once", "interval", "daily", "weekly", "monthly", "cron"
+        enabled: bool = True
+        
+        # Schedule parameters
+        run_at: Optional[str] = None          # For ONCE: ISO datetime
+        interval_minutes: Optional[int] = None # For INTERVAL
+        time_of_day: Optional[str] = None     # For DAILY/WEEKLY/MONTHLY: "HH:MM"
+        days_of_week: Optional[List[int]] = None  # For WEEKLY: 0=Mon, 6=Sun
+        day_of_month: Optional[int] = None    # For MONTHLY: 1-31
+        cron_expression: Optional[str] = None # For CRON
+        timezone: str = "UTC"
+        
+        # Execution settings
+        timeout: int = 300
+        retry_on_failure: bool = False
+        max_retries: int = 3
+        
+        # Metadata
+        description: Optional[str] = None
+        tags: List[str] = []
+    
+    class UpdateScheduleRequest(BaseModel):
+        enabled: Optional[bool] = None
+        schedule_type: Optional[str] = None
+        run_at: Optional[str] = None
+        interval_minutes: Optional[int] = None
+        time_of_day: Optional[str] = None
+        days_of_week: Optional[List[int]] = None
+        day_of_month: Optional[int] = None
+        cron_expression: Optional[str] = None
+        timezone: Optional[str] = None
+        timeout: Optional[int] = None
+        retry_on_failure: Optional[bool] = None
+        max_retries: Optional[int] = None
+        description: Optional[str] = None
+        tags: Optional[List[str]] = None
+    
+    @app.get("/api/schedules/workflows")
+    async def list_schedulable_workflows(current_user: dict = Depends(get_current_user)):
+        """
+        List all saved workflows available for scheduling for the current user.
+        
+        Example curl:
+            curl -H "Authorization: Bearer YOUR_TOKEN" http://localhost:12000/api/schedules/workflows
+        """
+        try:
+            from service.workflow_service import get_workflow_service
+            workflow_service = get_workflow_service()
+            user_id = current_user.get("user_id")
+            user_workflows = workflow_service.get_user_workflows(user_id)
+            # Return a simplified list with just id and name
+            return [
+                {"id": w.id, "name": w.name}
+                for w in user_workflows
+            ]
+        except Exception as e:
+            print(f"[ERROR] Failed to list workflows: {e}")
+            import traceback
+            traceback.print_exc()
+            return []
+    
+    @app.get("/api/schedules")
+    async def list_schedules(workflow_id: Optional[str] = None):
+        """
+        List all scheduled workflows.
+        
+        Example curl:
+            curl http://localhost:12000/api/schedules
+            curl http://localhost:12000/api/schedules?workflow_id=custom-123
+        """
+        scheduler = get_workflow_scheduler()
+        schedules = scheduler.list_schedules(workflow_id)
+        return {
+            "schedules": [s.to_dict() for s in schedules],
+            "count": len(schedules)
+        }
+    
+    @app.get("/api/schedules/upcoming")
+    async def get_upcoming_runs(limit: int = 10):
+        """
+        Get upcoming scheduled workflow runs.
+        
+        Example curl:
+            curl http://localhost:12000/api/schedules/upcoming
+        """
+        scheduler = get_workflow_scheduler()
+        upcoming = scheduler.get_upcoming_runs(limit)
+        return {
+            "upcoming": upcoming,
+            "count": len(upcoming)
+        }
+    
+    @app.get("/api/schedules/debug")
+    async def debug_scheduler():
+        """
+        Debug endpoint to check APScheduler status.
+        
+        Example curl:
+            curl http://localhost:12000/api/schedules/debug
+        """
+        scheduler = get_workflow_scheduler()
+        jobs = []
+        if scheduler.scheduler:
+            for job in scheduler.scheduler.get_jobs():
+                jobs.append({
+                    "id": job.id,
+                    "name": job.name,
+                    "next_run_time": job.next_run_time.isoformat() if job.next_run_time else None,
+                    "trigger": str(job.trigger)
+                })
+        return {
+            "scheduler_running": scheduler._is_running,
+            "scheduler_exists": scheduler.scheduler is not None,
+            "jobs_count": len(jobs),
+            "jobs": jobs,
+            "schedules_in_memory": len(scheduler.schedules)
+        }
+    
+    @app.get("/api/schedules/history")
+    async def get_schedule_history(schedule_id: Optional[str] = None, limit: int = 50):
+        """
+        Get run history for scheduled workflows.
+        
+        Example curl:
+            curl http://localhost:12000/api/schedules/history
+            curl http://localhost:12000/api/schedules/history?schedule_id={id}
+        """
+        scheduler = get_workflow_scheduler()
+        history = scheduler.get_run_history(schedule_id, limit)
+        return {
+            "history": history,
+            "count": len(history)
+        }
+    
+    @app.get("/api/schedules/{schedule_id}")
+    async def get_schedule(schedule_id: str):
+        """
+        Get a specific schedule by ID.
+        
+        Example curl:
+            curl http://localhost:12000/api/schedules/{schedule_id}
+        """
+        scheduler = get_workflow_scheduler()
+        schedule = scheduler.get_schedule(schedule_id)
+        if not schedule:
+            raise HTTPException(status_code=404, detail="Schedule not found")
+        return schedule.to_dict()
+    
+    @app.post("/api/schedules")
+    async def create_schedule(request: CreateScheduleRequest):
+        """
+        Create a new scheduled workflow.
+        
+        Example curl (run every 5 minutes):
+            curl -X POST http://localhost:12000/api/schedules \\
+                -H "Content-Type: application/json" \\
+                -d '{"workflow_id": "custom-123", "workflow_name": "My Workflow", "session_id": "user_3", "schedule_type": "interval", "interval_minutes": 5}'
+        
+        Example curl (run daily at 9am):
+            curl -X POST http://localhost:12000/api/schedules \\
+                -H "Content-Type: application/json" \\
+                -d '{"workflow_id": "custom-123", "workflow_name": "My Workflow", "session_id": "user_3", "schedule_type": "daily", "time_of_day": "09:00"}'
+        
+        Example curl (run once at specific time):
+            curl -X POST http://localhost:12000/api/schedules \\
+                -H "Content-Type: application/json" \\
+                -d '{"workflow_id": "custom-123", "workflow_name": "My Workflow", "session_id": "user_3", "schedule_type": "once", "run_at": "2026-02-02T10:00:00Z"}'
+        """
+        try:
+            scheduler = get_workflow_scheduler()
+            
+            # Convert schedule_type string to enum
+            try:
+                schedule_type = ScheduleType(request.schedule_type)
+            except ValueError:
+                raise HTTPException(
+                    status_code=400, 
+                    detail=f"Invalid schedule_type. Must be one of: {[t.value for t in ScheduleType]}"
+                )
+            
+            schedule = scheduler.create_schedule(
+                workflow_id=request.workflow_id,
+                workflow_name=request.workflow_name,
+                session_id=request.session_id,
+                schedule_type=schedule_type,
+                enabled=request.enabled,
+                run_at=request.run_at,
+                interval_minutes=request.interval_minutes,
+                time_of_day=request.time_of_day,
+                days_of_week=request.days_of_week,
+                day_of_month=request.day_of_month,
+                cron_expression=request.cron_expression,
+                timezone=request.timezone,
+                timeout=request.timeout,
+                retry_on_failure=request.retry_on_failure,
+                max_retries=request.max_retries,
+                description=request.description,
+                tags=request.tags
+            )
+            
+            return {
+                "success": True,
+                "message": f"Schedule created for workflow '{request.workflow_name}'",
+                "schedule": schedule.to_dict()
+            }
+            
+        except HTTPException:
+            raise
+        except Exception as e:
+            print(f"[Scheduler] Error creating schedule: {e}")
+            raise HTTPException(status_code=500, detail=f"Failed to create schedule: {str(e)}")
+    
+    @app.put("/api/schedules/{schedule_id}")
+    async def update_schedule(schedule_id: str, request: UpdateScheduleRequest):
+        """
+        Update a scheduled workflow.
+        
+        Example curl:
+            curl -X PUT http://localhost:12000/api/schedules/{schedule_id} \\
+                -H "Content-Type: application/json" \\
+                -d '{"enabled": false}'
+        """
+        try:
+            scheduler = get_workflow_scheduler()
+            
+            # Build update dict from non-None fields
+            update_data = {}
+            for field, value in request.model_dump().items():
+                if value is not None:
+                    if field == 'schedule_type':
+                        update_data[field] = ScheduleType(value)
+                    else:
+                        update_data[field] = value
+            
+            schedule = scheduler.update_schedule(schedule_id, **update_data)
+            if not schedule:
+                raise HTTPException(status_code=404, detail="Schedule not found")
+            
+            return {
+                "success": True,
+                "message": "Schedule updated",
+                "schedule": schedule.to_dict()
+            }
+            
+        except HTTPException:
+            raise
+        except Exception as e:
+            print(f"[Scheduler] Error updating schedule: {e}")
+            raise HTTPException(status_code=500, detail=f"Failed to update schedule: {str(e)}")
+    
+    @app.delete("/api/schedules/{schedule_id}")
+    async def delete_schedule(schedule_id: str):
+        """
+        Delete a scheduled workflow.
+        
+        Example curl:
+            curl -X DELETE http://localhost:12000/api/schedules/{schedule_id}
+        """
+        scheduler = get_workflow_scheduler()
+        success = scheduler.delete_schedule(schedule_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="Schedule not found")
+        
+        return {
+            "success": True,
+            "message": "Schedule deleted"
+        }
+    
+    @app.post("/api/schedules/{schedule_id}/toggle")
+    async def toggle_schedule(schedule_id: str, enabled: bool):
+        """
+        Enable or disable a scheduled workflow.
+        
+        Example curl:
+            curl -X POST "http://localhost:12000/api/schedules/{schedule_id}/toggle?enabled=false"
+        """
+        scheduler = get_workflow_scheduler()
+        schedule = scheduler.toggle_schedule(schedule_id, enabled)
+        if not schedule:
+            raise HTTPException(status_code=404, detail="Schedule not found")
+        
+        return {
+            "success": True,
+            "message": f"Schedule {'enabled' if enabled else 'disabled'}",
+            "schedule": schedule.to_dict()
+        }
+    
+    @app.post("/api/schedules/{schedule_id}/run-now")
+    async def run_schedule_now(schedule_id: str, session_id: Optional[str] = None, wait: bool = False):
+        """
+        Immediately execute a scheduled workflow (doesn't affect the regular schedule).
+        
+        If session_id is provided, the workflow runs in that session (visible in user's chat).
+        Otherwise, it uses the schedule's default session.
+        
+        If wait=true, the request blocks until workflow completes and returns full results.
+        
+        Example curl:
+            curl -X POST http://localhost:12000/api/schedules/{schedule_id}/run-now
+            curl -X POST "http://localhost:12000/api/schedules/{schedule_id}/run-now?session_id=sess_abc123"
+            curl -X POST "http://localhost:12000/api/schedules/{schedule_id}/run-now?wait=true"
+        """
+        import time
+        from datetime import datetime
+        
+        scheduler = get_workflow_scheduler()
+        schedule = scheduler.get_schedule(schedule_id)
+        if not schedule:
+            raise HTTPException(status_code=404, detail="Schedule not found")
+        
+        # Use the provided session_id or fall back to schedule's default
+        effective_session_id = session_id if session_id else schedule.session_id
+        
+        # Track start time for history
+        start_time = time.time()
+        started_at = datetime.utcnow().isoformat()
+        
+        # Use the existing workflow run logic
+        run_request = WorkflowRunRequest(
+            workflow_id=schedule.workflow_id,
+            workflow_name=schedule.workflow_name,
+            session_id=effective_session_id,
+            wait_for_completion=wait,  # Use the wait parameter
+            timeout=schedule.timeout
+        )
+        
+        result = await run_workflow(run_request)
+        
+        # Calculate execution time and store in history
+        execution_time = time.time() - start_time
+        completed_at = datetime.utcnow().isoformat()
+        
+        # Store run in history
+        scheduler._add_run_history(
+            schedule_id=schedule_id,
+            workflow_id=schedule.workflow_id,
+            workflow_name=schedule.workflow_name,
+            session_id=effective_session_id,
+            status="success" if result.get('success', False) else "failed",
+            result=result.get('result') or result.get('message', 'Workflow started'),
+            error=result.get('error'),
+            started_at=started_at,
+            completed_at=completed_at,
+            execution_time=execution_time
+        )
+        
+        return result
+
+    # ==================== END SCHEDULER ENDPOINTS ====================
 
     @app.post("/clear-memory")
     async def clear_memory():

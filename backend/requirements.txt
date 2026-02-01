@@ -25,3 +25,5 @@ pillow>=11.2.1
 a2a-sdk
 google-adk
 azure-monitor-opentelemetry
+# Workflow scheduling
+apscheduler>=3.10.4

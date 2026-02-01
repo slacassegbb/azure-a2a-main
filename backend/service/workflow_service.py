@@ -228,6 +228,13 @@ class WorkflowService:
         """Get a workflow by ID."""
         return self.workflows.get(workflow_id)
     
+    def get_workflow_by_name(self, workflow_name: str) -> Optional[Workflow]:
+        """Get a workflow by name (case-insensitive)."""
+        for workflow in self.workflows.values():
+            if workflow.name.lower() == workflow_name.lower():
+                return workflow
+        return None
+    
     def get_user_workflows(self, user_id: str) -> List[Workflow]:
         """Get all workflows for a specific user."""
         return [w for w in self.workflows.values() if w.user_id == user_id]

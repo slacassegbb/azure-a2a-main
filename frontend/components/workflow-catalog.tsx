@@ -5,8 +5,9 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
-import { Sparkles, Download, Trash2, Save, Search } from "lucide-react"
+import { Sparkles, Download, Trash2, Save, Search, Clock } from "lucide-react"
 import { useState, useEffect } from "react"
+import { ScheduleWorkflowDialog } from "./schedule-workflow-dialog"
 
 interface WorkflowTemplate {
   id: string
@@ -201,6 +202,7 @@ export function WorkflowCatalog({ onLoadWorkflow, onSaveWorkflow, currentWorkflo
   const [searchQuery, setSearchQuery] = useState("")
   const [isLoading, setIsLoading] = useState(true)
   const [isUserAuthenticated, setIsUserAuthenticated] = useState(false)
+  const [showScheduleDialog, setShowScheduleDialog] = useState(false)
   
   // Load workflows from backend (if authenticated) or localStorage on mount and when refreshTrigger changes
   useEffect(() => {
@@ -319,6 +321,16 @@ export function WorkflowCatalog({ onLoadWorkflow, onSaveWorkflow, currentWorkflo
           Save Current Workflow
         </Button>
         
+        <Button
+          onClick={() => setShowScheduleDialog(true)}
+          className="w-full"
+          variant="outline"
+          size="sm"
+        >
+          <Clock className="h-3 w-3 mr-2" />
+          Schedule Workflows
+        </Button>
+        
         <div className="relative">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-3 w-3 text-slate-400" />
           <Input
@@ -389,6 +401,12 @@ export function WorkflowCatalog({ onLoadWorkflow, onSaveWorkflow, currentWorkflo
           )))}
         </div>
       </ScrollArea>
+      
+      {/* Schedule Workflow Dialog */}
+      <ScheduleWorkflowDialog
+        open={showScheduleDialog}
+        onOpenChange={setShowScheduleDialog}
+      />
     </div>
   )
 }

@@ -6,6 +6,7 @@ import { ChatPanel } from "@/components/chat-panel"
 import { FileHistory } from "@/components/file-history"
 import { useEventHub } from "@/hooks/use-event-hub"
 import { ChatHistorySidebar } from "./chat-history-sidebar"
+import { ScheduleWorkflowDialog } from "@/components/schedule-workflow-dialog"
 import { Panel, PanelGroup, PanelResizeHandle, ImperativePanelHandle } from "react-resizable-panels"
 import { getOrCreateSessionId } from "@/lib/session"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
@@ -60,6 +61,8 @@ export function ChatLayout() {
     }
     return ""
   })
+  
+  const [showScheduleDialog, setShowScheduleDialog] = useState(false)
 
   // Only save workflow to localStorage (not agent mode toggle)
   useEffect(() => {
@@ -129,12 +132,8 @@ export function ChatLayout() {
   
   const handleScheduleWorkflow = useCallback(() => {
     console.log('[ChatLayout] Schedule workflow clicked:', workflowName || 'Untitled')
-    // TODO: Implement workflow scheduling
-    toast({
-      title: "Coming Soon",
-      description: "Workflow scheduling will be available in a future update",
-    })
-  }, [workflowName, toast])
+    setShowScheduleDialog(true)
+  }, [workflowName])
 
   // Callback when file history loads files - auto-open if there are files
   const handleFilesLoaded = useCallback((count: number) => {
@@ -516,6 +515,12 @@ export function ChatLayout() {
           </div>
         </Panel>
       </PanelGroup>
+      
+      {/* Schedule Workflow Dialog */}
+      <ScheduleWorkflowDialog
+        open={showScheduleDialog}
+        onOpenChange={setShowScheduleDialog}
+      />
     </div>
   )
 }

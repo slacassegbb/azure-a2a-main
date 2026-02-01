@@ -2969,10 +2969,10 @@ Answer with just JSON:
                             elif isinstance(inbound, dict) and 'status' in inbound:
                                 status = inbound['status']
                                 if isinstance(status, dict) and 'message' in status:
-                                    message = status['message']
-                                    if isinstance(message, dict) and 'parts' in message:
+                                    status_message = status['message']
+                                    if isinstance(status_message, dict) and 'parts' in status_message:
                                         parts_content = []
-                                        for part in message['parts']:
+                                        for part in status_message['parts']:
                                             if isinstance(part, dict):
                                                 if 'text' in part:
                                                     parts_content.append(str(part['text']))

@@ -284,7 +284,7 @@
         {
           "id": "step-1769957682991-ajw25bdvj",
           "agentId": "quickbooks-online-agent",
-          "agentName": "QuickBooks Online Agent",
+          "agentName": "AI Foundry QuickBooks Agent",
           "description": "list all customers",
           "order": 1,
           "x": -89,

@@ -391,7 +391,7 @@
     ]
   },
   {
-    "name": "QuickBooks Online Agent",
+    "name": "AI Foundry QuickBooks Agent",
     "description": "An intelligent agent specialized in QuickBooks Online accounting. Can manage customers, invoices, bills, vendors, employees, and generate financial reports. Also supports web search and document search capabilities.",
     "version": "1.0.0",
     "url": "http://localhost:8020/",
