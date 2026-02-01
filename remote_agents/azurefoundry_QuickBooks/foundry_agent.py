@@ -1371,14 +1371,14 @@ Current date: {datetime.datetime.now().isoformat()}
 
 
 async def create_foundry_quickbooks_agent() -> FoundryQuickBooksAgent:
-    """Factory function to create and initialize a Foundry QuickBooks Online agent."""
+    """Factory function to create and initialize an AI Foundry QuickBooks agent."""
     agent = FoundryQuickBooksAgent()
     await agent.create_agent()
     return agent
 
 
 async def demo_agent_interaction():
-    """Demo function showing how to use the Foundry QuickBooks Online agent."""
+    """Demo function showing how to use the AI Foundry QuickBooks agent."""
     agent = await create_foundry_quickbooks_agent()
     
     try:

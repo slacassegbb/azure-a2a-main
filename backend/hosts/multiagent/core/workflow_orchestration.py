@@ -394,6 +394,11 @@ class WorkflowOrchestration:
         task.recommended_agent = agent_name
         task.updated_at = datetime.now(timezone.utc)
         
+        # DEBUG: Log agent execution start
+        print(f"🚀 [HEADLESS DEBUG] Step {step.step_label}: Starting agent '{agent_name}'")
+        print(f"   📝 Description: {step.description[:80]}...")
+        print(f"   🔗 Context ID: {context_id}")
+        
         await self._emit_granular_agent_event(
             agent_name=agent_name,
             status_text=f"Starting: {step.description[:50]}...",
@@ -420,6 +425,10 @@ class WorkflowOrchestration:
                 suppress_streaming=False,
                 file_uris=file_uris  # Pass explicit file URIs
             )
+            
+            # DEBUG: Log agent response
+            print(f"✅ [HEADLESS DEBUG] Step {step.step_label}: Agent '{agent_name}' responded")
+            print(f"   📦 Response count: {len(responses) if responses else 0}")
             
             if not responses:
                 task.state = "failed"
