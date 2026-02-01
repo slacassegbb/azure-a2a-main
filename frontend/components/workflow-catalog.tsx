@@ -197,27 +197,89 @@ interface Props {
 }
 
 export function WorkflowCatalog({ onLoadWorkflow, onSaveWorkflow, currentWorkflowSteps, refreshTrigger }: Props) {
-  const [customWorkflows, setCustomWorkflows] = useState<WorkflowTemplate[]>(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('custom-workflows')
-      return saved ? JSON.parse(saved) : []
-    }
-    return []
-  })
+  const [customWorkflows, setCustomWorkflows] = useState<WorkflowTemplate[]>([])
   const [searchQuery, setSearchQuery] = useState("")
+  const [isLoading, setIsLoading] = useState(true)
+  const [isUserAuthenticated, setIsUserAuthenticated] = useState(false)
   
-  // Refresh custom workflows when refreshTrigger changes
+  // Load workflows from backend (if authenticated) or localStorage on mount and when refreshTrigger changes
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('custom-workflows')
-      setCustomWorkflows(saved ? JSON.parse(saved) : [])
+    const loadWorkflows = async () => {
+      setIsLoading(true)
+      
+      try {
+        const { getAllWorkflows, isAuthenticated } = await import('@/lib/workflow-api')
+        const authenticated = isAuthenticated()
+        setIsUserAuthenticated(authenticated)
+        
+        if (authenticated) {
+          // User is authenticated - load from backend only
+          const backendWorkflows = await getAllWorkflows()
+          
+          // Convert backend format to WorkflowTemplate format
+          const converted: WorkflowTemplate[] = backendWorkflows.map(w => ({
+            id: w.id,
+            name: w.name,
+            description: w.description,
+            category: w.category,
+            steps: w.steps.map(s => ({
+              id: s.id,
+              agentId: s.agentId,
+              agentName: s.agentName,
+              description: s.description,
+              order: s.order,
+              x: s.x ?? 0,
+              y: s.y ?? 0
+            })),
+            connections: w.connections,
+            isCustom: w.isCustom
+          }))
+          
+          setCustomWorkflows(converted)
+          console.log('[WorkflowCatalog] Loaded', converted.length, 'workflows from backend')
+        } else {
+          // Not authenticated - load from localStorage only
+          if (typeof window !== 'undefined') {
+            const saved = localStorage.getItem('custom-workflows')
+            const localWorkflows = saved ? JSON.parse(saved) : []
+            setCustomWorkflows(localWorkflows)
+            console.log('[WorkflowCatalog] Loaded', localWorkflows.length, 'workflows from localStorage')
+          }
+        }
+      } catch (err) {
+        console.error('[WorkflowCatalog] Failed to load workflows:', err)
+        // Fallback to localStorage on error
+        if (typeof window !== 'undefined') {
+          const saved = localStorage.getItem('custom-workflows')
+          setCustomWorkflows(saved ? JSON.parse(saved) : [])
+        }
+      }
+      
+      setIsLoading(false)
     }
+    
+    loadWorkflows()
   }, [refreshTrigger])
 
-  const handleDeleteCustomWorkflow = (id: string) => {
-    const updated = customWorkflows.filter(w => w.id !== id)
-    setCustomWorkflows(updated)
-    localStorage.setItem('custom-workflows', JSON.stringify(updated))
+  const handleDeleteCustomWorkflow = async (id: string) => {
+    const { deleteWorkflow, isAuthenticated } = await import('@/lib/workflow-api')
+    
+    if (isAuthenticated()) {
+      // Delete from backend
+      const success = await deleteWorkflow(id)
+      if (success) {
+        console.log('[WorkflowCatalog] Deleted workflow from backend:', id)
+        setCustomWorkflows(prev => prev.filter(w => w.id !== id))
+      } else {
+        alert("Failed to delete workflow")
+      }
+    } else {
+      // Delete from localStorage
+      const updated = customWorkflows.filter(w => w.id !== id)
+      setCustomWorkflows(updated)
+      localStorage.setItem('custom-workflows', JSON.stringify(updated))
+      console.log('[WorkflowCatalog] Deleted workflow from localStorage:', id)
+    }
   }
 
   const allWorkflows = [...PREDEFINED_WORKFLOWS, ...customWorkflows]

@@ -212,12 +212,18 @@ class EventEmitters:
         try:
             from service.websocket_streamer import get_websocket_streamer
             
+            # DEBUG: Log event emission attempt
+            print(f"📡 [EVENT DEBUG] Emitting remote_agent_activity for '{agent_name}'")
+            print(f"   📝 Status: {status_text[:60]}...")
+            print(f"   🔗 Context ID: {context_id}")
+            
             streamer = await get_websocket_streamer()
             if streamer:
                 stored_host_context = getattr(self, '_current_host_context_id', None)
                 routing_context_id = context_id or stored_host_context
                 
                 if not routing_context_id:
+                    print(f"   ⚠️ No context_id for {agent_name}, skipping event")
                     log_debug(f"⚠️ [_emit_granular_agent_event] No context_id for {agent_name}, skipping")
                     return
                 
@@ -230,13 +236,17 @@ class EventEmitters:
                 
                 success = await streamer._send_event("remote_agent_activity", event_data, routing_context_id)
                 if success:
+                    print(f"   ✅ Event sent successfully for '{agent_name}'")
                     log_debug(f"Streamed remote agent activity: {agent_name} - {status_text}")
                 else:
+                    print(f"   ❌ Failed to send event for '{agent_name}'")
                     log_debug(f"Failed to stream remote agent activity: {agent_name}")
             else:
+                print(f"   ⚠️ WebSocket streamer not available")
                 log_debug(f"WebSocket streamer not available for remote agent activity")
                 
         except Exception as e:
+            print(f"   ❌ Error emitting event: {e}")
             log_debug(f"Error emitting granular agent event: {e}")
 
     async def _emit_status_event(self, status_text: str, context_id: str):

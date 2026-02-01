@@ -688,5 +688,161 @@
         ]
       }
     ]
+  },
+  {
+    "name": "AI Foundry HubSpot Agent",
+    "description": "An intelligent agent specialized in HubSpot CRM management. Can manage contacts, companies, deals, tickets, notes, and associations. Also supports web search and document search capabilities.",
+    "version": "1.0.0",
+    "url": "http://localhost:9040/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "hubspot_contacts",
+        "name": "HubSpot Contact Management",
+        "description": "Create, search, update, and manage contact records in HubSpot CRM. Access contact details, track interactions, and manage contact properties.",
+        "examples": [
+          "List all my HubSpot contacts",
+          "Create a new contact with email john@example.com",
+          "Search for contacts with the last name Smith",
+          "Get contact details for contact ID 123",
+          "Update the phone number for a contact"
+        ],
+        "tags": [
+          "hubspot",
+          "contacts",
+          "crm",
+          "people"
+        ]
+      },
+      {
+        "id": "hubspot_companies",
+        "name": "HubSpot Company Management",
+        "description": "Create, search, update, and manage company records in HubSpot CRM. Track company information, industry, and relationships.",
+        "examples": [
+          "List all companies in HubSpot",
+          "Create a new company called Acme Corp",
+          "Search for companies in the tech industry",
+          "Get company details for company ID 456",
+          "Update company website information"
+        ],
+        "tags": [
+          "hubspot",
+          "companies",
+          "crm",
+          "organizations"
+        ]
+      },
+      {
+        "id": "hubspot_deals",
+        "name": "HubSpot Deal Management",
+        "description": "Create, search, update, and manage deals/opportunities in HubSpot CRM. Track deal stages, amounts, and close dates.",
+        "examples": [
+          "List all open deals",
+          "Create a new deal for $50,000",
+          "Search for deals closing this month",
+          "Update deal stage to Closed Won",
+          "Show me deals in the negotiation stage"
+        ],
+        "tags": [
+          "hubspot",
+          "deals",
+          "crm",
+          "sales",
+          "opportunities"
+        ]
+      },
+      {
+        "id": "hubspot_associations",
+        "name": "HubSpot Associations & Relationships",
+        "description": "View and manage relationships between HubSpot objects. See which contacts are associated with which companies and deals.",
+        "examples": [
+          "Show me all contacts associated with company ID 123",
+          "What deals are linked to this contact?",
+          "List associations between contacts and companies",
+          "Find all companies connected to this deal"
+        ],
+        "tags": [
+          "hubspot",
+          "associations",
+          "relationships",
+          "crm"
+        ]
+      },
+      {
+        "id": "hubspot_notes",
+        "name": "HubSpot Notes & Engagements",
+        "description": "Create notes and engagement records on HubSpot CRM objects. Track interactions, meetings, and communications.",
+        "examples": [
+          "Add a note to contact ID 123",
+          "Create a meeting note for a deal",
+          "Log an interaction with a company",
+          "Add follow-up notes after a call"
+        ],
+        "tags": [
+          "hubspot",
+          "notes",
+          "engagements",
+          "crm",
+          "activities"
+        ]
+      },
+      {
+        "id": "hubspot_account",
+        "name": "HubSpot Account Information",
+        "description": "View HubSpot account details, owners, and permissions. Get information about the connected HubSpot portal.",
+        "examples": [
+          "What HubSpot account am I connected to?",
+          "List all owners in this HubSpot portal",
+          "Show me account details",
+          "What permissions do I have?"
+        ],
+        "tags": [
+          "hubspot",
+          "account",
+          "portal",
+          "owners"
+        ]
+      },
+      {
+        "id": "web_search",
+        "name": "Web Search",
+        "description": "Search the web for current information using Bing or other integrated search tools.",
+        "examples": [
+          "Search for HubSpot best practices",
+          "Find information about PCI compliance",
+          "Get the latest HubSpot API updates"
+        ],
+        "tags": [
+          "web",
+          "search",
+          "bing",
+          "internet"
+        ]
+      },
+      {
+        "id": "human_interaction",
+        "name": "Human Expert Escalation",
+        "description": "Escalate complex CRM issues to human experts or facilitate human-in-the-loop interactions when automated responses are insufficient.",
+        "examples": [
+          "Escalate this CRM issue to a human expert",
+          "I need to speak with a person about data migration",
+          "Connect me with support for a complex workflow"
+        ],
+        "tags": [
+          "human-interaction",
+          "escalation",
+          "expert",
+          "human-capable"
+        ]
+      }
+    ]
   }
 ]

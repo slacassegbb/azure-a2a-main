@@ -1,0 +1,307 @@
+{
+  "workflows": [
+    {
+      "id": "custom-1738435200000",
+      "name": "Customer Support Pipeline",
+      "description": "Complete customer support workflow from classification to response",
+      "category": "Customer Service",
+      "user_id": "user_1",
+      "steps": [
+        {
+          "id": "step-1",
+          "agentId": "classification-triage",
+          "agentName": "Classification Agent",
+          "description": "Classify and route customer inquiry",
+          "order": 0,
+          "x": -200,
+          "y": 0
+        },
+        {
+          "id": "step-2",
+          "agentId": "deep-search",
+          "agentName": "Deep Search Agent",
+          "description": "Research customer history and relevant docs",
+          "order": 1,
+          "x": 0,
+          "y": 0
+        },
+        {
+          "id": "step-3",
+          "agentId": "reporter",
+          "agentName": "Reporter Agent",
+          "description": "Generate customer response",
+          "order": 2,
+          "x": 200,
+          "y": 0
+        }
+      ],
+      "connections": [
+        {
+          "id": "conn-1",
+          "fromStepId": "step-1",
+          "toStepId": "step-2"
+        },
+        {
+          "id": "conn-2",
+          "fromStepId": "step-2",
+          "toStepId": "step-3"
+        }
+      ],
+      "goal": "",
+      "is_custom": true,
+      "created_at": "2026-02-01T10:30:00Z",
+      "updated_at": "2026-02-01T10:30:00Z"
+    },
+    {
+      "id": "custom-1738435300000",
+      "name": "Marketing Content Creation",
+      "description": "Generate and refine marketing materials with brand consistency",
+      "category": "Marketing",
+      "user_id": "user_2",
+      "steps": [
+        {
+          "id": "step-a1",
+          "agentId": "image-generator",
+          "agentName": "Image Generator",
+          "description": "Create initial marketing visuals",
+          "order": 0,
+          "x": -250,
+          "y": -100
+        },
+        {
+          "id": "step-a2",
+          "agentId": "image-analysis",
+          "agentName": "Image Analysis",
+          "description": "Analyze generated images for quality",
+          "order": 1,
+          "x": 0,
+          "y": -100
+        },
+        {
+          "id": "step-a3",
+          "agentId": "branding-agent",
+          "agentName": "Branding Agent",
+          "description": "Apply brand guidelines and refine",
+          "order": 2,
+          "x": 250,
+          "y": -100
+        },
+        {
+          "id": "step-a4",
+          "agentId": "reporter",
+          "agentName": "Reporter Agent",
+          "description": "Generate accompanying marketing copy",
+          "order": 3,
+          "x": 0,
+          "y": 100
+        }
+      ],
+      "connections": [
+        {
+          "id": "conn-a1",
+          "fromStepId": "step-a1",
+          "toStepId": "step-a2"
+        },
+        {
+          "id": "conn-a2",
+          "fromStepId": "step-a2",
+          "toStepId": "step-a3"
+        },
+        {
+          "id": "conn-a3",
+          "fromStepId": "step-a3",
+          "toStepId": "step-a4"
+        }
+      ],
+      "goal": "",
+      "is_custom": true,
+      "created_at": "2026-02-01T11:15:00Z",
+      "updated_at": "2026-02-01T11:15:00Z"
+    },
+    {
+      "id": "custom-1769956269213",
+      "name": "simon",
+      "description": "test workflow",
+      "category": "Custom",
+      "user_id": "user_3",
+      "steps": [
+        {
+          "id": "step-1769458864235-662bzo2vq",
+          "agentId": "ai-foundry-branding-&-content-agent",
+          "agentName": "AI Foundry Branding & Content Agent",
+          "description": "Use the AI Foundry Branding & Content Agent agent",
+          "order": 0,
+          "x": -484,
+          "y": -10
+        },
+        {
+          "id": "step-1769458869274-t5b68z048",
+          "agentId": "ai-foundry-image-generator-agent",
+          "agentName": "AI Foundry Image Generator Agent",
+          "description": "Use the AI Foundry Image Generator Agent agent",
+          "order": 1,
+          "x": -196,
+          "y": -183
+        },
+        {
+          "id": "step-1769458870757-rll06al7e",
+          "agentId": "ai-foundry-image-generator-agent",
+          "agentName": "AI Foundry Image Generator Agent",
+          "description": "Use the AI Foundry Image Generator Agent agent",
+          "order": 2,
+          "x": -89,
+          "y": 8
+        },
+        {
+          "id": "step-1769458872315-g5uqt2vxi",
+          "agentId": "ai-foundry-image-generator-agent",
+          "agentName": "AI Foundry Image Generator Agent",
+          "description": "Use the AI Foundry Image Generator Agent agent",
+          "order": 3,
+          "x": -94,
+          "y": 173
+        },
+        {
+          "id": "step-1769458884533-79ir02d1j",
+          "agentId": "ai-foundry-image-generator-agent",
+          "agentName": "AI Foundry Image Generator Agent",
+          "description": "Use the AI Foundry Image Generator Agent agent",
+          "order": 4,
+          "x": 434,
+          "y": -21
+        },
+        {
+          "id": "step-1769465108854-c0lnaqktg",
+          "agentId": "ai-foundry-image-analysis-agent",
+          "agentName": "AI Foundry Image Analysis Agent",
+          "description": "Use the AI Foundry Image Analysis Agent agent",
+          "order": 5,
+          "x": 247,
+          "y": -168
+        }
+      ],
+      "connections": [
+        {
+          "id": "conn-1769458874898-3582ffhea",
+          "fromStepId": "step-1769458864235-662bzo2vq",
+          "toStepId": "step-1769458869274-t5b68z048"
+        },
+        {
+          "id": "conn-1769458876584-ow0l3jeio",
+          "fromStepId": "step-1769458864235-662bzo2vq",
+          "toStepId": "step-1769458870757-rll06al7e"
+        },
+        {
+          "id": "conn-1769458879323-5gdbjfs0r",
+          "fromStepId": "step-1769458864235-662bzo2vq",
+          "toStepId": "step-1769458872315-g5uqt2vxi"
+        },
+        {
+          "id": "conn-1769458886399-dlhzt30ib",
+          "fromStepId": "step-1769458869274-t5b68z048",
+          "toStepId": "step-1769458884533-79ir02d1j"
+        },
+        {
+          "id": "conn-1769458888824-0csid1avf",
+          "fromStepId": "step-1769458870757-rll06al7e",
+          "toStepId": "step-1769458884533-79ir02d1j"
+        },
+        {
+          "id": "conn-1769458891316-4vycnbtmw",
+          "fromStepId": "step-1769458872315-g5uqt2vxi",
+          "toStepId": "step-1769458884533-79ir02d1j"
+        },
+        {
+          "id": "conn-1769465110877-1g4085g0r",
+          "fromStepId": "step-1769458869274-t5b68z048",
+          "toStepId": "step-1769465108854-c0lnaqktg"
+        },
+        {
+          "id": "conn-1769465113160-x0oenzste",
+          "fromStepId": "step-1769458884533-79ir02d1j",
+          "toStepId": "step-1769465108854-c0lnaqktg"
+        }
+      ],
+      "goal": "",
+      "is_custom": true,
+      "created_at": "2026-02-01T14:31:09.219260Z",
+      "updated_at": "2026-02-01T14:31:09.219260Z"
+    },
+    {
+      "id": "custom-1769958528872",
+      "name": "stripe_quickbooks",
+      "description": "test workflow",
+      "category": "Custom",
+      "user_id": "user_3",
+      "steps": [
+        {
+          "id": "step-1769957681136-z3wq5a1mn",
+          "agentId": "ai-foundry-stripe-agent",
+          "agentName": "AI Foundry Stripe Agent",
+          "description": "check my balance",
+          "order": 0,
+          "x": -386,
+          "y": -19.5
+        },
+        {
+          "id": "step-1769957682991-ajw25bdvj",
+          "agentId": "quickbooks-online-agent",
+          "agentName": "AI Foundry QuickBooks Agent",
+          "description": "list all customers",
+          "order": 1,
+          "x": -89,
+          "y": -68.5
+        }
+      ],
+      "connections": [
+        {
+          "id": "conn-1769957712351-2b8q068vb",
+          "fromStepId": "step-1769957681136-z3wq5a1mn",
+          "toStepId": "step-1769957682991-ajw25bdvj"
+        }
+      ],
+      "goal": "",
+      "is_custom": true,
+      "created_at": "2026-02-01T15:08:48.881359Z",
+      "updated_at": "2026-02-01T15:08:48.881359Z"
+    },
+    {
+      "id": "custom-1769964199085",
+      "name": "simon 2",
+      "description": "sdsds",
+      "category": "Custom",
+      "user_id": "user_3",
+      "steps": [
+        {
+          "id": "step-1769957681136-z3wq5a1mn",
+          "agentId": "ai-foundry-stripe-agent",
+          "agentName": "AI Foundry Stripe Agent",
+          "description": "check my balance",
+          "order": 0,
+          "x": -386,
+          "y": -19.5
+        },
+        {
+          "id": "step-1769957682991-ajw25bdvj",
+          "agentId": "quickbooks-online-agent",
+          "agentName": "QuickBooks Online Agent",
+          "description": "list all customers",
+          "order": 1,
+          "x": -89,
+          "y": -68.5
+        }
+      ],
+      "connections": [
+        {
+          "id": "conn-1769957712351-2b8q068vb",
+          "fromStepId": "step-1769957681136-z3wq5a1mn",
+          "toStepId": "step-1769957682991-ajw25bdvj"
+        }
+      ],
+      "goal": "analyze financials and find customers",
+      "is_custom": true,
+      "created_at": "2026-02-01T16:43:19.089698Z",
+      "updated_at": "2026-02-01T16:43:19.089698Z"
+    }
+  ]
+}

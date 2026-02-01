@@ -823,6 +823,12 @@ def main():
             workflow_lines.append(f"{i+1}. [{agent_name}] {description}")
         workflow_text = "\n".join(workflow_lines)
         
+        # DEBUG: Log the workflow details
+        print(f"[WorkflowRun] 📋 WORKFLOW STEPS:")
+        for line in workflow_lines:
+            print(f"   {line}")
+        print(f"[WorkflowRun] 🎯 Workflow Goal: {workflow.goal}")
+        
         # Get initial message - always use standard execution message
         # The goal is used separately for completion evaluation, not as the trigger
         if request.initial_message:

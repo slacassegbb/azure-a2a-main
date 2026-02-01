@@ -1380,7 +1380,7 @@
     "description": "An intelligent QuickBooks Online agent for accounting and financial management. Manage customers, invoices, bills, vendors, employees, and generate financial reports.",
     "documentationUrl": null,
     "iconUrl": null,
-    "name": "QuickBooks Online Agent",
+    "name": "AI Foundry QuickBooks Agent",
     "preferredTransport": "JSONRPC",
     "protocolVersion": "0.3.0",
     "provider": null,
@@ -1570,6 +1570,83 @@
     ],
     "supportsAuthenticatedExtendedCard": null,
     "url": "http://localhost:9030/",
+    "version": "1.0.0"
+  },
+  {
+    "additionalInterfaces": null,
+    "capabilities": {
+      "extensions": null,
+      "pushNotifications": null,
+      "stateTransitionHistory": null,
+      "streaming": true
+    },
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "description": "Intelligent agent for HubSpot payment processing - customers, payments, subscriptions, invoices, and balance.",
+    "documentationUrl": null,
+    "iconUrl": null,
+    "name": "AI Foundry HubSpot Agent",
+    "preferredTransport": "JSONRPC",
+    "protocolVersion": "0.3.0",
+    "provider": null,
+    "security": null,
+    "securitySchemes": null,
+    "signatures": null,
+    "skills": [
+      {
+        "description": "Create, search, update, and manage customer records in HubSpot.",
+        "examples": [
+          "List all my HubSpot customers"
+        ],
+        "id": "hubspot_customers",
+        "inputModes": null,
+        "name": "HubSpot Customer Management",
+        "outputModes": null,
+        "security": null,
+        "tags": [
+          "hubspot",
+          "customers",
+          "payments"
+        ]
+      },
+      {
+        "description": "Create payment intents, process charges, and handle refunds.",
+        "examples": [
+          "Create a payment intent for $100"
+        ],
+        "id": "hubspot_payments",
+        "inputModes": null,
+        "name": "HubSpot Payment Processing",
+        "outputModes": null,
+        "security": null,
+        "tags": [
+          "hubspot",
+          "payments",
+          "charges"
+        ]
+      },
+      {
+        "description": "Check balance and view available funds.",
+        "examples": [
+          "What is my current HubSpot balance?"
+        ],
+        "id": "hubspot_balance",
+        "inputModes": null,
+        "name": "HubSpot Balance",
+        "outputModes": null,
+        "security": null,
+        "tags": [
+          "hubspot",
+          "balance"
+        ]
+      }
+    ],
+    "supportsAuthenticatedExtendedCard": null,
+    "url": "http://localhost:9040/",
     "version": "1.0.0"
   }
 ]
