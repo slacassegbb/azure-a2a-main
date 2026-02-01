@@ -326,8 +326,15 @@ class ConversationServer:
         agent_mode = message_data.get('params', {}).get('agentMode', None)
         enable_inter_agent_memory = message_data.get('params', {}).get('enableInterAgentMemory', False)
         workflow = message_data.get('params', {}).get('workflow')
+        workflow_goal = message_data.get('params', {}).get('workflowGoal')  # Goal from workflow designer
         user_id = message_data.get('params', {}).get('userId')  # Extract userId for color lookup
-        log_debug(f"_send_message: Agent Mode = {agent_mode}, Inter-Agent Memory = {enable_inter_agent_memory}, Workflow = {workflow[:50] if workflow else None}")
+        log_debug(f"_send_message: Agent Mode = {agent_mode}, Inter-Agent Memory = {enable_inter_agent_memory}, Workflow = {workflow[:50] if workflow else None}, WorkflowGoal = {workflow_goal[:50] if workflow_goal else None}")
+        
+        # DEBUG: Log the full workflow text to verify all steps are included
+        if workflow:
+            print(f"📋 [_send_message] FULL WORKFLOW TEXT ({len(workflow)} chars):")
+            for line in workflow.split('\n'):
+                print(f"    {line}")
         
         # DEBUG: Log the contextId from frontend
         frontend_context_id = message_data.get('params', {}).get('contextId')
@@ -369,7 +376,7 @@ class ConversationServer:
             )
         else:
             t = threading.Thread(
-                target=lambda: asyncio.run_coroutine_threadsafe(self.manager.process_message(message, agent_mode, enable_inter_agent_memory, workflow), main_loop)
+                target=lambda: asyncio.run_coroutine_threadsafe(self.manager.process_message(message, agent_mode, enable_inter_agent_memory, workflow, workflow_goal), main_loop)
             )
         t.start()
         

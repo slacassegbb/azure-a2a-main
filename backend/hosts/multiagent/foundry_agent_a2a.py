@@ -1368,7 +1368,7 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
                     {"role": "user", "content": user_prompt}
                 ],
                 response_format=response_model,
-                temperature=0.7,
+                temperature=0.0,  # Use 0.0 for deterministic workflow execution
                 max_tokens=2000
             )
             
@@ -3406,7 +3406,7 @@ Answer with just JSON:
                 
         return cleaned_parts
 
-    async def run_conversation_with_parts(self, message_parts: List[Part], context_id: Optional[str] = None, event_logger=None, agent_mode: bool = False, enable_inter_agent_memory: bool = False, workflow: Optional[str] = None) -> Any:
+    async def run_conversation_with_parts(self, message_parts: List[Part], context_id: Optional[str] = None, event_logger=None, agent_mode: bool = False, enable_inter_agent_memory: bool = False, workflow: Optional[str] = None, workflow_goal: Optional[str] = None) -> Any:
         """
         Process a user message that may include files, images, or multimodal content.
         
@@ -3631,7 +3631,7 @@ Answer with just JSON:
             
             if use_orchestration:
                 mode_type = "Workflow" if (workflow and workflow.strip()) else "Agent"
-                log_debug(f"🎯 [{mode_type} Mode] Using orchestration loop (workflow={bool(workflow)}, agent_mode={agent_mode})")
+                log_debug(f"🎯 [{mode_type} Mode] Using orchestration loop (workflow={bool(workflow)}, agent_mode={agent_mode}, workflow_goal={workflow_goal[:50] if workflow_goal else None})")
                 await self._emit_status_event("Starting orchestration...", context_id)
                 
                 # Use agent mode orchestration loop
@@ -3641,7 +3641,8 @@ Answer with just JSON:
                         context_id=context_id,
                         session_context=session_context,
                         event_logger=event_logger,
-                        workflow=workflow
+                        workflow=workflow,
+                        workflow_goal=workflow_goal
                     )
                     
                     # WORKFLOW MODE: Combine outputs into single response without calling agents

@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Textarea } from "@/components/ui/textarea"
 import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
-import { PanelRightClose, PanelRightOpen, ShieldCheck, ChevronDown, ChevronRight, Globe, Hash, Zap, FileText, ExternalLink, Settings, Clock, CheckCircle, XCircle, AlertCircle, Pause, Brain, Search, MessageSquare, Database, Shield, BarChart3, Gavel, Users, Bot, Trash2, User, ListOrdered, Network, RotateCcw } from "lucide-react"
+import { PanelRightClose, PanelRightOpen, ShieldCheck, ChevronDown, ChevronRight, Globe, Hash, Zap, FileText, ExternalLink, Settings, Clock, CheckCircle, XCircle, AlertCircle, Pause, Brain, Search, MessageSquare, Database, Shield, BarChart3, Gavel, Users, Bot, Trash2, User, ListOrdered, Network, RotateCcw, Play, Calendar } from "lucide-react"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { SimulateAgentRegistration } from "./simulate-agent-registration"
 import { ConnectedUsers } from "./connected-users"
@@ -86,7 +86,13 @@ type Props = {
   enableInterAgentMemory: boolean
   onInterAgentMemoryChange: (enabled: boolean) => void
   workflow?: string
+  workflowName?: string
+  workflowGoal?: string
   onWorkflowChange?: (workflow: string) => void
+  onWorkflowNameChange?: (name: string) => void
+  onWorkflowGoalChange?: (goal: string) => void
+  onRunWorkflow?: () => void
+  onScheduleWorkflow?: () => void
   dagNodes?: any[]
   dagLinks?: any[]
   activeNode?: string | null
@@ -143,7 +149,7 @@ function hasHumanInteractionSkill(agent: Agent): boolean {
   return agent.skills?.some(skill => skill.id === 'human_interaction') ?? false
 }
 
-export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableInterAgentMemory, onInterAgentMemoryChange, workflow: propWorkflow, onWorkflowChange, dagNodes = [], dagLinks = [], activeNode = null }: Props) {
+export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableInterAgentMemory, onInterAgentMemoryChange, workflow: propWorkflow, workflowName: propWorkflowName, workflowGoal: propWorkflowGoal, onWorkflowChange, onWorkflowNameChange, onWorkflowGoalChange, onRunWorkflow, onScheduleWorkflow, dagNodes = [], dagLinks = [], activeNode = null }: Props) {
   const searchParams = useSearchParams()
   const currentConversationId = searchParams.get('conversationId') || undefined
   
@@ -164,10 +170,16 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
   // Workflow state - use prop if provided, otherwise local state
   const [isWorkflowDialogOpen, setIsWorkflowDialogOpen] = useState(false)
   const [localWorkflow, setLocalWorkflow] = useState("")
+  const [localWorkflowName, setLocalWorkflowName] = useState("")
+  const [localWorkflowGoal, setLocalWorkflowGoal] = useState("")
   const [editedWorkflow, setEditedWorkflow] = useState("")
   
   const workflow = propWorkflow !== undefined ? propWorkflow : localWorkflow
   const setWorkflow = onWorkflowChange || setLocalWorkflow
+  const workflowName = propWorkflowName !== undefined ? propWorkflowName : localWorkflowName
+  const setWorkflowName = onWorkflowNameChange || setLocalWorkflowName
+  const workflowGoal = propWorkflowGoal !== undefined ? propWorkflowGoal : localWorkflowGoal
+  const setWorkflowGoal = onWorkflowGoalChange || setLocalWorkflowGoal
   
   // Agent status tracking state
   const [agentStatuses, setAgentStatuses] = useState<Map<string, AgentStatus>>(new Map())
@@ -896,7 +908,17 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
               </CardHeader>
               <CardContent className="px-3 pb-3 pt-2">
                 {/* Workflow Button */}
-                <Dialog open={isWorkflowDialogOpen} onOpenChange={setIsWorkflowDialogOpen}>
+                <Dialog 
+                  open={isWorkflowDialogOpen} 
+                  onOpenChange={(open) => {
+                    // When dialog closes, auto-sync the edited workflow to parent
+                    if (!open && editedWorkflow && editedWorkflow !== workflow) {
+                      console.log('[AgentNetwork] Auto-syncing workflow on dialog close')
+                      setWorkflow(editedWorkflow)
+                    }
+                    setIsWorkflowDialogOpen(open)
+                  }}
+                >
                   <DialogTrigger asChild>
                     <Button 
                       variant="outline" 
@@ -933,7 +955,10 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
                                     id: agent.name.toLowerCase().replace(/\s+/g, '-')
                                   }))}
                                   onWorkflowGenerated={(text) => setEditedWorkflow(text)}
+                                  onWorkflowNameChange={setWorkflowName}
+                                  onWorkflowGoalChange={setWorkflowGoal}
                                   initialWorkflow={editedWorkflow}
+                                  initialWorkflowName={workflowName}
                                   conversationId={currentConversationId}
                                 />
                               </div>
@@ -973,15 +998,60 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
                                   setIsWorkflowDialogOpen(false)
                                 }}
                               >
-                                Save Workflow
+                                Activate Workflow
                               </Button>
                             </DialogFooter>
                           </DialogContent>
                         </Dialog>
                         {workflow && (
-                          <p className="text-xs text-muted-foreground mt-1">
-                            ✓ {workflow.split('\n').filter(l => l.trim()).length} steps defined
-                          </p>
+                          <div className="mt-2 space-y-2">
+                            <div className="flex items-center justify-between">
+                              <div className="flex-1 min-w-0">
+                                <p className="text-xs font-medium text-slate-200 truncate">
+                                  {workflowName || "Untitled Workflow"}
+                                </p>
+                                <p className="text-xs text-muted-foreground">
+                                  ✓ {workflow.split('\n').filter(l => l.trim()).length} steps defined
+                                </p>
+                              </div>
+                              <div className="flex items-center gap-1 ml-2">
+                                <TooltipProvider>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-7 w-7 text-green-500 hover:text-green-400 hover:bg-green-500/10"
+                                        onClick={onRunWorkflow}
+                                      >
+                                        <Play className="h-4 w-4" />
+                                      </Button>
+                                    </TooltipTrigger>
+                                    <TooltipContent>
+                                      <p>Run Workflow</p>
+                                    </TooltipContent>
+                                  </Tooltip>
+                                </TooltipProvider>
+                                <TooltipProvider>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-7 w-7 text-blue-500 hover:text-blue-400 hover:bg-blue-500/10"
+                                        onClick={onScheduleWorkflow}
+                                      >
+                                        <Calendar className="h-4 w-4" />
+                                      </Button>
+                                    </TooltipTrigger>
+                                    <TooltipContent>
+                                      <p>Schedule Workflow</p>
+                                    </TooltipContent>
+                                  </Tooltip>
+                                </TooltipProvider>
+                              </div>
+                            </div>
+                          </div>
                         )}
               </CardContent>
             </Card>

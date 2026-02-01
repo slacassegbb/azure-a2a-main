@@ -674,7 +674,8 @@ Use the above output from the previous workflow step to complete your task."""
         context_id: str,
         session_context: SessionContext,
         event_logger=None,
-        workflow: Optional[str] = None
+        workflow: Optional[str] = None,
+        workflow_goal: Optional[str] = None
     ) -> List[str]:
         """
         Execute agent-mode orchestration: AI-driven task decomposition and multi-agent coordination.
@@ -696,6 +697,7 @@ Use the above output from the previous workflow step to complete your task."""
             session_context: Session state with agent task tracking
             event_logger: Optional callback for logging orchestration events
             workflow: Optional predefined workflow steps to enforce
+            workflow_goal: Optional goal from workflow designer for completion evaluation
             
         Returns:
             List of response strings from executed tasks for final synthesis
@@ -722,9 +724,14 @@ Use the above output from the previous workflow step to complete your task."""
             original_goal = self._active_conversations[context_id]
             goal_text = f"{original_goal}\n\n[Additional Information Provided]: {user_message}"
         else:
-            goal_text = user_message
+            # Use workflow_goal from the designer if provided, otherwise fall back to user_message
+            if workflow_goal and workflow_goal.strip():
+                goal_text = workflow_goal
+                log_debug(f"🎯 [Workflow Mode] Using workflow designer goal: {goal_text[:100]}...")
+            else:
+                goal_text = user_message
             if context_id not in self._active_conversations:
-                self._active_conversations[context_id] = user_message
+                self._active_conversations[context_id] = goal_text
         
         # Use the class method for extracting clean text from A2A response objects
         extract_text_from_response = self._extract_text_from_response
@@ -837,7 +844,12 @@ Do NOT skip steps. Do NOT mark goal as completed until ALL workflow steps are do
 
 {workflow.strip()}
 
-**IMPORTANT**: 
+**AGENT ROUTING**: 
+- Each step specifies the agent to use in [brackets] - e.g., "[QuickBooks Online Agent]"
+- You MUST use the agent specified in brackets for that step - do NOT substitute a different agent
+- Set `recommended_agent` to the exact agent name from the brackets
+
+**EXECUTION RULES**: 
 - Execute sequential steps (1, 2, 3) one after another
 - **PARALLEL STEPS** (e.g., 2a, 2b, 2c): When you see steps with letter suffixes, these can run SIMULTANEOUSLY
   - Use `next_tasks` (list) with `parallel=true` to execute them concurrently

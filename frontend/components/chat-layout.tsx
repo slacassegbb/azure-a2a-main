@@ -25,6 +25,10 @@ const initialDagLinks = [
 export function ChatLayout() {
   const DEBUG = process.env.NEXT_PUBLIC_DEBUG_LOGS === 'true'
   const { toast } = useToast()
+  
+  // Use the Event Hub hook early for proper client-side initialization
+  const { subscribe, unsubscribe, emit } = useEventHub()
+  
   const [isLeftSidebarCollapsed, setLeftSidebarCollapsed] = useState(false)
   const [isRightSidebarCollapsed, setRightSidebarCollapsed] = useState(false)
   const [isFileHistoryOpen, setFileHistoryOpen] = useState(false) // Closed by default
@@ -42,6 +46,20 @@ export function ChatLayout() {
     }
     return ""
   })
+  
+  const [workflowName, setWorkflowName] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('agent-mode-workflow-name') || ""
+    }
+    return ""
+  })
+  
+  const [workflowGoal, setWorkflowGoal] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('agent-mode-workflow-goal') || ""
+    }
+    return ""
+  })
 
   // Only save workflow to localStorage (not agent mode toggle)
   useEffect(() => {
@@ -51,8 +69,72 @@ export function ChatLayout() {
       } else {
         localStorage.removeItem('agent-mode-workflow')
       }
+      if (workflowName) {
+        localStorage.setItem('agent-mode-workflow-name', workflowName)
+      } else {
+        localStorage.removeItem('agent-mode-workflow-name')
+      }
+      if (workflowGoal) {
+        localStorage.setItem('agent-mode-workflow-goal', workflowGoal)
+      } else {
+        localStorage.removeItem('agent-mode-workflow-goal')
+      }
     }
-  }, [workflow])
+  }, [workflow, workflowName, workflowGoal])
+  
+  // Workflow action handlers (to be implemented)
+  const handleRunWorkflow = useCallback(() => {
+    if (!workflow) {
+      toast({
+        title: "No workflow defined",
+        description: "Please create a workflow first",
+        variant: "destructive"
+      })
+      return
+    }
+    
+    // Parse the workflow text to get all step descriptions
+    const lines = workflow.split('\n').filter(l => l.trim())
+    if (lines.length === 0) {
+      toast({
+        title: "Empty workflow",
+        description: "The workflow has no steps defined",
+        variant: "destructive"
+      })
+      return
+    }
+    
+    const workflowDisplayName = workflowName || 'Untitled Workflow'
+    
+    // Simple goal message - the workflow details are in the system prompt
+    const initialMessage = `Execute the "${workflowDisplayName}" workflow.`
+    
+    console.log('[ChatLayout] Running workflow:', workflowDisplayName)
+    console.log('[ChatLayout] Initial message:', initialMessage)
+    console.log('[ChatLayout] Workflow goal:', workflowGoal || '(none - will use trigger message)')
+    
+    // Emit event for ChatPanel to handle - include workflowGoal for orchestrator
+    emit('run_workflow', {
+      workflowName: workflowDisplayName,
+      workflow: workflow,
+      initialMessage: initialMessage,
+      workflowGoal: workflowGoal  // Pass the goal from workflow designer
+    })
+    
+    toast({
+      title: "Workflow Started",
+      description: `Running: ${workflowDisplayName}`,
+    })
+  }, [workflow, workflowName, emit, toast])
+  
+  const handleScheduleWorkflow = useCallback(() => {
+    console.log('[ChatLayout] Schedule workflow clicked:', workflowName || 'Untitled')
+    // TODO: Implement workflow scheduling
+    toast({
+      title: "Coming Soon",
+      description: "Workflow scheduling will be available in a future update",
+    })
+  }, [workflowName, toast])
 
   // Callback when file history loads files - auto-open if there are files
   const handleFilesLoaded = useCallback((count: number) => {
@@ -100,9 +182,6 @@ export function ChatLayout() {
   const [dagLinks, setDagLinks] = useState(() => [
     ...initialDagLinks,
   ])
-
-  // Use the Event Hub hook for proper client-side initialization
-  const { subscribe, unsubscribe, emit } = useEventHub()
 
   // Helper to update DAG from agents list
   const updateDagFromAgents = (agents: any[]) => {
@@ -393,6 +472,7 @@ export function ChatLayout() {
               dagLinks={dagLinks} 
               enableInterAgentMemory={enableInterAgentMemory}
               workflow={workflow}
+              workflowGoal={workflowGoal}
               registeredAgents={registeredAgents}
               connectedUsers={connectedUsers}
               activeNode={activeNode}
@@ -422,7 +502,13 @@ export function ChatLayout() {
             enableInterAgentMemory={enableInterAgentMemory}
             onInterAgentMemoryChange={setEnableInterAgentMemory}
             workflow={workflow}
+            workflowName={workflowName}
+            workflowGoal={workflowGoal}
             onWorkflowChange={setWorkflow}
+            onWorkflowNameChange={setWorkflowName}
+            onWorkflowGoalChange={setWorkflowGoal}
+            onRunWorkflow={handleRunWorkflow}
+            onScheduleWorkflow={handleScheduleWorkflow}
             dagNodes={dagNodes}
             dagLinks={dagLinks}
             activeNode={activeNode}

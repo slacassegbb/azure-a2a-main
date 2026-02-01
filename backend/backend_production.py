@@ -587,6 +587,374 @@ def main():
             "users": auth_service.get_all_users()
         }
 
+    # ==========================================================================
+    # Workflow API Endpoints
+    # ==========================================================================
+    
+    from service.workflow_service import get_workflow_service
+    workflow_service = get_workflow_service()
+    
+    class WorkflowCreate(BaseModel):
+        id: str
+        name: str
+        description: str = ""
+        category: str = "Custom"
+        goal: str = ""
+        steps: List[Dict[str, Any]]
+        connections: List[Dict[str, Any]]
+    
+    class WorkflowUpdate(BaseModel):
+        name: Optional[str] = None
+        description: Optional[str] = None
+        category: Optional[str] = None
+        goal: Optional[str] = None
+        steps: Optional[List[Dict[str, Any]]] = None
+        connections: Optional[List[Dict[str, Any]]] = None
+    
+    @app.get("/api/workflows")
+    async def get_workflows(current_user: dict = Depends(get_current_user)):
+        """Get all workflows for the current user."""
+        user_id = current_user.get("user_id")
+        workflows = workflow_service.get_user_workflows(user_id)
+        return {
+            "success": True,
+            "workflows": [workflow_service.workflow_to_dict(w) for w in workflows]
+        }
+    
+    @app.get("/api/workflows/all")
+    async def get_all_workflows():
+        """Get all workflows (for shared catalog - no auth required)."""
+        workflows = workflow_service.get_all_workflows()
+        return {
+            "success": True,
+            "workflows": [workflow_service.workflow_to_dict(w) for w in workflows]
+        }
+    
+    @app.get("/api/workflows/{workflow_id}")
+    async def get_workflow(workflow_id: str):
+        """Get a specific workflow by ID."""
+        workflow = workflow_service.get_workflow(workflow_id)
+        if not workflow:
+            raise HTTPException(status_code=404, detail="Workflow not found")
+        return {
+            "success": True,
+            "workflow": workflow_service.workflow_to_dict(workflow)
+        }
+    
+    @app.post("/api/workflows")
+    async def create_workflow(workflow_data: WorkflowCreate, current_user: dict = Depends(get_current_user)):
+        """Create a new workflow for the current user."""
+        user_id = current_user.get("user_id")
+        
+        # Check if workflow with this ID already exists
+        existing = workflow_service.get_workflow(workflow_data.id)
+        if existing:
+            # Update instead of create if it exists and belongs to user
+            if existing.user_id == user_id:
+                updated = workflow_service.update_workflow(
+                    workflow_id=workflow_data.id,
+                    user_id=user_id,
+                    name=workflow_data.name,
+                    description=workflow_data.description,
+                    category=workflow_data.category,
+                    steps=workflow_data.steps,
+                    connections=workflow_data.connections
+                )
+                return {
+                    "success": True,
+                    "message": "Workflow updated",
+                    "workflow": workflow_service.workflow_to_dict(updated)
+                }
+            else:
+                raise HTTPException(status_code=403, detail="Workflow belongs to another user")
+        
+        workflow = workflow_service.create_workflow(
+            workflow_id=workflow_data.id,
+            name=workflow_data.name,
+            user_id=user_id,
+            description=workflow_data.description,
+            category=workflow_data.category,
+            goal=workflow_data.goal,
+            steps=workflow_data.steps,
+            connections=workflow_data.connections
+        )
+        return {
+            "success": True,
+            "message": "Workflow created",
+            "workflow": workflow_service.workflow_to_dict(workflow)
+        }
+    
+    @app.put("/api/workflows/{workflow_id}")
+    async def update_workflow(workflow_id: str, workflow_data: WorkflowUpdate, current_user: dict = Depends(get_current_user)):
+        """Update an existing workflow."""
+        user_id = current_user.get("user_id")
+        
+        workflow = workflow_service.update_workflow(
+            workflow_id=workflow_id,
+            user_id=user_id,
+            name=workflow_data.name,
+            description=workflow_data.description,
+            category=workflow_data.category,
+            goal=workflow_data.goal,
+            steps=workflow_data.steps,
+            connections=workflow_data.connections
+        )
+        
+        if not workflow:
+            raise HTTPException(status_code=404, detail="Workflow not found or access denied")
+        
+        return {
+            "success": True,
+            "message": "Workflow updated",
+            "workflow": workflow_service.workflow_to_dict(workflow)
+        }
+    
+    @app.delete("/api/workflows/{workflow_id}")
+    async def delete_workflow(workflow_id: str, current_user: dict = Depends(get_current_user)):
+        """Delete a workflow."""
+        user_id = current_user.get("user_id")
+        
+        success = workflow_service.delete_workflow(workflow_id, user_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="Workflow not found or access denied")
+        
+        return {
+            "success": True,
+            "message": "Workflow deleted"
+        }
+    
+    @app.get("/api/workflows/list")
+    async def list_available_workflows():
+        """
+        List all available workflows (no authentication required).
+        Useful for discovering workflows before running them via API.
+        
+        Example curl:
+            curl http://localhost:12000/api/workflows/list
+        """
+        workflows = workflow_service.get_all_workflows()
+        return {
+            "workflows": [
+                {
+                    "id": w.id,
+                    "name": w.name,
+                    "description": w.description,
+                    "steps_count": len(w.steps) if w.steps else 0,
+                    "owner": w.user_id
+                }
+                for w in workflows
+            ]
+        }
+    
+    class WorkflowRunRequest(BaseModel):
+        workflow_id: Optional[str] = None
+        workflow_name: Optional[str] = None
+        session_id: Optional[str] = None
+        conversation_id: Optional[str] = None
+        initial_message: Optional[str] = None  # Override first step description
+        wait_for_completion: bool = False  # If True, wait and return the result
+        timeout: int = 300  # Timeout in seconds for synchronous mode (default 5 min)
+    
+    @app.post("/api/workflows/run")
+    async def run_workflow(request: WorkflowRunRequest):
+        """
+        Execute a workflow by ID or name.
+        
+        This endpoint allows triggering a workflow execution programmatically
+        without going through the UI. The workflow's first step description
+        is used as the initial message to kick off the orchestration.
+        
+        Modes:
+        - Async (default): Returns immediately with IDs, workflow runs in background
+        - Sync (wait_for_completion=true): Waits for workflow to complete and returns result
+        
+        Example curl (async - returns immediately):
+            curl -X POST http://localhost:12000/api/workflows/run \\
+                -H "Content-Type: application/json" \\
+                -d '{"workflow_name": "Customer Support Pipeline"}'
+        
+        Example curl (sync - waits for result):
+            curl -X POST http://localhost:12000/api/workflows/run \\
+                -H "Content-Type: application/json" \\
+                -d '{"workflow_name": "Customer Support Pipeline", "wait_for_completion": true}'
+        
+        Or by ID:
+            curl -X POST http://localhost:12000/api/workflows/run \\
+                -H "Content-Type: application/json" \\
+                -d '{"workflow_id": "custom-1738435200000", "wait_for_completion": true}'
+        """
+        import uuid
+        import asyncio
+        import threading
+        from service.server.server import main_loop
+        
+        # Find the workflow
+        workflow = None
+        if request.workflow_id:
+            workflow = workflow_service.get_workflow(request.workflow_id)
+        elif request.workflow_name:
+            # Search by name
+            all_workflows = workflow_service.get_all_workflows()
+            for w in all_workflows:
+                if w.name.lower() == request.workflow_name.lower():
+                    workflow = w
+                    break
+        
+        if not workflow:
+            raise HTTPException(
+                status_code=404, 
+                detail=f"Workflow not found: {request.workflow_id or request.workflow_name}"
+            )
+        
+        # Generate workflow text from steps
+        if not workflow.steps:
+            raise HTTPException(status_code=400, detail="Workflow has no steps defined")
+        
+        # Sort steps by order
+        sorted_steps = sorted(workflow.steps, key=lambda s: s.get('order', 0))
+        
+        # Generate workflow text (same format as frontend - include agent name for routing)
+        workflow_lines = []
+        for i, step in enumerate(sorted_steps):
+            agent_name = step.get('agentName', 'unknown')
+            default_desc = 'Use the ' + agent_name + ' agent'
+            description = step.get('description', default_desc)
+            # Include agent name so orchestrator knows which agent to route to
+            workflow_lines.append(f"{i+1}. [{agent_name}] {description}")
+        workflow_text = "\n".join(workflow_lines)
+        
+        # Get initial message - always use standard execution message
+        # The goal is used separately for completion evaluation, not as the trigger
+        if request.initial_message:
+            initial_message = request.initial_message
+        else:
+            # Standard execution message - the workflow steps define what to do
+            initial_message = f'Execute the "{workflow.name}" workflow.'
+        
+        # Generate IDs
+        session_id = request.session_id or str(uuid.uuid4())
+        conversation_id = request.conversation_id or str(uuid.uuid4())
+        message_id = f"msg_{uuid.uuid4().hex[:8]}"
+        context_id = f"{session_id}::{conversation_id}"
+        
+        print(f"[WorkflowRun] Starting workflow: {workflow.name}")
+        print(f"[WorkflowRun] Initial message: {initial_message}")
+        print(f"[WorkflowRun] Context ID: {context_id}")
+        print(f"[WorkflowRun] Wait for completion: {request.wait_for_completion}")
+        
+        # Check if agent_server is available
+        if not agent_server or not hasattr(agent_server, 'manager'):
+            raise HTTPException(status_code=503, detail="Agent server not available")
+        
+        # Create the message
+        from a2a.types import Message, Part, TextPart, Role
+        
+        message = Message(
+            messageId=message_id,
+            contextId=context_id,
+            role=Role.user,
+            parts=[Part(root=TextPart(text=initial_message))]
+        )
+        
+        # Process message with workflow
+        try:
+            if request.wait_for_completion:
+                # SYNCHRONOUS MODE: Wait for completion and return result
+                print(f"[WorkflowRun] Running in SYNC mode (timeout: {request.timeout}s)")
+                
+                import time
+                start_time = time.time()
+                
+                # Submit the coroutine to the main event loop
+                future = asyncio.run_coroutine_threadsafe(
+                    agent_server.manager.process_message(
+                        message, 
+                        agent_mode=None,  # Auto-detect from workflow
+                        enable_inter_agent_memory=True,
+                        workflow=workflow_text,
+                        workflow_goal=workflow.goal  # Pass the workflow's goal for completion evaluation
+                    ), 
+                    main_loop
+                )
+                
+                # Wait for the result with timeout
+                try:
+                    responses = future.result(timeout=request.timeout)
+                    elapsed_time = time.time() - start_time
+                    
+                    print(f"[WorkflowRun] ✅ Workflow completed in {elapsed_time:.2f}s")
+                    print(f"[WorkflowRun] Responses: {len(responses) if responses else 0}")
+                    
+                    # Format the responses
+                    result_text = ""
+                    if responses:
+                        if isinstance(responses, list):
+                            result_text = "\n\n".join(str(r) for r in responses)
+                        else:
+                            result_text = str(responses)
+                    
+                    return {
+                        "success": True,
+                        "completed": True,
+                        "message": f"Workflow '{workflow.name}' completed",
+                        "workflow_id": workflow.id,
+                        "workflow_name": workflow.name,
+                        "session_id": session_id,
+                        "conversation_id": conversation_id,
+                        "message_id": message_id,
+                        "initial_message": initial_message,
+                        "steps_count": len(sorted_steps),
+                        "execution_time_seconds": round(elapsed_time, 2),
+                        "result": result_text
+                    }
+                    
+                except asyncio.TimeoutError:
+                    elapsed_time = time.time() - start_time
+                    print(f"[WorkflowRun] ⏱️ Workflow timed out after {elapsed_time:.2f}s")
+                    raise HTTPException(
+                        status_code=408, 
+                        detail=f"Workflow timed out after {request.timeout} seconds. Use wait_for_completion=false for long-running workflows."
+                    )
+                    
+            else:
+                # ASYNC MODE: Fire and forget (original behavior)
+                print(f"[WorkflowRun] Running in ASYNC mode (fire-and-forget)")
+                t = threading.Thread(
+                    target=lambda: asyncio.run_coroutine_threadsafe(
+                        agent_server.manager.process_message(
+                            message, 
+                            agent_mode=None,  # Auto-detect from workflow
+                            enable_inter_agent_memory=True,
+                            workflow=workflow_text,
+                            workflow_goal=workflow.goal  # Pass the workflow's goal for completion evaluation
+                        ), 
+                        main_loop
+                    )
+                )
+                t.start()
+                
+                return {
+                    "success": True,
+                    "completed": False,
+                    "message": f"Workflow '{workflow.name}' started (async mode)",
+                    "workflow_id": workflow.id,
+                    "workflow_name": workflow.name,
+                    "session_id": session_id,
+                    "conversation_id": conversation_id,
+                    "message_id": message_id,
+                    "initial_message": initial_message,
+                    "steps_count": len(sorted_steps),
+                    "note": "Workflow is running in the background. Connect to WebSocket to receive updates."
+                }
+                
+        except HTTPException:
+            raise
+        except Exception as e:
+            print(f"[WorkflowRun] Error starting workflow: {e}")
+            import traceback
+            traceback.print_exc()
+            raise HTTPException(status_code=500, detail=f"Failed to start workflow: {str(e)}")
+
     @app.post("/clear-memory")
     async def clear_memory():
         """Clear all stored interactions from the Azure vector memory index."""

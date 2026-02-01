@@ -221,7 +221,7 @@ class FoundryHostManager(ApplicationManager):
         parts.append(Part(root=TextPart(text=str(resp))))
         return _build_message()
 
-    async def process_message(self, message: Message, agent_mode: bool = None, enable_inter_agent_memory: bool = False, workflow: str = None):
+    async def process_message(self, message: Message, agent_mode: bool = None, enable_inter_agent_memory: bool = False, workflow: str = None, workflow_goal: str = None):
         await self.ensure_host_agent_initialized()
         message_id = get_message_id(message)
         if message_id:
@@ -500,8 +500,8 @@ class FoundryHostManager(ApplicationManager):
         
         # Pass the entire message with all parts (including files) to the host agent
         user_text = message.parts[0].root.text if message.parts and message.parts[0].root.kind == 'text' else ""
-        log_debug(f"About to call run_conversation_with_parts with message parts: {len(message.parts)} parts, agent_mode: {effective_agent_mode}, enable_inter_agent_memory: {enable_inter_agent_memory}, workflow: {workflow[:50] if workflow else None}")
-        responses = await self._host_agent.run_conversation_with_parts(message.parts, context_id, event_logger=event_logger, agent_mode=effective_agent_mode, enable_inter_agent_memory=enable_inter_agent_memory, workflow=workflow)
+        log_debug(f"About to call run_conversation_with_parts with message parts: {len(message.parts)} parts, agent_mode: {effective_agent_mode}, enable_inter_agent_memory: {enable_inter_agent_memory}, workflow: {workflow[:50] if workflow else None}, workflow_goal: {workflow_goal[:50] if workflow_goal else None}")
+        responses = await self._host_agent.run_conversation_with_parts(message.parts, context_id, event_logger=event_logger, agent_mode=effective_agent_mode, enable_inter_agent_memory=enable_inter_agent_memory, workflow=workflow, workflow_goal=workflow_goal)
         log_debug(f"FoundryHostAgent responses count: {len(responses) if responses else 'None'}")
         log_debug(f"FoundryHostAgent responses: {responses}")
         

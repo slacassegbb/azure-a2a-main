@@ -49,7 +49,10 @@ interface Agent {
 interface VisualWorkflowDesignerProps {
   registeredAgents: Agent[]
   onWorkflowGenerated: (workflowText: string) => void
+  onWorkflowNameChange?: (name: string) => void
+  onWorkflowGoalChange?: (goal: string) => void
   initialWorkflow?: string
+  initialWorkflowName?: string
   conversationId?: string // Optional: use existing conversation from chat panel
 }
 
@@ -71,7 +74,10 @@ const HOST_COLOR = "#6366f1"
 export function VisualWorkflowDesigner({ 
   registeredAgents, 
   onWorkflowGenerated,
+  onWorkflowNameChange,
+  onWorkflowGoalChange,
   initialWorkflow,
+  initialWorkflowName,
   conversationId: externalConversationId
 }: VisualWorkflowDesignerProps) {
   // Also read directly from URL as backup
@@ -109,6 +115,7 @@ export function VisualWorkflowDesigner({
   const [workflowName, setWorkflowName] = useState("")
   const [workflowDescription, setWorkflowDescription] = useState("")
   const [workflowCategory, setWorkflowCategory] = useState("Custom")
+  const [workflowGoal, setWorkflowGoal] = useState("")
   const [catalogRefreshTrigger, setCatalogRefreshTrigger] = useState(0)
   
   // Component lifecycle logging (for debugging)
@@ -295,13 +302,15 @@ export function VisualWorkflowDesigner({
       return entries.map(entry => {
         const label = entry.subLetter ? `${entry.stepNumber}${entry.subLetter}` : `${entry.stepNumber}`
         const desc = entry.step.description || `Use the ${entry.step.agentName} agent`
-        return `${label}. ${desc}`
+        // Include agent name so orchestrator knows which agent to route to
+        return `${label}. [${entry.step.agentName}] ${desc}`
       }).join('\n')
     } else {
       // No connections - use visual order
       const sortedSteps = [...steps].sort((a, b) => a.order - b.order)
       return sortedSteps.map((step, index) => 
-        `${index + 1}. ${step.description || `Use the ${step.agentName} agent`}`
+        // Include agent name so orchestrator knows which agent to route to
+        `${index + 1}. [${step.agentName}] ${step.description || `Use the ${step.agentName} agent`}`
       ).join('\n')
     }
   }
@@ -712,7 +721,8 @@ export function VisualWorkflowDesigner({
       const workflowText = entries.map(entry => {
         const label = entry.subLetter ? `${entry.stepNumber}${entry.subLetter}` : `${entry.stepNumber}`
         const desc = entry.step.description || `Use the ${entry.step.agentName} agent`
-        return `${label}. ${desc}`
+        // Include agent name so orchestrator knows which agent to route to
+        return `${label}. [${entry.step.agentName}] ${desc}`
       }).join('\n')
       
       const orderMap = new Map<string, number>()
@@ -727,7 +737,8 @@ export function VisualWorkflowDesigner({
       // No connections - use visual order (all sequential)
       const sortedSteps = [...workflowSteps].sort((a, b) => a.order - b.order)
       const workflowText = sortedSteps.map((step, index) => 
-        `${index + 1}. ${step.description || `Use the ${step.agentName} agent`}`
+        // Include agent name so orchestrator knows which agent to route to
+        `${index + 1}. [${step.agentName}] ${step.description || `Use the ${step.agentName} agent`}`
       ).join('\n')
       
       const orderMap = new Map<string, number>()
@@ -1635,6 +1646,22 @@ export function VisualWorkflowDesigner({
     setConnections([])
     setSelectedStepId(null)
     
+    // Notify parent of the workflow name
+    if (onWorkflowNameChange && template.name) {
+      onWorkflowNameChange(template.name)
+    }
+    
+    // Notify parent of the workflow goal
+    if (onWorkflowGoalChange) {
+      onWorkflowGoalChange(template.goal || "")
+    }
+    
+    // Load workflow metadata
+    setWorkflowName(template.name || "")
+    setWorkflowDescription(template.description || "")
+    setWorkflowCategory(template.category || "Custom")
+    setWorkflowGoal(template.goal || "")
+    
     // Small delay to ensure state is cleared
     setTimeout(() => {
       // Map template steps to workflow steps with colors
@@ -1734,7 +1761,7 @@ export function VisualWorkflowDesigner({
   }
 
   // Save current workflow to catalog
-  const handleSaveWorkflow = () => {
+  const handleSaveWorkflow = async () => {
     if (!workflowName.trim()) {
       alert("Please enter a workflow name")
       return
@@ -1745,6 +1772,7 @@ export function VisualWorkflowDesigner({
       name: workflowName,
       description: workflowDescription || "Custom workflow",
       category: workflowCategory,
+      goal: workflowGoal || "",
       steps: workflowSteps.map(step => ({
         id: step.id,
         agentId: step.agentId,
@@ -1762,22 +1790,64 @@ export function VisualWorkflowDesigner({
       isCustom: true
     }
     
-    // Save to localStorage
-    const saved = localStorage.getItem('custom-workflows')
-    const existing = saved ? JSON.parse(saved) : []
-    existing.push(customWorkflow)
-    localStorage.setItem('custom-workflows', JSON.stringify(existing))
+    // Save to backend if authenticated, otherwise localStorage
+    let savedToBackend = false
+    try {
+      const { createWorkflow, isAuthenticated } = await import('@/lib/workflow-api')
+      
+      if (isAuthenticated()) {
+        const savedWorkflow = await createWorkflow({
+          id: customWorkflow.id,
+          name: customWorkflow.name,
+          description: customWorkflow.description,
+          category: customWorkflow.category,
+          goal: customWorkflow.goal,
+          steps: customWorkflow.steps,
+          connections: customWorkflow.connections
+        })
+        
+        if (savedWorkflow) {
+          console.log('[VisualWorkflowDesigner] Workflow saved to backend:', savedWorkflow.id)
+          savedToBackend = true
+        } else {
+          console.error('[VisualWorkflowDesigner] Backend save failed')
+          alert("Failed to save workflow. Please try again.")
+          return
+        }
+      } else {
+        // Not authenticated - save to localStorage only
+        console.log('[VisualWorkflowDesigner] User not authenticated, saving to localStorage')
+        const saved = localStorage.getItem('custom-workflows')
+        const existing = saved ? JSON.parse(saved) : []
+        existing.push(customWorkflow)
+        localStorage.setItem('custom-workflows', JSON.stringify(existing))
+      }
+    } catch (err) {
+      console.error('[VisualWorkflowDesigner] Error saving workflow:', err)
+      // If backend failed and user is authenticated, don't fall back to localStorage
+      alert("Failed to save workflow. Please check your connection and try again.")
+      return
+    }
     
-    // Reset form and close dialog
-    setWorkflowName("")
-    setWorkflowDescription("")
-    setWorkflowCategory("Custom")
+    // Update parent with the saved workflow name (so main UI shows it)
+    if (onWorkflowNameChange) {
+      onWorkflowNameChange(workflowName)
+    }
+    
+    // Also update parent with the current workflow text (critical for Play button to work!)
+    const currentWorkflowText = generateWorkflowTextFromRefs()
+    if (currentWorkflowText) {
+      onWorkflowGeneratedRef.current(currentWorkflowText)
+      console.log('[VisualWorkflowDesigner] Updated parent with workflow text:', currentWorkflowText)
+    }
+    
+    // Close dialog but keep the workflow name displayed
     setShowSaveDialog(false)
     
     // Trigger catalog refresh
     setCatalogRefreshTrigger(prev => prev + 1)
     
-    alert("Workflow saved successfully!")
+    alert(savedToBackend ? "Workflow saved to your account!" : "Workflow saved locally (sign in to sync across devices)")
   }
 
   // Canvas rendering
@@ -3576,7 +3646,13 @@ export function VisualWorkflowDesigner({
               <label className="text-sm font-medium text-slate-200">Workflow Name *</label>
               <Input
                 value={workflowName}
-                onChange={(e) => setWorkflowName(e.target.value)}
+                onChange={(e) => {
+                  setWorkflowName(e.target.value)
+                  // Also update parent so main UI reflects the name
+                  if (onWorkflowNameChange) {
+                    onWorkflowNameChange(e.target.value)
+                  }
+                }}
                 placeholder="e.g., My Custom Pipeline"
                 className="mt-1"
               />
@@ -3598,6 +3674,21 @@ export function VisualWorkflowDesigner({
                 placeholder="e.g., Custom, Marketing, Quality Control"
                 className="mt-1"
               />
+            </div>
+            <div>
+              <label className="text-sm font-medium text-slate-200">Workflow Goal</label>
+              <Input
+                value={workflowGoal}
+                onChange={(e) => {
+                  setWorkflowGoal(e.target.value)
+                  onWorkflowGoalChange?.(e.target.value)
+                }}
+                placeholder="e.g., Analyze customer data and generate a report"
+                className="mt-1"
+              />
+              <p className="text-xs text-slate-400 mt-1">
+                Optional: Set a specific goal for this workflow. If empty, defaults to "Execute the [Workflow Name] workflow"
+              </p>
             </div>
           </div>
           <DialogFooter>

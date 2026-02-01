@@ -534,13 +534,14 @@ type ChatPanelProps = {
   dagLinks: any[]
   enableInterAgentMemory: boolean
   workflow?: string
+  workflowGoal?: string
   registeredAgents?: any[]
   connectedUsers?: any[]
   activeNode?: string | null
   setActiveNode?: (node: string | null) => void
 }
 
-export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow, registeredAgents = [], connectedUsers = [], activeNode: externalActiveNode, setActiveNode: externalSetActiveNode }: ChatPanelProps) {
+export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow, workflowGoal, registeredAgents = [], connectedUsers = [], activeNode: externalActiveNode, setActiveNode: externalSetActiveNode }: ChatPanelProps) {
   const DEBUG = process.env.NEXT_PUBLIC_DEBUG_LOGS === 'true'
   // Use the shared Event Hub hook so we subscribe to the same client as the rest of the app
   const { subscribe, unsubscribe, emit, sendMessage, isConnected } = useEventHub()
@@ -661,11 +662,16 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
   
   // Use refs to always get the latest values (avoid stale closure)
   const workflowRef = useRef(workflow)
+  const workflowGoalRef = useRef(workflowGoal)
   const enableInterAgentMemoryRef = useRef(enableInterAgentMemory)
   
   useEffect(() => {
     workflowRef.current = workflow
   }, [workflow])
+  
+  useEffect(() => {
+    workflowGoalRef.current = workflowGoal
+  }, [workflowGoal])
   
   useEffect(() => {
     enableInterAgentMemoryRef.current = enableInterAgentMemory
@@ -684,10 +690,12 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
         
         // Get current values from refs (not stale closure values!)
         const currentWorkflow = workflowRef.current
+        const currentWorkflowGoal = workflowGoalRef.current
         const currentEnableMemory = enableInterAgentMemoryRef.current
         
         console.log('[Voice Live] Current settings:', {
           workflow: currentWorkflow?.substring(0, 50),
+          workflowGoal: currentWorkflowGoal?.substring(0, 50),
           enableMemory: currentEnableMemory
         })
         
@@ -712,7 +720,8 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
               role: 'user',
               parts: [{ root: { kind: 'text', text: message } }],
               enableInterAgentMemory: currentEnableMemory,
-              workflow: currentWorkflow ? currentWorkflow.trim() : undefined  // Backend auto-detects mode from workflow presence
+              workflow: currentWorkflow ? currentWorkflow.trim() : undefined,  // Backend auto-detects mode from workflow presence
+              workflowGoal: currentWorkflowGoal ? currentWorkflowGoal.trim() : undefined  // Goal from workflow designer for completion evaluation
             }
           })
         })
@@ -2237,7 +2246,111 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       })
     }
 
+    // Handle run_workflow event from Play button
+    const handleRunWorkflow = async (eventData: any) => {
+      const { workflowName, workflow: workflowText, initialMessage, workflowGoal } = eventData
+      
+      console.log('[ChatPanel] Running workflow:', workflowName)
+      console.log('[ChatPanel] Initial message:', initialMessage)
+      console.log('[ChatPanel] Workflow goal:', workflowGoal || '(none)')
+      
+      if (!initialMessage || !workflowText) {
+        console.error('[ChatPanel] Missing workflow data')
+        return
+      }
+      
+      // Don't run if already inferencing
+      if (isInferencing) {
+        console.warn('[ChatPanel] Already inferencing, cannot start workflow')
+        return
+      }
+      
+      // Create a system message to indicate workflow is starting
+      const systemMessage: Message = {
+        id: `workflow_start_${Date.now()}`,
+        role: "system",
+        content: `▶️ Starting workflow: **${workflowName}**`
+      }
+      setMessages(prev => [...prev, systemMessage])
+      
+      // Create user message with the first step description
+      const userMessage: Message = {
+        id: `msg_${Date.now()}`,
+        role: "user",
+        content: initialMessage,
+        ...(currentUser && {
+          username: currentUser.name,
+          userColor: currentUser.color
+        })
+      }
+      setMessages(prev => [...prev, userMessage])
+      
+      setIsInferencing(true)
+      setInferenceSteps([])
+      setActiveNode("User Input")
+      
+      // Get or create conversation
+      let actualConversationId = conversationId
+      if (conversationId === 'frontend-chat-context') {
+        try {
+          const newConversation = await createConversation()
+          if (newConversation) {
+            actualConversationId = newConversation.conversation_id
+            notifyConversationCreated(newConversation)
+            router.replace(`/?conversationId=${actualConversationId}`)
+          }
+        } catch (error) {
+          console.error('[ChatPanel] Failed to create conversation:', error)
+          setIsInferencing(false)
+          return
+        }
+      }
+      
+      // Broadcast inference started
+      sendMessage({
+        type: "shared_inference_started",
+        data: {
+          conversationId: actualConversationId,
+          timestamp: new Date().toISOString()
+        }
+      })
+      
+      // Send the workflow execution request to backend
+      try {
+        const baseUrl = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
+        const response = await fetch(`${baseUrl}/message/send`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            params: {
+              messageId: userMessage.id,
+              contextId: createContextId(actualConversationId),
+              role: 'user',
+              parts: [{ root: { kind: 'text', text: initialMessage } }],
+              enableInterAgentMemory: enableInterAgentMemory,
+              workflow: workflowText.trim(),
+              workflowGoal: workflowGoal || '',  // Pass the workflow goal for orchestrator
+              userId: currentUser?.user_id,
+            }
+          })
+        })
+        
+        if (!response.ok) {
+          console.error('[ChatPanel] Failed to execute workflow:', response.statusText)
+          setIsInferencing(false)
+        } else {
+          console.log('[ChatPanel] Workflow execution started successfully')
+        }
+      } catch (error) {
+        console.error('[ChatPanel] Error executing workflow:', error)
+        setIsInferencing(false)
+      }
+    }
+
     // Subscribe to real Event Hub events from A2A backend
+    subscribe("run_workflow", handleRunWorkflow)
     subscribe("task_updated", handleTaskUpdate)
     subscribe("task_created", handleTaskCreated)
     subscribe("system_event", handleSystemEvent)
@@ -2261,6 +2374,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
     subscribe("message_reaction", handleMessageReaction)
 
     return () => {
+      unsubscribe("run_workflow", handleRunWorkflow)
       unsubscribe("task_updated", handleTaskUpdate)
       unsubscribe("task_created", handleTaskCreated)
       unsubscribe("system_event", handleSystemEvent)
@@ -3058,6 +3172,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
             parts: parts,
             enableInterAgentMemory: enableInterAgentMemory,  // Include inter-agent memory flag
             workflow: workflow ? workflow.trim() : undefined,  // Backend auto-detects mode from workflow presence
+            workflowGoal: workflowGoal ? workflowGoal.trim() : undefined,  // Goal from workflow designer for completion evaluation
             userId: currentUser?.user_id,  // Store userId for color lookup when loading messages
           }
         })
