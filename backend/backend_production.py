@@ -1168,6 +1168,159 @@ def main():
             traceback.print_exc()
             raise HTTPException(status_code=500, detail=f"Failed to start workflow: {str(e)}")
 
+    # ==================== NATURAL LANGUAGE QUERY API ====================
+    # Synchronous API endpoint for sending natural language queries
+    # Supports intelligent workflow routing
+    
+    class QueryRequest(BaseModel):
+        query: str  # The natural language query
+        session_id: Optional[str] = None  # Optional session ID (auto-generated if not provided)
+        conversation_id: Optional[str] = None  # Optional conversation ID
+        timeout: int = 300  # Timeout in seconds (default 5 min)
+        enable_routing: bool = True  # Whether to enable intelligent workflow routing
+    
+    @app.post("/api/query")
+    async def execute_query(request: QueryRequest):
+        """
+        Execute a natural language query with intelligent workflow routing.
+        
+        This endpoint provides a simple API for sending queries that automatically:
+        - Enables all available session agents
+        - Routes to appropriate workflows if available
+        - Orchestrates multi-agent execution
+        - Returns the result synchronously
+        
+        Example curl:
+            curl -X POST http://localhost:12000/api/query \\
+                -H "Content-Type: application/json" \\
+                -d '{"query": "check my balance and list customers"}'
+        
+        With custom session:
+            curl -X POST http://localhost:12000/api/query \\
+                -H "Content-Type: application/json" \\
+                -d '{"query": "what invoices are overdue?", "session_id": "my-session-123"}'
+        """
+        import uuid
+        import asyncio
+        import time
+        from service.server.server import main_loop
+        from a2a.types import Message, Part, TextPart, Role
+        from service.agent_registry import get_registry, get_session_registry
+        
+        print(f"\n{'='*60}")
+        print(f"[Query API] 🔍 Received query: {request.query}")
+        print(f"{'='*60}")
+        
+        # Generate IDs
+        session_id = request.session_id or str(uuid.uuid4())
+        conversation_id = request.conversation_id or str(uuid.uuid4())
+        message_id = f"msg_{uuid.uuid4().hex[:8]}"
+        context_id = f"{session_id}::{conversation_id}"
+        
+        print(f"[Query API] Session ID: {session_id}")
+        print(f"[Query API] Context ID: {context_id}")
+        
+        # Check if agent_server is available
+        if not agent_server or not hasattr(agent_server, 'manager'):
+            raise HTTPException(status_code=503, detail="Agent server not available")
+        
+        # Enable ALL agents from global registry for this session
+        registry = get_registry()
+        session_registry = get_session_registry()
+        all_agents = registry.get_all_agents()
+        
+        if not all_agents:
+            raise HTTPException(
+                status_code=400, 
+                detail="No agents available. Please connect agents first via the UI or /api/registry endpoint."
+            )
+        
+        print(f"[Query API] 🔧 Enabling {len(all_agents)} agents for session {session_id}")
+        for agent_config in all_agents:
+            session_registry.enable_agent(session_id, agent_config)
+            print(f"[Query API] ✅ Enabled: {agent_config.get('name', 'unknown')}")
+        
+        # Build available workflows for intelligent routing (if enabled)
+        available_workflows = []
+        if request.enable_routing:
+            from service.workflow_service import get_workflow_service
+            workflow_service = get_workflow_service()
+            all_workflows = workflow_service.get_all_workflows()
+            for w in all_workflows:
+                if w.steps:
+                    workflow_info = {
+                        "name": w.name,
+                        "goal": w.goal or "",
+                        "agents": [step.get('agentName', '') for step in w.steps if step.get('agentName')]
+                    }
+                    available_workflows.append(workflow_info)
+            print(f"[Query API] 📋 Found {len(available_workflows)} workflows for routing")
+        
+        # Create the message
+        message = Message(
+            messageId=message_id,
+            contextId=context_id,
+            role=Role.user,
+            parts=[Part(root=TextPart(text=request.query))]
+        )
+        
+        # Process message with routing enabled
+        try:
+            print(f"[Query API] 🚀 Processing query (timeout: {request.timeout}s)")
+            start_time = time.time()
+            
+            # Submit the coroutine to the main event loop
+            future = asyncio.run_coroutine_threadsafe(
+                agent_server.manager.process_message(
+                    message, 
+                    agent_mode=None,  # Auto-detect based on routing
+                    enable_inter_agent_memory=True,
+                    workflow=None,  # No pre-defined workflow - let routing decide
+                    available_workflows=available_workflows if available_workflows else None
+                ), 
+                main_loop
+            )
+            
+            # Wait for the result with timeout
+            try:
+                responses = future.result(timeout=request.timeout)
+                elapsed_time = time.time() - start_time
+                
+                print(f"[Query API] ✅ Query completed in {elapsed_time:.2f}s")
+                
+                # Format the responses
+                result_text = ""
+                if responses:
+                    if isinstance(responses, list):
+                        result_text = "\n\n".join(str(r) for r in responses)
+                    else:
+                        result_text = str(responses)
+                
+                return {
+                    "success": True,
+                    "query": request.query,
+                    "session_id": session_id,
+                    "conversation_id": conversation_id,
+                    "execution_time_seconds": round(elapsed_time, 2),
+                    "result": result_text
+                }
+                
+            except asyncio.TimeoutError:
+                elapsed_time = time.time() - start_time
+                print(f"[Query API] ⏱️ Query timed out after {elapsed_time:.2f}s")
+                raise HTTPException(
+                    status_code=408, 
+                    detail=f"Query timed out after {request.timeout} seconds"
+                )
+                
+        except HTTPException:
+            raise
+        except Exception as e:
+            print(f"[Query API] ❌ Error processing query: {e}")
+            import traceback
+            traceback.print_exc()
+            raise HTTPException(status_code=500, detail=f"Failed to process query: {str(e)}")
+
     # ==================== ACTIVE WORKFLOW (SESSION-SCOPED) ====================
     # Stores active workflow state per session, synced across collaborative sessions
     

@@ -844,5 +844,128 @@
         ]
       }
     ]
+  },
+  {
+    "name": "Benjamin School English Teacher",
+    "description": "This agent provides detailed feedback on English essays based on a provided rubric, checking for accuracy, adherence to the rubric, and overall quality of writing.",
+    "version": "1.0.0",
+    "url": "https://azurefoundry-english.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "grade-english-essays",
+        "name": "Grade English Essays",
+        "description": "This agent takes an English essay submitted by a student and provides detailed feedback based on a provided rubric. It checks for accuracy, adherence to the rubric, and overall quality of writing.",
+        "examples": [
+          "Example query 1 - grade my paper on Shakespeare",
+          "Example query 2 - give me feedback on my essay about the Civil War"
+        ],
+        "tags": [
+          "english",
+          "essay grading",
+          "writing feedback"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Benjamin School Biology Teacher",
+    "description": "This agent knows the Biology curriculum and can help students study for the exam by providing explanations, answering questions, and offering practice problems.",
+    "version": "1.0.0",
+    "url": "https://azurefoundry-biology.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "precalc",
+        "name": "Pre-calculus Study Buddy",
+        "description": "This agent knows the Pre-Calculus curriculum and can help students study for the exam by providing explanations, answering questions, and offering practice problems.",
+        "examples": [
+          "Example query 1 - Create a study guide for chapter 5 in Pre-Calculus."
+        ],
+        "tags": [
+          "precalculus",
+          "math",
+          "study",
+          "practice problems"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Benjamin School AP-Calculus Study Buddy",
+    "description": "This agent knows the AP-Calculus curriculum and can help students study for the exam by providing explanations, answering questions, and offering practice problems.",
+    "version": "1.0.0",
+    "url": "https://azurefoundry-apcalc.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "apcalc",
+        "name": "AP-Calculus Study Buddy",
+        "description": "This agent knows the AP-Calculus curriculum and can help students study for the exam by providing explanations, answering questions, and offering practice problems.",
+        "examples": [
+          "Example query 1 - Create a study guide for chapter 5 in AP-Calculus."
+        ],
+        "tags": [
+          "apcalculus",
+          "math",
+          "study",
+          "practice problems"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Benjamin School AP Environmental Science Study Buddy",
+    "description": "This agent knows the AP Environmental Science curriculum and can help students study for the exam by providing explanations, answering questions, and offering practice problems.",
+    "version": "1.0.0",
+    "url": "https://azurefoundry-apes.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "apes",
+        "name": "AP Environmental Science Study Guide",
+        "description": "This agent knows the AP Environmental Science curriculum and can help students study for the exam by providing explanations, answering questions, and offering practice problems.",
+        "examples": [
+          "Create a study guide for chapter 5 in AP Environmental Science"
+        ],
+        "tags": [
+          "environmental science",
+          "APES",
+          "study guide"
+        ]
+      }
+    ]
   }
 ]
