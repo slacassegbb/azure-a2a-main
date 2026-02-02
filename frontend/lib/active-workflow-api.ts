@@ -6,7 +6,7 @@
  * Unlike localStorage, this syncs across collaborative sessions.
  */
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:12000';
+const API_BASE = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000';
 
 export interface ActiveWorkflow {
   id: string;  // Unique identifier for this workflow instance
