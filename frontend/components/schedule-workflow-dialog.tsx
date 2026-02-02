@@ -290,7 +290,7 @@ export function ScheduleWorkflowDialog({
       <DialogHeader>
         <DialogTitle className="flex items-center gap-2">
           <Calendar className="h-5 w-5" />
-          {initialWorkflowName ? `Schedule Workflow: ${initialWorkflowName}` : 'Schedule Workflows'}
+          Schedule a Workflow
         </DialogTitle>
         <DialogDescription>
           Set up automated runs for your workflows
