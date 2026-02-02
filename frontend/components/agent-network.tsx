@@ -509,10 +509,11 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
   // Note: Workflow persistence is now handled by parent ChatLayout component
   // No need to load from localStorage here since parent manages it
 
-  // Fetch run history when workflow is active
+  // Fetch run history when there are active workflows
   useEffect(() => {
     const fetchRunHistory = async () => {
-      if (!workflow) {
+      // Fetch history if there are any active workflows (not dependent on legacy workflow prop)
+      if (activeWorkflows.length === 0) {
         setRunHistory([])
         return
       }
@@ -537,7 +538,7 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
       fetchScheduledWorkflows()
     }, 30000)
     return () => clearInterval(interval)
-  }, [workflow, fetchScheduledWorkflows])
+  }, [activeWorkflows, fetchScheduledWorkflows])
 
   // Subscribe to WebSocket events - STABLE subscriptions (no churn)
   useEffect(() => {
