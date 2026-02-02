@@ -95,44 +95,75 @@ export function ChatLayout() {
   }, [])
 
   // Handler functions for adding/removing workflows
+  // We do optimistic updates for immediate UI feedback, and WebSocket will sync the authoritative state
   const handleAddWorkflow = useCallback(async (newWorkflow: ActiveWorkflow) => {
     const sessionId = getOrCreateSessionId()
+    
+    // Optimistic update - add immediately for responsive UI
+    setActiveWorkflows(prev => {
+      // Deduplicate by ID to prevent duplicates
+      if (prev.some(w => w.id === newWorkflow.id)) {
+        return prev
+      }
+      return [...prev, newWorkflow]
+    })
+    
     try {
       const success = await addActiveWorkflow(sessionId, newWorkflow)
-      if (success) {
-        setActiveWorkflows(prev => [...prev, newWorkflow])
-      }
+      // WebSocket broadcast will sync the authoritative state
       return success
     } catch (error) {
       console.error('[ChatLayout] Failed to add workflow:', error)
+      // Rollback optimistic update on failure
+      setActiveWorkflows(prev => prev.filter(w => w.id !== newWorkflow.id))
       return false
     }
   }, [])
 
   const handleRemoveWorkflow = useCallback(async (workflowId: string) => {
     const sessionId = getOrCreateSessionId()
+    
+    // Save current state for potential rollback
+    let removedWorkflow: ActiveWorkflow | undefined
+    
+    // Optimistic update - remove immediately
+    setActiveWorkflows(prev => {
+      removedWorkflow = prev.find(w => w.id === workflowId)
+      return prev.filter(w => w.id !== workflowId)
+    })
+    
     try {
       const success = await removeActiveWorkflowApi(sessionId, workflowId)
-      if (success) {
-        setActiveWorkflows(prev => prev.filter(w => w.id !== workflowId))
-      }
       return success
     } catch (error) {
       console.error('[ChatLayout] Failed to remove workflow:', error)
+      // Rollback on failure
+      if (removedWorkflow) {
+        setActiveWorkflows(prev => [...prev, removedWorkflow!])
+      }
       return false
     }
   }, [])
 
   const handleClearAllWorkflows = useCallback(async () => {
     const sessionId = getOrCreateSessionId()
+    
+    // Save current state for potential rollback
+    let previousWorkflows: ActiveWorkflow[] = []
+    
+    // Optimistic update - clear immediately
+    setActiveWorkflows(prev => {
+      previousWorkflows = prev
+      return []
+    })
+    
     try {
       const success = await clearActiveWorkflows(sessionId)
-      if (success) {
-        setActiveWorkflows([])
-      }
       return success
     } catch (error) {
       console.error('[ChatLayout] Failed to clear workflows:', error)
+      // Rollback on failure
+      setActiveWorkflows(previousWorkflows)
       return false
     }
   }, [])
