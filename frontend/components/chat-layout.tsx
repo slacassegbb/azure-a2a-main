@@ -16,10 +16,8 @@ import {
   clearActiveWorkflows,
   ActiveWorkflow,
   generateWorkflowId,
-  // Legacy imports for backward compatibility during migration
-  getActiveWorkflow as getLegacyActiveWorkflow,
-  setActiveWorkflow as setLegacyActiveWorkflowApi,
-  clearActiveWorkflow as clearLegacyActiveWorkflow
+  // Legacy import for initial load only (migration)
+  getActiveWorkflow as getLegacyActiveWorkflow
 } from "@/lib/active-workflow-api"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Button } from "@/components/ui/button"
@@ -212,24 +210,14 @@ export function ChatLayout() {
   }, [])
 
   // Save workflows to backend when they change (after initial load)
+  // NOTE: Removed legacy API sync to prevent infinite loop caused by:
+  // useEffect → setLegacyActiveWorkflowApi → WebSocket broadcast → state update → useEffect
+  // The new multi-workflow API handles persistence via handleAddWorkflow/handleRemoveWorkflow
   useEffect(() => {
     if (!workflowsLoaded) return // Don't save during initial load
     
-    const saveActiveWorkflows = async () => {
-      const sessionId = getOrCreateSessionId()
-      try {
-        // Also update legacy API for backward compatibility
-        if (activeWorkflows.length > 0) {
-          const first = activeWorkflows[0]
-          await setLegacyActiveWorkflowApi(sessionId, first.workflow, first.name, first.goal)
-        } else {
-          await clearLegacyActiveWorkflow(sessionId)
-        }
-      } catch (error) {
-        console.error('[ChatLayout] Failed to save active workflows:', error)
-      }
-    }
-    saveActiveWorkflows()
+    // Workflows are now saved via the individual add/remove handlers
+    // No need to sync here - that was causing infinite loops
   }, [activeWorkflows, workflowsLoaded])
 
   // Listen for active_workflows_changed events from WebSocket (collaborative sync)
@@ -242,33 +230,14 @@ export function ChatLayout() {
       }
     }
     
-    // Also handle legacy single workflow events for backward compatibility
-    const handleLegacyActiveWorkflowChanged = (data: { workflow?: string; name?: string; goal?: string }) => {
-      console.log('[ChatLayout] Received legacy active_workflow_changed event:', data)
-      // Update first workflow or create one
-      setActiveWorkflows(prev => {
-        if (prev.length === 0) {
-          return [{
-            id: generateWorkflowId(),
-            workflow: data.workflow || "",
-            name: data.name || "Untitled Workflow",
-            goal: data.goal || ""
-          }]
-        }
-        return prev.map((w, i) => i === 0 ? {
-          ...w,
-          workflow: data.workflow !== undefined ? data.workflow : w.workflow,
-          name: data.name !== undefined ? data.name : w.name,
-          goal: data.goal !== undefined ? data.goal : w.goal
-        } : w)
-      })
-    }
+    // NOTE: Legacy single workflow event handler removed to prevent infinite loops
+    // The legacy API (active_workflow_changed) was causing:
+    // state change → save effect → API call → WebSocket → state change → ...
+    // We now only use the new multi-workflow API which doesn't have this issue
     
     subscribe('active_workflows_changed', handleActiveWorkflowsChanged)
-    subscribe('active_workflow_changed', handleLegacyActiveWorkflowChanged)
     return () => {
       unsubscribe('active_workflows_changed', handleActiveWorkflowsChanged)
-      unsubscribe('active_workflow_changed', handleLegacyActiveWorkflowChanged)
     }
   }, [subscribe, unsubscribe])
   
