@@ -1189,6 +1189,7 @@ def main():
         timeout: int = 300
         retry_on_failure: bool = False
         max_retries: int = 3
+        max_runs: Optional[int] = None        # Maximum number of runs (None = unlimited)
         
         # Metadata
         description: Optional[str] = None
@@ -1207,6 +1208,7 @@ def main():
         timeout: Optional[int] = None
         retry_on_failure: Optional[bool] = None
         max_retries: Optional[int] = None
+        max_runs: Optional[int] = None
         description: Optional[str] = None
         tags: Optional[List[str]] = None
     
@@ -1369,6 +1371,7 @@ def main():
                 timeout=request.timeout,
                 retry_on_failure=request.retry_on_failure,
                 max_retries=request.max_retries,
+                max_runs=request.max_runs,
                 description=request.description,
                 tags=request.tags
             )
