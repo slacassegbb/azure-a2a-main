@@ -1117,7 +1117,7 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
                                       <Button
                                         variant="ghost"
                                         size="icon"
-                                        className="h-6 w-6 text-green-500 hover:text-green-400 hover:bg-green-500/10"
+                                        className="h-6 w-6 text-blue-500 hover:text-blue-400 hover:bg-blue-500/10"
                                         onClick={(e) => {
                                           e.stopPropagation()
                                           onRunWorkflow?.()
@@ -1144,7 +1144,7 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
                                           setEditedWorkflow("")
                                         }}
                                       >
-                                        <Square className="h-3 w-3" />
+                                        <Trash2 className="h-3 w-3" />
                                       </Button>
                                     </TooltipTrigger>
                                     <TooltipContent>
