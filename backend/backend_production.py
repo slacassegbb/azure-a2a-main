@@ -1248,10 +1248,23 @@ def main():
             all_workflows = workflow_service.get_all_workflows()
             for w in all_workflows:
                 if w.steps:
+                    # Sort steps by order
+                    sorted_steps = sorted(w.steps, key=lambda s: s.get('order', 0))
+                    # Generate workflow text in the format the orchestrator expects
+                    workflow_lines = []
+                    for i, step in enumerate(sorted_steps):
+                        agent_name = step.get('agentName', 'unknown')
+                        default_desc = f'Use the {agent_name} agent'
+                        description = step.get('description', default_desc)
+                        workflow_lines.append(f"{i+1}. [{agent_name}] {description}")
+                    workflow_text = "\n".join(workflow_lines)
+                    
                     workflow_info = {
+                        "id": w.id,
                         "name": w.name,
                         "goal": w.goal or "",
-                        "agents": [step.get('agentName', '') for step in w.steps if step.get('agentName')]
+                        "workflow": workflow_text,  # Include the formatted steps!
+                        "agents": [step.get('agentName', '') for step in sorted_steps if step.get('agentName')]
                     }
                     available_workflows.append(workflow_info)
             print(f"[Query API] 📋 Found {len(available_workflows)} workflows for routing")
