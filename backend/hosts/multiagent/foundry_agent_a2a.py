@@ -3734,9 +3734,15 @@ Answer with just JSON:
                             print(f"✅ [Multi-Workflow] Parallel execution complete - {len(parallel_workflows)} workflows")
                             await self._emit_status_event("All parallel workflows completed", context_id)
                             
-                            # Yield combined response and return
-                            yield self._make_response(combined_response, session_context)
-                            return
+                            # Store interaction and return combined response
+                            await self._store_user_host_interaction_safe(
+                                user_message_parts=message_parts,
+                                user_message_text=enhanced_message,
+                                host_response=[combined_response],
+                                context_id=context_id,
+                                span=span
+                            )
+                            return [combined_response]
                         else:
                             # Not enough workflows found, fallback to agents
                             log_error(f"[Multi-Workflow] Could not find all workflows for parallel execution, falling back to agents")
