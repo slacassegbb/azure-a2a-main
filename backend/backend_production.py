@@ -1258,6 +1258,130 @@ def main():
                 print(f"[ActiveWorkflow] Failed to broadcast clear: {e}")
         return {"success": True, "session_id": session_id}
 
+    # ==================== MULTI-WORKFLOW API ENDPOINTS ====================
+    # New API for managing multiple active workflows per session
+    
+    # Store for multi-workflow state (separate from legacy single workflow)
+    multi_workflows_store: Dict[str, List[Dict[str, Any]]] = {}
+    
+    @app.get("/api/active-workflows")
+    async def get_active_workflows(session_id: str = Query(..., description="Session ID")):
+        """
+        Get all active workflows for a session.
+        Returns empty list if no workflows are active.
+        """
+        workflows = multi_workflows_store.get(session_id, [])
+        return {"workflows": workflows}
+    
+    @app.post("/api/active-workflows")
+    async def set_active_workflows(
+        session_id: str = Query(..., description="Session ID"),
+        request: Request = None
+    ):
+        """
+        Set all active workflows for a session (replaces existing).
+        """
+        body = await request.json()
+        workflows = body.get("workflows", [])
+        multi_workflows_store[session_id] = workflows
+        
+        # Broadcast update to all users in session
+        try:
+            if websocket_streamer:
+                await websocket_streamer._send_event(
+                    "active_workflows_changed",
+                    {"contextId": session_id, "workflows": workflows},
+                    partition_key=session_id
+                )
+        except Exception as e:
+            print(f"[ActiveWorkflows] Failed to broadcast: {e}")
+        
+        return {"success": True, "workflows": workflows}
+    
+    @app.post("/api/active-workflows/add")
+    async def add_active_workflow(
+        session_id: str = Query(..., description="Session ID"),
+        request: Request = None
+    ):
+        """
+        Add a single workflow to the active workflows list.
+        """
+        body = await request.json()
+        workflow = body
+        
+        if session_id not in multi_workflows_store:
+            multi_workflows_store[session_id] = []
+        
+        # Avoid duplicates by ID
+        existing_ids = {w.get("id") for w in multi_workflows_store[session_id]}
+        if workflow.get("id") not in existing_ids:
+            multi_workflows_store[session_id].append(workflow)
+        
+        workflows = multi_workflows_store[session_id]
+        
+        # Broadcast update
+        try:
+            if websocket_streamer:
+                await websocket_streamer._send_event(
+                    "active_workflows_changed",
+                    {"contextId": session_id, "workflows": workflows},
+                    partition_key=session_id
+                )
+        except Exception as e:
+            print(f"[ActiveWorkflows] Failed to broadcast add: {e}")
+        
+        return {"success": True, "workflows": workflows}
+    
+    @app.delete("/api/active-workflows/{workflow_id}")
+    async def remove_active_workflow(
+        workflow_id: str,
+        session_id: str = Query(..., description="Session ID")
+    ):
+        """
+        Remove a specific workflow from the active workflows list.
+        """
+        if session_id in multi_workflows_store:
+            multi_workflows_store[session_id] = [
+                w for w in multi_workflows_store[session_id] 
+                if w.get("id") != workflow_id
+            ]
+        
+        workflows = multi_workflows_store.get(session_id, [])
+        
+        # Broadcast update
+        try:
+            if websocket_streamer:
+                await websocket_streamer._send_event(
+                    "active_workflows_changed",
+                    {"contextId": session_id, "workflows": workflows},
+                    partition_key=session_id
+                )
+        except Exception as e:
+            print(f"[ActiveWorkflows] Failed to broadcast remove: {e}")
+        
+        return {"success": True, "workflows": workflows}
+    
+    @app.delete("/api/active-workflows")
+    async def clear_active_workflows(session_id: str = Query(..., description="Session ID")):
+        """
+        Clear all active workflows for a session.
+        """
+        if session_id in multi_workflows_store:
+            del multi_workflows_store[session_id]
+        
+        # Broadcast update
+        try:
+            if websocket_streamer:
+                await websocket_streamer._send_event(
+                    "active_workflows_changed",
+                    {"contextId": session_id, "workflows": []},
+                    partition_key=session_id
+                )
+        except Exception as e:
+            print(f"[ActiveWorkflows] Failed to broadcast clear: {e}")
+        
+        return {"success": True, "workflows": []}
+
     # ==================== WORKFLOW SCHEDULER ENDPOINTS ====================
     
     from service.scheduler_service import (
