@@ -74,6 +74,8 @@ interface ScheduleWorkflowDialogProps {
   workflowName?: string
   sessionId?: string
   trigger?: React.ReactNode
+  // Callback when schedules change (create, delete, toggle)
+  onScheduleChange?: () => void
 }
 
 const DAYS_OF_WEEK = [
@@ -102,7 +104,8 @@ export function ScheduleWorkflowDialog({
   workflowId: initialWorkflowId, 
   workflowName: initialWorkflowName, 
   sessionId: initialSessionId,
-  trigger 
+  trigger,
+  onScheduleChange
 }: ScheduleWorkflowDialogProps) {
   // Support both controlled and uncontrolled modes
   const [internalOpen, setInternalOpen] = useState(false)
@@ -116,7 +119,8 @@ export function ScheduleWorkflowDialog({
   const [availableWorkflows, setAvailableWorkflows] = useState<WorkflowInfo[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [showCreateForm, setShowCreateForm] = useState(false)
+  // Auto-show create form when a workflow is pre-selected
+  const [showCreateForm, setShowCreateForm] = useState(!!initialWorkflowId)
   const [showHistory, setShowHistory] = useState(false)
   const [selectedHistoryItem, setSelectedHistoryItem] = useState<RunHistoryItem | null>(null)
   
@@ -167,8 +171,18 @@ export function ScheduleWorkflowDialog({
   useEffect(() => {
     if (open) {
       loadData()
+      // Always show create form when a specific workflow is pre-selected
+      setShowCreateForm(!!initialWorkflowId)
+      // Sync workflow ID and name from props when dialog opens
+      if (initialWorkflowId) {
+        setSelectedWorkflowId(initialWorkflowId)
+        setSelectedWorkflowName(initialWorkflowName || initialWorkflowId)
+      }
+    } else {
+      // Reset form state when dialog closes
+      setShowCreateForm(false)
     }
-  }, [open, initialWorkflowId])
+  }, [open, initialWorkflowId, initialWorkflowName])
   
   const handleCreateSchedule = async () => {
     if (!selectedWorkflowId || !selectedWorkflowName) {
@@ -216,8 +230,10 @@ export function ScheduleWorkflowDialog({
       }
       
       await createSchedule(request)
-      setShowCreateForm(false)
-      await loadData()
+      // Notify parent that schedules changed
+      onScheduleChange?.()
+      // Close the dialog after successful creation
+      setOpen(false)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to create schedule')
     } finally {
@@ -229,6 +245,8 @@ export function ScheduleWorkflowDialog({
     try {
       await toggleSchedule(scheduleId, enabled)
       await loadData()
+      // Notify parent that schedules changed
+      onScheduleChange?.()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to toggle schedule')
     }
@@ -240,6 +258,8 @@ export function ScheduleWorkflowDialog({
     try {
       await deleteSchedule(scheduleId)
       await loadData()
+      // Notify parent that schedules changed
+      onScheduleChange?.()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to delete schedule')
     }
@@ -284,7 +304,8 @@ export function ScheduleWorkflowDialog({
         </div>
       )}
         
-        {/* Existing Schedules */}
+        {/* Existing Schedules - hide when create form is showing */}
+        {!showCreateForm && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-medium">Active Schedules</h3>
@@ -396,6 +417,7 @@ export function ScheduleWorkflowDialog({
             </div>
           )}
         </div>
+        )}
         
         {/* Create Schedule Form */}
         {showCreateForm && (
@@ -405,42 +427,47 @@ export function ScheduleWorkflowDialog({
               <Button 
                 variant="ghost" 
                 size="sm" 
-                onClick={() => setShowCreateForm(false)}
+                onClick={() => {
+                  // If we have a pre-selected workflow, close the dialog entirely
+                  if (initialWorkflowId) {
+                    setOpen(false)
+                  } else {
+                    setShowCreateForm(false)
+                  }
+                }}
               >
                 <X className="h-4 w-4" />
               </Button>
             </div>
             
-            {/* Workflow Selector - only show if no workflow was pre-selected */}
-            {!initialWorkflowId && (
-              <div className="space-y-2">
-                <Label>Workflow</Label>
-                <Select 
-                  value={selectedWorkflowId} 
-                  onValueChange={(v) => {
-                    setSelectedWorkflowId(v)
-                    const workflow = availableWorkflows.find(w => w.id === v)
-                    if (workflow) {
-                      setSelectedWorkflowName(workflow.name)
-                    }
-                  }}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select a workflow..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {availableWorkflows.map(workflow => (
-                      <SelectItem key={workflow.id} value={workflow.id}>
-                        {workflow.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {availableWorkflows.length === 0 && (
-                  <p className="text-xs text-slate-400">No saved workflows found. Save a workflow first to schedule it.</p>
-                )}
-              </div>
-            )}
+            {/* Workflow Selector - always show so user can pick any workflow */}
+            <div className="space-y-2">
+              <Label>Workflow</Label>
+              <Select 
+                value={selectedWorkflowId} 
+                onValueChange={(v) => {
+                  setSelectedWorkflowId(v)
+                  const workflow = availableWorkflows.find(w => w.id === v)
+                  if (workflow) {
+                    setSelectedWorkflowName(workflow.name)
+                  }
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select a workflow..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {availableWorkflows.map(workflow => (
+                    <SelectItem key={workflow.id} value={workflow.id}>
+                      {workflow.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {availableWorkflows.length === 0 && (
+                <p className="text-xs text-slate-400">No saved workflows found. Save a workflow first to schedule it.</p>
+              )}
+            </div>
             
             {/* Session ID */}
             <div className="space-y-2">
@@ -643,7 +670,15 @@ export function ScheduleWorkflowDialog({
             
             {/* Create Button */}
             <div className="flex justify-end gap-2">
-              <Button variant="outline" onClick={() => setShowCreateForm(false)}>
+              <Button variant="outline" onClick={() => {
+                // If we have a pre-selected workflow, close the dialog entirely
+                // Otherwise just hide the form to show the schedules list
+                if (initialWorkflowId) {
+                  setOpen(false)
+                } else {
+                  setShowCreateForm(false)
+                }
+              }}>
                 Cancel
               </Button>
               <Button onClick={handleCreateSchedule} disabled={loading}>

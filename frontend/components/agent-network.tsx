@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Textarea } from "@/components/ui/textarea"
 import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
-import { PanelRightClose, PanelRightOpen, ShieldCheck, ChevronDown, ChevronRight, Globe, Hash, Zap, FileText, ExternalLink, Settings, Clock, CheckCircle, XCircle, AlertCircle, Pause, Brain, Search, MessageSquare, Database, Shield, BarChart3, Gavel, Users, Bot, Trash2, User, ListOrdered, Network, RotateCcw, Play, Calendar } from "lucide-react"
+import { PanelRightClose, PanelRightOpen, ShieldCheck, ChevronDown, ChevronRight, Globe, Hash, Zap, FileText, ExternalLink, Settings, Clock, CheckCircle, XCircle, AlertCircle, Pause, Brain, Search, MessageSquare, Database, Shield, BarChart3, Gavel, Users, Bot, Trash2, User, ListOrdered, Network, RotateCcw, Play, Calendar, Square, Workflow, History } from "lucide-react"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { SimulateAgentRegistration } from "./simulate-agent-registration"
 import { ConnectedUsers } from "./connected-users"
@@ -18,6 +18,8 @@ import { SessionInvitationNotification } from "./session-invite"
 import { VisualWorkflowDesigner } from "./visual-workflow-designer"
 import { AgentNetworkDag } from "./agent-network-dag"
 import { cn } from "@/lib/utils"
+import { getRunHistory, listSchedules, deleteSchedule, RunHistoryItem, ScheduledWorkflow, formatNextRun } from "@/lib/scheduler-api"
+import { ScheduleWorkflowDialog } from "./schedule-workflow-dialog"
 import { useState, useEffect, useCallback, useRef } from "react"
 import { useEventHub } from "@/contexts/event-hub-context"
 import { useSearchParams } from "next/navigation"
@@ -180,6 +182,20 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
   const setWorkflowName = onWorkflowNameChange || setLocalWorkflowName
   const workflowGoal = propWorkflowGoal !== undefined ? propWorkflowGoal : localWorkflowGoal
   const setWorkflowGoal = onWorkflowGoalChange || setLocalWorkflowGoal
+  
+  // Run history state
+  const [runHistory, setRunHistory] = useState<RunHistoryItem[]>([])
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false)
+  const [expandedRunId, setExpandedRunId] = useState<string | null>(null)
+  const [expandedScheduledRunId, setExpandedScheduledRunId] = useState<string | null>(null)
+  
+  // Workflow card expansion state
+  const [isActiveWorkflowExpanded, setIsActiveWorkflowExpanded] = useState(false)
+  const [expandedScheduleId, setExpandedScheduleId] = useState<string | null>(null)
+  
+  // Scheduled workflows state
+  const [scheduledWorkflows, setScheduledWorkflows] = useState<ScheduledWorkflow[]>([])
+  const [isScheduleDialogOpen, setIsScheduleDialogOpen] = useState(false)
   
   // Agent status tracking state
   const [agentStatuses, setAgentStatuses] = useState<Map<string, AgentStatus>>(new Map())
@@ -456,8 +472,61 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
     })
   }, [registeredAgents])
 
+  // Fetch scheduled workflows - extracted as useCallback so it can be passed to dialog
+  const fetchScheduledWorkflows = useCallback(async () => {
+    try {
+      const schedules = await listSchedules()
+      setScheduledWorkflows(schedules)
+    } catch (error) {
+      console.error('[AgentNetwork] Failed to fetch scheduled workflows:', error)
+    }
+  }, [])
+
+  // Delete a scheduled workflow
+  const handleDeleteSchedule = useCallback(async (scheduleId: string, workflowName: string) => {
+    if (!confirm(`Delete scheduled workflow "${workflowName}"? This will remove the schedule and stop future runs.`)) {
+      return
+    }
+    try {
+      await deleteSchedule(scheduleId)
+      await fetchScheduledWorkflows()
+    } catch (error) {
+      console.error('[AgentNetwork] Failed to delete schedule:', error)
+      alert('Failed to delete schedule. Please try again.')
+    }
+  }, [fetchScheduledWorkflows])
+
   // Note: Workflow persistence is now handled by parent ChatLayout component
   // No need to load from localStorage here since parent manages it
+
+  // Fetch run history when workflow is active
+  useEffect(() => {
+    const fetchRunHistory = async () => {
+      if (!workflow) {
+        setRunHistory([])
+        return
+      }
+      setIsLoadingHistory(true)
+      try {
+        const history = await getRunHistory(undefined, 10)
+        setRunHistory(history)
+      } catch (error) {
+        console.error('[AgentNetwork] Failed to fetch run history:', error)
+      } finally {
+        setIsLoadingHistory(false)
+      }
+    }
+    
+    fetchRunHistory()
+    fetchScheduledWorkflows()
+    
+    // Refresh history and schedules every 30 seconds
+    const interval = setInterval(() => {
+      fetchRunHistory()
+      fetchScheduledWorkflows()
+    }, 30000)
+    return () => clearInterval(interval)
+  }, [workflow, fetchScheduledWorkflows])
 
   // Subscribe to WebSocket events - STABLE subscriptions (no churn)
   useEffect(() => {
@@ -762,17 +831,19 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
                     >
                       <ShieldCheck className="h-4 w-4" style={{ color: "#3b82f6" }} />
                     </div>
-                    <div className="flex items-center gap-2">
-                      <CardTitle className="text-sm font-semibold">Host Agent</CardTitle>
-                      {(() => {
-                        const hostStatus = getHostAgentStatus()
-                        return (
-                          <div 
-                            className={`w-2 h-2 rounded-full ${hostStatus.bgColor} ${hostStatus.animate ? 'animate-pulse' : ''}`} 
-                            title={hostStatus.label}
-                          />
-                        )
-                      })()}
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <CardTitle className="text-sm font-semibold">Host Agent</CardTitle>
+                        {(() => {
+                          const hostStatus = getHostAgentStatus()
+                          return (
+                            <div 
+                              className={`w-2 h-2 rounded-full ${hostStatus.bgColor} ${hostStatus.animate ? 'animate-pulse' : ''}`} 
+                              title={hostStatus.label}
+                            />
+                          )
+                        })()}
+                      </div>
                     </div>
                   </div>
                   <div className="flex items-center gap-1">
@@ -907,32 +978,34 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
                 </div>
               </CardHeader>
               <CardContent className="px-3 pb-3 pt-2">
-                {/* Workflow Button */}
-                <Dialog 
-                  open={isWorkflowDialogOpen} 
-                  onOpenChange={(open) => {
-                    // When dialog closes, auto-sync the edited workflow to parent
-                    if (!open && editedWorkflow && editedWorkflow !== workflow) {
-                      console.log('[AgentNetwork] Auto-syncing workflow on dialog close')
-                      setWorkflow(editedWorkflow)
-                    }
-                    setIsWorkflowDialogOpen(open)
-                  }}
-                >
-                  <DialogTrigger asChild>
-                    <Button 
-                      variant="outline" 
-                      size="sm" 
-                      className="w-full h-8 text-xs"
-                      onClick={() => {
-                        setEditedWorkflow(workflow)
-                        setIsWorkflowDialogOpen(true)
-                            }}
-                          >
-                            <ListOrdered className="h-3 w-3 mr-2" />
-                            {workflow ? "Edit Workflow" : "Define Workflow"}
-                          </Button>
-                        </DialogTrigger>
+                {/* Workflow Buttons Row */}
+                <div className="flex gap-2">
+                  {/* Define/Edit Workflow Button */}
+                  <Dialog 
+                    open={isWorkflowDialogOpen} 
+                    onOpenChange={(open) => {
+                      // When dialog closes, auto-sync the edited workflow to parent
+                      if (!open && editedWorkflow && editedWorkflow !== workflow) {
+                        console.log('[AgentNetwork] Auto-syncing workflow on dialog close')
+                        setWorkflow(editedWorkflow)
+                      }
+                      setIsWorkflowDialogOpen(open)
+                    }}
+                  >
+                    <DialogTrigger asChild>
+                      <Button 
+                        variant="outline" 
+                        size="sm" 
+                        className="flex-1 h-8 text-xs"
+                        onClick={() => {
+                          setEditedWorkflow(workflow)
+                          setIsWorkflowDialogOpen(true)
+                        }}
+                      >
+                        <ListOrdered className="h-3 w-3 mr-2" />
+                        {workflow ? "Edit Workflow" : "Define Workflow"}
+                      </Button>
+                    </DialogTrigger>
                         <DialogContent className="max-w-[95vw] max-h-[95vh] h-[900px]">
                           <Tabs defaultValue="visual" className="flex-1 flex flex-col w-full">
                             <DialogHeader className="mb-4">
@@ -1003,28 +1076,54 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
                             </DialogFooter>
                           </DialogContent>
                         </Dialog>
+                        
+                        {/* Schedule Workflow Button */}
+                        <Button 
+                          variant="outline" 
+                          size="sm" 
+                          className="h-8 text-xs"
+                          onClick={() => setIsScheduleDialogOpen(true)}
+                          disabled={!workflow}
+                        >
+                          <Calendar className="h-3 w-3 mr-2" />
+                          Schedules
+                        </Button>
+                      </div>
                         {workflow && (
-                          <div className="mt-2 space-y-2">
-                            <div className="flex items-center justify-between">
-                              <div className="flex-1 min-w-0">
-                                <p className="text-xs font-medium text-slate-200 truncate">
-                                  {workflowName || "Untitled Workflow"}
-                                </p>
-                                <p className="text-xs text-muted-foreground">
-                                  ✓ {workflow.split('\n').filter(l => l.trim()).length} steps defined
-                                </p>
+                          <div className="mt-3 space-y-2">
+                            <p className="text-[10px] text-slate-500 uppercase tracking-wider font-medium px-1">Active Workflow</p>
+                            {/* Workflow Header with name and actions - Clickable to expand */}
+                            <div
+                              onClick={() => setIsActiveWorkflowExpanded(!isActiveWorkflowExpanded)}
+                              className="flex items-center justify-between bg-gradient-to-r from-purple-500/10 to-blue-500/10 rounded-lg p-2 border border-purple-500/20 hover:border-purple-400/40 transition-colors cursor-pointer"
+                            >
+                              <div className="flex items-center gap-2 flex-1 min-w-0">
+                                <div className="p-1.5 rounded-md bg-purple-500/20">
+                                  <Workflow className="h-3.5 w-3.5 text-purple-400" />
+                                </div>
+                                <div className="flex-1 min-w-0 text-left">
+                                  <p className="text-xs font-semibold text-slate-200 truncate">
+                                    {workflowName || "Untitled"}
+                                  </p>
+                                  <p className="text-[10px] text-purple-300/70">
+                                    {workflow.split('\n').filter(l => l.trim()).length} steps
+                                  </p>
+                                </div>
                               </div>
-                              <div className="flex items-center gap-1 ml-2">
+                              <div className="flex items-center gap-0.5">
                                 <TooltipProvider>
                                   <Tooltip>
                                     <TooltipTrigger asChild>
                                       <Button
                                         variant="ghost"
                                         size="icon"
-                                        className="h-7 w-7 text-green-500 hover:text-green-400 hover:bg-green-500/10"
-                                        onClick={onRunWorkflow}
+                                        className="h-6 w-6 text-green-500 hover:text-green-400 hover:bg-green-500/10"
+                                        onClick={(e) => {
+                                          e.stopPropagation()
+                                          onRunWorkflow?.()
+                                        }}
                                       >
-                                        <Play className="h-4 w-4" />
+                                        <Play className="h-3.5 w-3.5" />
                                       </Button>
                                     </TooltipTrigger>
                                     <TooltipContent>
@@ -1038,21 +1137,344 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
                                       <Button
                                         variant="ghost"
                                         size="icon"
-                                        className="h-7 w-7 text-blue-500 hover:text-blue-400 hover:bg-blue-500/10"
-                                        onClick={onScheduleWorkflow}
+                                        className="h-6 w-6 text-red-500 hover:text-red-400 hover:bg-red-500/10"
+                                        onClick={(e) => {
+                                          e.stopPropagation()
+                                          setWorkflow("")
+                                          setEditedWorkflow("")
+                                        }}
                                       >
-                                        <Calendar className="h-4 w-4" />
+                                        <Square className="h-3 w-3" />
                                       </Button>
                                     </TooltipTrigger>
                                     <TooltipContent>
-                                      <p>Schedule Workflow</p>
+                                      <p>Disable Workflow</p>
                                     </TooltipContent>
                                   </Tooltip>
                                 </TooltipProvider>
+                                {isActiveWorkflowExpanded ? (
+                                  <ChevronDown className="h-4 w-4 text-purple-400 ml-1" />
+                                ) : (
+                                  <ChevronRight className="h-4 w-4 text-purple-400 ml-1" />
+                                )}
                               </div>
                             </div>
+                            
+                            {/* Expanded content - View Steps and Run History */}
+                            {isActiveWorkflowExpanded && (
+                              <div className="space-y-2 pl-2 border-l-2 border-purple-500/20">
+                                {/* Workflow Steps Preview */}
+                                <div className="bg-slate-900/50 rounded-md p-2 max-h-32 overflow-y-auto">
+                                  <p className="text-[9px] text-slate-500 uppercase tracking-wider mb-1.5">Steps</p>
+                                  <div className="space-y-1">
+                                    {workflow.split('\n').filter(l => l.trim()).map((step, index) => (
+                                      <div key={index} className="flex items-start gap-2">
+                                        <div className="flex-shrink-0 w-4 h-4 rounded-full bg-purple-500/20 flex items-center justify-center mt-0.5">
+                                          <span className="text-[9px] font-bold text-purple-400">{index + 1}</span>
+                                        </div>
+                                        <p className="text-[10px] text-slate-400 leading-tight line-clamp-1">
+                                          {step.replace(/^\d+\.\s*/, '')}
+                                        </p>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                                
+                                {/* Run History */}
+                                <div className="bg-slate-900/50 rounded-md p-2 max-h-64 overflow-y-auto">
+                                  <p className="text-[9px] text-slate-500 uppercase tracking-wider mb-1.5">Run History</p>
+                                  {isLoadingHistory ? (
+                                    <p className="text-[10px] text-slate-500 text-center py-2">Loading...</p>
+                                  ) : runHistory.length === 0 ? (
+                                    <p className="text-[10px] text-slate-500 text-center py-2">No runs yet</p>
+                                  ) : (
+                                    <div className="space-y-1">
+                                      {runHistory.slice(0, 5).map((run) => (
+                                        <div key={run.run_id} className="border-b border-slate-800 last:border-0">
+                                          <button
+                                            onClick={() => setExpandedRunId(expandedRunId === run.run_id ? null : run.run_id)}
+                                            className="w-full flex items-center justify-between gap-2 py-1.5 hover:bg-slate-800/50 rounded px-1 cursor-pointer transition-colors"
+                                          >
+                                            <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                                              {run.status === 'success' ? (
+                                                <CheckCircle className="h-3 w-3 text-green-500 flex-shrink-0" />
+                                              ) : (
+                                                <XCircle className="h-3 w-3 text-red-500 flex-shrink-0" />
+                                              )}
+                                              <span className="text-[10px] text-slate-300 truncate">
+                                                {run.workflow_name || workflowName || 'Workflow'}
+                                              </span>
+                                            </div>
+                                            <div className="flex items-center gap-1.5 flex-shrink-0">
+                                              <span className="text-[9px] text-slate-500">
+                                                {new Date(run.started_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                                              </span>
+                                              <span className="text-[9px] text-slate-500">
+                                                {Math.round(run.duration_seconds)}s
+                                              </span>
+                                              {expandedRunId === run.run_id ? (
+                                                <ChevronDown className="h-3 w-3 text-slate-500" />
+                                              ) : (
+                                                <ChevronRight className="h-3 w-3 text-slate-500" />
+                                              )}
+                                            </div>
+                                          </button>
+                                          
+                                          {/* Expanded details */}
+                                          {expandedRunId === run.run_id && (
+                                            <div className="px-2 pb-2 pt-1 space-y-2 bg-slate-800/30 rounded-b">
+                                              {/* Timing */}
+                                              <div className="grid grid-cols-2 gap-x-2 gap-y-1">
+                                                <div>
+                                                  <p className="text-[9px] text-slate-500">Started</p>
+                                                  <p className="text-[9px] text-slate-400 font-mono">{new Date(run.started_at).toLocaleTimeString()}</p>
+                                                </div>
+                                                <div>
+                                                  <p className="text-[9px] text-slate-500">Duration</p>
+                                                  <p className="text-[9px] text-slate-400 font-mono">{run.duration_seconds.toFixed(1)}s</p>
+                                                </div>
+                                              </div>
+                                              
+                                              {/* Error */}
+                                              {run.error && (
+                                                <div>
+                                                  <p className="text-[9px] text-red-400 mb-0.5">Error</p>
+                                                  <div className="bg-red-500/10 border border-red-500/20 rounded p-1.5 max-h-20 overflow-y-auto">
+                                                    <p className="text-[9px] text-red-300 font-mono whitespace-pre-wrap break-words">{run.error}</p>
+                                                  </div>
+                                                </div>
+                                              )}
+                                              
+                                              {/* Result */}
+                                              {run.result && (
+                                                <div>
+                                                  <p className="text-[9px] text-slate-500 mb-0.5">Result</p>
+                                                  <div className="bg-slate-900/50 rounded p-1.5 max-h-24 overflow-y-auto">
+                                                    <p className="text-[9px] text-slate-400 font-mono whitespace-pre-wrap break-words">{run.result}</p>
+                                                  </div>
+                                                </div>
+                                              )}
+                                            </div>
+                                          )}
+                                        </div>
+                                      ))}
+                                      {runHistory.length > 5 && (
+                                        <p className="text-[9px] text-slate-500 italic text-center pt-1">
+                                          +{runHistory.length - 5} more runs
+                                        </p>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            )}
                           </div>
                         )}
+
+                        {/* Scheduled Workflows - shown as cards like active workflow */}
+                        {scheduledWorkflows.length > 0 && (
+                          <div className="mt-3 space-y-2">
+                            <p className="text-[10px] text-slate-500 uppercase tracking-wider font-medium px-1">Scheduled Workflows</p>
+                            {scheduledWorkflows.map((schedule) => (
+                              <div key={schedule.id} className="space-y-2">
+                                {/* Scheduled Workflow Header - Clickable to expand */}
+                                <div
+                                  onClick={() => setExpandedScheduleId(expandedScheduleId === schedule.id ? null : schedule.id)}
+                                  className={cn(
+                                    "flex items-center justify-between rounded-lg p-2 border cursor-pointer transition-colors",
+                                    schedule.enabled 
+                                      ? "bg-gradient-to-r from-blue-500/10 to-cyan-500/10 border-blue-500/20 hover:border-blue-400/40"
+                                      : "bg-slate-800/30 border-slate-700/30 opacity-60 hover:border-slate-600/40"
+                                  )}
+                                >
+                                  <div className="flex items-center gap-2 flex-1 min-w-0">
+                                    <div className={cn(
+                                      "p-1.5 rounded-md",
+                                      schedule.enabled ? "bg-blue-500/20" : "bg-slate-700/50"
+                                    )}>
+                                      <Calendar className={cn(
+                                        "h-3.5 w-3.5",
+                                        schedule.enabled ? "text-blue-400" : "text-slate-500"
+                                      )} />
+                                    </div>
+                                    <div className="flex-1 min-w-0 text-left">
+                                      <p className="text-xs font-semibold text-slate-200 truncate">
+                                        {schedule.workflow_name}
+                                      </p>
+                                      <p className={cn(
+                                        "text-[10px]",
+                                        schedule.enabled ? "text-blue-300/70" : "text-slate-500"
+                                      )}>
+                                        {schedule.schedule_type === 'interval' && `Every ${schedule.interval_minutes} min`}
+                                        {schedule.schedule_type === 'daily' && `Daily at ${schedule.time_of_day}`}
+                                        {schedule.schedule_type === 'weekly' && `Weekly at ${schedule.time_of_day}`}
+                                        {schedule.schedule_type === 'monthly' && `Monthly on day ${schedule.day_of_month}`}
+                                        {schedule.schedule_type === 'once' && 'One-time run'}
+                                        {schedule.schedule_type === 'cron' && 'Custom schedule'}
+                                        {schedule.enabled && schedule.next_run && ` • Next: ${formatNextRun(schedule.next_run)}`}
+                                        {!schedule.enabled && ' • Disabled'}
+                                      </p>
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center gap-1">
+                                    {/* Status indicators */}
+                                    {schedule.success_count > 0 && (
+                                      <span className="text-[9px] text-green-400 px-1">{schedule.success_count}✓</span>
+                                    )}
+                                    {schedule.failure_count > 0 && (
+                                      <span className="text-[9px] text-red-400 px-1">{schedule.failure_count}✗</span>
+                                    )}
+                                    {/* Edit Schedule Button */}
+                                    <TooltipProvider>
+                                      <Tooltip>
+                                        <TooltipTrigger asChild>
+                                          <Button
+                                            variant="ghost"
+                                            size="icon"
+                                            className="h-6 w-6 text-blue-400 hover:text-blue-300 hover:bg-blue-500/10"
+                                            onClick={(e) => {
+                                              e.stopPropagation()
+                                              setIsScheduleDialogOpen(true)
+                                            }}
+                                          >
+                                            <Settings className="h-3 w-3" />
+                                          </Button>
+                                        </TooltipTrigger>
+                                        <TooltipContent>
+                                          <p>Edit Schedule</p>
+                                        </TooltipContent>
+                                      </Tooltip>
+                                    </TooltipProvider>
+                                    {/* Delete Schedule Button */}
+                                    <TooltipProvider>
+                                      <Tooltip>
+                                        <TooltipTrigger asChild>
+                                          <Button
+                                            variant="ghost"
+                                            size="icon"
+                                            className="h-6 w-6 text-red-400 hover:text-red-300 hover:bg-red-500/10"
+                                            onClick={(e) => {
+                                              e.stopPropagation()
+                                              handleDeleteSchedule(schedule.id, schedule.workflow_name)
+                                            }}
+                                          >
+                                            <Trash2 className="h-3 w-3" />
+                                          </Button>
+                                        </TooltipTrigger>
+                                        <TooltipContent>
+                                          <p>Delete Schedule</p>
+                                        </TooltipContent>
+                                      </Tooltip>
+                                    </TooltipProvider>
+                                    {expandedScheduleId === schedule.id ? (
+                                      <ChevronDown className="h-4 w-4 text-blue-400" />
+                                    ) : (
+                                      <ChevronRight className="h-4 w-4 text-blue-400" />
+                                    )}
+                                  </div>
+                                </div>
+
+                                {/* Expanded content - Run History */}
+                                {expandedScheduleId === schedule.id && (
+                                  <div className="space-y-2 pl-2 border-l-2 border-blue-500/20">
+                                    <div className="bg-slate-900/50 rounded-md p-2 max-h-64 overflow-y-auto">
+                                      <p className="text-[9px] text-slate-500 uppercase tracking-wider mb-1.5">Run History ({schedule.run_count} runs)</p>
+                                      {runHistory.filter(run => run.schedule_id === schedule.id).length === 0 ? (
+                                        <p className="text-[10px] text-slate-500 text-center py-2">No runs recorded yet</p>
+                                      ) : (
+                                        <div className="space-y-1">
+                                          {runHistory
+                                            .filter(run => run.schedule_id === schedule.id)
+                                            .slice(0, 5)
+                                            .map((run) => (
+                                              <div key={run.run_id} className="border-b border-slate-800 last:border-0">
+                                                <button
+                                                  onClick={() => setExpandedScheduledRunId(expandedScheduledRunId === run.run_id ? null : run.run_id)}
+                                                  className="w-full flex items-center justify-between gap-2 py-1.5 hover:bg-slate-800/50 rounded px-1 cursor-pointer transition-colors"
+                                                >
+                                                  <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                                                    {run.status === 'success' ? (
+                                                      <CheckCircle className="h-3 w-3 text-green-500 flex-shrink-0" />
+                                                    ) : (
+                                                      <XCircle className="h-3 w-3 text-red-500 flex-shrink-0" />
+                                                    )}
+                                                    <span className="text-[10px] text-slate-300 truncate">
+                                                      {new Date(run.started_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} at {new Date(run.started_at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}
+                                                    </span>
+                                                  </div>
+                                                  <div className="flex items-center gap-1.5 flex-shrink-0">
+                                                    <span className="text-[9px] text-slate-500">
+                                                      {Math.round(run.duration_seconds)}s
+                                                    </span>
+                                                    {expandedScheduledRunId === run.run_id ? (
+                                                      <ChevronDown className="h-3 w-3 text-slate-500" />
+                                                    ) : (
+                                                      <ChevronRight className="h-3 w-3 text-slate-500" />
+                                                    )}
+                                                  </div>
+                                                </button>
+                                                
+                                                {/* Expanded details */}
+                                                {expandedScheduledRunId === run.run_id && (
+                                                  <div className="px-2 pb-2 pt-1 space-y-2 bg-slate-800/30 rounded-b">
+                                                    {/* Timing */}
+                                                    <div className="grid grid-cols-2 gap-x-2 gap-y-1">
+                                                      <div>
+                                                        <p className="text-[9px] text-slate-500">Started</p>
+                                                        <p className="text-[9px] text-slate-400 font-mono">{new Date(run.started_at).toLocaleTimeString()}</p>
+                                                      </div>
+                                                      <div>
+                                                        <p className="text-[9px] text-slate-500">Duration</p>
+                                                        <p className="text-[9px] text-slate-400 font-mono">{run.duration_seconds.toFixed(1)}s</p>
+                                                      </div>
+                                                    </div>
+                                                    
+                                                    {/* Error */}
+                                                    {run.error && (
+                                                      <div>
+                                                        <p className="text-[9px] text-red-400 mb-0.5">Error</p>
+                                                        <div className="bg-red-500/10 border border-red-500/20 rounded p-1.5 max-h-20 overflow-y-auto">
+                                                          <p className="text-[9px] text-red-300 font-mono whitespace-pre-wrap break-words">{run.error}</p>
+                                                        </div>
+                                                      </div>
+                                                    )}
+                                                    
+                                                    {/* Result */}
+                                                    {run.result && (
+                                                      <div>
+                                                        <p className="text-[9px] text-slate-500 mb-0.5">Result</p>
+                                                        <div className="bg-slate-900/50 rounded p-1.5 max-h-24 overflow-y-auto">
+                                                          <p className="text-[9px] text-slate-400 font-mono whitespace-pre-wrap break-words">{run.result}</p>
+                                                        </div>
+                                                      </div>
+                                                    )}
+                                                  </div>
+                                                )}
+                                              </div>
+                                            ))}
+                                          {runHistory.filter(run => run.schedule_id === schedule.id).length > 5 && (
+                                            <p className="text-[9px] text-slate-500 italic text-center pt-1">
+                                              +{runHistory.filter(run => run.schedule_id === schedule.id).length - 5} more runs
+                                            </p>
+                                          )}
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        
+                        {/* Schedule Dialog */}
+                        <ScheduleWorkflowDialog 
+                          open={isScheduleDialogOpen} 
+                          onOpenChange={setIsScheduleDialogOpen}
+                          workflowId={workflowName || undefined}
+                          workflowName={workflowName || undefined}
+                          onScheduleChange={fetchScheduledWorkflows}
+                        />
               </CardContent>
             </Card>
           </div>
