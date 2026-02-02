@@ -137,18 +137,20 @@ export function ScheduleWorkflowDialog({
   const [description, setDescription] = useState('')
   const [retryOnFailure, setRetryOnFailure] = useState(false)
   const [maxRuns, setMaxRuns] = useState<number | null>(null) // null = unlimited
-  const [sessionId, setSessionId] = useState(initialSessionId || 'scheduler_default')
+  // Use the user's actual session ID so scheduled workflows are visible to them
+  const [sessionId, setSessionId] = useState(initialSessionId || getOrCreateSessionId())
   
   // Load schedules and available workflows
   const loadData = async () => {
     setLoading(true)
     setError(null)
     try {
-      // Load all schedules (no workflow filter in standalone mode)
+      // Load all schedules for this session (filtered by session_id for security)
+      const currentSessionId = getOrCreateSessionId()
       const [schedulesData, upcomingData, historyData] = await Promise.all([
-        listSchedules(initialWorkflowId),
+        listSchedules(initialWorkflowId, currentSessionId),
         getUpcomingRuns(5),
-        getRunHistory(undefined, 50)
+        getRunHistory(undefined, currentSessionId, 50)
       ])
       setSchedules(schedulesData)
       setUpcomingRuns(upcomingData)

@@ -507,11 +507,13 @@ class WorkflowScheduler:
         """Get a schedule by ID."""
         return self.schedules.get(schedule_id)
     
-    def list_schedules(self, workflow_id: Optional[str] = None) -> List[ScheduledWorkflow]:
-        """List all schedules, optionally filtered by workflow."""
+    def list_schedules(self, workflow_id: Optional[str] = None, session_id: Optional[str] = None) -> List[ScheduledWorkflow]:
+        """List all schedules, optionally filtered by workflow and/or session."""
         schedules = list(self.schedules.values())
         if workflow_id:
             schedules = [s for s in schedules if s.workflow_id == workflow_id]
+        if session_id:
+            schedules = [s for s in schedules if s.session_id == session_id]
         return sorted(schedules, key=lambda s: s.created_at, reverse=True)
     
     def update_schedule(self, schedule_id: str, **kwargs) -> Optional[ScheduledWorkflow]:
@@ -583,13 +585,17 @@ class WorkflowScheduler:
         upcoming.sort(key=lambda x: x['next_run'])
         return upcoming[:limit]
     
-    def get_run_history(self, schedule_id: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
-        """Get run history for schedules with full results."""
+    def get_run_history(self, schedule_id: Optional[str] = None, session_id: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
+        """Get run history for schedules with full results, optionally filtered by session."""
+        filtered = self.run_history
+        
         if schedule_id:
             # Filter by schedule_id
-            filtered = [h for h in self.run_history if h.get('schedule_id') == schedule_id]
-        else:
-            filtered = self.run_history
+            filtered = [h for h in filtered if h.get('schedule_id') == schedule_id]
+        
+        if session_id:
+            # Filter by session_id (owner of the schedule)
+            filtered = [h for h in filtered if h.get('session_id') == session_id]
         
         # Sort by timestamp descending and limit
         sorted_history = sorted(filtered, key=lambda x: x.get('timestamp', ''), reverse=True)

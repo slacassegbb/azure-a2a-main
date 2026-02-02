@@ -134,11 +134,16 @@ function getAuthHeaders(): HeadersInit {
 }
 
 /**
- * List all scheduled workflows
+ * List all scheduled workflows, optionally filtered by session
  */
-export async function listSchedules(workflowId?: string): Promise<ScheduledWorkflow[]> {
-  const url = workflowId 
-    ? `${API_BASE}/api/schedules?workflow_id=${workflowId}`
+export async function listSchedules(workflowId?: string, sessionId?: string): Promise<ScheduledWorkflow[]> {
+  const params = new URLSearchParams();
+  if (workflowId) params.append('workflow_id', workflowId);
+  if (sessionId) params.append('session_id', sessionId);
+  
+  const queryString = params.toString();
+  const url = queryString 
+    ? `${API_BASE}/api/schedules?${queryString}`
     : `${API_BASE}/api/schedules`;
   
   const response = await fetch(url, {
@@ -279,12 +284,15 @@ export async function runScheduleNow(scheduleId: string, sessionId?: string, wai
 }
 
 /**
- * Get run history
+ * Get run history, optionally filtered by session
  */
-export async function getScheduleHistory(scheduleId?: string, limit: number = 50): Promise<RunHistoryItem[]> {
-  const url = scheduleId
-    ? `${API_BASE}/api/schedules/history?schedule_id=${scheduleId}&limit=${limit}`
-    : `${API_BASE}/api/schedules/history?limit=${limit}`;
+export async function getScheduleHistory(scheduleId?: string, sessionId?: string, limit: number = 50): Promise<RunHistoryItem[]> {
+  const params = new URLSearchParams();
+  if (scheduleId) params.append('schedule_id', scheduleId);
+  if (sessionId) params.append('session_id', sessionId);
+  params.append('limit', limit.toString());
+  
+  const url = `${API_BASE}/api/schedules/history?${params.toString()}`;
   
   const response = await fetch(url, {
     headers: getAuthHeaders()
@@ -366,13 +374,15 @@ export async function listSchedulableWorkflows(): Promise<WorkflowInfo[]> {
 }
 
 /**
- * Get run history for scheduled workflows
+ * Get run history for scheduled workflows, optionally filtered by session
  */
-export async function getRunHistory(scheduleId?: string, limit: number = 50): Promise<RunHistoryItem[]> {
-  let url = `${API_BASE}/api/schedules/history?limit=${limit}`;
-  if (scheduleId) {
-    url += `&schedule_id=${scheduleId}`;
-  }
+export async function getRunHistory(scheduleId?: string, sessionId?: string, limit: number = 50): Promise<RunHistoryItem[]> {
+  const params = new URLSearchParams();
+  if (scheduleId) params.append('schedule_id', scheduleId);
+  if (sessionId) params.append('session_id', sessionId);
+  params.append('limit', limit.toString());
+  
+  const url = `${API_BASE}/api/schedules/history?${params.toString()}`;
   
   const response = await fetch(url, {
     headers: getAuthHeaders()

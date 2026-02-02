@@ -9,6 +9,7 @@ import { ChatHistorySidebar } from "./chat-history-sidebar"
 import { ScheduleWorkflowDialog } from "@/components/schedule-workflow-dialog"
 import { Panel, PanelGroup, PanelResizeHandle, ImperativePanelHandle } from "react-resizable-panels"
 import { getOrCreateSessionId } from "@/lib/session"
+import { getActiveWorkflow, setActiveWorkflow as setActiveWorkflowApi, clearActiveWorkflow } from "@/lib/active-workflow-api"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Button } from "@/components/ui/button"
 import { ChevronDown, ChevronRight, FileText } from "lucide-react"
@@ -40,50 +41,64 @@ export function ChatLayout() {
   const leftPanelRef = useRef<ImperativePanelHandle>(null)
   const rightPanelRef = useRef<ImperativePanelHandle>(null)
   
-  const [workflow, setWorkflow] = useState(() => {
-    // Only persist workflow text (not agent mode toggle)
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem('agent-mode-workflow') || ""
-    }
-    return ""
-  })
-  
-  const [workflowName, setWorkflowName] = useState(() => {
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem('agent-mode-workflow-name') || ""
-    }
-    return ""
-  })
-  
-  const [workflowGoal, setWorkflowGoal] = useState(() => {
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem('agent-mode-workflow-goal') || ""
-    }
-    return ""
-  })
+  // Workflow state - now session-scoped via backend API
+  const [workflow, setWorkflow] = useState("")
+  const [workflowName, setWorkflowName] = useState("")
+  const [workflowGoal, setWorkflowGoal] = useState("")
+  const [workflowLoaded, setWorkflowLoaded] = useState(false)
   
   const [showScheduleDialog, setShowScheduleDialog] = useState(false)
 
-  // Only save workflow to localStorage (not agent mode toggle)
+  // Load active workflow from backend on mount
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      if (workflow) {
-        localStorage.setItem('agent-mode-workflow', workflow)
-      } else {
-        localStorage.removeItem('agent-mode-workflow')
-      }
-      if (workflowName) {
-        localStorage.setItem('agent-mode-workflow-name', workflowName)
-      } else {
-        localStorage.removeItem('agent-mode-workflow-name')
-      }
-      if (workflowGoal) {
-        localStorage.setItem('agent-mode-workflow-goal', workflowGoal)
-      } else {
-        localStorage.removeItem('agent-mode-workflow-goal')
+    const loadActiveWorkflow = async () => {
+      const sessionId = getOrCreateSessionId()
+      try {
+        const activeWorkflow = await getActiveWorkflow(sessionId)
+        setWorkflow(activeWorkflow.workflow || "")
+        setWorkflowName(activeWorkflow.name || "")
+        setWorkflowGoal(activeWorkflow.goal || "")
+        setWorkflowLoaded(true)
+      } catch (error) {
+        console.error('[ChatLayout] Failed to load active workflow:', error)
+        setWorkflowLoaded(true)
       }
     }
-  }, [workflow, workflowName, workflowGoal])
+    loadActiveWorkflow()
+  }, [])
+
+  // Save workflow to backend when it changes (after initial load)
+  useEffect(() => {
+    if (!workflowLoaded) return // Don't save during initial load
+    
+    const saveActiveWorkflow = async () => {
+      const sessionId = getOrCreateSessionId()
+      try {
+        if (workflow || workflowName || workflowGoal) {
+          await setActiveWorkflowApi(sessionId, workflow, workflowName, workflowGoal)
+        } else {
+          await clearActiveWorkflow(sessionId)
+        }
+      } catch (error) {
+        console.error('[ChatLayout] Failed to save active workflow:', error)
+      }
+    }
+    saveActiveWorkflow()
+  }, [workflow, workflowName, workflowGoal, workflowLoaded])
+
+  // Listen for active_workflow_changed events from WebSocket (collaborative sync)
+  useEffect(() => {
+    const handleActiveWorkflowChanged = (data: { workflow?: string; name?: string; goal?: string }) => {
+      console.log('[ChatLayout] Received active_workflow_changed event:', data)
+      // Update local state from WebSocket broadcast
+      if (data.workflow !== undefined) setWorkflow(data.workflow)
+      if (data.name !== undefined) setWorkflowName(data.name)
+      if (data.goal !== undefined) setWorkflowGoal(data.goal)
+    }
+    
+    subscribe('active_workflow_changed', handleActiveWorkflowChanged)
+    return () => unsubscribe('active_workflow_changed', handleActiveWorkflowChanged)
+  }, [subscribe, unsubscribe])
   
   // Workflow action handlers (to be implemented)
   const handleRunWorkflow = useCallback(() => {

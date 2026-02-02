@@ -123,8 +123,16 @@ workflow_scheduler = None
 
 
 async def execute_scheduled_workflow(workflow_name: str, session_id: str, timeout: int = 300):
-    """Execute a workflow for the scheduler. Returns result dict."""
+    """Execute a workflow for the scheduler. Returns result dict.
+    
+    Note: We use a unique scheduler-specific session ID to prevent
+    scheduled workflow messages from appearing in the user's active UI.
+    """
     global agent_server
+    
+    # Generate a unique scheduler session ID to isolate from user sessions
+    # This prevents scheduled workflow messages from appearing in the user's conversation
+    scheduler_session_id = f"scheduler_{uuid.uuid4().hex[:12]}"
     
     from service.workflow_service import WorkflowService
     from service.agent_registry import get_registry, get_session_registry
@@ -160,13 +168,13 @@ async def execute_scheduled_workflow(workflow_name: str, session_id: str, timeou
     for agent_name in agent_names_needed:
         agent_config = global_registry.get_agent(agent_name)
         if agent_config:
-            # Enable this agent for the scheduler session
-            was_enabled = session_registry.enable_agent(session_id, agent_config)
+            # Enable this agent for the scheduler session (use isolated scheduler_session_id)
+            was_enabled = session_registry.enable_agent(scheduler_session_id, agent_config)
             if was_enabled:
                 enabled_count += 1
-                print(f"[SCHEDULER] ✅ Enabled agent '{agent_name}' for session {session_id}")
+                print(f"[SCHEDULER] ✅ Enabled agent '{agent_name}' for session {scheduler_session_id}")
             else:
-                print(f"[SCHEDULER] ℹ️ Agent '{agent_name}' already enabled for session {session_id}")
+                print(f"[SCHEDULER] ℹ️ Agent '{agent_name}' already enabled for session {scheduler_session_id}")
         else:
             missing_agents.append(agent_name)
             print(f"[SCHEDULER] ❌ Agent '{agent_name}' NOT FOUND in global registry!")
@@ -177,7 +185,7 @@ async def execute_scheduled_workflow(workflow_name: str, session_id: str, timeou
             "error": f"Missing agents in registry: {', '.join(missing_agents)}. Available agents can be found in the Agent Catalog."
         }
     
-    print(f"[SCHEDULER] Enabled {enabled_count} agents for session {session_id}")
+    print(f"[SCHEDULER] Enabled {enabled_count} agents for session {scheduler_session_id}")
     # --- END ENABLE AGENTS ---
     
     # Build workflow text
@@ -194,10 +202,11 @@ async def execute_scheduled_workflow(workflow_name: str, session_id: str, timeou
     initial_message = f'Run the "{workflow.name}" workflow.'
     conversation_id = str(uuid.uuid4())
     message_id = f"msg_{uuid.uuid4().hex[:8]}"
-    context_id = f"{session_id}::{conversation_id}"
+    # Use scheduler_session_id for context to isolate from user's active session
+    context_id = f"{scheduler_session_id}::{conversation_id}"
     
     print(f"[SCHEDULER] 📝 Workflow text:\n{workflow_text}")
-    print(f"[SCHEDULER] 📨 Context ID: {context_id}")
+    print(f"[SCHEDULER] 📨 Context ID: {context_id} (isolated from user session {session_id})")
     
     if not agent_server:
         print(f"[SCHEDULER] ❌ agent_server is None!")
@@ -1159,6 +1168,96 @@ def main():
             traceback.print_exc()
             raise HTTPException(status_code=500, detail=f"Failed to start workflow: {str(e)}")
 
+    # ==================== ACTIVE WORKFLOW (SESSION-SCOPED) ====================
+    # Stores active workflow state per session, synced across collaborative sessions
+    
+    # In-memory store for active workflows per session
+    # Format: { session_id: { "workflow": str, "name": str, "goal": str } }
+    active_workflows_store: Dict[str, Dict[str, str]] = {}
+    
+    class ActiveWorkflowRequest(BaseModel):
+        workflow: str = ""
+        name: str = ""
+        goal: str = ""
+    
+    @app.get("/api/active-workflow")
+    async def get_active_workflow(session_id: str = Query(..., description="Session ID to get active workflow for")):
+        """
+        Get the active workflow for a session.
+        Used by all users in a collaborative session to see the same active workflow.
+        
+        Example curl:
+            curl "http://localhost:12000/api/active-workflow?session_id=abc123"
+        """
+        if session_id in active_workflows_store:
+            return active_workflows_store[session_id]
+        return {"workflow": "", "name": "", "goal": ""}
+    
+    @app.post("/api/active-workflow")
+    async def set_active_workflow(
+        session_id: str = Query(..., description="Session ID to set active workflow for"),
+        request: ActiveWorkflowRequest = None
+    ):
+        """
+        Set the active workflow for a session.
+        This is synced across all users in the collaborative session.
+        
+        Example curl:
+            curl -X POST "http://localhost:12000/api/active-workflow?session_id=abc123" \\
+                 -H "Content-Type: application/json" \\
+                 -d '{"workflow": "1. [Agent A] Do something", "name": "My Workflow", "goal": "Accomplish task"}'
+        """
+        if request:
+            active_workflows_store[session_id] = {
+                "workflow": request.workflow,
+                "name": request.name,
+                "goal": request.goal
+            }
+            # Broadcast to all users in this session via WebSocket
+            # Use _send_event with session_id as contextId for smart routing
+            try:
+                if websocket_streamer:
+                    await websocket_streamer._send_event(
+                        "active_workflow_changed",
+                        {
+                            "contextId": session_id,
+                            "workflow": request.workflow,
+                            "name": request.name,
+                            "goal": request.goal
+                        },
+                        partition_key=session_id
+                    )
+            except Exception as e:
+                print(f"[ActiveWorkflow] Failed to broadcast: {e}")
+        return {"success": True, "session_id": session_id}
+    
+    @app.delete("/api/active-workflow")
+    async def clear_active_workflow(session_id: str = Query(..., description="Session ID to clear active workflow for")):
+        """
+        Clear the active workflow for a session.
+        
+        Example curl:
+            curl -X DELETE "http://localhost:12000/api/active-workflow?session_id=abc123"
+        """
+        if session_id in active_workflows_store:
+            del active_workflows_store[session_id]
+            # Broadcast to all users in this session via WebSocket
+            try:
+                if websocket_streamer:
+                    await websocket_streamer._send_event(
+                        "active_workflow_changed",
+                        {
+                            "contextId": session_id,
+                            "workflow": "",
+                            "name": "",
+                            "goal": ""
+                        },
+                        partition_key=session_id
+                    )
+            except Exception as e:
+                print(f"[ActiveWorkflow] Failed to broadcast clear: {e}")
+        return {"success": True, "session_id": session_id}
+
     # ==================== WORKFLOW SCHEDULER ENDPOINTS ====================
     
     from service.scheduler_service import (
@@ -1237,16 +1336,17 @@ def main():
             return []
     
     @app.get("/api/schedules")
-    async def list_schedules(workflow_id: Optional[str] = None):
+    async def list_schedules(workflow_id: Optional[str] = None, session_id: Optional[str] = None):
         """
-        List all scheduled workflows.
+        List all scheduled workflows, optionally filtered by session.
         
         Example curl:
             curl http://localhost:12000/api/schedules
+            curl http://localhost:12000/api/schedules?session_id=user_123
             curl http://localhost:12000/api/schedules?workflow_id=custom-123
         """
         scheduler = get_workflow_scheduler()
-        schedules = scheduler.list_schedules(workflow_id)
+        schedules = scheduler.list_schedules(workflow_id, session_id)
         return {
             "schedules": [s.to_dict() for s in schedules],
             "count": len(schedules)
@@ -1294,16 +1394,17 @@ def main():
         }
     
     @app.get("/api/schedules/history")
-    async def get_schedule_history(schedule_id: Optional[str] = None, limit: int = 50):
+    async def get_schedule_history(schedule_id: Optional[str] = None, session_id: Optional[str] = None, limit: int = 50):
         """
-        Get run history for scheduled workflows.
+        Get run history for scheduled workflows, optionally filtered by session.
         
         Example curl:
             curl http://localhost:12000/api/schedules/history
+            curl http://localhost:12000/api/schedules/history?session_id=user_123
             curl http://localhost:12000/api/schedules/history?schedule_id={id}
         """
         scheduler = get_workflow_scheduler()
-        history = scheduler.get_run_history(schedule_id, limit)
+        history = scheduler.get_run_history(schedule_id, session_id, limit)
         return {
             "history": history,
             "count": len(history)
