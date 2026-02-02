@@ -267,7 +267,7 @@
     },
     {
       "id": "custom-1769964199085",
-      "name": "Stripe Balance & QuickBooks Customers",
+      "name": "Stripe Balance & QuickBooks  Customers",
       "description": "Check Stripe account balance and list all QuickBooks customers",
       "category": "Custom",
       "user_id": "user_3",
@@ -298,48 +298,10 @@
           "toStepId": "step-1769957682991-ajw25bdvj"
         }
       ],
-      "goal": "analyze financials and find customers",
+      "goal": "test 2",
       "is_custom": true,
       "created_at": "2026-02-01T16:43:19.089698Z",
-      "updated_at": "2026-02-01T16:43:19.089698Z"
-    },
-    {
-      "id": "custom-1770008200858",
-      "name": "test",
-      "description": "test",
-      "category": "Custom",
-      "user_id": "user_3",
-      "steps": [
-        {
-          "id": "step-1769957681136-z3wq5a1mn",
-          "agentId": "ai-foundry-stripe-agent",
-          "agentName": "AI Foundry Stripe Agent",
-          "description": "check my balance",
-          "order": 0,
-          "x": -386,
-          "y": -19.5
-        },
-        {
-          "id": "step-1769957682991-ajw25bdvj",
-          "agentId": "quickbooks-online-agent",
-          "agentName": "AI Foundry QuickBooks Agent",
-          "description": "list all customers",
-          "order": 1,
-          "x": -89,
-          "y": -68.5
-        }
-      ],
-      "connections": [
-        {
-          "id": "conn-1769957712351-2b8q068vb",
-          "fromStepId": "step-1769957681136-z3wq5a1mn",
-          "toStepId": "step-1769957682991-ajw25bdvj"
-        }
-      ],
-      "goal": "this is a test",
-      "is_custom": true,
-      "created_at": "2026-02-02T04:56:40.866283Z",
-      "updated_at": "2026-02-02T04:56:40.866283Z"
+      "updated_at": "2026-02-02T16:39:34.307844Z"
     }
   ]
 }

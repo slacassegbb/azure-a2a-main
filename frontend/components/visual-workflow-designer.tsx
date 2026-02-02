@@ -3,7 +3,7 @@
 import type React from "react"
 import { useEffect, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
-import { X, Plus, Trash2, Download, Upload, Library, X as CloseIcon, Send, Loader2, PlayCircle, StopCircle, Phone, PhoneOff, Mic, MicOff, ChevronLeft, ChevronRight } from "lucide-react"
+import { X, Plus, Trash2, Download, Upload, Library, X as CloseIcon, Send, Loader2, PlayCircle, StopCircle, Phone, PhoneOff, Mic, MicOff, ChevronLeft, ChevronRight, Save } from "lucide-react"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { WorkflowCatalog } from "./workflow-catalog"
 import { Input } from "@/components/ui/input"
@@ -117,6 +117,7 @@ export function VisualWorkflowDesigner({
   const [workflowCategory, setWorkflowCategory] = useState("Custom")
   const [workflowGoal, setWorkflowGoal] = useState("")
   const [catalogRefreshTrigger, setCatalogRefreshTrigger] = useState(0)
+  const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(null)
   
   // Component lifecycle logging (for debugging)
   // useEffect(() => {
@@ -1399,6 +1400,7 @@ export function VisualWorkflowDesigner({
     setWorkflowSteps([])
     setConnections([])
     setSelectedStepId(null)
+    setSelectedWorkflowId(null) // Clear selected workflow highlight
     // Clear saved data from localStorage
     localStorage.removeItem('workflow-visual-data')
   }
@@ -1646,15 +1648,8 @@ export function VisualWorkflowDesigner({
     setConnections([])
     setSelectedStepId(null)
     
-    // Notify parent of the workflow name
-    if (onWorkflowNameChange && template.name) {
-      onWorkflowNameChange(template.name)
-    }
-    
-    // Notify parent of the workflow goal
-    if (onWorkflowGoalChange) {
-      onWorkflowGoalChange(template.goal || "")
-    }
+    // Set the selected workflow ID to highlight it in the catalog
+    setSelectedWorkflowId(template.id)
     
     // Load workflow metadata
     setWorkflowName(template.name || "")
@@ -1662,8 +1657,23 @@ export function VisualWorkflowDesigner({
     setWorkflowCategory(template.category || "Custom")
     setWorkflowGoal(template.goal || "")
     
+    // Notify parent of the workflow name and goal
+    // (now safe - parent won't auto-create workflows)
+    if (onWorkflowNameChange && template.name) {
+      onWorkflowNameChange(template.name)
+    }
+    if (onWorkflowGoalChange) {
+      onWorkflowGoalChange(template.goal || "")
+    }
+    
     // Small delay to ensure state is cleared
     setTimeout(() => {
+      // Guard against empty/undefined steps
+      if (!template.steps || template.steps.length === 0) {
+        console.log('[VisualWorkflowDesigner] No steps in template, keeping canvas empty')
+        return
+      }
+      
       // Map template steps to workflow steps with colors
       const steps = template.steps.map((step: any) => {
         // Find the agent in registeredAgents to get the correct color
@@ -1685,11 +1695,11 @@ export function VisualWorkflowDesigner({
       })
       
       setWorkflowSteps(steps)
-      setConnections(template.connections)
+      setConnections(template.connections || [])
       
       // Update refs immediately to ensure test workflow uses latest data
       workflowStepsRef.current = steps
-      connectionsRef.current = template.connections
+      connectionsRef.current = template.connections || []
       
       // Update workflow steps map ref for event handlers
       const newMap = new Map<string, WorkflowStep>()
@@ -1758,6 +1768,111 @@ export function VisualWorkflowDesigner({
       }
       localStorage.setItem('workflow-visual-data', JSON.stringify(data))
     }, 100)
+  }
+
+  // Quick save - updates existing workflow without showing dialog
+  const handleQuickSave = async () => {
+    if (!workflowName.trim()) {
+      // No name yet - show the dialog
+      setShowSaveDialog(true)
+      return
+    }
+    
+    const workflowData = {
+      name: workflowName,
+      description: workflowDescription || "Custom workflow",
+      category: workflowCategory,
+      goal: workflowGoal || "",
+      steps: workflowSteps.map(step => ({
+        id: step.id,
+        agentId: step.agentId,
+        agentName: step.agentName,
+        description: step.description,
+        order: step.order,
+        x: step.x,
+        y: step.y
+      })),
+      connections: connections.map(conn => ({
+        id: conn.id,
+        fromStepId: conn.fromStepId,
+        toStepId: conn.toStepId
+      }))
+    }
+    
+    console.log('[VisualWorkflowDesigner] Quick save - workflow data:', {
+      name: workflowData.name,
+      goal: workflowData.goal,
+      selectedWorkflowId
+    })
+    
+    try {
+      const token = sessionStorage.getItem('auth_token') || localStorage.getItem('auth_token')
+      
+      if (token && selectedWorkflowId) {
+        // Update existing workflow in backend
+        const response = await fetch(`${process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'}/api/workflows/${selectedWorkflowId}`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify(workflowData)
+        })
+        
+        if (response.ok) {
+          console.log('[VisualWorkflowDesigner] Workflow updated successfully')
+        } else {
+          console.error('[VisualWorkflowDesigner] Failed to update workflow')
+          alert("Failed to save workflow. Please try again.")
+          return
+        }
+      } else if (token && !selectedWorkflowId) {
+        // No selected workflow - create new one
+        const newId = `workflow_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`
+        const response = await fetch(`${process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'}/api/workflows`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({ id: newId, ...workflowData })
+        })
+        
+        if (response.ok) {
+          const data = await response.json()
+          setSelectedWorkflowId(data.workflow?.id || newId)
+          console.log('[VisualWorkflowDesigner] New workflow created:', data.workflow?.id || newId)
+        } else {
+          console.error('[VisualWorkflowDesigner] Failed to create workflow')
+          alert("Failed to save workflow. Please try again.")
+          return
+        }
+      } else {
+        // Not authenticated - update in localStorage
+        const customWorkflows = JSON.parse(localStorage.getItem('customWorkflows') || '[]')
+        if (selectedWorkflowId) {
+          const index = customWorkflows.findIndex((w: any) => w.id === selectedWorkflowId)
+          if (index >= 0) {
+            customWorkflows[index] = { id: selectedWorkflowId, ...workflowData, isCustom: true }
+          } else {
+            customWorkflows.push({ id: selectedWorkflowId, ...workflowData, isCustom: true })
+          }
+        } else {
+          const newId = `workflow_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`
+          customWorkflows.push({ id: newId, ...workflowData, isCustom: true })
+          setSelectedWorkflowId(newId)
+        }
+        localStorage.setItem('customWorkflows', JSON.stringify(customWorkflows))
+        console.log('[VisualWorkflowDesigner] Workflow saved to localStorage')
+      }
+      
+      // Trigger catalog refresh
+      setCatalogRefreshTrigger(prev => prev + 1)
+      
+    } catch (err) {
+      console.error('[VisualWorkflowDesigner] Error saving workflow:', err)
+      alert("Failed to save workflow. Please check your connection and try again.")
+    }
   }
 
   // Save current workflow to catalog
@@ -3114,43 +3229,88 @@ export function VisualWorkflowDesigner({
 
         {/* Canvas */}
         <div className="flex-1 flex flex-col gap-2">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-slate-200">Workflow Canvas</h3>
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setShowCatalog(!showCatalog)}
-                className="text-xs"
-              >
-                <Library className="h-3 w-3 mr-1" />
-                {showCatalog ? "Hide" : "Show"} Templates
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  zoomRef.current = 1
-                  panOffsetRef.current = { x: 0, y: 0 }
-                }}
-                className="text-xs"
-              >
-                Reset View
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={clearWorkflow}
-                disabled={workflowSteps.length === 0}
-                className="text-xs"
-              >
-                <Trash2 className="h-3 w-3 mr-1" />
-                Clear All
-              </Button>
+          {/* Workflow Metadata - Compact Editable */}
+          {(workflowSteps.length > 0 || workflowName) && (
+            <div className="px-3 py-2 bg-slate-800/50 rounded-lg border border-slate-700">
+              <div className="flex items-end gap-3">
+                <div className="flex-1 grid grid-cols-3 gap-3">
+                  {/* Title */}
+                  <div className="space-y-1">
+                    <label className="text-[10px] text-slate-400 uppercase tracking-wide">Workflow Name</label>
+                    <Input
+                      value={workflowName}
+                      onChange={(e) => {
+                        setWorkflowName(e.target.value)
+                        if (onWorkflowNameChange) {
+                          onWorkflowNameChange(e.target.value)
+                        }
+                      }}
+                      placeholder="Enter workflow name..."
+                      className="h-8 text-sm font-medium bg-slate-900/50 border-slate-600 text-slate-200"
+                    />
+                  </div>
+                  
+                  {/* Description */}
+                  <div className="space-y-1">
+                    <label className="text-[10px] text-slate-400 uppercase tracking-wide">Description</label>
+                    <Input
+                      value={workflowDescription}
+                      onChange={(e) => setWorkflowDescription(e.target.value)}
+                      placeholder="Brief description..."
+                      className="h-8 text-sm bg-slate-900/50 border-slate-600 text-slate-300"
+                    />
+                  </div>
+                  
+                  {/* Goal */}
+                  <div className="space-y-1">
+                    <label className="text-[10px] text-slate-400 uppercase tracking-wide">Goal</label>
+                    <Input
+                      value={workflowGoal}
+                      onChange={(e) => {
+                        setWorkflowGoal(e.target.value)
+                        if (onWorkflowGoalChange) {
+                          onWorkflowGoalChange(e.target.value)
+                        }
+                      }}
+                      placeholder="What should this accomplish..."
+                      className="h-8 text-sm bg-slate-900/50 border-slate-600 text-slate-300"
+                    />
+                  </div>
+                </div>
+                
+                {/* Save Button - Always visible */}
+                <Button
+                  onClick={handleQuickSave}
+                  size="sm"
+                  className="h-8"
+                >
+                  <Save className="h-3 w-3 mr-1" />
+                  Save
+                </Button>
+              </div>
             </div>
-          </div>
+          )}
           
-          {/* Test Workflow Panel - Compact version above canvas */}
+          <div 
+            className="flex-1 relative bg-slate-900 rounded-lg border-2 border-dashed border-slate-800 overflow-hidden"
+            onDragOver={(e) => {
+              e.preventDefault()
+              setIsDraggingOver(true)
+            }}
+            onDragLeave={() => setIsDraggingOver(false)}
+            onDrop={handleCanvasDrop}
+          >
+            <canvas
+              ref={canvasRef}
+              className="w-full h-full"
+              style={{ 
+                minHeight: "400px",
+                cursor: draggingStepId ? 'move' : isPanning ? 'grabbing' : 'grab'
+              }}
+            />
+          </div>
+
+          {/* Test Workflow Panel - Between canvas and analytics */}
           {workflowSteps.length > 0 && generatedWorkflowText && (
             <div className="bg-slate-800/50 rounded-lg p-3 border border-slate-700">
               <div className="flex items-center gap-2">
@@ -3299,25 +3459,6 @@ export function VisualWorkflowDesigner({
               })()}
             </div>
           )}
-          
-          <div 
-            className="flex-1 relative bg-slate-900 rounded-lg border-2 border-dashed border-slate-800 overflow-hidden"
-            onDragOver={(e) => {
-              e.preventDefault()
-              setIsDraggingOver(true)
-            }}
-            onDragLeave={() => setIsDraggingOver(false)}
-            onDrop={handleCanvasDrop}
-          >
-            <canvas
-              ref={canvasRef}
-              className="w-full h-full"
-              style={{ 
-                minHeight: "400px",
-                cursor: draggingStepId ? 'move' : isPanning ? 'grabbing' : 'grab'
-              }}
-            />
-          </div>
 
           {/* Workflow Analytics */}
           {(() => {
@@ -3562,7 +3703,7 @@ export function VisualWorkflowDesigner({
           <div className="w-80 flex flex-col">
             <div className="bg-slate-900 rounded-lg border border-slate-700 overflow-hidden h-full flex flex-col">
               <div className="p-3 border-b border-slate-700 bg-slate-800/50 flex items-center justify-between">
-                <h3 className="text-sm font-semibold text-slate-200">Workflow Templates</h3>
+                <h3 className="text-sm font-semibold text-slate-200">Active Workflows</h3>
                 <button
                   onClick={() => setShowCatalog(false)}
                   className="text-slate-400 hover:text-slate-200 transition-colors"
@@ -3574,9 +3715,74 @@ export function VisualWorkflowDesigner({
               <div className="flex-1 overflow-hidden">
                 <WorkflowCatalog
                   onLoadWorkflow={loadWorkflow}
-                  onSaveWorkflow={() => setShowSaveDialog(true)}
+                  onSaveWorkflow={handleQuickSave}
+                  onNewWorkflow={async (name, description, category, goal) => {
+                    // Clear the canvas
+                    clearWorkflow()
+                    // Set the workflow metadata (with fallback default for goal)
+                    const defaultGoal = "Complete the workflow tasks efficiently and accurately"
+                    setWorkflowName(name)
+                    setWorkflowDescription(description)
+                    setWorkflowCategory(category)
+                    setWorkflowGoal(goal || defaultGoal)
+                    
+                    // Generate a unique ID for the new workflow
+                    const newWorkflowId = `workflow_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`
+                    
+                    // Immediately save the blank workflow
+                    try {
+                      const token = sessionStorage.getItem('auth_token') || localStorage.getItem('auth_token')
+                      const workflowData = {
+                        id: newWorkflowId,
+                        name: name,
+                        description: description || '',
+                        category: category || 'Custom',
+                        steps: [], // Empty steps array
+                        connections: [], // Empty connections array
+                        goal: goal || 'Complete the workflow tasks efficiently and accurately'
+                      }
+                      
+                      if (token) {
+                        // Save to backend
+                        const response = await fetch(`${process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'}/api/workflows`, {
+                          method: 'POST',
+                          headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${token}`
+                          },
+                          body: JSON.stringify(workflowData)
+                        })
+                        
+                        if (response.ok) {
+                          const data = await response.json()
+                          setSelectedWorkflowId(data.workflow?.id || newWorkflowId)
+                        }
+                      } else {
+                        // Save to localStorage
+                        const customWorkflows = JSON.parse(localStorage.getItem('customWorkflows') || '[]')
+                        customWorkflows.push(workflowData)
+                        localStorage.setItem('customWorkflows', JSON.stringify(customWorkflows))
+                        setSelectedWorkflowId(newWorkflowId)
+                      }
+                      
+                      // Trigger catalog refresh
+                      setCatalogRefreshTrigger(prev => prev + 1)
+                      
+                    } catch (error) {
+                      console.error('Failed to create workflow:', error)
+                    }
+                    
+                    // Notify parent
+                    if (onWorkflowNameChange) {
+                      onWorkflowNameChange(name)
+                    }
+                    if (onWorkflowGoalChange) {
+                      onWorkflowGoalChange(goal)
+                    }
+                  }}
                   currentWorkflowSteps={workflowSteps.length}
                   refreshTrigger={catalogRefreshTrigger}
+                  selectedWorkflowId={selectedWorkflowId}
                 />
               </div>
             </div>

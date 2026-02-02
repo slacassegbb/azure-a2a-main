@@ -460,6 +460,13 @@ export function ScheduleWorkflowDialog({
                   <SelectValue placeholder="Select a workflow..." />
                 </SelectTrigger>
                 <SelectContent>
+                  {/* Show selected workflow even if not in available list yet */}
+                  {selectedWorkflowId && selectedWorkflowName && 
+                   !availableWorkflows.find(w => w.id === selectedWorkflowId) && (
+                    <SelectItem key={selectedWorkflowId} value={selectedWorkflowId}>
+                      {selectedWorkflowName}
+                    </SelectItem>
+                  )}
                   {availableWorkflows.map(workflow => (
                     <SelectItem key={workflow.id} value={workflow.id}>
                       {workflow.name}

@@ -995,14 +995,7 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
                   {/* Define/Edit Workflow Button */}
                   <Dialog 
                     open={isWorkflowDialogOpen} 
-                    onOpenChange={(open) => {
-                      // When dialog closes, auto-sync the edited workflow to parent
-                      if (!open && editedWorkflow && editedWorkflow !== workflow) {
-                        console.log('[AgentNetwork] Auto-syncing workflow on dialog close')
-                        setWorkflow(editedWorkflow)
-                      }
-                      setIsWorkflowDialogOpen(open)
-                    }}
+                    onOpenChange={setIsWorkflowDialogOpen}
                   >
                     <DialogTrigger asChild>
                       <Button 

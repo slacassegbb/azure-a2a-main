@@ -5,15 +5,18 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
-import { Sparkles, Download, Trash2, Save, Search, Clock } from "lucide-react"
+import { Sparkles, Download, Trash2, Save, Search, Clock, Plus, X } from "lucide-react"
 import { useState, useEffect } from "react"
 import { ScheduleWorkflowDialog } from "./schedule-workflow-dialog"
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Label } from "@/components/ui/label"
 
 interface WorkflowTemplate {
   id: string
   name: string
   description: string
   category: string
+  goal?: string
   steps: Array<{
     id: string
     agentId: string
@@ -193,16 +196,24 @@ const PREDEFINED_WORKFLOWS: WorkflowTemplate[] = [
 interface Props {
   onLoadWorkflow: (workflow: WorkflowTemplate) => void
   onSaveWorkflow: () => void
+  onNewWorkflow?: (name: string, description: string, category: string, goal: string) => void
   currentWorkflowSteps: number
   refreshTrigger?: number
+  selectedWorkflowId?: string | null
 }
 
-export function WorkflowCatalog({ onLoadWorkflow, onSaveWorkflow, currentWorkflowSteps, refreshTrigger }: Props) {
+export function WorkflowCatalog({ onLoadWorkflow, onSaveWorkflow, onNewWorkflow, currentWorkflowSteps, refreshTrigger, selectedWorkflowId }: Props) {
   const [customWorkflows, setCustomWorkflows] = useState<WorkflowTemplate[]>([])
   const [searchQuery, setSearchQuery] = useState("")
   const [isLoading, setIsLoading] = useState(true)
   const [isUserAuthenticated, setIsUserAuthenticated] = useState(false)
   const [showScheduleDialog, setShowScheduleDialog] = useState(false)
+  const [workflowToSchedule, setWorkflowToSchedule] = useState<WorkflowTemplate | null>(null)
+  const [showNewWorkflowDialog, setShowNewWorkflowDialog] = useState(false)
+  const [newWorkflowName, setNewWorkflowName] = useState("")
+  const [newWorkflowDescription, setNewWorkflowDescription] = useState("")
+  const [newWorkflowCategory, setNewWorkflowCategory] = useState("Custom")
+  const [newWorkflowGoal, setNewWorkflowGoal] = useState("Complete the workflow tasks efficiently and accurately")
   
   // Load workflows from backend (if authenticated) or localStorage on mount and when refreshTrigger changes
   useEffect(() => {
@@ -224,6 +235,7 @@ export function WorkflowCatalog({ onLoadWorkflow, onSaveWorkflow, currentWorkflo
             name: w.name,
             description: w.description,
             category: w.category,
+            goal: w.goal || "",
             steps: w.steps.map(s => ({
               id: s.id,
               agentId: s.agentId,
@@ -284,7 +296,8 @@ export function WorkflowCatalog({ onLoadWorkflow, onSaveWorkflow, currentWorkflo
     }
   }
 
-  const allWorkflows = [...PREDEFINED_WORKFLOWS, ...customWorkflows]
+  // Only show custom/user workflows, not predefined ones
+  const allWorkflows = customWorkflows
   
   // Filter workflows based on search query
   const filteredWorkflows = allWorkflows.filter(workflow => {
@@ -299,36 +312,14 @@ export function WorkflowCatalog({ onLoadWorkflow, onSaveWorkflow, currentWorkflo
 
   return (
     <div className="h-full flex flex-col bg-slate-900 rounded-lg border border-slate-800">
-      <div className="p-4 border-b border-slate-800">
-        <h3 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
-          <Sparkles className="h-4 w-4 text-indigo-400" />
-          Workflow Templates
-        </h3>
-        <p className="text-xs text-slate-400 mt-1">
-          Start with a predefined workflow or save your own
-        </p>
-      </div>
-
       <div className="p-4 border-b border-slate-800 space-y-3">
         <Button
-          onClick={onSaveWorkflow}
-          disabled={currentWorkflowSteps === 0}
+          onClick={() => setShowNewWorkflowDialog(true)}
           className="w-full"
-          variant="outline"
           size="sm"
         >
-          <Save className="h-3 w-3 mr-2" />
-          Save Current Workflow
-        </Button>
-        
-        <Button
-          onClick={() => setShowScheduleDialog(true)}
-          className="w-full"
-          variant="outline"
-          size="sm"
-        >
-          <Clock className="h-3 w-3 mr-2" />
-          Schedule Workflows
+          <Plus className="h-3 w-3 mr-2" />
+          New Workflow
         </Button>
         
         <div className="relative">
@@ -349,8 +340,18 @@ export function WorkflowCatalog({ onLoadWorkflow, onSaveWorkflow, currentWorkflo
               No workflows found matching "{searchQuery}"
             </p>
           ) : (
-            filteredWorkflows.map((workflow) => (
-            <Card key={workflow.id} className="bg-slate-800 border-slate-700 hover:border-indigo-500 transition-colors">
+            filteredWorkflows.map((workflow) => {
+              const isSelected = selectedWorkflowId === workflow.id
+              return (
+            <Card 
+              key={workflow.id} 
+              className={`bg-slate-800 transition-colors cursor-pointer ${
+                isSelected 
+                  ? 'border-indigo-500 border-2' 
+                  : 'border-slate-700 hover:border-indigo-500'
+              }`}
+              onClick={() => onLoadWorkflow(workflow)}
+            >
               <CardHeader className="p-3">
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex-1">
@@ -368,7 +369,10 @@ export function WorkflowCatalog({ onLoadWorkflow, onSaveWorkflow, currentWorkflo
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={() => handleDeleteCustomWorkflow(workflow.id)}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        handleDeleteCustomWorkflow(workflow.id)
+                      }}
                       className="h-6 w-6 p-0 text-slate-400 hover:text-primary hover:bg-primary/10"
                     >
                       <Trash2 className="h-3 w-3" />
@@ -377,7 +381,7 @@ export function WorkflowCatalog({ onLoadWorkflow, onSaveWorkflow, currentWorkflo
                 </div>
               </CardHeader>
               <CardContent className="p-3 pt-0">
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
                     <Badge variant="secondary" className="text-xs">
                       {workflow.category}
@@ -386,27 +390,160 @@ export function WorkflowCatalog({ onLoadWorkflow, onSaveWorkflow, currentWorkflo
                       {workflow.steps.length} steps
                     </span>
                   </div>
-                  <Button
-                    onClick={() => onLoadWorkflow(workflow)}
-                    variant="ghost"
-                    size="sm"
-                    className="h-7 text-xs"
-                  >
-                    <Download className="h-3 w-3 mr-1" />
-                    Load
-                  </Button>
+                  
+                  {/* Show action buttons when this workflow is selected */}
+                  {isSelected && (
+                    <div className="flex gap-2">
+                      <Button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          onSaveWorkflow()
+                        }}
+                        disabled={currentWorkflowSteps === 0}
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 w-7 p-0"
+                        title="Save workflow"
+                      >
+                        <Save className="h-3 w-3" />
+                      </Button>
+                      <Button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          setWorkflowToSchedule(workflow)
+                          setShowScheduleDialog(true)
+                        }}
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 w-7 p-0"
+                        title="Schedule workflow"
+                      >
+                        <Clock className="h-3 w-3" />
+                      </Button>
+                    </div>
+                  )}
                 </div>
               </CardContent>
             </Card>
-          )))}
+          )
+          }))}
         </div>
       </ScrollArea>
       
       {/* Schedule Workflow Dialog */}
       <ScheduleWorkflowDialog
         open={showScheduleDialog}
-        onOpenChange={setShowScheduleDialog}
+        onOpenChange={(open) => {
+          setShowScheduleDialog(open)
+          if (!open) {
+            setWorkflowToSchedule(null)
+          }
+        }}
+        workflowId={workflowToSchedule?.id}
+        workflowName={workflowToSchedule?.name}
       />
+      
+      {/* New Workflow Dialog */}
+      <Dialog open={showNewWorkflowDialog} onOpenChange={(open) => {
+        if (!open) {
+          // Dialog is closing - reset form without creating workflow
+          setNewWorkflowName("")
+          setNewWorkflowDescription("")
+          setNewWorkflowCategory("Custom")
+          setNewWorkflowGoal("Complete the workflow tasks efficiently and accurately")
+        }
+        setShowNewWorkflowDialog(open)
+      }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Create New Workflow</DialogTitle>
+            <DialogDescription>
+              Enter the details for your new workflow. You'll start with a blank canvas.
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="workflow-name">Workflow Name *</Label>
+              <Input
+                id="workflow-name"
+                value={newWorkflowName}
+                onChange={(e) => setNewWorkflowName(e.target.value)}
+                placeholder="e.g., Customer Onboarding Flow"
+              />
+            </div>
+            
+            <div className="space-y-2">
+              <Label htmlFor="workflow-description">Description</Label>
+              <Input
+                id="workflow-description"
+                value={newWorkflowDescription}
+                onChange={(e) => setNewWorkflowDescription(e.target.value)}
+                placeholder="Brief description of what this workflow does"
+              />
+            </div>
+            
+            <div className="space-y-2">
+              <Label htmlFor="workflow-category">Category</Label>
+              <Input
+                id="workflow-category"
+                value={newWorkflowCategory}
+                onChange={(e) => setNewWorkflowCategory(e.target.value)}
+                placeholder="e.g., Customer Service, Sales, Marketing"
+              />
+            </div>
+            
+            <div className="space-y-2">
+              <Label htmlFor="workflow-goal">Goal (optional)</Label>
+              <Input
+                id="workflow-goal"
+                value={newWorkflowGoal}
+                onChange={(e) => setNewWorkflowGoal(e.target.value)}
+                placeholder="Complete the workflow tasks efficiently and accurately"
+              />
+              <p className="text-xs text-slate-400">
+                The goal helps guide the AI agents in executing this workflow
+              </p>
+            </div>
+          </div>
+          
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setShowNewWorkflowDialog(false)
+                setNewWorkflowName("")
+                setNewWorkflowDescription("")
+                setNewWorkflowCategory("Custom")
+                setNewWorkflowGoal("Complete the workflow tasks efficiently and accurately")
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                if (!newWorkflowName.trim()) {
+                  alert("Please enter a workflow name")
+                  return
+                }
+                
+                if (onNewWorkflow) {
+                  onNewWorkflow(newWorkflowName, newWorkflowDescription, newWorkflowCategory, newWorkflowGoal)
+                }
+                
+                setShowNewWorkflowDialog(false)
+                setNewWorkflowName("")
+                setNewWorkflowDescription("")
+                setNewWorkflowCategory("Custom")
+                setNewWorkflowGoal("Complete the workflow tasks efficiently and accurately")
+              }}
+              disabled={!newWorkflowName.trim()}
+            >
+              Create Workflow
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

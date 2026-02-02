@@ -1174,6 +1174,7 @@ def main():
     
     class QueryRequest(BaseModel):
         query: str  # The natural language query
+        user_id: str  # REQUIRED: User ID to filter workflows (only user's workflows are considered)
         session_id: Optional[str] = None  # Optional session ID (auto-generated if not provided)
         conversation_id: Optional[str] = None  # Optional conversation ID
         timeout: int = 300  # Timeout in seconds (default 5 min)
@@ -1186,19 +1187,21 @@ def main():
         
         This endpoint provides a simple API for sending queries that automatically:
         - Enables all available session agents
-        - Routes to appropriate workflows if available
+        - Routes to appropriate workflows belonging to the specified user
         - Orchestrates multi-agent execution
         - Returns the result synchronously
+        
+        REQUIRED: user_id must be provided to filter workflows by user.
         
         Example curl:
             curl -X POST http://localhost:12000/api/query \\
                 -H "Content-Type: application/json" \\
-                -d '{"query": "check my balance and list customers"}'
+                -d '{"query": "check my balance and list customers", "user_id": "user_3"}'
         
         With custom session:
             curl -X POST http://localhost:12000/api/query \\
                 -H "Content-Type: application/json" \\
-                -d '{"query": "what invoices are overdue?", "session_id": "my-session-123"}'
+                -d '{"query": "what invoices are overdue?", "user_id": "user_3", "session_id": "my-session-123"}'
         """
         import uuid
         import asyncio
@@ -1209,6 +1212,7 @@ def main():
         
         print(f"\n{'='*60}")
         print(f"[Query API] 🔍 Received query: {request.query}")
+        print(f"[Query API] 👤 User ID: {request.user_id}")
         print(f"{'='*60}")
         
         # Generate IDs
@@ -1246,7 +1250,12 @@ def main():
             from service.workflow_service import get_workflow_service
             workflow_service = get_workflow_service()
             all_workflows = workflow_service.get_all_workflows()
-            for w in all_workflows:
+            
+            # Filter workflows by user_id - only include workflows belonging to this user
+            user_workflows = [w for w in all_workflows if w.user_id == request.user_id]
+            print(f"[Query API] 👤 Filtered to {len(user_workflows)} workflows for user '{request.user_id}' (out of {len(all_workflows)} total)")
+            
+            for w in user_workflows:
                 if w.steps:
                     # Sort steps by order
                     sorted_steps = sorted(w.steps, key=lambda s: s.get('order', 0))

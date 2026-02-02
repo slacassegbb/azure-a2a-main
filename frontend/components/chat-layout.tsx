@@ -171,12 +171,8 @@ export function ChatLayout() {
   const setWorkflow = useCallback((value: string) => {
     setActiveWorkflows(prev => {
       if (prev.length === 0) {
-        return [{
-          id: generateWorkflowId(),
-          workflow: value,
-          name: "Untitled Workflow",
-          goal: ""
-        }]
+        // Don't auto-create workflow - just ignore
+        return prev
       }
       return prev.map((w, i) => i === 0 ? { ...w, workflow: value } : w)
     })
@@ -185,12 +181,8 @@ export function ChatLayout() {
   const setWorkflowName = useCallback((value: string) => {
     setActiveWorkflows(prev => {
       if (prev.length === 0) {
-        return [{
-          id: generateWorkflowId(),
-          workflow: "",
-          name: value,
-          goal: ""
-        }]
+        // Don't auto-create workflow - just ignore
+        return prev
       }
       return prev.map((w, i) => i === 0 ? { ...w, name: value } : w)
     })
@@ -199,12 +191,8 @@ export function ChatLayout() {
   const setWorkflowGoal = useCallback((value: string) => {
     setActiveWorkflows(prev => {
       if (prev.length === 0) {
-        return [{
-          id: generateWorkflowId(),
-          workflow: "",
-          name: "Untitled Workflow",
-          goal: value
-        }]
+        // Don't auto-create workflow - just ignore
+        return prev
       }
       return prev.map((w, i) => i === 0 ? { ...w, goal: value } : w)
     })
