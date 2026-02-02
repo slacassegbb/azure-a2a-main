@@ -200,8 +200,8 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
   const [expandedRunId, setExpandedRunId] = useState<string | null>(null)
   const [expandedScheduledRunId, setExpandedScheduledRunId] = useState<string | null>(null)
   
-  // Workflow card expansion state
-  const [isActiveWorkflowExpanded, setIsActiveWorkflowExpanded] = useState(false)
+  // Workflow card expansion state - track which workflow ID is expanded (null = none)
+  const [expandedWorkflowId, setExpandedWorkflowId] = useState<string | null>(null)
   const [expandedScheduleId, setExpandedScheduleId] = useState<string | null>(null)
   
   // Scheduled workflows state
@@ -1150,9 +1150,10 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
                             <div className="space-y-2">
                               {activeWorkflows.map((wf, index) => (
                                 <div key={wf.id} className="group">
-                                  {/* Workflow Header with name and actions */}
+                                  {/* Workflow Header with name and actions - Clickable to expand */}
                                   <div
-                                    className="flex items-center justify-between bg-gradient-to-r from-purple-500/10 to-blue-500/10 rounded-lg p-2 border border-purple-500/20 hover:border-purple-400/40 transition-colors"
+                                    onClick={() => setExpandedWorkflowId(expandedWorkflowId === wf.id ? null : wf.id)}
+                                    className="flex items-center justify-between bg-gradient-to-r from-purple-500/10 to-blue-500/10 rounded-lg p-2 border border-purple-500/20 hover:border-purple-400/40 transition-colors cursor-pointer"
                                   >
                                     <div className="flex items-center gap-2 flex-1 min-w-0">
                                       <div className="p-1.5 rounded-md bg-purple-500/20">
@@ -1193,8 +1194,120 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
                                           </TooltipContent>
                                         </Tooltip>
                                       </TooltipProvider>
+                                      {expandedWorkflowId === wf.id ? (
+                                        <ChevronDown className="h-4 w-4 text-purple-400 ml-1" />
+                                      ) : (
+                                        <ChevronRight className="h-4 w-4 text-purple-400 ml-1" />
+                                      )}
                                     </div>
                                   </div>
+                                  
+                                  {/* Expanded content - View Steps */}
+                                  {expandedWorkflowId === wf.id && (
+                                    <div className="space-y-2 pl-2 border-l-2 border-purple-500/20 mt-1">
+                                      {/* Workflow Steps Preview */}
+                                      <div className="bg-slate-900/50 rounded-md p-2 max-h-32 overflow-y-auto">
+                                        <p className="text-[9px] text-slate-500 uppercase tracking-wider mb-1.5">Steps</p>
+                                        <div className="space-y-1">
+                                          {wf.workflow.split('\n').filter(l => l.trim()).map((step, stepIndex) => (
+                                            <div key={stepIndex} className="flex items-start gap-2">
+                                              <div className="flex-shrink-0 w-4 h-4 rounded-full bg-purple-500/20 flex items-center justify-center mt-0.5">
+                                                <span className="text-[9px] font-bold text-purple-400">{stepIndex + 1}</span>
+                                              </div>
+                                              <p className="text-[10px] text-slate-400 leading-tight line-clamp-1">
+                                                {step.replace(/^\d+\.\s*/, '')}
+                                              </p>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      </div>
+                                      
+                                      {/* Run History */}
+                                      <div className="bg-slate-900/50 rounded-md p-2 max-h-64 overflow-y-auto">
+                                        <p className="text-[9px] text-slate-500 uppercase tracking-wider mb-1.5">Run History</p>
+                                        {isLoadingHistory ? (
+                                          <p className="text-[10px] text-slate-500 text-center py-2">Loading...</p>
+                                        ) : runHistory.length === 0 ? (
+                                          <p className="text-[10px] text-slate-500 text-center py-2">No runs yet</p>
+                                        ) : (
+                                          <div className="space-y-1">
+                                            {runHistory.filter(run => run.workflow_name === wf.name).slice(0, 5).map((run) => (
+                                              <div key={run.run_id} className="border-b border-slate-800 last:border-0">
+                                                <button
+                                                  onClick={(e) => {
+                                                    e.stopPropagation()
+                                                    setExpandedRunId(expandedRunId === run.run_id ? null : run.run_id)
+                                                  }}
+                                                  className="w-full flex items-center justify-between gap-2 py-1.5 hover:bg-slate-800/50 rounded px-1 cursor-pointer transition-colors"
+                                                >
+                                                  <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                                                    {run.status === 'success' ? (
+                                                      <CheckCircle className="h-3 w-3 text-green-500 flex-shrink-0" />
+                                                    ) : (
+                                                      <XCircle className="h-3 w-3 text-red-500 flex-shrink-0" />
+                                                    )}
+                                                    <span className="text-[10px] text-slate-300 truncate">
+                                                      {run.workflow_name || wf.name || 'Workflow'}
+                                                    </span>
+                                                  </div>
+                                                  <div className="flex items-center gap-1.5 flex-shrink-0">
+                                                    <span className="text-[9px] text-slate-500">
+                                                      {new Date(run.started_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                                                    </span>
+                                                    <span className="text-[9px] text-slate-500">
+                                                      {Math.round(run.duration_seconds)}s
+                                                    </span>
+                                                    {expandedRunId === run.run_id ? (
+                                                      <ChevronDown className="h-3 w-3 text-slate-500" />
+                                                    ) : (
+                                                      <ChevronRight className="h-3 w-3 text-slate-500" />
+                                                    )}
+                                                  </div>
+                                                </button>
+                                                
+                                                {/* Expanded run details */}
+                                                {expandedRunId === run.run_id && (
+                                                  <div className="px-2 pb-2 pt-1 space-y-2 bg-slate-800/30 rounded-b">
+                                                    {/* Timing */}
+                                                    <div className="grid grid-cols-2 gap-x-2 gap-y-1">
+                                                      <div>
+                                                        <p className="text-[9px] text-slate-500">Started</p>
+                                                        <p className="text-[9px] text-slate-400 font-mono">{new Date(run.started_at).toLocaleTimeString()}</p>
+                                                      </div>
+                                                      <div>
+                                                        <p className="text-[9px] text-slate-500">Duration</p>
+                                                        <p className="text-[9px] text-slate-400 font-mono">{run.duration_seconds.toFixed(1)}s</p>
+                                                      </div>
+                                                    </div>
+                                                    
+                                                    {/* Error */}
+                                                    {run.error && (
+                                                      <div>
+                                                        <p className="text-[9px] text-red-400 mb-0.5">Error</p>
+                                                        <div className="bg-red-500/10 border border-red-500/20 rounded p-1.5 max-h-20 overflow-y-auto">
+                                                          <p className="text-[9px] text-red-300 font-mono whitespace-pre-wrap break-words">{run.error}</p>
+                                                        </div>
+                                                      </div>
+                                                    )}
+                                                    
+                                                    {/* Result */}
+                                                    {run.result && (
+                                                      <div>
+                                                        <p className="text-[9px] text-slate-500 mb-0.5">Result</p>
+                                                        <div className="bg-slate-900/50 rounded p-1.5 max-h-24 overflow-y-auto">
+                                                          <p className="text-[9px] text-slate-400 font-mono whitespace-pre-wrap break-words">{run.result}</p>
+                                                        </div>
+                                                      </div>
+                                                    )}
+                                                  </div>
+                                                )}
+                                              </div>
+                                            ))}
+                                          </div>
+                                        )}
+                                      </div>
+                                    </div>
+                                  )}
                                 </div>
                               ))}
                             </div>
