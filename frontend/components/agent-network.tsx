@@ -473,9 +473,11 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
   }, [registeredAgents])
 
   // Fetch scheduled workflows - extracted as useCallback so it can be passed to dialog
+  // Filter by session_id to only show user's own scheduled workflows
   const fetchScheduledWorkflows = useCallback(async () => {
     try {
-      const schedules = await listSchedules()
+      const sessionId = getOrCreateSessionId()
+      const schedules = await listSchedules(undefined, sessionId)
       setScheduledWorkflows(schedules)
     } catch (error) {
       console.error('[AgentNetwork] Failed to fetch scheduled workflows:', error)
@@ -508,7 +510,8 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
       }
       setIsLoadingHistory(true)
       try {
-        const history = await getRunHistory(undefined, 10)
+        const sessionId = getOrCreateSessionId()
+        const history = await getRunHistory(undefined, sessionId, 10)
         setRunHistory(history)
       } catch (error) {
         console.error('[AgentNetwork] Failed to fetch run history:', error)

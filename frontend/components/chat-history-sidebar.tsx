@@ -10,6 +10,7 @@ import { listConversations, createConversation, deleteConversation, listMessages
 import { LoginDialog } from "@/components/login-dialog"
 import { useEventHub } from "@/hooks/use-event-hub"
 import { getOrCreateSessionId, leaveCollaborativeSession, isInCollaborativeSession } from "@/lib/session"
+import { clearActiveWorkflow } from "@/lib/active-workflow-api"
 
 type Props = {
   isCollapsed: boolean
@@ -42,7 +43,7 @@ export function ChatHistorySidebar({ isCollapsed, onToggle }: Props) {
     }
   }, [])
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
     if (typeof window !== 'undefined') {
       // Send logout message to backend to clean up all sessions
       // This handles both: owning a session (others joined you) and being in someone else's session
@@ -57,6 +58,14 @@ export function ChatHistorySidebar({ isCollapsed, onToggle }: Props) {
       sessionStorage.removeItem('auth_token')
       sessionStorage.removeItem('user_info')
       setCurrentUser(null)
+      
+      // Clear active workflow state via API (session-scoped)
+      const sessionId = getOrCreateSessionId()
+      try {
+        await clearActiveWorkflow(sessionId)
+      } catch (error) {
+        console.error('[Logout] Failed to clear active workflow:', error)
+      }
       
       // Small delay to allow WebSocket message to be sent before reload
       setTimeout(() => {
