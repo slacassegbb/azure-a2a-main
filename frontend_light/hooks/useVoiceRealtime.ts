@@ -105,51 +105,34 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig): VoiceRealtimeHook
     return data.token;
   };
 
-  // Speak a filler message using Web Speech API (separate from Voice Realtime)
-  // DISABLED: The filler gets picked up by the microphone and confuses the AI
-  // The microphone muting during playback doesn't help because Web Speech uses system audio
-  const speakFiller = useCallback((text: string) => {
-    // DISABLED - causes echo issues where AI hears the filler as user input
-    console.log("[VoiceRealtime] 🗣️ Filler disabled to prevent echo:", text);
-    return;
-    
-    // Original implementation kept for reference:
-    /*
-    // Check if Web Speech API is available
-    if (typeof window === "undefined" || !("speechSynthesis" in window)) {
-      console.log("[VoiceRealtime] Web Speech API not available");
-      return;
-    }
-
+  // Speak a filler message using Azure Voice Live API with out-of-band TTS
+  // Uses response.create with conversation: "none" to avoid corrupting the conversation state
+  const speakFillerViaAzure = useCallback((text: string) => {
     // Only speak one filler per request
     if (fillerSpokenRef.current) {
       console.log("[VoiceRealtime] Filler already spoken for this request");
       return;
     }
-    fillerSpokenRef.current = true;
-
-    console.log("[VoiceRealtime] 🗣️ Speaking filler via Web Speech:", text);
-
-    // Cancel any ongoing speech
-    window.speechSynthesis.cancel();
-
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.rate = 1.1; // Slightly faster for fillers
-    utterance.pitch = 1.0;
-    utterance.volume = 0.8; // Slightly quieter than main voice
-
-    // Try to use a natural English voice
-    const voices = window.speechSynthesis.getVoices();
-    const preferredVoice = voices.find(
-      (v) => v.name.includes("Samantha") || v.name.includes("Alex") || 
-             v.name.includes("Google") || v.lang.startsWith("en")
-    );
-    if (preferredVoice) {
-      utterance.voice = preferredVoice;
+    
+    // Check if we have an active Azure WebSocket connection
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+      console.log("[VoiceRealtime] Azure WebSocket not ready for filler TTS");
+      return;
     }
-
-    window.speechSynthesis.speak(utterance);
-    */
+    
+    fillerSpokenRef.current = true;
+    console.log("[VoiceRealtime] 🗣️ Speaking filler via Azure Voice Live:", text);
+    
+    // Use response.create with conversation: "none" for out-of-band TTS
+    // This generates audio without affecting the conversation history or pending function calls
+    wsRef.current.send(JSON.stringify({
+      type: "response.create",
+      response: {
+        conversation: "none",  // Critical: creates out-of-band response that doesn't affect conversation
+        modalities: ["audio", "text"],
+        instructions: `Say exactly this brief message in a natural, friendly tone: "${text}". Keep it short and conversational.`,
+      }
+    }));
   }, []);
 
   // Connect to backend WebSocket for status events
@@ -194,8 +177,11 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig): VoiceRealtimeHook
             .replace(/ Agent$/i, "");
           
           if (friendlyName) {
-            // Update visual status (no audio filler - causes echo issues)
+            // Update visual status
             setCurrentAgent(friendlyName);
+            
+            // Speak filler via Azure Voice Live TTS (out-of-band, won't corrupt conversation)
+            speakFillerViaAzure(`Contacting the ${friendlyName} agent now. Please wait a moment.`);
           }
         }
       } catch (err) {
@@ -210,7 +196,7 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig): VoiceRealtimeHook
     ws.onclose = () => {
       console.log("[VoiceRealtime] Backend WebSocket disconnected");
     };
-  }, [config.userId, speakFiller]);
+  }, [config.userId, speakFillerViaAzure]);
 
   // Disconnect backend WebSocket
   const disconnectBackendWebSocket = useCallback(() => {
@@ -476,18 +462,6 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig): VoiceRealtimeHook
       setError(null);
       setTranscript("");
       setResult("");
-
-      // Preload Web Speech voices for fillers
-      if ("speechSynthesis" in window) {
-        // Trigger voice loading
-        window.speechSynthesis.getVoices();
-        // Chrome needs this event listener to get voices
-        if (window.speechSynthesis.onvoiceschanged !== undefined) {
-          window.speechSynthesis.onvoiceschanged = () => {
-            console.log("[VoiceRealtime] Web Speech voices loaded:", window.speechSynthesis.getVoices().length);
-          };
-        }
-      }
 
       // Get Azure token
       const token = await getAzureToken();
