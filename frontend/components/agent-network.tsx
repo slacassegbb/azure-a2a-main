@@ -1180,6 +1180,36 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
                                             <Button
                                               variant="ghost"
                                               size="icon"
+                                              className="h-6 w-6 text-blue-500 hover:text-blue-400 hover:bg-blue-500/10"
+                                              onClick={(e) => {
+                                                e.stopPropagation()
+                                                // Set this workflow as the active one and run it
+                                                if (onWorkflowChange) {
+                                                  onWorkflowChange(wf.workflow)
+                                                }
+                                                if (onWorkflowNameChange) {
+                                                  onWorkflowNameChange(wf.name)
+                                                }
+                                                if (onWorkflowGoalChange) {
+                                                  onWorkflowGoalChange(wf.goal)
+                                                }
+                                                onRunWorkflow?.()
+                                              }}
+                                            >
+                                              <Play className="h-3.5 w-3.5" />
+                                            </Button>
+                                          </TooltipTrigger>
+                                          <TooltipContent>
+                                            <p>Run Workflow</p>
+                                          </TooltipContent>
+                                        </Tooltip>
+                                      </TooltipProvider>
+                                      <TooltipProvider>
+                                        <Tooltip>
+                                          <TooltipTrigger asChild>
+                                            <Button
+                                              variant="ghost"
+                                              size="icon"
                                               className="h-6 w-6 text-red-500 hover:text-red-400 hover:bg-red-500/10"
                                               onClick={(e) => {
                                                 e.stopPropagation()
