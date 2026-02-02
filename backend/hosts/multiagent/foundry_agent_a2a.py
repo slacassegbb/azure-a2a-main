@@ -3446,6 +3446,7 @@ Answer with just JSON:
             List of response strings from the host agent
         """
         """Run conversation with A2A message parts (including files)."""
+        print(f"🔍 [ENTRY DEBUG] run_conversation_with_parts: workflow={workflow}, available_workflows={available_workflows}", flush=True)
         log_debug(f"ENTRY: run_conversation_with_parts called with {len(message_parts) if message_parts else 0} parts")
         try:
             log_debug(f"Step: About to create tracer span...")
@@ -3633,6 +3634,10 @@ Answer with just JSON:
             # =====================================================================
             # MULTI-WORKFLOW ROUTING: LLM selects best approach when multiple workflows available
             # =====================================================================
+            # Track selected workflow metadata for run history (initialized here, may be set during routing)
+            selected_workflow_metadata = None
+            
+            print(f"🔍 [DEBUG] available_workflows = {available_workflows}, workflow = {workflow}", flush=True)
             if available_workflows and len(available_workflows) > 0 and not workflow:
                 print(f"🔀 [Multi-Workflow] {len(available_workflows)} workflows available, invoking intelligent routing")
                 log_debug(f"🔀 [Multi-Workflow] {len(available_workflows)} workflows available, invoking intelligent routing")
@@ -3663,6 +3668,12 @@ Answer with just JSON:
                             workflow = selected_wf.get('workflow', selected_wf.get('steps', ''))
                             workflow_goal = selected_wf.get('goal', workflow_goal)
                             agent_mode = True  # Enable orchestration for workflow execution
+                            # Store metadata for run history
+                            selected_workflow_metadata = {
+                                'id': selected_wf.get('id', ''),
+                                'name': selected_wf.get('name', ''),
+                                'goal': selected_wf.get('goal', '')
+                            }
                             log_debug(f"🔀 [Multi-Workflow] Selected workflow: {route_selection.selected_workflow}")
                             await self._emit_status_event(f"Selected workflow: {route_selection.selected_workflow}", context_id)
                         else:
@@ -3805,6 +3816,29 @@ Answer with just JSON:
                     
                     # Return as single response (not a list)
                     final_responses = [combined_response]
+                    
+                    # Record workflow run in history (for on-demand runs via routing)
+                    if selected_workflow_metadata:
+                        try:
+                            from service.scheduler_service import get_workflow_scheduler
+                            from datetime import datetime
+                            scheduler = get_workflow_scheduler()
+                            session_id = context_id.split("::")[0] if "::" in context_id else "unknown"
+                            scheduler._add_run_history(
+                                schedule_id="on-demand",  # Indicates this was not a scheduled run
+                                workflow_id=selected_workflow_metadata.get('id', ''),
+                                workflow_name=selected_workflow_metadata.get('name', ''),
+                                session_id=session_id,
+                                status="success",
+                                result=combined_response[:2000] if combined_response else None,
+                                error=None,
+                                started_at=None,  # Will use current time
+                                completed_at=None,
+                                execution_time=None
+                            )
+                            log_debug(f"📋 [Run History] Recorded on-demand workflow run: {selected_workflow_metadata.get('name')}")
+                        except Exception as history_err:
+                            log_error(f"[Run History] Failed to record workflow run: {history_err}")
                     
                     # Store the interaction and return
                     log_debug("About to store User→Host interaction for context_id: {context_id}")
