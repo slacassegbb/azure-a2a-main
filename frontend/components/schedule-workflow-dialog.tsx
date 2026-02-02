@@ -255,8 +255,6 @@ export function ScheduleWorkflowDialog({
   }
   
   const handleDelete = async (scheduleId: string) => {
-    if (!confirm('Are you sure you want to delete this schedule?')) return
-    
     try {
       await deleteSchedule(scheduleId)
       await loadData()
