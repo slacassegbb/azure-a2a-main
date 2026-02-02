@@ -19,6 +19,7 @@ import { VisualWorkflowDesigner } from "./visual-workflow-designer"
 import { AgentNetworkDag } from "./agent-network-dag"
 import { cn } from "@/lib/utils"
 import { getRunHistory, listSchedules, deleteSchedule, RunHistoryItem, ScheduledWorkflow, formatNextRun } from "@/lib/scheduler-api"
+import { generateWorkflowId } from "@/lib/active-workflow-api"
 import { ScheduleWorkflowDialog } from "./schedule-workflow-dialog"
 import { useState, useEffect, useCallback, useRef } from "react"
 import { useEventHub } from "@/contexts/event-hub-context"
@@ -1069,17 +1070,36 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
                                 variant="outline"
                                 onClick={() => {
                                   setEditedWorkflow("")
-                                  setWorkflow("")
                                   setIsWorkflowDialogOpen(false)
                                 }}
                               >
-                                Clear
+                                Cancel
                               </Button>
                               <Button
-                                onClick={() => {
-                                  setWorkflow(editedWorkflow)
+                                onClick={async () => {
+                                  if (!editedWorkflow.trim()) return
+                                  
+                                  // Create new workflow object
+                                  const newWorkflow = {
+                                    id: generateWorkflowId(),
+                                    workflow: editedWorkflow,
+                                    name: workflowName || "Untitled Workflow",
+                                    goal: workflowGoal || ""
+                                  }
+                                  
+                                  // Use onAddWorkflow if available (multi-workflow mode)
+                                  if (onAddWorkflow) {
+                                    await onAddWorkflow(newWorkflow)
+                                  } else {
+                                    // Fallback to legacy single workflow mode
+                                    setWorkflow(editedWorkflow)
+                                  }
+                                  
+                                  // Clear the editor and close dialog
+                                  setEditedWorkflow("")
                                   setIsWorkflowDialogOpen(false)
                                 }}
+                                disabled={!editedWorkflow.trim()}
                               >
                                 Add Workflow to Session
                               </Button>
