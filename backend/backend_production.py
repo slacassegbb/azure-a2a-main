@@ -191,7 +191,7 @@ async def execute_scheduled_workflow(workflow_name: str, session_id: str, timeou
         workflow_lines.append(f"{i+1}. [{agent_name}] {description}")
     workflow_text = "\n".join(workflow_lines)
     
-    initial_message = f'Execute the "{workflow.name}" workflow.'
+    initial_message = f'Run the "{workflow.name}" workflow.'
     conversation_id = str(uuid.uuid4())
     message_id = f"msg_{uuid.uuid4().hex[:8]}"
     context_id = f"{session_id}::{conversation_id}"
@@ -1015,7 +1015,7 @@ def main():
             initial_message = request.initial_message
         else:
             # Standard execution message - the workflow steps define what to do
-            initial_message = f'Execute the "{workflow.name}" workflow.'
+            initial_message = f'Run the "{workflow.name}" workflow.'
         
         # Generate IDs
         session_id = request.session_id or str(uuid.uuid4())
