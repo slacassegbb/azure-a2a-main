@@ -535,13 +535,20 @@ type ChatPanelProps = {
   enableInterAgentMemory: boolean
   workflow?: string
   workflowGoal?: string
+  activeWorkflows?: Array<{
+    id: string
+    workflow: string
+    name: string
+    description?: string
+    goal: string
+  }>
   registeredAgents?: any[]
   connectedUsers?: any[]
   activeNode?: string | null
   setActiveNode?: (node: string | null) => void
 }
 
-export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow, workflowGoal, registeredAgents = [], connectedUsers = [], activeNode: externalActiveNode, setActiveNode: externalSetActiveNode }: ChatPanelProps) {
+export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow, workflowGoal, activeWorkflows = [], registeredAgents = [], connectedUsers = [], activeNode: externalActiveNode, setActiveNode: externalSetActiveNode }: ChatPanelProps) {
   const DEBUG = process.env.NEXT_PUBLIC_DEBUG_LOGS === 'true'
   // Use the shared Event Hub hook so we subscribe to the same client as the rest of the app
   const { subscribe, unsubscribe, emit, sendMessage, isConnected } = useEventHub()
@@ -3173,6 +3180,14 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
             enableInterAgentMemory: enableInterAgentMemory,  // Include inter-agent memory flag
             workflow: workflow ? workflow.trim() : undefined,  // Backend auto-detects mode from workflow presence
             workflowGoal: workflowGoal ? workflowGoal.trim() : undefined,  // Goal from workflow designer for completion evaluation
+            // Send all active workflows for intelligent routing
+            availableWorkflows: activeWorkflows.length > 0 ? activeWorkflows.map(w => ({
+              id: w.id,
+              name: w.name,
+              description: w.description || '',
+              goal: w.goal,
+              workflow: w.workflow
+            })) : undefined,
             userId: currentUser?.user_id,  // Store userId for color lookup when loading messages
           }
         })

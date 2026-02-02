@@ -88,6 +88,39 @@ class NextStep(BaseModel):
     reasoning: str = Field(..., description="Short explanation of the decision.")
 
 
+# Multi-Workflow Routing Models
+RouteApproach = Literal["workflow", "agents", "direct"]
+
+
+class RouteSelection(BaseModel):
+    """
+    LLM decision for routing user requests to the best execution approach.
+    
+    Used when multiple workflows are available - the LLM decides whether to:
+    - Use a specific workflow (structured multi-step process)
+    - Use agents directly (free-form multi-agent orchestration)
+    - Respond directly (simple queries that don't need orchestration)
+    """
+    approach: RouteApproach = Field(
+        ..., 
+        description="The execution approach: 'workflow' to use a pre-defined workflow, 'agents' for free-form multi-agent orchestration, 'direct' for simple queries"
+    )
+    selected_workflow: Optional[str] = Field(
+        None, 
+        description="Name of the selected workflow (required if approach='workflow', null otherwise)"
+    )
+    confidence: float = Field(
+        1.0,
+        description="Confidence score 0.0-1.0 for the selection. Below 0.7 may warrant asking user for clarification.",
+        ge=0.0,
+        le=1.0
+    )
+    reasoning: str = Field(
+        ..., 
+        description="Brief explanation of why this approach/workflow was selected"
+    )
+
+
 class WorkflowStepType(str, Enum):
     """Type of workflow step execution."""
     SEQUENTIAL = "sequential"

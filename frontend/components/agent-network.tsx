@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Textarea } from "@/components/ui/textarea"
 import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
-import { PanelRightClose, PanelRightOpen, ShieldCheck, ChevronDown, ChevronRight, Globe, Hash, Zap, FileText, ExternalLink, Settings, Clock, CheckCircle, XCircle, AlertCircle, Pause, Brain, Search, MessageSquare, Database, Shield, BarChart3, Gavel, Users, Bot, Trash2, User, ListOrdered, Network, RotateCcw, Play, Calendar, Square, Workflow, History } from "lucide-react"
+import { PanelRightClose, PanelRightOpen, ShieldCheck, ChevronDown, ChevronRight, Globe, Hash, Zap, FileText, ExternalLink, Settings, Clock, CheckCircle, XCircle, AlertCircle, Pause, Brain, Search, MessageSquare, Database, Shield, BarChart3, Gavel, Users, Bot, Trash2, User, ListOrdered, Network, RotateCcw, Play, Calendar, Square, Workflow, History, X } from "lucide-react"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { SimulateAgentRegistration } from "./simulate-agent-registration"
 import { ConnectedUsers } from "./connected-users"
@@ -90,9 +90,19 @@ type Props = {
   workflow?: string
   workflowName?: string
   workflowGoal?: string
+  activeWorkflows?: Array<{
+    id: string
+    workflow: string
+    name: string
+    description?: string
+    goal: string
+  }>
   onWorkflowChange?: (workflow: string) => void
   onWorkflowNameChange?: (name: string) => void
   onWorkflowGoalChange?: (goal: string) => void
+  onAddWorkflow?: (workflow: { id: string; workflow: string; name: string; description?: string; goal: string }) => Promise<boolean>
+  onRemoveWorkflow?: (workflowId: string) => Promise<boolean>
+  onClearAllWorkflows?: () => Promise<boolean>
   onRunWorkflow?: () => void
   onScheduleWorkflow?: () => void
   dagNodes?: any[]
@@ -151,7 +161,7 @@ function hasHumanInteractionSkill(agent: Agent): boolean {
   return agent.skills?.some(skill => skill.id === 'human_interaction') ?? false
 }
 
-export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableInterAgentMemory, onInterAgentMemoryChange, workflow: propWorkflow, workflowName: propWorkflowName, workflowGoal: propWorkflowGoal, onWorkflowChange, onWorkflowNameChange, onWorkflowGoalChange, onRunWorkflow, onScheduleWorkflow, dagNodes = [], dagLinks = [], activeNode = null }: Props) {
+export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableInterAgentMemory, onInterAgentMemoryChange, workflow: propWorkflow, workflowName: propWorkflowName, workflowGoal: propWorkflowGoal, activeWorkflows = [], onWorkflowChange, onWorkflowNameChange, onWorkflowGoalChange, onAddWorkflow, onRemoveWorkflow, onClearAllWorkflows, onRunWorkflow, onScheduleWorkflow, dagNodes = [], dagLinks = [], activeNode = null }: Props) {
   const searchParams = useSearchParams()
   const currentConversationId = searchParams.get('conversationId') || undefined
   
@@ -1003,7 +1013,7 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
                         }}
                       >
                         <ListOrdered className="h-3 w-3 mr-2" />
-                        {workflow ? "Edit Workflow" : "Define Workflow"}
+                        {activeWorkflows.length > 0 ? "Add Another Workflow" : "Add Workflow"}
                       </Button>
                     </DialogTrigger>
                         <DialogContent className="max-w-[95vw] max-h-[95vh] h-[900px]">
@@ -1071,7 +1081,7 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
                                   setIsWorkflowDialogOpen(false)
                                 }}
                               >
-                                Activate Workflow
+                                Add Workflow to Session
                               </Button>
                             </DialogFooter>
                           </DialogContent>
@@ -1088,190 +1098,91 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
                           Schedules
                         </Button>
                       </div>
-                        {workflow && (
+                        {/* Active Workflows - show multiple workflow cards */}
+                        {activeWorkflows.length > 0 && (
                           <div className="mt-3 space-y-2">
-                            <p className="text-[10px] text-slate-500 uppercase tracking-wider font-medium px-1">Active Workflow</p>
-                            {/* Workflow Header with name and actions - Clickable to expand */}
-                            <div
-                              onClick={() => setIsActiveWorkflowExpanded(!isActiveWorkflowExpanded)}
-                              className="flex items-center justify-between bg-gradient-to-r from-purple-500/10 to-blue-500/10 rounded-lg p-2 border border-purple-500/20 hover:border-purple-400/40 transition-colors cursor-pointer"
-                            >
-                              <div className="flex items-center gap-2 flex-1 min-w-0">
-                                <div className="p-1.5 rounded-md bg-purple-500/20">
-                                  <Workflow className="h-3.5 w-3.5 text-purple-400" />
-                                </div>
-                                <div className="flex-1 min-w-0 text-left">
-                                  <p className="text-xs font-semibold text-slate-200 truncate">
-                                    {workflowName || "Untitled"}
-                                  </p>
-                                  <p className="text-[10px] text-purple-300/70">
-                                    {workflow.split('\n').filter(l => l.trim()).length} steps
-                                  </p>
-                                  {workflowGoal && (
-                                    <p className="text-[10px] text-slate-400 truncate mt-0.5" title={workflowGoal}>
-                                      Goal: {workflowGoal}
-                                    </p>
-                                  )}
-                                </div>
-                              </div>
-                              <div className="flex items-center gap-0.5">
+                            <div className="flex items-center justify-between px-1">
+                              <p className="text-[10px] text-slate-500 uppercase tracking-wider font-medium">
+                                Active Workflows ({activeWorkflows.length})
+                              </p>
+                              {activeWorkflows.length > 1 && (
                                 <TooltipProvider>
                                   <Tooltip>
                                     <TooltipTrigger asChild>
                                       <Button
                                         variant="ghost"
-                                        size="icon"
-                                        className="h-6 w-6 text-blue-500 hover:text-blue-400 hover:bg-blue-500/10"
-                                        onClick={(e) => {
-                                          e.stopPropagation()
-                                          onRunWorkflow?.()
-                                        }}
+                                        size="sm"
+                                        className="h-5 px-1.5 text-[10px] text-red-400 hover:text-red-300 hover:bg-red-500/10"
+                                        onClick={() => onClearAllWorkflows?.()}
                                       >
-                                        <Play className="h-3.5 w-3.5" />
+                                        Clear All
                                       </Button>
                                     </TooltipTrigger>
                                     <TooltipContent>
-                                      <p>Run Workflow</p>
+                                      <p>Remove all active workflows</p>
                                     </TooltipContent>
                                   </Tooltip>
                                 </TooltipProvider>
-                                <TooltipProvider>
-                                  <Tooltip>
-                                    <TooltipTrigger asChild>
-                                      <Button
-                                        variant="ghost"
-                                        size="icon"
-                                        className="h-6 w-6 text-red-500 hover:text-red-400 hover:bg-red-500/10"
-                                        onClick={(e) => {
-                                          e.stopPropagation()
-                                          setWorkflow("")
-                                          setEditedWorkflow("")
-                                        }}
-                                      >
-                                        <Trash2 className="h-3 w-3" />
-                                      </Button>
-                                    </TooltipTrigger>
-                                    <TooltipContent>
-                                      <p>Disable Workflow</p>
-                                    </TooltipContent>
-                                  </Tooltip>
-                                </TooltipProvider>
-                                {isActiveWorkflowExpanded ? (
-                                  <ChevronDown className="h-4 w-4 text-purple-400 ml-1" />
-                                ) : (
-                                  <ChevronRight className="h-4 w-4 text-purple-400 ml-1" />
-                                )}
-                              </div>
+                              )}
                             </div>
                             
-                            {/* Expanded content - View Steps and Run History */}
-                            {isActiveWorkflowExpanded && (
-                              <div className="space-y-2 pl-2 border-l-2 border-purple-500/20">
-                                {/* Workflow Steps Preview */}
-                                <div className="bg-slate-900/50 rounded-md p-2 max-h-32 overflow-y-auto">
-                                  <p className="text-[9px] text-slate-500 uppercase tracking-wider mb-1.5">Steps</p>
-                                  <div className="space-y-1">
-                                    {workflow.split('\n').filter(l => l.trim()).map((step, index) => (
-                                      <div key={index} className="flex items-start gap-2">
-                                        <div className="flex-shrink-0 w-4 h-4 rounded-full bg-purple-500/20 flex items-center justify-center mt-0.5">
-                                          <span className="text-[9px] font-bold text-purple-400">{index + 1}</span>
-                                        </div>
-                                        <p className="text-[10px] text-slate-400 leading-tight line-clamp-1">
-                                          {step.replace(/^\d+\.\s*/, '')}
-                                        </p>
+                            {/* Workflow Cards */}
+                            <div className="space-y-2">
+                              {activeWorkflows.map((wf, index) => (
+                                <div key={wf.id} className="group">
+                                  {/* Workflow Header with name and actions */}
+                                  <div
+                                    className="flex items-center justify-between bg-gradient-to-r from-purple-500/10 to-blue-500/10 rounded-lg p-2 border border-purple-500/20 hover:border-purple-400/40 transition-colors"
+                                  >
+                                    <div className="flex items-center gap-2 flex-1 min-w-0">
+                                      <div className="p-1.5 rounded-md bg-purple-500/20">
+                                        <Workflow className="h-3.5 w-3.5 text-purple-400" />
                                       </div>
-                                    ))}
+                                      <div className="flex-1 min-w-0 text-left">
+                                        <p className="text-xs font-semibold text-slate-200 truncate">
+                                          {wf.name || "Untitled"}
+                                        </p>
+                                        <p className="text-[10px] text-purple-300/70">
+                                          {wf.workflow.split('\n').filter(l => l.trim()).length} steps
+                                        </p>
+                                        {wf.goal && (
+                                          <p className="text-[10px] text-slate-400 truncate mt-0.5" title={wf.goal}>
+                                            Goal: {wf.goal}
+                                          </p>
+                                        )}
+                                      </div>
+                                    </div>
+                                    <div className="flex items-center gap-0.5">
+                                      <TooltipProvider>
+                                        <Tooltip>
+                                          <TooltipTrigger asChild>
+                                            <Button
+                                              variant="ghost"
+                                              size="icon"
+                                              className="h-6 w-6 text-red-500 hover:text-red-400 hover:bg-red-500/10"
+                                              onClick={(e) => {
+                                                e.stopPropagation()
+                                                onRemoveWorkflow?.(wf.id)
+                                              }}
+                                            >
+                                              <X className="h-3 w-3" />
+                                            </Button>
+                                          </TooltipTrigger>
+                                          <TooltipContent>
+                                            <p>Remove from session</p>
+                                          </TooltipContent>
+                                        </Tooltip>
+                                      </TooltipProvider>
+                                    </div>
                                   </div>
                                 </div>
-                                
-                                {/* Run History */}
-                                <div className="bg-slate-900/50 rounded-md p-2 max-h-64 overflow-y-auto">
-                                  <p className="text-[9px] text-slate-500 uppercase tracking-wider mb-1.5">Run History</p>
-                                  {isLoadingHistory ? (
-                                    <p className="text-[10px] text-slate-500 text-center py-2">Loading...</p>
-                                  ) : runHistory.length === 0 ? (
-                                    <p className="text-[10px] text-slate-500 text-center py-2">No runs yet</p>
-                                  ) : (
-                                    <div className="space-y-1">
-                                      {runHistory.slice(0, 5).map((run) => (
-                                        <div key={run.run_id} className="border-b border-slate-800 last:border-0">
-                                          <button
-                                            onClick={() => setExpandedRunId(expandedRunId === run.run_id ? null : run.run_id)}
-                                            className="w-full flex items-center justify-between gap-2 py-1.5 hover:bg-slate-800/50 rounded px-1 cursor-pointer transition-colors"
-                                          >
-                                            <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                                              {run.status === 'success' ? (
-                                                <CheckCircle className="h-3 w-3 text-green-500 flex-shrink-0" />
-                                              ) : (
-                                                <XCircle className="h-3 w-3 text-red-500 flex-shrink-0" />
-                                              )}
-                                              <span className="text-[10px] text-slate-300 truncate">
-                                                {run.workflow_name || workflowName || 'Workflow'}
-                                              </span>
-                                            </div>
-                                            <div className="flex items-center gap-1.5 flex-shrink-0">
-                                              <span className="text-[9px] text-slate-500">
-                                                {new Date(run.started_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
-                                              </span>
-                                              <span className="text-[9px] text-slate-500">
-                                                {Math.round(run.duration_seconds)}s
-                                              </span>
-                                              {expandedRunId === run.run_id ? (
-                                                <ChevronDown className="h-3 w-3 text-slate-500" />
-                                              ) : (
-                                                <ChevronRight className="h-3 w-3 text-slate-500" />
-                                              )}
-                                            </div>
-                                          </button>
-                                          
-                                          {/* Expanded details */}
-                                          {expandedRunId === run.run_id && (
-                                            <div className="px-2 pb-2 pt-1 space-y-2 bg-slate-800/30 rounded-b">
-                                              {/* Timing */}
-                                              <div className="grid grid-cols-2 gap-x-2 gap-y-1">
-                                                <div>
-                                                  <p className="text-[9px] text-slate-500">Started</p>
-                                                  <p className="text-[9px] text-slate-400 font-mono">{new Date(run.started_at).toLocaleTimeString()}</p>
-                                                </div>
-                                                <div>
-                                                  <p className="text-[9px] text-slate-500">Duration</p>
-                                                  <p className="text-[9px] text-slate-400 font-mono">{run.duration_seconds.toFixed(1)}s</p>
-                                                </div>
-                                              </div>
-                                              
-                                              {/* Error */}
-                                              {run.error && (
-                                                <div>
-                                                  <p className="text-[9px] text-red-400 mb-0.5">Error</p>
-                                                  <div className="bg-red-500/10 border border-red-500/20 rounded p-1.5 max-h-20 overflow-y-auto">
-                                                    <p className="text-[9px] text-red-300 font-mono whitespace-pre-wrap break-words">{run.error}</p>
-                                                  </div>
-                                                </div>
-                                              )}
-                                              
-                                              {/* Result */}
-                                              {run.result && (
-                                                <div>
-                                                  <p className="text-[9px] text-slate-500 mb-0.5">Result</p>
-                                                  <div className="bg-slate-900/50 rounded p-1.5 max-h-24 overflow-y-auto">
-                                                    <p className="text-[9px] text-slate-400 font-mono whitespace-pre-wrap break-words">{run.result}</p>
-                                                  </div>
-                                                </div>
-                                              )}
-                                            </div>
-                                          )}
-                                        </div>
-                                      ))}
-                                      {runHistory.length > 5 && (
-                                        <p className="text-[9px] text-slate-500 italic text-center pt-1">
-                                          +{runHistory.length - 5} more runs
-                                        </p>
-                                      )}
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-                            )}
+                              ))}
+                            </div>
+                            
+                            {/* Info text about multi-workflow routing */}
+                            <p className="text-[9px] text-slate-500 px-1 italic">
+                              The AI will automatically choose the best workflow for each request.
+                            </p>
                           </div>
                         )}
 
