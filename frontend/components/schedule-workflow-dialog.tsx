@@ -72,6 +72,7 @@ interface ScheduleWorkflowDialogProps {
   // When used for a specific workflow
   workflowId?: string
   workflowName?: string
+  workflowGoal?: string  // Goal from workflow designer
   sessionId?: string
   trigger?: React.ReactNode
   // Callback when schedules change (create, delete, toggle)
@@ -102,7 +103,8 @@ export function ScheduleWorkflowDialog({
   open: controlledOpen,
   onOpenChange: controlledOnOpenChange,
   workflowId: initialWorkflowId, 
-  workflowName: initialWorkflowName, 
+  workflowName: initialWorkflowName,
+  workflowGoal: initialWorkflowGoal,
   sessionId: initialSessionId,
   trigger,
   onScheduleChange
@@ -205,6 +207,7 @@ export function ScheduleWorkflowDialog({
         retry_on_failure: retryOnFailure,
         max_runs: maxRuns,  // Add max_runs parameter
         description: description || undefined,
+        workflow_goal: initialWorkflowGoal || undefined,  // Include the goal
       }
       
       // Add schedule-specific parameters

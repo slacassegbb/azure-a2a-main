@@ -79,6 +79,7 @@ class ScheduledWorkflow:
     # Metadata
     description: Optional[str] = None
     tags: List[str] = field(default_factory=list)
+    workflow_goal: Optional[str] = None  # Goal from workflow designer
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
@@ -97,6 +98,7 @@ class ScheduledWorkflow:
         data.setdefault('last_error', None)
         data.setdefault('success_count', 0)
         data.setdefault('failure_count', 0)
+        data.setdefault('workflow_goal', None)
         
         return cls(**data)
 

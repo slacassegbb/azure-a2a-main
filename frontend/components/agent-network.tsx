@@ -1107,6 +1107,11 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
                                   <p className="text-[10px] text-purple-300/70">
                                     {workflow.split('\n').filter(l => l.trim()).length} steps
                                   </p>
+                                  {workflowGoal && (
+                                    <p className="text-[10px] text-slate-400 truncate mt-0.5" title={workflowGoal}>
+                                      Goal: {workflowGoal}
+                                    </p>
+                                  )}
                                 </div>
                               </div>
                               <div className="flex items-center gap-0.5">
@@ -1313,6 +1318,11 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
                                         {schedule.enabled && schedule.next_run && ` • Next: ${formatNextRun(schedule.next_run)}`}
                                         {!schedule.enabled && ' • Disabled'}
                                       </p>
+                                      {schedule.workflow_goal && (
+                                        <p className="text-[10px] text-slate-400 truncate mt-0.5" title={schedule.workflow_goal}>
+                                          Goal: {schedule.workflow_goal}
+                                        </p>
+                                      )}
                                     </div>
                                   </div>
                                   <div className="flex items-center gap-1">
@@ -1472,6 +1482,7 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
                           onOpenChange={setIsScheduleDialogOpen}
                           workflowId={workflowName || undefined}
                           workflowName={workflowName || undefined}
+                          workflowGoal={workflowGoal || undefined}
                           onScheduleChange={fetchScheduledWorkflows}
                         />
               </CardContent>

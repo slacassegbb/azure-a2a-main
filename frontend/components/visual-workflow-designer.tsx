@@ -1846,8 +1846,6 @@ export function VisualWorkflowDesigner({
     
     // Trigger catalog refresh
     setCatalogRefreshTrigger(prev => prev + 1)
-    
-    alert(savedToBackend ? "Workflow saved to your account!" : "Workflow saved locally (sign in to sync across devices)")
   }
 
   // Canvas rendering

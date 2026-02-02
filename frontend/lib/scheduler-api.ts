@@ -41,6 +41,7 @@ export interface ScheduledWorkflow {
   // Metadata
   description?: string;
   tags: string[];
+  workflow_goal?: string;  // Goal from workflow designer
 }
 
 export interface CreateScheduleRequest {
@@ -68,6 +69,7 @@ export interface CreateScheduleRequest {
   // Metadata
   description?: string;
   tags?: string[];
+  workflow_goal?: string;  // Goal from workflow designer
 }
 
 export interface UpdateScheduleRequest {
