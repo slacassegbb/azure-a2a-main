@@ -54,9 +54,10 @@ export function ChatLayout() {
   const [activeWorkflows, setActiveWorkflows] = useState<ActiveWorkflow[]>([])
   const [workflowsLoaded, setWorkflowsLoaded] = useState(false)
   
-  // Legacy single workflow state - kept for backward compatibility with existing components
-  // These are derived from activeWorkflows[0] or empty
-  const workflow = activeWorkflows.length > 0 ? activeWorkflows[0].workflow : ""
+  // Legacy single workflow state - NO LONGER auto-derived from activeWorkflows
+  // These remain empty until user explicitly clicks Play on a workflow
+  // This allows intelligent routing to work when just typing in chat
+  const workflow = ""  // Only set when Play button clicked (handled by run_workflow event)
   const workflowName = activeWorkflows.length > 0 ? activeWorkflows[0].name : ""
   const workflowGoal = activeWorkflows.length > 0 ? activeWorkflows[0].goal : ""
   
@@ -243,7 +244,10 @@ export function ChatLayout() {
   
   // Workflow action handlers (to be implemented)
   const handleRunWorkflow = useCallback(() => {
-    if (!workflow) {
+    // Get the first active workflow to run
+    const firstWorkflow = activeWorkflows.length > 0 ? activeWorkflows[0] : null
+    
+    if (!firstWorkflow || !firstWorkflow.workflow) {
       toast({
         title: "No workflow defined",
         description: "Please create a workflow first",
@@ -253,7 +257,7 @@ export function ChatLayout() {
     }
     
     // Parse the workflow text to get all step descriptions
-    const lines = workflow.split('\n').filter(l => l.trim())
+    const lines = firstWorkflow.workflow.split('\n').filter((l: string) => l.trim())
     if (lines.length === 0) {
       toast({
         title: "Empty workflow",
@@ -263,33 +267,34 @@ export function ChatLayout() {
       return
     }
     
-    const workflowDisplayName = workflowName || 'Untitled Workflow'
+    const workflowDisplayName = firstWorkflow.name || 'Untitled Workflow'
     
     // Simple goal message - the workflow details are in the system prompt
     const initialMessage = `Execute the "${workflowDisplayName}" workflow.`
     
     console.log('[ChatLayout] Running workflow:', workflowDisplayName)
     console.log('[ChatLayout] Initial message:', initialMessage)
-    console.log('[ChatLayout] Workflow goal:', workflowGoal || '(none - will use trigger message)')
+    console.log('[ChatLayout] Workflow goal:', firstWorkflow.goal || '(none - will use trigger message)')
     
     // Emit event for ChatPanel to handle - include workflowGoal for orchestrator
     emit('run_workflow', {
       workflowName: workflowDisplayName,
-      workflow: workflow,
+      workflow: firstWorkflow.workflow,
       initialMessage: initialMessage,
-      workflowGoal: workflowGoal  // Pass the goal from workflow designer
+      workflowGoal: firstWorkflow.goal  // Pass the goal from workflow designer
     })
     
     toast({
       title: "Workflow Started",
       description: `Running: ${workflowDisplayName}`,
     })
-  }, [workflow, workflowName, emit, toast])
+  }, [activeWorkflows, emit, toast])
   
   const handleScheduleWorkflow = useCallback(() => {
-    console.log('[ChatLayout] Schedule workflow clicked:', workflowName || 'Untitled')
+    const firstWorkflow = activeWorkflows.length > 0 ? activeWorkflows[0] : null
+    console.log('[ChatLayout] Schedule workflow clicked:', firstWorkflow?.name || 'Untitled')
     setShowScheduleDialog(true)
-  }, [workflowName])
+  }, [activeWorkflows])
 
   // Callback when file history loads files - auto-open if there are files
   const handleFilesLoaded = useCallback((count: number) => {

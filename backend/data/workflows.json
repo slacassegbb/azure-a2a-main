@@ -267,8 +267,8 @@
     },
     {
       "id": "custom-1769964199085",
-      "name": "simon 2",
-      "description": "sdsds",
+      "name": "Stripe Balance & QuickBooks Customers",
+      "description": "Check Stripe account balance and list all QuickBooks customers",
       "category": "Custom",
       "user_id": "user_3",
       "steps": [
