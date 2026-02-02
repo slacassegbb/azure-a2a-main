@@ -38,6 +38,7 @@ from ..models import (
     AgentModeTask,
     AgentModePlan,
     NextStep,
+    RouteSelection,
     ParsedWorkflow,
     ParsedWorkflowStep,
     WorkflowStepType,
@@ -676,6 +677,135 @@ Use the above output from the previous workflow step to complete your task."""
             task.output = {"result": output_text}
             task.updated_at = datetime.now(timezone.utc)
             return {"output": output_text, "hitl_pause": False}
+
+    async def _intelligent_route_selection(
+        self,
+        user_message: str,
+        available_workflows: List[Dict[str, Any]],
+        context_id: str
+    ) -> RouteSelection:
+        """
+        Use LLM to intelligently select the best execution approach for the user's request.
+        
+        This is the "router" that decides whether to:
+        - Use a specific pre-defined workflow (structured multi-step process)
+        - Use agents directly (free-form multi-agent orchestration)
+        - Respond directly (simple queries that don't need orchestration)
+        
+        Args:
+            user_message: The user's request/goal
+            available_workflows: List of workflow metadata dicts with keys:
+                - name: Workflow name
+                - description: What the workflow does
+                - goal: The workflow's objective
+                - steps: List of workflow steps (optional, for context)
+            context_id: Conversation identifier
+            
+        Returns:
+            RouteSelection with approach, selected_workflow, confidence, and reasoning
+        """
+        log_debug(f"🔀 [Route Selection] Analyzing request with {len(available_workflows)} available workflows")
+        
+        # Build workflow descriptions for the prompt
+        workflow_descriptions = []
+        for i, wf in enumerate(available_workflows, 1):
+            wf_name = wf.get('name', f'Workflow {i}')
+            wf_desc = wf.get('description', 'No description provided')
+            wf_goal = wf.get('goal', '')
+            
+            desc = f"""**{wf_name}**
+- Description: {wf_desc}
+- Goal: {wf_goal if wf_goal else 'Execute the workflow steps'}"""
+            
+            # Optionally include step count or step preview
+            if wf.get('steps'):
+                steps = wf['steps']
+                if isinstance(steps, list):
+                    desc += f"\n- Steps: {len(steps)} steps"
+                elif isinstance(steps, str):
+                    step_count = len([l for l in steps.split('\n') if l.strip() and l.strip()[0].isdigit()])
+                    desc += f"\n- Steps: {step_count} steps"
+            
+            workflow_descriptions.append(desc)
+        
+        workflows_text = "\n\n".join(workflow_descriptions)
+        
+        # Build available agents summary
+        agent_descriptions = []
+        for card in self.cards.values():
+            agent_info = f"**{card.name}**: {card.description[:150]}..."
+            if hasattr(card, 'skills') and card.skills:
+                skill_names = [s.name for s in card.skills[:3]]  # First 3 skills
+                agent_info += f" (Skills: {', '.join(skill_names)})"
+            agent_descriptions.append(agent_info)
+        
+        agents_text = "\n".join(agent_descriptions) if agent_descriptions else "No agents available"
+        
+        system_prompt = f"""You are an intelligent routing assistant. Analyze the user's request and decide the best execution approach.
+
+### 📋 AVAILABLE WORKFLOWS
+These are pre-defined multi-step processes. Use them when the user's goal clearly matches.
+
+{workflows_text}
+
+### 🤖 AVAILABLE AGENTS
+These are specialized agents that can handle specific tasks.
+
+{agents_text}
+
+### 🎯 DECISION RULES
+
+**Choose "workflow"** when:
+- User's goal clearly matches a workflow's description or purpose
+- The task requires a specific sequence of coordinated steps
+- A workflow exists that handles this exact use case
+- User explicitly mentions a workflow name
+
+**Choose "agents"** when:
+- Goal needs multi-agent coordination but no workflow fits
+- Task is complex but doesn't match any workflow pattern
+- User needs something custom or ad-hoc
+- Multiple agents could help but in a non-standard way
+
+**Choose "direct"** when:
+- Simple question that can be answered without agents
+- General conversation or greetings
+- Request doesn't require any specialized agent capabilities
+- Single simple task that the host can handle directly
+
+### 📤 OUTPUT FORMAT
+Return a JSON object with:
+- approach: "workflow" | "agents" | "direct"
+- selected_workflow: Name of workflow (if approach="workflow") or null
+- confidence: 0.0 to 1.0 (how confident you are in this choice)
+- reasoning: Brief explanation of your decision"""
+
+        user_prompt = f"""User request: {user_message}
+
+Analyze this request and decide the best approach."""
+
+        try:
+            selection = await self._call_azure_openai_structured(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                response_model=RouteSelection,
+                context_id=context_id
+            )
+            
+            log_debug(f"🔀 [Route Selection] Decision: approach={selection.approach}, workflow={selection.selected_workflow}, confidence={selection.confidence}")
+            log_debug(f"🔀 [Route Selection] Reasoning: {selection.reasoning}")
+            
+            return selection
+            
+        except Exception as e:
+            log_error(f"[Route Selection] Error during selection: {e}")
+            # Fallback to agents approach on error
+            return RouteSelection(
+                approach="agents",
+                selected_workflow=None,
+                confidence=0.5,
+                reasoning=f"Fallback to agents due to selection error: {str(e)}"
+            )
 
     async def _agent_mode_orchestration_loop(
         self,

@@ -9,7 +9,18 @@ import { ChatHistorySidebar } from "./chat-history-sidebar"
 import { ScheduleWorkflowDialog } from "@/components/schedule-workflow-dialog"
 import { Panel, PanelGroup, PanelResizeHandle, ImperativePanelHandle } from "react-resizable-panels"
 import { getOrCreateSessionId } from "@/lib/session"
-import { getActiveWorkflow, setActiveWorkflow as setActiveWorkflowApi, clearActiveWorkflow } from "@/lib/active-workflow-api"
+import { 
+  getActiveWorkflows, 
+  addActiveWorkflow, 
+  removeActiveWorkflow as removeActiveWorkflowApi, 
+  clearActiveWorkflows,
+  ActiveWorkflow,
+  generateWorkflowId,
+  // Legacy imports for backward compatibility during migration
+  getActiveWorkflow as getLegacyActiveWorkflow,
+  setActiveWorkflow as setLegacyActiveWorkflowApi,
+  clearActiveWorkflow as clearLegacyActiveWorkflow
+} from "@/lib/active-workflow-api"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Button } from "@/components/ui/button"
 import { ChevronDown, ChevronRight, FileText } from "lucide-react"
@@ -41,63 +52,193 @@ export function ChatLayout() {
   const leftPanelRef = useRef<ImperativePanelHandle>(null)
   const rightPanelRef = useRef<ImperativePanelHandle>(null)
   
-  // Workflow state - now session-scoped via backend API
-  const [workflow, setWorkflow] = useState("")
-  const [workflowName, setWorkflowName] = useState("")
-  const [workflowGoal, setWorkflowGoal] = useState("")
-  const [workflowLoaded, setWorkflowLoaded] = useState(false)
+  // Multi-workflow state - now session-scoped via backend API
+  const [activeWorkflows, setActiveWorkflows] = useState<ActiveWorkflow[]>([])
+  const [workflowsLoaded, setWorkflowsLoaded] = useState(false)
+  
+  // Legacy single workflow state - kept for backward compatibility with existing components
+  // These are derived from activeWorkflows[0] or empty
+  const workflow = activeWorkflows.length > 0 ? activeWorkflows[0].workflow : ""
+  const workflowName = activeWorkflows.length > 0 ? activeWorkflows[0].name : ""
+  const workflowGoal = activeWorkflows.length > 0 ? activeWorkflows[0].goal : ""
   
   const [showScheduleDialog, setShowScheduleDialog] = useState(false)
 
-  // Load active workflow from backend on mount
+  // Load active workflows from backend on mount
   useEffect(() => {
-    const loadActiveWorkflow = async () => {
+    const loadActiveWorkflows = async () => {
       const sessionId = getOrCreateSessionId()
       try {
-        const activeWorkflow = await getActiveWorkflow(sessionId)
-        setWorkflow(activeWorkflow.workflow || "")
-        setWorkflowName(activeWorkflow.name || "")
-        setWorkflowGoal(activeWorkflow.goal || "")
-        setWorkflowLoaded(true)
+        // Try new multi-workflow API first
+        const result = await getActiveWorkflows(sessionId)
+        if (result.workflows && result.workflows.length > 0) {
+          setActiveWorkflows(result.workflows)
+        } else {
+          // Fall back to legacy single workflow API for migration
+          const legacyWorkflow = await getLegacyActiveWorkflow(sessionId)
+          if (legacyWorkflow.workflow || legacyWorkflow.name || legacyWorkflow.goal) {
+            setActiveWorkflows([{
+              id: generateWorkflowId(),
+              workflow: legacyWorkflow.workflow || "",
+              name: legacyWorkflow.name || "Untitled Workflow",
+              goal: legacyWorkflow.goal || ""
+            }])
+          }
+        }
+        setWorkflowsLoaded(true)
       } catch (error) {
-        console.error('[ChatLayout] Failed to load active workflow:', error)
-        setWorkflowLoaded(true)
+        console.error('[ChatLayout] Failed to load active workflows:', error)
+        setWorkflowsLoaded(true)
       }
     }
-    loadActiveWorkflow()
+    loadActiveWorkflows()
   }, [])
 
-  // Save workflow to backend when it changes (after initial load)
+  // Handler functions for adding/removing workflows
+  const handleAddWorkflow = useCallback(async (newWorkflow: ActiveWorkflow) => {
+    const sessionId = getOrCreateSessionId()
+    try {
+      const success = await addActiveWorkflow(sessionId, newWorkflow)
+      if (success) {
+        setActiveWorkflows(prev => [...prev, newWorkflow])
+      }
+      return success
+    } catch (error) {
+      console.error('[ChatLayout] Failed to add workflow:', error)
+      return false
+    }
+  }, [])
+
+  const handleRemoveWorkflow = useCallback(async (workflowId: string) => {
+    const sessionId = getOrCreateSessionId()
+    try {
+      const success = await removeActiveWorkflowApi(sessionId, workflowId)
+      if (success) {
+        setActiveWorkflows(prev => prev.filter(w => w.id !== workflowId))
+      }
+      return success
+    } catch (error) {
+      console.error('[ChatLayout] Failed to remove workflow:', error)
+      return false
+    }
+  }, [])
+
+  const handleClearAllWorkflows = useCallback(async () => {
+    const sessionId = getOrCreateSessionId()
+    try {
+      const success = await clearActiveWorkflows(sessionId)
+      if (success) {
+        setActiveWorkflows([])
+      }
+      return success
+    } catch (error) {
+      console.error('[ChatLayout] Failed to clear workflows:', error)
+      return false
+    }
+  }, [])
+
+  // Legacy setters for backward compatibility with visual designer
+  const setWorkflow = useCallback((value: string) => {
+    setActiveWorkflows(prev => {
+      if (prev.length === 0) {
+        return [{
+          id: generateWorkflowId(),
+          workflow: value,
+          name: "Untitled Workflow",
+          goal: ""
+        }]
+      }
+      return prev.map((w, i) => i === 0 ? { ...w, workflow: value } : w)
+    })
+  }, [])
+
+  const setWorkflowName = useCallback((value: string) => {
+    setActiveWorkflows(prev => {
+      if (prev.length === 0) {
+        return [{
+          id: generateWorkflowId(),
+          workflow: "",
+          name: value,
+          goal: ""
+        }]
+      }
+      return prev.map((w, i) => i === 0 ? { ...w, name: value } : w)
+    })
+  }, [])
+
+  const setWorkflowGoal = useCallback((value: string) => {
+    setActiveWorkflows(prev => {
+      if (prev.length === 0) {
+        return [{
+          id: generateWorkflowId(),
+          workflow: "",
+          name: "Untitled Workflow",
+          goal: value
+        }]
+      }
+      return prev.map((w, i) => i === 0 ? { ...w, goal: value } : w)
+    })
+  }, [])
+
+  // Save workflows to backend when they change (after initial load)
   useEffect(() => {
-    if (!workflowLoaded) return // Don't save during initial load
+    if (!workflowsLoaded) return // Don't save during initial load
     
-    const saveActiveWorkflow = async () => {
+    const saveActiveWorkflows = async () => {
       const sessionId = getOrCreateSessionId()
       try {
-        if (workflow || workflowName || workflowGoal) {
-          await setActiveWorkflowApi(sessionId, workflow, workflowName, workflowGoal)
+        // Also update legacy API for backward compatibility
+        if (activeWorkflows.length > 0) {
+          const first = activeWorkflows[0]
+          await setLegacyActiveWorkflowApi(sessionId, first.workflow, first.name, first.goal)
         } else {
-          await clearActiveWorkflow(sessionId)
+          await clearLegacyActiveWorkflow(sessionId)
         }
       } catch (error) {
-        console.error('[ChatLayout] Failed to save active workflow:', error)
+        console.error('[ChatLayout] Failed to save active workflows:', error)
       }
     }
-    saveActiveWorkflow()
-  }, [workflow, workflowName, workflowGoal, workflowLoaded])
+    saveActiveWorkflows()
+  }, [activeWorkflows, workflowsLoaded])
 
-  // Listen for active_workflow_changed events from WebSocket (collaborative sync)
+  // Listen for active_workflows_changed events from WebSocket (collaborative sync)
   useEffect(() => {
-    const handleActiveWorkflowChanged = (data: { workflow?: string; name?: string; goal?: string }) => {
-      console.log('[ChatLayout] Received active_workflow_changed event:', data)
-      // Update local state from WebSocket broadcast
-      if (data.workflow !== undefined) setWorkflow(data.workflow)
-      if (data.name !== undefined) setWorkflowName(data.name)
-      if (data.goal !== undefined) setWorkflowGoal(data.goal)
+    // Handle new multi-workflow events
+    const handleActiveWorkflowsChanged = (data: { workflows?: ActiveWorkflow[] }) => {
+      console.log('[ChatLayout] Received active_workflows_changed event:', data)
+      if (data.workflows) {
+        setActiveWorkflows(data.workflows)
+      }
     }
     
-    subscribe('active_workflow_changed', handleActiveWorkflowChanged)
-    return () => unsubscribe('active_workflow_changed', handleActiveWorkflowChanged)
+    // Also handle legacy single workflow events for backward compatibility
+    const handleLegacyActiveWorkflowChanged = (data: { workflow?: string; name?: string; goal?: string }) => {
+      console.log('[ChatLayout] Received legacy active_workflow_changed event:', data)
+      // Update first workflow or create one
+      setActiveWorkflows(prev => {
+        if (prev.length === 0) {
+          return [{
+            id: generateWorkflowId(),
+            workflow: data.workflow || "",
+            name: data.name || "Untitled Workflow",
+            goal: data.goal || ""
+          }]
+        }
+        return prev.map((w, i) => i === 0 ? {
+          ...w,
+          workflow: data.workflow !== undefined ? data.workflow : w.workflow,
+          name: data.name !== undefined ? data.name : w.name,
+          goal: data.goal !== undefined ? data.goal : w.goal
+        } : w)
+      })
+    }
+    
+    subscribe('active_workflows_changed', handleActiveWorkflowsChanged)
+    subscribe('active_workflow_changed', handleLegacyActiveWorkflowChanged)
+    return () => {
+      unsubscribe('active_workflows_changed', handleActiveWorkflowsChanged)
+      unsubscribe('active_workflow_changed', handleLegacyActiveWorkflowChanged)
+    }
   }, [subscribe, unsubscribe])
   
   // Workflow action handlers (to be implemented)
@@ -487,6 +628,7 @@ export function ChatLayout() {
               enableInterAgentMemory={enableInterAgentMemory}
               workflow={workflow}
               workflowGoal={workflowGoal}
+              activeWorkflows={activeWorkflows}
               registeredAgents={registeredAgents}
               connectedUsers={connectedUsers}
               activeNode={activeNode}
@@ -518,9 +660,13 @@ export function ChatLayout() {
             workflow={workflow}
             workflowName={workflowName}
             workflowGoal={workflowGoal}
+            activeWorkflows={activeWorkflows}
             onWorkflowChange={setWorkflow}
             onWorkflowNameChange={setWorkflowName}
             onWorkflowGoalChange={setWorkflowGoal}
+            onAddWorkflow={handleAddWorkflow}
+            onRemoveWorkflow={handleRemoveWorkflow}
+            onClearAllWorkflows={handleClearAllWorkflows}
             onRunWorkflow={handleRunWorkflow}
             onScheduleWorkflow={handleScheduleWorkflow}
             dagNodes={dagNodes}

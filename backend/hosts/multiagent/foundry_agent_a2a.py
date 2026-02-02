@@ -3406,7 +3406,7 @@ Answer with just JSON:
                 
         return cleaned_parts
 
-    async def run_conversation_with_parts(self, message_parts: List[Part], context_id: Optional[str] = None, event_logger=None, agent_mode: bool = False, enable_inter_agent_memory: bool = False, workflow: Optional[str] = None, workflow_goal: Optional[str] = None) -> Any:
+    async def run_conversation_with_parts(self, message_parts: List[Part], context_id: Optional[str] = None, event_logger=None, agent_mode: bool = False, enable_inter_agent_memory: bool = False, workflow: Optional[str] = None, workflow_goal: Optional[str] = None, available_workflows: Optional[List[Dict[str, Any]]] = None) -> Any:
         """
         Process a user message that may include files, images, or multimodal content.
         
@@ -3419,12 +3419,17 @@ Answer with just JSON:
         1. **File Processing**: Extract text from documents, analyze images, handle masks
         2. **Artifact Storage**: Save files to Azure Blob or local storage with unique IDs
         3. **Context Preparation**: Package files for agent consumption (URIs + metadata)
-        4. **Mode Selection**: Route to agent-mode orchestration or standard conversation
-        5. **Response Synthesis**: Combine results from multiple agents if needed
+        4. **Route Selection**: If multiple workflows available, LLM selects best approach
+        5. **Mode Selection**: Route to agent-mode orchestration or standard conversation
+        6. **Response Synthesis**: Combine results from multiple agents if needed
         
         Agent Mode vs Standard Mode:
         - **Agent Mode**: AI orchestrator breaks down request into specialized tasks
         - **Standard Mode**: Single LLM call with tool use for agent delegation
+        
+        Multi-Workflow Routing:
+        - When available_workflows is provided, LLM intelligently selects the best approach
+        - Can choose a specific workflow, free-form agent orchestration, or direct response
         
         Args:
             message_parts: List of A2A Part objects (text, files, data)
@@ -3432,7 +3437,10 @@ Answer with just JSON:
             event_logger: Optional callback for logging conversation events
             agent_mode: If True, use multi-agent orchestration loop
             enable_inter_agent_memory: If True, agents can access conversation context
-            workflow: Optional predefined workflow steps to execute
+            workflow: Optional predefined workflow steps to execute (single workflow mode)
+            workflow_goal: Optional goal for workflow completion evaluation
+            available_workflows: Optional list of workflow metadata dicts for intelligent routing
+                Each dict should have: name, description, goal, workflow (steps text)
             
         Returns:
             List of response strings from the host agent
@@ -3621,6 +3629,64 @@ Answer with just JSON:
                 enhanced_message = f"{image_guidance}\n\n{enhanced_message}" if enhanced_message else image_guidance
             
             log_debug(f"Enhanced message prepared")
+            
+            # =====================================================================
+            # MULTI-WORKFLOW ROUTING: LLM selects best approach when multiple workflows available
+            # =====================================================================
+            if available_workflows and len(available_workflows) > 0 and not workflow:
+                print(f"🔀 [Multi-Workflow] {len(available_workflows)} workflows available, invoking intelligent routing")
+                log_debug(f"🔀 [Multi-Workflow] {len(available_workflows)} workflows available, invoking intelligent routing")
+                await self._emit_status_event(f"Analyzing request against {len(available_workflows)} available workflows...", context_id)
+                
+                try:
+                    route_selection = await self._intelligent_route_selection(
+                        user_message=enhanced_message,
+                        available_workflows=available_workflows,
+                        context_id=context_id
+                    )
+                    
+                    print(f"🔀 [Multi-Workflow] Route decision: approach={route_selection.approach}, workflow={route_selection.selected_workflow}, confidence={route_selection.confidence:.2f}")
+                    print(f"🔀 [Multi-Workflow] Reasoning: {route_selection.reasoning}")
+                    log_debug(f"🔀 [Multi-Workflow] Route decision: {route_selection.approach} (confidence: {route_selection.confidence})")
+                    
+                    if route_selection.approach == "workflow" and route_selection.selected_workflow:
+                        # Find the selected workflow from available_workflows (case-insensitive match)
+                        selected_wf = None
+                        selected_workflow_lower = route_selection.selected_workflow.lower().strip()
+                        for wf in available_workflows:
+                            wf_name = wf.get('name', '').lower().strip()
+                            if wf_name == selected_workflow_lower:
+                                selected_wf = wf
+                                break
+                        
+                        if selected_wf:
+                            workflow = selected_wf.get('workflow', selected_wf.get('steps', ''))
+                            workflow_goal = selected_wf.get('goal', workflow_goal)
+                            agent_mode = True  # Enable orchestration for workflow execution
+                            log_debug(f"🔀 [Multi-Workflow] Selected workflow: {route_selection.selected_workflow}")
+                            await self._emit_status_event(f"Selected workflow: {route_selection.selected_workflow}", context_id)
+                        else:
+                            log_error(f"[Multi-Workflow] Workflow '{route_selection.selected_workflow}' not found in available workflows")
+                            agent_mode = True  # Fallback to agent orchestration
+                            
+                    elif route_selection.approach == "agents":
+                        # Use free-form multi-agent orchestration (no specific workflow)
+                        agent_mode = True
+                        workflow = None
+                        log_debug(f"🔀 [Multi-Workflow] Using free-form agent orchestration")
+                        await self._emit_status_event("Using multi-agent orchestration", context_id)
+                        
+                    elif route_selection.approach == "direct":
+                        # Skip orchestration, use standard Foundry response
+                        agent_mode = False
+                        workflow = None
+                        log_debug(f"🔀 [Multi-Workflow] Using direct response (no orchestration)")
+                        await self._emit_status_event("Processing directly", context_id)
+                        
+                except Exception as e:
+                    log_error(f"[Multi-Workflow] Routing error: {e}, falling back to agent mode")
+                    agent_mode = True
+                    workflow = None
             
             # =====================================================================
             # MODE DETECTION: Use orchestration when workflow OR agent_mode is set
