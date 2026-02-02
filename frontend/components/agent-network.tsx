@@ -1086,7 +1086,6 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
                           size="sm" 
                           className="h-8 text-xs"
                           onClick={() => setIsScheduleDialogOpen(true)}
-                          disabled={!workflow}
                         >
                           <Calendar className="h-3 w-3 mr-2" />
                           Schedules
