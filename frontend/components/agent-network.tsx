@@ -485,10 +485,7 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
   }, [])
 
   // Delete a scheduled workflow
-  const handleDeleteSchedule = useCallback(async (scheduleId: string, workflowName: string) => {
-    if (!confirm(`Delete scheduled workflow "${workflowName}"? This will remove the schedule and stop future runs.`)) {
-      return
-    }
+  const handleDeleteSchedule = useCallback(async (scheduleId: string, _workflowName: string) => {
     try {
       await deleteSchedule(scheduleId)
       await fetchScheduledWorkflows()
