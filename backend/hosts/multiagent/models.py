@@ -89,7 +89,7 @@ class NextStep(BaseModel):
 
 
 # Multi-Workflow Routing Models
-RouteApproach = Literal["workflow", "agents", "direct"]
+RouteApproach = Literal["workflow", "workflows_parallel", "agents", "direct"]
 
 
 class RouteSelection(BaseModel):
@@ -98,16 +98,21 @@ class RouteSelection(BaseModel):
     
     Used when multiple workflows are available - the LLM decides whether to:
     - Use a specific workflow (structured multi-step process)
+    - Use multiple workflows in parallel (when user needs multiple independent workflows)
     - Use agents directly (free-form multi-agent orchestration)
     - Respond directly (simple queries that don't need orchestration)
     """
     approach: RouteApproach = Field(
         ..., 
-        description="The execution approach: 'workflow' to use a pre-defined workflow, 'agents' for free-form multi-agent orchestration, 'direct' for simple queries"
+        description="The execution approach: 'workflow' for single workflow, 'workflows_parallel' for multiple workflows running simultaneously, 'agents' for free-form multi-agent orchestration, 'direct' for simple queries"
     )
     selected_workflow: Optional[str] = Field(
         None, 
         description="Name of the selected workflow (required if approach='workflow', null otherwise)"
+    )
+    selected_workflows: Optional[List[str]] = Field(
+        None,
+        description="List of workflow names to execute in parallel (required if approach='workflows_parallel', null otherwise)"
     )
     confidence: float = Field(
         1.0,

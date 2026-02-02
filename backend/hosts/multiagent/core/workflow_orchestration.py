@@ -756,10 +756,17 @@ These are specialized agents that can handle specific tasks.
 ### 🎯 DECISION RULES
 
 **Choose "workflow"** when:
-- User's goal clearly matches a workflow's description or purpose
+- User's goal clearly matches ONE workflow's description or purpose
 - The task requires a specific sequence of coordinated steps
 - A workflow exists that handles this exact use case
 - User explicitly mentions a workflow name
+
+**Choose "workflows_parallel"** when:
+- User's request matches TWO OR MORE workflows that should run SIMULTANEOUSLY
+- The workflows are INDEPENDENT and don't depend on each other's output
+- User explicitly asks for multiple things that map to different workflows
+- Example: "Run the legal review AND the financial analysis" → both workflows in parallel
+- Set selected_workflows to the list of workflow names to execute
 
 **Choose "agents"** when:
 - Goal needs multi-agent coordination but no workflow fits
@@ -775,8 +782,9 @@ These are specialized agents that can handle specific tasks.
 
 ### 📤 OUTPUT FORMAT
 Return a JSON object with:
-- approach: "workflow" | "agents" | "direct"
+- approach: "workflow" | "workflows_parallel" | "agents" | "direct"
 - selected_workflow: Name of workflow (if approach="workflow") or null
+- selected_workflows: List of workflow names (if approach="workflows_parallel") or null
 - confidence: 0.0 to 1.0 (how confident you are in this choice)
 - reasoning: Brief explanation of your decision"""
 
@@ -792,7 +800,10 @@ Analyze this request and decide the best approach."""
                 context_id=context_id
             )
             
-            log_debug(f"🔀 [Route Selection] Decision: approach={selection.approach}, workflow={selection.selected_workflow}, confidence={selection.confidence}")
+            if selection.approach == "workflows_parallel":
+                log_debug(f"🔀 [Route Selection] Decision: approach={selection.approach}, workflows={selection.selected_workflows}, confidence={selection.confidence}")
+            else:
+                log_debug(f"🔀 [Route Selection] Decision: approach={selection.approach}, workflow={selection.selected_workflow}, confidence={selection.confidence}")
             log_debug(f"🔀 [Route Selection] Reasoning: {selection.reasoning}")
             
             return selection
@@ -803,6 +814,7 @@ Analyze this request and decide the best approach."""
             return RouteSelection(
                 approach="agents",
                 selected_workflow=None,
+                selected_workflows=None,
                 confidence=0.5,
                 reasoning=f"Fallback to agents due to selection error: {str(e)}"
             )

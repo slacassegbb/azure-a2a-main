@@ -3645,7 +3645,7 @@ Answer with just JSON:
                         context_id=context_id
                     )
                     
-                    print(f"🔀 [Multi-Workflow] Route decision: approach={route_selection.approach}, workflow={route_selection.selected_workflow}, confidence={route_selection.confidence:.2f}")
+                    print(f"🔀 [Multi-Workflow] Route decision: approach={route_selection.approach}, workflow={route_selection.selected_workflow}, workflows={route_selection.selected_workflows}, confidence={route_selection.confidence:.2f}")
                     print(f"🔀 [Multi-Workflow] Reasoning: {route_selection.reasoning}")
                     log_debug(f"🔀 [Multi-Workflow] Route decision: {route_selection.approach} (confidence: {route_selection.confidence})")
                     
@@ -3668,6 +3668,80 @@ Answer with just JSON:
                         else:
                             log_error(f"[Multi-Workflow] Workflow '{route_selection.selected_workflow}' not found in available workflows")
                             agent_mode = True  # Fallback to agent orchestration
+                    
+                    elif route_selection.approach == "workflows_parallel" and route_selection.selected_workflows:
+                        # Execute multiple workflows in parallel
+                        import asyncio
+                        
+                        parallel_workflow_names = route_selection.selected_workflows
+                        log_debug(f"🔀 [Multi-Workflow] Parallel execution of {len(parallel_workflow_names)} workflows: {parallel_workflow_names}")
+                        await self._emit_status_event(f"Executing {len(parallel_workflow_names)} workflows in parallel...", context_id)
+                        
+                        # Find matching workflows
+                        parallel_workflows = []
+                        for wf_name in parallel_workflow_names:
+                            wf_name_lower = wf_name.lower().strip()
+                            for wf in available_workflows:
+                                if wf.get('name', '').lower().strip() == wf_name_lower:
+                                    parallel_workflows.append(wf)
+                                    break
+                        
+                        if len(parallel_workflows) >= 2:
+                            # Execute workflows in parallel using asyncio.gather
+                            async def execute_single_workflow(wf_data: dict) -> List[str]:
+                                wf_steps = wf_data.get('workflow', wf_data.get('steps', ''))
+                                wf_goal_text = wf_data.get('goal', '')
+                                wf_name_str = wf_data.get('name', 'Workflow')
+                                
+                                await self._emit_status_event(f"Starting: {wf_name_str}", context_id)
+                                
+                                try:
+                                    outputs = await self._agent_mode_orchestration_loop(
+                                        user_message=enhanced_message,
+                                        context_id=f"{context_id}_{wf_name_str}",  # Unique context per workflow
+                                        session_context=session_context,
+                                        event_logger=event_logger,
+                                        workflow=wf_steps,
+                                        workflow_goal=wf_goal_text
+                                    )
+                                    await self._emit_status_event(f"Completed: {wf_name_str}", context_id)
+                                    return outputs if outputs else []
+                                except Exception as wf_err:
+                                    log_error(f"[Parallel Workflow] Error in {wf_name_str}: {wf_err}")
+                                    return [f"Error in {wf_name_str}: {str(wf_err)}"]
+                            
+                            # Run all workflows in parallel
+                            print(f"🔀 [Multi-Workflow] Launching {len(parallel_workflows)} workflows in parallel")
+                            parallel_results = await asyncio.gather(
+                                *[execute_single_workflow(wf) for wf in parallel_workflows],
+                                return_exceptions=True
+                            )
+                            
+                            # Combine all outputs
+                            all_parallel_outputs = []
+                            for i, (wf, result) in enumerate(zip(parallel_workflows, parallel_results)):
+                                wf_name_str = wf.get('name', f'Workflow {i+1}')
+                                if isinstance(result, Exception):
+                                    all_parallel_outputs.append(f"## {wf_name_str}\n\nError: {str(result)}")
+                                elif isinstance(result, list):
+                                    combined = "\n\n".join(result) if result else "No output"
+                                    all_parallel_outputs.append(f"## {wf_name_str}\n\n{combined}")
+                                else:
+                                    all_parallel_outputs.append(f"## {wf_name_str}\n\n{str(result)}")
+                            
+                            # Return combined response directly
+                            combined_response = "\n\n---\n\n".join(all_parallel_outputs)
+                            print(f"✅ [Multi-Workflow] Parallel execution complete - {len(parallel_workflows)} workflows")
+                            await self._emit_status_event("All parallel workflows completed", context_id)
+                            
+                            # Yield combined response and return
+                            yield self._make_response(combined_response, session_context)
+                            return
+                        else:
+                            # Not enough workflows found, fallback to agents
+                            log_error(f"[Multi-Workflow] Could not find all workflows for parallel execution, falling back to agents")
+                            agent_mode = True
+                            workflow = None
                             
                     elif route_selection.approach == "agents":
                         # Use free-form multi-agent orchestration (no specific workflow)
