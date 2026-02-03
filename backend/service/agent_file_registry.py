@@ -7,9 +7,9 @@ needs to associate that file with the user's session so it shows up in their
 file history.
 
 This registry provides:
-1. In-memory tracking of agent-generated files per session
-2. Persistence to a local JSON file for restart resilience
-3. Methods to register new files and list files for a session
+1. Database storage (PostgreSQL) with JSON fallback for local dev
+2. Methods to register new files and list files for a session
+3. Thread-safe operations with connection pooling
 """
 
 import json
@@ -19,39 +19,116 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Any, Optional
+import psycopg2
+from psycopg2.extras import RealDictCursor
 
 # Thread lock for safe concurrent access
 _lock = threading.Lock()
 
-# In-memory registry: {session_id: [file_records]}
+# In-memory registry for JSON fallback: {session_id: [file_records]}
 _registry: Dict[str, List[Dict[str, Any]]] = {}
 
-# Directory for persisting the registry
+# Directory for persisting the registry (JSON fallback)
 REGISTRY_DIR = Path(__file__).resolve().parent.parent / "data"
 REGISTRY_FILE = REGISTRY_DIR / "agent_files_registry.json"
 
+# Database connection
+DATABASE_URL = os.getenv('DATABASE_URL')
+_db_conn = None
+_use_database = False
+
+def _init_database():
+    """Initialize database connection if DATABASE_URL is available."""
+    global _db_conn, _use_database
+    
+    if DATABASE_URL:
+        try:
+            _db_conn = psycopg2.connect(DATABASE_URL)
+            _use_database = True
+            print("[AgentFileRegistry] ✅ Using PostgreSQL database")
+        except Exception as e:
+            print(f"[AgentFileRegistry] ❌ Failed to connect to database: {e}")
+            _use_database = False
+    else:
+        print("[AgentFileRegistry] ⚠️ DATABASE_URL not set, using JSON file fallback")
+
 
 def _load_registry():
-    """Load registry from disk on startup."""
+    """Load registry from database or disk on startup."""
     global _registry
-    try:
-        if REGISTRY_FILE.exists():
-            with open(REGISTRY_FILE, 'r') as f:
-                _registry = json.load(f)
-                print(f"[AgentFileRegistry] Loaded {sum(len(v) for v in _registry.values())} files for {len(_registry)} sessions")
-    except Exception as e:
-        print(f"[AgentFileRegistry] Failed to load registry: {e}")
+    
+    if _use_database and _db_conn:
+        # When using database, we don't load all files into memory
+        # Files are queried on-demand via get_agent_files()
         _registry = {}
+        print("[AgentFileRegistry] Files will be queried from database on-demand")
+    else:
+        # Fallback to JSON file
+        try:
+            if REGISTRY_FILE.exists():
+                with open(REGISTRY_FILE, 'r') as f:
+                    _registry = json.load(f)
+                    print(f"[AgentFileRegistry] Loaded {sum(len(v) for v in _registry.values())} files for {len(_registry)} sessions from file")
+        except Exception as e:
+            print(f"[AgentFileRegistry] Failed to load registry: {e}")
+            _registry = {}
 
 
 def _save_registry():
-    """Persist registry to disk."""
+    """Persist registry to disk (JSON fallback only)."""
     try:
         REGISTRY_DIR.mkdir(parents=True, exist_ok=True)
         with open(REGISTRY_FILE, 'w') as f:
             json.dump(_registry, f, indent=2, default=str)
     except Exception as e:
         print(f"[AgentFileRegistry] Failed to save registry: {e}")
+
+
+def _save_to_database(file_record: Dict[str, Any], session_id: str):
+    """Save file record to database."""
+    if not _db_conn:
+        return
+    
+    try:
+        cur = _db_conn.cursor()
+        
+        # Parse uploaded_at datetime
+        uploaded_at = file_record.get('uploadedAt')
+        if isinstance(uploaded_at, str):
+            uploaded_at = datetime.fromisoformat(uploaded_at.replace('Z', '+00:00'))
+        
+        # Insert into database (UPSERT)
+        cur.execute("""
+            INSERT INTO agent_files (
+                id, session_id, filename, original_name, size,
+                content_type, uploaded_at, uri, source_agent, file_type
+            ) VALUES (
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+            )
+            ON CONFLICT (id) DO UPDATE SET
+                filename = EXCLUDED.filename,
+                uri = EXCLUDED.uri,
+                uploaded_at = EXCLUDED.uploaded_at
+        """, (
+            file_record['id'],
+            session_id,
+            file_record['filename'],
+            file_record.get('originalName', file_record['filename']),
+            file_record.get('size', 0),
+            file_record.get('contentType', 'application/octet-stream'),
+            uploaded_at,
+            file_record['uri'],
+            file_record.get('sourceAgent'),
+            file_record.get('type', 'agent_generated')
+        ))
+        
+        _db_conn.commit()
+        cur.close()
+    except Exception as e:
+        print(f"[AgentFileRegistry] Error saving to database: {e}")
+        if _db_conn:
+            _db_conn.rollback()
+
 
 
 def register_agent_file(
@@ -79,18 +156,38 @@ def register_agent_file(
         The created file record
     """
     with _lock:
-        if session_id not in _registry:
-            _registry[session_id] = []
+        # Generate file_id if not provided
+        actual_file_id = file_id or str(uuid.uuid4())
         
         # Check for duplicates by URI (strip query params to compare base URL)
         base_uri = uri.split('?')[0] if '?' in uri else uri
-        existing = next((f for f in _registry[session_id] if f.get('uri', '').split('?')[0] == base_uri), None)
-        if existing:
-            print(f"[AgentFileRegistry] File already registered: {filename}")
-            return existing
         
-        # Generate file_id if not provided
-        actual_file_id = file_id or str(uuid.uuid4())
+        if _use_database and _db_conn:
+            # Check database for existing file
+            try:
+                cur = _db_conn.cursor(cursor_factory=RealDictCursor)
+                cur.execute("""
+                    SELECT * FROM agent_files 
+                    WHERE session_id = %s AND uri LIKE %s
+                    LIMIT 1
+                """, (session_id, f"{base_uri}%"))
+                existing = cur.fetchone()
+                cur.close()
+                
+                if existing:
+                    print(f"[AgentFileRegistry] File already registered in database: {filename}")
+                    return dict(existing)
+            except Exception as e:
+                print(f"[AgentFileRegistry] Error checking for duplicate: {e}")
+        else:
+            # Check in-memory registry
+            if session_id not in _registry:
+                _registry[session_id] = []
+            
+            existing = next((f for f in _registry[session_id] if f.get('uri', '').split('?')[0] == base_uri), None)
+            if existing:
+                print(f"[AgentFileRegistry] File already registered: {filename}")
+                return existing
         
         file_record = {
             "id": actual_file_id,
@@ -104,11 +201,13 @@ def register_agent_file(
             "type": "agent_generated"
         }
         
-        _registry[session_id].append(file_record)
-        print(f"[AgentFileRegistry] Registered file for session {session_id[:8]}...: {filename}")
+        if _use_database:
+            _save_to_database(file_record, session_id)
+        else:
+            _registry[session_id].append(file_record)
+            _save_registry()
         
-        # Persist to disk
-        _save_registry()
+        print(f"[AgentFileRegistry] Registered file for session {session_id[:8]}...: {filename}")
         
         return file_record
 
@@ -124,7 +223,43 @@ def get_agent_files(session_id: str) -> List[Dict[str, Any]]:
         List of file records
     """
     with _lock:
-        return list(_registry.get(session_id, []))
+        if _use_database and _db_conn:
+            # Query from database
+            try:
+                cur = _db_conn.cursor(cursor_factory=RealDictCursor)
+                cur.execute("""
+                    SELECT * FROM agent_files
+                    WHERE session_id = %s
+                    ORDER BY uploaded_at DESC
+                """, (session_id,))
+                
+                rows = cur.fetchall()
+                cur.close()
+                
+                # Convert to list of dicts with correct key names
+                files = []
+                for row in rows:
+                    file_record = {
+                        "id": str(row['id']),
+                        "filename": row['filename'],
+                        "originalName": row['original_name'],
+                        "size": row['size'],
+                        "contentType": row['content_type'],
+                        "uploadedAt": row['uploaded_at'].isoformat() if row['uploaded_at'] else None,
+                        "uri": row['uri'],
+                        "sourceAgent": row['source_agent'],
+                        "type": row['file_type']
+                    }
+                    files.append(file_record)
+                
+                return files
+                
+            except Exception as e:
+                print(f"[AgentFileRegistry] Error querying files from database: {e}")
+                return []
+        else:
+            # Return from in-memory registry
+            return list(_registry.get(session_id, []))
 
 
 def clear_session_files(session_id: str) -> int:
@@ -148,8 +283,21 @@ def clear_session_files(session_id: str) -> int:
 def get_all_sessions() -> List[str]:
     """Get all session IDs that have registered files."""
     with _lock:
-        return list(_registry.keys())
+        if _use_database and _db_conn:
+            # Query from database
+            try:
+                cur = _db_conn.cursor()
+                cur.execute("SELECT DISTINCT session_id FROM agent_files")
+                rows = cur.fetchall()
+                cur.close()
+                return [row[0] for row in rows]
+            except Exception as e:
+                print(f"[AgentFileRegistry] Error querying sessions: {e}")
+                return []
+        else:
+            return list(_registry.keys())
 
 
-# Load registry on module import
+# Initialize database connection and load registry on module import
+_init_database()
 _load_registry()
