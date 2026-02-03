@@ -154,12 +154,23 @@ class AuthService:
         """Hash a password using SHA-256."""
         return hashlib.sha256(password.encode()).hexdigest()
     
+    def _generate_unique_user_id(self) -> str:
+        """Generate a unique user_id using UUID to prevent collisions.
+        
+        Previously used len(self.users) + 1 which caused collisions when:
+        1. Container restarts and users.json is lost
+        2. New user registers with same counter value as existing JWT token
+        3. Both users share the same tenant_id → see each other's data
+        """
+        import uuid
+        return f"user_{uuid.uuid4().hex[:12]}"
+    
     def create_user(self, email: str, password: str, name: str, role: str = "User", description: str = "", skills: List[str] = None, color: str = "#6B7280") -> Optional[User]:
         """Create a new user and save to file."""
         if email in self.users:
             return None
             
-        user_id = f"user_{len(self.users) + 1}"
+        user_id = self._generate_unique_user_id()
         password_hash = self._hash_password(password)
         
         user = User(

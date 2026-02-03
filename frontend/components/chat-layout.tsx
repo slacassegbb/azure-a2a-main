@@ -212,8 +212,18 @@ export function ChatLayout() {
   // Listen for active_workflows_changed events from WebSocket (collaborative sync)
   useEffect(() => {
     // Handle new multi-workflow events
-    const handleActiveWorkflowsChanged = (data: { workflows?: ActiveWorkflow[] }) => {
+    const handleActiveWorkflowsChanged = (data: { workflows?: ActiveWorkflow[], contextId?: string }) => {
       console.log('[ChatLayout] Received active_workflows_changed event:', data)
+      
+      // Session isolation: only process events for our session
+      // This prevents cross-session data leakage if backend routes incorrectly
+      const mySessionId = getOrCreateSessionId()
+      const eventSessionId = data.contextId
+      if (eventSessionId && mySessionId && eventSessionId !== mySessionId) {
+        console.log('[ChatLayout] Ignoring active_workflows_changed from different session:', eventSessionId, 'my session:', mySessionId)
+        return
+      }
+      
       if (data.workflows) {
         setActiveWorkflows(data.workflows)
       }

@@ -166,6 +166,10 @@ class WebSocketManager:
         # Track reverse mapping
         self.connection_tenants[websocket] = tenant_id
         
+        # DEBUG: Log all current tenants for isolation debugging
+        all_tenants = list(self.tenant_connections.keys())
+        print(f"🔐 [TENANT REGISTER] New connection for tenant={tenant_id}")
+        print(f"🔐 [TENANT REGISTER] All active tenants: {all_tenants}")
         logger.info(f"Registered connection for tenant: {tenant_id[:20]}... (total tenant connections: {len(self.tenant_connections[tenant_id])})")
     
     def unregister_tenant_connection(self, websocket: WebSocket):
@@ -694,6 +698,9 @@ class WebSocketManager:
         # Get connections for this tenant
         tenant_websockets = self.tenant_connections.get(tenant_id, set())
         
+        event_type = event_data.get('eventType', 'unknown')
+        print(f"🔒 [TENANT DEBUG] broadcast_to_tenant: tenant={tenant_id}, event={event_type}, connections={len(tenant_websockets)}")
+        
         if not tenant_websockets:
             logger.debug(f"No connections for tenant {tenant_id[:20]}..., skipping broadcast (no fallback)")
             return 0
@@ -789,16 +796,26 @@ class WebSocketManager:
             sent_count = 0
             session_id = None
             
+            # DEBUG: Log tenant isolation details
+            event_type = event_data.get('eventType', 'unknown')
+            print(f"🔒 [TENANT DEBUG] smart_broadcast: event={event_type}, context_id={context_id[:40]}...")
+            print(f"🔒 [TENANT DEBUG] Available tenants: {list(self.tenant_connections.keys())}")
+            
             # First try the raw context_id as tenant (for simple session IDs like "user_3")
             if context_id in self.tenant_connections:
                 session_id = context_id
+                print(f"🔒 [TENANT DEBUG] Direct match: broadcasting to tenant={context_id}")
                 sent_count = await self.broadcast_to_tenant(event_data, context_id)
             else:
                 # Then try extracting tenant from tenant::conversation format
                 tenant_id = get_tenant_from_context(context_id)
+                print(f"🔒 [TENANT DEBUG] Extracted tenant_id={tenant_id} from context_id")
                 if tenant_id in self.tenant_connections:
                     session_id = tenant_id
+                    print(f"🔒 [TENANT DEBUG] Tenant match: broadcasting to tenant={tenant_id}")
                     sent_count = await self.broadcast_to_tenant(event_data, tenant_id)
+                else:
+                    print(f"🔒 [TENANT DEBUG] ⚠️ No tenant match found! Event will NOT be broadcast.")
             
             # Also broadcast to collaborative session members
             # These are users who joined this session but have different user_ids

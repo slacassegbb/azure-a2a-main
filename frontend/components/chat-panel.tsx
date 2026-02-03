@@ -614,6 +614,19 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
     }
   }, [])
   
+  // Track the conversation we just created from the home page
+  // This prevents cross-pollination: only accept messages for THIS conversation, not any conversation
+  const pendingConversationIdRef = useRef<string | null>(null)
+  
+  // Clear pending conversation when URL updates to a real conversation
+  // This means the router.replace succeeded and we're now on the conversation page
+  useEffect(() => {
+    if (conversationId !== 'frontend-chat-context') {
+      // We're now on a real conversation page, clear the pending ref
+      pendingConversationIdRef.current = null
+    }
+  }, [conversationId])
+  
   // Create tenant-aware contextId for A2A protocol
   // Format: sessionId::conversationId - enables multi-tenant isolation
   // IMPORTANT: Include currentSessionId in deps so it recalculates when joining collaborative session
@@ -643,9 +656,22 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       return true
     }
     
-    // In non-collaborative sessions, allow 'frontend-chat-context' to receive all messages
-    // This is for the default home page where no specific conversation is selected
-    if (conversationId === 'frontend-chat-context') return false
+    // On the home page, ONLY accept messages for a conversation we just created
+    // This prevents cross-pollination where messages from other tabs/users could leak through
+    if (conversationId === 'frontend-chat-context') {
+      // If we have a pending conversation (just created), only accept events for that
+      if (pendingConversationIdRef.current) {
+        if (eventConvId === pendingConversationIdRef.current) {
+          return false // Accept - it's for our pending conversation
+        }
+        console.log("[ChatPanel] Home page: filtering event for different conversation:", eventConvId, "pending:", pendingConversationIdRef.current)
+        return true // Filter - it's for a different conversation
+      }
+      // No pending conversation - we shouldn't receive any messages
+      // This is a clean home page state
+      console.log("[ChatPanel] Home page: filtering event - no pending conversation, received:", eventConvId)
+      return true
+    }
     
     // Otherwise, filter out events for other conversations
     return true
@@ -2303,6 +2329,8 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
           const newConversation = await createConversation()
           if (newConversation) {
             actualConversationId = newConversation.conversation_id
+            // Track this as our pending conversation to accept messages for it
+            pendingConversationIdRef.current = actualConversationId
             notifyConversationCreated(newConversation)
             router.replace(`/?conversationId=${actualConversationId}`)
           }
@@ -3008,6 +3036,8 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
           const newConversation = await createConversation()
           if (newConversation) {
             actualConversationId = newConversation.conversation_id
+            // Track this as our pending conversation to accept messages for it
+            pendingConversationIdRef.current = actualConversationId
             console.log('[ChatPanel] Created conversation:', actualConversationId)
             // Notify sidebar about the new conversation
             notifyConversationCreated(newConversation)
