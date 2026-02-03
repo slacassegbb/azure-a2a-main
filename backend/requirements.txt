@@ -27,3 +27,6 @@ google-adk
 azure-monitor-opentelemetry
 # Workflow scheduling
 apscheduler>=3.10.4
+# PostgreSQL database drivers
+psycopg2-binary>=2.9.9
+asyncpg>=0.29.0

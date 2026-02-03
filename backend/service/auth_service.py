@@ -1,8 +1,8 @@
 """Authentication Service Module
 
 This module provides user authentication and JWT token management.
-It's deliberately kept lightweight with minimal dependencies to enable
-fast startup of the WebSocket server.
+It uses PostgreSQL for persistent storage with automatic fallback to JSON files
+when DATABASE_URL is not configured.
 """
 
 import os
@@ -38,22 +38,81 @@ class User:
 
 
 class AuthService:
-    """Handles user authentication and JWT token management using JSON file storage."""
+    """Handles user authentication and JWT token management.
+    
+    Uses PostgreSQL when DATABASE_URL is available, falls back to JSON storage otherwise.
+    """
     
     def __init__(self, users_file: Path | str = None):
         if users_file is None:
             users_file = DEFAULT_DATA_DIR / "users.json"
         self.users_file = Path(users_file)
         self.users: Dict[str, User] = {}
-        # Track active WebSocket connections for logging (not used for data retrieval)
-        # Each session manages its own user info via WebSocket
+        
+        # Track active WebSocket connections for logging
         self.active_users: Dict[str, Dict[str, Any]] = {}
         
-        # Ensure data directory exists
-        self.users_file.parent.mkdir(parents=True, exist_ok=True)
+        # Check if PostgreSQL is available
+        self.database_url = os.getenv("DATABASE_URL")
+        self.use_database = False
+        self.db_conn = None
         
-        # Load users from JSON file
-        self._load_users_from_file()
+        if self.database_url:
+            try:
+                import psycopg2
+                self.db_conn = psycopg2.connect(self.database_url)
+                self.use_database = True
+                print(f"[AuthService] ✅ Using PostgreSQL database for user storage")
+            except ImportError:
+                print(f"[AuthService] ⚠️  psycopg2 not installed, falling back to JSON storage")
+            except Exception as e:
+                print(f"[AuthService] ⚠️  Database connection failed: {e}, falling back to JSON storage")
+        
+        if not self.use_database:
+            print(f"[AuthService] 📁 Using JSON file storage: {self.users_file}")
+            # Ensure data directory exists
+            self.users_file.parent.mkdir(parents=True, exist_ok=True)
+            # Load users from JSON file
+            self._load_users_from_file()
+        else:
+            # Load users from database into memory cache
+            self._load_users_from_database()
+    
+    def _load_users_from_database(self):
+        """Load users from PostgreSQL database."""
+        if not self.use_database:
+            return
+        
+        try:
+            cursor = self.db_conn.cursor()
+            cursor.execute("""
+                SELECT user_id, email, password_hash, name, role, description, 
+                       skills, color, created_at, last_login
+                FROM users
+                ORDER BY created_at
+            """)
+            
+            rows = cursor.fetchall()
+            for row in rows:
+                user = User(
+                    user_id=row[0],
+                    email=row[1],
+                    password_hash=row[2],
+                    name=row[3],
+                    role=row[4] or "",
+                    description=row[5] or "",
+                    skills=row[6] if isinstance(row[6], list) else [],
+                    color=row[7] or "#6B7280",
+                    created_at=row[8],
+                    last_login=row[9]
+                )
+                self.users[user.email] = user
+            
+            cursor.close()
+            print(f"[AuthService] Loaded {len(self.users)} users from PostgreSQL database")
+        except Exception as e:
+            print(f"[AuthService] Error loading users from database: {e}")
+            raise
     
     def _load_users_from_file(self):
         """Load users from JSON file."""
@@ -166,7 +225,7 @@ class AuthService:
         return f"user_{uuid.uuid4().hex[:12]}"
     
     def create_user(self, email: str, password: str, name: str, role: str = "User", description: str = "", skills: List[str] = None, color: str = "#6B7280") -> Optional[User]:
-        """Create a new user and save to file."""
+        """Create a new user and save to database or file."""
         if email in self.users:
             return None
             
@@ -186,14 +245,62 @@ class AuthService:
         )
         
         self.users[email] = user
-        # Save to file whenever a new user is created
-        self._save_users_to_file()
+        
+        # Save to database or file
+        if self.use_database:
+            self._save_user_to_database(user)
+        else:
+            self._save_users_to_file()
+        
         return user
     
+    def _save_user_to_database(self, user: User):
+        """Save a single user to PostgreSQL database."""
+        if not self.use_database:
+            return
+        
+        try:
+            cursor = self.db_conn.cursor()
+            cursor.execute("""
+                INSERT INTO users (
+                    user_id, email, password_hash, name, role, 
+                    description, skills, color, created_at, last_login
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (user_id) DO UPDATE SET
+                    email = EXCLUDED.email,
+                    password_hash = EXCLUDED.password_hash,
+                    name = EXCLUDED.name,
+                    role = EXCLUDED.role,
+                    description = EXCLUDED.description,
+                    skills = EXCLUDED.skills,
+                    color = EXCLUDED.color,
+                    last_login = EXCLUDED.last_login
+            """, (
+                user.user_id,
+                user.email,
+                user.password_hash,
+                user.name,
+                user.role,
+                user.description,
+                json.dumps(user.skills),
+                user.color,
+                user.created_at,
+                user.last_login
+            ))
+            self.db_conn.commit()
+            cursor.close()
+        except Exception as e:
+            print(f"[AuthService] Error saving user to database: {e}")
+            self.db_conn.rollback()
+            raise
+    
     def authenticate_user(self, email: str, password: str) -> Optional[User]:
-        """Authenticate a user with email and password - always reads from JSON file."""
-        # Always reload users from file to get latest data
-        self._load_users_from_file()
+        """Authenticate a user with email and password."""
+        # Reload users from database/file to get latest data
+        if self.use_database:
+            self._load_users_from_database()
+        else:
+            self._load_users_from_file()
         
         user = self.users.get(email)
         if not user:
@@ -203,9 +310,15 @@ class AuthService:
         if password_hash != user.password_hash:
             return None
             
-        # Update last login and save to file
+        # Update last login
         user.last_login = datetime.now(UTC)
-        self._save_users_to_file()
+        
+        # Save updated user
+        if self.use_database:
+            self._save_user_to_database(user)
+        else:
+            self._save_users_to_file()
+        
         return user
     
     def create_access_token(self, user: User, expires_delta: Optional[timedelta] = None) -> str:
@@ -227,7 +340,7 @@ class AuthService:
         return encoded_jwt
     
     def verify_token(self, token: str) -> Optional[Dict[str, Any]]:
-        """Verify and decode a JWT token - always reads from JSON file."""
+        """Verify and decode a JWT token - reloads from database/file."""
         try:
             print(f"[AuthService] Verifying token...")
             payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
@@ -239,8 +352,11 @@ class AuthService:
                 print(f"[AuthService] Token verification failed: no email in payload")
                 return None
                 
-            # Always reload users from file to get latest data
-            self._load_users_from_file()
+            # Reload users from database/file to get latest data
+            if self.use_database:
+                self._load_users_from_database()
+            else:
+                self._load_users_from_file()
             
             # Check if user still exists
             user = self.users.get(email)
@@ -263,18 +379,30 @@ class AuthService:
             return None
     
     def get_user_by_email(self, email: str) -> Optional[User]:
-        """Get user by email."""
+        """Get user by email - reloads from database/file first."""
+        if self.use_database:
+            self._load_users_from_database()
+        else:
+            self._load_users_from_file()
         return self.users.get(email)
     
     def get_user_by_id(self, user_id: str) -> Optional[User]:
-        """Get user by user_id."""
+        """Get user by user_id - reloads from database/file first."""
+        if self.use_database:
+            self._load_users_from_database()
+        else:
+            self._load_users_from_file()
         for user in self.users.values():
             if user.user_id == user_id:
                 return user
         return None
     
     def get_all_users(self) -> List[Dict[str, Any]]:
-        """Get all users (without password hashes)."""
+        """Get all users (without password hashes) - reloads from database/file first."""
+        if self.use_database:
+            self._load_users_from_database()
+        else:
+            self._load_users_from_file()
         return [
             {
                 "user_id": user.user_id,

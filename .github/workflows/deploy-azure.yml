@@ -14,6 +14,7 @@ name: Deploy to Azure Container Apps
 # - AZURE_SEARCH_ADMIN_KEY: Azure Search admin key
 # - AZURE_SEARCH_INDEX_NAME: Azure Search index name (e.g., microsoft-results)
 # - BING_CONNECTION_ID: (Optional) Bing Grounding connection ID for web search
+# - DATABASE_URL: PostgreSQL database connection string
 
 on:
   push:
@@ -136,6 +137,7 @@ jobs:
               "AZURE_SEARCH_ADMIN_KEY=${{ secrets.AZURE_SEARCH_ADMIN_KEY }}" \
               "AZURE_SEARCH_INDEX_NAME=${{ secrets.AZURE_SEARCH_INDEX_NAME }}" \
               "BING_CONNECTION_ID=${{ secrets.BING_CONNECTION_ID }}" \
+              "DATABASE_URL=${{ secrets.DATABASE_URL }}" \
               "WEBSOCKET_SERVER_URL=https://websocket-uami.ambitioussky-6c709152.westus2.azurecontainerapps.io" \
               "A2A_HOST=FOUNDRY" \
               "VERBOSE_LOGGING=true"

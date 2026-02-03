@@ -123,6 +123,52 @@ websocket_streamer = None
 workflow_scheduler = None
 
 
+def test_database_connection():
+    """Test PostgreSQL database connection on startup."""
+    database_url = os.getenv("DATABASE_URL")
+    
+    if not database_url:
+        print("[INFO] 💾 No DATABASE_URL found - using local JSON storage")
+        return False
+    
+    print("[INFO] 💾 DATABASE_URL found - testing PostgreSQL connection...")
+    
+    try:
+        import psycopg2
+        
+        # Parse connection string to hide password in logs
+        if "@" in database_url:
+            parts = database_url.split("@")
+            safe_url = f"postgresql://***:***@{parts[1]}"
+        else:
+            safe_url = database_url
+        
+        print(f"[INFO] 🔌 Connecting to: {safe_url}")
+        
+        # Test connection
+        conn = psycopg2.connect(database_url)
+        cursor = conn.cursor()
+        
+        # Test query
+        cursor.execute("SELECT version();")
+        version = cursor.fetchone()[0]
+        
+        cursor.close()
+        conn.close()
+        
+        print(f"[INFO] ✅ Database connection successful!")
+        print(f"[INFO] 📊 PostgreSQL version: {version[:50]}...")
+        return True
+        
+    except ImportError:
+        print("[ERROR] ❌ psycopg2 not installed. Run: pip install psycopg2-binary")
+        return False
+    except Exception as e:
+        print(f"[ERROR] ❌ Database connection failed: {e}")
+        print("[ERROR] 💡 Falling back to local JSON storage")
+        return False
+
+
 async def execute_scheduled_workflow(workflow_name: str, session_id: str, timeout: int = 300):
     """Execute a workflow for the scheduler. Returns result dict.
     
@@ -799,8 +845,12 @@ def main():
     async def register(request: RegisterRequest):
         """Register a new user."""
         try:
-            # Check if user already exists
-            auth_service._load_users_from_file()  # Reload to get latest data
+            # Check if user already exists - reload from database/file to get latest data
+            if auth_service.use_database:
+                auth_service._load_users_from_database()
+            else:
+                auth_service._load_users_from_file()
+            
             if request.email in auth_service.users:
                 return LoginResponse(
                     success=False,
@@ -2946,6 +2996,11 @@ Read-Host "Press Enter to close this window"
     print(f"[INFO] Health check available at: http://{host}:{port}/health")
     print(f"[INFO] API docs available at: http://{host}:{port}/docs")
     print(f"[INFO] OpenAPI spec available at: http://{host}:{port}/openapi.json")
+    
+    # Test database connection
+    print("[INFO] " + "="*60)
+    test_database_connection()
+    print("[INFO] " + "="*60)
 
     uvicorn.run(
         app,

@@ -189,6 +189,8 @@ if [ -f ".env" ]; then
     DEFAULT_SEARCH_INDEX_NAME=$(grep "AZURE_SEARCH_INDEX_NAME" .env | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
     # Bing Grounding configuration
     DEFAULT_BING_CONNECTION_ID=$(grep "BING_CONNECTION_ID" .env | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
+    # Database configuration
+    DEFAULT_DATABASE_URL=$(grep "DATABASE_URL" .env | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
 fi
 
 read -p "Azure AI Foundry Project Endpoint [$DEFAULT_AI_ENDPOINT]: " AZURE_AI_ENDPOINT
@@ -236,6 +238,16 @@ echo -e "${CYAN}🌐 Bing Grounding (Web Search) Configuration${NC}"
 echo -e "${YELLOW}  (Optional - leave blank to disable web search capability)${NC}"
 read -p "Bing Connection ID [$DEFAULT_BING_CONNECTION_ID]: " BING_CONNECTION_ID
 BING_CONNECTION_ID=${BING_CONNECTION_ID:-$DEFAULT_BING_CONNECTION_ID}
+
+# Database configuration (PostgreSQL)
+echo ""
+echo -e "${CYAN}💾 Database Configuration${NC}"
+DATABASE_URL=${DEFAULT_DATABASE_URL}
+if [ -n "$DATABASE_URL" ]; then
+    echo -e "${GREEN}  ✅ Using DATABASE_URL from .env${NC}"
+else
+    echo -e "${YELLOW}  ⚠️  No DATABASE_URL found - will use local JSON storage${NC}"
+fi
 
 echo ""
 
@@ -369,6 +381,7 @@ if [ -n "$BACKEND_EXISTS" ]; then
             "AZURE_SEARCH_ADMIN_KEY=$AZURE_SEARCH_KEY" \
             "AZURE_SEARCH_INDEX_NAME=$AZURE_SEARCH_INDEX" \
             "BING_CONNECTION_ID=$BING_CONNECTION_ID" \
+            "DATABASE_URL=$DATABASE_URL" \
             "A2A_HOST=FOUNDRY" \
             "VERBOSE_LOGGING=true" \
         --output none
@@ -401,6 +414,7 @@ else
             "AZURE_SEARCH_ADMIN_KEY=$AZURE_SEARCH_KEY" \
             "AZURE_SEARCH_INDEX_NAME=$AZURE_SEARCH_INDEX" \
             "BING_CONNECTION_ID=$BING_CONNECTION_ID" \
+            "DATABASE_URL=$DATABASE_URL" \
             "A2A_HOST=FOUNDRY" \
             "VERBOSE_LOGGING=true" \
         --output none

@@ -9,7 +9,7 @@ This service is intended to run locally for development and can be deployed to c
 - **WebSocket server**: Background service streaming events to the UI (default `ws://localhost:8080`).
 - **Conversation server**: Implements A2A protocol endpoints and routes messages to host managers (Foundry/ADK).
 - **Agent registry**: CRUD API backed by `backend/data/agent_registry.json`.
-- **Auth service**: Simple JWT auth with users stored in `backend/data/users.json` (auto‑created with sample users).
+- **Auth service**: JWT auth with users stored in PostgreSQL database (falls back to `backend/data/users.json` for local dev without DATABASE_URL).
 - **Uploads**: File uploads saved under `backend/uploads/`; voice uploads saved to `backend/voice_recordings/` and optionally transcribed.
 - **Document processor**: Converts images/PDF/Office/text to markdown; audio/video analyzed via Azure Content Understanding using templates in `hosts/multiagent/analyzer_templates/`.
 - **Memory service**: Optional Azure AI Search vector memory storing interactions with embeddings (`AZURE_SEARCH_*`, `AZURE_OPENAI_EMBEDDINGS_*`).
@@ -139,14 +139,14 @@ You should see logs like:
 - `GET /health` — health probe
 - `GET /docs` — OpenAPI UI
 
-### Authentication (file‑backed JWT)
+### Authentication (database‑backed JWT)
 - `POST /api/auth/login` — returns JWT
 - `POST /api/auth/register` — create a new user
 - `GET /api/auth/me` — user from token
 - `GET /api/auth/users` — all users
 - `GET /api/auth/active-users` — currently connected users (via WebSocket auth)
 
-User storage lives in `backend/data/users.json`. If missing, it is auto‑created with sample users (`simon@example.com / simon123`, etc.). Change `SECRET_KEY` and replace users for real deployments.
+User storage uses PostgreSQL when `DATABASE_URL` environment variable is set (recommended for production). For local development without a database, it falls back to `backend/data/users.json` with auto‑created sample users (`simon@example.com / simon123`, etc.). Change `SECRET_KEY` and replace users for real deployments.
 
 ### Agent registry
 - `GET /api/agents` — list
@@ -260,7 +260,8 @@ When using memory/indexing, configure Azure AI Search and embeddings (see `.env`
 - Port 8080 already in use: stop the conflicting service. The WebSocket server currently binds to `localhost:8080`.
 - Cannot access docs/health: verify `A2A_UI_HOST`/`A2A_UI_PORT` and firewall rules.
 - Voice transcription errors: ensure `AZURE_CONTENT_UNDERSTANDING_ENDPOINT` is set and audio is valid WAV.
-- Auth issues: set a strong `SECRET_KEY`; delete `backend/data/users.json` to regenerate sample users in dev.
+- Auth issues: set a strong `SECRET_KEY`; ensure `DATABASE_URL` is configured for production (falls back to `backend/data/users.json` in dev).
+- Database connection errors: verify `DATABASE_URL` connection string and PostgreSQL server accessibility.
 - Agent health appears offline: endpoints must expose `/health`; network timeouts are limited.
 
 ---
@@ -271,6 +272,7 @@ When using memory/indexing, configure Azure AI Search and embeddings (see `.env`
 - `backend/service/websocket_server.py` — WebSocket server
 - `backend/service/websocket_streamer.py` — WebSocket streaming client
 - `backend/data/agent_registry.json` — agent registry storage
-- `backend/data/users.json` — user store (auto‑created)
+- `backend/data/users.json` — user store fallback (local dev only, use DATABASE_URL for production)
+- `backend/database/` — PostgreSQL schema and migration scripts
 - `backend/uploads/` — uploaded files
 
