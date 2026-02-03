@@ -177,6 +177,39 @@ export function Dashboard({ user, onLogout }: DashboardProps) {
       // Restore activated workflows from sessionStorage
       const storedActivatedWorkflows = getActivatedWorkflowIds();
       setActivatedWorkflowIds(storedActivatedWorkflows);
+      
+      // Re-enable agents for any activated workflows that aren't already enabled
+      if (storedActivatedWorkflows.size > 0 && agentsData.length > 0) {
+        console.log('[Dashboard] Re-enabling agents for activated workflows...');
+        const workflowIds = Array.from(storedActivatedWorkflows);
+        for (const workflowId of workflowIds) {
+          const workflow = workflowsData.find(w => w.id === workflowId);
+          if (workflow) {
+            const { getRequiredAgents } = await import("./WorkflowCard");
+            const requiredAgents = getRequiredAgents(workflow, agentsData);
+            
+            for (const agentStatus of requiredAgents) {
+              if (agentStatus.isOnline) {
+                const matchingAgent = agentsData.find(a => 
+                  a.name.toLowerCase() === agentStatus.agentName.toLowerCase() ||
+                  a.name.toLowerCase().includes(agentStatus.agentName.toLowerCase()) ||
+                  agentStatus.agentName.toLowerCase().includes(a.name.toLowerCase())
+                );
+                
+                if (matchingAgent && !enabledUrls.has(matchingAgent.url)) {
+                  const success = await enableSessionAgent(matchingAgent);
+                  if (success) {
+                    enabledUrls.add(matchingAgent.url);
+                    console.log(`[Dashboard] Re-enabled agent: ${matchingAgent.name}`);
+                  }
+                }
+              }
+            }
+          }
+        }
+        // Update state with any newly enabled agents
+        setEnabledAgentUrls(new Set(enabledUrls));
+      }
     } catch (err) {
       console.error("Failed to load data:", err);
       setError("Failed to load data. Please try again.");
