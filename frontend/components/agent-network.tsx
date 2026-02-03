@@ -1576,13 +1576,10 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
                           </div>
                         )}
                         
-                        {/* Schedule Dialog */}
+                        {/* Schedule Dialog - don't pre-select workflow when opened from agent card */}
                         <ScheduleWorkflowDialog 
                           open={isScheduleDialogOpen} 
                           onOpenChange={setIsScheduleDialogOpen}
-                          workflowId={workflowName || undefined}
-                          workflowName={workflowName || undefined}
-                          workflowGoal={workflowGoal || undefined}
                           onScheduleChange={fetchScheduledWorkflows}
                         />
               </CardContent>
