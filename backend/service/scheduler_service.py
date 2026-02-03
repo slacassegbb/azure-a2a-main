@@ -14,6 +14,8 @@ from typing import Dict, List, Optional, Any, Callable
 from dataclasses import dataclass, field, asdict
 from enum import Enum
 from pathlib import Path
+import psycopg2
+from psycopg2.extras import RealDictCursor
 
 logger = logging.getLogger(__name__)
 
@@ -119,17 +121,64 @@ class WorkflowScheduler:
         self.scheduler: Optional[Any] = None
         self._workflow_executor: Optional[Callable] = None
         self._is_running = False
-        self._main_event_loop: Optional[asyncio.AbstractEventLoop] = None  # Store reference to main event loop
+        self._main_event_loop: Optional[asyncio.AbstractEventLoop] = None
         
-        # Ensure data directory exists
-        self.data_dir.mkdir(parents=True, exist_ok=True)
+        # Try to connect to database
+        self.database_url = os.environ.get('DATABASE_URL')
+        self.use_database = False
+        self.db_conn = None
+        
+        if self.database_url:
+            try:
+                self.db_conn = psycopg2.connect(self.database_url)
+                self.use_database = True
+                logger.info("[WorkflowScheduler] ✅ Using PostgreSQL database")
+            except Exception as e:
+                logger.warning(f"[WorkflowScheduler] ⚠️  Database connection failed: {e}")
+                logger.warning("[WorkflowScheduler] Falling back to JSON file storage")
+        
+        if not self.use_database:
+            # Ensure data directory exists for JSON fallback
+            self.data_dir.mkdir(parents=True, exist_ok=True)
+            logger.info("[WorkflowScheduler] Using JSON file storage")
         
         # Load existing schedules and history
         self._load_schedules()
         self._load_run_history()
     
     def _load_schedules(self):
-        """Load schedules from persistent storage."""
+        """Load schedules from database or persistent storage."""
+        if self.use_database:
+            self._load_schedules_from_database()
+        else:
+            self._load_schedules_from_file()
+    
+    def _load_schedules_from_database(self):
+        """Load schedules from PostgreSQL database."""
+        try:
+            cur = self.db_conn.cursor(cursor_factory=RealDictCursor)
+            cur.execute("""
+                SELECT * FROM scheduled_workflows
+                ORDER BY created_at DESC
+            """)
+            
+            for row in cur.fetchall():
+                schedule_data = dict(row)
+                # Convert datetime objects to ISO strings
+                for key in ['created_at', 'updated_at', 'last_run', 'next_run', 'run_at']:
+                    if schedule_data.get(key):
+                        schedule_data[key] = schedule_data[key].isoformat()
+                
+                schedule = ScheduledWorkflow.from_dict(schedule_data)
+                self.schedules[schedule.id] = schedule
+            
+            cur.close()
+            logger.info(f"[WorkflowScheduler] Loaded {len(self.schedules)} scheduled workflows from database")
+        except Exception as e:
+            logger.error(f"[WorkflowScheduler] Error loading from database: {e}")
+    
+    def _load_schedules_from_file(self):
+        """Load schedules from JSON file."""
         if self.schedules_file.exists():
             try:
                 with open(self.schedules_file, 'r') as f:
@@ -137,13 +186,118 @@ class WorkflowScheduler:
                     for item in data:
                         schedule = ScheduledWorkflow.from_dict(item)
                         self.schedules[schedule.id] = schedule
-                logger.info(f"Loaded {len(self.schedules)} scheduled workflows")
+                logger.info(f"[WorkflowScheduler] Loaded {len(self.schedules)} scheduled workflows")
             except Exception as e:
-                logger.error(f"Error loading schedules: {e}")
+                logger.error(f"[WorkflowScheduler] Error loading schedules: {e}")
                 self.schedules = {}
     
     def _save_schedules(self):
-        """Save schedules to persistent storage."""
+        """Save schedules to database or persistent storage."""
+        if self.use_database:
+            # Database saves are done per-schedule in _save_schedule_to_database
+            pass
+        else:
+            self._save_schedules_to_file()
+    
+    def _save_schedules_to_file(self):
+        """Save schedules to JSON file."""
+        try:
+            data = [s.to_dict() for s in self.schedules.values()]
+            with open(self.schedules_file, 'w') as f:
+                json.dump(data, f, indent=2, default=str)
+            logger.debug(f"[WorkflowScheduler] Saved {len(self.schedules)} schedules to file")
+        except Exception as e:
+            logger.error(f"[WorkflowScheduler] Error saving schedules: {e}")
+    
+    def _save_schedule_to_database(self, schedule: ScheduledWorkflow) -> bool:
+        """Save a single schedule to PostgreSQL database using UPSERT."""
+        try:
+            cur = self.db_conn.cursor()
+            cur.execute("""
+                INSERT INTO scheduled_workflows (
+                    id, workflow_id, workflow_name, session_id, schedule_type,
+                    enabled, created_at, updated_at, last_run, next_run, run_count,
+                    last_status, last_error, success_count, failure_count,
+                    run_at, interval_minutes, time_of_day, days_of_week, day_of_month,
+                    cron_expression, timezone, timeout, retry_on_failure, max_retries, max_runs,
+                    description, tags, workflow_goal
+                ) VALUES (
+                    %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s,
+                    %s, %s, %s, %s::jsonb, %s,
+                    %s, %s, %s, %s, %s, %s,
+                    %s, %s::jsonb, %s
+                )
+                ON CONFLICT (id) DO UPDATE SET
+                    workflow_id = EXCLUDED.workflow_id,
+                    workflow_name = EXCLUDED.workflow_name,
+                    enabled = EXCLUDED.enabled,
+                    updated_at = EXCLUDED.updated_at,
+                    last_run = EXCLUDED.last_run,
+                    next_run = EXCLUDED.next_run,
+                    run_count = EXCLUDED.run_count,
+                    last_status = EXCLUDED.last_status,
+                    last_error = EXCLUDED.last_error,
+                    success_count = EXCLUDED.success_count,
+                    failure_count = EXCLUDED.failure_count,
+                    interval_minutes = EXCLUDED.interval_minutes,
+                    max_runs = EXCLUDED.max_runs
+            """, (
+                schedule.id,
+                schedule.workflow_id,
+                schedule.workflow_name,
+                schedule.session_id,
+                schedule.schedule_type.value if isinstance(schedule.schedule_type, ScheduleType) else schedule.schedule_type,
+                schedule.enabled,
+                schedule.created_at,
+                schedule.updated_at,
+                schedule.last_run,
+                schedule.next_run,
+                schedule.run_count,
+                schedule.last_status,
+                schedule.last_error,
+                schedule.success_count,
+                schedule.failure_count,
+                schedule.run_at,
+                schedule.interval_minutes,
+                schedule.time_of_day,
+                json.dumps(schedule.days_of_week) if schedule.days_of_week else None,
+                schedule.day_of_month,
+                schedule.cron_expression,
+                schedule.timezone,
+                schedule.timeout,
+                schedule.retry_on_failure,
+                schedule.max_retries,
+                schedule.max_runs,
+                schedule.description,
+                json.dumps(schedule.tags),
+                schedule.workflow_goal
+            ))
+            self.db_conn.commit()
+            cur.close()
+            return True
+        except Exception as e:
+            logger.error(f"[WorkflowScheduler] Error saving schedule to database: {e}")
+            self.db_conn.rollback()
+            return False
+    
+    def _delete_schedule_from_database(self, schedule_id: str) -> bool:
+        """Delete a schedule from PostgreSQL database."""
+        try:
+            cur = self.db_conn.cursor()
+            cur.execute("DELETE FROM scheduled_workflows WHERE id = %s", (schedule_id,))
+            rows_deleted = cur.rowcount
+            self.db_conn.commit()
+            cur.close()
+            return rows_deleted > 0
+        except Exception as e:
+            logger.error(f"[WorkflowScheduler] Error deleting schedule from database: {e}")
+            self.db_conn.rollback()
+            return False
+    
+    def _old_save_schedules(self):
+        """Old save method - replaced by database methods."""
         try:
             data = [s.to_dict() for s in self.schedules.values()]
             with open(self.schedules_file, 'w') as f:
@@ -276,7 +430,10 @@ class WorkflowScheduler:
                 job = self.scheduler.get_job(schedule.id)
                 if job and job.next_run_time:
                     schedule.next_run = job.next_run_time.isoformat()
-                    self._save_schedules()
+                    if self.use_database:
+                        self._save_schedule_to_database(schedule)
+                    else:
+                        self._save_schedules()
                     print(f"[Scheduler] 📅 Job added! Next run: {job.next_run_time}")
                     
                 print(f"[Scheduler] 📅 Scheduled workflow '{schedule.workflow_name}' ({schedule.schedule_type.value})")
@@ -388,7 +545,10 @@ class WorkflowScheduler:
         schedule.last_run = datetime.utcnow().isoformat()
         schedule.last_status = "running"
         schedule.last_error = None
-        self._save_schedules()
+        if self.use_database:
+            self._save_schedule_to_database(schedule)
+        else:
+            self._save_schedules()
         
         execution_success = False
         error_message = None
@@ -471,7 +631,10 @@ class WorkflowScheduler:
             execution_time=execution_time
         )
         
-        self._save_schedules()
+        if self.use_database:
+            self._save_schedule_to_database(schedule)
+        else:
+            self._save_schedules()
     
     # CRUD Operations
     
@@ -492,7 +655,11 @@ class WorkflowScheduler:
         )
         
         self.schedules[schedule.id] = schedule
-        self._save_schedules()
+        
+        if self.use_database:
+            self._save_schedule_to_database(schedule)
+        else:
+            self._save_schedules()
         
         print(f"[Scheduler] Created schedule {schedule.id}, enabled={schedule.enabled}, _is_running={self._is_running}")
         
@@ -530,7 +697,11 @@ class WorkflowScheduler:
                 setattr(schedule, key, value)
         
         schedule.updated_at = datetime.utcnow().isoformat()
-        self._save_schedules()
+        
+        if self.use_database:
+            self._save_schedule_to_database(schedule)
+        else:
+            self._save_schedules()
         
         # Update scheduler job
         if self.scheduler and self._is_running:
@@ -560,7 +731,11 @@ class WorkflowScheduler:
                 pass
         
         del self.schedules[schedule_id]
-        self._save_schedules()
+        
+        if self.use_database:
+            self._delete_schedule_from_database(schedule_id)
+        else:
+            self._save_schedules()
         
         logger.info(f"Deleted schedule {schedule_id}")
         return True
