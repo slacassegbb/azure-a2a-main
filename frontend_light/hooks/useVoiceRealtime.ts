@@ -94,6 +94,7 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig): VoiceRealtimeHook
   const pendingCallRef = useRef<{ call_id: string; item_id: string } | null>(null);
   const fillerSpokenRef = useRef(false);
   const isProcessingRef = useRef(false);
+  const isResponseActiveRef = useRef(false);  // Track if Azure is generating a response
 
   // Get Azure token from the API route
   const getAzureToken = async (): Promise<string> => {
@@ -114,7 +115,14 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig): VoiceRealtimeHook
       return;
     }
     
+    // Skip if there's already an active response (to avoid "Conversation already has an active response" error)
+    if (isResponseActiveRef.current) {
+      console.log("[VoiceRealtime] Skipping filler - response already active:", text);
+      return;
+    }
+    
     console.log("[VoiceRealtime] 🗣️ Speaking filler via Azure Voice Live:", text);
+    isResponseActiveRef.current = true;
     
     // Use response.create with conversation: "none" for out-of-band TTS
     // This generates audio without affecting the conversation history or pending function calls
@@ -454,11 +462,13 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig): VoiceRealtimeHook
 
           case "response.done":
             console.log("[VoiceRealtime] Response complete");
+            isResponseActiveRef.current = false;  // Allow new fillers
             setIsListening(true);
             break;
 
           case "error":
             console.error("[VoiceRealtime] API error:", msg.error);
+            isResponseActiveRef.current = false;  // Reset on error
             setError(msg.error?.message || "Unknown error");
             config.onError?.(msg.error?.message || "Unknown error");
             break;
