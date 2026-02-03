@@ -1600,5 +1600,41 @@
         ]
       }
     ]
+  },
+  {
+    "name": "Twilio SMS Agent",
+    "description": "An intelligent SMS agent powered by Azure AI Foundry that can send text messages via Twilio. Specializes in sending notifications, alerts, reminders, and communications to phone numbers.",
+    "version": "1.0.0",
+    "url": "https://azurefoundry-twilio2.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "send_sms",
+        "name": "Send SMS",
+        "description": "Send text messages to phone numbers via Twilio",
+        "examples": [
+          "Send a text message to +15551234567 saying hello",
+          "Text my friend at +15559876543 with the meeting details",
+          "Send an SMS reminder to +15551112222",
+          "Message +15553334444 about the event tomorrow"
+        ],
+        "tags": [
+          "sms",
+          "text",
+          "messaging",
+          "twilio",
+          "notifications",
+          "alerts"
+        ]
+      }
+    ]
   }
 ]
