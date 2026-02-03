@@ -1247,21 +1247,19 @@ def main():
         if not agent_server or not hasattr(agent_server, 'manager'):
             raise HTTPException(status_code=503, detail="Agent server not available")
         
-        # Enable ALL agents from global registry for this session
-        registry = get_registry()
+        # Get agents enabled for this session (user must enable them in UI first)
         session_registry = get_session_registry()
-        all_agents = registry.get_all_agents()
+        session_agents = session_registry.get_session_agents(session_id)
         
-        if not all_agents:
+        if not session_agents:
             raise HTTPException(
                 status_code=400, 
-                detail="No agents available. Please connect agents first via the UI or /api/registry endpoint."
+                detail="No agents enabled for this session. Please enable agents from the Agents tab first."
             )
         
-        print(f"[Query API] 🔧 Enabling {len(all_agents)} agents for session {session_id}")
-        for agent_config in all_agents:
-            session_registry.enable_agent(session_id, agent_config)
-            print(f"[Query API] ✅ Enabled: {agent_config.get('name', 'unknown')}")
+        print(f"[Query API] 🔧 Using {len(session_agents)} pre-enabled session agents")
+        for agent_config in session_agents:
+            print(f"[Query API] ✅ Session agent: {agent_config.get('name', 'unknown')}")
         
         # Build available workflows for intelligent routing (if enabled)
         available_workflows = []

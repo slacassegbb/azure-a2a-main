@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { getUserWorkflows, getAgents, Workflow, Agent, UserInfo } from "@/lib/api";
+import { getUserWorkflows, getAgents, getSessionAgents, enableSessionAgent, disableSessionAgent, Workflow, Agent, UserInfo } from "@/lib/api";
 import { WorkflowCard } from "./WorkflowCard";
 import { AgentCard } from "./AgentCard";
 import { VoiceButton } from "./VoiceButton";
@@ -28,6 +28,8 @@ export function Dashboard({ user, onLogout }: DashboardProps) {
   const [activeTab, setActiveTab] = useState<TabType>("workflows");
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
+  const [enabledAgentUrls, setEnabledAgentUrls] = useState<Set<string>>(new Set());
+  const [loadingAgentUrls, setLoadingAgentUrls] = useState<Set<string>>(new Set());
   const [messages, setMessages] = useState<VoiceMessage[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -37,18 +39,70 @@ export function Dashboard({ user, onLogout }: DashboardProps) {
     setMessages(prev => [message, ...prev]); // Add to beginning (newest first)
   }, []);
 
+  // Toggle agent enabled/disabled
+  const handleToggleAgent = useCallback(async (agent: Agent) => {
+    const agentUrl = agent.url;
+    if (!agentUrl) return;
+
+    // Set loading state
+    setLoadingAgentUrls(prev => {
+      const next = new Set(Array.from(prev));
+      next.add(agentUrl);
+      return next;
+    });
+
+    try {
+      const isCurrentlyEnabled = enabledAgentUrls.has(agentUrl);
+      
+      if (isCurrentlyEnabled) {
+        // Disable the agent
+        const success = await disableSessionAgent(agentUrl);
+        if (success) {
+          setEnabledAgentUrls(prev => {
+            const next = new Set(Array.from(prev));
+            next.delete(agentUrl);
+            return next;
+          });
+        }
+      } else {
+        // Enable the agent
+        const success = await enableSessionAgent(agent);
+        if (success) {
+          setEnabledAgentUrls(prev => {
+            const next = new Set(Array.from(prev));
+            next.add(agentUrl);
+            return next;
+          });
+        }
+      }
+    } catch (err) {
+      console.error("Failed to toggle agent:", err);
+    } finally {
+      setLoadingAgentUrls(prev => {
+        const next = new Set(Array.from(prev));
+        next.delete(agentUrl);
+        return next;
+      });
+    }
+  }, [enabledAgentUrls]);
+
   const loadData = useCallback(async () => {
     setIsLoading(true);
     setError(null);
     
     try {
-      const [workflowsData, agentsData] = await Promise.all([
+      const [workflowsData, agentsData, sessionAgentsData] = await Promise.all([
         getUserWorkflows(),
         getAgents(),
+        getSessionAgents(),
       ]);
       
       setWorkflows(workflowsData);
       setAgents(agentsData);
+      
+      // Track which agents are enabled in this session
+      const enabledUrls = new Set(sessionAgentsData.map(a => a.url).filter(Boolean));
+      setEnabledAgentUrls(enabledUrls);
     } catch (err) {
       console.error("Failed to load data:", err);
       setError("Failed to load data. Please try again.");
@@ -63,6 +117,7 @@ export function Dashboard({ user, onLogout }: DashboardProps) {
 
   const onlineAgents = agents.filter((a) => a.status === "online");
   const offlineAgents = agents.filter((a) => a.status === "offline");
+  const enabledAgentCount = enabledAgentUrls.size;
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -190,9 +245,15 @@ export function Dashboard({ user, onLogout }: DashboardProps) {
                   />
                 </svg>
                 Agents
-                <span className="hidden sm:inline-flex items-center justify-center px-2 py-0.5 text-xs font-medium bg-green-100 dark:bg-green-900/50 text-green-600 dark:text-green-400 rounded-full">
-                  {onlineAgents.length} online
-                </span>
+                {enabledAgentCount > 0 ? (
+                  <span className="hidden sm:inline-flex items-center justify-center px-2 py-0.5 text-xs font-medium bg-green-100 dark:bg-green-900/50 text-green-600 dark:text-green-400 rounded-full">
+                    {enabledAgentCount} enabled
+                  </span>
+                ) : (
+                  <span className="hidden sm:inline-flex items-center justify-center px-2 py-0.5 text-xs font-medium bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 rounded-full">
+                    {onlineAgents.length} online
+                  </span>
+                )}
               </span>
             </button>
 
@@ -257,7 +318,13 @@ export function Dashboard({ user, onLogout }: DashboardProps) {
         ) : activeTab === "workflows" ? (
           <WorkflowsTab workflows={workflows} />
         ) : activeTab === "agents" ? (
-          <AgentsTab onlineAgents={onlineAgents} offlineAgents={offlineAgents} />
+          <AgentsTab 
+            onlineAgents={onlineAgents} 
+            offlineAgents={offlineAgents}
+            enabledAgentUrls={enabledAgentUrls}
+            loadingAgentUrls={loadingAgentUrls}
+            onToggleAgent={handleToggleAgent}
+          />
         ) : (
           <MessagesTab messages={messages} />
         )}
@@ -265,7 +332,13 @@ export function Dashboard({ user, onLogout }: DashboardProps) {
 
       {/* Voice Button */}
       {user && (
-        <VoiceButton userId={user.user_id} apiUrl={API_BASE_URL} onNewMessage={handleNewMessage} />
+        <VoiceButton 
+          userId={user.user_id} 
+          apiUrl={API_BASE_URL} 
+          onNewMessage={handleNewMessage}
+          disabled={enabledAgentCount === 0}
+          disabledMessage="Enable at least one agent to start"
+        />
       )}
     </div>
   );
@@ -312,17 +385,42 @@ function WorkflowsTab({ workflows }: { workflows: Workflow[] }) {
 function AgentsTab({
   onlineAgents,
   offlineAgents,
+  enabledAgentUrls,
+  loadingAgentUrls,
+  onToggleAgent,
 }: {
   onlineAgents: Agent[];
   offlineAgents: Agent[];
+  enabledAgentUrls: Set<string>;
+  loadingAgentUrls: Set<string>;
+  onToggleAgent: (agent: Agent) => void;
 }) {
+  const enabledCount = Array.from(enabledAgentUrls).filter(url => 
+    onlineAgents.some(a => a.url === url)
+  ).length;
+
   return (
     <div className="space-y-6">
+      {/* Enabled count summary */}
+      {enabledCount > 0 && (
+        <div className="p-3 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-xl">
+          <p className="text-sm text-green-700 dark:text-green-300 flex items-center gap-2">
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+            </svg>
+            <span><strong>{enabledCount}</strong> agent{enabledCount !== 1 ? 's' : ''} enabled for this session</span>
+          </p>
+        </div>
+      )}
+
       {/* Online Agents */}
       <section>
         <h2 className="text-sm font-semibold text-gray-900 dark:text-white mb-3 flex items-center gap-2">
           <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
           Online ({onlineAgents.length})
+          <span className="text-xs font-normal text-gray-500 dark:text-gray-400 ml-2">
+            Tap to enable
+          </span>
         </h2>
         {onlineAgents.length === 0 ? (
           <div className="p-4 bg-gray-50 dark:bg-gray-800/50 rounded-xl text-center">
@@ -333,7 +431,13 @@ function AgentsTab({
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
             {onlineAgents.map((agent) => (
-              <AgentCard key={agent.url || agent.name} agent={agent} />
+              <AgentCard 
+                key={agent.url || agent.name} 
+                agent={agent}
+                isEnabled={enabledAgentUrls.has(agent.url)}
+                isLoading={loadingAgentUrls.has(agent.url)}
+                onToggle={onToggleAgent}
+              />
             ))}
           </div>
         )}

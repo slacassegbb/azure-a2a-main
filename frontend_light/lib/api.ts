@@ -170,3 +170,97 @@ export async function getAgents(): Promise<Agent[]> {
     return [];
   }
 }
+
+// Session-based agent management
+let sessionId: string | null = null;
+
+function getOrCreateSessionId(): string {
+  if (typeof window === 'undefined') return 'server-session';
+  
+  if (!sessionId) {
+    sessionId = sessionStorage.getItem('a2a_session_id');
+    if (!sessionId) {
+      sessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      sessionStorage.setItem('a2a_session_id', sessionId);
+    }
+  }
+  return sessionId;
+}
+
+export function getSessionId(): string {
+  return getOrCreateSessionId();
+}
+
+export async function getSessionAgents(): Promise<Agent[]> {
+  try {
+    const sid = getOrCreateSessionId();
+    const response = await fetch(`${API_BASE_URL}/agents/session?session_id=${sid}`, {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    return (data.agents || []).map((agent: Record<string, unknown>) => ({
+      name: agent.name as string,
+      description: agent.description as string || '',
+      url: agent.url as string || '',
+      version: agent.version as string || '',
+      iconUrl: agent.iconUrl as string || null,
+      provider: agent.provider as { organization?: string } || null,
+      capabilities: agent.capabilities as { streaming?: boolean; pushNotifications?: boolean } || {},
+      status: 'online' as const, // Session agents are always considered online
+    }));
+  } catch (error) {
+    console.error('[API] Failed to get session agents:', error);
+    return [];
+  }
+}
+
+export async function enableSessionAgent(agent: Agent): Promise<boolean> {
+  try {
+    const sid = getOrCreateSessionId();
+    const response = await fetch(`${API_BASE_URL}/agents/session/enable`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({
+        session_id: sid,
+        agent: {
+          name: agent.name,
+          description: agent.description,
+          url: agent.url,
+          version: agent.version,
+          capabilities: agent.capabilities,
+        }
+      }),
+    });
+
+    return response.ok;
+  } catch (error) {
+    console.error('[API] Failed to enable agent:', error);
+    return false;
+  }
+}
+
+export async function disableSessionAgent(agentUrl: string): Promise<boolean> {
+  try {
+    const sid = getOrCreateSessionId();
+    const response = await fetch(`${API_BASE_URL}/agents/session/disable`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({
+        session_id: sid,
+        agent_url: agentUrl,
+      }),
+    });
+
+    return response.ok;
+  } catch (error) {
+    console.error('[API] Failed to disable agent:', error);
+    return false;
+  }
+}
+
