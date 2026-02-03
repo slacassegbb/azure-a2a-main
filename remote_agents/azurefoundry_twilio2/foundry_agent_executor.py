@@ -121,11 +121,6 @@ class FoundryTwilioAgentExecutor(AgentExecutor):
     ) -> None:
         try:
             user_message = self._convert_parts_to_text(message_parts)
-            
-            # Log the incoming message for debugging
-            logger.info(f"📨 [Twilio] Received message from host: {user_message[:500]}..." if len(user_message) > 500 else f"📨 [Twilio] Received message from host: {user_message}")
-            print(f"📨 [Twilio] Received message from host: {user_message[:500]}..." if len(user_message) > 500 else f"📨 [Twilio] Received message from host: {user_message}")
-            
             agent = await self._get_or_create_agent()
             # Use force_new=True to create separate threads for parallel requests
             thread_id = await self._get_or_create_thread(context_id, agent, force_new=True)

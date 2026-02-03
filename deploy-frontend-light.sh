@@ -92,6 +92,21 @@ fi
 
 BACKEND_URL="https://$BACKEND_FQDN"
 echo -e "${GREEN}✅ Backend URL: $BACKEND_URL${NC}"
+
+# Get WebSocket server FQDN
+WEBSOCKET_FQDN=$(az containerapp show \
+    --name websocket-uami \
+    --resource-group "$RESOURCE_GROUP" \
+    --query properties.configuration.ingress.fqdn -o tsv 2>/dev/null)
+
+if [ -n "$WEBSOCKET_FQDN" ]; then
+    WEBSOCKET_URL="wss://$WEBSOCKET_FQDN"
+    echo -e "${GREEN}✅ WebSocket URL: $WEBSOCKET_URL${NC}"
+else
+    # Fallback: derive from backend URL
+    WEBSOCKET_URL="${BACKEND_URL/https:/wss:}"
+    echo -e "${YELLOW}⚠️  WebSocket container not found, using backend URL for WebSocket${NC}"
+fi
 echo ""
 
 # Read Azure AI Foundry configuration
@@ -143,6 +158,7 @@ IMAGE_LATEST="$ACR_NAME.azurecr.io/$CONTAINER_NAME:latest"
 docker buildx build --platform linux/amd64 \
     -f "$FRONTEND_PATH/Dockerfile" \
     --build-arg NEXT_PUBLIC_A2A_API_URL="$BACKEND_URL" \
+    --build-arg NEXT_PUBLIC_WEBSOCKET_URL="$WEBSOCKET_URL" \
     --build-arg NEXT_PUBLIC_AZURE_AI_FOUNDRY_PROJECT_ENDPOINT="$AZURE_AI_ENDPOINT" \
     --build-arg NEXT_PUBLIC_VOICE_MODEL="$VOICE_MODEL" \
     --build-arg AZURE_OPENAI_GPT_API_KEY="$AZURE_OPENAI_GPT_API_KEY" \
