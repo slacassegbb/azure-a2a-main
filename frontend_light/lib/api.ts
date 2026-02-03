@@ -76,6 +76,10 @@ export interface Agent {
     streaming?: boolean;
     pushNotifications?: boolean;
   };
+  skills?: Array<{
+    name: string;
+    description?: string;
+  }>;
   status: 'online' | 'offline';
 }
 
@@ -161,6 +165,7 @@ export async function getAgents(): Promise<Agent[]> {
       iconUrl: agent.iconUrl as string || null,
       provider: agent.provider as { organization?: string } || null,
       capabilities: agent.capabilities as { streaming?: boolean; pushNotifications?: boolean } || {},
+      skills: agent.skills as Array<{ name: string; description?: string }> || [],
       status: agent.status === 'online' ? 'online' : 'offline',
     }));
 
@@ -212,6 +217,7 @@ export async function getSessionAgents(): Promise<Agent[]> {
       iconUrl: agent.iconUrl as string || null,
       provider: agent.provider as { organization?: string } || null,
       capabilities: agent.capabilities as { streaming?: boolean; pushNotifications?: boolean } || {},
+      skills: agent.skills as Array<{ name: string; description?: string }> || [],
       status: 'online' as const, // Session agents are always considered online
     }));
   } catch (error) {

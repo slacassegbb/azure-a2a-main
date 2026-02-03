@@ -155,31 +155,45 @@ export function AgentCard({ agent, isEnabled = false, onToggle, isLoading = fals
         </p>
       )}
 
-      {/* Capabilities & Provider */}
-      <div className="flex items-center justify-between pt-2 border-t border-gray-100 dark:border-gray-700">
-        <div className="flex items-center gap-2">
-          {agent.capabilities?.streaming && (
-            <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-400 rounded-full">
-              <svg
-                className="w-3 h-3"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M13 10V3L4 14h7v7l9-11h-7z"
-                />
-              </svg>
-              Stream
+      {/* Skills */}
+      {agent.skills && agent.skills.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 mb-3">
+          {agent.skills.slice(0, 3).map((skill, idx) => (
+            <span
+              key={idx}
+              className={`inline-flex items-center px-2 py-0.5 text-xs font-medium rounded-full ${
+                isEnabled
+                  ? "bg-green-100 text-green-700 dark:bg-green-900/50 dark:text-green-400"
+                  : "bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-400"
+              }`}
+              title={skill.description}
+            >
+              {skill.name}
+            </span>
+          ))}
+          {agent.skills.length > 3 && (
+            <span
+              className="inline-flex items-center px-2 py-0.5 text-xs font-medium bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400 rounded-full"
+              title={`${agent.skills.length - 3} more skills`}
+            >
+              +{agent.skills.length - 3}
             </span>
           )}
         </div>
-        {agent.provider?.organization && (
-          <span className="text-xs text-gray-400 dark:text-gray-500 truncate max-w-[100px]">
-            {agent.provider.organization}
+      )}
+
+      {/* Provider */}
+      <div className="flex items-center justify-between pt-2 border-t border-gray-100 dark:border-gray-700">
+        <div className="flex items-center gap-2">
+          {agent.provider?.organization && (
+            <span className="text-xs text-gray-400 dark:text-gray-500 truncate">
+              {agent.provider.organization}
+            </span>
+          )}
+        </div>
+        {agent.version && (
+          <span className="text-xs text-gray-400 dark:text-gray-500">
+            v{agent.version}
           </span>
         )}
       </div>
