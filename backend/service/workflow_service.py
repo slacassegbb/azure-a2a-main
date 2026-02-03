@@ -1,15 +1,19 @@
 """
-Workflow Service - Handles workflow persistence to JSON file.
+Workflow Service - Handles workflow persistence to PostgreSQL database.
 
-Workflows are persisted to a local JSON file for restart resilience and 
+Workflows are persisted to PostgreSQL for restart resilience and 
 cross-browser/device sharing. Each workflow is associated with a user.
+Falls back to JSON file storage if database is not available.
 """
 
 import json
+import os
 from datetime import datetime, UTC
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, field, asdict
+import psycopg2
+from psycopg2.extras import RealDictCursor
 
 # Default data directory (matches other services)
 DEFAULT_DATA_DIR = Path(__file__).parent.parent / "data"
@@ -59,19 +63,135 @@ class Workflow:
 
 
 class WorkflowService:
-    """Handles workflow persistence using JSON file storage."""
+    """Handles workflow persistence using PostgreSQL database with JSON fallback."""
     
     def __init__(self, workflows_file: Path | str = None):
-        if workflows_file is None:
-            workflows_file = DEFAULT_DATA_DIR / "workflows.json"
-        self.workflows_file = Path(workflows_file)
-        self.workflows: Dict[str, Workflow] = {}
+        # Try to connect to database
+        self.database_url = os.environ.get('DATABASE_URL')
+        self.use_database = False
+        self.db_conn = None
         
-        # Ensure data directory exists
-        self.workflows_file.parent.mkdir(parents=True, exist_ok=True)
+        if self.database_url:
+            try:
+                self.db_conn = psycopg2.connect(self.database_url)
+                self.use_database = True
+                print(f"[WorkflowService] ✅ Using PostgreSQL database")
+            except Exception as e:
+                print(f"[WorkflowService] ⚠️  Database connection failed: {e}")
+                print(f"[WorkflowService] Falling back to JSON file storage")
         
-        # Load workflows from JSON file
-        self._load_workflows_from_file()
+        # Fallback to JSON file if database not available
+        if not self.use_database:
+            if workflows_file is None:
+                workflows_file = DEFAULT_DATA_DIR / "workflows.json"
+            self.workflows_file = Path(workflows_file)
+            self.workflows: Dict[str, Workflow] = {}
+            
+            # Ensure data directory exists
+            self.workflows_file.parent.mkdir(parents=True, exist_ok=True)
+            
+            # Load workflows from JSON file
+            self._load_workflows_from_file()
+            print(f"[WorkflowService] Using JSON file storage")
+        else:
+            # When using database, load into memory on init
+            self.workflows: Dict[str, Workflow] = {}
+            self._load_workflows_from_database()
+    
+            # When using database, load into memory on init
+            self.workflows: Dict[str, Workflow] = {}
+            self._load_workflows_from_database()
+    
+    def _load_workflows_from_database(self):
+        """Load workflows from PostgreSQL database."""
+        try:
+            cur = self.db_conn.cursor(cursor_factory=RealDictCursor)
+            cur.execute("""
+                SELECT id, name, description, category, user_id,
+                       steps, connections, goal, is_custom,
+                       created_at, updated_at
+                FROM workflows
+                ORDER BY created_at DESC
+            """)
+            
+            for row in cur.fetchall():
+                workflow = Workflow(
+                    id=row['id'],
+                    name=row['name'],
+                    description=row['description'] or '',
+                    category=row['category'] or 'Custom',
+                    user_id=row['user_id'],
+                    steps=row['steps'] or [],
+                    connections=row['connections'] or [],
+                    goal=row['goal'] or '',
+                    is_custom=row['is_custom'],
+                    created_at=row['created_at'].isoformat() if row['created_at'] else '',
+                    updated_at=row['updated_at'].isoformat() if row['updated_at'] else ''
+                )
+                self.workflows[workflow.id] = workflow
+            
+            cur.close()
+            print(f"[WorkflowService] Loaded {len(self.workflows)} workflows from database")
+        except Exception as e:
+            print(f"[WorkflowService] Error loading from database: {e}")
+    
+    def _save_workflow_to_database(self, workflow: Workflow) -> bool:
+        """Save a single workflow to PostgreSQL database using UPSERT."""
+        try:
+            cur = self.db_conn.cursor()
+            cur.execute("""
+                INSERT INTO workflows (
+                    id, name, description, category, user_id,
+                    steps, connections, goal, is_custom,
+                    created_at, updated_at
+                ) VALUES (
+                    %s, %s, %s, %s, %s,
+                    %s::jsonb, %s::jsonb, %s, %s,
+                    %s, %s
+                )
+                ON CONFLICT (id) DO UPDATE SET
+                    name = EXCLUDED.name,
+                    description = EXCLUDED.description,
+                    category = EXCLUDED.category,
+                    steps = EXCLUDED.steps,
+                    connections = EXCLUDED.connections,
+                    goal = EXCLUDED.goal,
+                    is_custom = EXCLUDED.is_custom,
+                    updated_at = EXCLUDED.updated_at
+            """, (
+                workflow.id,
+                workflow.name,
+                workflow.description,
+                workflow.category,
+                workflow.user_id,
+                json.dumps(workflow.steps),
+                json.dumps(workflow.connections),
+                workflow.goal,
+                workflow.is_custom,
+                workflow.created_at,
+                workflow.updated_at
+            ))
+            self.db_conn.commit()
+            cur.close()
+            return True
+        except Exception as e:
+            print(f"[WorkflowService] Error saving workflow to database: {e}")
+            self.db_conn.rollback()
+            return False
+    
+    def _delete_workflow_from_database(self, workflow_id: str) -> bool:
+        """Delete a workflow from PostgreSQL database."""
+        try:
+            cur = self.db_conn.cursor()
+            cur.execute("DELETE FROM workflows WHERE id = %s", (workflow_id,))
+            rows_deleted = cur.rowcount
+            self.db_conn.commit()
+            cur.close()
+            return rows_deleted > 0
+        except Exception as e:
+            print(f"[WorkflowService] Error deleting workflow from database: {e}")
+            self.db_conn.rollback()
+            return False
     
     def _load_workflows_from_file(self):
         """Load workflows from JSON file."""
@@ -145,7 +265,7 @@ class WorkflowService:
         category: str = "Custom",
         goal: str = ""
     ) -> Workflow:
-        """Create a new workflow and save to file."""
+        """Create a new workflow and save to database or file."""
         now = datetime.now(UTC).isoformat().replace('+00:00', 'Z')
         
         workflow = Workflow(
@@ -163,7 +283,12 @@ class WorkflowService:
         )
         
         self.workflows[workflow.id] = workflow
-        self._save_workflows_to_file()
+        
+        if self.use_database:
+            self._save_workflow_to_database(workflow)
+        else:
+            self._save_workflows_to_file()
+        
         print(f"[WorkflowService] Created workflow '{name}' (id={workflow_id}) for user {user_id}")
         return workflow
     
@@ -204,7 +329,11 @@ class WorkflowService:
         
         workflow.updated_at = datetime.now(UTC).isoformat().replace('+00:00', 'Z')
         
-        self._save_workflows_to_file()
+        if self.use_database:
+            self._save_workflow_to_database(workflow)
+        else:
+            self._save_workflows_to_file()
+        
         print(f"[WorkflowService] Updated workflow '{workflow.name}' (id={workflow_id})")
         return workflow
     
@@ -220,7 +349,12 @@ class WorkflowService:
             return False
         
         del self.workflows[workflow_id]
-        self._save_workflows_to_file()
+        
+        if self.use_database:
+            self._delete_workflow_from_database(workflow_id)
+        else:
+            self._save_workflows_to_file()
+        
         print(f"[WorkflowService] Deleted workflow {workflow_id}")
         return True
     
