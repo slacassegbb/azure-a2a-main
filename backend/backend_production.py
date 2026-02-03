@@ -286,6 +286,67 @@ async def execute_scheduled_workflow(workflow_name: str, session_id: str, timeou
         return {"success": False, "error": str(e)}
 
 
+async def wake_up_remote_agents():
+    """Wake up all remote agents with public URLs on backend startup.
+    
+    This is useful when agents are running on scale-to-zero containers (like Azure Container Apps).
+    Sending a health check request will wake them up so they're ready when users make queries.
+    """
+    import asyncio
+    
+    print("[STARTUP] 🔔 Waking up remote agents with public URLs...")
+    
+    try:
+        registry = get_registry()
+        agents = registry.get_all_agents()
+        
+        # Filter agents with public URLs (https://)
+        remote_agents = [
+            agent for agent in agents 
+            if agent.get('url', '').startswith('https://')
+        ]
+        
+        if not remote_agents:
+            print("[STARTUP] No remote agents with public URLs found")
+            return
+        
+        print(f"[STARTUP] Found {len(remote_agents)} remote agents to wake up")
+        
+        # Wake up agents in parallel with a short timeout
+        async def ping_agent(agent: dict) -> tuple:
+            """Ping an agent's health endpoint to wake it up."""
+            url = agent.get('url', '').rstrip('/')
+            name = agent.get('name', 'Unknown')
+            health_url = f"{url}/health"
+            
+            try:
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    response = await client.get(health_url)
+                    if response.status_code == 200:
+                        print(f"[STARTUP] ✅ {name}: AWAKE (status: {response.status_code})")
+                        return (name, True)
+                    else:
+                        print(f"[STARTUP] ⚠️  {name}: responded with status {response.status_code}")
+                        return (name, False)
+            except httpx.TimeoutException:
+                print(f"[STARTUP] ⏳ {name}: still waking up (timeout - container starting)")
+                return (name, False)
+            except Exception as e:
+                print(f"[STARTUP] ❌ {name}: error - {type(e).__name__}: {e}")
+                return (name, False)
+        
+        # Run all pings in parallel
+        tasks = [ping_agent(agent) for agent in remote_agents]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Summary
+        awake_count = sum(1 for r in results if isinstance(r, tuple) and r[1])
+        print(f"[STARTUP] 🔔 Wake-up complete: {awake_count}/{len(remote_agents)} agents responded")
+        
+    except Exception as e:
+        print(f"[STARTUP] ❌ Error during agent wake-up: {type(e).__name__}: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """FastAPI lifespan context manager for startup and shutdown."""
@@ -335,6 +396,13 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"[WARNING] Failed to initialize workflow scheduler: {type(e).__name__}: {e}")
         # Continue startup even if scheduler fails
+    
+    # Wake up all remote agents with public URLs (for scale-to-zero containers)
+    try:
+        await wake_up_remote_agents()
+    except Exception as e:
+        print(f"[WARNING] Failed to wake up remote agents: {type(e).__name__}: {e}")
+        # Continue startup even if wake-up fails
     
     print("[INFO] A2A Backend API startup complete")
     
