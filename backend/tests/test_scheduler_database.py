@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Test scheduler database operations."""
 import os
 import sys
@@ -7,6 +8,9 @@ from pathlib import Path
 backend_dir = Path(__file__).parent.parent
 sys.path.insert(0, str(backend_dir))
 
+# Set DATABASE_URL before importing
+os.environ["DATABASE_URL"] = "postgresql://pgadmin:Hip1hops!@a2adb.postgres.database.azure.com:5432/postgres"
+
 from service.scheduler_service import WorkflowScheduler, ScheduleType
 
 def test_scheduler_database():
@@ -14,12 +18,7 @@ def test_scheduler_database():
     print("\n🧪 Testing Scheduler Database Operations\n")
     print("=" * 50)
     
-    # Initialize scheduler with database
     database_url = os.getenv('DATABASE_URL')
-    if not database_url:
-        print("❌ DATABASE_URL not set")
-        return False
-    
     print(f"✓ Using database: {database_url.split('@')[1] if '@' in database_url else 'local'}")
     
     scheduler = WorkflowScheduler()
@@ -32,7 +31,7 @@ def test_scheduler_database():
     
     # Test 2: List schedules
     print("\n📋 Test 2: Listing schedules...")
-    schedules = scheduler.get_schedules()
+    schedules = scheduler.list_schedules()
     for schedule in schedules[:3]:  # Show first 3
         print(f"  - {schedule.id}: {schedule.workflow_name} ({schedule.schedule_type.value})")
     
@@ -44,8 +43,7 @@ def test_scheduler_database():
         session_id="test-session",
         schedule_type=ScheduleType.INTERVAL,
         enabled=False,  # Disabled so it doesn't actually run
-        interval_value=60,
-        interval_unit="minutes"
+        interval_minutes=60
     )
     
     if test_schedule:
@@ -56,10 +54,10 @@ def test_scheduler_database():
         updated = scheduler.update_schedule(
             test_schedule.id,
             enabled=True,
-            interval_value=30
+            interval_minutes=30
         )
         if updated:
-            print(f"✓ Updated schedule: interval_value={updated.interval_value}")
+            print(f"✓ Updated schedule: interval_minutes={updated.interval_minutes}")
         else:
             print("❌ Failed to update schedule")
         
@@ -70,7 +68,7 @@ def test_scheduler_database():
             print(f"✓ Retrieved schedule: {fetched.id}")
             print(f"  - workflow_name: {fetched.workflow_name}")
             print(f"  - enabled: {fetched.enabled}")
-            print(f"  - interval_value: {fetched.interval_value}")
+            print(f"  - interval_minutes: {fetched.interval_minutes}")
         else:
             print("❌ Failed to retrieve schedule")
         

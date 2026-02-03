@@ -306,26 +306,70 @@ class WorkflowScheduler:
             logger.error(f"Error saving schedules: {e}")
     
     def _load_run_history(self):
-        """Load run history from persistent storage."""
-        if self.run_history_file.exists():
-            try:
-                with open(self.run_history_file, 'r') as f:
-                    self.run_history = json.load(f)
-                logger.info(f"Loaded {len(self.run_history)} run history entries")
-            except Exception as e:
-                logger.error(f"Error loading run history: {e}")
-                self.run_history = []
-        else:
+        """Load run history from database or file."""
+        if self.use_database:
+            # When using database, we don't load all history into memory
+            # History is queried on-demand via get_run_history()
             self.run_history = []
+            logger.info("[WorkflowScheduler] Run history will be queried from database")
+        else:
+            # Fallback to JSON file
+            if self.run_history_file.exists():
+                try:
+                    with open(self.run_history_file, 'r') as f:
+                        self.run_history = json.load(f)
+                    logger.info(f"Loaded {len(self.run_history)} run history entries from file")
+                except Exception as e:
+                    logger.error(f"Error loading run history: {e}")
+                    self.run_history = []
+            else:
+                self.run_history = []
     
     def _save_run_history(self):
-        """Save run history to persistent storage."""
+        """Save run history to file (JSON fallback only)."""
         try:
-            # Keep only last 100 entries per schedule to avoid file growth
+            # Keep only last 500 entries to avoid file growth
             with open(self.run_history_file, 'w') as f:
                 json.dump(self.run_history[-500:], f, indent=2, default=str)
         except Exception as e:
             logger.error(f"Error saving run history: {e}")
+    
+    def _add_run_history_to_database(self, run_id: str, schedule_id: str, workflow_id: str, 
+                                      workflow_name: str, session_id: str, timestamp: str,
+                                      started_at: str, completed_at: str, duration_seconds: float,
+                                      status: str, result: Optional[str], error: Optional[str]):
+        """Add run history entry to database."""
+        if not self.db_conn:
+            logger.error("No database connection available")
+            return
+        
+        try:
+            cur = self.db_conn.cursor()
+            
+            # Convert ISO strings to datetime objects
+            timestamp_dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+            started_at_dt = datetime.fromisoformat(started_at.replace('Z', '+00:00'))
+            completed_at_dt = datetime.fromisoformat(completed_at.replace('Z', '+00:00'))
+            
+            cur.execute("""
+                INSERT INTO schedule_run_history (
+                    run_id, schedule_id, workflow_id, workflow_name, session_id,
+                    timestamp, started_at, completed_at, duration_seconds,
+                    status, result, error
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, (
+                run_id, schedule_id, workflow_id, workflow_name, session_id,
+                timestamp_dt, started_at_dt, completed_at_dt, duration_seconds,
+                status, result, error
+            ))
+            
+            self.db_conn.commit()
+            cur.close()
+            logger.debug(f"[WorkflowScheduler] Saved run history {run_id} to database")
+        except Exception as e:
+            logger.error(f"[WorkflowScheduler] Error saving run history to database: {e}")
+            if self.db_conn:
+                self.db_conn.rollback()
     
     def _add_run_history(self, schedule_id: str, workflow_id: str, workflow_name: str, session_id: str, 
                          status: str, result: Optional[str] = None, error: Optional[str] = None,
@@ -347,8 +391,26 @@ class WorkflowScheduler:
             "result": result[:5000] if result else None,  # Truncate to 5000 chars
             "error": error,
         }
-        self.run_history.append(entry)
-        self._save_run_history()
+        
+        if self.use_database:
+            self._add_run_history_to_database(
+                run_id=entry["run_id"],
+                schedule_id=entry["schedule_id"],
+                workflow_id=entry["workflow_id"],
+                workflow_name=entry["workflow_name"],
+                session_id=entry["session_id"],
+                timestamp=entry["timestamp"],
+                started_at=entry["started_at"],
+                completed_at=entry["completed_at"],
+                duration_seconds=entry["duration_seconds"],
+                status=entry["status"],
+                result=entry["result"],
+                error=entry["error"]
+            )
+        else:
+            self.run_history.append(entry)
+            self._save_run_history()
+        
         return entry
 
     def set_workflow_executor(self, executor: Callable):
@@ -764,19 +826,70 @@ class WorkflowScheduler:
     
     def get_run_history(self, schedule_id: Optional[str] = None, session_id: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
         """Get run history for schedules with full results, optionally filtered by session."""
-        filtered = self.run_history
         
-        if schedule_id:
-            # Filter by schedule_id
-            filtered = [h for h in filtered if h.get('schedule_id') == schedule_id]
-        
-        if session_id:
-            # Filter by session_id (owner of the schedule)
-            filtered = [h for h in filtered if h.get('session_id') == session_id]
-        
-        # Sort by timestamp descending and limit
-        sorted_history = sorted(filtered, key=lambda x: x.get('timestamp', ''), reverse=True)
-        return sorted_history[:limit]
+        if self.use_database and self.db_conn:
+            # Query from database
+            try:
+                cur = self.db_conn.cursor()
+                
+                # Build query with optional filters
+                query = "SELECT * FROM schedule_run_history WHERE 1=1"
+                params = []
+                
+                if schedule_id:
+                    query += " AND schedule_id = %s"
+                    params.append(schedule_id)
+                
+                if session_id:
+                    query += " AND session_id = %s"
+                    params.append(session_id)
+                
+                query += " ORDER BY timestamp DESC LIMIT %s"
+                params.append(limit)
+                
+                cur.execute(query, params)
+                rows = cur.fetchall()
+                cur.close()
+                
+                # Convert to list of dicts
+                history = []
+                for row in rows:
+                    entry = {
+                        "run_id": str(row[0]),
+                        "schedule_id": str(row[1]),
+                        "workflow_id": row[2],
+                        "workflow_name": row[3],
+                        "session_id": row[4],
+                        "timestamp": row[5].isoformat() if row[5] else None,
+                        "started_at": row[6].isoformat() if row[6] else None,
+                        "completed_at": row[7].isoformat() if row[7] else None,
+                        "duration_seconds": row[8],
+                        "status": row[9],
+                        "result": row[10],
+                        "error": row[11]
+                    }
+                    history.append(entry)
+                
+                return history
+                
+            except Exception as e:
+                logger.error(f"Error querying run history from database: {e}")
+                return []
+        else:
+            # Fallback to in-memory list
+            filtered = self.run_history
+            
+            if schedule_id:
+                # Filter by schedule_id
+                filtered = [h for h in filtered if h.get('schedule_id') == schedule_id]
+            
+            if session_id:
+                # Filter by session_id (owner of the schedule)
+                filtered = [h for h in filtered if h.get('session_id') == session_id]
+            
+            # Sort by timestamp descending and limit
+            sorted_history = sorted(filtered, key=lambda x: x.get('timestamp', ''), reverse=True)
+            return sorted_history[:limit]
 
 
 # Global scheduler instance
