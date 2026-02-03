@@ -869,8 +869,7 @@ class ConversationServer:
         try:
             log_debug("Starting agent registry sync with health checks...")
             
-            # Read agents from the persistent registry file (not in-memory list)
-            from service.agent_registry import get_registry
+            # Use module-level imported get_registry (same as _get_catalog uses)
             registry = get_registry()
             registry_agents = registry.get_all_agents()
             
@@ -897,8 +896,12 @@ class ConversationServer:
                     agent_url = agent.get('url')
                     agent_status = health_map.get(agent_url, False)
                     
-                    # Get capabilities from dict
-                    caps = agent.get('capabilities', {}) or {}
+                    # Get capabilities from dict (handle legacy list format)
+                    raw_caps = agent.get('capabilities')
+                    if isinstance(raw_caps, dict):
+                        caps = raw_caps
+                    else:
+                        caps = {}  # Default to empty dict if capabilities is a list or None
                     
                     agent_data = {
                         'name': agent_name,
@@ -929,7 +932,9 @@ class ConversationServer:
                 "count": len(agent_list)
             }
         except Exception as e:
+            import traceback
             print(f"[DEBUG] Error in agent registry sync: {str(e)}")
+            traceback.print_exc()
             return {
                 "success": False,
                 "error": str(e),
