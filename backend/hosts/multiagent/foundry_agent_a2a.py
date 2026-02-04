@@ -3681,7 +3681,7 @@ Answer with just JSON:
                                 'goal': selected_wf.get('goal', '')
                             }
                             log_debug(f"🔀 [Multi-Workflow] Selected workflow: {route_selection.selected_workflow}")
-                            await self._emit_status_event(f"Selected workflow: {route_selection.selected_workflow}", context_id)
+                            await self._emit_status_event(f"🔄 Route Decision: Using WORKFLOW '{route_selection.selected_workflow}'", context_id)
                         else:
                             log_error(f"[Multi-Workflow] Workflow '{route_selection.selected_workflow}' not found in available workflows")
                             agent_mode = True  # Fallback to agent orchestration
@@ -3771,14 +3771,14 @@ Answer with just JSON:
                         agent_mode = True
                         workflow = None
                         log_debug(f"🔀 [Multi-Workflow] Using free-form agent orchestration")
-                        await self._emit_status_event("Using multi-agent orchestration", context_id)
+                        await self._emit_status_event("🔄 Route Decision: Using AGENTS (no workflow)", context_id)
                         
                     elif route_selection.approach == "direct":
                         # Skip orchestration, use standard Foundry response
                         agent_mode = False
                         workflow = None
                         log_debug(f"🔀 [Multi-Workflow] Using direct response (no orchestration)")
-                        await self._emit_status_event("Processing directly", context_id)
+                        await self._emit_status_event("🔄 Route Decision: Direct response (no agents needed)", context_id)
                         
                 except Exception as e:
                     log_error(f"[Multi-Workflow] Routing error: {e}, falling back to agent mode")

@@ -583,6 +583,7 @@ class WorkflowOrchestration:
             return {"error": task.error_message, "output": None}
         
         log_debug(f"🎯 [Agent Mode] Calling agent: {recommended_agent}")
+        await self._emit_status_event(f"🤖 Calling Agent: {recommended_agent}", context_id)
         
         # Build enhanced task message with previous task output for sequential context
         # This enables agents to build upon previous work in the workflow
