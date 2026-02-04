@@ -273,11 +273,29 @@ def clear_session_files(session_id: str) -> int:
         Number of files cleared
     """
     with _lock:
-        count = len(_registry.get(session_id, []))
-        if session_id in _registry:
-            del _registry[session_id]
-            _save_registry()
-        return count
+        if _use_database and _db_conn:
+            # Delete from database
+            try:
+                cur = _db_conn.cursor()
+                cur.execute("DELETE FROM agent_files WHERE session_id = %s", (session_id,))
+                count = cur.rowcount
+                _db_conn.commit()
+                cur.close()
+                # Also clear from in-memory cache
+                if session_id in _registry:
+                    del _registry[session_id]
+                return count
+            except Exception as e:
+                print(f"[AgentFileRegistry] Error deleting files from database: {e}")
+                _db_conn.rollback()
+                return 0
+        else:
+            # Fallback to JSON file
+            count = len(_registry.get(session_id, []))
+            if session_id in _registry:
+                del _registry[session_id]
+                _save_registry()
+            return count
 
 
 def get_all_sessions() -> List[str]:
