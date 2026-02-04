@@ -3,10 +3,11 @@
 import type React from "react"
 import { useEffect, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
-import { X, Plus, Trash2, Download, Upload, Library, X as CloseIcon, Send, Loader2, PlayCircle, StopCircle, Phone, PhoneOff, Mic, MicOff, ChevronLeft, ChevronRight, Save } from "lucide-react"
+import { X, Plus, Trash2, Download, Upload, Library, X as CloseIcon, Send, Loader2, PlayCircle, StopCircle, Phone, PhoneOff, Mic, MicOff, ChevronLeft, ChevronRight, Save, FileText } from "lucide-react"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { WorkflowCatalog } from "./workflow-catalog"
 import { Input } from "@/components/ui/input"
+import { Textarea } from "@/components/ui/textarea"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { useEventHub } from "@/hooks/use-event-hub"
 import { useVoiceLive } from "@/hooks/use-voice-live"
@@ -58,16 +59,16 @@ interface VisualWorkflowDesignerProps {
 }
 
 const AGENT_COLORS = [
-  "#ec4899", // pink
   "#8b5cf6", // purple
-  "#06b6d4", // cyan
+  "#3b82f6", // blue
   "#10b981", // emerald
   "#f59e0b", // amber
   "#ef4444", // red
-  "#3b82f6", // blue
+  "#6366f1", // indigo
   "#14b8a6", // teal
   "#f97316", // orange
   "#a855f7", // violet
+  "#ec4899", // pink
 ]
 
 const HOST_COLOR = "#6366f1"
@@ -114,6 +115,7 @@ export function VisualWorkflowDesigner({
   const hasInitializedRef = useRef(false)
   const [showCatalog, setShowCatalog] = useState(true)
   const [showSaveDialog, setShowSaveDialog] = useState(false)
+  const [showTextEditorDialog, setShowTextEditorDialog] = useState(false)
   const [workflowName, setWorkflowName] = useState("")
   const [workflowDescription, setWorkflowDescription] = useState("")
   const [workflowCategory, setWorkflowCategory] = useState("Custom")
@@ -3280,68 +3282,6 @@ export function VisualWorkflowDesigner({
 
         {/* Canvas */}
         <div className="flex-1 flex flex-col gap-2">
-          {/* Workflow Metadata - Compact Editable */}
-          {(workflowSteps.length > 0 || workflowName) && (
-            <div className="px-3 py-2 bg-slate-800/50 rounded-lg border border-slate-700">
-              <div className="flex items-end gap-3">
-                <div className="flex-1 grid grid-cols-3 gap-3">
-                  {/* Title */}
-                  <div className="space-y-1">
-                    <label className="text-[10px] text-slate-400 uppercase tracking-wide">Workflow Name</label>
-                    <Input
-                      value={workflowName}
-                      onChange={(e) => {
-                        setWorkflowName(e.target.value)
-                        if (onWorkflowNameChange) {
-                          onWorkflowNameChange(e.target.value)
-                        }
-                      }}
-                      placeholder="Enter workflow name..."
-                      className="h-8 text-sm font-medium bg-slate-900/50 border-slate-600 text-slate-200"
-                    />
-                  </div>
-                  
-                  {/* Description */}
-                  <div className="space-y-1">
-                    <label className="text-[10px] text-slate-400 uppercase tracking-wide">Description</label>
-                    <Input
-                      value={workflowDescription}
-                      onChange={(e) => setWorkflowDescription(e.target.value)}
-                      placeholder="Brief description..."
-                      className="h-8 text-sm bg-slate-900/50 border-slate-600 text-slate-300"
-                    />
-                  </div>
-                  
-                  {/* Goal */}
-                  <div className="space-y-1">
-                    <label className="text-[10px] text-slate-400 uppercase tracking-wide">Goal</label>
-                    <Input
-                      value={workflowGoal}
-                      onChange={(e) => {
-                        setWorkflowGoal(e.target.value)
-                        if (onWorkflowGoalChange) {
-                          onWorkflowGoalChange(e.target.value)
-                        }
-                      }}
-                      placeholder="What should this accomplish..."
-                      className="h-8 text-sm bg-slate-900/50 border-slate-600 text-slate-300"
-                    />
-                  </div>
-                </div>
-                
-                {/* Save Button - Always visible */}
-                <Button
-                  onClick={handleQuickSave}
-                  size="sm"
-                  className="h-8"
-                >
-                  <Save className="h-3 w-3 mr-1" />
-                  Save
-                </Button>
-              </div>
-            </div>
-          )}
-          
           <div 
             className="flex-1 relative bg-slate-900 rounded-lg border-2 border-dashed border-slate-800 overflow-hidden"
             onDragOver={(e) => {
@@ -3359,7 +3299,49 @@ export function VisualWorkflowDesigner({
                 cursor: draggingStepId ? 'move' : isPanning ? 'grabbing' : 'grab'
               }}
             />
+            
+            {/* Workflow Name - Top Left */}
+            {workflowName && (
+              <h3 className="absolute top-3 left-3 text-sm font-semibold text-slate-200">{workflowName}</h3>
+            )}
+            
+            {/* Edit Workflow Text Button - Bottom Right */}
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setShowTextEditorDialog(true)}
+              className="absolute bottom-3 right-3 h-8 text-xs bg-slate-800/90 hover:bg-slate-700 border border-slate-600"
+            >
+              <FileText className="h-3 w-3 mr-1.5" />
+              Edit Text
+            </Button>
           </div>
+
+          {/* Text Editor Dialog */}
+          <Dialog open={showTextEditorDialog} onOpenChange={setShowTextEditorDialog}>
+            <DialogContent className="max-w-2xl">
+              <DialogHeader>
+                <DialogTitle>Workflow Text</DialogTitle>
+                <DialogDescription>
+                  View and edit the workflow steps as text. Changes will update the visual canvas.
+                </DialogDescription>
+              </DialogHeader>
+              <Textarea
+                value={generatedWorkflowText}
+                onChange={(e) => {
+                  setGeneratedWorkflowText(e.target.value)
+                  onWorkflowGenerated(e.target.value)
+                }}
+                placeholder="Example:&#10;1. Use the image generator agent to create an image&#10;2. Use the branding agent to get branding guidelines&#10;3. Use the image generator to refine the image based on branding"
+                className="min-h-[300px] font-mono text-sm"
+              />
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setShowTextEditorDialog(false)}>
+                  Close
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
 
           {/* Test Workflow Panel - Between canvas and analytics */}
           {workflowSteps.length > 0 && generatedWorkflowText && (
@@ -3568,7 +3550,7 @@ export function VisualWorkflowDesigner({
             const hasData = totalTokens > 0 || totalTime > 0
             
             return (
-              <div className="flex items-center gap-6 px-4 py-2 bg-slate-800/50 rounded-lg border border-slate-700/50">
+              <div className="flex items-center justify-center gap-6 px-4 py-2 bg-slate-800/50 rounded-lg border border-slate-700/50">
                 {/* Total Time */}
                 <div className="flex items-center gap-2">
                   <div className="flex items-center justify-center w-8 h-8 rounded-full bg-emerald-500/20 border border-emerald-500/30">
@@ -3603,12 +3585,12 @@ export function VisualWorkflowDesigner({
                 
                 {/* Host Tokens */}
                 <div className="flex items-center gap-2">
-                  <div className="flex items-center justify-center w-8 h-8 rounded-full bg-cyan-500/20 border border-cyan-500/30">
-                    <span className="text-cyan-400">🧠</span>
+                  <div className="flex items-center justify-center w-8 h-8 rounded-full bg-blue-500/20 border border-blue-500/30">
+                    <span className="text-blue-400">🧠</span>
                   </div>
                   <div>
                     <div className="text-xs text-slate-500 uppercase tracking-wide">Host Tokens</div>
-                    <div className="text-lg font-bold text-cyan-400">
+                    <div className="text-lg font-bold text-blue-400">
                       {hostTokens > 0 ? formatTokens(hostTokens) : "—"}
                     </div>
                   </div>
@@ -3751,7 +3733,7 @@ export function VisualWorkflowDesigner({
 
         {/* Workflow Catalog Sidebar */}
         {showCatalog && (
-          <div className="w-80 flex flex-col">
+          <div className="w-96 flex flex-col">
             <div className="bg-slate-900 rounded-lg border border-slate-700 overflow-hidden h-full flex flex-col">
               <div className="p-3 border-b border-slate-700 bg-slate-800/50 flex items-center justify-between">
                 <h3 className="text-sm font-semibold text-slate-200">Active Workflows</h3>
@@ -3872,20 +3854,6 @@ export function VisualWorkflowDesigner({
           )}
         </div>
       </div>
-
-      {/* Generated Workflow Preview - Collapsible */}
-      {workflowSteps.length > 0 && generatedWorkflowText && (
-        <details className="bg-slate-900 rounded-lg border border-slate-800">
-          <summary className="cursor-pointer p-3 text-sm font-semibold text-slate-200 hover:bg-slate-800/50 rounded-lg">
-            Generated Workflow Text (click to expand)
-          </summary>
-          <div className="p-4 pt-0">
-            <pre className="text-xs font-mono text-slate-300 bg-slate-950 p-3 rounded whitespace-pre-wrap">
-              {generatedWorkflowText}
-            </pre>
-          </div>
-        </details>
-      )}
 
       {/* Save Workflow Dialog */}
       <Dialog open={showSaveDialog} onOpenChange={setShowSaveDialog}>

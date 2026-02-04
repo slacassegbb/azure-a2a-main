@@ -5,11 +5,12 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
-import { Sparkles, Download, Trash2, Save, Search, Clock, Plus, X } from "lucide-react"
+import { Sparkles, Download, Trash2, Save, Search, Clock, Plus, X, Pencil } from "lucide-react"
 import { useState, useEffect } from "react"
 import { ScheduleWorkflowDialog } from "./schedule-workflow-dialog"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
+import { Textarea } from "@/components/ui/textarea"
 
 interface WorkflowTemplate {
   id: string
@@ -215,6 +216,13 @@ export function WorkflowCatalog({ onLoadWorkflow, onSaveWorkflow, onNewWorkflow,
   const [newWorkflowCategory, setNewWorkflowCategory] = useState("Custom")
   const [newWorkflowGoal, setNewWorkflowGoal] = useState("Complete the workflow tasks efficiently and accurately")
   
+  // Edit mode state
+  const [editingWorkflowId, setEditingWorkflowId] = useState<string | null>(null)
+  const [editName, setEditName] = useState("")
+  const [editDescription, setEditDescription] = useState("")
+  const [editGoal, setEditGoal] = useState("")
+  const [editCategory, setEditCategory] = useState("")
+  
   // Load workflows from backend (if authenticated) or localStorage on mount and when refreshTrigger changes
   useEffect(() => {
     const loadWorkflows = async () => {
@@ -296,6 +304,58 @@ export function WorkflowCatalog({ onLoadWorkflow, onSaveWorkflow, onNewWorkflow,
     }
   }
 
+  const handleStartEdit = (workflow: WorkflowTemplate) => {
+    setEditingWorkflowId(workflow.id)
+    setEditName(workflow.name)
+    setEditDescription(workflow.description)
+    setEditGoal(workflow.goal || "")
+    setEditCategory(workflow.category)
+  }
+
+  const handleSaveEdit = async (workflowId: string) => {
+    const { updateWorkflow, isAuthenticated } = await import('@/lib/workflow-api')
+    
+    const workflow = customWorkflows.find(w => w.id === workflowId)
+    if (!workflow) return
+    
+    const updatedWorkflow = {
+      ...workflow,
+      name: editName,
+      description: editDescription,
+      goal: editGoal,
+      category: editCategory
+    }
+    
+    if (isAuthenticated()) {
+      // Update in backend
+      const saved = await updateWorkflow(workflowId, {
+        name: editName,
+        description: editDescription,
+        goal: editGoal,
+        category: editCategory
+      })
+      if (saved) {
+        console.log('[WorkflowCatalog] Updated workflow in backend:', workflowId)
+        setCustomWorkflows(prev => prev.map(w => w.id === workflowId ? updatedWorkflow : w))
+      } else {
+        alert("Failed to update workflow")
+        return
+      }
+    } else {
+      // Update in localStorage
+      const updated = customWorkflows.map(w => w.id === workflowId ? updatedWorkflow : w)
+      setCustomWorkflows(updated)
+      localStorage.setItem('custom-workflows', JSON.stringify(updated))
+      console.log('[WorkflowCatalog] Updated workflow in localStorage:', workflowId)
+    }
+    
+    setEditingWorkflowId(null)
+  }
+
+  const handleCancelEdit = () => {
+    setEditingWorkflowId(null)
+  }
+
   // Only show custom/user workflows, not predefined ones
   const allWorkflows = customWorkflows
   
@@ -342,30 +402,57 @@ export function WorkflowCatalog({ onLoadWorkflow, onSaveWorkflow, onNewWorkflow,
           ) : (
             filteredWorkflows.map((workflow) => {
               const isSelected = selectedWorkflowId === workflow.id
+              const isEditing = editingWorkflowId === workflow.id
+              
               return (
             <Card 
               key={workflow.id} 
-              className={`bg-slate-800 transition-colors cursor-pointer ${
-                isSelected 
+              className={`bg-slate-800 transition-colors ${
+                isEditing 
                   ? 'border-indigo-500 border-2' 
-                  : 'border-slate-700 hover:border-indigo-500'
+                  : isSelected 
+                    ? 'border-indigo-500 border-2 cursor-pointer' 
+                    : 'border-slate-700 hover:border-indigo-500 cursor-pointer'
               }`}
-              onClick={() => onLoadWorkflow(workflow)}
+              onClick={() => !isEditing && onLoadWorkflow(workflow)}
             >
-              <CardHeader className="p-3">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="flex-1">
-                    <CardTitle className="text-sm text-slate-200 flex items-center gap-2">
-                      {workflow.name}
-                      {workflow.isCustom && (
-                        <Badge variant="outline" className="text-xs">Custom</Badge>
-                      )}
-                    </CardTitle>
-                    <CardDescription className="text-xs mt-1">
-                      {workflow.description}
-                    </CardDescription>
-                  </div>
+              <CardHeader className="p-3 relative">
+                {/* Buttons - positioned absolutely in top-right */}
+                <div className="absolute top-2 right-2 flex gap-1 z-10">
                   {workflow.isCustom && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        if (isEditing) {
+                          handleSaveEdit(workflow.id)
+                        } else {
+                          handleStartEdit(workflow)
+                        }
+                      }}
+                      className={`h-6 w-6 p-0 ${isEditing ? 'text-indigo-400 hover:text-indigo-300 hover:bg-indigo-400/10' : 'text-slate-400 hover:text-indigo-400 hover:bg-indigo-400/10'}`}
+                      title={isEditing ? "Save changes" : "Edit workflow"}
+                    >
+                      {isEditing ? <Save className="h-3 w-3" /> : <Pencil className="h-3 w-3" />}
+                    </Button>
+                  )}
+                  {isSelected && !isEditing && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setWorkflowToSchedule(workflow)
+                        setShowScheduleDialog(true)
+                      }}
+                      className="h-6 w-6 p-0 text-slate-400 hover:text-blue-400 hover:bg-blue-400/10"
+                      title="Schedule workflow"
+                    >
+                      <Clock className="h-3 w-3" />
+                    </Button>
+                  )}
+                  {workflow.isCustom && !isEditing && (
                     <Button
                       variant="ghost"
                       size="sm"
@@ -373,55 +460,77 @@ export function WorkflowCatalog({ onLoadWorkflow, onSaveWorkflow, onNewWorkflow,
                         e.stopPropagation()
                         handleDeleteCustomWorkflow(workflow.id)
                       }}
-                      className="h-6 w-6 p-0 text-slate-400 hover:text-primary hover:bg-primary/10"
+                      className="h-6 w-6 p-0 text-slate-400 hover:text-red-400 hover:bg-red-400/10"
+                      title="Delete workflow"
                     >
                       <Trash2 className="h-3 w-3" />
                     </Button>
                   )}
                 </div>
+
+                {/* Content - with padding-right to avoid overlapping buttons */}
+                <div className="pr-16">
+                  <CardTitle className="text-sm text-slate-200 break-words">
+                    <span className="break-words">
+                      {isEditing ? (
+                        <span
+                          contentEditable
+                          suppressContentEditableWarning
+                          onBlur={(e) => setEditName(e.currentTarget.textContent || '')}
+                          onInput={(e) => setEditName(e.currentTarget.textContent || '')}
+                          onClick={(e) => e.stopPropagation()}
+                          className="outline-none border-b border-dashed border-indigo-400"
+                        >
+                          {editName}
+                        </span>
+                      ) : (
+                        workflow.name
+                      )}
+                    </span>
+                  </CardTitle>
+                  
+                  {/* Goal field - show first */}
+                  {(workflow.goal || isEditing) && (
+                    <div className="mt-2">
+                      <span className="text-[10px] text-slate-500 uppercase tracking-wide">Goal</span>
+                      <p 
+                        className={`text-xs text-slate-400 mt-0.5 break-words ${isEditing ? 'outline-none border-b border-dashed border-indigo-400' : ''}`}
+                        contentEditable={isEditing}
+                        suppressContentEditableWarning
+                        onBlur={(e) => isEditing && setEditGoal(e.currentTarget.textContent || '')}
+                        onInput={(e) => isEditing && setEditGoal(e.currentTarget.textContent || '')}
+                        onClick={(e) => isEditing && e.stopPropagation()}
+                        data-placeholder="What should this accomplish..."
+                      >
+                        {isEditing ? editGoal : workflow.goal}
+                      </p>
+                    </div>
+                  )}
+                  
+                  {/* Description - show second */}
+                  <div className="mt-2">
+                    <span className="text-[10px] text-slate-500 uppercase tracking-wide">Description</span>
+                    <CardDescription 
+                      className={`text-xs mt-0.5 break-words ${isEditing ? 'outline-none border-b border-dashed border-indigo-400' : ''}`}
+                      contentEditable={isEditing}
+                      suppressContentEditableWarning
+                      onBlur={(e) => isEditing && setEditDescription(e.currentTarget.textContent || '')}
+                      onInput={(e) => isEditing && setEditDescription(e.currentTarget.textContent || '')}
+                      onClick={(e) => isEditing && e.stopPropagation()}
+                    >
+                      {isEditing ? editDescription : workflow.description}
+                    </CardDescription>
+                  </div>
+                </div>
               </CardHeader>
               <CardContent className="p-3 pt-0">
                 <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-2">
-                    <Badge variant="secondary" className="text-xs">
-                      {workflow.category}
-                    </Badge>
-                    <span className="text-xs text-slate-400">
-                      {workflow.steps.length} steps
-                    </span>
-                  </div>
-                  
-                  {/* Show action buttons when this workflow is selected */}
-                  {isSelected && (
-                    <div className="flex gap-2">
-                      <Button
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          onSaveWorkflow()
-                        }}
-                        disabled={currentWorkflowSteps === 0}
-                        variant="ghost"
-                        size="sm"
-                        className="h-7 w-7 p-0"
-                        title="Save workflow"
-                      >
-                        <Save className="h-3 w-3" />
-                      </Button>
-                      <Button
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          setWorkflowToSchedule(workflow)
-                          setShowScheduleDialog(true)
-                        }}
-                        variant="ghost"
-                        size="sm"
-                        className="h-7 w-7 p-0"
-                        title="Schedule workflow"
-                      >
-                        <Clock className="h-3 w-3" />
-                      </Button>
-                    </div>
-                  )}
+                  <Badge variant="secondary" className="text-xs">
+                    {workflow.category}
+                  </Badge>
+                  <span className="text-xs text-slate-400">
+                    {workflow.steps.length} steps
+                  </span>
                 </div>
               </CardContent>
             </Card>
