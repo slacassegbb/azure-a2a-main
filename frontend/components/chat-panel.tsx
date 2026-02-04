@@ -775,7 +775,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
   
   const [messages, setMessages] = useState<Message[]>([])
   const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null)  // Track which message is currently streaming
-  const [isLoadingMessages, setIsLoadingMessages] = useState(true) // Add loading state
+  const [isLoadingMessages, setIsLoadingMessages] = useState(false) // Start false, only true when loading existing conversations
   const [input, setInput] = useState("")
   const [isInputFocused, setIsInputFocused] = useState(false) // Track input focus for Teams-like highlight
   const [isInputHovered, setIsInputHovered] = useState(false) // Track input hover for gradient bar
@@ -946,12 +946,16 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
   // Reset messages when conversation ID changes (new chat)
   useEffect(() => {
     const loadConversationMessages = async () => {
-    setIsLoadingMessages(true) // Start loading
+    // Only set loading state for existing conversations, not new chats
+    const isExistingConversation = conversationId && conversationId !== 'frontend-chat-context'
+    if (isExistingConversation) {
+      setIsLoadingMessages(true) // Start loading only for existing conversations
+    }
     if (DEBUG) console.log('[ChatPanel] Conversation ID changed to:', conversationId)
     if (DEBUG) console.log('[ChatPanel] URL search params:', searchParams.toString())
       
       // Load messages for existing conversations (no auth required for message loading)
-      if (conversationId && conversationId !== 'frontend-chat-context') {
+      if (isExistingConversation) {
         try {
           if (DEBUG) console.log("[ChatPanel] Loading conversation:", conversationId)
           const { conversation, messageUserMap } = await getConversation(conversationId)
@@ -3792,6 +3796,11 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
             {/* Chat input area will be rendered below */}
           </div>
         </>
+      )}
+      
+      {/* Loading state - take up space to keep input at bottom */}
+      {isLoadingMessages && messages.length === 0 && !isInferencing && (
+        <div className="flex-1" />
       )}
       
       {/* Layout for empty state - welcome message positioned above centered input */}
