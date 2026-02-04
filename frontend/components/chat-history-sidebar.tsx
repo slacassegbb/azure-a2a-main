@@ -6,7 +6,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { MessageSquarePlus, PanelLeftClose, PanelLeftOpen, Trash2, LogOut, SquarePen } from "lucide-react"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { cn } from "@/lib/utils"
-import { listConversations, createConversation, deleteConversation, listMessages, notifyConversationCreated, type Conversation } from "@/lib/conversation-api"
+import { listConversations, createConversation, deleteConversation, listMessages, notifyConversationCreated, updateConversationTitle, type Conversation } from "@/lib/conversation-api"
 import { LoginDialog } from "@/components/login-dialog"
 import { useEventHub } from "@/hooks/use-event-hub"
 import { getOrCreateSessionId, leaveCollaborativeSession, isInCollaborativeSession } from "@/lib/session"
@@ -102,6 +102,8 @@ export function ChatHistorySidebar({ isCollapsed, onToggle }: Props) {
                 if (text) {
                   // Generate a title from the first message
                   const title = text.length > 50 ? text.slice(0, 47) + '...' : text
+                  // Persist the generated title to the database (fire and forget)
+                  updateConversationTitle(conv.conversation_id, title)
                   return { ...conv, name: title }
                 }
               }
