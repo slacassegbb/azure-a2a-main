@@ -218,13 +218,20 @@ class WebSocketManager:
         # If tenant_id doesn't match user's own session, validate it's a valid collaborative session
         actual_tenant_id = tenant_id
         if tenant_id and user_id:
-            # Check if this is the user's own session (user_id matches tenant_id)
-            if tenant_id == user_id:
-                # User's own session - register normally
+            # Extract base session ID from tenant_id if it's in sess_xxx::conv-id format
+            # This allows voice/conversation-specific connections to work properly
+            base_tenant_id = get_tenant_from_context(tenant_id) if '::' in tenant_id else tenant_id
+            
+            # Check if this is the user's own session (user_id matches base tenant)
+            # The tenant_id might be sess_xxx::conv-uuid for conversation-specific routing
+            if base_tenant_id == user_id or tenant_id == user_id:
+                # User's own session - register with the FULL tenant_id they provided
+                # This allows events routed to sess_xxx::conv-uuid to reach them
+                logger.info(f"[WebSocket] User {user_id} connecting with tenant {tenant_id[:40]}...")
                 self.register_tenant_connection(websocket, tenant_id)
             else:
                 # Different tenant - check if it's a valid collaborative session they're a member of
-                session = collaborative_session_manager.get_session(tenant_id)
+                session = collaborative_session_manager.get_session(base_tenant_id)
                 if session and session.is_member(user_id):
                     # Valid collaborative session - register with the collaborative session's tenant
                     logger.info(f"[WebSocket] User {user_id} connecting to collaborative session {tenant_id[:20]}...")
@@ -801,21 +808,26 @@ class WebSocketManager:
             print(f"🔒 [TENANT DEBUG] smart_broadcast: event={event_type}, context_id={context_id[:40]}...")
             print(f"🔒 [TENANT DEBUG] Available tenants: {list(self.tenant_connections.keys())}")
             
-            # First try the raw context_id as tenant (for simple session IDs like "user_3")
-            if context_id in self.tenant_connections:
-                session_id = context_id
-                print(f"🔒 [TENANT DEBUG] Direct match: broadcasting to tenant={context_id}")
-                sent_count = await self.broadcast_to_tenant(event_data, context_id)
-            else:
-                # Then try extracting tenant from tenant::conversation format
-                tenant_id = get_tenant_from_context(context_id)
-                print(f"🔒 [TENANT DEBUG] Extracted tenant_id={tenant_id} from context_id")
-                if tenant_id in self.tenant_connections:
-                    session_id = tenant_id
-                    print(f"🔒 [TENANT DEBUG] Tenant match: broadcasting to tenant={tenant_id}")
-                    sent_count = await self.broadcast_to_tenant(event_data, tenant_id)
-                else:
-                    print(f"🔒 [TENANT DEBUG] ⚠️ No tenant match found! Event will NOT be broadcast.")
+            # Always extract the base tenant (session) from context_id
+            # For "user_3::uuid" format, extract "user_3"
+            # For simple "user_3", it stays as "user_3"
+            base_tenant_id = get_tenant_from_context(context_id)
+            
+            # Broadcast to the full context_id if it's registered as a tenant
+            # (e.g., voice hook connects with user_3::conversation-uuid)
+            if context_id in self.tenant_connections and context_id != base_tenant_id:
+                print(f"🔒 [TENANT DEBUG] Direct match: broadcasting to full contextId tenant={context_id[:40]}...")
+                sent_count += await self.broadcast_to_tenant(event_data, context_id)
+            
+            # ALSO broadcast to the base session tenant (e.g., user_3)
+            # This ensures the main EventHub receives events too
+            if base_tenant_id in self.tenant_connections:
+                session_id = base_tenant_id
+                print(f"🔒 [TENANT DEBUG] Base tenant match: broadcasting to tenant={base_tenant_id}")
+                sent_count += await self.broadcast_to_tenant(event_data, base_tenant_id)
+            elif context_id not in self.tenant_connections:
+                # Neither full contextId nor base tenant found
+                print(f"🔒 [TENANT DEBUG] ⚠️ No tenant match found! Event will NOT be broadcast.")
             
             # Also broadcast to collaborative session members
             # These are users who joined this session but have different user_ids

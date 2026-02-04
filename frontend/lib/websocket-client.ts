@@ -248,6 +248,7 @@ export class WebSocketClient {
           // Connection successful, set up message handling
           this.websocket.onmessage = (event) => {
             try {
+              console.log('[WebSocket] 📨 Raw message received:', event.data.slice(0, 200));
               const data = JSON.parse(event.data);
               this.handleEvent(data);
             } catch (error) {
@@ -356,6 +357,7 @@ export class WebSocketClient {
           break;
         }
         case 'remote_agent_activity':
+          console.log('[WebSocket] 🎯 GOT remote_agent_activity, emitting to listeners:', eventData);
           this.emit('remote_agent_activity', eventData);
           break;
         case 'conversation':
