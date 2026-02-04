@@ -576,10 +576,13 @@ class WorkflowOrchestration:
         )
         
         if not recommended_agent or recommended_agent not in self.cards:
+            available_agent_names = list(self.cards.keys()) if self.cards else []
             task.state = "failed"
-            task.error_message = f"Agent '{recommended_agent}' not found"
+            task.error_message = f"Agent '{recommended_agent}' not found. Available agents: {available_agent_names}"
             task.updated_at = datetime.now(timezone.utc)
-            log_error(f"[Agent Mode] Agent not found: {recommended_agent}")
+            log_error(f"[Agent Mode] Agent not found: {recommended_agent}. Available: {available_agent_names}")
+            print(f"⚠️ [AGENT NOT FOUND] Requested: '{recommended_agent}', Available: {available_agent_names}")
+            await self._emit_status_event(f"⚠️ Agent '{recommended_agent}' not found", context_id)
             return {"error": task.error_message, "output": None}
         
         log_debug(f"🎯 [Agent Mode] Calling agent: {recommended_agent}")
@@ -741,6 +744,11 @@ Use the above output from the previous workflow step to complete your task."""
             agent_descriptions.append(agent_info)
         
         agents_text = "\n".join(agent_descriptions) if agent_descriptions else "No agents available"
+        
+        # Debug: Log agents and workflows counts for troubleshooting
+        log_debug(f"🔀 [Route Selection] Agents in registry: {len(agent_descriptions)}, Workflows: {len(available_workflows)}")
+        if len(agent_descriptions) == 0:
+            log_error(f"⚠️ [Route Selection] WARNING: No agents registered in self.cards! This may cause routing issues.")
         
         system_prompt = f"""You are an intelligent routing assistant. Analyze the user's request and decide the best execution approach.
 
@@ -1073,6 +1081,13 @@ Do NOT skip steps. Do NOT mark goal as completed until ALL workflow steps are do
                     agent_info['skills'] = skills_list
                 
                 available_agents.append(agent_info)
+            
+            # Debug: Log available agents count for troubleshooting
+            agent_names = [a.get('name', 'Unknown') for a in available_agents]
+            log_debug(f"📋 [Planner] {len(available_agents)} agents available: {agent_names[:5]}{'...' if len(agent_names) > 5 else ''}")
+            if iteration == 1:
+                # Only show on first iteration to avoid spam
+                await self._emit_status_event(f"📋 {len(available_agents)} agents available for planning", context_id)
             
             user_prompt = f"""Goal:
 {plan.goal}

@@ -1,5 +1,6 @@
 from typing import Callable
 import sys
+import asyncio
 from pathlib import Path
 import httpx
 from a2a.client import A2AClient
@@ -26,6 +27,9 @@ from log_config import log_debug
 
 TaskCallbackArg = Task | TaskStatusUpdateEvent | TaskArtifactUpdateEvent
 TaskUpdateCallback = Callable[[TaskCallbackArg, AgentCard], Task]
+
+# Timeout for agent message calls (3 minutes - generous for slow agents)
+AGENT_MESSAGE_TIMEOUT = 180.0
 
 
 class RemoteAgentConnections:
@@ -105,9 +109,19 @@ class RemoteAgentConnections:
                     raise
 
         # Non-streaming fallback path (either not supported or streaming failed)
-        response = await self.agent_client.send_message(
-            SendMessageRequest(id=str(uuid4()), params=request)
-        )
+        try:
+            print(f"📤 [SEND_MESSAGE] Calling {self.card.name} (non-streaming, timeout={AGENT_MESSAGE_TIMEOUT}s)...")
+            response = await asyncio.wait_for(
+                self.agent_client.send_message(
+                    SendMessageRequest(id=str(uuid4()), params=request)
+                ),
+                timeout=AGENT_MESSAGE_TIMEOUT
+            )
+            print(f"✅ [SEND_MESSAGE] Got response from {self.card.name}")
+        except asyncio.TimeoutError:
+            print(f"⚠️ [SEND_MESSAGE] TIMEOUT calling {self.card.name} after {AGENT_MESSAGE_TIMEOUT}s")
+            raise TimeoutError(f"Agent {self.card.name} did not respond within {AGENT_MESSAGE_TIMEOUT} seconds")
+        
         log_debug(f"RemoteAgentConnections.send_message (non-streaming): response.root:: {response.root}")
         if isinstance(response.root, JSONRPCErrorResponse):
             return response.root.error

@@ -2368,10 +2368,12 @@ Answer with just JSON:
             # Check if agent exists (quick validation)
             if agent_name not in self.remote_agent_connections:
                 available_agents = list(self.remote_agent_connections.keys())
+                print(f"⚠️ [SEND_MESSAGE] Agent '{agent_name}' not found! Available: {available_agents}")
                 raise ValueError(f"Agent '{agent_name}' not found. Available agents: {available_agents}")
             
             client = self.remote_agent_connections[agent_name]
             if not client:
+                print(f"⚠️ [SEND_MESSAGE] Client not available for {agent_name}")
                 raise ValueError(f"Client not available for {agent_name}")
 
             # Ensure message is clean text, not a JSON structure

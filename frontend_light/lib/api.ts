@@ -302,6 +302,8 @@ export async function enableSessionAgent(agent: Agent): Promise<boolean> {
           url: agent.url,
           version: agent.version,
           capabilities: agent.capabilities,
+          skills: agent.skills,  // Include skills for orchestrator routing
+          provider: agent.provider,
         }
       }),
     });

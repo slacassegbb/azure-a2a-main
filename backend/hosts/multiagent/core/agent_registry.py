@@ -45,9 +45,16 @@ class AgentRegistry:
         This clears existing agents and sets only the provided session agents.
         Called before processing each request to ensure session isolation.
         
+        OPTIMIZATION: We now construct AgentCard objects directly from the session
+        data (which came from the catalog) instead of making HTTP calls to fetch
+        agent cards on every request. This eliminates N HTTP calls per message.
+        
         Args:
             session_agents: List of agent dicts with url, name, description, skills, etc.
         """
+        import asyncio
+        from a2a.types import AgentCard, AgentSkill, AgentCapabilities, AgentProvider
+        
         # Clear existing agents
         self.cards.clear()
         self.remote_agent_connections.clear()
@@ -55,22 +62,115 @@ class AgentRegistry:
         
         print(f"🔷 [SET_SESSION_AGENTS] Received {len(session_agents)} agents to register")
         
+        # Track successful and failed registrations
+        successful_agents = []
+        failed_agents = []
+        
         # Register each session agent
         for agent_data in session_agents:
             agent_url = agent_data.get('url')
             agent_name = agent_data.get('name', 'Unknown')
             print(f"🔷 [SET_SESSION_AGENTS]   - Registering: {agent_name} @ {agent_url}")
-            if agent_url:
-                try:
-                    await self.retrieve_card(agent_url)
-                    log_debug(f"Session agent registered: {agent_name}")
-                except Exception as e:
-                    log_error(f"Failed to register session agent {agent_url}: {e}")
+            
+            if not agent_url:
+                failed_agents.append(f"{agent_name} (no URL)")
+                continue
+                
+            try:
+                # OPTIMIZATION: Try to construct AgentCard directly from session data
+                # This avoids HTTP calls on every request
+                if self._can_construct_card_from_data(agent_data):
+                    card = self._construct_agent_card(agent_data)
+                    self.register_agent_card(card)
+                    successful_agents.append(agent_name)
+                    log_debug(f"Session agent registered (from cache): {agent_name}")
+                else:
+                    # Fallback: Fetch card via HTTP (only if data is incomplete)
+                    print(f"🔷 [SET_SESSION_AGENTS]   ⚠️ Incomplete data for {agent_name}, fetching via HTTP...")
+                    await asyncio.wait_for(self.retrieve_card(agent_url), timeout=15.0)
+                    successful_agents.append(agent_name)
+                    log_debug(f"Session agent registered (via HTTP): {agent_name}")
+                    
+            except asyncio.TimeoutError:
+                failed_agents.append(f"{agent_name} (TIMEOUT)")
+                log_error(f"⚠️ TIMEOUT registering agent {agent_name} @ {agent_url}")
+                print(f"⚠️ [SET_SESSION_AGENTS] TIMEOUT: {agent_name} @ {agent_url}")
+            except Exception as e:
+                failed_agents.append(f"{agent_name} ({type(e).__name__})")
+                log_error(f"⚠️ Failed to register session agent {agent_url}: {e}")
+                print(f"⚠️ [SET_SESSION_AGENTS] FAILED: {agent_name} - {e}")
         
-        # Log what's in self.agents (the string used in the system prompt)
+        # Log summary
         print(f"🔷 [SET_SESSION_AGENTS] Final self.cards has {len(self.cards)} agents: {list(self.cards.keys())}")
+        if failed_agents:
+            print(f"⚠️ [SET_SESSION_AGENTS] WARNING: {len(failed_agents)} agents failed to register: {failed_agents}")
         print(f"🔷 [SET_SESSION_AGENTS] self.agents string length: {len(self.agents)} chars")
         log_debug(f"Session has {len(self.cards)} agents: {list(self.cards.keys())}")
+        
+        # Return summary for debugging
+        return {
+            "registered": len(successful_agents),
+            "failed": len(failed_agents),
+            "successful_agents": successful_agents,
+            "failed_agents": failed_agents
+        }
+    
+    def _can_construct_card_from_data(self, agent_data: Dict[str, Any]) -> bool:
+        """Check if we have enough data to construct an AgentCard without HTTP fetch."""
+        # Minimum required: name, url, description
+        return bool(
+            agent_data.get('name') and 
+            agent_data.get('url') and 
+            agent_data.get('description')
+        )
+    
+    def _construct_agent_card(self, agent_data: Dict[str, Any]) -> 'AgentCard':
+        """Construct an AgentCard object from session data dict.
+        
+        This avoids HTTP calls by using cached data from the catalog.
+        """
+        from a2a.types import AgentCard, AgentSkill, AgentCapabilities, AgentProvider
+        
+        # Build skills list
+        skills = []
+        if agent_data.get('skills'):
+            for skill in agent_data['skills']:
+                if isinstance(skill, dict):
+                    skills.append(AgentSkill(
+                        id=skill.get('id', skill.get('name', '')),
+                        name=skill.get('name', ''),
+                        description=skill.get('description', '')
+                    ))
+        
+        # Build capabilities
+        caps_data = agent_data.get('capabilities', {})
+        if isinstance(caps_data, dict):
+            capabilities = AgentCapabilities(
+                streaming=caps_data.get('streaming', False),
+                pushNotifications=caps_data.get('pushNotifications', False)
+            )
+        else:
+            capabilities = AgentCapabilities(streaming=False, pushNotifications=False)
+        
+        # Build provider (optional)
+        provider = None
+        if agent_data.get('provider'):
+            prov_data = agent_data['provider']
+            if isinstance(prov_data, dict):
+                provider = AgentProvider(organization=prov_data.get('organization', ''))
+        
+        # Construct the card
+        card = AgentCard(
+            name=agent_data['name'],
+            url=agent_data['url'],
+            description=agent_data.get('description', ''),
+            version=agent_data.get('version', '1.0.0'),
+            skills=skills if skills else None,
+            capabilities=capabilities,
+            provider=provider
+        )
+        
+        return card
 
     def _find_agent_registry_path(self) -> Path:
         """Resolve the agent registry path within the backend/data directory."""
