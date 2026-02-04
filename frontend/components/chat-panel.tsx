@@ -552,6 +552,27 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
   // Use the shared Event Hub hook so we subscribe to the same client as the rest of the app
   const { subscribe, unsubscribe, emit, sendMessage, isConnected } = useEventHub()
   
+  // Helper function to check if workflow's required agents are available in the session
+  const isWorkflowRunnable = (workflowText: string): boolean => {
+    // Parse workflow text to extract agent names
+    const lines = workflowText.split('\n').filter(l => l.trim())
+    const requiredAgents: string[] = []
+    for (const line of lines) {
+      const match = line.match(/^\d+\.\s*\[([^\]]+)\]/) || line.match(/^\d+\.\s*(?:Use the\s+)?([^:]+?)(?:\s+agent)?:/i)
+      if (match) {
+        requiredAgents.push(match[1].trim())
+      }
+    }
+    
+    // Check if all required agents are registered
+    return requiredAgents.every(agentName => 
+      registeredAgents.some(registered => 
+        registered.name?.toLowerCase().includes(agentName.toLowerCase()) ||
+        agentName.toLowerCase().includes(registered.name?.toLowerCase() || '')
+      )
+    )
+  }
+  
   // Get conversation ID from URL parameters (needed for hooks)
   const searchParams = useSearchParams()
   const router = useRouter()
@@ -3129,14 +3150,16 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
             enableInterAgentMemory: enableInterAgentMemory,  // Include inter-agent memory flag
             workflow: workflow ? workflow.trim() : undefined,  // Backend auto-detects mode from workflow presence
             workflowGoal: workflowGoal ? workflowGoal.trim() : undefined,  // Goal from workflow designer for completion evaluation
-            // Send all active workflows for intelligent routing
-            availableWorkflows: activeWorkflows.length > 0 ? activeWorkflows.map(w => ({
-              id: w.id,
-              name: w.name,
-              description: w.description || '',
-              goal: w.goal,
-              workflow: w.workflow
-            })) : undefined,
+            // Send only active workflows where all required agents are available (for intelligent routing)
+            availableWorkflows: activeWorkflows.length > 0 ? activeWorkflows
+              .filter(w => isWorkflowRunnable(w.workflow))
+              .map(w => ({
+                id: w.id,
+                name: w.name,
+                description: w.description || '',
+                goal: w.goal,
+                workflow: w.workflow
+              })) : undefined,
             userId: currentUser?.user_id,  // Store userId for color lookup when loading messages
           }
         })
