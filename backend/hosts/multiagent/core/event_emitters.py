@@ -211,6 +211,7 @@ class EventEmitters:
         """Emit granular agent activity event to WebSocket for thinking box visibility."""
         try:
             from service.websocket_streamer import get_websocket_streamer
+            from utils.tenant import get_conversation_from_context
             
             # DEBUG: Log event emission attempt
             print(f"📡 [EVENT DEBUG] Emitting remote_agent_activity for '{agent_name}'")
@@ -227,11 +228,16 @@ class EventEmitters:
                     log_debug(f"⚠️ [_emit_granular_agent_event] No context_id for {agent_name}, skipping")
                     return
                 
+                # Extract conversationId from contextId (format: session_id::conversation_id)
+                # This is critical for frontend filtering - events should only show in their conversation
+                conversation_id = get_conversation_from_context(routing_context_id)
+                
                 event_data = {
                     "agentName": agent_name,
                     "content": status_text,
                     "timestamp": datetime.now(timezone.utc).isoformat(),
-                    "contextId": routing_context_id
+                    "contextId": routing_context_id,
+                    "conversationId": conversation_id  # Add conversationId for frontend filtering
                 }
                 
                 success = await streamer._send_event("remote_agent_activity", event_data, routing_context_id)

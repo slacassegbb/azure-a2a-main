@@ -1471,6 +1471,28 @@ def main():
                     else:
                         result_text = str(responses)
                 
+                # Emit final_response event to WebSocket so frontend can clear inferencing state
+                # This is especially important for voice queries which don't use streaming
+                try:
+                    from service.websocket_streamer import get_websocket_streamer
+                    async def emit_final_response():
+                        streamer = await get_websocket_streamer()
+                        if streamer:
+                            await streamer._send_event(
+                                "final_response",
+                                {
+                                    "contextId": context_id,
+                                    "conversationId": conversation_id,
+                                    "result": result_text[:500] if result_text else "",  # Truncate for event
+                                    "isComplete": True,
+                                },
+                                context_id
+                            )
+                            print(f"[Query API] 📡 Emitted final_response event for conversation: {conversation_id}")
+                    asyncio.run_coroutine_threadsafe(emit_final_response(), main_loop)
+                except Exception as e:
+                    print(f"[Query API] ⚠️ Failed to emit final_response event: {e}")
+                
                 return {
                     "success": True,
                     "query": request.query,

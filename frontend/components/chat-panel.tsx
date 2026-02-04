@@ -7,13 +7,12 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
-import { Paperclip, Mic, MicOff, Send, Bot, User, Paintbrush, Copy, ThumbsUp, ThumbsDown, Loader2, Phone, PhoneOff, Plus, Pencil, X, Sparkles } from "lucide-react"
+import { Paperclip, Mic, MicOff, Send, Bot, User, Paintbrush, Copy, ThumbsUp, ThumbsDown, Loader2, Plus, Pencil, X, Sparkles } from "lucide-react"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { useEventHub } from "@/hooks/use-event-hub"
 import { useVoiceRecording } from "@/hooks/use-voice-recording"
-import { useVoiceLive } from "@/hooks/use-voice-live"
-import { getScenarioById } from "@/lib/voice-scenarios"
+import { VoiceButton } from "@/components/voice-button"
 import { InferenceSteps } from "./inference-steps"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
@@ -636,6 +635,30 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
     return newContextId
   }, [conversationId, currentSessionId])
   
+  // Callback to ensure we have a real conversation (for voice button)
+  // Returns the new conversation ID if created, or null if already on a real conversation
+  const ensureConversation = useCallback(async (): Promise<string | null> => {
+    if (conversationId !== 'frontend-chat-context') {
+      // Already on a real conversation
+      return null
+    }
+    
+    try {
+      const newConversation = await createConversation()
+      if (newConversation) {
+        const newConvId = newConversation.conversation_id
+        // Track this as our pending conversation to accept messages for it
+        pendingConversationIdRef.current = newConvId
+        notifyConversationCreated(newConversation)
+        router.replace(`/?conversationId=${newConvId}`)
+        return newConvId
+      }
+    } catch (error) {
+      console.error('[ChatPanel] Failed to create conversation for voice:', error)
+    }
+    return null
+  }, [conversationId, router])
+  
   // Helper function to check if we should filter by conversationId
   // Each event should only be shown in its corresponding conversation view
   // Returns true if the event should be FILTERED OUT (not shown)
@@ -687,9 +710,6 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
   // Voice recording hook
   const voiceRecording = useVoiceRecording()
   
-  // Track Voice Live call IDs for response injection
-  const voiceLiveCallMapRef = useRef<Map<string, string>>(new Map()) // messageId -> call_id
-  
   // Ref for deduplicating message events (avoids stale closure issues in event handlers)
   const processedMessageIdsRef = useRef<Set<string>>(new Set())
   
@@ -709,69 +729,6 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
   useEffect(() => {
     enableInterAgentMemoryRef.current = enableInterAgentMemory
   }, [enableInterAgentMemory])
-  
-  // Voice Live hook for realtime voice conversations
-  const voiceLive = useVoiceLive({
-    foundryProjectUrl: process.env.NEXT_PUBLIC_AZURE_AI_FOUNDRY_PROJECT_ENDPOINT || '',
-    model: process.env.NEXT_PUBLIC_VOICE_MODEL || 'gpt-realtime',
-    scenario: getScenarioById('host-agent-chat'),
-    onSendToA2A: async (message: string, metadata?: any) => {
-      // Send message through the host agent via HTTP POST (same as handleSend)
-      try {
-        console.log('[Voice Live] Sending message to A2A network:', message)
-        console.log('[Voice Live] Metadata:', metadata)
-        
-        // Get current values from refs (not stale closure values!)
-        const currentWorkflow = workflowRef.current
-        const currentWorkflowGoal = workflowGoalRef.current
-        const currentEnableMemory = enableInterAgentMemoryRef.current
-        
-        console.log('[Voice Live] Current settings:', {
-          workflow: currentWorkflow?.substring(0, 50),
-          workflowGoal: currentWorkflowGoal?.substring(0, 50),
-          enableMemory: currentEnableMemory
-        })
-        
-        const baseUrl = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
-        const messageId = `voice_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-        
-        // Store the mapping of messageId to Voice Live call_id
-        if (metadata?.tool_call_id) {
-          voiceLiveCallMapRef.current.set(messageId, metadata.tool_call_id)
-          console.log('[Voice Live] Stored call mapping:', messageId, '->', metadata.tool_call_id)
-        }
-        
-        const response = await fetch(`${baseUrl}/message/send`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            params: {
-              messageId,
-              contextId: contextId,  // Use tenant-aware contextId
-              role: 'user',
-              parts: [{ root: { kind: 'text', text: message } }],
-              enableInterAgentMemory: currentEnableMemory,
-              workflow: currentWorkflow ? currentWorkflow.trim() : undefined,  // Backend auto-detects mode from workflow presence
-              workflowGoal: currentWorkflowGoal ? currentWorkflowGoal.trim() : undefined  // Goal from workflow designer for completion evaluation
-            }
-          })
-        })
-
-        if (!response.ok) {
-          console.error('[Voice Live] Failed to send message to backend:', response.statusText)
-          throw new Error(`Failed to send message: ${response.statusText}`)
-        }
-
-        console.log('[Voice Live] Message sent to backend successfully')
-        return contextId  // Return tenant-aware contextId
-      } catch (error) {
-        console.error('[Voice Live] Error sending to A2A:', error)
-        throw error
-      }
-    }
-  })
   
   const [messages, setMessages] = useState<Message[]>([])
   const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null)  // Track which message is currently streaming
@@ -1951,50 +1908,6 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       }
     }
 
-    // Handle outgoing agent message (Host Agent -> Remote Agent)
-    const handleOutgoingAgentMessage = (data: any) => {
-      console.log("[ChatPanel] 📤 Outgoing agent message received:", data)
-      console.log("[ChatPanel] 📤 Message content:", data.message)
-      console.log("[ChatPanel] 📤 Voice Live connected?", voiceLive.isConnected)
-      console.log("[ChatPanel] 📤 Pending calls in map:", voiceLiveCallMapRef.current.size)
-      
-      // If Voice Live is connected and has a pending call, inject the outgoing message
-      if (!voiceLive.isConnected) {
-        console.log('[Voice Live] ⚠️ Not connected, skipping outgoing message injection')
-        return
-      }
-      
-      if (!data.message) {
-        console.log('[Voice Live] ⚠️ No message in event data, skipping injection')
-        return
-      }
-      
-      if (voiceLiveCallMapRef.current.size === 0) {
-        console.log('[Voice Live] ⚠️ No pending calls in map, skipping injection')
-        return
-      }
-      
-      // Get the most recent call_id (FIFO - first in, first out)
-      const voiceCallIds = Array.from(voiceLiveCallMapRef.current.entries())
-      console.log('[Voice Live] 📤 Injecting outgoing message for call:', voiceCallIds[0])
-      
-      if (voiceCallIds.length > 0) {
-        const [messageId, callId] = voiceCallIds[0]
-        
-        console.log('[Voice Live] 📤 Injecting to call_id:', callId)
-        console.log('[Voice Live] 📤 Message to inject:', data.message)
-        
-        // Inject the outgoing message so Voice Live speaks it
-        voiceLive.injectNetworkResponse({
-          call_id: callId,
-          message: data.message,
-          status: 'in_progress'  // Mark as in_progress, not completed yet
-        })
-        
-        console.log('[Voice Live] ✅ Outgoing message injected successfully')
-      }
-    }
-
     // Handle inference step events (tool calls, remote agent activities)
     const handleInferenceStep = (data: any) => {
       console.log("[ChatPanel] Inference step received:", data)
@@ -2065,11 +1978,20 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       if (activityConvId.includes("::")) {
         activityConvId = activityConvId.split("::")[1]
       }
+      
+      console.log("[ChatPanel] 🔍 Remote activity filter check:", { 
+        activityConvId, 
+        currentConversationId: conversationId,
+        pending: pendingConversationIdRef.current 
+      })
+      
       // In collaborative sessions, auto-navigate to the conversation if different
       if (shouldFilterByConversationIdRef.current(activityConvId)) {
-        console.log("[ChatPanel] Ignoring remote activity for different conversation:", activityConvId, "current:", conversationId)
+        console.log("[ChatPanel] ❌ Ignoring remote activity for different conversation:", activityConvId, "current:", conversationId)
         return
       }
+      
+      console.log("[ChatPanel] ✅ Accepting remote activity for conversation:", activityConvId)
       
       if (data.agentName && data.content) {
         const content = data.content
@@ -2408,7 +2330,6 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
     subscribe("remote_agent_activity", handleRemoteAgentActivity)
     subscribe("file_uploaded", handleFileUploaded)
     subscribe("shared_file_uploaded", handleSharedFileUploaded)
-    subscribe("outgoing_agent_message", handleOutgoingAgentMessage)
     subscribe("typing_indicator", handleTypingIndicator)
     subscribe("message_reaction", handleMessageReaction)
 
@@ -2432,11 +2353,10 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       unsubscribe("remote_agent_activity", handleRemoteAgentActivity)
       unsubscribe("file_uploaded", handleFileUploaded)
       unsubscribe("shared_file_uploaded", handleSharedFileUploaded)
-      unsubscribe("outgoing_agent_message", handleOutgoingAgentMessage)
       unsubscribe("typing_indicator", handleTypingIndicator)
       unsubscribe("message_reaction", handleMessageReaction)
     }
-  }, [subscribe, unsubscribe, emit, sendMessage, voiceLive, conversationId, isLoadingMessages])
+  }, [subscribe, unsubscribe, emit, sendMessage, conversationId, isLoadingMessages])
   // NOTE: Removed shouldFilterByConversationId from deps - using ref instead to prevent
   // effect re-runs when isInCollaborativeSession changes (which was resetting workflow bar state)
   // NOTE: Removed processedMessageIds from deps to prevent constant re-subscription
@@ -2492,11 +2412,11 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       setActiveNode(data.agent)
     }
 
-    const handleFinalResponse = (data: { inferenceId: string; message: Omit<Message, "id">; conversationId?: string; messageId?: string; attachments?: any[]; isFromMyTenant?: boolean }) => {
+    const handleFinalResponse = (data: { inferenceId?: string; message?: Omit<Message, "id">; conversationId?: string; messageId?: string; attachments?: any[]; isFromMyTenant?: boolean; isComplete?: boolean; result?: string; contextId?: string }) => {
       console.log("[ChatPanel] Final response received:", data)
       
       // Filter by conversationId - only process final responses for the current conversation
-      let responseConvId = data.conversationId || data.inferenceId || ""
+      let responseConvId = data.conversationId || data.inferenceId || data.contextId || ""
       if (responseConvId.includes("::")) {
         responseConvId = responseConvId.split("::")[1]
       }
@@ -2504,6 +2424,16 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       // In collaborative sessions, auto-navigate to the conversation if different
       if (shouldFilterByConversationIdRef.current(responseConvId)) {
         console.log("[ChatPanel] Ignoring final response for different conversation:", responseConvId, "current:", conversationId)
+        return
+      }
+      
+      // If this is a simple "completion" event (from /api/query voice), just clear inference state
+      // No message to add - the message was already handled via normal flow
+      if (data.isComplete && !data.message) {
+        console.log("[ChatPanel] Voice/API query complete - clearing inference state")
+        setIsInferencing(false)
+        setInferenceSteps([])
+        setActiveNode(null)
         return
       }
       
@@ -2524,7 +2454,15 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       // Mark this message as processed
       setProcessedMessageIds(prev => new Set([...prev, responseId]))
       
-      // Only add messages if they have content
+      // Only add messages if they have content and a message object exists
+      if (!data.message) {
+        console.log("[ChatPanel] No message in final_response, just clearing inference state")
+        setIsInferencing(false)
+        setInferenceSteps([])
+        setActiveNode(null)
+        return
+      }
+      
       const messagesToAdd: Message[] = []
       
       const isHostAgent = data.message.agent === "foundry-host-agent" || 
@@ -2631,29 +2569,6 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       // when the WebSocket 'message' event arrives with video/image content.
       // Adding them here would create DUPLICATES.
       // The inference steps with imageUrl are only used for the workflow panel thumbnail preview.
-
-      // Check if this is a Voice Live response that needs to be injected back
-      if (voiceLive.isConnected && isHostAgent && data.message.content) {
-        // Check if any pending Voice Live calls exist
-        const voiceCallIds = Array.from(voiceLiveCallMapRef.current.entries())
-        console.log('[Voice Live] Checking for pending calls:', voiceCallIds)
-        
-        if (voiceCallIds.length > 0) {
-          // Get the most recent call_id (FIFO - first in, first out)
-          const [messageId, callId] = voiceCallIds[0]
-          console.log('[Voice Live] Injecting response for call_id:', callId)
-          
-          voiceLive.injectNetworkResponse({
-            call_id: callId,
-            message: data.message.content,
-            status: 'completed'
-          })
-          
-          // Remove from map
-          voiceLiveCallMapRef.current.delete(messageId)
-          console.log('[Voice Live] Response injected successfully')
-        }
-      }
       
       // NOTE: Inference state is cleared earlier (when creating the workflow summary)
       // to prevent brief moment where both live and permanent workflows are visible
@@ -4146,33 +4061,24 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                   }
                 </TooltipContent>
               </Tooltip>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button 
-                    variant="ghost" 
-                    size="icon"
-                    className={`h-9 w-9 rounded-full ${
-                      voiceLive.isConnected 
-                        ? 'bg-green-100 text-green-600 hover:bg-green-200' 
-                        : voiceLive.error 
-                        ? 'bg-red-100 text-red-600' 
-                        : 'hover:bg-primary/20'
-                    }`}
-                    disabled={isInferencing}
-                    onClick={voiceLive.isConnected ? voiceLive.stopVoiceConversation : voiceLive.startVoiceConversation}
-                  >
-                    {voiceLive.isConnected ? <PhoneOff size={20} className="text-muted-foreground" /> : <Phone size={20} className="text-muted-foreground" />}
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent side="top">
-                  {voiceLive.isConnected 
-                    ? 'End voice conversation' 
-                    : voiceLive.error 
-                    ? `Error: ${voiceLive.error}` 
-                    : 'Start voice conversation'
-                  }
-                </TooltipContent>
-              </Tooltip>
+              <VoiceButton 
+                sessionId={currentSessionId} 
+                contextId={contextId} 
+                conversationId={conversationId}
+                onEnsureConversation={ensureConversation}
+                onFirstMessage={(convId, transcript) => {
+                  // Update title based on first voice message, same as text messages
+                  const newTitle = generateTitleFromMessage(transcript);
+                  updateConversationTitle(convId, newTitle);
+                  // Broadcast title update to collaborative session members
+                  sendMessage({
+                    type: "conversation_title_update",
+                    conversationId: convId,
+                    title: newTitle
+                  });
+                }}
+                disabled={isInferencing} 
+              />
               <Button 
                 onClick={handleSend} 
                 disabled={isInferencing || (!input.trim() && !refineTarget)}

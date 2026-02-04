@@ -950,6 +950,8 @@ class FoundryHostManager(ApplicationManager):
                                     "agentName": status_agent_name,
                                     "content": f"Image available: {content_item['uri']}",
                                     "timestamp": __import__('datetime').datetime.utcnow().isoformat(),
+                                    "contextId": context_id,
+                                    "conversationId": context_id.split("::")[1] if "::" in context_id else context_id,
                                 },
                                 context_id,
                             )
