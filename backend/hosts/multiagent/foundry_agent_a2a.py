@@ -2774,9 +2774,9 @@ Answer with just JSON:
                 
                 # Handle task states
                 if task.status.state == TaskState.completed:
-                    # NOTE: Don't emit _emit_simple_task_status here - the streaming callback 
-                    # (_default_task_callback -> _emit_task_event) already emits the completion status.
-                    # Emitting here causes DUPLICATE task_updated events with different taskIds.
+                    # Emit completed status for remote agent - the streaming callback doesn't always
+                    # receive a final status-update event with state=completed from remote agents
+                    asyncio.create_task(self._emit_simple_task_status(agent_name, "completed", contextId, taskId))
                     asyncio.create_task(self._emit_granular_agent_event(agent_name, f"{agent_name} has completed the task successfully", contextId))
                     
                     response_parts = []
@@ -2864,6 +2864,8 @@ Answer with just JSON:
                     
                 elif task.status.state == TaskState.failed:
                     log_debug(f"Task failed for {agent_name}")
+                    # Emit failed status for remote agent
+                    asyncio.create_task(self._emit_simple_task_status(agent_name, "failed", contextId, taskId))
                     retry_after = self._parse_retry_after_from_task(task)
                     max_rate_limit_retries = 3
                     retry_attempt = 0
