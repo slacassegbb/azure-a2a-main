@@ -332,45 +332,100 @@ export async function disableSessionAgent(agentUrl: string): Promise<boolean> {
   }
 }
 
-// ============ Workflow Activation (Session-based) ============
+// ============ Workflow Activation (Database-backed via API) ============
 
-const ACTIVATED_WORKFLOWS_KEY = 'a2a_activated_workflows';
+// In-memory cache for activated workflow IDs (synced with backend)
+let _activatedWorkflowsCache: Set<string> = new Set();
+let _cacheSessionId: string | null = null;
 
-export function getActivatedWorkflowIds(): Set<string> {
-  if (typeof window === 'undefined') return new Set();
+/**
+ * Fetch activated workflow IDs from backend API
+ * This should be called once on page load with the user's session ID
+ */
+export async function fetchActivatedWorkflowIds(sessionId: string): Promise<Set<string>> {
   try {
-    const stored = sessionStorage.getItem(ACTIVATED_WORKFLOWS_KEY);
-    if (stored) {
-      return new Set(JSON.parse(stored));
+    const response = await fetch(`${API_BASE_URL}/api/active-workflows?session_id=${encodeURIComponent(sessionId)}`);
+    if (!response.ok) {
+      console.error('[API] Failed to fetch activated workflows:', response.statusText);
+      return new Set();
     }
+    const data = await response.json();
+    const workflows = data.workflows || [];
+    const ids = new Set<string>(workflows.map((w: { id?: string }) => w.id).filter(Boolean));
+    
+    // Update cache
+    _activatedWorkflowsCache = ids;
+    _cacheSessionId = sessionId;
+    
+    console.log(`[API] Loaded ${ids.size} activated workflows from database`);
+    return ids;
   } catch (error) {
-    console.error('[API] Failed to get activated workflows:', error);
+    console.error('[API] Failed to fetch activated workflows:', error);
+    return new Set();
   }
-  return new Set();
 }
 
-export function saveActivatedWorkflowIds(ids: Set<string>): void {
-  if (typeof window === 'undefined') return;
+/**
+ * Get activated workflow IDs from cache (synchronous)
+ * Call fetchActivatedWorkflowIds first to populate the cache
+ */
+export function getActivatedWorkflowIds(): Set<string> {
+  return new Set(_activatedWorkflowsCache);
+}
+
+/**
+ * Save activated workflow IDs to backend API
+ * Also updates the local cache
+ */
+export async function saveActivatedWorkflowIdsAsync(sessionId: string, ids: Set<string>, workflows: Workflow[]): Promise<void> {
+  // Update cache immediately
+  _activatedWorkflowsCache = new Set(ids);
+  _cacheSessionId = sessionId;
+  
   try {
-    sessionStorage.setItem(ACTIVATED_WORKFLOWS_KEY, JSON.stringify(Array.from(ids)));
+    // Build workflow data array from IDs
+    const workflowData = Array.from(ids).map(id => {
+      const workflow = workflows.find(w => w.id === id);
+      return {
+        id,
+        workflow: workflow?.steps?.map((s, i) => `${i + 1}. [${s.agentName}] ${s.description}`).join('\n') || '',
+        name: workflow?.name || '',
+        goal: workflow?.goal || workflow?.description || '',
+        description: workflow?.description || ''
+      };
+    });
+    
+    const response = await fetch(`${API_BASE_URL}/api/active-workflows?session_id=${encodeURIComponent(sessionId)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workflows: workflowData })
+    });
+    
+    if (!response.ok) {
+      console.error('[API] Failed to save activated workflows:', response.statusText);
+    }
   } catch (error) {
     console.error('[API] Failed to save activated workflows:', error);
   }
 }
 
+/**
+ * Legacy sync function for backward compatibility
+ * This just updates the cache - actual save happens via saveActivatedWorkflowIdsAsync
+ */
+export function saveActivatedWorkflowIds(ids: Set<string>): void {
+  _activatedWorkflowsCache = new Set(ids);
+}
+
 export function activateWorkflow(workflowId: string): void {
-  const ids = getActivatedWorkflowIds();
-  ids.add(workflowId);
-  saveActivatedWorkflowIds(ids);
+  _activatedWorkflowsCache.add(workflowId);
 }
 
 export function deactivateWorkflow(workflowId: string): void {
-  const ids = getActivatedWorkflowIds();
-  ids.delete(workflowId);
-  saveActivatedWorkflowIds(ids);
+  _activatedWorkflowsCache.delete(workflowId);
 }
 
 export function isWorkflowActivated(workflowId: string): boolean {
-  return getActivatedWorkflowIds().has(workflowId);
+  return _activatedWorkflowsCache.has(workflowId);
 }
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { getUserWorkflows, getAgents, getSessionAgents, enableSessionAgent, disableSessionAgent, getActivatedWorkflowIds, saveActivatedWorkflowIds, getWorkflowSchedules, toggleSchedule, Workflow, Agent, UserInfo, ScheduleInfo, WorkflowScheduleMap } from "@/lib/api";
+import { getUserWorkflows, getAgents, getSessionAgents, enableSessionAgent, disableSessionAgent, getActivatedWorkflowIds, saveActivatedWorkflowIds, saveActivatedWorkflowIdsAsync, fetchActivatedWorkflowIds, getWorkflowSchedules, toggleSchedule, Workflow, Agent, UserInfo, ScheduleInfo, WorkflowScheduleMap } from "@/lib/api";
 import { WorkflowCard, getRequiredAgents, AgentStatus } from "./WorkflowCard";
 import { AgentCard } from "./AgentCard";
 import { VoiceButton } from "./VoiceButton";
@@ -45,7 +45,7 @@ export function Dashboard({ user, onLogout }: DashboardProps) {
   // Toggle workflow activation - auto-enables required agents
   const handleToggleWorkflow = useCallback(async (workflow: Workflow) => {
     const workflowId = workflow.id;
-    if (!workflowId) return;
+    if (!workflowId || !user?.user_id) return;
 
     setLoadingWorkflowIds(prev => {
       const next = new Set(Array.from(prev));
@@ -59,12 +59,11 @@ export function Dashboard({ user, onLogout }: DashboardProps) {
       if (isCurrentlyActivated) {
         // Deactivate workflow - just update local state, don't disable agents
         // (agents might be used by other workflows)
-        setActivatedWorkflowIds(prev => {
-          const next = new Set(Array.from(prev));
-          next.delete(workflowId);
-          saveActivatedWorkflowIds(next);
-          return next;
-        });
+        const newIds = new Set(Array.from(activatedWorkflowIds));
+        newIds.delete(workflowId);
+        setActivatedWorkflowIds(newIds);
+        // Save to database
+        await saveActivatedWorkflowIdsAsync(user.user_id, newIds, workflows);
       } else {
         // Activate workflow and auto-enable required agents
         const requiredAgents = getRequiredAgents(workflow, agents);
@@ -92,12 +91,11 @@ export function Dashboard({ user, onLogout }: DashboardProps) {
         }
 
         // Mark workflow as activated
-        setActivatedWorkflowIds(prev => {
-          const next = new Set(Array.from(prev));
-          next.add(workflowId);
-          saveActivatedWorkflowIds(next);
-          return next;
-        });
+        const newIds = new Set(Array.from(activatedWorkflowIds));
+        newIds.add(workflowId);
+        setActivatedWorkflowIds(newIds);
+        // Save to database
+        await saveActivatedWorkflowIdsAsync(user.user_id, newIds, workflows);
       }
     } catch (err) {
       console.error("Failed to toggle workflow:", err);
@@ -108,7 +106,7 @@ export function Dashboard({ user, onLogout }: DashboardProps) {
         return next;
       });
     }
-  }, [activatedWorkflowIds, agents, enabledAgentUrls]);
+  }, [activatedWorkflowIds, agents, enabledAgentUrls, user?.user_id, workflows]);
 
   // Toggle agent enabled/disabled
   const handleToggleAgent = useCallback(async (agent: Agent) => {
@@ -181,6 +179,8 @@ export function Dashboard({ user, onLogout }: DashboardProps) {
   }, []);
 
   const loadData = useCallback(async () => {
+    if (!user?.user_id) return;
+    
     setIsLoading(true);
     setError(null);
     
@@ -200,8 +200,8 @@ export function Dashboard({ user, onLogout }: DashboardProps) {
       const enabledUrls = new Set(sessionAgentsData.map(a => a.url).filter(Boolean));
       setEnabledAgentUrls(enabledUrls);
       
-      // Restore activated workflows from sessionStorage
-      const storedActivatedWorkflows = getActivatedWorkflowIds();
+      // Restore activated workflows from database API
+      const storedActivatedWorkflows = await fetchActivatedWorkflowIds(user.user_id);
       setActivatedWorkflowIds(storedActivatedWorkflows);
       
       // Re-enable agents for any activated workflows that aren't already enabled
@@ -242,7 +242,7 @@ export function Dashboard({ user, onLogout }: DashboardProps) {
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [user?.user_id]);
 
   useEffect(() => {
     loadData();
