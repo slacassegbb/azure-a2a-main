@@ -354,10 +354,10 @@ export function ChatHistorySidebar({ isCollapsed, onToggle }: Props) {
 
   return (
     <TooltipProvider delayDuration={0}>
-      <div className={cn("flex h-full flex-col transition-all duration-300")}>
+      <div className={cn("flex flex-col transition-all duration-300")}>
         {isCollapsed ? (
           // Collapsed state - minimal vertical layout
-          <div className="flex flex-col items-center justify-start h-full py-2">
+          <div className="flex flex-col items-center justify-start py-2">
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button variant="ghost" size="icon" className="h-9 w-9" onClick={onToggle}>

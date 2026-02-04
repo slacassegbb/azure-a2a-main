@@ -760,7 +760,7 @@ export function FileHistory({ className, onFileSelect, onFilesLoaded, conversati
             Click to upload files
           </div>
         ) : (
-          <div className="h-56 overflow-y-auto pr-4">
+          <div className="max-h-[280px] overflow-y-auto pr-4">
             <div className="space-y-1">
               {files.map((file) => {
               // Check if file is an image
@@ -786,7 +786,10 @@ export function FileHistory({ className, onFileSelect, onFilesLoaded, conversati
                               className="w-full h-full object-cover"
                               onError={(e) => {
                                 e.currentTarget.style.display = 'none'
-                                e.currentTarget.parentElement!.innerHTML = '<div class="w-full h-full flex items-center justify-center"><span class="text-lg">🖼️</span></div>'
+                                const parent = e.currentTarget.parentElement
+                                if (parent) {
+                                  parent.innerHTML = '<div class="w-full h-full flex items-center justify-center"><span class="text-lg">🖼️</span></div>'
+                                }
                               }}
                             />
                           </div>

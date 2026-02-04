@@ -676,12 +676,19 @@ def download_attachment(email_id: str, attachment_id: str) -> dict:
             # Item attachments (like embedded emails) don't have contentBytes
             return {"success": False, "message": "Attachment is not a file (may be embedded item)", "content": None}
         
+        # DEBUG: Log what Graph API actually returns
+        filename = data.get("name", "attachment")
+        graph_content_type = data.get("contentType", "application/octet-stream")
+        logger.info(f"📎 Graph API returned for '{filename}':")
+        logger.info(f"   contentType from Graph: {graph_content_type}")
+        logger.info(f"   size: {data.get('size', 0)}")
+        
         result = {
             "success": True,
             "message": "Attachment downloaded",
             "content": content,
-            "name": data.get("name", "attachment"),
-            "content_type": data.get("contentType", "application/octet-stream"),
+            "name": filename,
+            "content_type": graph_content_type,
             "size": data.get("size", len(content)),
         }
         

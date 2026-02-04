@@ -520,6 +520,9 @@ async def process_file_part(file_part, artifact_info=None, session_id: str = Non
         }
         
         # Store the interaction in A2A memory service
+        # NOTE: Document content is ALWAYS stored regardless of memory toggle setting.
+        # This ensures uploaded files are searchable for the search_memory tool.
+        # The memory toggle only controls whether A2A conversation interactions are stored.
         if session_id:
             await a2a_memory_service.store_interaction(interaction_data, session_id=session_id)
             print(f"[A2ADocumentProcessor] Successfully processed and stored: {filename} (session: {session_id})")

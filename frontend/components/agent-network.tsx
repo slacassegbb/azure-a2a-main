@@ -770,12 +770,14 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
   const clearMemory = async () => {
     setIsClearingMemory(true)
     try {
+      const sessionId = getOrCreateSessionId()
       const baseUrl = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
       const response = await fetch(`${baseUrl}/clear-memory`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-        }
+        },
+        body: JSON.stringify({ user_id: sessionId })
       })
       
       const data = await response.json()
@@ -934,7 +936,7 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
                         {isClearingMemory ? "Clearing..." : "Clear memory"}
                       </TooltipContent>
                     </Tooltip>
-                    {/* Memory Toggle */}
+                    {/* Conversation Memory Toggle */}
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <div className="flex items-center">
@@ -947,7 +949,16 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
                         </div>
                       </TooltipTrigger>
                       <TooltipContent side="left">
-                        {enableInterAgentMemory ? "Memory enabled" : "Memory disabled"}
+                        <div className="text-xs">
+                          <div className="font-semibold mb-1">
+                            {enableInterAgentMemory ? "Conversation Memory: ON" : "Conversation Memory: OFF"}
+                          </div>
+                          <div className="text-muted-foreground">
+                            {enableInterAgentMemory 
+                              ? "Storing conversations + documents" 
+                              : "Storing documents only"}
+                          </div>
+                        </div>
                       </TooltipContent>
                     </Tooltip>
                     {/* Settings Button */}

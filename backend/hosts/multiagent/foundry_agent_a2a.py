@@ -377,14 +377,21 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
             
             for attempt in range(max_retries + 1):
                 try:
-                    # Create the streaming response using Responses API with Azure Agent reference
-                    # Agent contains model, instructions, and tools (including Bing Grounding)
+                    # Create the streaming response using Responses API
+                    # Pass instructions directly - this is supported by the OpenAI SDK!
+                    # Instructions parameter overrides any agent_reference instructions
                     print(f"🔵 [AZURE] Creating stream (attempt {attempt + 1}/{max_retries + 1})...")
                     print(f"🔵 [AZURE] Agent: {self.agent.name if self.agent else 'None'}, Input length: {len(user_message)}")
+                    print(f"🔵 [AZURE] Instructions length: {len(instructions)} chars")
+                    print(f"🔵 [AZURE] Checking if Email Agent is in instructions: {'Email Agent' in instructions}")
+                    print(f"🔵 [AZURE] Tools count: {len(tools)}")
+                    
                     stream = await self.openai_client.responses.create(
                         input=user_message,
                         previous_response_id=previous_response_id,
-                        extra_body={"agent": {"name": self.agent.name, "type": "agent_reference"}},
+                        instructions=instructions,  # Pass instructions directly!
+                        model=self.model_name,  # Need to specify model when not using agent_reference
+                        tools=tools,  # Pass tools directly
                         stream=True,
                     )
                     print(f"✅ [AZURE] Stream created successfully")
@@ -970,6 +977,9 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
                 description="Multi-agent orchestrator with Bing web search grounding"
             )
             
+            # Store model name for responses API calls
+            self.model_name = model_name
+            
             print(f"✅ Azure Agent created successfully!")
             log_foundry_debug(f"✅ Agent created successfully! ID: {self.agent.id}")
             log_foundry_debug(f"🔧 Agent object attributes: {dir(self.agent)}")
@@ -1330,23 +1340,29 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
         
         return json.dumps(result, ensure_ascii=False)
 
-    async def _update_agent_instructions(self):
+    async def _update_agent_instructions(self, agent_mode: bool = False):
         """
         Update the agent's instructions with the current agent list.
         
-        With the Responses API, we don't have a persistent agent to update.
-        Instead, we just update the cached instructions that get passed
-        to each responses.create() call.
+        With the Responses API using agent_reference, we need to update
+        the agent definition in Azure AI Foundry so the instructions
+        reflect the current session agents.
+        
+        Args:
+            agent_mode: Whether to use agent mode instructions (default: False for orchestrator mode)
         """
         if not self.agent:
             print(f"⚠️ No agent initialized to update")
             return
             
         try:
-            print(f"🔄 Updating agent instructions with {len(self.cards)} registered agents...")
+            print(f"🔄 Updating agent instructions with {len(self.cards)} registered agents (agent_mode={agent_mode})...")
+            
+            # CRITICAL: Update self.agents FIRST with current agent list
+            self.agents = json.dumps(self.list_remote_agents(), indent=2)
             
             # Update the cached instructions with current agent list
-            self.agent_instructions = self.root_instruction('foundry-host-agent')
+            self.agent_instructions = self.root_instruction('foundry-host-agent', agent_mode=agent_mode)
             
             # Also update the tools list in case agents changed
             self.agent_tools = self._get_tools()
@@ -1356,6 +1372,8 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
                     
         except Exception as e:
             print(f"❌ Error updating agent instructions: {e}")
+            import traceback
+            traceback.print_exc()
             # Don't fail the registration if instruction update fails
             pass
 
@@ -2970,15 +2988,20 @@ Answer with just JSON:
 
                     self._update_last_host_turn(session_context, agent_name, response_parts)
                     
-                    # Store interaction in background
-                    asyncio.create_task(self._store_a2a_interaction_background(
-                        outbound_request=request,
-                        inbound_response=response,
-                        agent_name=agent_name,
-                        processing_time=time.time() - start_time,
-                        span=span,
-                        context_id=contextId
-                    ))
+                    # Store interaction in background (only if inter-agent memory is enabled)
+                    enable_memory = getattr(session_context, 'enable_inter_agent_memory', False)
+                    if enable_memory:
+                        asyncio.create_task(self._store_a2a_interaction_background(
+                            outbound_request=request,
+                            inbound_response=response,
+                            agent_name=agent_name,
+                            processing_time=time.time() - start_time,
+                            span=span,
+                            context_id=contextId
+                        ))
+                        log_debug(f"[Memory] Storing A2A interaction for {agent_name} (memory enabled)")
+                    else:
+                        log_debug(f"[Memory] Skipping A2A interaction storage for {agent_name} (memory disabled)")
                     
                     return response_parts
                     
@@ -3082,15 +3105,20 @@ Answer with just JSON:
                 result = await self.convert_parts(response.parts, tool_context)
                 self._update_last_host_turn(session_context, agent_name, result)
                 
-                # Store interaction in background
-                asyncio.create_task(self._store_a2a_interaction_background(
-                    outbound_request=request,
-                    inbound_response=response,
-                    agent_name=agent_name,
-                    processing_time=time.time() - start_time,
-                    span=span,
-                    context_id=contextId
-                ))
+                # Store interaction in background (only if inter-agent memory is enabled)
+                enable_memory = getattr(session_context, 'enable_inter_agent_memory', False)
+                if enable_memory:
+                    asyncio.create_task(self._store_a2a_interaction_background(
+                        outbound_request=request,
+                        inbound_response=response,
+                        agent_name=agent_name,
+                        processing_time=time.time() - start_time,
+                        span=span,
+                        context_id=contextId
+                    ))
+                    log_debug(f"[Memory] Storing A2A interaction for {agent_name} (memory enabled)")
+                else:
+                    log_debug(f"[Memory] Skipping A2A interaction storage for {agent_name} (memory disabled)")
                 
                 return result
                 
@@ -3416,10 +3444,13 @@ Answer with just JSON:
         """
         Persist agent-to-agent interactions to memory service for future semantic search.
         
-        Why we store interactions:
-        - Enable "has this been asked before?" queries
+        NOTE: This is only called when inter-agent memory is ENABLED in the UI toggle.
+        When disabled, only uploaded document content is stored (not A2A conversations).
+        
+        Why we store interactions (when enabled):
+        - Enable "has this been asked before?" queries across conversations
         - Learn from past agent responses and patterns
-        - Provide context for multi-turn conversations
+        - Provide cross-conversation context
         - Track agent performance and reliability
         - Support debugging and troubleshooting
         
@@ -4185,6 +4216,11 @@ Answer with just JSON:
             tools = self._format_tools_for_responses_api()
             
             # Create streaming response
+            print(f"🔥 [DEBUG] About to create response with instructions containing {len(self.cards)} agents")
+            print(f"🔥 [DEBUG] Agent names in self.cards: {list(self.cards.keys())}")
+            print(f"🔥 [DEBUG] self.agents JSON value:\n{self.agents}")
+            print(f"🔥 [DEBUG] FULL INSTRUCTIONS being sent to Azure:\n{self.agent_instructions if self.agent_instructions else 'NONE'}")
+            print(f"🔥 [DEBUG] ===== END INSTRUCTIONS =====")
             response = await self._create_response_with_streaming(
                 user_message=enhanced_message,
                 context_id=context_id,

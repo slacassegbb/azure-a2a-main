@@ -97,14 +97,41 @@ def _build_agent_skills() -> List[AgentSkill]:
     """
     return [
         AgentSkill(
-            id='email_communication',
-            name='Email Communication',
-            description="A conversational assistant that helps compose and send professional emails. Just describe what you want to communicate and who should receive it.",
-            tags=['communication', 'writing', 'messaging'],
+            id='email_read',
+            name='Email Reading & Search',
+            description="Read, search, and retrieve emails from the inbox. Can filter by sender, subject, date, and unread status.",
+            tags=['email', 'inbox', 'read', 'search', 'retrieve', 'messages'],
             examples=[
-                'I need to ask John for a project update',
+                'Check my emails',
+                'Show my last 5 emails',
+                'Any unread emails?',
+                'Find emails from john@company.com',
+                'Get emails about invoices',
+                'What emails do I have from Ryan?',
+            ],
+        ),
+        AgentSkill(
+            id='email_attachments',
+            name='Email Attachment Download',
+            description="Download and extract file attachments from emails. Retrieves PDFs, documents, invoices, images, spreadsheets and other files attached to emails.",
+            tags=['attachments', 'download', 'files', 'documents', 'invoice', 'pdf', 'extract'],
+            examples=[
+                'Download attachments from my recent emails',
+                'Get the invoice attachment from Ryan',
+                'Find and download the PDF from the contract email',
+                'Extract files from emails about the project',
+                'Download all attachments from today',
+            ],
+        ),
+        AgentSkill(
+            id='email_send',
+            name='Email Composition & Sending',
+            description="Compose and send professional emails via Microsoft Graph API. Can include CC recipients and format emails with HTML.",
+            tags=['email', 'send', 'compose', 'write', 'communication'],
+            examples=[
+                'Send an email to john@company.com about the project update',
                 'Help me write a message to the client about the deadline',
-                'I want to follow up with the team about the meeting',
+                'I need to follow up with the team about the meeting',
             ],
         ),
     ]
@@ -121,7 +148,7 @@ def _create_agent_card(host: str, port: int) -> AgentCard:
     
     return AgentCard(
         name='Email Agent',
-        description="A conversational assistant that helps you communicate via email. Describe what you want to say and to whom, and I'll help compose and send the message.",
+        description="Full email management: READ emails from inbox (search by sender, subject, date), DOWNLOAD email attachments (invoices, documents, PDFs), and COMPOSE & SEND professional emails via Microsoft Graph API.",
         url=resolve_agent_url(resolved_host_for_url, port),
         version='1.0.0',
         defaultInputModes=['text'],

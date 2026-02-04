@@ -615,6 +615,12 @@ class FoundryHostManager(ApplicationManager):
             print(f"🟢 [MANAGER] Calling set_session_agents...")
             await self._host_agent.set_session_agents(session_agents)
             print(f"🟢 [MANAGER] After set_session_agents, host has {len(self._host_agent.cards)} agents")
+            
+            # 🔥 CRITICAL: Update agent instructions with session agents included
+            # This ensures the system prompt includes session-scoped agents like Email Agent
+            # Use the proper method to ensure self.agents is updated FIRST, then instructions
+            await self._host_agent._update_agent_instructions(agent_mode=effective_agent_mode)
+            print(f"✅ [MANAGER] Updated agent instructions with {len(self._host_agent.cards)} agents")
         else:
             print("⚠️ [MANAGER] No session ID found in context, host agent will have no agents")
         
@@ -944,17 +950,8 @@ class FoundryHostManager(ApplicationManager):
                             except Exception as reg_error:
                                 print(f"⚠️ [FILE_REGISTRY] Failed to register file: {reg_error}")
                             
-                            await streamer._send_event(
-                                "remote_agent_activity",
-                                {
-                                    "agentName": status_agent_name,
-                                    "content": f"Image available: {content_item['uri']}",
-                                    "timestamp": __import__('datetime').datetime.utcnow().isoformat(),
-                                    "contextId": context_id,
-                                    "conversationId": context_id.split("::")[1] if "::" in context_id else context_id,
-                                },
-                                context_id,
-                            )
+                            # Note: File availability is already communicated via file_uploaded event
+                            # No need to send additional remote_agent_activity events
                     if success:
                         log_debug(f"Message streamed to WebSocket: {event_data}")
                     else:
@@ -1062,9 +1059,58 @@ class FoundryHostManager(ApplicationManager):
         self._events.append(event)
 
     def get_conversation(self, conversation_id: Optional[str]) -> Optional[Conversation]:
+        # First check in-memory list
         for c in self._conversations:
             if c.conversation_id == conversation_id:
                 return c
+        
+        # If not found in memory, check the database and load it
+        # This handles the case where backend was restarted but conversation exists in DB
+        if conversation_id:
+            try:
+                # Try with full context_id first
+                db_conv = chat_history_service.get_conversation(conversation_id)
+                if not db_conv:
+                    # Also try with just the conversation part (without session prefix)
+                    conv_id_only = conversation_id.split("::")[-1] if "::" in conversation_id else conversation_id
+                    db_conv = chat_history_service.get_conversation(conv_id_only)
+                
+                if db_conv:
+                    log_debug(f"Found conversation {conversation_id} in database, loading into memory")
+                    # Recreate the in-memory Conversation object
+                    conversation = Conversation(
+                        conversation_id=conversation_id,
+                        is_active=db_conv.get('is_active', True)
+                    )
+                    # Load messages from database
+                    messages_data = chat_history_service.get_messages(db_conv.get('conversation_id', conversation_id))
+                    if messages_data:
+                        for msg_data in messages_data:
+                            try:
+                                parts = []
+                                for part_data in msg_data.get('parts', []):
+                                    if isinstance(part_data, dict) and 'root' in part_data:
+                                        root = part_data['root']
+                                        if root.get('kind') == 'text':
+                                            parts.append(Part(root=TextPart(text=root.get('text', ''))))
+                                    elif isinstance(part_data, str):
+                                        parts.append(Part(root=TextPart(text=part_data)))
+                                if parts:
+                                    msg = Message(
+                                        role=msg_data.get('role', 'user'),
+                                        parts=parts,
+                                        contextId=msg_data.get('context_id', conversation_id),
+                                        messageId=msg_data.get('message_id')
+                                    )
+                                    conversation.messages.append(msg)
+                            except Exception as e:
+                                log_debug(f"Error loading message: {e}")
+                    
+                    self._conversations.append(conversation)
+                    return conversation
+            except Exception as e:
+                log_debug(f"Error loading conversation from database: {e}")
+        
         return None
 
     def get_pending_messages(self) -> list[tuple[str, str]]:

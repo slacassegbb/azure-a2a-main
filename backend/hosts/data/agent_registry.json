@@ -927,5 +927,64 @@
         ]
       }
     ]
+  },
+  {
+    "name": "Email Agent",
+    "description": "Full email management: READ emails from inbox (search by sender, subject, date), DOWNLOAD email attachments (invoices, documents, PDFs), and COMPOSE & SEND professional emails via Microsoft Graph API.",
+    "version": "1.0.0",
+    "url": "http://localhost:9029/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "email_read",
+        "name": "Email Reading & Search",
+        "description": "Read, search, and retrieve emails from the inbox. Can filter by sender, subject, date, and unread status.",
+        "examples": null,
+        "tags": [
+          "email",
+          "inbox",
+          "read",
+          "search",
+          "retrieve",
+          "messages"
+        ]
+      },
+      {
+        "id": "email_attachments",
+        "name": "Email Attachment Download",
+        "description": "Download and extract file attachments from emails. Retrieves PDFs, documents, invoices, images, spreadsheets and other files attached to emails.",
+        "examples": null,
+        "tags": [
+          "attachments",
+          "download",
+          "files",
+          "documents",
+          "invoice",
+          "pdf",
+          "extract"
+        ]
+      },
+      {
+        "id": "email_send",
+        "name": "Email Composition & Sending",
+        "description": "Compose and send professional emails via Microsoft Graph API. Can include CC recipients and format emails with HTML.",
+        "examples": null,
+        "tags": [
+          "email",
+          "send",
+          "compose",
+          "write",
+          "communication"
+        ]
+      }
+    ]
   }
 ]

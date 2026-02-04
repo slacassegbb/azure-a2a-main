@@ -163,6 +163,22 @@ class AgentRegistry:
             True if saved successfully, False otherwise
         """
         try:
+            # Handle both old format (url) and new format (local_url/production_url)
+            # If agent has 'url' but not 'local_url', use 'url' as local_url
+            local_url = agent.get('local_url') or agent.get('url')
+            production_url = agent.get('production_url') or agent.get('url')
+            
+            # Both must be non-null for database constraint
+            if not local_url:
+                local_url = production_url
+            if not production_url:
+                production_url = local_url
+            
+            print(f"[AgentRegistry] _save_agent_to_database: {agent.get('name')}")
+            print(f"[AgentRegistry]   local_url: {local_url}")
+            print(f"[AgentRegistry]   production_url: {production_url}")
+            print(f"[AgentRegistry]   skills: {[s.get('id') for s in agent.get('skills', [])]}")
+            
             cur = self.db_conn.cursor()
             cur.execute("""
                 INSERT INTO agents (
@@ -179,8 +195,8 @@ class AgentRegistry:
                 ON CONFLICT (name) DO UPDATE SET
                     description = EXCLUDED.description,
                     version = EXCLUDED.version,
-                    local_url = EXCLUDED.local_url,
-                    production_url = EXCLUDED.production_url,
+                    local_url = COALESCE(EXCLUDED.local_url, agents.local_url),
+                    production_url = COALESCE(EXCLUDED.production_url, agents.production_url),
                     default_input_modes = EXCLUDED.default_input_modes,
                     default_output_modes = EXCLUDED.default_output_modes,
                     capabilities = EXCLUDED.capabilities,
@@ -190,8 +206,8 @@ class AgentRegistry:
                 agent.get('name'),
                 agent.get('description'),
                 agent.get('version'),
-                agent.get('local_url'),
-                agent.get('production_url'),
+                local_url,
+                production_url,
                 json.dumps(agent.get('defaultInputModes', [])),
                 json.dumps(agent.get('defaultOutputModes', [])),
                 json.dumps(agent.get('capabilities', {})),
@@ -272,16 +288,25 @@ class AgentRegistry:
         Returns:
             True if agent was updated, False if not found
         """
+        print(f"[AgentRegistry] update_agent called for: {name}")
+        print(f"[AgentRegistry] Agent data keys: {list(agent.keys())}")
+        print(f"[AgentRegistry] Skills count: {len(agent.get('skills', []))}")
+        
         # Validate required fields
         if not self._validate_agent(agent):
+            print(f"[AgentRegistry] ❌ Validation FAILED for {name}")
             raise ValueError("Invalid agent configuration")
+        
+        print(f"[AgentRegistry] ✅ Validation passed for {name}")
         
         if self.use_database:
             # Check if agent exists
             existing = self.get_agent(name)
             if not existing:
+                print(f"[AgentRegistry] ❌ Agent {name} not found in database")
                 return False
             
+            print(f"[AgentRegistry] 📝 Updating {name} in database...")
             # Update in database
             return self._save_agent_to_database(agent)
         else:

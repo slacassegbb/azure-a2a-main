@@ -3282,7 +3282,10 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                             const urlWithoutParams = (attachment.uri || "").split('?')[0].toLowerCase()
                             const isVideoByExt = /\.(mp4|webm|mov|avi|mkv)$/.test(urlWithoutParams)
                             const isImageByExt = /\.(png|jpe?g|gif|webp|svg|bmp)$/.test(urlWithoutParams)
-                            const isImage = (attachment.mediaType || "").startsWith("image/") || (!attachment.mediaType && isImageByExt)
+                            const isPdfByExt = /\.pdf$/.test(urlWithoutParams)
+                            
+                            // PDFs should NEVER be treated as images, even if mediaType is wrong
+                            const isImage = !isPdfByExt && ((attachment.mediaType || "").startsWith("image/") || (!attachment.mediaType && isImageByExt))
                             const isVideo = (attachment.mediaType || "").startsWith("video/") || (!attachment.mediaType && isVideoByExt) || isVideoByExt
                             
                             // Debug: Log full type detection for each attachment
@@ -3294,6 +3297,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                               urlWithoutParams: urlWithoutParams?.slice(-60),
                               isVideoByExt,
                               isImageByExt,
+                              isPdfByExt,
                               isVideo,
                               isImage,
                               videoId: attachment.videoId,

@@ -43,7 +43,7 @@ export function ChatLayout() {
   const [isLeftSidebarCollapsed, setLeftSidebarCollapsed] = useState(false)
   const [isRightSidebarCollapsed, setRightSidebarCollapsed] = useState(false)
   const [isFileHistoryOpen, setFileHistoryOpen] = useState(false) // Closed by default
-  const [enableInterAgentMemory, setEnableInterAgentMemory] = useState(true)
+  const [enableInterAgentMemory, setEnableInterAgentMemory] = useState(false)
   const [activeNode, setActiveNode] = useState<string | null>(null)
   
   // Panel refs for programmatic collapse/expand
@@ -580,12 +580,15 @@ export function ChatLayout() {
           onExpand={() => setLeftSidebarCollapsed(false)}
         >
           <div className="flex flex-col h-full bg-muted/20">
-            <ChatHistorySidebar
-              isCollapsed={isLeftSidebarCollapsed}
-              onToggle={handleLeftSidebarToggle}
-            />
+            {/* Chat History - scrollable region */}
+            <div className="flex-1 overflow-y-auto min-h-0">
+              <ChatHistorySidebar
+                isCollapsed={isLeftSidebarCollapsed}
+                onToggle={handleLeftSidebarToggle}
+              />
+            </div>
             {!isLeftSidebarCollapsed && (
-              <div className="mt-2">
+              <div className="flex-shrink-0 border-t">
                 <Collapsible open={isFileHistoryOpen} onOpenChange={setFileHistoryOpen}>
                   <CollapsibleTrigger asChild>
                     <Button 

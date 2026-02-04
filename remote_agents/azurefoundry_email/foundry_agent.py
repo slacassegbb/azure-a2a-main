@@ -214,7 +214,7 @@ You are an Email Communications Specialist. You can both READ incoming emails an
 When users ask to check, read, show, or retrieve emails, output a request in this format:
 
 ```EMAIL_FETCH
-COUNT: 10
+COUNT: 50
 UNREAD_ONLY: false
 FROM_ADDRESS: 
 SUBJECT_CONTAINS: 
@@ -223,7 +223,9 @@ INCLUDE_ATTACHMENTS: false
 ```END_EMAIL_FETCH
 
 Parameters:
-- COUNT: Number of emails to fetch (1-50, default: 10)
+- COUNT: Number of emails to fetch (1-100, default: 50)
+  * Use 50-100 when searching for specific emails (by sender, subject, or attachments)
+  * Use 10-20 only when user explicitly asks for "recent" or "last few" emails
 - UNREAD_ONLY: true/false - only get unread emails
 - FROM_ADDRESS: Filter by sender email (partial match)
 - SUBJECT_CONTAINS: Filter by subject text (partial match)  
@@ -238,11 +240,12 @@ Parameters:
 
 Examples:
 - "Show my last 5 emails" → COUNT: 5, INCLUDE_ATTACHMENTS: false
-- "Any unread emails?" → UNREAD_ONLY: true, INCLUDE_ATTACHMENTS: false
-- "Get my emails with attachments" → INCLUDE_ATTACHMENTS: true
-- "Download attachments from invoice emails" → SUBJECT_CONTAINS: invoice, INCLUDE_ATTACHMENTS: true
-- "Emails about invoices with files" → SUBJECT_CONTAINS: invoice, INCLUDE_ATTACHMENTS: true
-- "Emails from john@company.com" → FROM_ADDRESS: john@company.com, INCLUDE_ATTACHMENTS: false
+- "Any unread emails?" → COUNT: 20, UNREAD_ONLY: true, INCLUDE_ATTACHMENTS: false
+- "Find email from Ryan about invoice" → COUNT: 100, FROM_ADDRESS: Ryan, SUBJECT_CONTAINS: invoice, INCLUDE_ATTACHMENTS: true
+- "Get my emails with attachments" → COUNT: 50, INCLUDE_ATTACHMENTS: true
+- "Download attachments from invoice emails" → COUNT: 100, SUBJECT_CONTAINS: invoice, INCLUDE_ATTACHMENTS: true
+- "Emails about invoices with files" → COUNT: 100, SUBJECT_CONTAINS: invoice, INCLUDE_ATTACHMENTS: true
+- "Emails from john@company.com" → COUNT: 50, FROM_ADDRESS: john@company.com, INCLUDE_ATTACHMENTS: false
 
 ### 2. SEND EMAILS
 When you have information to send an email, output it in this format:
@@ -278,7 +281,7 @@ BODY:
 You: "I'll check your inbox now.
 
 ```EMAIL_FETCH
-COUNT: 10
+COUNT: 50
 UNREAD_ONLY: false
 FROM_ADDRESS: 
 SUBJECT_CONTAINS: 
@@ -302,7 +305,7 @@ INCLUDE_ATTACHMENTS: true
 You: "I'll get invoices from today and download their attachments.
 
 ```EMAIL_FETCH
-COUNT: 20
+COUNT: 100
 UNREAD_ONLY: false
 FROM_ADDRESS: 
 SUBJECT_CONTAINS: invoice
@@ -623,8 +626,15 @@ Current date: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}
             if not container_client.exists():
                 container_client.create_container()
             
-            # Upload the content
-            container_client.upload_blob(name=blob_name, data=content, overwrite=True)
+            # Upload the content with proper content type
+            from azure.storage.blob import ContentSettings
+            content_settings = ContentSettings(content_type=content_type)
+            container_client.upload_blob(
+                name=blob_name, 
+                data=content, 
+                overwrite=True,
+                content_settings=content_settings
+            )
             
             # Generate SAS token
             sas_duration_minutes = int(os.getenv("AZURE_BLOB_SAS_DURATION_MINUTES", str(24 * 60)))

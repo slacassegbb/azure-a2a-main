@@ -2094,36 +2094,34 @@ def main():
     # ==================== END SCHEDULER ENDPOINTS ====================
 
     @app.post("/clear-memory")
-    async def clear_memory():
-        """Clear all stored interactions from the Azure vector memory index."""
+    async def clear_memory(request: Request):
+        """Clear stored interactions from the Azure vector memory index for a specific user."""
         try:
-            # Access the host agent through the conversation server's manager
-            if agent_server and hasattr(agent_server, 'manager'):
-                # Ensure the host agent is initialized
-                await agent_server.manager.ensure_host_agent_initialized()
-                
-                # Access the FoundryHostAgent2 instance and clear memory
-                if hasattr(agent_server.manager, '_host_agent') and agent_server.manager._host_agent:
-                    success = agent_server.manager._host_agent.clear_memory_index()
-                    if success:
-                        return {
-                            "success": True,
-                            "message": "Memory index cleared successfully"
-                        }
-                    else:
-                        return {
-                            "success": False,
-                            "message": "Failed to clear memory index"
-                        }
-                else:
-                    return {
-                        "success": False,
-                        "message": "Host agent not initialized"
-                    }
+            # Get user_id from request body
+            body = await request.json()
+            user_id = body.get('user_id')
+            
+            if not user_id:
+                return {
+                    "success": False,
+                    "message": "user_id is required"
+                }
+            
+            # Import and use a2a_memory_service directly to avoid context_id transformation
+            from hosts.multiagent.a2a_memory_service import a2a_memory_service
+            
+            # Clear memory for this specific session_id (user_id)
+            success = a2a_memory_service.clear_all_interactions(session_id=user_id)
+            
+            if success:
+                return {
+                    "success": True,
+                    "message": f"Memory index cleared successfully for user {user_id}"
+                }
             else:
                 return {
                     "success": False,
-                    "message": "Agent server not available"
+                    "message": "Failed to clear memory index"
                 }
         except Exception as e:
             print(f"Error clearing memory: {e}")
