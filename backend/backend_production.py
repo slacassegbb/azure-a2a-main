@@ -84,6 +84,9 @@ from typing import Optional, Dict, Any, List
 # This avoids code duplication and keeps auth logic in one place
 from service.auth_service import AuthService, User, SECRET_KEY, ALGORITHM
 
+# Import ActiveWorkflowService for persisted workflow state
+from service import active_workflow_service
+
 
 class HTTPXClientWrapper:
     """Wrapper to return the singleton client where needed."""
@@ -1495,10 +1498,7 @@ def main():
 
     # ==================== ACTIVE WORKFLOW (SESSION-SCOPED) ====================
     # Stores active workflow state per session, synced across collaborative sessions
-    
-    # In-memory store for active workflows per session
-    # Format: { session_id: { "workflow": str, "name": str, "goal": str } }
-    active_workflows_store: Dict[str, Dict[str, str]] = {}
+    # Now persisted to PostgreSQL via active_workflow_service
     
     class ActiveWorkflowRequest(BaseModel):
         workflow: str = ""
@@ -1506,7 +1506,7 @@ def main():
         goal: str = ""
     
     @app.get("/api/active-workflow")
-    async def get_active_workflow(session_id: str = Query(..., description="Session ID to get active workflow for")):
+    async def get_active_workflow_endpoint(session_id: str = Query(..., description="Session ID to get active workflow for")):
         """
         Get the active workflow for a session.
         Used by all users in a collaborative session to see the same active workflow.
@@ -1514,9 +1514,7 @@ def main():
         Example curl:
             curl "http://localhost:12000/api/active-workflow?session_id=abc123"
         """
-        if session_id in active_workflows_store:
-            return active_workflows_store[session_id]
-        return {"workflow": "", "name": "", "goal": ""}
+        return active_workflow_service.get_active_workflow(session_id)
     
     @app.post("/api/active-workflow")
     async def set_active_workflow(
@@ -1533,11 +1531,13 @@ def main():
                  -d '{"workflow": "1. [Agent A] Do something", "name": "My Workflow", "goal": "Accomplish task"}'
         """
         if request:
-            active_workflows_store[session_id] = {
-                "workflow": request.workflow,
-                "name": request.name,
-                "goal": request.goal
-            }
+            # Store in database via service
+            active_workflow_service.set_active_workflow(
+                session_id,
+                request.workflow,
+                request.name,
+                request.goal
+            )
             # Broadcast to all users in this session via WebSocket
             # Use _send_event with session_id as contextId for smart routing
             try:
@@ -1564,30 +1564,28 @@ def main():
         Example curl:
             curl -X DELETE "http://localhost:12000/api/active-workflow?session_id=abc123"
         """
-        if session_id in active_workflows_store:
-            del active_workflows_store[session_id]
-            # Broadcast to all users in this session via WebSocket
-            try:
-                if websocket_streamer:
-                    await websocket_streamer._send_event(
-                        "active_workflow_changed",
-                        {
-                            "contextId": session_id,
-                            "workflow": "",
-                            "name": "",
-                            "goal": ""
-                        },
-                        partition_key=session_id
-                    )
-            except Exception as e:
-                print(f"[ActiveWorkflow] Failed to broadcast clear: {e}")
+        # Clear from database via service
+        active_workflow_service.clear_active_workflow(session_id)
+        # Broadcast to all users in this session via WebSocket
+        try:
+            if websocket_streamer:
+                await websocket_streamer._send_event(
+                    "active_workflow_changed",
+                    {
+                        "contextId": session_id,
+                        "workflow": "",
+                        "name": "",
+                        "goal": ""
+                    },
+                    partition_key=session_id
+                )
+        except Exception as e:
+            print(f"[ActiveWorkflow] Failed to broadcast clear: {e}")
         return {"success": True, "session_id": session_id}
 
     # ==================== MULTI-WORKFLOW API ENDPOINTS ====================
     # New API for managing multiple active workflows per session
-    
-    # Store for multi-workflow state (separate from legacy single workflow)
-    multi_workflows_store: Dict[str, List[Dict[str, Any]]] = {}
+    # Uses database-backed service for persistence across restarts
     
     @app.get("/api/active-workflows")
     async def get_active_workflows(session_id: str = Query(..., description="Session ID")):
@@ -1595,7 +1593,7 @@ def main():
         Get all active workflows for a session.
         Returns empty list if no workflows are active.
         """
-        workflows = multi_workflows_store.get(session_id, [])
+        workflows = active_workflow_service.get_active_workflows(session_id)
         return {"workflows": workflows}
     
     @app.post("/api/active-workflows")
@@ -1608,7 +1606,7 @@ def main():
         """
         body = await request.json()
         workflows = body.get("workflows", [])
-        multi_workflows_store[session_id] = workflows
+        active_workflow_service.set_active_workflows(session_id, workflows)
         
         # Broadcast update to all users in session
         try:
@@ -1634,15 +1632,7 @@ def main():
         body = await request.json()
         workflow = body
         
-        if session_id not in multi_workflows_store:
-            multi_workflows_store[session_id] = []
-        
-        # Avoid duplicates by ID
-        existing_ids = {w.get("id") for w in multi_workflows_store[session_id]}
-        if workflow.get("id") not in existing_ids:
-            multi_workflows_store[session_id].append(workflow)
-        
-        workflows = multi_workflows_store[session_id]
+        workflows = active_workflow_service.add_active_workflow(session_id, workflow)
         
         # Broadcast update
         try:
@@ -1665,13 +1655,7 @@ def main():
         """
         Remove a specific workflow from the active workflows list.
         """
-        if session_id in multi_workflows_store:
-            multi_workflows_store[session_id] = [
-                w for w in multi_workflows_store[session_id] 
-                if w.get("id") != workflow_id
-            ]
-        
-        workflows = multi_workflows_store.get(session_id, [])
+        workflows = active_workflow_service.remove_active_workflow(session_id, workflow_id)
         
         # Broadcast update
         try:
@@ -1691,8 +1675,7 @@ def main():
         """
         Clear all active workflows for a session.
         """
-        if session_id in multi_workflows_store:
-            del multi_workflows_store[session_id]
+        active_workflow_service.clear_active_workflows(session_id)
         
         # Broadcast update
         try:
