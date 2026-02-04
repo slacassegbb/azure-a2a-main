@@ -287,21 +287,36 @@ def delete_conversation(conversation_id: str) -> bool:
 
 
 def update_conversation_name(conversation_id: str, name: str) -> bool:
-    """Update conversation name."""
+    """Update conversation name.
+    
+    Handles both short IDs (abc123) and full IDs (session::abc123).
+    Will try to match on either the exact ID or IDs ending with ::conversation_id.
+    """
+    # Update cache if present
     if conversation_id in _conversations_cache:
         _conversations_cache[conversation_id]["name"] = name
         _conversations_cache[conversation_id]["updated_at"] = datetime.utcnow().isoformat()
+    
+    # Also check for full ID format in cache
+    for cached_id in list(_conversations_cache.keys()):
+        if cached_id.endswith(f"::{conversation_id}"):
+            _conversations_cache[cached_id]["name"] = name
+            _conversations_cache[cached_id]["updated_at"] = datetime.utcnow().isoformat()
     
     conn = _get_connection()
     if conn:
         try:
             cur = conn.cursor()
+            # Try updating by exact match OR by suffix match (for session::convId format)
             cur.execute("""
-                UPDATE conversations SET name = %s, updated_at = %s WHERE conversation_id = %s
-            """, (name, datetime.utcnow(), conversation_id))
+                UPDATE conversations SET name = %s, updated_at = %s 
+                WHERE conversation_id = %s OR conversation_id LIKE %s
+            """, (name, datetime.utcnow(), conversation_id, f"%::{conversation_id}"))
+            rows_updated = cur.rowcount
             conn.commit()
             cur.close()
-            return True
+            print(f"[ChatHistoryService] Updated name for {rows_updated} conversation(s) matching {conversation_id}")
+            return rows_updated > 0
         except Exception as e:
             print(f"[ChatHistoryService] Error updating conversation name: {e}")
             conn.rollback()
