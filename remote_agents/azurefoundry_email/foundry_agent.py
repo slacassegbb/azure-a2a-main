@@ -175,23 +175,39 @@ class FoundryEmailAgent:
         return self.agent
     
     def _get_agent_instructions(self) -> str:
-        """Get the agent instructions for email composition and sending."""
+        """Get the agent instructions for email composition, sending, and reading."""
         return f"""
-You are an Email Communications Specialist. Your job is to compose and send professional emails IMMEDIATELY without asking for confirmation.
+You are an Email Communications Specialist. You can both READ incoming emails and SEND emails via Microsoft Graph API.
 
-## HOW THIS WORKS
+## CAPABILITIES
 
-When you receive information about an email to send, you must:
+### 1. READ EMAILS (Inbox Retrieval)
+When users ask to check, read, show, or retrieve emails, output a request in this format:
 
-1. **Extract the Information**:
-   - Recipient email address
-   - Subject line (create one based on context if not provided)
-   - The FULL content/report to include in the email body
-   - Any CC recipients (optional)
+```EMAIL_FETCH
+COUNT: 10
+UNREAD_ONLY: false
+FROM_ADDRESS: 
+SUBJECT_CONTAINS: 
+SINCE_DATE: 
+```END_EMAIL_FETCH
 
-2. **Compose and SEND IMMEDIATELY**: Create a professional email and output it in the EMAIL_TO_SEND format right away. DO NOT ask for confirmation or approval.
+Parameters:
+- COUNT: Number of emails to fetch (1-50, default: 10)
+- UNREAD_ONLY: true/false - only get unread emails
+- FROM_ADDRESS: Filter by sender email (partial match)
+- SUBJECT_CONTAINS: Filter by subject text (partial match)  
+- SINCE_DATE: Get emails after this date (format: 2026-02-04)
 
-3. **Output Format**: ALWAYS output the email in this EXACT format:
+Examples:
+- "Show my last 5 emails" → COUNT: 5
+- "Any unread emails?" → UNREAD_ONLY: true
+- "Emails from john@company.com" → FROM_ADDRESS: john@company.com
+- "Emails about invoices" → SUBJECT_CONTAINS: invoice
+- "Emails from today" → SINCE_DATE: {datetime.datetime.now().strftime('%Y-%m-%d')}
+
+### 2. SEND EMAILS
+When you have information to send an email, output it in this format:
 
 ```EMAIL_TO_SEND
 TO: recipient@example.com
@@ -203,21 +219,55 @@ BODY:
 </html>
 ```END_EMAIL
 
-The system will automatically detect this format and send the email.
-
 ## CRITICAL RULES
 
-- **NEVER** ask "Would you like me to send this?" or "Do you want any changes?"
-- **NEVER** show a draft and wait for approval
-- **ALWAYS** output the EMAIL_TO_SEND block immediately when you have the required info
-- If you have recipient + subject/topic + content, SEND IT immediately
-- **INCLUDE THE FULL REPORT IN THE BODY** - the system will use it to generate the PDF, then automatically shorten the email body
-- Use HTML formatting for professional appearance (<p>, <h2>, <ul>, <li>, <strong>, etc.)
+**For Reading Emails:**
+- When user asks to "check emails", "show my inbox", "any new emails?", etc. → Use EMAIL_FETCH format
+- After fetching, summarize the emails in a readable format
+- You can suggest actions like "Would you like me to reply to any of these?"
 
-## EXAMPLE
+**For Sending Emails:**
+- **NEVER** ask "Would you like me to send this?" or wait for confirmation
+- **ALWAYS** output the EMAIL_TO_SEND block immediately when you have recipient + subject + content
+- Include the FULL report content in the BODY - the system will generate a PDF if appropriate
+- Use HTML formatting for professional appearance
 
-User: "Send this report to simon@company.com: [Report Title] Executive Summary... Key Findings... Recommendations..."
+## RESPONSE EXAMPLES
 
+**User: "Check my emails"**
+You: "I'll check your inbox now.
+
+```EMAIL_FETCH
+COUNT: 10
+UNREAD_ONLY: false
+FROM_ADDRESS: 
+SUBJECT_CONTAINS: 
+SINCE_DATE: 
+```END_EMAIL_FETCH"
+
+**User: "Show unread emails from today"**
+You: "Checking for unread emails received today.
+
+```EMAIL_FETCH
+COUNT: 20
+UNREAD_ONLY: true
+FROM_ADDRESS: 
+SUBJECT_CONTAINS: 
+SINCE_DATE: {datetime.datetime.now().strftime('%Y-%m-%d')}
+```END_EMAIL_FETCH"
+
+**User: "Any emails from support@vendor.com?"**
+You: "I'll look for emails from that address.
+
+```EMAIL_FETCH
+COUNT: 10
+UNREAD_ONLY: false
+FROM_ADDRESS: support@vendor.com
+SUBJECT_CONTAINS: 
+SINCE_DATE: 
+```END_EMAIL_FETCH"
+
+**User: "Send this report to simon@company.com: [Report content...]"**
 You: "I'll send that email now.
 
 ```EMAIL_TO_SEND
@@ -227,20 +277,9 @@ CC:
 BODY:
 <html>
 <p>Dear Simon,</p>
-<h2>Report Title</h2>
-<h3>Executive Summary</h3>
-<p>Your executive summary content here...</p>
-<h3>Key Findings</h3>
-<ul>
-<li>Finding 1</li>
-<li>Finding 2</li>
-</ul>
-<h3>Recommendations</h3>
-<p>Your recommendations here...</p>
+[Full report content in HTML...]
 </html>
 ```END_EMAIL"
-
-(The system will automatically generate a branded PDF from the full report and send a short email body referencing the attachment)
 
 Current date: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}
 """
@@ -272,6 +311,8 @@ Current date: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}
         await self.send_message(thread_id, user_message)
         client = self._get_client()
         run = client.runs.create(thread_id=thread_id, agent_id=self.agent.id)
+        
+        logger.info(f"Created run {run.id} with status {run.status}")
 
         max_iterations = 25
         iterations = 0
@@ -282,11 +323,13 @@ Current date: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}
 
             try:
                 run = client.runs.get(thread_id=thread_id, run_id=run.id)
+                logger.info(f"Run status: {run.status} (iteration {iterations})")
             except Exception as e:
                 yield f"Error: {str(e)}"
                 return
 
             if run.status == "failed":
+                logger.error(f"Run failed: {run.last_error}")
                 yield f"Error: {run.last_error}"
                 return
 
@@ -296,6 +339,7 @@ Current date: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}
                 run = client.runs.get(thread_id=thread_id, run_id=run.id)
 
         if run.status == "failed":
+            logger.error(f"Run failed after loop: {run.last_error}")
             yield f"Error: {run.last_error}"
             return
 
@@ -322,6 +366,12 @@ Current date: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}
                     if hasattr(content_item, 'text'):
                         text_content = content_item.text.value
                         
+                        # Check if there's an email fetch request
+                        fetch_result, fetch_clean = self._try_fetch_emails(text_content)
+                        if fetch_result:
+                            yield f"{fetch_clean}\n\n{fetch_result}"
+                            break
+                        
                         # Check if there's an email to send
                         email_result, clean_content = self._try_send_email(text_content)
                         if email_result:
@@ -330,6 +380,123 @@ Current date: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}
                         else:
                             yield text_content
                 break
+    
+    def _try_fetch_emails(self, response_text: str) -> tuple[Optional[str], str]:
+        """Check if the response contains an email fetch request and retrieve emails.
+        Returns: (formatted_emails, cleaned_content)
+        """
+        import re
+        
+        # Look for the EMAIL_FETCH block
+        pattern = r'```EMAIL_FETCH\s*\n(.*?)\n```END_EMAIL_FETCH'
+        match = re.search(pattern, response_text, re.DOTALL)
+        
+        if not match:
+            return None, response_text
+        
+        fetch_block = match.group(1)
+        logger.info(f"📧 EMAIL_FETCH block content:\n{fetch_block}")
+        
+        # Parse the fetch parameters line by line
+        # Each line is "FIELD: value" or "FIELD:" (empty value)
+        count = 10
+        unread_only = False
+        from_address = None
+        subject_contains = None
+        since_date = None
+        
+        for line in fetch_block.strip().split('\n'):
+            line = line.strip()
+            if ':' in line:
+                field, _, value = line.partition(':')
+                field = field.strip().upper()
+                value = value.strip()
+                
+                if field == 'COUNT' and value.isdigit():
+                    count = int(value)
+                elif field == 'UNREAD_ONLY':
+                    unread_only = value.lower() == 'true'
+                elif field == 'FROM_ADDRESS' and value:
+                    from_address = value
+                elif field == 'SUBJECT_CONTAINS' and value:
+                    subject_contains = value
+                elif field == 'SINCE_DATE' and value:
+                    since_date = value
+        
+        logger.info(f"📧 Parsed EMAIL_FETCH: count={count}, unread={unread_only}, from={from_address}, subject={subject_contains}, since={since_date}")
+        
+        # Remove the EMAIL_FETCH block from response for clean display
+        clean_content = re.sub(pattern, '', response_text, flags=re.DOTALL).strip()
+        if not clean_content:
+            clean_content = "📬 Checking your inbox..."
+        
+        # Fetch the emails
+        try:
+            from email_config import get_emails
+            
+            result = get_emails(
+                count=count,
+                unread_only=unread_only,
+                from_address=from_address,
+                subject_contains=subject_contains,
+                since_date=since_date
+            )
+            
+            if not result["success"]:
+                return f"❌ {result['message']}", clean_content
+            
+            emails = result["emails"]
+            
+            if not emails:
+                filters_desc = []
+                if unread_only:
+                    filters_desc.append("unread")
+                if from_address:
+                    filters_desc.append(f"from '{from_address}'")
+                if subject_contains:
+                    filters_desc.append(f"about '{subject_contains}'")
+                if since_date:
+                    filters_desc.append(f"since {since_date}")
+                
+                filter_text = " ".join(filters_desc) if filters_desc else ""
+                return f"📭 No {filter_text} emails found.", clean_content
+            
+            # Format emails for display
+            formatted = f"📬 **Found {len(emails)} email(s):**\n\n"
+            
+            for i, email in enumerate(emails, 1):
+                # Format received time
+                received = email.get("received_at", "")
+                if received:
+                    try:
+                        from datetime import datetime
+                        dt = datetime.fromisoformat(received.replace("Z", "+00:00"))
+                        received = dt.strftime("%b %d, %Y at %I:%M %p")
+                    except:
+                        pass
+                
+                read_status = "" if email.get("is_read") else "🔵 "
+                attachment_icon = "📎 " if email.get("has_attachments") else ""
+                
+                formatted += f"---\n"
+                formatted += f"**{i}. {read_status}{attachment_icon}{email.get('subject', '(No Subject)')}**\n"
+                formatted += f"   From: {email.get('from_name', 'Unknown')} <{email.get('from_email', '')}>\n"
+                formatted += f"   Received: {received}\n"
+                
+                # Show preview
+                preview = email.get("preview", "")
+                if preview:
+                    # Truncate preview if too long
+                    if len(preview) > 150:
+                        preview = preview[:150] + "..."
+                    formatted += f"   Preview: {preview}\n"
+                formatted += "\n"
+            
+            return formatted, clean_content
+            
+        except Exception as e:
+            logger.error(f"Failed to fetch emails: {e}")
+            return f"❌ Failed to fetch emails: {str(e)}", clean_content
     
     def _try_send_email(self, response_text: str) -> tuple[Optional[str], str]:
         """Check if the response contains an email to send and send it.

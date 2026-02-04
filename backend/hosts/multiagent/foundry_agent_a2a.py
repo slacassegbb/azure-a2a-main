@@ -352,6 +352,7 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
         - Supports streaming for real-time UI updates
         - Handles tool calls (function calls) in a loop
         - Uses previous_response_id for multi-turn context
+        - Implements retry logic for transient Azure OpenAI errors
         
         Returns:
             Dict with keys: id, text, tool_calls, status, usage
@@ -370,70 +371,165 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
             status = "completed"
             tool_calls_to_execute = []
             
-            try:
-                # Create the streaming response using Responses API with Azure Agent reference
-                # Agent contains model, instructions, and tools (including Bing Grounding)
-                stream = await self.openai_client.responses.create(
-                    input=user_message,
-                    previous_response_id=previous_response_id,
-                    extra_body={"agent": {"name": self.agent.name, "type": "agent_reference"}},
-                    stream=True,
-                )
-            except Exception as stream_error:
-                log_error(f"Error creating stream: {stream_error}")
-                import traceback
-                traceback.print_exc()
+            # Retry logic for transient Azure OpenAI errors
+            max_retries = self.max_retries if hasattr(self, 'max_retries') else 2
+            last_error = None
+            
+            for attempt in range(max_retries + 1):
+                try:
+                    # Create the streaming response using Responses API with Azure Agent reference
+                    # Agent contains model, instructions, and tools (including Bing Grounding)
+                    print(f"🔵 [AZURE] Creating stream (attempt {attempt + 1}/{max_retries + 1})...")
+                    print(f"🔵 [AZURE] Agent: {self.agent.name if self.agent else 'None'}, Input length: {len(user_message)}")
+                    stream = await self.openai_client.responses.create(
+                        input=user_message,
+                        previous_response_id=previous_response_id,
+                        extra_body={"agent": {"name": self.agent.name, "type": "agent_reference"}},
+                        stream=True,
+                    )
+                    print(f"✅ [AZURE] Stream created successfully")
+                    break  # Success, exit retry loop
+                except Exception as stream_error:
+                    last_error = stream_error
+                    error_str = str(stream_error).lower()
+                    
+                    # Check if this is a retryable error
+                    is_retryable = any(keyword in error_str for keyword in [
+                        'rate limit', 'throttl', 'overload', 'capacity', 'timeout',
+                        'connection', 'temporarily', 'retry', '429', '503', '504', '500',
+                        'an error occurred while processing'  # Generic Azure error
+                    ])
+                    
+                    if is_retryable and attempt < max_retries:
+                        wait_time = (2 ** attempt) + 1  # Exponential backoff: 2s, 3s, 5s
+                        log_error(f"⚠️ Azure OpenAI error (attempt {attempt + 1}/{max_retries + 1}), retrying in {wait_time}s: {stream_error}")
+                        await asyncio.sleep(wait_time)
+                        continue
+                    else:
+                        log_error(f"Error creating stream (attempt {attempt + 1}/{max_retries + 1}): {stream_error}")
+                        import traceback
+                        traceback.print_exc()
+                        return {
+                            "id": None,
+                            "text": f"I apologize, but I encountered an error processing your request: {str(stream_error)}",
+                            "tool_calls": [],
+                            "status": "failed",
+                            "usage": None
+                        }
+            else:
+                # All retries exhausted
+                log_error(f"All {max_retries + 1} attempts failed for Azure OpenAI request")
                 return {
                     "id": None,
-                    "text": f"I apologize, but I encountered an error processing your request: {str(stream_error)}",
+                    "text": f"I apologize, but I encountered a persistent error after {max_retries + 1} attempts: {str(last_error)}",
                     "tool_calls": [],
                     "status": "failed",
                     "usage": None
                 }
             
-            # Process the streaming response
-            try:
-                async for event in stream:
-                    event_type = event.type
-                    
-                    if event_type == "response.created":
-                        response_id = event.response.id
-                        self._response_ids[context_id] = response_id  # Track for multi-turn
-                        log_debug(f"📝 Response created: {response_id}")
-                    
-                    elif event_type == "response.output_text.delta":
-                        chunk = event.delta
-                        if chunk:
-                            full_text += chunk
-                            await self._emit_text_chunk(chunk, context_id)
-                    
-                    elif event_type == "response.output_item.done":
-                        # Check for function call outputs
-                        if hasattr(event, 'item') and event.item.type == "function_call":
-                            tool_call = event.item
-                            tool_calls_to_execute.append(tool_call)
-                            print(f"🔧 [FUNCTION CALL] name={tool_call.name}, arguments={tool_call.arguments}")
-                    
-                    elif event_type == "response.completed":
-                        log_debug(f"✅ Response completed")
-                        break
-                    
-                    elif event_type == "error":
-                        log_error(f"Stream error: {event}")
-                        status = "failed"
-                        break
+            # Process the streaming response with retry for mid-stream failures
+            stream_retry_count = 0
+            max_stream_retries = 2
+            event_count = 0
+            
+            print(f"🔵 [AZURE] Starting stream processing...")
+            while stream_retry_count <= max_stream_retries:
+                try:
+                    async for event in stream:
+                        event_count += 1
+                        event_type = event.type
                         
-            except Exception as stream_proc_error:
-                log_error(f"Error processing stream: {stream_proc_error}")
-                if full_text:
+                        if event_count <= 3 or event_count % 10 == 0:
+                            print(f"🔵 [AZURE] Event {event_count}: {event_type}")
+                        
+                        if event_type == "response.created":
+                            response_id = event.response.id
+                            self._response_ids[context_id] = response_id  # Track for multi-turn
+                            log_debug(f"📝 Response created: {response_id}")
+                            print(f"📝 [AZURE] Response created: {response_id}")
+                        
+                        elif event_type == "response.output_text.delta":
+                            chunk = event.delta
+                            if chunk:
+                                full_text += chunk
+                                await self._emit_text_chunk(chunk, context_id)
+                        
+                        elif event_type == "response.output_item.done":
+                            # Check for function call outputs
+                            if hasattr(event, 'item') and event.item.type == "function_call":
+                                tool_call = event.item
+                                tool_calls_to_execute.append(tool_call)
+                                print(f"🔧 [FUNCTION CALL] name={tool_call.name}, arguments={tool_call.arguments}")
+                        
+                        elif event_type == "response.completed":
+                            log_debug(f"✅ Response completed")
+                            break
+                        
+                        elif event_type == "error":
+                            log_error(f"Stream error: {event}")
+                            status = "failed"
+                            break
+                    
+                    # Successfully processed stream, exit retry loop
+                    break
+                            
+                except Exception as stream_proc_error:
+                    stream_retry_count += 1
+                    error_str = str(stream_proc_error).lower()
+                    
+                    # DEBUG: Print full exception details
+                    print(f"🔴 [AZURE] Stream exception type: {type(stream_proc_error).__name__}")
+                    print(f"🔴 [AZURE] Stream exception: {stream_proc_error}")
+                    if hasattr(stream_proc_error, 'response'):
+                        print(f"🔴 [AZURE] Response status: {stream_proc_error.response.status_code if hasattr(stream_proc_error.response, 'status_code') else 'N/A'}")
+                    if hasattr(stream_proc_error, 'body'):
+                        print(f"🔴 [AZURE] Response body: {stream_proc_error.body}")
+                    
+                    # Check if this is a retryable error
+                    is_retryable = any(keyword in error_str for keyword in [
+                        'rate limit', 'throttl', 'overload', 'capacity', 'timeout',
+                        'connection', 'temporarily', 'retry', '429', '503', '504', '500',
+                        'an error occurred while processing'  # Generic Azure error
+                    ])
+                    
+                    if is_retryable and stream_retry_count <= max_stream_retries:
+                        wait_time = (2 ** stream_retry_count) + 1
+                        log_error(f"⚠️ Stream processing error (attempt {stream_retry_count}/{max_stream_retries + 1}), retrying in {wait_time}s: {stream_proc_error}")
+                        await asyncio.sleep(wait_time)
+                        
+                        # Need to recreate the stream for retry
+                        try:
+                            stream = await self.openai_client.responses.create(
+                                input=user_message,
+                                previous_response_id=previous_response_id,
+                                extra_body={"agent": {"name": self.agent.name, "type": "agent_reference"}},
+                                stream=True,
+                            )
+                            # Reset state for new stream
+                            full_text = ""
+                            tool_calls_to_execute = []
+                            continue
+                        except Exception as retry_error:
+                            log_error(f"Failed to create retry stream: {retry_error}")
+                            # Fall through to handle as non-retryable
+                    
+                    log_error(f"Error processing stream: {stream_proc_error}")
+                    if full_text:
+                        return {
+                            "id": response_id,
+                            "text": full_text,
+                            "tool_calls": [],
+                            "status": "completed",
+                            "usage": None
+                        }
+                    # Return a user-friendly error instead of raising
                     return {
-                        "id": response_id,
-                        "text": full_text,
+                        "id": None,
+                        "text": f"I apologize, but I encountered a temporary error communicating with Azure. Please try again in a moment.",
                         "tool_calls": [],
-                        "status": "completed",
+                        "status": "failed",
                         "usage": None
                     }
-                raise
 
             # MULTI-TURN TOOL EXECUTION LOOP
             max_tool_iterations = 30
@@ -473,50 +569,74 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
                 # Continue the conversation with tool outputs
                 tool_calls_to_execute = []
                 
-                try:
-                    # Use previous_response_id to chain responses 
-                    # Tool outputs are submitted by setting input to function call outputs
-                    function_call_outputs = []
-                    for output in tool_outputs:
-                        function_call_outputs.append({
-                            "type": "function_call_output",
-                            "call_id": output["tool_call_id"],
-                            "output": output["output"]
-                        })
-                    
-                    # Continue conversation with agent reference
-                    continue_stream = await self.openai_client.responses.create(
-                        input=function_call_outputs,  # Pass tool outputs as input
-                        previous_response_id=response_id,  # Chain to previous response
-                        extra_body={"agent": {"name": self.agent.name, "type": "agent_reference"}},
-                        stream=True,
-                    )
-                    
-                    async for event in continue_stream:
-                        event_type = event.type
+                # Retry logic for continuing conversation after tool calls
+                continue_retry_count = 0
+                max_continue_retries = 2
+                
+                while continue_retry_count <= max_continue_retries:
+                    try:
+                        # Use previous_response_id to chain responses 
+                        # Tool outputs are submitted by setting input to function call outputs
+                        function_call_outputs = []
+                        for output in tool_outputs:
+                            function_call_outputs.append({
+                                "type": "function_call_output",
+                                "call_id": output["tool_call_id"],
+                                "output": output["output"]
+                            })
                         
-                        if event_type == "response.created":
-                            response_id = event.response.id
-                            self._response_ids[context_id] = response_id
+                        # Continue conversation with agent reference
+                        continue_stream = await self.openai_client.responses.create(
+                            input=function_call_outputs,  # Pass tool outputs as input
+                            previous_response_id=response_id,  # Chain to previous response
+                            extra_body={"agent": {"name": self.agent.name, "type": "agent_reference"}},
+                            stream=True,
+                        )
                         
-                        elif event_type == "response.output_text.delta":
-                            chunk = event.delta
-                            if chunk:
-                                full_text += chunk
-                                await self._emit_text_chunk(chunk, context_id)
-                        
-                        elif event_type == "response.output_item.done":
-                            if hasattr(event, 'item') and event.item.type == "function_call":
-                                tool_calls_to_execute.append(event.item)
-                        
-                        elif event_type == "response.completed":
-                            break
+                        async for event in continue_stream:
+                            event_type = event.type
                             
-                except Exception as continue_error:
-                    log_error(f"Error continuing conversation: {continue_error}")
-                    import traceback
-                    traceback.print_exc()
-                    break
+                            if event_type == "response.created":
+                                response_id = event.response.id
+                                self._response_ids[context_id] = response_id
+                            
+                            elif event_type == "response.output_text.delta":
+                                chunk = event.delta
+                                if chunk:
+                                    full_text += chunk
+                                    await self._emit_text_chunk(chunk, context_id)
+                            
+                            elif event_type == "response.output_item.done":
+                                if hasattr(event, 'item') and event.item.type == "function_call":
+                                    tool_calls_to_execute.append(event.item)
+                            
+                            elif event_type == "response.completed":
+                                break
+                        
+                        # Successfully processed, exit retry loop
+                        break
+                                
+                    except Exception as continue_error:
+                        continue_retry_count += 1
+                        error_str = str(continue_error).lower()
+                        
+                        # Check if this is a retryable error
+                        is_retryable = any(keyword in error_str for keyword in [
+                            'rate limit', 'throttl', 'overload', 'capacity', 'timeout',
+                            'connection', 'temporarily', 'retry', '429', '503', '504', '500',
+                            'an error occurred while processing'  # Generic Azure error
+                        ])
+                        
+                        if is_retryable and continue_retry_count <= max_continue_retries:
+                            wait_time = (2 ** continue_retry_count) + 1
+                            log_error(f"⚠️ Tool continuation error (attempt {continue_retry_count}/{max_continue_retries + 1}), retrying in {wait_time}s: {continue_error}")
+                            await asyncio.sleep(wait_time)
+                            continue
+                        
+                        log_error(f"Error continuing conversation: {continue_error}")
+                        import traceback
+                        traceback.print_exc()
+                        break
             
             return {
                 "id": response_id,

@@ -339,6 +339,277 @@ EMAIL_TEMPLATES = {
 }
 
 
+# ===========================
+# EMAIL READING/FETCHING
+# ===========================
+
+def get_emails(
+    count: int = 10,
+    unread_only: bool = False,
+    from_address: str = None,
+    subject_contains: str = None,
+    since_date: str = None,
+    folder: str = "inbox"
+) -> dict:
+    """
+    Fetch emails from the inbox using Microsoft Graph API.
+    
+    Args:
+        count: Number of emails to retrieve (default: 10, max: 50)
+        unread_only: If True, only fetch unread emails
+        from_address: Filter by sender email address (partial match)
+        subject_contains: Filter by subject line (partial match)
+        since_date: Only get emails after this date (ISO format: 2026-02-04)
+        folder: Mail folder to read from (default: "inbox")
+    
+    Returns:
+        dict with 'success' (bool), 'message' (str), and 'emails' (list)
+    """
+    credentials = get_email_credentials()
+    
+    # Validate credentials
+    if not all([credentials["tenant_id"], credentials["client_id"], 
+                credentials["client_secret"], credentials["sender_email"]]):
+        return {"success": False, "message": "Missing email credentials", "emails": []}
+    
+    try:
+        # Get OAuth token
+        credential = ClientSecretCredential(
+            tenant_id=credentials["tenant_id"],
+            client_id=credentials["client_id"],
+            client_secret=credentials["client_secret"],
+        )
+        token = credential.get_token("https://graph.microsoft.com/.default").token
+        
+        # Build the Graph API URL with filters
+        user_email = credentials["sender_email"]
+        count = min(count, 50)  # Cap at 50
+        
+        # Build filter query
+        filters = []
+        if unread_only:
+            filters.append("isRead eq false")
+        if since_date:
+            filters.append(f"receivedDateTime ge {since_date}T00:00:00Z")
+        
+        # Construct URL - use /messages directly for broader compatibility
+        # The /mailFolders/inbox/messages path can have issues with some mailbox configurations
+        url = f"https://graph.microsoft.com/v1.0/users/{user_email}/messages"
+        params = {
+            "$top": count,
+            "$orderby": "receivedDateTime desc",
+            "$select": "id,subject,from,receivedDateTime,isRead,bodyPreview,body,hasAttachments,toRecipients,ccRecipients,parentFolderId"
+        }
+        
+        # Add folder filter if not inbox (inbox is default for /messages)
+        if folder and folder.lower() != "inbox":
+            # For specific folders, we need to use the mailFolders endpoint
+            url = f"https://graph.microsoft.com/v1.0/users/{user_email}/mailFolders/{folder}/messages"
+        
+        if filters:
+            params["$filter"] = " and ".join(filters)
+        
+        logger.info(f"Fetching emails from: {url}")
+        logger.info(f"Query params: {params}")
+        
+        response = requests.get(
+            url,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
+            params=params,
+            timeout=30,
+        )
+        
+        logger.info(f"Response status: {response.status_code}")
+        
+        if response.status_code >= 300:
+            error_msg = f"Failed to fetch emails: {response.status_code} - {response.text}"
+            logger.error(error_msg)
+            return {"success": False, "message": error_msg, "emails": []}
+        
+        data = response.json()
+        messages = data.get("value", [])
+        
+        logger.info(f"API returned {len(messages)} messages")
+        
+        # Apply client-side filters for partial matches (Graph doesn't support contains on all fields)
+        filtered_messages = []
+        for msg in messages:
+            # Filter by sender
+            if from_address:
+                sender_email = msg.get("from", {}).get("emailAddress", {}).get("address", "").lower()
+                sender_name = msg.get("from", {}).get("emailAddress", {}).get("name", "").lower()
+                if from_address.lower() not in sender_email and from_address.lower() not in sender_name:
+                    continue
+            
+            # Filter by subject
+            if subject_contains:
+                subject = msg.get("subject", "").lower()
+                if subject_contains.lower() not in subject:
+                    continue
+            
+            filtered_messages.append(msg)
+        
+        # Format the emails for response
+        emails = []
+        for msg in filtered_messages:
+            from_info = msg.get("from", {}).get("emailAddress", {})
+            emails.append({
+                "id": msg.get("id"),
+                "subject": msg.get("subject", "(No Subject)"),
+                "from_name": from_info.get("name", "Unknown"),
+                "from_email": from_info.get("address", "Unknown"),
+                "received_at": msg.get("receivedDateTime"),
+                "is_read": msg.get("isRead", False),
+                "preview": msg.get("bodyPreview", "")[:200],  # First 200 chars
+                "body_html": msg.get("body", {}).get("content", ""),
+                "has_attachments": msg.get("hasAttachments", False),
+                "to_recipients": [r.get("emailAddress", {}).get("address", "") 
+                                  for r in msg.get("toRecipients", [])],
+                "cc_recipients": [r.get("emailAddress", {}).get("address", "") 
+                                  for r in msg.get("ccRecipients", [])],
+            })
+        
+        logger.info(f"Fetched {len(emails)} emails from {folder}")
+        return {
+            "success": True, 
+            "message": f"Retrieved {len(emails)} emails", 
+            "emails": emails
+        }
+        
+    except Exception as e:
+        error_msg = f"Failed to fetch emails: {str(e)}"
+        logger.error(error_msg)
+        return {"success": False, "message": error_msg, "emails": []}
+
+
+def get_email_by_id(email_id: str) -> dict:
+    """
+    Fetch a specific email by ID with full body content.
+    
+    Args:
+        email_id: The Microsoft Graph email ID
+    
+    Returns:
+        dict with 'success' (bool), 'message' (str), and 'email' (dict)
+    """
+    credentials = get_email_credentials()
+    
+    if not all([credentials["tenant_id"], credentials["client_id"], 
+                credentials["client_secret"], credentials["sender_email"]]):
+        return {"success": False, "message": "Missing email credentials", "email": None}
+    
+    try:
+        credential = ClientSecretCredential(
+            tenant_id=credentials["tenant_id"],
+            client_id=credentials["client_id"],
+            client_secret=credentials["client_secret"],
+        )
+        token = credential.get_token("https://graph.microsoft.com/.default").token
+        
+        user_email = credentials["sender_email"]
+        url = f"https://graph.microsoft.com/v1.0/users/{user_email}/messages/{email_id}"
+        
+        response = requests.get(
+            url,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
+            params={
+                "$select": "id,subject,from,receivedDateTime,isRead,body,hasAttachments,toRecipients,ccRecipients,attachments"
+            },
+            timeout=30,
+        )
+        
+        if response.status_code >= 300:
+            error_msg = f"Failed to fetch email: {response.status_code} - {response.text}"
+            logger.error(error_msg)
+            return {"success": False, "message": error_msg, "email": None}
+        
+        msg = response.json()
+        from_info = msg.get("from", {}).get("emailAddress", {})
+        
+        email = {
+            "id": msg.get("id"),
+            "subject": msg.get("subject", "(No Subject)"),
+            "from_name": from_info.get("name", "Unknown"),
+            "from_email": from_info.get("address", "Unknown"),
+            "received_at": msg.get("receivedDateTime"),
+            "is_read": msg.get("isRead", False),
+            "body_html": msg.get("body", {}).get("content", ""),
+            "body_type": msg.get("body", {}).get("contentType", "html"),
+            "has_attachments": msg.get("hasAttachments", False),
+            "to_recipients": [r.get("emailAddress", {}).get("address", "") 
+                              for r in msg.get("toRecipients", [])],
+            "cc_recipients": [r.get("emailAddress", {}).get("address", "") 
+                              for r in msg.get("ccRecipients", [])],
+        }
+        
+        logger.info(f"Fetched email: {email['subject']}")
+        return {"success": True, "message": "Email retrieved", "email": email}
+        
+    except Exception as e:
+        error_msg = f"Failed to fetch email: {str(e)}"
+        logger.error(error_msg)
+        return {"success": False, "message": error_msg, "email": None}
+
+
+def mark_email_as_read(email_id: str, is_read: bool = True) -> dict:
+    """
+    Mark an email as read or unread.
+    
+    Args:
+        email_id: The Microsoft Graph email ID
+        is_read: True to mark as read, False to mark as unread
+    
+    Returns:
+        dict with 'success' (bool) and 'message' (str)
+    """
+    credentials = get_email_credentials()
+    
+    if not all([credentials["tenant_id"], credentials["client_id"], 
+                credentials["client_secret"], credentials["sender_email"]]):
+        return {"success": False, "message": "Missing email credentials"}
+    
+    try:
+        credential = ClientSecretCredential(
+            tenant_id=credentials["tenant_id"],
+            client_id=credentials["client_id"],
+            client_secret=credentials["client_secret"],
+        )
+        token = credential.get_token("https://graph.microsoft.com/.default").token
+        
+        user_email = credentials["sender_email"]
+        url = f"https://graph.microsoft.com/v1.0/users/{user_email}/messages/{email_id}"
+        
+        response = requests.patch(
+            url,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
+            json={"isRead": is_read},
+            timeout=30,
+        )
+        
+        if response.status_code >= 300:
+            error_msg = f"Failed to update email: {response.status_code} - {response.text}"
+            logger.error(error_msg)
+            return {"success": False, "message": error_msg}
+        
+        status = "read" if is_read else "unread"
+        logger.info(f"Marked email as {status}")
+        return {"success": True, "message": f"Email marked as {status}"}
+        
+    except Exception as e:
+        error_msg = f"Failed to update email: {str(e)}"
+        logger.error(error_msg)
+        return {"success": False, "message": error_msg}
+
+
 def get_template(template_name: str) -> dict:
     """Get an email template by name."""
     return EMAIL_TEMPLATES.get(template_name, {})
