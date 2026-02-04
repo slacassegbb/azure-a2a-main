@@ -218,16 +218,39 @@ export async function deleteConversation(conversationId: string): Promise<boolea
 }
 
 /**
- * Update conversation title (simple client-side approach)
- * For now, we'll emit an event that the sidebar can listen to
+ * Update conversation title - persists to database and emits local event
  */
-export function updateConversationTitle(conversationId: string, title: string): void {
-  // Emit a custom event that the sidebar can listen to
-  const event = new CustomEvent('conversationTitleUpdate', {
-    detail: { conversationId, title }
-  })
-  window.dispatchEvent(event)
-  console.log('[ConversationAPI] Title update event emitted:', { conversationId, title })
+export async function updateConversationTitle(conversationId: string, title: string): Promise<boolean> {
+  try {
+    console.log('[ConversationAPI] Updating title:', { conversationId, title })
+    
+    // Persist to database
+    const response = await fetch(`${API_BASE_URL}/conversation/update-title`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        params: { conversationId, title }
+      })
+    })
+    
+    const result = await response.json()
+    
+    if (result.success) {
+      // Also emit local event for immediate UI update
+      const event = new CustomEvent('conversationTitleUpdate', {
+        detail: { conversationId, title }
+      })
+      window.dispatchEvent(event)
+      console.log('[ConversationAPI] Title updated and event emitted:', { conversationId, title })
+      return true
+    } else {
+      console.error('[ConversationAPI] Failed to update title:', result.error)
+      return false
+    }
+  } catch (error) {
+    console.error('[ConversationAPI] Error updating title:', error)
+    return false
+  }
 }
 
 /**

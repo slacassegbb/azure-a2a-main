@@ -193,6 +193,9 @@ class ConversationServer:
         app.add_api_route(
             '/conversation/delete', self._delete_conversation, methods=['POST']
         )
+        app.add_api_route(
+            '/conversation/update-title', self._update_conversation_title, methods=['POST']
+        )
         app.add_api_route('/message/send', self._send_message, methods=['POST'])
         app.add_api_route('/events/get', self._get_events, methods=['POST'])
         app.add_api_route(
@@ -626,6 +629,41 @@ class ConversationServer:
             return {"success": True}
         except Exception as e:
             log_debug(f"❌  Error: {e}")
+            return {"success": False, "error": str(e)}
+
+    async def _update_conversation_title(self, request: Request):
+        """Update a conversation's title/name."""
+        try:
+            message_data = await request.json()
+            params = message_data.get('params', {})
+            conversation_id = params.get('conversationId')
+            title = params.get('title')
+            
+            if not conversation_id:
+                return {"success": False, "error": "conversationId required"}
+            if not title:
+                return {"success": False, "error": "title required"}
+            
+            log_debug(f"📝  Update title request - conversationId: {conversation_id}, title: {title}")
+            
+            # Update in database
+            try:
+                chat_history_service.update_conversation_name(conversation_id, title)
+                log_debug(f"✅  Title updated in database")
+            except Exception as db_error:
+                log_debug(f"Error updating title in database: {db_error}")
+                return {"success": False, "error": str(db_error)}
+            
+            # Also update in memory if conversation exists
+            for conv in self.manager.conversations:
+                if conv.conversation_id == conversation_id or conv.conversation_id.endswith(f"::{conversation_id}"):
+                    conv.name = title
+                    log_debug(f"✅  Title updated in memory")
+                    break
+            
+            return {"success": True}
+        except Exception as e:
+            log_debug(f"❌  Error updating title: {e}")
             return {"success": False, "error": str(e)}
 
     def _get_events(self):
