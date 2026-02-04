@@ -72,6 +72,81 @@ class WorkflowOrchestration:
     - self._call_azure_openai_structured()
     """
 
+    async def _load_agent_from_catalog(self, agent_name: str) -> bool:
+        """
+        Load an agent from the global catalog and register it for this session.
+        
+        This enables workflows and scheduled workflows to call agents that aren't
+        explicitly registered to the session. The agent just needs to exist in
+        the catalog (database).
+        
+        Args:
+            agent_name: Name of the agent to load
+            
+        Returns:
+            True if agent was loaded successfully, False if not found
+        """
+        try:
+            from service.agent_registry import get_registry
+            from a2a.types import AgentCard, AgentSkill, AgentCapabilities, AgentProvider
+            
+            registry = get_registry()
+            agent_config = registry.get_agent(agent_name)
+            
+            if not agent_config:
+                print(f"🔍 [CATALOG_FALLBACK] Agent '{agent_name}' not found in catalog")
+                return False
+            
+            print(f"🔍 [CATALOG_FALLBACK] Found agent '{agent_name}' in catalog: {agent_config.get('url')}")
+            
+            # Build AgentCard from catalog data
+            skills = []
+            if agent_config.get('skills'):
+                for skill in agent_config['skills']:
+                    if isinstance(skill, dict):
+                        skills.append(AgentSkill(
+                            id=skill.get('id', skill.get('name', '')),
+                            name=skill.get('name', ''),
+                            description=skill.get('description', '')
+                        ))
+            
+            caps_data = agent_config.get('capabilities', {})
+            if isinstance(caps_data, dict):
+                capabilities = AgentCapabilities(
+                    streaming=caps_data.get('streaming', False),
+                    pushNotifications=caps_data.get('pushNotifications', False)
+                )
+            else:
+                capabilities = AgentCapabilities(streaming=False, pushNotifications=False)
+            
+            provider = None
+            if agent_config.get('provider'):
+                prov_data = agent_config['provider']
+                if isinstance(prov_data, dict):
+                    provider = AgentProvider(organization=prov_data.get('organization', ''))
+            
+            card = AgentCard(
+                name=agent_config['name'],
+                url=agent_config['url'],
+                description=agent_config.get('description', ''),
+                version=agent_config.get('version', '1.0.0'),
+                skills=skills if skills else None,
+                capabilities=capabilities,
+                provider=provider
+            )
+            
+            # Register the agent card (this adds to self.cards and self.remote_agent_connections)
+            self.register_agent_card(card)
+            
+            print(f"✅ [CATALOG_FALLBACK] Registered agent '{agent_name}' from catalog")
+            return True
+            
+        except Exception as e:
+            print(f"⚠️ [CATALOG_FALLBACK] Error loading agent '{agent_name}': {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
     async def _execute_parsed_workflow(
         self,
         parsed_workflow: ParsedWorkflow,
@@ -385,6 +460,14 @@ class WorkflowOrchestration:
             available_agents = [{"name": card.name, "description": card.description} for card in self.cards.values()]
             agent_name = await self._select_agent_for_task(step.description, available_agents, context_id)
         
+        # If agent not in session, try to load from global catalog
+        # This enables workflows/scheduled workflows to use any cataloged agent
+        if agent_name and agent_name not in self.cards:
+            print(f"🔍 [Workflow Step] Agent '{agent_name}' not in session, checking catalog...")
+            agent_loaded = await self._load_agent_from_catalog(agent_name)
+            if agent_loaded:
+                print(f"✅ [Workflow Step] Loaded agent '{agent_name}' from catalog")
+        
         if not agent_name or agent_name not in self.cards:
             task.state = "failed"
             task.error_message = "No suitable agent found"
@@ -574,6 +657,14 @@ class WorkflowOrchestration:
             status_text=f"Executing: {task_desc[:50]}...",
             context_id=context_id
         )
+        
+        # If agent not in session, try to load from global catalog
+        # This enables workflows/scheduled workflows to use any cataloged agent
+        if recommended_agent and recommended_agent not in self.cards:
+            print(f"🔍 [Agent Mode] Agent '{recommended_agent}' not in session, checking catalog...")
+            agent_loaded = await self._load_agent_from_catalog(recommended_agent)
+            if agent_loaded:
+                print(f"✅ [Agent Mode] Loaded agent '{recommended_agent}' from catalog")
         
         if not recommended_agent or recommended_agent not in self.cards:
             available_agent_names = list(self.cards.keys()) if self.cards else []

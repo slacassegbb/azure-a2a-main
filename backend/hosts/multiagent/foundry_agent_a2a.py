@@ -2298,6 +2298,79 @@ Answer with just JSON:
             len(getattr(session_context, "host_turn_history", [])),
         )
 
+    async def _load_agent_from_catalog(self, agent_name: str) -> bool:
+        """
+        Load an agent from the global catalog and register it for this session.
+        
+        This enables workflows and scheduled workflows to call agents that aren't
+        explicitly registered to the session. The agent just needs to exist in
+        the catalog (database).
+        
+        Args:
+            agent_name: Name of the agent to load
+            
+        Returns:
+            True if agent was loaded successfully, False if not found
+        """
+        try:
+            from service.agent_registry import get_registry
+            from a2a.types import AgentCard, AgentSkill, AgentCapabilities, AgentProvider
+            
+            registry = get_registry()
+            agent_config = registry.get_agent(agent_name)
+            
+            if not agent_config:
+                print(f"🔍 [CATALOG_FALLBACK] Agent '{agent_name}' not found in catalog")
+                return False
+            
+            print(f"🔍 [CATALOG_FALLBACK] Found agent '{agent_name}' in catalog: {agent_config.get('url')}")
+            
+            # Build AgentCard from catalog data
+            skills = []
+            if agent_config.get('skills'):
+                for skill in agent_config['skills']:
+                    if isinstance(skill, dict):
+                        skills.append(AgentSkill(
+                            id=skill.get('id', skill.get('name', '')),
+                            name=skill.get('name', ''),
+                            description=skill.get('description', '')
+                        ))
+            
+            caps_data = agent_config.get('capabilities', {})
+            if isinstance(caps_data, dict):
+                capabilities = AgentCapabilities(
+                    streaming=caps_data.get('streaming', False),
+                    pushNotifications=caps_data.get('pushNotifications', False)
+                )
+            else:
+                capabilities = AgentCapabilities(streaming=False, pushNotifications=False)
+            
+            provider = None
+            if agent_config.get('provider'):
+                prov_data = agent_config['provider']
+                if isinstance(prov_data, dict):
+                    provider = AgentProvider(organization=prov_data.get('organization', ''))
+            
+            card = AgentCard(
+                name=agent_config['name'],
+                url=agent_config['url'],
+                description=agent_config.get('description', ''),
+                version=agent_config.get('version', '1.0.0'),
+                skills=skills if skills else None,
+                capabilities=capabilities,
+                provider=provider
+            )
+            
+            # Register the agent card (this adds to self.cards and self.remote_agent_connections)
+            self.register_agent_card(card)
+            
+            print(f"✅ [CATALOG_FALLBACK] Registered agent '{agent_name}' from catalog")
+            return True
+            
+        except Exception as e:
+            print(f"⚠️ [CATALOG_FALLBACK] Error loading agent '{agent_name}': {e}")
+            return False
+
     async def send_message(
         self,
         agent_name: str,
@@ -2365,11 +2438,16 @@ Answer with just JSON:
             span.set_attribute("agent_name", agent_name)
             span.set_attribute("context_id", session_context.contextId)
             
-            # Check if agent exists (quick validation)
+            # Check if agent exists - if not, try to load from global catalog
+            # This enables workflows/scheduled workflows to call agents without session registration
             if agent_name not in self.remote_agent_connections:
-                available_agents = list(self.remote_agent_connections.keys())
-                print(f"⚠️ [SEND_MESSAGE] Agent '{agent_name}' not found! Available: {available_agents}")
-                raise ValueError(f"Agent '{agent_name}' not found. Available agents: {available_agents}")
+                print(f"🔍 [SEND_MESSAGE] Agent '{agent_name}' not in session, checking global catalog...")
+                agent_loaded = await self._load_agent_from_catalog(agent_name)
+                if not agent_loaded:
+                    available_agents = list(self.remote_agent_connections.keys())
+                    print(f"⚠️ [SEND_MESSAGE] Agent '{agent_name}' not found in session or catalog! Available: {available_agents}")
+                    raise ValueError(f"Agent '{agent_name}' not found. Available agents: {available_agents}")
+                print(f"✅ [SEND_MESSAGE] Agent '{agent_name}' loaded from catalog")
             
             client = self.remote_agent_connections[agent_name]
             if not client:
