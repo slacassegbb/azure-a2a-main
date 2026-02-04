@@ -200,6 +200,7 @@ async def execute_scheduled_workflow(workflow_name: str, session_id: str, timeou
     # --- ENABLE AGENTS FOR SCHEDULER SESSION ---
     # The scheduler session doesn't have agents enabled like a user browser session.
     # We need to look up required agents from the global registry and enable them.
+    # IMPORTANT: Scheduled workflows always use production URLs (public URLs for Azure agents)
     global_registry = get_registry()
     session_registry = get_session_registry()
     
@@ -213,11 +214,22 @@ async def execute_scheduled_workflow(workflow_name: str, session_id: str, timeou
     print(f"[SCHEDULER] Workflow '{workflow_name}' needs agents: {agent_names_needed}")
     
     # Look up each agent in global registry and enable for scheduler session
+    # For scheduled workflows, always use production_url if available
     missing_agents = []
     enabled_count = 0
     for agent_name in agent_names_needed:
         agent_config = global_registry.get_agent(agent_name)
         if agent_config:
+            # Force production URL for scheduled workflows
+            if 'production_url' in agent_config and agent_config['production_url']:
+                agent_config = agent_config.copy()
+                agent_config['url'] = agent_config['production_url']
+                print(f"[SCHEDULER] 🌐 Using production URL for '{agent_name}': {agent_config['url']}")
+            elif 'url' in agent_config:
+                print(f"[SCHEDULER] 🔗 Using URL for '{agent_name}': {agent_config['url']}")
+            else:
+                print(f"[SCHEDULER] ⚠️  No URL found for '{agent_name}'")
+            
             # Enable this agent for the scheduler session (use isolated scheduler_session_id)
             was_enabled = session_registry.enable_agent(scheduler_session_id, agent_config)
             if was_enabled:
@@ -3007,12 +3019,57 @@ Read-Host "Press Enter to close this window"
     test_database_connection()
     print("[INFO] " + "="*60)
 
+    # Configure uvicorn with log config
+    import logging.config
+    
+    # Create a custom log config that filters schedule API logs
+    log_config = {
+        "version": 1,
+        "disable_existing_loggers": False,
+        "filters": {
+            "suppress_schedules": {
+                "()": lambda: type('SuppressScheduleFilter', (logging.Filter,), {
+                    'filter': lambda self, record: "GET /api/schedules" not in record.getMessage()
+                })()
+            }
+        },
+        "formatters": {
+            "default": {
+                "()": "uvicorn.logging.DefaultFormatter",
+                "fmt": "%(levelprefix)s %(message)s",
+                "use_colors": True
+            },
+            "access": {
+                "()": "uvicorn.logging.AccessFormatter",
+                "fmt": '%(levelprefix)s %(client_addr)s - "%(request_line)s" %(status_code)s',
+            }
+        },
+        "handlers": {
+            "default": {
+                "formatter": "default",
+                "class": "logging.StreamHandler",
+                "stream": "ext://sys.stderr"
+            },
+            "access": {
+                "formatter": "access",
+                "class": "logging.StreamHandler",
+                "stream": "ext://sys.stdout",
+                "filters": ["suppress_schedules"]
+            }
+        },
+        "loggers": {
+            "uvicorn": {"handlers": ["default"], "level": "INFO"},
+            "uvicorn.error": {"level": "INFO"},
+            "uvicorn.access": {"handlers": ["access"], "level": "INFO", "propagate": False}
+        }
+    }
+
     uvicorn.run(
         app,
         host=host,
         port=port,
         timeout_graceful_shutdown=5,
-        access_log=True,  # Enable access logs for API monitoring
+        log_config=log_config
     )
 
 

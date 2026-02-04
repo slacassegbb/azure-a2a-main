@@ -586,7 +586,7 @@ class WorkflowScheduler:
         """Execute a scheduled workflow."""
         import time
         
-        print(f"[Scheduler] 🚀🚀🚀 _execute_scheduled_workflow started for {schedule_id}")
+        print(f"[Scheduler] 🚀 _execute_scheduled_workflow started for {schedule_id}")
         
         schedule = self.schedules.get(schedule_id)
         if not schedule:

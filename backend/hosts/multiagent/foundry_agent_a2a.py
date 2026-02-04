@@ -5075,8 +5075,16 @@ Answer with just JSON:
         Factory method to create a FoundryHostAgent2 with a shared httpx.AsyncClient and optional task evaluation.
         
         Note: create_agent_at_startup defaults to False since Responses API is stateless and doesn't need agent creation.
+        Uses extended timeout to support Azure Container Apps cold starts (scale-to-zero scenarios).
         """
-        shared_client = httpx.AsyncClient()
+        # Use extended timeout to support cold starts from scale-to-zero (up to 60s for container startup)
+        timeout_config = httpx.Timeout(
+            connect=60.0,  # Time to establish connection (important for cold starts)
+            read=180.0,    # Time to read response (agent processing time)
+            write=30.0,    # Time to send request
+            pool=10.0      # Time to get connection from pool
+        )
+        shared_client = httpx.AsyncClient(timeout=timeout_config)
         return FoundryHostAgent2(remote_agent_addresses, http_client=shared_client, task_callback=task_callback, enable_task_evaluation=enable_task_evaluation, create_agent_at_startup=create_agent_at_startup)
 
     def set_host_manager(self, host_manager):
