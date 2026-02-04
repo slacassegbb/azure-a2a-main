@@ -515,14 +515,18 @@ class SessionAgentRegistry:
     
     def enable_agent(self, session_id: str, agent: Dict[str, Any]) -> bool:
         """Enable an agent for a session."""
+        print(f"🟢 [SessionRegistry.enable_agent] session_id='{session_id}', agent={agent.get('name')}")
         if session_id not in self._sessions:
             self._sessions[session_id] = []
         
         # Check if already enabled (by URL)
         if any(a.get('url') == agent.get('url') for a in self._sessions[session_id]):
+            print(f"🟢 [SessionRegistry.enable_agent] Agent already enabled, skipping")
             return False
         
         self._sessions[session_id].append(agent)
+        print(f"🟢 [SessionRegistry.enable_agent] Now {len(self._sessions[session_id])} agents in session")
+        print(f"🟢 [SessionRegistry.enable_agent] All sessions: {list(self._sessions.keys())}")
         return True
     
     def disable_agent(self, session_id: str, agent_url: str) -> bool:
@@ -538,7 +542,10 @@ class SessionAgentRegistry:
     
     def get_session_agents(self, session_id: str) -> List[Dict[str, Any]]:
         """Get all enabled agents for a session."""
-        return self._sessions.get(session_id, [])
+        agents = self._sessions.get(session_id, [])
+        print(f"🔵 [SessionRegistry.get_session_agents] session_id='{session_id}' -> {len(agents)} agents")
+        print(f"🔵 [SessionRegistry.get_session_agents] All sessions: {list(self._sessions.keys())}")
+        return agents
     
     def is_enabled(self, session_id: str, agent_url: str) -> bool:
         """Check if an agent is enabled for a session."""

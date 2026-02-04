@@ -844,49 +844,64 @@ Use the above output from the previous workflow step to complete your task."""
         system_prompt = f"""You are an intelligent routing assistant. Analyze the user's request and decide the best execution approach.
 
 ### 📋 AVAILABLE WORKFLOWS
-These are pre-defined multi-step processes. Use them when the user's goal clearly matches.
+Pre-defined multi-step processes with specific sequences of agent calls.
 
 {workflows_text}
 
 ### 🤖 AVAILABLE AGENTS
-These are specialized agents that can handle specific tasks.
+Specialized agents that can handle specific tasks independently.
 
 {agents_text}
 
-### 🎯 DECISION RULES
+### 🎯 DECISION RULES (IN PRIORITY ORDER)
 
-**Choose "workflow"** when:
+**1. Choose "workflow"** when:
 - User's goal clearly matches ONE workflow's description or purpose
-- The task requires a specific sequence of coordinated steps
-- A workflow exists that handles this exact use case
-- User explicitly mentions a workflow name
+- User explicitly mentions a workflow name (even if they also mention an agent)
+- The task requires the specific coordinated steps defined in a workflow
+- Example: "Run the invoice workflow" → workflow
+- Example: "Use QuickBooks to run the invoice workflow" → workflow (workflow name takes priority)
 
-**Choose "workflows_parallel"** when:
+**2. Choose "workflows_parallel"** when:
 - User's request matches TWO OR MORE workflows that should run SIMULTANEOUSLY
 - The workflows are INDEPENDENT and don't depend on each other's output
 - User explicitly asks for multiple things that map to different workflows
-- Example: "Run the legal review AND the financial analysis" → both workflows in parallel
-- Set selected_workflows to the list of workflow names to execute
+- Example: "Run the legal review AND the financial analysis" → workflows_parallel
 
-**Choose "agents"** when:
-- **User explicitly mentions an AGENT name** (e.g., "use the QuickBooks agent", "ask the image generator") - ALWAYS use agents approach, NOT workflows
-- User wants to call a specific agent directly without a predefined workflow
-- Goal needs multi-agent coordination but no workflow fits
-- Task is complex but doesn't match any workflow pattern
-- User needs something custom or ad-hoc
-- Multiple agents could help but in a non-standard way
+**3. Choose "single_agent"** when:
+- User explicitly names ONE specific agent and wants a simple, direct task
+- The request is a single action that one agent can complete alone
+- NO workflow matches the request
+- Example: "Use the QuickBooks agent to list customers" → single_agent (QuickBooks)
+- Example: "Ask the image generator to create a cat picture" → single_agent (Image Generator)
+- Set selected_agent to the agent name
 
-**Choose "direct"** when:
-- Simple question that can be answered without agents
-- General conversation or greetings
-- Request doesn't require any specialized agent capabilities
-- Single simple task that the host can handle directly
+**4. Choose "multi_agent"** when:
+- Task requires coordination between MULTIPLE agents but NO workflow fits
+- User describes a complex goal that needs different agent capabilities combined
+- User wants something custom/ad-hoc that spans multiple agent domains
+- Example: "Research competitors and then create a marketing report" → multi_agent
+- Example: "Get customer data and generate an invoice image" → multi_agent
+
+**5. Choose "direct"** when:
+- Simple question that requires NO agent capabilities
+- General conversation, greetings, or meta-questions about the system
+- Information that the host already knows (e.g., "what agents are available?")
+- Example: "Hello" → direct
+- Example: "What can you do?" → direct
+
+### ⚠️ PRIORITY RULES
+1. Workflow name mentioned → prefer "workflow" (even if agent also mentioned)
+2. Single agent + simple task → use "single_agent" (skip orchestration overhead)
+3. Complex multi-step task with no workflow → use "multi_agent"
+4. When in doubt between single_agent and multi_agent → choose single_agent
 
 ### 📤 OUTPUT FORMAT
 Return a JSON object with:
-- approach: "workflow" | "workflows_parallel" | "agents" | "direct"
+- approach: "workflow" | "workflows_parallel" | "single_agent" | "multi_agent" | "direct"
 - selected_workflow: Name of workflow (if approach="workflow") or null
-- selected_workflows: List of workflow names (if approach="workflows_parallel") or null
+- selected_workflows: List of workflow names (if approach="workflows_parallel") or null  
+- selected_agent: Name of agent (if approach="single_agent") or null
 - confidence: 0.0 to 1.0 (how confident you are in this choice)
 - reasoning: Brief explanation of your decision"""
 
@@ -912,13 +927,14 @@ Analyze this request and decide the best approach."""
             
         except Exception as e:
             log_error(f"[Route Selection] Error during selection: {e}")
-            # Fallback to agents approach on error
+            # Fallback to multi_agent approach on error
             return RouteSelection(
-                approach="agents",
+                approach="multi_agent",
                 selected_workflow=None,
                 selected_workflows=None,
+                selected_agent=None,
                 confidence=0.5,
-                reasoning=f"Fallback to agents due to selection error: {str(e)}"
+                reasoning=f"Fallback to multi_agent due to selection error: {str(e)}"
             )
 
     async def _agent_mode_orchestration_loop(

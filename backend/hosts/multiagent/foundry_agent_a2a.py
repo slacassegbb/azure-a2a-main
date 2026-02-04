@@ -3736,9 +3736,9 @@ Answer with just JSON:
                         context_id=context_id
                     )
                     
-                    print(f"🔀 [Multi-Workflow] Route decision: approach={route_selection.approach}, workflow={route_selection.selected_workflow}, workflows={route_selection.selected_workflows}, confidence={route_selection.confidence:.2f}")
-                    print(f"🔀 [Multi-Workflow] Reasoning: {route_selection.reasoning}")
-                    log_debug(f"🔀 [Multi-Workflow] Route decision: {route_selection.approach} (confidence: {route_selection.confidence})")
+                    print(f"🔀 [Route] Decision: approach={route_selection.approach}, workflow={route_selection.selected_workflow}, workflows={route_selection.selected_workflows}, agent={getattr(route_selection, 'selected_agent', None)}, confidence={route_selection.confidence:.2f}")
+                    print(f"🔀 [Route] Reasoning: {route_selection.reasoning}")
+                    log_debug(f"🔀 [Route] Decision: {route_selection.approach} (confidence: {route_selection.confidence})")
                     
                     if route_selection.approach == "workflow" and route_selection.selected_workflow:
                         # Find the selected workflow from available_workflows (case-insensitive match)
@@ -3846,12 +3846,60 @@ Answer with just JSON:
                             agent_mode = True
                             workflow = None
                             
-                    elif route_selection.approach == "agents":
+                    elif route_selection.approach == "single_agent" and route_selection.selected_agent:
+                        # Direct call to a single agent - use orchestration but targeted
+                        single_agent_name = route_selection.selected_agent
+                        log_debug(f"🔀 [Route Selection] Using single agent: {single_agent_name}")
+                        await self._emit_status_event(f"🔄 Route Decision: Direct call to AGENT '{single_agent_name}'", context_id)
+                        
+                        # Verify the agent exists in session cards
+                        agent_exists = False
+                        for card in self.cards.values():
+                            if card.name.lower().strip() == single_agent_name.lower().strip():
+                                agent_exists = True
+                                single_agent_name = card.name  # Use exact name
+                                break
+                        
+                        # If not in session, try to load from catalog
+                        if not agent_exists:
+                            log_debug(f"🔍 [Single Agent] Agent '{single_agent_name}' not in session, checking catalog...")
+                            agent_loaded = await self._load_agent_from_catalog(single_agent_name)
+                            if agent_loaded:
+                                agent_exists = True
+                                # Get the exact name from the newly loaded card
+                                for card in self.cards.values():
+                                    if card.name.lower().strip() == single_agent_name.lower().strip():
+                                        single_agent_name = card.name
+                                        break
+                                log_debug(f"✅ [Single Agent] Loaded agent '{single_agent_name}' from catalog")
+                        
+                        if agent_exists:
+                            # Use orchestration but with a forced single-agent task
+                            # This ensures proper session handling, file passing, etc.
+                            agent_mode = True
+                            workflow = f"1. [{single_agent_name}] Complete the user's request"
+                            workflow_goal = enhanced_message
+                            log_debug(f"🎯 [Single Agent] Forcing single-task workflow for {single_agent_name}")
+                        else:
+                            # Agent not found even in catalog - give clear error
+                            log_error(f"[Single Agent] Agent '{single_agent_name}' not found in session or catalog")
+                            await self._emit_status_event(f"⚠️ Agent '{single_agent_name}' not available", context_id)
+                            # Return error response instead of falling back to broken multi-agent
+                            await self._store_user_host_interaction_safe(
+                                user_message_parts=message_parts,
+                                user_message_text=enhanced_message,
+                                host_response=[f"I couldn't find an agent named '{single_agent_name}'. Please make sure the agent is registered and available."],
+                                context_id=context_id,
+                                span=span
+                            )
+                            return [f"I couldn't find an agent named '{single_agent_name}'. Please make sure the agent is registered and available."]
+                    
+                    elif route_selection.approach == "multi_agent":
                         # Use free-form multi-agent orchestration (no specific workflow)
                         agent_mode = True
                         workflow = None
-                        log_debug(f"🔀 [Multi-Workflow] Using free-form agent orchestration")
-                        await self._emit_status_event("🔄 Route Decision: Using AGENTS (no workflow)", context_id)
+                        log_debug(f"🔀 [Route Selection] Using multi-agent orchestration")
+                        await self._emit_status_event("🔄 Route Decision: Using MULTI-AGENT orchestration", context_id)
                         
                     elif route_selection.approach == "direct":
                         # Skip orchestration, use standard Foundry response
@@ -3876,6 +3924,12 @@ Answer with just JSON:
                 mode_type = "Workflow" if (workflow and workflow.strip()) else "Agent"
                 log_debug(f"🎯 [{mode_type} Mode] Using orchestration loop (workflow={bool(workflow)}, agent_mode={agent_mode}, workflow_goal={workflow_goal[:50] if workflow_goal else None})")
                 await self._emit_status_event("Starting orchestration...", context_id)
+                
+                # Debug: Log agent count before orchestration
+                cards_count = len(self.cards) if hasattr(self, 'cards') and self.cards else 0
+                print(f"🔍 [DEBUG] Cards available before orchestration: {cards_count}")
+                if cards_count > 0:
+                    print(f"🔍 [DEBUG] Card names: {list(self.cards.keys())[:5]}...")
                 
                 # Use agent mode orchestration loop
                 try:

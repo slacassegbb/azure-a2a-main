@@ -1072,6 +1072,8 @@ class ConversationServer:
         session_id = body.get('session_id')
         agent = body.get('agent')
         
+        print(f"🟢 [API /agents/session/enable] session_id='{session_id}', agent={agent.get('name') if agent else None}")
+        
         if not session_id or not agent:
             return {'status': 'error', 'message': 'session_id and agent required'}
         

@@ -139,7 +139,8 @@ class AgentRegistry:
                     skills.append(AgentSkill(
                         id=skill.get('id', skill.get('name', '')),
                         name=skill.get('name', ''),
-                        description=skill.get('description', '')
+                        description=skill.get('description', ''),
+                        tags=skill.get('tags', [])  # Required field, default to empty list
                     ))
         
         # Build capabilities
@@ -159,6 +160,10 @@ class AgentRegistry:
             if isinstance(prov_data, dict):
                 provider = AgentProvider(organization=prov_data.get('organization', ''))
         
+        # Get input/output modes with defaults
+        default_input_modes = agent_data.get('defaultInputModes', ['text'])
+        default_output_modes = agent_data.get('defaultOutputModes', ['text'])
+        
         # Construct the card
         card = AgentCard(
             name=agent_data['name'],
@@ -167,7 +172,9 @@ class AgentRegistry:
             version=agent_data.get('version', '1.0.0'),
             skills=skills if skills else None,
             capabilities=capabilities,
-            provider=provider
+            provider=provider,
+            defaultInputModes=default_input_modes,
+            defaultOutputModes=default_output_modes
         )
         
         return card
