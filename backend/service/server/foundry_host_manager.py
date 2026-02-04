@@ -336,11 +336,20 @@ class FoundryHostManager(ApplicationManager):
             session_id = parse_session_from_context(context_id)
             conv_id_only = context_id.split("::")[-1] if "::" in context_id else context_id
             
-            # Persist to database
+            # Check if a conversation with short ID already exists (from /conversation/create)
+            # and copy its name instead of using the default "Chat xxx..."
+            existing_name = None
+            existing_conv = chat_history_service.get_conversation(conv_id_only)
+            if existing_conv:
+                existing_name = existing_conv.get("name", "")
+                if existing_name and not existing_name.startswith("Chat "):
+                    log_debug(f"Found existing conversation with name: {existing_name}")
+            
+            # Persist to database with existing name or default
             chat_history_service.create_conversation(
                 conversation_id=context_id,
                 session_id=session_id or "default",
-                name=f"Chat {conv_id_only[:8]}..."
+                name=existing_name if existing_name else f"Chat {conv_id_only[:8]}..."
             )
             
             # Update collaborative session's current conversation for auto-navigation
