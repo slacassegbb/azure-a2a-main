@@ -418,7 +418,7 @@ export function WorkflowCatalog({ onLoadWorkflow, onSaveWorkflow, onNewWorkflow,
             >
               <CardHeader className="p-3 relative">
                 {/* Buttons - positioned absolutely in top-right */}
-                <div className="absolute top-2 right-2 flex gap-1 z-10">
+                <div className="absolute top-3 right-3 flex gap-1 z-10">
                   {workflow.isCustom && (
                     <Button
                       variant="ghost"
@@ -437,7 +437,7 @@ export function WorkflowCatalog({ onLoadWorkflow, onSaveWorkflow, onNewWorkflow,
                       {isEditing ? <Save className="h-3 w-3" /> : <Pencil className="h-3 w-3" />}
                     </Button>
                   )}
-                  {isSelected && !isEditing && (
+                  {!isEditing && (
                     <Button
                       variant="ghost"
                       size="sm"
@@ -468,28 +468,34 @@ export function WorkflowCatalog({ onLoadWorkflow, onSaveWorkflow, onNewWorkflow,
                   )}
                 </div>
 
-                {/* Content - with padding-right to avoid overlapping buttons */}
-                <div className="pr-16">
-                  <CardTitle className="text-sm text-slate-200 break-words">
-                    <span className="break-words">
-                      {isEditing ? (
-                        <span
-                          contentEditable
-                          suppressContentEditableWarning
-                          onBlur={(e) => setEditName(e.currentTarget.textContent || '')}
-                          onInput={(e) => setEditName(e.currentTarget.textContent || '')}
-                          onClick={(e) => e.stopPropagation()}
-                          className="outline-none border-b border-dashed border-indigo-400"
-                        >
-                          {editName}
-                        </span>
-                      ) : (
-                        workflow.name
-                      )}
-                    </span>
-                  </CardTitle>
+                {/* Content */}
+                <div>
+                  {/* Title with padding for buttons */}
+                  <div className="flex items-center gap-2 pr-16">
+                    <CardTitle className="text-sm text-slate-200 break-words">
+                      <span className="break-words">
+                        {isEditing ? (
+                          <span
+                            contentEditable
+                            suppressContentEditableWarning
+                            onBlur={(e) => setEditName(e.currentTarget.textContent || '')}
+                            onInput={(e) => setEditName(e.currentTarget.textContent || '')}
+                            onClick={(e) => e.stopPropagation()}
+                            className="outline-none border-b border-dashed border-indigo-400"
+                          >
+                            {editName}
+                          </span>
+                        ) : (
+                          workflow.name
+                        )}
+                      </span>
+                    </CardTitle>
+                    <Badge variant="secondary" className="text-xs flex-shrink-0">
+                      {workflow.category}
+                    </Badge>
+                  </div>
                   
-                  {/* Goal field - show first */}
+                  {/* Goal field - full width */}
                   {(workflow.goal || isEditing) && (
                     <div className="mt-2">
                       <span className="text-[10px] text-slate-500 uppercase tracking-wide">Goal</span>
@@ -507,7 +513,7 @@ export function WorkflowCatalog({ onLoadWorkflow, onSaveWorkflow, onNewWorkflow,
                     </div>
                   )}
                   
-                  {/* Description - show second */}
+                  {/* Description - full width */}
                   <div className="mt-2">
                     <span className="text-[10px] text-slate-500 uppercase tracking-wide">Description</span>
                     <CardDescription 
@@ -524,10 +530,7 @@ export function WorkflowCatalog({ onLoadWorkflow, onSaveWorkflow, onNewWorkflow,
                 </div>
               </CardHeader>
               <CardContent className="p-3 pt-0">
-                <div className="flex items-center justify-between gap-2">
-                  <Badge variant="secondary" className="text-xs">
-                    {workflow.category}
-                  </Badge>
+                <div className="flex items-center justify-end gap-2">
                   <span className="text-xs text-slate-400">
                     {workflow.steps.length} steps
                   </span>

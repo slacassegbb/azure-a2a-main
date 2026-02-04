@@ -538,7 +538,7 @@ export function VisualWorkflowDesigner({
     return AGENT_COLORS[index % AGENT_COLORS.length]
   }
 
-  // Load from localStorage ONCE on mount only
+  // Load from localStorage ONCE on mount only - DISABLED to start with clean canvas
   useEffect(() => {
     if (hasInitializedRef.current) {
       return
@@ -546,65 +546,8 @@ export function VisualWorkflowDesigner({
     
     hasInitializedRef.current = true
     
-    // Only load from localStorage, never parse from text
-    try {
-      const saved = localStorage.getItem('workflow-visual-data')
-      if (saved) {
-        const data = JSON.parse(saved)
-        const savedPositions = data.positions || []
-        const savedConnections = data.connections || []
-        
-        if (savedPositions.length > 0) {
-          // Restore with saved IDs to maintain connections
-          const steps: WorkflowStep[] = savedPositions.map((pos: any) => {
-            // Find the agent in registeredAgents to get the correct color
-            // Always look up the color to ensure consistency, even if saved color exists
-            const agentIndex = registeredAgents.findIndex(a => 
-              (a.id || a.name.toLowerCase().replace(/\s+/g, '-')) === pos.agentId ||
-              a.name === pos.agentName
-            )
-            
-            return {
-              id: pos.id,
-              agentId: pos.agentId,
-              agentName: pos.agentName,
-              agentColor: agentIndex >= 0 ? getAgentColor(agentIndex) : (pos.agentColor || getAgentColor(pos.order)),
-              description: pos.description,
-              x: pos.x,
-              y: pos.y,
-              order: pos.order
-            }
-          })
-          
-          setWorkflowSteps(steps)
-          
-          // Restore connections with saved IDs
-          if (savedConnections.length > 0) {
-            const restoredConnections: Connection[] = savedConnections.map((conn: any) => ({
-              id: conn.id,
-              fromStepId: conn.fromStepId,
-              toStepId: conn.toStepId
-            }))
-            
-            setConnections(restoredConnections)
-          }
-          
-          // Mark as initialized AFTER state updates
-          setTimeout(() => {
-            hasInitializedRef.current = true
-          }, 0)
-        } else {
-          // No saved data - mark as initialized so new changes can be saved
-          hasInitializedRef.current = true
-        }
-      } else {
-        // No saved data - mark as initialized so new changes can be saved
-        hasInitializedRef.current = true
-      }
-    } catch (e) {
-      console.error('Failed to load saved data:', e)
-      hasInitializedRef.current = true
-    }
+    // Don't auto-load from localStorage - start with empty canvas
+    // Users must explicitly select a workflow from the catalog
   }, [])
 
   // Update workflow text whenever steps or connections change
@@ -3305,16 +3248,18 @@ export function VisualWorkflowDesigner({
               <h3 className="absolute top-3 left-3 text-sm font-semibold text-slate-200">{workflowName}</h3>
             )}
             
-            {/* Edit Workflow Text Button - Bottom Right */}
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => setShowTextEditorDialog(true)}
-              className="absolute bottom-3 right-3 h-8 text-xs bg-slate-800/90 hover:bg-slate-700 border border-slate-600"
-            >
-              <FileText className="h-3 w-3 mr-1.5" />
-              Edit Text
-            </Button>
+            {/* Edit Workflow Text Button - Bottom Right - only show if workflow loaded */}
+            {workflowSteps.length > 0 && (
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setShowTextEditorDialog(true)}
+                className="absolute bottom-3 right-3 h-8 text-xs bg-slate-800/90 hover:bg-slate-700 border border-slate-600"
+              >
+                <FileText className="h-3 w-3 mr-1.5" />
+                Edit Text
+              </Button>
+            )}
           </div>
 
           {/* Text Editor Dialog */}
