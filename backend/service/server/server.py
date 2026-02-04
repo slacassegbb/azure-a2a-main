@@ -12,7 +12,7 @@ from urllib.parse import urlparse
 import httpx
 from dotenv import load_dotenv
 
-from a2a.types import FilePart, FileWithUri, Message, Part, TextPart, DataPart
+from a2a.types import FilePart, FileWithUri, Message, Part, TextPart, DataPart, Role
 from fastapi import APIRouter, FastAPI, Request, Response
 from service.websocket_streamer import get_websocket_streamer
 from service.websocket_server import get_websocket_server
@@ -476,54 +476,96 @@ class ConversationServer:
         
         Request body can include:
         - sessionId: Filter conversations for this session (tenant isolation)
+        
+        Combines in-memory conversations with database persisted conversations.
         """
         try:
             message_data = await request.json()
             session_id = message_data.get('params', {}).get('sessionId') if isinstance(message_data.get('params'), dict) else None
             
-            all_conversations = self.manager.conversations
-            
-            # DEBUG: Log conversation and message details for troubleshooting image persistence
-            for conv in all_conversations:
-                file_parts_count = 0
-                data_parts_with_uri = 0
-                for msg in conv.messages:
-                    if hasattr(msg, 'parts'):
-                        for part in msg.parts:
-                            root = getattr(part, 'root', part)
-                            if hasattr(root, 'kind'):
-                                if root.kind == 'file':
-                                    file_parts_count += 1
-                                    file_obj = getattr(root, 'file', None)
-                                    if file_obj:
-                                        log_debug(f"📸 [CONV DEBUG] FilePart in {conv.conversation_id}: name={getattr(file_obj, 'name', 'unknown')}, uri={getattr(file_obj, 'uri', 'no-uri')[:80]}...")
-                                elif root.kind == 'data' and isinstance(getattr(root, 'data', None), dict):
-                                    if 'artifact-uri' in root.data:
-                                        data_parts_with_uri += 1
-                                        log_debug(f"📸 [CONV DEBUG] DataPart with artifact-uri in {conv.conversation_id}: {root.data.get('artifact-uri', '')[:80]}...")
-                if file_parts_count > 0 or data_parts_with_uri > 0:
-                    log_debug(f"📸 [CONV DEBUG] Conversation {conv.conversation_id}: {len(conv.messages)} messages, {file_parts_count} FileParts, {data_parts_with_uri} DataParts with URIs")
-            
-            # If sessionId is provided, filter conversations for that session
+            # If sessionId is provided, load conversations from database for that session
             if session_id:
-                filtered_conversations = []
-                for conv in all_conversations:
-                    # contextId format: sessionId::conversationId
-                    if conv.conversation_id.startswith(f"{session_id}::"):
-                        # Create a copy with just the conversationId part (remove session prefix)
-                        conv_copy = Conversation(
-                            conversation_id=conv.conversation_id.split('::', 1)[1] if '::' in conv.conversation_id else conv.conversation_id,
-                            name=conv.name,
-                            is_active=conv.is_active,
-                            task_ids=conv.task_ids,
-                            messages=conv.messages
-                        )
-                        filtered_conversations.append(conv_copy)
+                # First, get any conversations from database for this session
+                db_conversations = chat_history_service.list_conversations(session_id)
+                log_debug(f"[_list_conversation] Loaded {len(db_conversations)} conversations from database for session {session_id}")
                 
+                # Convert database conversations to Conversation objects
+                filtered_conversations = []
+                seen_conv_ids = set()
+                
+                for db_conv in db_conversations:
+                    full_conv_id = db_conv.get("conversation_id", "")
+                    # Strip session prefix for frontend display
+                    conv_id_only = full_conv_id.split('::', 1)[1] if '::' in full_conv_id else full_conv_id
+                    
+                    if conv_id_only in seen_conv_ids:
+                        continue
+                    seen_conv_ids.add(conv_id_only)
+                    
+                    # Load messages for this conversation
+                    messages = chat_history_service.get_messages(full_conv_id)
+                    
+                    # Convert to Message objects
+                    message_objects = []
+                    for msg_data in messages:
+                        try:
+                            parts = []
+                            for part_data in msg_data.get("parts", []):
+                                if isinstance(part_data, dict):
+                                    kind = part_data.get("kind") or part_data.get("root", {}).get("kind")
+                                    if kind == "text":
+                                        text = part_data.get("text") or part_data.get("root", {}).get("text", "")
+                                        parts.append(Part(root=TextPart(text=text)))
+                                    elif kind == "data":
+                                        data = part_data.get("data") or part_data.get("root", {}).get("data", {})
+                                        parts.append(Part(root=DataPart(data=data)))
+                                    elif kind == "file":
+                                        file_data = part_data.get("file") or part_data.get("root", {}).get("file", {})
+                                        parts.append(Part(root=FilePart(file=FileWithUri(
+                                            name=file_data.get("name", ""),
+                                            uri=file_data.get("uri", ""),
+                                            mimeType=file_data.get("mimeType", "application/octet-stream")
+                                        ))))
+                            
+                            if parts:
+                                message_objects.append(Message(
+                                    messageId=msg_data.get("message_id", str(uuid.uuid4())),
+                                    role=Role.user if msg_data.get("role") == "user" else Role.agent,
+                                    parts=parts,
+                                    contextId=msg_data.get("context_id", full_conv_id)
+                                ))
+                        except Exception as e:
+                            log_debug(f"Error converting message: {e}")
+                            continue
+                    
+                    conv = Conversation(
+                        conversation_id=conv_id_only,
+                        name=db_conv.get("name", ""),
+                        is_active=db_conv.get("is_active", True),
+                        task_ids=db_conv.get("task_ids", []),
+                        messages=message_objects
+                    )
+                    filtered_conversations.append(conv)
+                
+                # Also include any in-memory conversations for this session not in database
+                for conv in self.manager.conversations:
+                    if conv.conversation_id.startswith(f"{session_id}::"):
+                        conv_id_only = conv.conversation_id.split('::', 1)[1]
+                        if conv_id_only not in seen_conv_ids:
+                            conv_copy = Conversation(
+                                conversation_id=conv_id_only,
+                                name=conv.name,
+                                is_active=conv.is_active,
+                                task_ids=conv.task_ids,
+                                messages=conv.messages
+                            )
+                            filtered_conversations.append(conv_copy)
+                
+                log_debug(f"[_list_conversation] Returning {len(filtered_conversations)} conversations for session {session_id}")
                 return ListConversationResponse(result=filtered_conversations, message_user_map=message_user_map)
             
-            # No session filter - return all conversations
-            return ListConversationResponse(result=all_conversations, message_user_map=message_user_map)
+            # No session filter - return all in-memory conversations
+            return ListConversationResponse(result=self.manager.conversations, message_user_map=message_user_map)
         except Exception as e:
             log_debug(f"Error in _list_conversation: {e}")
             return ListConversationResponse(result=self.manager.conversations, message_user_map=message_user_map)
