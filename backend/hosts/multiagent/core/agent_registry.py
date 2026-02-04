@@ -161,16 +161,19 @@ class AgentRegistry:
                 provider = AgentProvider(organization=prov_data.get('organization', ''))
         
         # Get input/output modes with defaults
-        default_input_modes = agent_data.get('defaultInputModes', ['text'])
-        default_output_modes = agent_data.get('defaultOutputModes', ['text'])
+        default_input_modes = agent_data.get('defaultInputModes') or ['text']
+        default_output_modes = agent_data.get('defaultOutputModes') or ['text']
         
-        # Construct the card
+        # Get version with fallback (handle None explicitly)
+        version = agent_data.get('version') or '1.0.0'
+        
+        # Construct the card - skills must be a list (not None)
         card = AgentCard(
             name=agent_data['name'],
             url=agent_data['url'],
-            description=agent_data.get('description', ''),
-            version=agent_data.get('version', '1.0.0'),
-            skills=skills if skills else None,
+            description=agent_data.get('description') or '',
+            version=version,
+            skills=skills if skills else [],  # Must be a list, not None
             capabilities=capabilities,
             provider=provider,
             defaultInputModes=default_input_modes,

@@ -2307,7 +2307,7 @@ Answer with just JSON:
         the catalog (database).
         
         Args:
-            agent_name: Name of the agent to load
+            agent_name: Name of the agent to load (can be partial/fuzzy match)
             
         Returns:
             True if agent was loaded successfully, False if not found
@@ -2317,13 +2317,36 @@ Answer with just JSON:
             from a2a.types import AgentCard, AgentSkill, AgentCapabilities, AgentProvider
             
             registry = get_registry()
+            
+            # First try exact match
             agent_config = registry.get_agent(agent_name)
             
+            # If not found, try fuzzy matching
             if not agent_config:
-                print(f"🔍 [CATALOG_FALLBACK] Agent '{agent_name}' not found in catalog")
+                all_agents = registry.get_all_agents()
+                search_lower = agent_name.lower()
+                
+                # Try to find agent by partial name match
+                for agent in all_agents:
+                    agent_name_lower = agent.get('name', '').lower()
+                    # Check if search term is contained in agent name or vice versa
+                    if search_lower in agent_name_lower or agent_name_lower in search_lower:
+                        agent_config = agent
+                        print(f"🔍 [CATALOG_FALLBACK] Fuzzy match: '{agent_name}' -> '{agent.get('name')}'")
+                        break
+                    # Also check for word overlap (e.g., "QuickBooks" matches "AI Foundry QuickBooks Agent")
+                    search_words = set(search_lower.split())
+                    agent_words = set(agent_name_lower.split())
+                    if search_words & agent_words:  # If there's any word overlap
+                        agent_config = agent
+                        print(f"🔍 [CATALOG_FALLBACK] Word match: '{agent_name}' -> '{agent.get('name')}'")
+                        break
+            
+            if not agent_config:
+                print(f"🔍 [CATALOG_FALLBACK] Agent '{agent_name}' not found in catalog (tried fuzzy match)")
                 return False
             
-            print(f"🔍 [CATALOG_FALLBACK] Found agent '{agent_name}' in catalog: {agent_config.get('url')}")
+            print(f"🔍 [CATALOG_FALLBACK] Found agent '{agent_config.get('name')}' in catalog: {agent_config.get('url')}")
             
             # Build AgentCard from catalog data
             skills = []
@@ -3898,6 +3921,7 @@ Answer with just JSON:
                         # Use free-form multi-agent orchestration (no specific workflow)
                         agent_mode = True
                         workflow = None
+                        workflow_goal = None  # Clear workflow_goal so orchestrator uses user's message
                         log_debug(f"🔀 [Route Selection] Using multi-agent orchestration")
                         await self._emit_status_event("🔄 Route Decision: Using MULTI-AGENT orchestration", context_id)
                         
@@ -3905,6 +3929,7 @@ Answer with just JSON:
                         # Skip orchestration, use standard Foundry response
                         agent_mode = False
                         workflow = None
+                        workflow_goal = None  # Clear workflow_goal
                         log_debug(f"🔀 [Multi-Workflow] Using direct response (no orchestration)")
                         await self._emit_status_event("🔄 Route Decision: Direct response (no agents needed)", context_id)
                         

@@ -392,7 +392,7 @@
   },
   {
     "name": "AI Foundry QuickBooks Agent",
-    "description": "An intelligent agent specialized in QuickBooks Online accounting. Can manage customers, invoices, bills, vendors, employees, and generate financial reports. Also supports web search and document search capabilities.",
+    "description": "An intelligent QuickBooks Online agent for accounting and financial management. Manage customers, invoices, bills, vendors, employees, and generate financial reports.",
     "version": "1.0.0",
     "url": "http://localhost:8020/",
     "defaultInputModes": [
@@ -409,13 +409,7 @@
         "id": "quickbooks_customers",
         "name": "QuickBooks Customer Management",
         "description": "Search, create, update, and manage customer records in QuickBooks Online. Access customer details, contact information, and transaction history.",
-        "examples": [
-          "Show me all customers with Tech in their name",
-          "Create a new customer for XYZ Corporation",
-          "Get details for customer ABC Corp",
-          "Update the email for customer John Smith",
-          "List all active customers"
-        ],
+        "examples": null,
         "tags": [
           "quickbooks",
           "customers",
@@ -427,13 +421,7 @@
         "id": "quickbooks_invoices",
         "name": "QuickBooks Invoice Management",
         "description": "Create, search, and manage invoices in QuickBooks Online. Track payments, view invoice details, and manage accounts receivable.",
-        "examples": [
-          "Show me all unpaid invoices",
-          "Create an invoice for customer ABC Corp for $500",
-          "Get details for invoice #1001",
-          "What invoices are overdue?",
-          "List invoices from this month"
-        ],
+        "examples": null,
         "tags": [
           "quickbooks",
           "invoices",
@@ -442,16 +430,10 @@
         ]
       },
       {
-        "id": "quickbooks_bills_expenses",
+        "id": "quickbooks_bills",
         "name": "QuickBooks Bills & Expenses",
         "description": "Manage bills, purchases, and expenses in QuickBooks Online. Track vendor payments, record expenses, and manage accounts payable.",
-        "examples": [
-          "Show me all bills due this week",
-          "Create a bill from vendor Office Supplies Inc",
-          "Record a payment for bill #2001",
-          "List all purchases this month",
-          "What bills are overdue?"
-        ],
+        "examples": null,
         "tags": [
           "quickbooks",
           "bills",
@@ -464,64 +446,20 @@
         "id": "quickbooks_reports",
         "name": "QuickBooks Financial Reports",
         "description": "Generate financial reports including Profit & Loss, Balance Sheet, and custom queries. Access company information and financial summaries.",
-        "examples": [
-          "Show me the Profit and Loss report",
-          "Get the Balance Sheet",
-          "What is our company information?",
-          "Query all accounts receivable over $1000",
-          "Generate a sales report"
-        ],
+        "examples": null,
         "tags": [
           "quickbooks",
           "reports",
           "financial",
           "accounting",
-          "P&L",
-          "balance sheet"
-        ]
-      },
-      {
-        "id": "quickbooks_vendors",
-        "name": "QuickBooks Vendor Management",
-        "description": "Manage vendor/supplier records in QuickBooks Online. Create, update, and track vendor information and payment history.",
-        "examples": [
-          "List all our vendors",
-          "Create a new vendor for our supplier",
-          "Update vendor contact information",
-          "Get details for vendor ABC Supplies"
-        ],
-        "tags": [
-          "quickbooks",
-          "vendors",
-          "suppliers",
-          "procurement"
-        ]
-      },
-      {
-        "id": "web_search",
-        "name": "Web Search",
-        "description": "Search the web for current information using Bing or other integrated search tools.",
-        "examples": [
-          "Find the latest news about a company",
-          "Search for QuickBooks best practices",
-          "Get current market information"
-        ],
-        "tags": [
-          "web",
-          "search",
-          "bing",
-          "internet"
+          "P&L"
         ]
       },
       {
         "id": "human_interaction",
         "name": "Human Expert Escalation",
         "description": "Escalate complex issues to human experts or facilitate human-in-the-loop interactions when automated responses are insufficient.",
-        "examples": [
-          "Escalate this issue to a human expert",
-          "I need to speak with a person",
-          "Connect me with a human agent"
-        ],
+        "examples": null,
         "tags": [
           "human-interaction",
           "escalation",
@@ -847,7 +785,7 @@
   },
   {
     "name": "Benjamin School English Teacher",
-    "description": "This agent provides detailed feedback on English essays based on a provided rubric, checking for accuracy, adherence to the rubric, and overall quality of writing.",
+    "description": "High school English teacher specializing in essay grading and literary analysis",
     "version": "1.0.0",
     "url": "https://azurefoundry-english.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
     "defaultInputModes": [
@@ -857,24 +795,8 @@
       "text"
     ],
     "capabilities": {
-      "streaming": true
-    },
-    "skills": [
-      {
-        "id": "grade-english-essays",
-        "name": "Grade English Essays",
-        "description": "This agent takes an English essay submitted by a student and provides detailed feedback based on a provided rubric. It checks for accuracy, adherence to the rubric, and overall quality of writing.",
-        "examples": [
-          "Example query 1 - grade my paper on Shakespeare",
-          "Example query 2 - give me feedback on my essay about the Civil War"
-        ],
-        "tags": [
-          "english",
-          "essay grading",
-          "writing feedback"
-        ]
-      }
-    ]
+      "streaming": false
+    }
   },
   {
     "name": "Benjamin School Biology Teacher",
