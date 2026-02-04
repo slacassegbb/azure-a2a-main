@@ -11,12 +11,16 @@ import datetime
 import asyncio
 import logging
 import json
-from typing import Optional, Dict, List
+import uuid
+import tempfile
+from pathlib import Path
+from typing import Optional, Dict, List, Any
 
 from azure.ai.agents import AgentsClient
 from azure.ai.agents.models import Agent, ThreadMessage, ThreadRun, AgentThread, ToolOutput, BingGroundingTool, ListSortOrder, FilePurpose, FileSearchTool, RequiredMcpToolCall, ToolApproval
 from azure.ai.projects import AIProjectClient
 from azure.identity import DefaultAzureCredential
+from azure.storage.blob import BlobServiceClient, generate_blob_sas, BlobSasPermissions
 import glob
 
 logger = logging.getLogger(__name__)
@@ -43,7 +47,32 @@ class FoundryEmailAgent:
         self._file_search_tool = None
         self._agents_client = None
         self._project_client = None
+        self._blob_service_client: Optional[BlobServiceClient] = None
+        self._latest_artifacts: List[Dict[str, Any]] = []  # Store file artifacts for A2A
         self.last_token_usage: Optional[Dict[str, int]] = None  # Store token usage from last run
+
+    def _get_blob_service_client(self) -> Optional[BlobServiceClient]:
+        """Return a BlobServiceClient if Azure storage is configured and forced."""
+        force_blob = os.getenv("FORCE_AZURE_BLOB", "false").lower() == "true"
+        if not force_blob:
+            return None
+        if self._blob_service_client is not None:
+            return self._blob_service_client
+
+        connection_string = os.getenv("AZURE_STORAGE_CONNECTION_STRING")
+        if not connection_string:
+            logger.error("AZURE_STORAGE_CONNECTION_STRING must be set when FORCE_AZURE_BLOB=true")
+            raise RuntimeError("Missing AZURE_STORAGE_CONNECTION_STRING for blob uploads")
+
+        try:
+            self._blob_service_client = BlobServiceClient.from_connection_string(
+                connection_string,
+                api_version="2023-11-03",
+            )
+            return self._blob_service_client
+        except Exception as e:
+            logger.error(f"Failed to create BlobServiceClient: {e}")
+            raise
         
     def _get_client(self) -> AgentsClient:
         """Get a cached AgentsClient instance to reduce API calls."""
@@ -190,6 +219,7 @@ UNREAD_ONLY: false
 FROM_ADDRESS: 
 SUBJECT_CONTAINS: 
 SINCE_DATE: 
+INCLUDE_ATTACHMENTS: false
 ```END_EMAIL_FETCH
 
 Parameters:
@@ -198,13 +228,21 @@ Parameters:
 - FROM_ADDRESS: Filter by sender email (partial match)
 - SUBJECT_CONTAINS: Filter by subject text (partial match)  
 - SINCE_DATE: Get emails after this date (format: 2026-02-04)
+- INCLUDE_ATTACHMENTS: true/false - download and extract file attachments
+
+**IMPORTANT for INCLUDE_ATTACHMENTS:**
+- Set to `true` when user explicitly asks for attachments, files, or documents from emails
+- Set to `true` for: "get emails with attachments", "download files from my emails", "attachments from invoices"
+- Set to `false` for: "show my emails", "any new messages?", "what emails do I have?"
+- When `true`, all email attachments will be downloaded and made available
 
 Examples:
-- "Show my last 5 emails" → COUNT: 5
-- "Any unread emails?" → UNREAD_ONLY: true
-- "Emails from john@company.com" → FROM_ADDRESS: john@company.com
-- "Emails about invoices" → SUBJECT_CONTAINS: invoice
-- "Emails from today" → SINCE_DATE: {datetime.datetime.now().strftime('%Y-%m-%d')}
+- "Show my last 5 emails" → COUNT: 5, INCLUDE_ATTACHMENTS: false
+- "Any unread emails?" → UNREAD_ONLY: true, INCLUDE_ATTACHMENTS: false
+- "Get my emails with attachments" → INCLUDE_ATTACHMENTS: true
+- "Download attachments from invoice emails" → SUBJECT_CONTAINS: invoice, INCLUDE_ATTACHMENTS: true
+- "Emails about invoices with files" → SUBJECT_CONTAINS: invoice, INCLUDE_ATTACHMENTS: true
+- "Emails from john@company.com" → FROM_ADDRESS: john@company.com, INCLUDE_ATTACHMENTS: false
 
 ### 2. SEND EMAILS
 When you have information to send an email, output it in this format:
@@ -223,7 +261,9 @@ BODY:
 
 **For Reading Emails:**
 - When user asks to "check emails", "show my inbox", "any new emails?", etc. → Use EMAIL_FETCH format
+- When user mentions "attachments", "files", "documents" → Set INCLUDE_ATTACHMENTS: true
 - After fetching, summarize the emails in a readable format
+- If attachments were downloaded, mention them in your response
 - You can suggest actions like "Would you like me to reply to any of these?"
 
 **For Sending Emails:**
@@ -243,28 +283,31 @@ UNREAD_ONLY: false
 FROM_ADDRESS: 
 SUBJECT_CONTAINS: 
 SINCE_DATE: 
+INCLUDE_ATTACHMENTS: false
 ```END_EMAIL_FETCH"
 
-**User: "Show unread emails from today"**
-You: "Checking for unread emails received today.
+**User: "Get my last 5 emails with attachments"**
+You: "I'll retrieve your emails and download any attachments.
+
+```EMAIL_FETCH
+COUNT: 5
+UNREAD_ONLY: false
+FROM_ADDRESS: 
+SUBJECT_CONTAINS: 
+SINCE_DATE: 
+INCLUDE_ATTACHMENTS: true
+```END_EMAIL_FETCH"
+
+**User: "Download invoice attachments from today"**
+You: "I'll get invoices from today and download their attachments.
 
 ```EMAIL_FETCH
 COUNT: 20
-UNREAD_ONLY: true
-FROM_ADDRESS: 
-SUBJECT_CONTAINS: 
-SINCE_DATE: {datetime.datetime.now().strftime('%Y-%m-%d')}
-```END_EMAIL_FETCH"
-
-**User: "Any emails from support@vendor.com?"**
-You: "I'll look for emails from that address.
-
-```EMAIL_FETCH
-COUNT: 10
 UNREAD_ONLY: false
-FROM_ADDRESS: support@vendor.com
-SUBJECT_CONTAINS: 
-SINCE_DATE: 
+FROM_ADDRESS: 
+SUBJECT_CONTAINS: invoice
+SINCE_DATE: {datetime.datetime.now().strftime('%Y-%m-%d')}
+INCLUDE_ATTACHMENTS: true
 ```END_EMAIL_FETCH"
 
 **User: "Send this report to simon@company.com: [Report content...]"**
@@ -386,6 +429,7 @@ Current date: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}
         Returns: (formatted_emails, cleaned_content)
         """
         import re
+        from datetime import datetime, timedelta
         
         # Look for the EMAIL_FETCH block
         pattern = r'```EMAIL_FETCH\s*\n(.*?)\n```END_EMAIL_FETCH'
@@ -404,6 +448,7 @@ Current date: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}
         from_address = None
         subject_contains = None
         since_date = None
+        include_attachments = False
         
         for line in fetch_block.strip().split('\n'):
             line = line.strip()
@@ -422,17 +467,22 @@ Current date: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}
                     subject_contains = value
                 elif field == 'SINCE_DATE' and value:
                     since_date = value
+                elif field == 'INCLUDE_ATTACHMENTS':
+                    include_attachments = value.lower() == 'true'
         
-        logger.info(f"📧 Parsed EMAIL_FETCH: count={count}, unread={unread_only}, from={from_address}, subject={subject_contains}, since={since_date}")
+        logger.info(f"📧 Parsed EMAIL_FETCH: count={count}, unread={unread_only}, from={from_address}, subject={subject_contains}, since={since_date}, include_attachments={include_attachments}")
         
         # Remove the EMAIL_FETCH block from response for clean display
         clean_content = re.sub(pattern, '', response_text, flags=re.DOTALL).strip()
         if not clean_content:
             clean_content = "📬 Checking your inbox..."
         
+        # Clear any previous artifacts
+        self._latest_artifacts = []
+        
         # Fetch the emails
         try:
-            from email_config import get_emails
+            from email_config import get_emails, get_email_attachments, download_attachment
             
             result = get_emails(
                 count=count,
@@ -461,6 +511,55 @@ Current date: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}
                 filter_text = " ".join(filters_desc) if filters_desc else ""
                 return f"📭 No {filter_text} emails found.", clean_content
             
+            # If attachments requested, process them
+            downloaded_attachments = []
+            if include_attachments:
+                logger.info(f"� Processing attachments for {len(emails)} emails...")
+                for email in emails:
+                    if email.get("has_attachments"):
+                        email_id = email.get("id")
+                        email_subject = email.get("subject", "Unknown")
+                        
+                        # Get attachment list for this email
+                        att_result = get_email_attachments(email_id)
+                        if att_result["success"] and att_result["attachments"]:
+                            for att in att_result["attachments"]:
+                                # Skip inline attachments (usually images in signature)
+                                if att.get("is_inline"):
+                                    continue
+                                
+                                # Download the attachment
+                                dl_result = download_attachment(email_id, att["id"])
+                                if dl_result["success"] and dl_result["content"]:
+                                    # Upload to blob storage
+                                    blob_url = self._upload_attachment_to_blob(
+                                        content=dl_result["content"],
+                                        filename=dl_result["name"],
+                                        content_type=dl_result["content_type"]
+                                    )
+                                    
+                                    if blob_url:
+                                        attachment_info = {
+                                            "name": dl_result["name"],
+                                            "url": blob_url,
+                                            "content_type": dl_result["content_type"],
+                                            "size": dl_result["size"],
+                                            "from_email": email_subject,
+                                        }
+                                        downloaded_attachments.append(attachment_info)
+                                        
+                                        # Add to artifacts for A2A payload
+                                        self._latest_artifacts.append({
+                                            "artifact-uri": blob_url,
+                                            "file-name": dl_result["name"],
+                                            "mime": dl_result["content_type"],
+                                            "file-size": dl_result["size"],
+                                            "storage-type": "azure-blob",
+                                        })
+                                        logger.info(f"✅ Uploaded attachment: {dl_result['name']} -> {blob_url[:80]}...")
+                                    else:
+                                        logger.warning(f"⚠️ Failed to upload attachment: {dl_result['name']}")
+            
             # Format emails for display
             formatted = f"📬 **Found {len(emails)} email(s):**\n\n"
             
@@ -469,7 +568,6 @@ Current date: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}
                 received = email.get("received_at", "")
                 if received:
                     try:
-                        from datetime import datetime
                         dt = datetime.fromisoformat(received.replace("Z", "+00:00"))
                         received = dt.strftime("%b %d, %Y at %I:%M %p")
                     except:
@@ -492,11 +590,117 @@ Current date: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}
                     formatted += f"   Preview: {preview}\n"
                 formatted += "\n"
             
+            # Add attachment summary if any were downloaded
+            if downloaded_attachments:
+                formatted += f"\n---\n📎 **Downloaded {len(downloaded_attachments)} attachment(s):**\n\n"
+                for att in downloaded_attachments:
+                    size_kb = att["size"] / 1024
+                    formatted += f"• **{att['name']}** ({size_kb:.1f} KB) - from: {att['from_email']}\n"
+            
             return formatted, clean_content
             
         except Exception as e:
             logger.error(f"Failed to fetch emails: {e}")
             return f"❌ Failed to fetch emails: {str(e)}", clean_content
+    
+    def _upload_attachment_to_blob(self, content: bytes, filename: str, content_type: str) -> Optional[str]:
+        """Upload an email attachment to Azure Blob Storage and return the URL with SAS token."""
+        from datetime import datetime, timedelta
+        from azure.core.credentials import AzureNamedKeyCredential, AzureSasCredential
+        
+        blob_client = self._get_blob_service_client()
+        if not blob_client:
+            logger.warning("Blob storage not configured, skipping upload")
+            return None
+
+        container_name = os.getenv("AZURE_BLOB_CONTAINER", "a2a-files")
+        
+        # Create unique blob path: email-attachments/{uuid}/{filename}
+        blob_name = f"email-attachments/{uuid.uuid4().hex}/{filename}"
+        
+        try:
+            container_client = blob_client.get_container_client(container_name)
+            if not container_client.exists():
+                container_client.create_container()
+            
+            # Upload the content
+            container_client.upload_blob(name=blob_name, data=content, overwrite=True)
+            
+            # Generate SAS token
+            sas_duration_minutes = int(os.getenv("AZURE_BLOB_SAS_DURATION_MINUTES", str(24 * 60)))
+            sas_token: Optional[str] = None
+            
+            service_client = self._blob_service_client
+            
+            if service_client is not None:
+                credential = getattr(service_client, "credential", None)
+                account_key_value: Optional[str] = None
+                
+                if isinstance(credential, AzureNamedKeyCredential):
+                    account_key_value = credential.key
+                elif isinstance(credential, AzureSasCredential):
+                    sas_token = credential.signature.lstrip("?")
+                elif hasattr(credential, "account_key"):
+                    account_key_value = getattr(credential, "account_key")
+                elif hasattr(credential, "key"):
+                    account_key_value = getattr(credential, "key")
+                
+                if callable(account_key_value):
+                    account_key_value = account_key_value()
+                if isinstance(account_key_value, bytes):
+                    account_key_value = account_key_value.decode()
+                
+                if account_key_value:
+                    try:
+                        sas_token = generate_blob_sas(
+                            account_name=service_client.account_name,
+                            container_name=container_name,
+                            blob_name=blob_name,
+                            account_key=account_key_value,
+                            permission=BlobSasPermissions(read=True),
+                            expiry=datetime.utcnow() + timedelta(minutes=sas_duration_minutes),
+                            protocol="https",
+                            version="2023-11-03",
+                        )
+                    except Exception as sas_error:
+                        logger.error(f"Failed to generate SAS URL: {sas_error}")
+            
+            # Try user delegation key if shared key didn't work
+            if sas_token is None and self._blob_service_client is not None:
+                try:
+                    delegation_key = self._blob_service_client.get_user_delegation_key(
+                        key_start_time=datetime.utcnow() - timedelta(minutes=5),
+                        key_expiry_time=datetime.utcnow() + timedelta(minutes=sas_duration_minutes),
+                    )
+                    sas_token = generate_blob_sas(
+                        account_name=self._blob_service_client.account_name,
+                        container_name=container_name,
+                        blob_name=blob_name,
+                        user_delegation_key=delegation_key,
+                        permission=BlobSasPermissions(read=True),
+                        expiry=datetime.utcnow() + timedelta(minutes=sas_duration_minutes),
+                        version="2023-11-03",
+                    )
+                except Exception as ude_err:
+                    logger.warning(f"Failed to generate user delegation SAS: {ude_err}")
+            
+            if sas_token:
+                base_url = blob_client.get_blob_client(container=container_name, blob=blob_name).url
+                token = sas_token.lstrip("?")
+                separator = '&' if '?' in base_url else '?'
+                return f"{base_url}{separator}{token}"
+            
+            raise RuntimeError("Unable to generate SAS token for blob upload")
+            
+        except Exception as e:
+            logger.error(f"Failed to upload attachment to blob storage: {e}")
+            return None
+    
+    def pop_latest_artifacts(self) -> List[Dict[str, Any]]:
+        """Return and clear any file artifacts (downloaded attachments)."""
+        artifacts = self._latest_artifacts
+        self._latest_artifacts = []
+        return artifacts
     
     def _try_send_email(self, response_text: str) -> tuple[Optional[str], str]:
         """Check if the response contains an email to send and send it.

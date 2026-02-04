@@ -557,6 +557,143 @@ def get_email_by_id(email_id: str) -> dict:
         return {"success": False, "message": error_msg, "email": None}
 
 
+def get_email_attachments(email_id: str) -> dict:
+    """
+    Get attachments for a specific email.
+    
+    Args:
+        email_id: The Microsoft Graph email ID
+    
+    Returns:
+        dict with 'success' (bool), 'message' (str), and 'attachments' (list)
+        Each attachment has: id, name, content_type, size
+    """
+    credentials = get_email_credentials()
+    
+    if not all([credentials["tenant_id"], credentials["client_id"], 
+                credentials["client_secret"], credentials["sender_email"]]):
+        return {"success": False, "message": "Missing email credentials", "attachments": []}
+    
+    try:
+        credential = ClientSecretCredential(
+            tenant_id=credentials["tenant_id"],
+            client_id=credentials["client_id"],
+            client_secret=credentials["client_secret"],
+        )
+        token = credential.get_token("https://graph.microsoft.com/.default").token
+        
+        user_email = credentials["sender_email"]
+        url = f"https://graph.microsoft.com/v1.0/users/{user_email}/messages/{email_id}/attachments"
+        
+        response = requests.get(
+            url,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
+            timeout=30,
+        )
+        
+        if response.status_code >= 300:
+            error_msg = f"Failed to get attachments: {response.status_code} - {response.text}"
+            logger.error(error_msg)
+            return {"success": False, "message": error_msg, "attachments": []}
+        
+        data = response.json()
+        attachments_data = data.get("value", [])
+        
+        attachments = []
+        for att in attachments_data:
+            attachments.append({
+                "id": att.get("id"),
+                "name": att.get("name", "unknown"),
+                "content_type": att.get("contentType", "application/octet-stream"),
+                "size": att.get("size", 0),
+                "is_inline": att.get("isInline", False),
+            })
+        
+        logger.info(f"Found {len(attachments)} attachments for email {email_id}")
+        return {"success": True, "message": f"Found {len(attachments)} attachments", "attachments": attachments}
+        
+    except Exception as e:
+        error_msg = f"Failed to get attachments: {str(e)}"
+        logger.error(error_msg)
+        return {"success": False, "message": error_msg, "attachments": []}
+
+
+def download_attachment(email_id: str, attachment_id: str) -> dict:
+    """
+    Download a specific attachment from an email.
+    
+    Args:
+        email_id: The Microsoft Graph email ID
+        attachment_id: The attachment ID
+    
+    Returns:
+        dict with 'success' (bool), 'message' (str), 'content' (bytes), 
+        'name' (str), and 'content_type' (str)
+    """
+    import base64
+    
+    credentials = get_email_credentials()
+    
+    if not all([credentials["tenant_id"], credentials["client_id"], 
+                credentials["client_secret"], credentials["sender_email"]]):
+        return {"success": False, "message": "Missing email credentials", "content": None}
+    
+    try:
+        credential = ClientSecretCredential(
+            tenant_id=credentials["tenant_id"],
+            client_id=credentials["client_id"],
+            client_secret=credentials["client_secret"],
+        )
+        token = credential.get_token("https://graph.microsoft.com/.default").token
+        
+        user_email = credentials["sender_email"]
+        url = f"https://graph.microsoft.com/v1.0/users/{user_email}/messages/{email_id}/attachments/{attachment_id}"
+        
+        response = requests.get(
+            url,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
+            timeout=60,  # Longer timeout for large files
+        )
+        
+        if response.status_code >= 300:
+            error_msg = f"Failed to download attachment: {response.status_code} - {response.text}"
+            logger.error(error_msg)
+            return {"success": False, "message": error_msg, "content": None}
+        
+        data = response.json()
+        
+        # File attachments have contentBytes (base64 encoded)
+        content_bytes_b64 = data.get("contentBytes")
+        if content_bytes_b64:
+            content = base64.b64decode(content_bytes_b64)
+        else:
+            # Item attachments (like embedded emails) don't have contentBytes
+            return {"success": False, "message": "Attachment is not a file (may be embedded item)", "content": None}
+        
+        result = {
+            "success": True,
+            "message": "Attachment downloaded",
+            "content": content,
+            "name": data.get("name", "attachment"),
+            "content_type": data.get("contentType", "application/octet-stream"),
+            "size": data.get("size", len(content)),
+        }
+        
+        logger.info(f"Downloaded attachment: {result['name']} ({result['size']} bytes)")
+        return result
+        
+    except Exception as e:
+        error_msg = f"Failed to download attachment: {str(e)}"
+        logger.error(error_msg)
+        return {"success": False, "message": error_msg, "content": None}
+
+
 def mark_email_as_read(email_id: str, is_read: bool = True) -> dict:
     """
     Mark an email as read or unread.
