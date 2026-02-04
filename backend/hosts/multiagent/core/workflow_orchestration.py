@@ -769,6 +769,8 @@ These are specialized agents that can handle specific tasks.
 - Set selected_workflows to the list of workflow names to execute
 
 **Choose "agents"** when:
+- **User explicitly mentions an AGENT name** (e.g., "use the QuickBooks agent", "ask the image generator") - ALWAYS use agents approach, NOT workflows
+- User wants to call a specific agent directly without a predefined workflow
 - Goal needs multi-agent coordination but no workflow fits
 - Task is complex but doesn't match any workflow pattern
 - User needs something custom or ad-hoc
