@@ -53,6 +53,9 @@ interface VisualWorkflowDesignerProps {
   onWorkflowNameChange?: (name: string) => void
   onWorkflowGoalChange?: (goal: string) => void
   onWorkflowLoaded?: (workflow: { id: string; name: string; description: string; category: string; goal: string }) => void
+  onActivateWorkflow?: (workflow: { id: string; name: string; description: string; category: string; goal: string; steps: any[]; connections: any[] }) => void
+  onDeactivateWorkflow?: (workflowId: string) => void
+  activatedWorkflowIds?: string[]
   initialWorkflow?: string
   initialWorkflowName?: string
   conversationId?: string // Optional: use existing conversation from chat panel
@@ -79,6 +82,9 @@ export function VisualWorkflowDesigner({
   onWorkflowNameChange,
   onWorkflowGoalChange,
   onWorkflowLoaded,
+  onActivateWorkflow,
+  onDeactivateWorkflow,
+  activatedWorkflowIds = [],
   initialWorkflow,
   initialWorkflowName,
   conversationId: externalConversationId
@@ -3681,7 +3687,7 @@ export function VisualWorkflowDesigner({
           <div className="w-96 flex flex-col">
             <div className="bg-slate-900 rounded-lg border border-slate-700 overflow-hidden h-full flex flex-col">
               <div className="p-3 border-b border-slate-700 bg-slate-800/50 flex items-center justify-between">
-                <h3 className="text-sm font-semibold text-slate-200">Active Workflows</h3>
+                <h3 className="text-sm font-semibold text-slate-200">Workflows</h3>
                 <button
                   onClick={() => setShowCatalog(false)}
                   className="text-slate-400 hover:text-slate-200 transition-colors"
@@ -3694,6 +3700,18 @@ export function VisualWorkflowDesigner({
                 <WorkflowCatalog
                   onLoadWorkflow={loadWorkflow}
                   onSaveWorkflow={handleQuickSave}
+                  onActivateWorkflow={onActivateWorkflow ? (workflow) => {
+                    onActivateWorkflow({
+                      id: workflow.id,
+                      name: workflow.name,
+                      description: workflow.description,
+                      category: workflow.category,
+                      goal: workflow.goal || "",
+                      steps: workflow.steps || [],
+                      connections: workflow.connections || []
+                    })
+                  } : undefined}
+                  onDeactivateWorkflow={onDeactivateWorkflow}
                   onNewWorkflow={async (name, description, category, goal) => {
                     // Clear the canvas
                     clearWorkflow()
@@ -3761,6 +3779,7 @@ export function VisualWorkflowDesigner({
                   currentWorkflowSteps={workflowSteps.length}
                   refreshTrigger={catalogRefreshTrigger}
                   selectedWorkflowId={selectedWorkflowId}
+                  activatedWorkflowIds={activatedWorkflowIds}
                 />
               </div>
             </div>

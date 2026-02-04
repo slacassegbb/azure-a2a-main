@@ -471,9 +471,9 @@
   },
   {
     "name": "AI Foundry Stripe Agent",
-    "description": "An intelligent agent specialized in Stripe payment processing. Can manage customers, payments, subscriptions, invoices, products, and check balance/payouts. Also supports web search and document search capabilities.",
+    "description": "Intelligent agent for Stripe payment processing - customers, payments, subscriptions, invoices, and balance.",
     "version": "1.0.0",
-    "url": "http://localhost:9030/",
+    "url": "https://azurefoundry-stripe.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
     "defaultInputModes": [
       "text"
     ],
@@ -487,142 +487,33 @@
       {
         "id": "stripe_customers",
         "name": "Stripe Customer Management",
-        "description": "Create, search, update, and manage customer records in Stripe. Access customer details, payment methods, and subscription history.",
-        "examples": [
-          "List all my Stripe customers",
-          "Create a new customer with email john@example.com",
-          "Search for customers with the name Smith",
-          "Get customer details for cus_123abc",
-          "Delete customer cus_xyz789"
-        ],
+        "description": "Create, search, update, and manage customer records in Stripe.",
+        "examples": null,
         "tags": [
           "stripe",
           "customers",
-          "payments",
-          "crm"
+          "payments"
         ]
       },
       {
         "id": "stripe_payments",
         "name": "Stripe Payment Processing",
-        "description": "Create and manage payment intents, process charges, handle refunds, and track payment status in Stripe.",
-        "examples": [
-          "Create a payment intent for $100",
-          "List recent payment intents",
-          "Show me all successful payments",
-          "Process a refund for payment pi_abc123",
-          "Check the status of payment intent pi_xyz"
-        ],
+        "description": "Create payment intents, process charges, and handle refunds.",
+        "examples": null,
         "tags": [
           "stripe",
           "payments",
-          "charges",
-          "refunds",
-          "payment-intents"
-        ]
-      },
-      {
-        "id": "stripe_subscriptions",
-        "name": "Stripe Subscription Management",
-        "description": "Create, update, cancel, and manage recurring subscriptions. Handle subscription schedules and billing cycles.",
-        "examples": [
-          "List all active subscriptions",
-          "Create a subscription for customer cus_123",
-          "Cancel subscription sub_abc",
-          "Update subscription to a different plan",
-          "Show me subscriptions expiring this month"
-        ],
-        "tags": [
-          "stripe",
-          "subscriptions",
-          "recurring",
-          "billing"
-        ]
-      },
-      {
-        "id": "stripe_products_prices",
-        "name": "Stripe Products & Pricing",
-        "description": "Manage your product catalog and pricing in Stripe. Create products, set prices, and manage pricing tiers.",
-        "examples": [
-          "List all products",
-          "Create a new product called Premium Plan",
-          "Set up a $29/month price for a product",
-          "Get price details for price_123",
-          "Show me all active prices"
-        ],
-        "tags": [
-          "stripe",
-          "products",
-          "prices",
-          "catalog",
-          "pricing"
-        ]
-      },
-      {
-        "id": "stripe_invoices",
-        "name": "Stripe Invoice Management",
-        "description": "Create, send, and manage invoices in Stripe. Track invoice status, payments, and handle invoice items.",
-        "examples": [
-          "List all unpaid invoices",
-          "Create an invoice for customer cus_123",
-          "Send invoice inv_abc to the customer",
-          "Finalize and send pending invoice",
-          "Show me overdue invoices"
-        ],
-        "tags": [
-          "stripe",
-          "invoices",
-          "billing",
-          "accounts receivable"
+          "charges"
         ]
       },
       {
         "id": "stripe_balance",
-        "name": "Stripe Balance & Payouts",
-        "description": "Check your Stripe balance, view available and pending funds, and manage payouts to your bank account.",
-        "examples": [
-          "What is my current Stripe balance?",
-          "Show me available funds",
-          "List recent payouts",
-          "How much is pending in my account?"
-        ],
+        "name": "Stripe Balance",
+        "description": "Check balance and view available funds.",
+        "examples": null,
         "tags": [
           "stripe",
-          "balance",
-          "payouts",
-          "funds"
-        ]
-      },
-      {
-        "id": "web_search",
-        "name": "Web Search",
-        "description": "Search the web for current information using Bing or other integrated search tools.",
-        "examples": [
-          "Search for Stripe best practices",
-          "Find information about PCI compliance",
-          "Get the latest Stripe API updates"
-        ],
-        "tags": [
-          "web",
-          "search",
-          "bing",
-          "internet"
-        ]
-      },
-      {
-        "id": "human_interaction",
-        "name": "Human Expert Escalation",
-        "description": "Escalate complex payment issues to human experts or facilitate human-in-the-loop interactions when automated responses are insufficient.",
-        "examples": [
-          "Escalate this payment issue to a human expert",
-          "I need to speak with a person about a dispute",
-          "Connect me with support for a chargeback"
-        ],
-        "tags": [
-          "human-interaction",
-          "escalation",
-          "expert",
-          "human-capable"
+          "balance"
         ]
       }
     ]
@@ -894,7 +785,7 @@
     "name": "Twilio SMS Agent",
     "description": "A notification agent powered by Azure AI Foundry that sends SMS text messages via Twilio. Use this agent to deliver workflow results, send alerts, or notify users via SMS. Ideal as the final step in a workflow to deliver summaries or confirmations to users' phones.",
     "version": "1.0.0",
-    "url": "http://localhost:8016/",
+    "url": "https://azurefoundry-twilio2.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
     "defaultInputModes": [
       "text"
     ],
@@ -909,12 +800,7 @@
         "id": "send_sms",
         "name": "Send SMS Message",
         "description": "Send an SMS text message to a phone number via Twilio. Can receive message content from previous workflow steps and deliver it via SMS notification.",
-        "examples": [
-          "Send SMS: Your account balance is $1,234.56",
-          "Text me a summary of the results",
-          "Send a notification via SMS",
-          "Message my phone with the workflow output"
-        ],
+        "examples": null,
         "tags": [
           "sms",
           "text",
@@ -928,12 +814,7 @@
         "id": "notify_user",
         "name": "User Notification",
         "description": "Notify a user via SMS with workflow results, alerts, or important updates. Ideal as the final step in a workflow to deliver results to users' phones.",
-        "examples": [
-          "Notify me when the task is complete",
-          "Send the final results via text message",
-          "Alert the user with the summary",
-          "Deliver the workflow output by SMS"
-        ],
+        "examples": null,
         "tags": [
           "notify",
           "alert",

@@ -11,7 +11,6 @@ import { Textarea } from "@/components/ui/textarea"
 import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
 import { PanelRightClose, PanelRightOpen, ShieldCheck, ChevronDown, ChevronRight, Globe, Hash, Zap, FileText, ExternalLink, Settings, Clock, CheckCircle, XCircle, AlertCircle, Pause, Brain, Search, MessageSquare, Database, Shield, BarChart3, Gavel, Users, Bot, Trash2, User, ListOrdered, Network, RotateCcw, Play, Calendar, Square, Workflow, History, X } from "lucide-react"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { SimulateAgentRegistration } from "./simulate-agent-registration"
 import { ConnectedUsers } from "./connected-users"
 import { SessionInvitationNotification } from "./session-invite"
@@ -516,18 +515,18 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
   // Note: Workflow persistence is now handled by parent ChatLayout component
   // No need to load from localStorage here since parent manages it
 
-  // Fetch run history when there are active workflows
+  // Fetch run history when there are active workflows or scheduled workflows
   useEffect(() => {
     const fetchRunHistory = async () => {
-      // Fetch history if there are any active workflows (not dependent on legacy workflow prop)
-      if (activeWorkflows.length === 0) {
+      // Fetch history if there are any active workflows or scheduled workflows
+      if (activeWorkflows.length === 0 && scheduledWorkflows.length === 0) {
         setRunHistory([])
         return
       }
       setIsLoadingHistory(true)
       try {
-        const sessionId = getOrCreateSessionId()
-        const history = await getRunHistory(undefined, sessionId, 10)
+        // Fetch run history without session filter to get all scheduled workflow runs
+        const history = await getRunHistory(undefined, undefined, 50)
         setRunHistory(history)
       } catch (error) {
         console.error('[AgentNetwork] Failed to fetch run history:', error)
@@ -545,7 +544,7 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
       fetchScheduledWorkflows()
     }, 30000)
     return () => clearInterval(interval)
-  }, [activeWorkflows, fetchScheduledWorkflows])
+  }, [activeWorkflows, scheduledWorkflows, fetchScheduledWorkflows])
 
   // Subscribe to WebSocket events - STABLE subscriptions (no churn)
   useEffect(() => {
@@ -1018,22 +1017,16 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
                         {activeWorkflows.length > 0 ? "Add Another Workflow" : "Add Workflow"}
                       </Button>
                     </DialogTrigger>
-                        <DialogContent className="max-w-[95vw] max-h-[95vh] h-[900px]">
-                          <Tabs defaultValue="visual" className="flex-1 flex flex-col w-full">
-                            <DialogHeader className="mb-4">
+                        <DialogContent className="max-w-[95vw] max-h-[95vh] flex flex-col">
+                            <DialogHeader>
                               <DialogTitle>Workflow Designer</DialogTitle>
                               <DialogDescription>
                                 Define workflow steps to orchestrate agents. Connect one step to multiple agents for parallel execution.
                               </DialogDescription>
                             </DialogHeader>
                             
-                            <TabsList className="grid w-full grid-cols-2 mb-4">
-                              <TabsTrigger value="visual">Visual Designer</TabsTrigger>
-                              <TabsTrigger value="text">Text Editor</TabsTrigger>
-                            </TabsList>
-                            
-                            <TabsContent value="visual" className="flex-1 overflow-hidden w-full">
-                              <div className="h-[680px] w-full">
+                            <div className="flex-1 overflow-hidden w-full min-h-0">
+                              <div className="h-full w-full">
                                 <VisualWorkflowDesigner
                                   registeredAgents={registeredAgents.map(agent => ({
                                     ...agent,
@@ -1042,6 +1035,7 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
                                   onWorkflowGenerated={(text) => setEditedWorkflow(text)}
                                   onWorkflowNameChange={setWorkflowName}
                                   onWorkflowGoalChange={setWorkflowGoal}
+                                  activatedWorkflowIds={activeWorkflows.map(wf => wf.id)}
                                   onWorkflowLoaded={(wf) => {
                                     // Capture loaded workflow metadata
                                     setLoadedWorkflowId(wf.id)
@@ -1054,82 +1048,42 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
                                     // Update the goal as well
                                     setWorkflowGoal(wf.goal)
                                   }}
+                                  onActivateWorkflow={async (workflow) => {
+                                    // Convert workflow to text format
+                                    const workflowText = workflow.steps?.map((step: any, index: number) => {
+                                      return `${index + 1}. Use the ${step.agentName} agent${step.description ? `: ${step.description}` : ''}`
+                                    }).join('\n') || ''
+                                    
+                                    // Create workflow object
+                                    const newWorkflow = {
+                                      id: workflow.id,
+                                      workflow: workflowText,
+                                      name: workflow.name,
+                                      description: workflow.description,
+                                      goal: workflow.goal
+                                    }
+                                    
+                                    // Add to session
+                                    if (onAddWorkflow) {
+                                      await onAddWorkflow(newWorkflow)
+                                    } else {
+                                      setWorkflow(workflowText)
+                                    }
+                                    
+                                    // DON'T close the dialog - keep it open to add more workflows
+                                  }}
+                                  onDeactivateWorkflow={async (workflowId) => {
+                                    // Remove from session
+                                    if (onRemoveWorkflow) {
+                                      await onRemoveWorkflow(workflowId)
+                                    }
+                                  }}
                                   initialWorkflow={editedWorkflow}
                                   initialWorkflowName={workflowName}
                                   conversationId={currentConversationId}
                                 />
                               </div>
-                            </TabsContent>                            
-                            <TabsContent value="text" className="flex-1 overflow-hidden w-full">
-                              <div className="space-y-4 h-full flex-col w-full">
-                                <Textarea
-                                  value={editedWorkflow}
-                                    onChange={(e) => setEditedWorkflow(e.target.value)}
-                                    placeholder="Example:&#10;1. Use the image generator agent to create an image&#10;2. Use the branding agent to get branding guidelines&#10;3. Use the image generator to refine the image based on branding&#10;4. Use the image analysis agent to review the result"
-                                    className="flex-1 font-mono text-sm"
-                                  />
-                                  {workflow && (
-                                    <div className="text-xs text-muted-foreground">
-                                      <p className="font-medium mb-1">Current workflow:</p>
-                                      <pre className="whitespace-pre-wrap bg-muted p-2 rounded">{workflow}</pre>
-                                    </div>
-                                  )}
-                                </div>
-                              </TabsContent>
-                            </Tabs>
-                            
-                            <DialogFooter>
-                              <Button
-                                variant="outline"
-                                onClick={() => {
-                                  setEditedWorkflow("")
-                                  setIsWorkflowDialogOpen(false)
-                                }}
-                              >
-                                Cancel
-                              </Button>
-                              <Button
-                                onClick={async () => {
-                                  if (!editedWorkflow.trim()) return
-                                  
-                                  // Use loaded workflow ID if available, otherwise generate new one
-                                  const workflowId = loadedWorkflowId || generateWorkflowId()
-                                  const workflowDesc = loadedWorkflowDescription || ""
-                                  // Use loadedWorkflowName as fallback if workflowName is empty
-                                  const finalWorkflowName = workflowName || loadedWorkflowName || "Untitled Workflow"
-                                  const finalWorkflowGoal = workflowGoal || loadedWorkflowGoal || ""
-                                  
-                                  // Create workflow object
-                                  const newWorkflow = {
-                                    id: workflowId,
-                                    workflow: editedWorkflow,
-                                    name: finalWorkflowName,
-                                    description: workflowDesc,
-                                    goal: finalWorkflowGoal
-                                  }
-                                  
-                                  // Use onAddWorkflow if available (multi-workflow mode)
-                                  if (onAddWorkflow) {
-                                    await onAddWorkflow(newWorkflow)
-                                  } else {
-                                    // Fallback to legacy single workflow mode
-                                    setWorkflow(editedWorkflow)
-                                  }
-                                  
-                                  // Clear the editor, metadata, and close dialog
-                                  setEditedWorkflow("")
-                                  setLoadedWorkflowId(null)
-                                  setLoadedWorkflowName("")
-                                  setLoadedWorkflowDescription("")
-                                  setLoadedWorkflowCategory("Custom")
-                                  setLoadedWorkflowGoal("")
-                                  setIsWorkflowDialogOpen(false)
-                                }}
-                                disabled={!editedWorkflow.trim()}
-                              >
-                                Add Workflow to Session
-                              </Button>
-                            </DialogFooter>
+                            </div>
                           </DialogContent>
                         </Dialog>
                         
