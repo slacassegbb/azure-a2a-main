@@ -145,7 +145,22 @@ class FoundryHostManager(ApplicationManager):
                         for part_data in msg_data.get("parts", []):
                             if isinstance(part_data, dict):
                                 # Reconstruct Part objects from stored data
-                                if part_data.get("root", {}).get("kind") == "text":
+                                # model_dump() outputs directly without root wrapper: {"kind": "text", "text": "..."}
+                                kind = part_data.get("kind")
+                                
+                                if kind == "text" or "text" in part_data:
+                                    parts.append(Part(root=TextPart(text=part_data.get("text", ""))))
+                                elif kind == "file" or "file" in part_data:
+                                    file_data = part_data.get("file", {})
+                                    parts.append(Part(root=FilePart(file=FileWithUri(
+                                        uri=file_data.get("uri", ""),
+                                        name=file_data.get("name", ""),
+                                        mimeType=file_data.get("mimeType", "")
+                                    ))))
+                                elif kind == "data" or "data" in part_data:
+                                    parts.append(Part(root=DataPart(data=part_data.get("data", {}))))
+                                # Legacy format with root wrapper (shouldn't happen but just in case)
+                                elif part_data.get("root", {}).get("kind") == "text":
                                     parts.append(Part(root=TextPart(text=part_data["root"].get("text", ""))))
                                 elif part_data.get("root", {}).get("kind") == "file":
                                     file_data = part_data["root"].get("file", {})
@@ -154,12 +169,6 @@ class FoundryHostManager(ApplicationManager):
                                         name=file_data.get("name", ""),
                                         mimeType=file_data.get("mimeType", "")
                                     ))))
-                                elif part_data.get("root", {}).get("kind") == "data":
-                                    parts.append(Part(root=DataPart(data=part_data["root"].get("data", {}))))
-                                else:
-                                    # Try to reconstruct based on available data
-                                    if "text" in part_data:
-                                        parts.append(Part(root=TextPart(text=part_data["text"])))
                         
                         if parts:
                             msg = Message(
