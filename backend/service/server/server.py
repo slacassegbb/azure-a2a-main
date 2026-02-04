@@ -17,6 +17,7 @@ from fastapi import APIRouter, FastAPI, Request, Response
 from service.websocket_streamer import get_websocket_streamer
 from service.websocket_server import get_websocket_server
 from service.agent_registry import get_registry, get_session_registry
+from service import chat_history_service
 
 # Add backend directory to path for log_config import
 backend_dir = Path(__file__).resolve().parents[2]
@@ -565,6 +566,15 @@ class ConversationServer:
             
             # Update the internal list (access private variable since property has no setter)
             self.manager._conversations = filtered
+            
+            # Also delete from database
+            try:
+                # Try both the short ID and full ID
+                chat_history_service.delete_conversation(conversation_id)
+                if full_id:
+                    chat_history_service.delete_conversation(full_id)
+            except Exception as db_error:
+                log_debug(f"Error deleting from database: {db_error}")
             
             if len(filtered) == original_length:
                 log_debug(f"⚠️  Conversation not found: {conversation_id}")

@@ -21,6 +21,7 @@ from service.types import Conversation, Event
 from utils.agent_card import get_agent_card
 from utils.file_parts import extract_uri, convert_artifact_dict_to_file_part, create_file_part
 from service.agent_registry import get_session_registry
+from service import chat_history_service
 
 # Tenant separator used in contextId format: sessionId::conversationId
 TENANT_SEPARATOR = '::'
@@ -93,6 +94,9 @@ class FoundryHostManager(ApplicationManager):
         self._task_map: Dict[str, str] = {}
         self._next_id: Dict[str, str] = {}
         
+        # Load conversations from database on startup
+        self._load_conversations_from_database()
+        
         # Initialize the agent immediately at startup instead of lazy loading
         log_debug("Initializing Foundry agent at startup...")
         try:
@@ -106,6 +110,74 @@ class FoundryHostManager(ApplicationManager):
             log_debug(f"Failed to initialize Foundry agent at startup: {e}")
             # Don't raise to prevent backend from crashing
             self._host_agent_initialized = False
+    
+    def _load_conversations_from_database(self):
+        """Load existing conversations from database into memory."""
+        try:
+            # Get all conversations from database
+            db_conversations = chat_history_service.list_conversations("default")
+            
+            for db_conv in db_conversations:
+                conv_id = db_conv.get("conversation_id")
+                if not conv_id:
+                    continue
+                    
+                # Check if already in memory
+                if any(c.conversation_id == conv_id for c in self._conversations):
+                    continue
+                
+                # Load messages for this conversation
+                messages = chat_history_service.get_messages(conv_id)
+                
+                # Convert to Conversation object with messages
+                conversation = Conversation(
+                    conversation_id=conv_id,
+                    name=db_conv.get("name", ""),
+                    is_active=db_conv.get("is_active", True),
+                    task_ids=db_conv.get("task_ids", []),
+                    messages=[]  # Will be populated below
+                )
+                
+                # Convert message dicts to Message objects
+                for msg_data in messages:
+                    try:
+                        parts = []
+                        for part_data in msg_data.get("parts", []):
+                            if isinstance(part_data, dict):
+                                # Reconstruct Part objects from stored data
+                                if part_data.get("root", {}).get("kind") == "text":
+                                    parts.append(Part(root=TextPart(text=part_data["root"].get("text", ""))))
+                                elif part_data.get("root", {}).get("kind") == "file":
+                                    file_data = part_data["root"].get("file", {})
+                                    parts.append(Part(root=FilePart(file=FileWithUri(
+                                        uri=file_data.get("uri", ""),
+                                        name=file_data.get("name", ""),
+                                        mimeType=file_data.get("mimeType", "")
+                                    ))))
+                                elif part_data.get("root", {}).get("kind") == "data":
+                                    parts.append(Part(root=DataPart(data=part_data["root"].get("data", {}))))
+                                else:
+                                    # Try to reconstruct based on available data
+                                    if "text" in part_data:
+                                        parts.append(Part(root=TextPart(text=part_data["text"])))
+                        
+                        if parts:
+                            msg = Message(
+                                messageId=msg_data.get("messageId", str(uuid.uuid4())),
+                                role=msg_data.get("role", "user"),
+                                parts=parts,
+                                contextId=msg_data.get("contextId"),
+                                taskId=msg_data.get("taskId")
+                            )
+                            conversation.messages.append(msg)
+                    except Exception as msg_error:
+                        log_debug(f"Error reconstructing message: {msg_error}")
+                
+                self._conversations.append(conversation)
+            
+            log_debug(f"Loaded {len(self._conversations)} conversations from database")
+        except Exception as e:
+            log_debug(f"Error loading conversations from database: {e}")
 
     def _ensure_host_agent_initialized(self):
         """Ensure agent is initialized - should already be done at startup."""
@@ -126,10 +198,18 @@ class FoundryHostManager(ApplicationManager):
         if not self._host_agent_initialized:
             self._ensure_host_agent_initialized()
 
-    async def create_conversation(self) -> Conversation:
+    async def create_conversation(self, session_id: str = None) -> Conversation:
         conversation_id = str(uuid.uuid4())
         c = Conversation(conversation_id=conversation_id, is_active=True)
         self._conversations.append(c)
+        
+        # Persist to database
+        chat_history_service.create_conversation(
+            conversation_id=conversation_id,
+            session_id=session_id or "default",
+            name=f"Chat {conversation_id[:8]}..."
+        )
+        
         return c
 
     def foundry_content_to_message(self, resp, context_id, task_id=None):
@@ -243,14 +323,23 @@ class FoundryHostManager(ApplicationManager):
             conversation = Conversation(conversation_id=context_id, is_active=True)
             self._conversations.append(conversation)
             
+            # Extract session_id for database persistence
+            session_id = parse_session_from_context(context_id)
+            conv_id_only = context_id.split("::")[-1] if "::" in context_id else context_id
+            
+            # Persist to database
+            chat_history_service.create_conversation(
+                conversation_id=context_id,
+                session_id=session_id or "default",
+                name=f"Chat {conv_id_only[:8]}..."
+            )
+            
             # Update collaborative session's current conversation for auto-navigation
             try:
                 from service.collaborative_sessions import get_session_manager
                 session_manager = get_session_manager()
                 # Extract session_id (tenant) from context_id (format: "user_2::conv_id")
                 if "::" in context_id:
-                    session_id = context_id.split("::")[0]
-                    conv_id_only = context_id.split("::")[1]
                     session_manager.update_current_conversation(session_id, conv_id_only)
                     log_debug(f"Updated collaborative session {session_id[:8]}... current conversation to {conv_id_only[:8]}...")
             except Exception as e:
@@ -291,6 +380,19 @@ class FoundryHostManager(ApplicationManager):
         self._messages.append(message)
         if conversation:
             conversation.messages.append(message)
+            # Persist message to database
+            try:
+                session_id = parse_session_from_context(context_id)
+                chat_history_service.add_message(conversation.conversation_id, {
+                    "messageId": get_message_id(message) or str(uuid.uuid4()),
+                    "role": getattr(message, 'role', 'user'),
+                    "parts": [p.model_dump() if hasattr(p, 'model_dump') else p.dict() if hasattr(p, 'dict') else str(p) for p in (message.parts or [])],
+                    "contextId": context_id,
+                    "taskId": None,
+                    "metadata": {"type": "user_message"}
+                })
+            except Exception as e:
+                log_debug(f"Error persisting message to database: {e}")
         log_debug("About to add event...")
         self.add_event(Event(
             id=str(uuid.uuid4()),
@@ -578,6 +680,18 @@ class FoundryHostManager(ApplicationManager):
             log_debug(f"Message created with {len(msg.parts) if hasattr(msg, 'parts') else 0} parts")
             if conversation:
                 conversation.messages.append(msg)
+                # Persist agent response to database
+                try:
+                    chat_history_service.add_message(conversation.conversation_id, {
+                        "messageId": get_message_id(msg) or str(uuid.uuid4()),
+                        "role": getattr(msg, 'role', 'agent'),
+                        "parts": [p.model_dump() if hasattr(p, 'model_dump') else p.dict() if hasattr(p, 'dict') else str(p) for p in (msg.parts or [])],
+                        "contextId": context_id,
+                        "taskId": task_id,
+                        "metadata": {"type": "agent_response", "response_index": resp_index}
+                    })
+                except Exception as e:
+                    log_debug(f"Error persisting agent response to database: {e}")
             if not hasattr(task, 'history') or task.history is None:
                 task.history = []
             task.history.append(msg)
