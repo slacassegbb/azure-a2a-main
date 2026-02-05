@@ -19,6 +19,7 @@ interface WorkflowStep {
   agentId: string
   agentName: string
   agentColor: string
+  agentIconUrl?: string  // Agent logo/icon URL
   description: string
   x: number
   y: number
@@ -75,6 +76,25 @@ const AGENT_COLORS = [
 
 const HOST_COLOR = "#6366f1"
 
+// Helper function to adjust color brightness for gradients
+function adjustColorBrightness(color: string, amount: number): string {
+  // Remove # if present
+  const hex = color.replace('#', '')
+  
+  // Parse RGB values
+  let r = parseInt(hex.substring(0, 2), 16)
+  let g = parseInt(hex.substring(2, 4), 16)
+  let b = parseInt(hex.substring(4, 6), 16)
+  
+  // Adjust brightness
+  r = Math.max(0, Math.min(255, r + amount))
+  g = Math.max(0, Math.min(255, g + amount))
+  b = Math.max(0, Math.min(255, b + amount))
+  
+  // Convert back to hex
+  return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`
+}
+
 export function VisualWorkflowDesigner({ 
   registeredAgents, 
   onWorkflowGenerated,
@@ -102,6 +122,7 @@ export function VisualWorkflowDesigner({
   })
   
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const hiddenInputRef = useRef<HTMLInputElement>(null)
   const [workflowSteps, setWorkflowSteps] = useState<WorkflowStep[]>([])
   const workflowStepsRef = useRef<WorkflowStep[]>([])
   const [connections, setConnections] = useState<Connection[]>([])
@@ -127,6 +148,7 @@ export function VisualWorkflowDesigner({
   const [workflowGoal, setWorkflowGoal] = useState("")
   const [catalogRefreshTrigger, setCatalogRefreshTrigger] = useState(0)
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(null)
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
   
   // Component lifecycle logging (for debugging)
   // useEffect(() => {
@@ -138,6 +160,8 @@ export function VisualWorkflowDesigner({
   const [connectionStart, setConnectionStart] = useState<{ stepId: string, x: number, y: number } | null>(null)
   const connectionStartRef = useRef<{ stepId: string, x: number, y: number } | null>(null)
   const [connectionPreview, setConnectionPreview] = useState<{ x: number, y: number } | null>(null)
+  const [connectionHoverTarget, setConnectionHoverTarget] = useState<string | null>(null)
+  const connectionHoverTargetRef = useRef<string | null>(null)
   
   // Zoom and pan
   const zoomRef = useRef(1)
@@ -452,6 +476,14 @@ export function VisualWorkflowDesigner({
     // Don't auto-load from localStorage - start with empty canvas
     // Users must explicitly select a workflow from the catalog
   }, [])
+  
+  // Track unsaved changes when steps or connections change
+  useEffect(() => {
+    // Only mark as unsaved if workflow has been loaded/created (has an ID or name)
+    if (workflowSteps.length > 0 && (selectedWorkflowId || workflowName)) {
+      setHasUnsavedChanges(true)
+    }
+  }, [workflowSteps, connections, selectedWorkflowId, workflowName])
 
   // Update workflow text whenever steps or connections change
   // NEW: Detects parallel branches (fan-out) and generates sub-lettered steps (2a, 2b, etc.)
@@ -1171,6 +1203,7 @@ export function VisualWorkflowDesigner({
       agentId: agentId,
       agentName: draggedAgent.name,
       agentColor: getAgentColor(agentIndex),
+      agentIconUrl: (draggedAgent as any).iconUrl || (draggedAgent as any).avatar,
       description: `Use the ${draggedAgent.name} agent`,
       x,
       y,
@@ -1232,6 +1265,7 @@ export function VisualWorkflowDesigner({
     setConnections([])
     setSelectedStepId(null)
     setSelectedWorkflowId(null) // Clear selected workflow highlight
+    setHasUnsavedChanges(false) // Clear unsaved changes when clearing canvas
     // Clear saved data from localStorage
     localStorage.removeItem('workflow-visual-data')
   }
@@ -1518,7 +1552,11 @@ export function VisualWorkflowDesigner({
       
       // Map template steps to workflow steps with colors
       const steps = template.steps.map((step: any) => {
-        // Find the agent in registeredAgents to get the correct color
+        // Find the agent in registeredAgents to get the correct color and icon
+        const matchedAgent = registeredAgents.find(a => 
+          (a.id || a.name.toLowerCase().replace(/\s+/g, '-')) === step.agentId ||
+          a.name === step.agentName
+        )
         const agentIndex = registeredAgents.findIndex(a => 
           (a.id || a.name.toLowerCase().replace(/\s+/g, '-')) === step.agentId ||
           a.name === step.agentName
@@ -1529,6 +1567,7 @@ export function VisualWorkflowDesigner({
           agentId: step.agentId,
           agentName: step.agentName,
           agentColor: getAgentColor(agentIndex >= 0 ? agentIndex : step.order),
+          agentIconUrl: (matchedAgent as any)?.iconUrl || (matchedAgent as any)?.avatar,
           description: step.description,
           x: step.x,
           y: step.y,
@@ -1538,6 +1577,9 @@ export function VisualWorkflowDesigner({
       
       setWorkflowSteps(steps)
       setConnections(template.connections || [])
+      
+      // Clear unsaved changes flag when loading a workflow
+      setHasUnsavedChanges(false)
       
       // Update refs immediately to ensure test workflow uses latest data
       workflowStepsRef.current = steps
@@ -1621,8 +1663,23 @@ export function VisualWorkflowDesigner({
       await new Promise(resolve => setTimeout(resolve, 50))
     }
     
-    if (!workflowName.trim()) {
-      // No name yet - show the dialog
+    // Show save dialog if:
+    // 1. No name yet, OR
+    // 2. This is a new workflow (no selectedWorkflowId)
+    if (!workflowName.trim() || !selectedWorkflowId) {
+      // Set default values for new workflow
+      if (!workflowName.trim()) {
+        setWorkflowName("My Workflow")
+      }
+      if (!workflowDescription.trim()) {
+        setWorkflowDescription("Custom workflow created in the visual designer")
+      }
+      if (!workflowCategory.trim()) {
+        setWorkflowCategory("Custom")
+      }
+      if (!workflowGoal.trim()) {
+        setWorkflowGoal("Complete the workflow tasks efficiently and accurately")
+      }
       setShowSaveDialog(true)
       return
     }
@@ -1714,6 +1771,9 @@ export function VisualWorkflowDesigner({
         localStorage.setItem('customWorkflows', JSON.stringify(customWorkflows))
         console.log('[VisualWorkflowDesigner] Workflow saved to localStorage')
       }
+      
+      // Clear unsaved changes flag after successful save
+      setHasUnsavedChanges(false)
       
       // Trigger catalog refresh
       setCatalogRefreshTrigger(prev => prev + 1)
@@ -1839,6 +1899,9 @@ export function VisualWorkflowDesigner({
     // Close dialog but keep the workflow name displayed
     setShowSaveDialog(false)
     
+    // Clear unsaved changes flag after successful save
+    setHasUnsavedChanges(false)
+    
     // Trigger catalog refresh
     setCatalogRefreshTrigger(prev => prev + 1)
   }
@@ -1891,6 +1954,31 @@ export function VisualWorkflowDesigner({
       }
 
       // Draw connections based on connection state
+      // Card dimensions for connection endpoints
+      const baseCardWidth = 260
+      const connCardHeight = 70
+      
+      // Helper to calculate dynamic card width (accounts for expanded editing state)
+      const getCardWidth = (step: typeof workflowSteps[0]) => {
+        if (editingStepId === step.id) {
+          // Calculate expanded width like in the card drawing code
+          ctx.font = "12px -apple-system, system-ui, sans-serif"
+          const descText = editingDescription || ""
+          const textWidth = ctx.measureText(descText + '|').width
+          const minTextArea = baseCardWidth - 36 - 12 * 3 - 20 // iconSize - padding*3 - extra
+          return textWidth > minTextArea 
+            ? Math.min(baseCardWidth + (textWidth - minTextArea) + 20, 600)
+            : baseCardWidth
+        }
+        return baseCardWidth
+      }
+      
+      // Store connection endpoints to draw on top of cards later
+      const connectionEndpoints: Array<{
+        fromX: number, fromY: number, toX: number, toY: number,
+        fromColor: string, toColor: string, isConnectionSelected: boolean
+      }> = []
+      
       connections.forEach((connection) => {
         const from = workflowSteps.find(s => s.id === connection.fromStepId)
         const to = workflowSteps.find(s => s.id === connection.toStepId)
@@ -1902,17 +1990,31 @@ export function VisualWorkflowDesigner({
         const toCenterX = centerX + to.x
         const toCenterY = centerY + to.y
         
+        // Get dynamic card widths for each step
+        const fromCardWidth = getCardWidth(from)
+        const toCardWidth = getCardWidth(to)
+        
         // Calculate angle between agents
         const angle = Math.atan2(to.y - from.y, to.x - from.x)
         
-        // Hexagon boundary radius (approximate)
-        const hexRadius = 40
+        // Calculate connection points on card edges
+        // For mostly horizontal connections, connect from right edge to left edge
+        // For mostly vertical, connect from bottom to top
+        let fromX: number, fromY: number, toX: number, toY: number
         
-        // Once connected, line starts from hexagon border (center)
-        const fromX = fromCenterX + Math.cos(angle) * hexRadius
-        const fromY = fromCenterY + Math.sin(angle) * hexRadius
-        const toX = toCenterX - Math.cos(angle) * hexRadius
-        const toY = toCenterY - Math.sin(angle) * hexRadius
+        if (Math.abs(Math.cos(angle)) > Math.abs(Math.sin(angle))) {
+          // Horizontal-ish: use right/left edges
+          fromX = fromCenterX + (Math.cos(angle) > 0 ? fromCardWidth/2 : -fromCardWidth/2)
+          fromY = fromCenterY
+          toX = toCenterX - (Math.cos(angle) > 0 ? toCardWidth/2 : -toCardWidth/2)
+          toY = toCenterY
+        } else {
+          // Vertical-ish: use top/bottom edges
+          fromX = fromCenterX
+          fromY = fromCenterY + (Math.sin(angle) > 0 ? connCardHeight/2 : -connCardHeight/2)
+          toX = toCenterX
+          toY = toCenterY - (Math.sin(angle) > 0 ? connCardHeight/2 : -connCardHeight/2)
+        }
         
         // Check if this connection involves the selected agent
         const isConnectionSelected = selectedStepId && (
@@ -1920,204 +2022,271 @@ export function VisualWorkflowDesigner({
           connection.toStepId === selectedStepId
         )
         
-        // Draw connection line
-        ctx.strokeStyle = isConnectionSelected ? "rgba(99, 102, 241, 0.7)" : "rgba(99, 102, 241, 0.5)"
-        ctx.lineWidth = isConnectionSelected ? 4 : 3
-        ctx.shadowColor = "rgba(99, 102, 241, 0.3)"
-        ctx.shadowBlur = isConnectionSelected ? 6 : 4
+        // Get agent colors for connector dots (will be drawn later on top of cards)
+        const fromColor = from.agentColor || "#6366f1"
+        const toColor = to.agentColor || "#6366f1"
+        
+        // Store endpoint info for drawing on top of cards later
+        connectionEndpoints.push({
+          fromX, fromY, toX, toY, fromColor, toColor, isConnectionSelected: !!isConnectionSelected
+        })
+        
+        // Draw connection line - clean, subtle style
+        ctx.strokeStyle = isConnectionSelected ? "rgba(148, 163, 184, 0.6)" : "rgba(100, 116, 139, 0.4)" // slate colors
+        ctx.lineWidth = isConnectionSelected ? 2 : 1.5
+        ctx.lineCap = "round"
         
         ctx.beginPath()
         ctx.moveTo(fromX, fromY)
         ctx.lineTo(toX, toY)
         ctx.stroke()
-        ctx.shadowBlur = 0
         
-        // Draw arrow at target end
-        const arrowLength = 12
-        const arrowX = toX
-        const arrowY = toY
-        
-        ctx.save()
-        ctx.translate(arrowX, arrowY)
-        ctx.rotate(angle)
-        ctx.beginPath()
-        ctx.moveTo(0, 0)
-        ctx.lineTo(-arrowLength, -6)
-        ctx.lineTo(-arrowLength, 6)
-        ctx.closePath()
-        ctx.fillStyle = isConnectionSelected ? "rgba(99, 102, 241, 0.9)" : "rgba(99, 102, 241, 0.7)"
-        ctx.fill()
-        ctx.restore()
-        
-        // Draw delete button on connection (middle point) - only for selected agent connections
+        // Draw subtle delete button on connection (middle point) - only for selected agent connections
         if (isConnectionSelected) {
           const midX = (fromX + toX) / 2
           const midY = (fromY + toY) / 2
           
-          // Delete button circle
-          ctx.fillStyle = "#ef4444"
-          ctx.shadowColor = "rgba(239, 68, 68, 0.5)"
-          ctx.shadowBlur = 8
+          // Small subtle circle with card style
           ctx.beginPath()
-          ctx.arc(midX, midY, 10, 0, Math.PI * 2)
+          ctx.arc(midX, midY, 8, 0, Math.PI * 2)
+          ctx.fillStyle = "#1e293b" // slate-800
           ctx.fill()
-          ctx.shadowBlur = 0
+          ctx.strokeStyle = "#64748b" // slate-500
+          ctx.lineWidth = 1.5
+          ctx.stroke()
           
-          // X mark
-          ctx.strokeStyle = "#ffffff"
-          ctx.lineWidth = 2
+          // Small X mark
+          ctx.strokeStyle = "#94a3b8" // slate-400
+          ctx.lineWidth = 1.5
+          ctx.lineCap = "round"
           ctx.beginPath()
-          ctx.moveTo(midX - 4, midY - 4)
-          ctx.lineTo(midX + 4, midY + 4)
-          ctx.moveTo(midX + 4, midY - 4)
-          ctx.lineTo(midX - 4, midY + 4)
+          ctx.moveTo(midX - 3, midY - 3)
+          ctx.lineTo(midX + 3, midY + 3)
+          ctx.moveTo(midX + 3, midY - 3)
+          ctx.lineTo(midX - 3, midY + 3)
           ctx.stroke()
         }
       })
       
-      // Draw connection preview while dragging
-      if (isCreatingConnection && connectionStart && connectionPreview) {
-        const startStep = workflowSteps.find(s => s.id === connectionStart.stepId)
-        if (startStep) {
-          const fromCenterX = centerX + startStep.x
-          const fromCenterY = centerY + startStep.y
-          const toX = centerX + connectionPreview.x
-          const toY = centerY + connectionPreview.y
-          
-          // Start from button position (x + 50)
-          const buttonOffsetX = 50
-          const fromX = fromCenterX + buttonOffsetX
-          const fromY = fromCenterY
-          
-          ctx.strokeStyle = "rgba(99, 102, 241, 0.3)"
-          ctx.lineWidth = 3
-          ctx.setLineDash([10, 5])
-          
-          ctx.beginPath()
-          ctx.moveTo(fromX, fromY)
-          ctx.lineTo(toX, toY)
-          ctx.stroke()
-          
-          ctx.setLineDash([])
-        }
-      }
+      // Connection preview while dragging - draw BEFORE agents, will add the main one later
+      // (Preview line is drawn later after agents so it appears on top)
 
       // Draw workflow steps
       workflowSteps.forEach((step) => {
         const x = centerX + step.x
         const y = centerY + step.y
         const isSelected = step.id === selectedStepId
-
-        // Agent icon (hexagon)
+        const isConnectionTarget = connectionHoverTarget === step.id
+        
+        // Get workflow order for step badge
+        const workflowOrder = workflowOrderMap.get(step.id)
+        
+        // Check if this step is being edited
+        const isEditing = editingStepId === step.id
+        
+        // Base card dimensions
+        const baseCardWidth = 260
+        const cardHeight = 70
+        const cardRadius = 10
+        const iconSize = 36
+        const iconRadius = 8
+        const padding = 12
+        
+        // Calculate dynamic card width when editing to fit full description
+        ctx.font = "12px -apple-system, system-ui, sans-serif"
+        const descText = isEditing ? (editingDescription || "") : (step.description || "")
+        const textWidth = ctx.measureText(descText + (isEditing ? '|' : '')).width
+        const minTextArea = baseCardWidth - iconSize - padding * 3 - 20
+        
+        // Expand card width only when editing and text is longer
+        const cardWidth = isEditing && textWidth > minTextArea 
+          ? Math.min(baseCardWidth + (textWidth - minTextArea) + 20, 600)
+          : baseCardWidth
+        
+        // Parse agent color for dark icon background
+        const r = parseInt(step.agentColor.slice(1, 3), 16) || 100
+        const g = parseInt(step.agentColor.slice(3, 5), 16) || 100
+        const b = parseInt(step.agentColor.slice(5, 7), 16) || 100
+        
         ctx.save()
-        ctx.translate(x, y)
         
-        const size = 30
-        
-        // Draw animated hexagon for selected state
-        if (isSelected) {
-          const pulse = Math.sin(Date.now() / 300) * 0.15 + 0.85 // Pulsing between 0.7 and 1.0
+        // === PULSING GLOW for connection target ===
+        if (isConnectionTarget) {
+          // Calculate pulse (using time for animation)
+          const pulse = 0.5 + 0.5 * Math.sin(Date.now() / 150)
           
-          // Outer animated hexagon with pulsing glow - WHITE
-          ctx.strokeStyle = "#ffffff"
-          ctx.lineWidth = 6
-          ctx.shadowColor = "#ffffff"
-          ctx.shadowBlur = 20 * pulse
-          ctx.beginPath()
-          for (let i = 0; i < 6; i++) {
-            const angle = (Math.PI / 3) * i - Math.PI / 2
-            const expandedSize = size + 6 * pulse // Pulsing expansion
-            const px = Math.cos(angle) * expandedSize
-            const py = Math.sin(angle) * expandedSize
-            if (i === 0) ctx.moveTo(px, py)
-            else ctx.lineTo(px, py)
+          // Draw glow layers
+          for (let i = 3; i >= 0; i--) {
+            ctx.beginPath()
+            ctx.roundRect(
+              x - cardWidth/2 - i * 4, 
+              y - cardHeight/2 - i * 4, 
+              cardWidth + i * 8, 
+              cardHeight + i * 8, 
+              cardRadius + i * 2
+            )
+            ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${0.15 * pulse * (1 - i * 0.2)})`
+            ctx.fill()
           }
-          ctx.closePath()
-          ctx.stroke()
-          
-          // Animated dashed hexagon layer - WHITE with transparency
-          const dashOffset = (Date.now() / 40) % 20
-          ctx.setLineDash([10, 5])
-          ctx.lineDashOffset = -dashOffset
-          ctx.lineWidth = 3
-          ctx.strokeStyle = "rgba(255, 255, 255, 0.8)"
-          ctx.shadowBlur = 10
-          ctx.beginPath()
-          for (let i = 0; i < 6; i++) {
-            const angle = (Math.PI / 3) * i - Math.PI / 2
-            const dashedSize = size + 3
-            const px = Math.cos(angle) * dashedSize
-            const py = Math.sin(angle) * dashedSize
-            if (i === 0) ctx.moveTo(px, py)
-            else ctx.lineTo(px, py)
-          }
-          ctx.closePath()
-          ctx.stroke()
-          ctx.setLineDash([])
-          ctx.shadowBlur = 0
-        } else {
-          // Normal hexagon outline
-          ctx.strokeStyle = step.agentColor
-          ctx.lineWidth = 3
-          ctx.shadowColor = step.agentColor
-          ctx.shadowBlur = 4
-          ctx.beginPath()
-          for (let i = 0; i < 6; i++) {
-            const angle = (Math.PI / 3) * i - Math.PI / 2
-            const px = Math.cos(angle) * size
-            const py = Math.sin(angle) * size
-            if (i === 0) ctx.moveTo(px, py)
-            else ctx.lineTo(px, py)
-          }
-          ctx.closePath()
-          ctx.stroke()
-          ctx.shadowBlur = 0
         }
-
-        // Inner fill (same for both selected and normal)
+        
+        // === CARD BACKGROUND ===
+        ctx.beginPath()
+        ctx.roundRect(x - cardWidth/2, y - cardHeight/2, cardWidth, cardHeight, cardRadius)
+        ctx.fillStyle = "#111827" // Very dark gray (gray-900)
+        ctx.fill()
+        
+        // Card border
+        ctx.strokeStyle = isConnectionTarget ? step.agentColor : (isSelected ? step.agentColor : "#374151") // gray-700
+        ctx.lineWidth = isConnectionTarget ? 2.5 : (isSelected ? 2 : 1)
+        ctx.stroke()
+        
+        // === ICON BOX ===
+        const iconX = x - cardWidth/2 + padding
+        const iconY = y - iconSize/2
+        
+        // No background - just the bot icon directly on the card
+        
+        // === ICON (Simple Bot) ===
+        const icx = iconX + iconSize/2
+        const icy = iconY + iconSize/2
+        
+        ctx.fillStyle = step.agentColor
+        // Head
+        ctx.beginPath()
+        ctx.roundRect(icx - 8, icy - 6, 16, 12, 2)
+        ctx.fill()
+        // Eyes (dark background color)
+        ctx.fillStyle = "#111827" // Match card background
+        ctx.beginPath()
+        ctx.arc(icx - 4, icy - 1, 2, 0, Math.PI * 2)
+        ctx.arc(icx + 4, icy - 1, 2, 0, Math.PI * 2)
+        ctx.fill()
+        // Antenna
         ctx.fillStyle = step.agentColor
         ctx.beginPath()
-        for (let i = 0; i < 6; i++) {
-          const angle = (Math.PI / 3) * i - Math.PI / 2
-          const px = Math.cos(angle) * (size * 0.7)
-          const py = Math.sin(angle) * (size * 0.7)
-          if (i === 0) ctx.moveTo(px, py)
-          else ctx.lineTo(px, py)
-        }
-        ctx.closePath()
+        ctx.arc(icx, icy - 10, 2, 0, Math.PI * 2)
         ctx.fill()
-
-        // Center circle (brighter when selected)
-        ctx.fillStyle = isSelected ? "#ffffff" : "rgba(255, 255, 255, 0.9)"
+        ctx.fillRect(icx - 0.5, icy - 10, 1, 5)
+        
+        // === TEXT CONTENT ===
+        const textLeft = iconX + iconSize + 10
+        
+        // Agent name (bigger, at the top of card)
+        ctx.fillStyle = "#f9fafb" // gray-50
+        ctx.font = "600 14px -apple-system, system-ui, sans-serif"
+        ctx.textAlign = "left"
+        ctx.textBaseline = "middle"
+        
+        let name = step.agentName.replace(/ Agent$/i, '')
+        const maxNameW = cardWidth - iconSize - padding * 3 - 30
+        if (ctx.measureText(name).width > maxNameW) {
+          while (ctx.measureText(name + '…').width > maxNameW && name.length > 1) {
+            name = name.slice(0, -1)
+          }
+          name += '…'
+        }
+        ctx.fillText(name, textLeft, y - 10)
+        
+        // Green status dot
         ctx.beginPath()
-        ctx.arc(0, 0, size * 0.35, 0, Math.PI * 2)
+        ctx.arc(textLeft + ctx.measureText(name).width + 6, y - 10, 2.5, 0, Math.PI * 2)
+        ctx.fillStyle = "#22c55e"
         ctx.fill()
         
-        ctx.restore()
-
-        // Order badge - show workflow order in the center white circle
-        const workflowOrder = workflowOrderMap.get(step.id)
-        if (workflowOrder !== undefined) {
-          // Draw number inside the center white circle
-          ctx.fillStyle = step.agentColor
-          ctx.font = "bold 16px system-ui"
-          ctx.textAlign = "center"
-          ctx.textBaseline = "middle"
-          ctx.fillText(workflowOrder.toString(), x, y)
+        // Description (gray, editable) - below agent name
+        const desc = isEditing ? (editingDescription || "") : (step.description || "Add instructions...")
+        
+        ctx.fillStyle = isEditing ? "#818cf8" : "#6b7280" // indigo-400 or gray-500
+        ctx.font = "12px -apple-system, system-ui, sans-serif"
+        
+        // Truncate description only when NOT editing - show full text while editing
+        let descDisplay = desc
+        const maxDescW = cardWidth - iconSize - padding * 3 - 20
+        if (!isEditing && ctx.measureText(descDisplay).width > maxDescW) {
+          while (ctx.measureText(descDisplay + '…').width > maxDescW && descDisplay.length > 1) {
+            descDisplay = descDisplay.slice(0, -1)
+          }
+          descDisplay += '…'
+        }
+        
+        if (isEditing) {
+          ctx.fillText(descDisplay + (showCursor ? '|' : ''), textLeft, y + 10)
         } else {
-          // Not in workflow - show grayed out dash in center
-          ctx.fillStyle = "rgba(148, 163, 184, 0.4)"
-          ctx.font = "bold 16px system-ui"
+          ctx.fillText(descDisplay, textLeft, y + 10)
+        }
+        
+        // === STEP NUMBER BADGE (small circle on top-left corner of card) ===
+        if (workflowOrder !== undefined) {
+          const badgeX = x - cardWidth/2
+          const badgeY = y - cardHeight/2
+          const badgeRadius = 10
+          
+          // Circle background
+          ctx.beginPath()
+          ctx.arc(badgeX, badgeY, badgeRadius, 0, Math.PI * 2)
+          ctx.fillStyle = step.agentColor
+          ctx.fill()
+          
+          // Number
+          ctx.fillStyle = "#ffffff"
+          ctx.font = "bold 10px -apple-system, system-ui, sans-serif"
           ctx.textAlign = "center"
           ctx.textBaseline = "middle"
-          ctx.fillText("-", x, y)
+          ctx.fillText(`${workflowOrder}`, badgeX, badgeY)
+        }
+        
+        ctx.restore()
+        
+        // === DELETE & CONNECT BUTTONS (only when selected) ===
+        if (isSelected) {
+          // Delete button (X in top-right area, with more padding from corner)
+          const delX = x + cardWidth/2 - 22
+          const delY = y - cardHeight/2 + 18
+          
+          ctx.strokeStyle = "#6b7280"
+          ctx.lineWidth = 2
+          ctx.lineCap = "round"
+          
+          // X icon
+          ctx.beginPath()
+          ctx.moveTo(delX - 4, delY - 4)
+          ctx.lineTo(delX + 4, delY + 4)
+          ctx.moveTo(delX + 4, delY - 4)
+          ctx.lineTo(delX - 4, delY + 4)
+          ctx.stroke()
+          
+          // Connect button (+ on right edge, inside border style)
+          const connX = x + cardWidth/2
+          const connY = y
+          const connRadius = 12
+          
+          // Circle with card background and border
+          ctx.beginPath()
+          ctx.arc(connX, connY, connRadius, 0, Math.PI * 2)
+          ctx.fillStyle = "#111827" // Same as card background
+          ctx.fill()
+          ctx.strokeStyle = step.agentColor // Same as selected border
+          ctx.lineWidth = 2
+          ctx.stroke()
+          
+          // Plus icon
+          ctx.strokeStyle = step.agentColor
+          ctx.lineWidth = 2
+          ctx.lineCap = "round"
+          ctx.beginPath()
+          ctx.moveTo(connX - 5, connY)
+          ctx.lineTo(connX + 5, connY)
+          ctx.moveTo(connX, connY - 5)
+          ctx.lineTo(connX, connY + 5)
+          ctx.stroke()
         }
 
-        // Status indicator (working/completed/waiting) - show whenever we have status data
+        // Status indicator (working/completed/waiting)
         const stepStatus = stepStatuses.get(step.id)
         if (stepStatus) {
-            const statusX = x - 28
-            const statusY = y - 28
+            const statusX = x - cardWidth/2 + 8
+            const statusY = y - cardHeight/2 - 6
             
             if (stepStatus.status === "working") {
               // Pulsing green dot
@@ -2126,7 +2295,7 @@ export function VisualWorkflowDesigner({
               ctx.shadowColor = "rgba(34, 197, 94, 0.6)"
               ctx.shadowBlur = 8
               ctx.beginPath()
-              ctx.arc(statusX, statusY, 5, 0, Math.PI * 2)
+              ctx.arc(statusX, statusY, 6, 0, Math.PI * 2)
               ctx.fill()
               ctx.shadowBlur = 0
             } else if (stepStatus.status === "waiting") {
@@ -2168,210 +2337,33 @@ export function VisualWorkflowDesigner({
               ctx.stroke()
             }
         }
-        
-        // Delete button (top center, floating above hexagon) - only show on selected agent
-        if (isSelected) {
-          const deleteX = x
-          const deleteY = y - 55
-          const deleteRadius = 9
+
+        // Duration & tokens - small text below card only when completed
+        const stepStatusForDuration = stepStatuses.get(step.id)
+        if (stepStatusForDuration && stepStatusForDuration.status === "completed") {
+          let infoText = ""
           
-          // Red gradient for delete button
-          const deleteGradient = ctx.createRadialGradient(deleteX, deleteY, 0, deleteX, deleteY, deleteRadius)
-          deleteGradient.addColorStop(0, "#ef4444")
-          deleteGradient.addColorStop(1, "#dc2626")
-          ctx.fillStyle = deleteGradient
-          ctx.shadowColor = "rgba(239, 68, 68, 0.5)"
-          ctx.shadowBlur = 10
-          ctx.beginPath()
-          ctx.arc(deleteX, deleteY, deleteRadius, 0, Math.PI * 2)
-          ctx.fill()
-          ctx.shadowBlur = 0
+          if (stepStatusForDuration.startTime && stepStatusForDuration.completedAt) {
+            const durationMs = stepStatusForDuration.completedAt - stepStatusForDuration.startTime
+            const durationSec = (durationMs / 1000).toFixed(1)
+            infoText += `${durationSec}s`
+          }
           
-          // X icon (smaller)
-          ctx.strokeStyle = "#ffffff"
-          ctx.lineWidth = 1.8
-          ctx.lineCap = "round"
-          ctx.beginPath()
-          ctx.moveTo(deleteX - 3, deleteY - 3)
-          ctx.lineTo(deleteX + 3, deleteY + 3)
-          ctx.moveTo(deleteX + 3, deleteY - 3)
-          ctx.lineTo(deleteX - 3, deleteY + 3)
-          ctx.stroke()
-        }
-        
-        // Connection handle (arrow button on the right side) - show on selected agent for parallel workflow support
-        if (isSelected) {
-          // PARALLEL WORKFLOW SUPPORT:
-          // Always show connection handle to allow multiple outgoing connections (fan-out)
-          const handleX = x + 50
-          const handleY = y
-          const handleRadius = 10
-            
-            // Glow on/off animation
-            const glow = Math.sin(Date.now() / 250) * 0.5 + 0.5 // Oscillates between 0 and 1
-            
-            // Gradient for handle
-            const handleGradient = ctx.createRadialGradient(handleX, handleY, 0, handleX, handleY, handleRadius)
-            handleGradient.addColorStop(0, "#818cf8")
-            handleGradient.addColorStop(1, "#6366f1")
-            ctx.fillStyle = handleGradient
-            
-            // Glowing shadow
-            ctx.shadowColor = `rgba(99, 102, 241, ${0.3 + glow * 0.7})` // Opacity varies from 0.3 to 1.0
-            ctx.shadowBlur = 8 + glow * 12 // Shadow blur varies from 8 to 20
-            ctx.beginPath()
-            ctx.arc(handleX, handleY, handleRadius, 0, Math.PI * 2)
-            ctx.fill()
-            ctx.shadowBlur = 0
-            
-          // Arrow icon (smaller)
-          ctx.save()
-          ctx.translate(handleX, handleY)
-          ctx.fillStyle = "#ffffff"
-          ctx.beginPath()
-          ctx.moveTo(2.5, 0)
-          ctx.lineTo(-2.5, -4)
-          ctx.lineTo(-2.5, 4)
-          ctx.closePath()
-          ctx.fill()
-          ctx.restore()
+          if (stepStatusForDuration.tokenUsage) {
+            const tokens = stepStatusForDuration.tokenUsage.total_tokens
+            if (infoText) infoText += " · "
+            infoText += `${tokens.toLocaleString()} tokens`
+          }
+          
+          if (infoText) {
+            ctx.font = "10px system-ui"
+            ctx.fillStyle = "#6b7280" // gray-500
+            ctx.textAlign = "center"
+            ctx.textBaseline = "top"
+            ctx.fillText(infoText, x, y + cardHeight/2 + 6)
+          }
         }
 
-        // Agent name - positioned below hexagon
-        const nameYOffset = 50
-        
-        ctx.shadowColor = "rgba(0, 0, 0, 0.5)"
-        ctx.shadowBlur = 2
-        ctx.fillStyle = isSelected ? step.agentColor : "#f1f5f9"
-        ctx.font = isSelected ? "bold 13px system-ui" : "600 12px system-ui"
-        ctx.textAlign = "center"
-        
-        if (isSelected) {
-          // Add background bar for selected agent name
-          const textWidth = ctx.measureText(step.agentName).width
-          ctx.fillStyle = "rgba(30, 41, 59, 0.9)"
-          ctx.fillRect(x - textWidth / 2 - 8, y + nameYOffset - 8, textWidth + 16, 20)
-          ctx.fillStyle = step.agentColor
-        }
-        
-        ctx.fillText(step.agentName, x, y + nameYOffset)
-        
-        // Display duration beside agent name (right side) if completed
-        {
-          const stepStatusForDuration = stepStatuses.get(step.id)
-          if (stepStatusForDuration && stepStatusForDuration.status === "completed") {
-            const nameWidth = ctx.measureText(step.agentName).width
-            let rightOffset = nameWidth / 2 + 8
-            
-            // Display duration if available
-            if (stepStatusForDuration.startTime && stepStatusForDuration.completedAt) {
-              const durationMs = stepStatusForDuration.completedAt - stepStatusForDuration.startTime
-              const durationSec = (durationMs / 1000).toFixed(1)
-              const durationText = `⏱️ ${durationSec}s`
-              
-              ctx.font = "10px system-ui"
-              ctx.fillStyle = "#94a3b8"
-              ctx.textAlign = "left"
-              ctx.fillText(durationText, x + rightOffset, y + nameYOffset)
-              
-              rightOffset += ctx.measureText(durationText).width + 8
-            }
-            
-            // Display token usage if available
-            if (stepStatusForDuration.tokenUsage) {
-              const tokens = stepStatusForDuration.tokenUsage.total_tokens
-              const tokensText = `🎟️ ${tokens.toLocaleString()}`
-              
-              ctx.font = "10px system-ui"
-              ctx.fillStyle = "#94a3b8"
-              ctx.textAlign = "left"
-              ctx.fillText(tokensText, x + rightOffset, y + nameYOffset)
-            }
-          }
-        }
-        
-        ctx.shadowBlur = 0
-        
-        // Draw description below agent name (editable) - wrap text to multiple lines
-        const descYOffset = nameYOffset + 25
-        ctx.font = "11px system-ui"
-        ctx.textAlign = "center"
-        
-        const maxWidth = 240 // Max width per line
-        const isEditingThis = editingStepId === step.id
-        const displayText = isEditingThis ? editingDescription : (step.description || "Click to add description")
-        
-        // Word wrap function
-        const wrapText = (text: string, maxWidth: number) => {
-          const words = text.split(' ')
-          const lines: string[] = []
-          let currentLine = ''
-          
-          for (const word of words) {
-            const testLine = currentLine ? currentLine + ' ' + word : word
-            const metrics = ctx.measureText(testLine)
-            
-            if (metrics.width > maxWidth && currentLine) {
-              lines.push(currentLine)
-              currentLine = word
-            } else {
-              currentLine = testLine
-            }
-          }
-          if (currentLine) {
-            lines.push(currentLine)
-          }
-          
-          return lines
-        }
-        
-        const lines = wrapText(displayText || " ", maxWidth)
-        const lineHeight = 14
-        const totalHeight = lines.length * lineHeight
-        
-        // Draw background for all lines
-        const bgWidth = Math.max(...lines.map(line => ctx.measureText(line).width), 100) + 16
-        ctx.fillStyle = isEditingThis ? "rgba(30, 41, 59, 0.95)" : "rgba(15, 23, 42, 0.8)"
-        ctx.fillRect(x - bgWidth / 2 - 4, y + descYOffset - 10, bgWidth + 8, totalHeight + 8)
-        
-        // Draw border when editing
-        if (isEditingThis) {
-          ctx.strokeStyle = "rgba(129, 140, 248, 0.8)"
-          ctx.lineWidth = 2
-          ctx.strokeRect(x - bgWidth / 2 - 4, y + descYOffset - 10, bgWidth + 8, totalHeight + 8)
-        }
-        
-        // Draw each line
-        ctx.fillStyle = isEditingThis ? "rgba(129, 140, 248, 0.95)" : "rgba(148, 163, 184, 0.9)"
-        lines.forEach((line, i) => {
-          ctx.fillText(line, x, y + descYOffset + i * lineHeight)
-        })
-        
-        // Draw blinking cursor when editing
-        if (isEditingThis && showCursor) {
-          // Calculate cursor position
-          const textBeforeCursor = displayText.substring(0, cursorPosition)
-          const linesBeforeCursor = wrapText(textBeforeCursor, maxWidth)
-          const currentLineIndex = Math.max(0, linesBeforeCursor.length - 1)
-          const currentLineText = linesBeforeCursor[currentLineIndex] || ""
-          const cursorX = x + ctx.measureText(currentLineText).width / 2
-          const cursorY = y + descYOffset + currentLineIndex * lineHeight
-          
-          ctx.fillStyle = "rgba(129, 140, 248, 1)"
-          ctx.fillRect(cursorX, cursorY - 8, 2, 12)
-        }
-        
-        // Add a subtle indicator that text is clickable (only when not editing)
-        if (!isEditingThis) {
-          ctx.font = "9px system-ui"
-          ctx.fillStyle = "rgba(148, 163, 184, 0.4)"
-          ctx.fillText("(click to edit)", x, y + descYOffset + totalHeight + 8)
-        } else {
-          ctx.font = "9px system-ui"
-          ctx.fillStyle = "rgba(148, 163, 184, 0.6)"
-          ctx.fillText("(press Enter to save, Esc to cancel)", x, y + descYOffset + totalHeight + 8)
-        }
-        
         // Display agent status and messages (above the agent)
         // Use step ID to get the correct status (handles duplicate agents)
         {
@@ -2381,10 +2373,10 @@ export function VisualWorkflowDesigner({
             
             // Check if messages are collapsed
           if (stepStatus.messagesCollapsed) {
-            // Show a "+" button to expand messages
+            // Show a "+" button to expand messages (above the card)
             const buttonSize = 32
             const buttonX = x - buttonSize / 2
-            const buttonY = y - 80
+            const buttonY = y - cardHeight/2 - 50
               
               ctx.save()
               
@@ -2429,10 +2421,10 @@ export function VisualWorkflowDesigner({
               ctx.restore()
             } else {
               // Show all messages stacked
-              // Draw collapse button at same position as expand button
+              // Draw collapse button at same position as expand button (above the card)
               const collapseButtonSize = 28
               const collapseButtonX = x - collapseButtonSize / 2
-              const collapseButtonY = y - 80
+              const collapseButtonY = y - cardHeight/2 - 50
               
               ctx.save()
               
@@ -2633,6 +2625,137 @@ export function VisualWorkflowDesigner({
         }
       })
 
+      // Draw connection endpoint dots ON TOP of cards (but still inside the transform)
+      connectionEndpoints.forEach(({ fromX, fromY, toX, toY, fromColor, toColor, isConnectionSelected }) => {
+        // Calculate angle for direction arrow
+        const angle = Math.atan2(toY - fromY, toX - fromX)
+        
+        // Use agent color when selected, gray when not (matches card border style)
+        const sourceStrokeColor = isConnectionSelected ? fromColor : "#374151" // gray-700
+        const targetFillColor = isConnectionSelected ? toColor : "#374151" // gray-700
+        
+        // Draw connector dot at SOURCE (output) - hollow circle with border
+        ctx.beginPath()
+        ctx.arc(fromX, fromY, 6, 0, Math.PI * 2)
+        ctx.fillStyle = "#1e293b" // dark fill
+        ctx.fill()
+        ctx.strokeStyle = sourceStrokeColor
+        ctx.lineWidth = 2.5
+        ctx.stroke()
+        
+        // Draw small direction arrow just before target dot
+        const arrowDistance = 16 // distance from target center
+        const arrowX = toX - arrowDistance * Math.cos(angle)
+        const arrowY = toY - arrowDistance * Math.sin(angle)
+        const arrowLength = 8
+        
+        ctx.save()
+        ctx.translate(arrowX, arrowY)
+        ctx.rotate(angle)
+        ctx.beginPath()
+        ctx.moveTo(arrowLength/2, 0)
+        ctx.lineTo(-arrowLength/2, -4)
+        ctx.lineTo(-arrowLength/2, 4)
+        ctx.closePath()
+        ctx.fillStyle = targetFillColor
+        ctx.fill()
+        ctx.restore()
+        
+        // Draw connector dot at TARGET (input) - filled circle
+        ctx.beginPath()
+        ctx.arc(toX, toY, 6, 0, Math.PI * 2)
+        ctx.fillStyle = targetFillColor
+        ctx.fill()
+        ctx.strokeStyle = "#1e293b"
+        ctx.lineWidth = 1.5
+        ctx.stroke()
+      })
+
+      // Draw connection preview ON TOP of everything
+      if (isCreatingConnection && connectionStart && connectionPreview) {
+        const startStep = workflowSteps.find(s => s.id === connectionStart.stepId)
+        if (startStep) {
+          const fromCenterX = centerX + startStep.x
+          const fromCenterY = centerY + startStep.y
+          
+          // Get dynamic card width for source (in case it's being edited)
+          const startCardWidth = getCardWidth(startStep)
+          
+          // Start from right edge of source card
+          const fromX = fromCenterX + startCardWidth/2
+          const fromY = fromCenterY
+          
+          // If hovering over a valid target, snap to its left edge
+          let toX: number
+          let toY: number
+          
+          if (connectionHoverTarget) {
+            const targetStep = workflowSteps.find(s => s.id === connectionHoverTarget)
+            if (targetStep) {
+              const targetCardWidth = getCardWidth(targetStep)
+              toX = centerX + targetStep.x - targetCardWidth/2
+              toY = centerY + targetStep.y
+            } else {
+              toX = centerX + connectionPreview.x
+              toY = centerY + connectionPreview.y
+            }
+          } else {
+            toX = centerX + connectionPreview.x
+            toY = centerY + connectionPreview.y
+          }
+          
+          // Draw the preview line
+          ctx.save()
+          
+          // Get colors for connector dots
+          const fromColor = startStep.agentColor || "#6366f1"
+          
+          if (connectionHoverTarget) {
+            // Solid line when snapped to target
+            ctx.strokeStyle = "#64748b" // slate-500
+            ctx.lineWidth = 2
+            ctx.setLineDash([])
+          } else {
+            // Dashed line when dragging freely
+            ctx.strokeStyle = "rgba(100, 116, 139, 0.5)" // slate-500 with opacity
+            ctx.lineWidth = 2
+            ctx.setLineDash([8, 4])
+          }
+          
+          ctx.beginPath()
+          ctx.moveTo(fromX, fromY)
+          ctx.lineTo(toX, toY)
+          ctx.stroke()
+          ctx.setLineDash([])
+          
+          // Draw connector dot at SOURCE (output) - matches established connections
+          ctx.beginPath()
+          ctx.arc(fromX, fromY, 6, 0, Math.PI * 2)
+          ctx.fillStyle = "#1e293b"
+          ctx.fill()
+          ctx.strokeStyle = fromColor
+          ctx.lineWidth = 2.5
+          ctx.stroke()
+          
+          // Draw connector dot at TARGET when snapped
+          if (connectionHoverTarget) {
+            const targetStep = workflowSteps.find(s => s.id === connectionHoverTarget)
+            const toColor = targetStep?.agentColor || "#6366f1"
+            
+            ctx.beginPath()
+            ctx.arc(toX, toY, 6, 0, Math.PI * 2)
+            ctx.fillStyle = toColor
+            ctx.fill()
+            ctx.strokeStyle = "#1e293b"
+            ctx.lineWidth = 1.5
+            ctx.stroke()
+          }
+          
+          ctx.restore()
+        }
+      }
+
+      // Restore the main transform (zoom/pan) before drawing UI overlays
       ctx.restore()
 
       // Instructions overlay (when empty)
@@ -2662,7 +2785,7 @@ export function VisualWorkflowDesigner({
     })
 
     return () => cancelAnimationFrame(animationFrameId)
-  }, [workflowSteps, selectedStepId, isDraggingOver, connections, isCreatingConnection, connectionStart, connectionPreview, workflowOrderMap, editingStepId, editingDescription, cursorPosition, showCursor, isTesting, stepStatuses, hostMessages])
+  }, [workflowSteps, selectedStepId, isDraggingOver, connections, isCreatingConnection, connectionStart, connectionPreview, connectionHoverTarget, workflowOrderMap, editingStepId, editingDescription, cursorPosition, showCursor, isTesting, stepStatuses, hostMessages])
   
   // Cursor blinking effect
   useEffect(() => {
@@ -2673,6 +2796,13 @@ export function VisualWorkflowDesigner({
       return () => clearInterval(interval)
     } else {
       setShowCursor(true)
+    }
+  }, [editingStepId])
+
+  // Focus hidden input when editing starts
+  useEffect(() => {
+    if (editingStepId && hiddenInputRef.current) {
+      hiddenInputRef.current.focus()
     }
   }, [editingStepId])
 
@@ -2703,14 +2833,16 @@ export function VisualWorkflowDesigner({
       const canvasY = (mouseY - centerY - panOffsetRef.current.y) / zoomRef.current
       
       // Check if clicking on message expand/collapse button (highest priority)
+      // Card height for positioning calculations
+      const buttonCardHeight = 70
       for (const step of workflowStepsRef.current) {
         const stepStatus = stepStatusesRef.current.get(step.id)
         if (stepStatus && stepStatus.messages && stepStatus.messages.length > 0) {
           if (stepStatus.messagesCollapsed) {
-            // Check for expand button click
+            // Check for expand button click (above the card)
             const buttonSize = 32
             const buttonX = step.x - buttonSize / 2
-            const buttonY = step.y - 80
+            const buttonY = step.y - buttonCardHeight/2 - 50
             
             if (canvasX >= buttonX && canvasX <= buttonX + buttonSize &&
                 canvasY >= buttonY && canvasY <= buttonY + buttonSize) {
@@ -2719,10 +2851,10 @@ export function VisualWorkflowDesigner({
               return
             }
           } else {
-            // Check for collapse button click
+            // Check for collapse button click (above the card)
             const buttonSize = 28
             const buttonX = step.x - buttonSize / 2
-            const buttonY = step.y - 80
+            const buttonY = step.y - buttonCardHeight/2 - 50
             
             if (canvasX >= buttonX && canvasX <= buttonX + buttonSize &&
                 canvasY >= buttonY && canvasY <= buttonY + buttonSize) {
@@ -2735,58 +2867,29 @@ export function VisualWorkflowDesigner({
       }
       
       // First, check if clicking on an agent to determine what step is under cursor
+      // Card dimensions: 260x70
+      const cardWidth = 260
+      const cardHeight = 70
       const clickedStep = workflowStepsRef.current.find(step => {
-        const dx = canvasX - step.x
-        const dy = canvasY - step.y
-        const distance = Math.sqrt(dx * dx + dy * dy)
-        return distance < 40 // 40px radius
-      })
-      
-      // Check for clicks on description text area (highest priority)
-      for (const step of workflowStepsRef.current) {
-        const nameYOffset = 50
-        const descYOffset = nameYOffset + 25
-        
-        // Estimate the description area bounds
-        const descText = step.description || "Click to add description"
-        const maxWidth = 240
-        const lineHeight = 14
-        
-        // Rough calculation for multi-line text height
-        const estimatedCharsPerLine = Math.floor(maxWidth / 6.5)
-        const estimatedLines = Math.ceil(descText.length / estimatedCharsPerLine)
-        const totalHeight = estimatedLines * lineHeight
-        
-        // Check if click is within description area
         const dx = Math.abs(canvasX - step.x)
-        const dy = canvasY - (step.y + descYOffset)
-        
-        // Description area is centered horizontally and extends vertically
-        if (dx < 130 && dy > -10 && dy < totalHeight + 10) {
-          e.preventDefault()
-          e.stopPropagation()
-          setEditingStepId(step.id)
-          const desc = step.description || ""
-          setEditingDescription(desc)
-          setCursorPosition(desc.length) // Put cursor at end
-          setSelectedStepId(step.id)
-          return
-        }
-      }
+        const dy = Math.abs(canvasY - step.y)
+        return dx < cardWidth/2 && dy < cardHeight/2 // Inside the card bounds
+      })
       
       // Check for delete button clicks on the selected step (check before other interactions)
       if (selectedStepIdRef.current) {
         const selectedStep = workflowStepsRef.current.find(s => s.id === selectedStepIdRef.current)
         
         if (selectedStep) {
-          // Check if clicking on delete button (top center)
-          const deleteX = selectedStep.x
-          const deleteY = selectedStep.y - 55
+          // Check if clicking on delete button (X in top-right area)
+          // Card dimensions: 260x70
+          const deleteX = selectedStep.x + 130 - 22 // cardWidth/2 - 22 (more padding from corner)
+          const deleteY = selectedStep.y - 35 + 18 // -cardHeight/2 + 18 (more padding from top)
           const deleteDx = canvasX - deleteX
           const deleteDy = canvasY - deleteY
           const deleteDistance = Math.sqrt(deleteDx * deleteDx + deleteDy * deleteDy)
           
-          if (deleteDistance < 14) { // 14px radius for delete button (increased for easier clicking)
+          if (deleteDistance < 12) { // 12px radius for X button
             e.preventDefault()
             e.stopPropagation()
             // Delete the agent and any connections involving it
@@ -2798,15 +2901,15 @@ export function VisualWorkflowDesigner({
             return
           }
           
-          // Check if clicking on connection handle (arrow button)
+          // Check if clicking on connection handle (+ button on right edge of card)
           // PARALLEL WORKFLOW SUPPORT: Allow clicking handle even if connections exist
-          const handleX = selectedStep.x + 50
+          const handleX = selectedStep.x + 130 // cardWidth/2 (on edge of card)
           const handleY = selectedStep.y
           const handleDx = canvasX - handleX
           const handleDy = canvasY - handleY
           const handleDistance = Math.sqrt(handleDx * handleDx + handleDy * handleDy)
           
-          if (handleDistance < 12) { // 12px radius for handle (slightly larger for easier clicking)
+          if (handleDistance < 14) { // 14px radius for handle (12px button + padding)
             // Start creating a connection
             e.preventDefault()
             e.stopPropagation()
@@ -2849,7 +2952,7 @@ export function VisualWorkflowDesigner({
         }
       }
       
-      // Handle agent click/drag
+      // Handle agent click/drag (double-click to edit is handled separately)
       if (clickedStep) {
         // Start dragging agent
         isDraggingAgentLocal = true
@@ -2887,6 +2990,20 @@ export function VisualWorkflowDesigner({
       if (isCreatingConnectionRef.current) {
         // Update connection preview
         setConnectionPreview({ x: canvasX, y: canvasY })
+        
+        // Check if hovering over a potential target agent
+        const hoverTarget = workflowStepsRef.current.find(step => {
+          if (step.id === connectionStartRef.current?.stepId) return false // Can't connect to self
+          const dx = Math.abs(canvasX - step.x)
+          const dy = Math.abs(canvasY - step.y)
+          return dx < 130 && dy < 35 // Inside the card bounds (260/2 x 70/2)
+        })
+        
+        const newHoverTargetId = hoverTarget?.id || null
+        if (newHoverTargetId !== connectionHoverTargetRef.current) {
+          connectionHoverTargetRef.current = newHoverTargetId
+          setConnectionHoverTarget(newHoverTargetId)
+        }
       } else if (isDraggingAgentLocal && draggingStepIdRef.current) {
         // Update agent position
         setWorkflowSteps(prev => 
@@ -2921,13 +3038,12 @@ export function VisualWorkflowDesigner({
         const canvasX = (mouseX - centerX - panOffsetRef.current.x) / zoomRef.current
         const canvasY = (mouseY - centerY - panOffsetRef.current.y) / zoomRef.current
         
-        // Check if releasing on an agent
+        // Check if releasing on an agent (card bounds: 280x72)
         const targetStep = workflowStepsRef.current.find(step => {
           if (step.id === connectionStartRef.current!.stepId) return false // Can't connect to self
-          const dx = canvasX - step.x
-          const dy = canvasY - step.y
-          const distance = Math.sqrt(dx * dx + dy * dy)
-          return distance < 40 // 40px radius
+          const dx = Math.abs(canvasX - step.x)
+          const dy = Math.abs(canvasY - step.y)
+          return dx < 130 && dy < 35 // Inside the card bounds (260/2 x 70/2)
         })
         
         if (targetStep) {
@@ -2956,9 +3072,11 @@ export function VisualWorkflowDesigner({
         // Reset connection creation state
         isCreatingConnectionRef.current = false
         connectionStartRef.current = null
+        connectionHoverTargetRef.current = null
         setIsCreatingConnection(false)
         setConnectionStart(null)
         setConnectionPreview(null)
+        setConnectionHoverTarget(null)
       }
       
       isPanningLocal = false
@@ -2968,12 +3086,44 @@ export function VisualWorkflowDesigner({
       setDraggingStepId(null)
     }
 
+    // Double-click to edit description (fallback)
+    const handleDoubleClick = (e: MouseEvent) => {
+      const rect = canvas.getBoundingClientRect()
+      const centerX = rect.width / 2
+      const centerY = rect.height / 2
+      const mouseX = e.clientX - rect.left
+      const mouseY = e.clientY - rect.top
+      
+      const canvasX = (mouseX - centerX - panOffsetRef.current.x) / zoomRef.current
+      const canvasY = (mouseY - centerY - panOffsetRef.current.y) / zoomRef.current
+      
+      const cardWidth = 260
+      const cardHeight = 70
+      const clickedStep = workflowStepsRef.current.find(step => {
+        const dx = Math.abs(canvasX - step.x)
+        const dy = Math.abs(canvasY - step.y)
+        return dx < cardWidth/2 && dy < cardHeight/2
+      })
+      
+      if (clickedStep) {
+        e.preventDefault()
+        e.stopPropagation()
+        setEditingStepId(clickedStep.id)
+        const desc = clickedStep.description || ""
+        setEditingDescription(desc)
+        setCursorPosition(desc.length)
+        setSelectedStepId(clickedStep.id)
+      }
+    }
+
     canvas.addEventListener('mousedown', handleMouseDown)
+    canvas.addEventListener('dblclick', handleDoubleClick)
     window.addEventListener('mousemove', handleMouseMove)
     window.addEventListener('mouseup', handleMouseUp)
 
     return () => {
       canvas.removeEventListener('mousedown', handleMouseDown)
+      canvas.removeEventListener('dblclick', handleDoubleClick)
       window.removeEventListener('mousemove', handleMouseMove)
       window.removeEventListener('mouseup', handleMouseUp)
     }
@@ -3127,6 +3277,41 @@ export function VisualWorkflowDesigner({
               }}
             />
             
+            {/* Hidden input for text editing */}
+            <input
+              ref={hiddenInputRef}
+              type="text"
+              value={editingDescription}
+              onChange={(e) => {
+                setEditingDescription(e.target.value)
+                setCursorPosition(e.target.selectionStart || e.target.value.length)
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  if (editingStepId) {
+                    updateStepDescription(editingDescription, editingStepId)
+                  }
+                  setEditingStepId(null)
+                  setCursorPosition(0)
+                } else if (e.key === 'Escape') {
+                  e.preventDefault()
+                  setEditingStepId(null)
+                  setCursorPosition(0)
+                }
+              }}
+              onBlur={() => {
+                if (editingStepId) {
+                  updateStepDescription(editingDescription, editingStepId)
+                  setEditingStepId(null)
+                  setCursorPosition(0)
+                }
+              }}
+              className="absolute opacity-0 pointer-events-none"
+              style={{ top: -9999, left: -9999 }}
+              tabIndex={-1}
+            />
+            
             {/* Workflow Name - Top Left */}
             {workflowName && (
               <h3 className="absolute top-3 left-3 text-sm font-semibold text-slate-200">{workflowName}</h3>
@@ -3134,8 +3319,8 @@ export function VisualWorkflowDesigner({
             
             {/* Canvas Action Buttons - Bottom Right */}
             <div className="absolute bottom-3 right-3 flex gap-2">
-              {/* Save Workflow Button - show if workflow has steps */}
-              {workflowSteps.length > 0 && (
+              {/* Save Workflow Button - only show if there are unsaved changes */}
+              {hasUnsavedChanges && workflowSteps.length > 0 && (
                 <Button
                   variant="secondary"
                   size="sm"
