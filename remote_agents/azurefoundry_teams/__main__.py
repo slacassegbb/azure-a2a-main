@@ -228,10 +228,25 @@ async def handle_teams_webhook(request: Request) -> JSONResponse:
                             # Found a pending request - forward to backend via A2A message
                             logger.info(f"📤 Forwarding human response to backend for context {context_id}")
                             
-                            # NOTE: Do NOT clear the pending request here!
-                            # The executor needs this info to resume with the correct thread_id.
-                            # The executor's _process_request will clear it after processing.
-                            # agent_executor_instance.clear_pending_context(context_id)
+                            # Store the thread_id before clearing so the executor can use it
+                            # We need to pass this through somehow...
+                            thread_id = request_info.get("thread_id")
+                            wait_info = request_info.get("wait_info", "")
+                            
+                            # Clear the pending request NOW - we're about to forward it
+                            # The executor will receive the context_id and can look up the thread
+                            # from _active_threads if needed
+                            agent_executor_instance.clear_pending_context(context_id)
+                            
+                            # Store the HITL resume info so the executor can find it
+                            # Key by context_id so the executor can retrieve it
+                            if not hasattr(agent_executor_instance, '_hitl_resume_info'):
+                                agent_executor_instance._hitl_resume_info = {}
+                            agent_executor_instance._hitl_resume_info[context_id] = {
+                                "thread_id": thread_id,
+                                "wait_info": wait_info,
+                            }
+                            logger.info(f"💾 Stored HITL resume info for {context_id}: thread={thread_id}")
                             
                             # Forward to backend's message API (A2A format)
                             try:

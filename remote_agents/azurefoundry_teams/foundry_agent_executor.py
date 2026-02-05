@@ -138,18 +138,28 @@ class FoundryTeamsAgentExecutor(AgentExecutor):
             logger.info(f"🔍 [HITL CHECK] Incoming context_id: {context_id}")
             logger.info(f"🔍 [HITL CHECK] _waiting_for_input keys: {list(self._waiting_for_input.keys())}")
             
-            pending_info = self._waiting_for_input.get(context_id)
+            # First check _hitl_resume_info (set by webhook when it forwards the human response)
+            # This is the preferred source since the webhook clears _waiting_for_input
+            hitl_resume_info = getattr(self, '_hitl_resume_info', {})
+            logger.info(f"🔍 [HITL CHECK] _hitl_resume_info keys: {list(hitl_resume_info.keys())}")
+            pending_info = hitl_resume_info.get(context_id) or self._waiting_for_input.get(context_id)
+            source = "hitl_resume_info" if hitl_resume_info.get(context_id) else "waiting_for_input" if pending_info else None
+            
             if pending_info:
                 # This is a human response to a pending HITL request
                 thread_id = pending_info.get("thread_id")
                 original_prompt = pending_info.get("wait_info", "")
                 
+                logger.info(f"🔄 [HITL RESUME] Found pending info from {source}")
                 logger.info(f"🔄 [HITL RESUME] Resuming with existing thread {thread_id} for context {context_id}")
                 logger.info(f"🔄 [HITL RESUME] Original prompt: {original_prompt[:100]}...")
                 logger.info(f"🔄 [HITL RESUME] Human response: {user_message}")
                 
-                # Clear the pending state
-                del self._waiting_for_input[context_id]
+                # Clear the resume info
+                if context_id in hitl_resume_info:
+                    del hitl_resume_info[context_id]
+                if context_id in self._waiting_for_input:
+                    del self._waiting_for_input[context_id]
                 
                 # Enhance the message with context so the LLM understands this is a response
                 user_message = f"""The user has responded to the approval request.
