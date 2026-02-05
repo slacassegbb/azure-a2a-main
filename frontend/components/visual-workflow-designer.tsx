@@ -3,17 +3,16 @@
 import type React from "react"
 import { useEffect, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
-import { X, Plus, Trash2, Download, Upload, Library, X as CloseIcon, Send, Loader2, PlayCircle, StopCircle, Phone, PhoneOff, Mic, MicOff, ChevronLeft, ChevronRight, Save, FileText } from "lucide-react"
+import { X, Plus, Trash2, Download, Upload, Library, X as CloseIcon, Send, Loader2, PlayCircle, StopCircle, ChevronLeft, ChevronRight, Save, FileText } from "lucide-react"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { WorkflowCatalog } from "./workflow-catalog"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { useEventHub } from "@/hooks/use-event-hub"
-import { useVoiceLive } from "@/hooks/use-voice-live"
-import { getScenarioById } from "@/lib/voice-scenarios"
+import { VoiceButton } from "@/components/voice-button"
 import { useSearchParams } from "next/navigation"
-import { createContextId } from "@/lib/session"
+import { createContextId, getOrCreateSessionId } from "@/lib/session"
 
 interface WorkflowStep {
   id: string
@@ -206,10 +205,7 @@ export function VisualWorkflowDesigner({
   // Event Hub for live updates
   const { subscribe, unsubscribe, emit } = useEventHub()
   
-  // Track Voice Live call IDs for response injection
-  const voiceLiveCallMapRef = useRef<Map<string, string>>(new Map()) // messageId -> call_id
-  
-  // Helper function to generate workflow text from current refs (used by voiceLive hook)
+  // Helper function to generate workflow text from current refs
   // NEW: Supports parallel branches with sub-lettered steps (2a, 2b, etc.)
   const generateWorkflowTextFromRefs = (): string => {
     const steps = workflowStepsRef.current
@@ -326,107 +322,8 @@ export function VisualWorkflowDesigner({
     }
   }
   
-  // Voice Live hook for speaking agent messages
-  const voiceLive = useVoiceLive({
-    foundryProjectUrl: process.env.NEXT_PUBLIC_AZURE_AI_FOUNDRY_PROJECT_ENDPOINT || '',
-    model: process.env.NEXT_PUBLIC_VOICE_MODEL || 'gpt-realtime',
-    scenario: getScenarioById('host-agent-chat'),
-    onSendToA2A: async (message: string, metadata?: any): Promise<string> => {
-      // Send message through the test workflow
-      try {
-        console.log('[Voice Live] Sending message to workflow test:', message)
-        console.log('[Voice Live] Metadata:', metadata)
-        
-        const messageId = `voice_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-        
-        // Store the mapping of messageId to Voice Live call_id
-        if (metadata?.tool_call_id) {
-          voiceLiveCallMapRef.current.set(messageId, metadata.tool_call_id)
-          console.log('[Voice Live] Stored call mapping:', messageId, '->', metadata.tool_call_id)
-        }
-        
-        // Set the test input and trigger testing
-        setTestInput(message)
-        
-        // Small delay to ensure state is updated
-        await new Promise(resolve => setTimeout(resolve, 100))
-        
-        // Trigger the test
-        const currentWorkflowText = generateWorkflowTextFromRefs()
-        if (!currentWorkflowText) {
-          console.error('[Voice Live] No workflow to test')
-          return ''
-        }
-        
-        // Read conversation ID from URL RIGHT NOW (not from cached state)
-        const currentUrl = new URL(window.location.href)
-        const freshConversationId = currentUrl.searchParams.get('conversationId')
-        const newConversationId = freshConversationId || activeConversationId || `workflow-${Date.now()}`
-        setWorkflowConversationId(newConversationId)
-        console.log("[Voice Live] Using conversation ID:", newConversationId, freshConversationId ? "(from URL)" : activeConversationId ? "(from prop)" : "(new)")
-        
-        setIsTesting(true)
-        setTestMessages([{ role: "user", content: message }])
-        setStepStatuses(new Map())
-        stepStatusesRef.current = new Map()
-        agentStepIndexRef.current = new Map()  // Reset agent step counters
-        setHostTokenUsage(null)  // Reset host tokens for new workflow
-        
-        const baseUrl = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
-        
-        const parts: any[] = [
-          {
-            root: {
-              kind: 'text',
-              text: message
-            }
-          }
-        ]
-        
-        const response = await fetch(`${baseUrl}/message/send`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            params: {
-              messageId,
-              contextId: createContextId(newConversationId),  // Use tenant-aware contextId
-              parts: parts,
-              role: 'user',
-              agentMode: true,
-              enableInterAgentMemory: true,
-              workflow: currentWorkflowText
-            }
-          })
-        })
-        
-        if (!response.ok) {
-          console.error('[Voice Live] Failed to send message:', response.statusText)
-          throw new Error(`Failed to send message: ${response.statusText}`)
-        }
-        
-        console.log('[Voice Live] Message sent successfully')
-        
-        // NOTE: URL update moved to when test completes to prevent chat panel from
-        // reloading messages during the workflow test
-        
-        // Set timeout
-        if (testTimeoutRef.current) {
-          clearTimeout(testTimeoutRef.current)
-        }
-        testTimeoutRef.current = setTimeout(() => {
-          console.log('[WorkflowTest] Test timeout reached (10 minutes), stopping...')
-          setIsTesting(false)
-        }, 600000)
-        
-        return newConversationId
-      } catch (error) {
-        console.error('[Voice Live] Error sending to A2A:', error)
-        throw error
-      }
-    }
-  })
+  // Get session ID for voice button
+  const currentSessionId = getOrCreateSessionId()
   
   // Agent dragging
   const [draggingStepId, setDraggingStepId] = useState<string | null>(null)
@@ -1155,16 +1052,6 @@ export function VisualWorkflowDesigner({
       if (stepOrder === maxOrder) {
         setTimeout(() => handleStopTest(), 2000)
       }
-      
-      // Voice Live integration
-      if (voiceLive.isConnected && voiceLiveCallMapRef.current.size > 0) {
-        const entries = Array.from(voiceLiveCallMapRef.current.entries())
-        if (entries.length > 0) {
-          const [messageId, callId] = entries[0]
-          voiceLive.injectNetworkResponse({ call_id: callId, message: content, status: 'completed' })
-          voiceLiveCallMapRef.current.delete(messageId)
-        }
-      }
     }
     
     // File uploaded - attach to step
@@ -1207,15 +1094,6 @@ export function VisualWorkflowDesigner({
           target: data.targetAgent,
           timestamp: Date.now()
         }])
-        
-        // Voice Live integration
-        if (voiceLive.isConnected && voiceLiveCallMapRef.current.size > 0) {
-          const entries = Array.from(voiceLiveCallMapRef.current.entries())
-          if (entries.length > 0) {
-            const [, callId] = entries[0]
-            voiceLive.injectNetworkResponse({ call_id: callId, message: data.message, status: 'in_progress' })
-          }
-        }
       }
     }
     
@@ -3312,43 +3190,12 @@ export function VisualWorkflowDesigner({
                   disabled={isTesting}
                   className="flex-1 text-sm h-8"
                 />
-                <Button
-                  variant="ghost"
-                  size="sm"
+                <VoiceButton 
+                  sessionId={currentSessionId} 
+                  contextId={createContextId(workflowConversationId || activeConversationId || 'workflow-test')}
+                  conversationId={workflowConversationId || activeConversationId || 'workflow-test'}
                   disabled={isTesting}
-                  onClick={voiceLive.isConnected ? voiceLive.stopVoiceConversation : voiceLive.startVoiceConversation}
-                  className={`h-8 ${
-                    voiceLive.isConnected 
-                      ? 'bg-green-100 text-green-600 hover:bg-green-200' 
-                      : voiceLive.error 
-                      ? 'bg-red-100 text-red-600' 
-                      : ''
-                  }`}
-                  title={
-                    voiceLive.isConnected 
-                      ? 'End voice conversation' 
-                      : voiceLive.error 
-                      ? `Error: ${voiceLive.error}` 
-                      : 'Start voice conversation'
-                  }
-                >
-                  {voiceLive.isConnected ? <PhoneOff className="h-3 w-3" /> : <Phone className="h-3 w-3" />}
-                </Button>
-                {voiceLive.isConnected && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={voiceLive.toggleMute}
-                    className={`h-8 ${
-                      voiceLive.isMuted 
-                        ? 'bg-primary/20 text-primary hover:bg-primary/30' 
-                        : 'bg-primary/10 text-primary hover:bg-primary/20'
-                    }`}
-                    title={voiceLive.isMuted ? 'Unmute microphone' : 'Mute microphone'}
-                  >
-                    {voiceLive.isMuted ? <MicOff className="h-3 w-3" /> : <Mic className="h-3 w-3" />}
-                  </Button>
-                )}
+                />
                 <Button
                   onClick={handleTestSubmit}
                   disabled={!testInput.trim() || isTesting}
