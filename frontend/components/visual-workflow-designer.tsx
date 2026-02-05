@@ -2737,10 +2737,12 @@ export function VisualWorkflowDesigner({
         ctx.lineWidth = 2.5
         ctx.stroke()
         
-        // Draw small direction arrow just before target dot
-        const arrowDistance = 16 // distance from target center
-        const arrowX = toX - arrowDistance * Math.cos(angle)
-        const arrowY = toY - arrowDistance * Math.sin(angle)
+        // Draw small direction arrow right after the X delete button (midpoint + offset)
+        const midX = (fromX + toX) / 2
+        const midY = (fromY + toY) / 2
+        const arrowOffset = 18 // Distance from midpoint X button towards target
+        const arrowX = midX + arrowOffset * Math.cos(angle)
+        const arrowY = midY + arrowOffset * Math.sin(angle)
         const arrowLength = 8
         
         ctx.save()
@@ -3321,7 +3323,7 @@ export function VisualWorkflowDesigner({
     <div className="flex flex-col h-full gap-4">
       <div className="flex gap-4 h-full">
         {/* Agent Palette */}
-        <div className="w-64 flex flex-col gap-2 bg-slate-900 rounded-lg p-4 border border-slate-800">
+        <div className="w-64 flex flex-col gap-2 bg-slate-800/50 rounded-lg p-4 border border-slate-700/50">
           <h3 className="text-sm font-semibold text-slate-200 mb-2">Available Agents</h3>
           <ScrollArea className="flex-1">
             <div className="space-y-2">
@@ -3443,50 +3445,52 @@ export function VisualWorkflowDesigner({
               )}
             </div>
             
-            {/* Goal Bar - Below Workflow Name */}
-            <div 
-              className="absolute top-12 left-3 right-3 z-10 flex items-center gap-2"
-              onDoubleClick={() => {
-                if (!isEditingGoal) {
-                  setIsEditingGoal(true)
-                  setEditingGoalText(workflowGoal || `Execute the ${workflowName || 'workflow'} workflow`)
-                  setTimeout(() => goalInputRef.current?.focus(), 50)
-                }
-              }}
-            >
-              <span className="text-sm font-medium text-amber-500 shrink-0">Goal:</span>
-              {isEditingGoal ? (
-                <input
-                  ref={goalInputRef}
-                  type="text"
-                  value={editingGoalText}
-                  onChange={(e) => setEditingGoalText(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
+            {/* Goal Bar - Below Workflow Name - only show if workflow selected */}
+            {selectedWorkflowId && workflowSteps.length > 0 && (
+              <div 
+                className="absolute top-12 left-3 right-3 z-10 flex items-center gap-2"
+                onDoubleClick={() => {
+                  if (!isEditingGoal) {
+                    setIsEditingGoal(true)
+                    setEditingGoalText(workflowGoal || `Execute the ${workflowName || 'workflow'} workflow`)
+                    setTimeout(() => goalInputRef.current?.focus(), 50)
+                  }
+                }}
+              >
+                <span className="text-sm font-medium text-amber-500 shrink-0">Goal:</span>
+                {isEditingGoal ? (
+                  <input
+                    ref={goalInputRef}
+                    type="text"
+                    value={editingGoalText}
+                    onChange={(e) => setEditingGoalText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        setWorkflowGoal(editingGoalText)
+                        onWorkflowGoalChange?.(editingGoalText)
+                        setIsEditingGoal(false)
+                      } else if (e.key === 'Escape') {
+                        setIsEditingGoal(false)
+                      }
+                    }}
+                    onBlur={() => {
                       setWorkflowGoal(editingGoalText)
                       onWorkflowGoalChange?.(editingGoalText)
                       setIsEditingGoal(false)
-                    } else if (e.key === 'Escape') {
-                      setIsEditingGoal(false)
-                    }
-                  }}
-                  onBlur={() => {
-                    setWorkflowGoal(editingGoalText)
-                    onWorkflowGoalChange?.(editingGoalText)
-                    setIsEditingGoal(false)
-                  }}
-                  className="flex-1 bg-slate-800/80 border border-slate-600 rounded px-2 py-1 text-sm text-slate-200 focus:outline-none focus:border-indigo-500"
-                  placeholder="Enter workflow goal..."
-                />
-              ) : (
-                <p 
-                  className="text-sm text-slate-200 truncate cursor-pointer hover:text-white flex-1"
-                  title="Double-click to edit goal"
-                >
-                  {workflowGoal || `Execute the ${workflowName || 'workflow'} workflow`}
-                </p>
-              )}
-            </div>
+                    }}
+                    className="flex-1 bg-slate-800/80 border border-slate-600 rounded px-2 py-1 text-sm text-slate-200 focus:outline-none focus:border-indigo-500"
+                    placeholder="Enter workflow goal..."
+                  />
+                ) : (
+                  <p 
+                    className="text-sm text-slate-200 truncate cursor-pointer hover:text-white flex-1"
+                    title="Double-click to edit goal"
+                  >
+                    {workflowGoal || `Execute the ${workflowName || 'workflow'} workflow`}
+                  </p>
+                )}
+              </div>
+            )}
             
             {/* Canvas Action Buttons - Bottom Right */}
             <div className="absolute bottom-3 right-3 flex gap-2">
@@ -3826,8 +3830,8 @@ export function VisualWorkflowDesigner({
 
         {/* Orchestration Sidebar - Collapsible */}
         {hostMessages.length > 0 && showOrchestrationSidebar && (
-          <div className="w-80 flex flex-col bg-slate-900 rounded-lg border border-slate-700 overflow-hidden">
-            <div className="p-3 border-b border-slate-700 bg-slate-800/50 flex items-center justify-between">
+          <div className="w-80 flex flex-col bg-slate-800/50 rounded-lg border border-slate-700/50 overflow-hidden">
+            <div className="p-3 border-b border-slate-700/50 bg-slate-800/50 flex items-center justify-between">
               <div>
                 <h3 className="text-sm font-semibold text-indigo-400 flex items-center gap-2">
                   <div 
@@ -3892,8 +3896,8 @@ export function VisualWorkflowDesigner({
         {/* Workflow Catalog Sidebar */}
         {showCatalog && (
           <div className="w-96 flex flex-col">
-            <div className="bg-slate-900 rounded-lg border border-slate-700 overflow-hidden h-full flex flex-col">
-              <div className="p-3 border-b border-slate-700 bg-slate-800/50 flex items-center justify-between">
+            <div className="bg-slate-800/50 rounded-lg border border-slate-700/50 overflow-hidden h-full flex flex-col">
+              <div className="p-3 border-b border-slate-700/50 bg-slate-800/50 flex items-center justify-between">
                 <h3 className="text-sm font-semibold text-slate-200">Workflows</h3>
                 <button
                   onClick={() => setShowCatalog(false)}

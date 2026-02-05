@@ -476,8 +476,8 @@ export function WorkflowCatalog({ onLoadWorkflow, onSaveWorkflow, onNewWorkflow,
   })
 
   return (
-    <div className="h-full flex flex-col bg-slate-900 rounded-lg border border-slate-800">
-      <div className="p-4 border-b border-slate-800 space-y-3">
+    <div className="h-full flex flex-col bg-transparent rounded-lg border-0">
+      <div className="p-4 border-b border-slate-700/50 space-y-3">
         <Button
           onClick={() => setShowNewWorkflowDialog(true)}
           className="w-full"
