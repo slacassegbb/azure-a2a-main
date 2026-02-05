@@ -1123,17 +1123,6 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
                             </div>
                           </DialogContent>
                         </Dialog>
-                        
-                        {/* Schedule Workflow Button */}
-                        <Button 
-                          variant="outline" 
-                          size="sm" 
-                          className="flex-1 h-8 text-xs"
-                          onClick={() => setIsScheduleDialogOpen(true)}
-                        >
-                          <Calendar className="h-3 w-3 mr-2" />
-                          Schedules
-                        </Button>
                       </div>
                         {/* Active Workflows - show multiple workflow cards */}
                         {activeWorkflows.length > 0 && (
