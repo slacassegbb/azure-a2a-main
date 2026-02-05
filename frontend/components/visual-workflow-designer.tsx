@@ -146,9 +146,15 @@ export function VisualWorkflowDesigner({
   const [workflowDescription, setWorkflowDescription] = useState("")
   const [workflowCategory, setWorkflowCategory] = useState("Custom")
   const [workflowGoal, setWorkflowGoal] = useState("")
+  const [isEditingGoal, setIsEditingGoal] = useState(false)
+  const [editingGoalText, setEditingGoalText] = useState("")
+  const goalInputRef = useRef<HTMLInputElement>(null)
   const [catalogRefreshTrigger, setCatalogRefreshTrigger] = useState(0)
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(null)
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
+  const [autoSaveStatus, setAutoSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+  const autoSaveTimerRef = useRef<NodeJS.Timeout | null>(null)
+  const isInitialLoadRef = useRef(true) // Prevent auto-save on initial load
   
   // Component lifecycle logging (for debugging)
   // useEffect(() => {
@@ -196,6 +202,89 @@ export function VisualWorkflowDesigner({
   const waitingStepIdRef = useRef<string | null>(null)
   // Keep ref in sync with state
   useEffect(() => { waitingStepIdRef.current = waitingStepId }, [waitingStepId])
+  
+  // Auto-save workflow when steps or connections change (debounced)
+  useEffect(() => {
+    // Skip auto-save if:
+    // 1. Initial load (haven't loaded a workflow yet)
+    // 2. No workflow is selected (it's a brand new workflow)
+    // 3. No name yet (workflow hasn't been saved once)
+    if (isInitialLoadRef.current || !selectedWorkflowId || !workflowName.trim()) {
+      return
+    }
+    
+    // Clear existing timer
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current)
+    }
+    
+    // Set status to show we have pending changes
+    setAutoSaveStatus('idle')
+    setHasUnsavedChanges(true)
+    
+    // Debounce auto-save by 1.5 seconds
+    autoSaveTimerRef.current = setTimeout(async () => {
+      try {
+        setAutoSaveStatus('saving')
+        
+        const workflowData = {
+          name: workflowName,
+          description: workflowDescription || "Custom workflow",
+          category: workflowCategory,
+          goal: workflowGoal || "",
+          steps: workflowSteps.map(step => ({
+            id: step.id,
+            agentId: step.agentId,
+            agentName: step.agentName,
+            description: step.description,
+            order: step.order,
+            x: step.x,
+            y: step.y
+          })),
+          connections: connections.map(conn => ({
+            id: conn.id,
+            fromStepId: conn.fromStepId,
+            toStepId: conn.toStepId
+          }))
+        }
+        
+        const token = sessionStorage.getItem('auth_token') || localStorage.getItem('auth_token')
+        
+        if (token && selectedWorkflowId) {
+          const response = await fetch(`${process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'}/api/workflows/${selectedWorkflowId}`, {
+            method: 'PUT',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify(workflowData)
+          })
+          
+          if (response.ok) {
+            console.log('[AutoSave] Workflow saved successfully')
+            setAutoSaveStatus('saved')
+            setHasUnsavedChanges(false)
+            // Reset to idle after 2 seconds
+            setTimeout(() => setAutoSaveStatus('idle'), 2000)
+          } else {
+            console.error('[AutoSave] Failed to save workflow:', response.status)
+            setAutoSaveStatus('error')
+          }
+        }
+      } catch (error) {
+        console.error('[AutoSave] Error saving workflow:', error)
+        setAutoSaveStatus('error')
+      }
+    }, 1500)
+    
+    // Cleanup
+    return () => {
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current)
+      }
+    }
+  }, [workflowSteps, connections, workflowName, workflowDescription, workflowCategory, workflowGoal, selectedWorkflowId])
+  
   const [waitingResponse, setWaitingResponse] = useState("")
   const [waitingMessage, setWaitingMessage] = useState<string | null>(null) // Captured agent message when waiting
   const workflowStepsMapRef = useRef<Map<string, WorkflowStep>>(new Map())
@@ -1651,6 +1740,11 @@ export function VisualWorkflowDesigner({
         }))
       }
       localStorage.setItem('workflow-visual-data', JSON.stringify(data))
+      
+      // Mark initial load complete - auto-save can now work
+      setTimeout(() => {
+        isInitialLoadRef.current = false
+      }, 500)
     }, 100)
   }
 
@@ -3313,26 +3407,89 @@ export function VisualWorkflowDesigner({
             />
             
             {/* Workflow Name - Top Left */}
-            {workflowName && (
-              <h3 className="absolute top-3 left-3 text-sm font-semibold text-slate-200">{workflowName}</h3>
-            )}
+            <div className="absolute top-3 left-3 z-10 flex items-center gap-3">
+              {workflowName && (
+                <h3 className="text-lg font-semibold text-slate-200">{workflowName}</h3>
+              )}
+              
+              {/* Auto-save Status Indicator */}
+              {selectedWorkflowId && workflowSteps.length > 0 && (
+                <div className="flex items-center gap-1.5 text-xs">
+                  {autoSaveStatus === 'saving' && (
+                    <>
+                      <Loader2 className="h-3 w-3 animate-spin text-slate-400" />
+                      <span className="text-slate-400">Saving...</span>
+                    </>
+                  )}
+                  {autoSaveStatus === 'saved' && (
+                    <>
+                      <div className="h-2 w-2 rounded-full bg-green-500" />
+                      <span className="text-green-400">Saved</span>
+                    </>
+                  )}
+                  {autoSaveStatus === 'error' && (
+                    <>
+                      <div className="h-2 w-2 rounded-full bg-red-500" />
+                      <span className="text-red-400">Save failed</span>
+                    </>
+                  )}
+                  {autoSaveStatus === 'idle' && hasUnsavedChanges && (
+                    <>
+                      <div className="h-2 w-2 rounded-full bg-yellow-500" />
+                      <span className="text-yellow-400">Unsaved</span>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+            
+            {/* Goal Bar - Below Workflow Name */}
+            <div 
+              className="absolute top-12 left-3 right-3 z-10 flex items-center gap-2"
+              onDoubleClick={() => {
+                if (!isEditingGoal) {
+                  setIsEditingGoal(true)
+                  setEditingGoalText(workflowGoal || `Execute the ${workflowName || 'workflow'} workflow`)
+                  setTimeout(() => goalInputRef.current?.focus(), 50)
+                }
+              }}
+            >
+              <span className="text-sm font-medium text-amber-500 shrink-0">Goal:</span>
+              {isEditingGoal ? (
+                <input
+                  ref={goalInputRef}
+                  type="text"
+                  value={editingGoalText}
+                  onChange={(e) => setEditingGoalText(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      setWorkflowGoal(editingGoalText)
+                      onWorkflowGoalChange?.(editingGoalText)
+                      setIsEditingGoal(false)
+                    } else if (e.key === 'Escape') {
+                      setIsEditingGoal(false)
+                    }
+                  }}
+                  onBlur={() => {
+                    setWorkflowGoal(editingGoalText)
+                    onWorkflowGoalChange?.(editingGoalText)
+                    setIsEditingGoal(false)
+                  }}
+                  className="flex-1 bg-slate-800/80 border border-slate-600 rounded px-2 py-1 text-sm text-slate-200 focus:outline-none focus:border-indigo-500"
+                  placeholder="Enter workflow goal..."
+                />
+              ) : (
+                <p 
+                  className="text-sm text-slate-200 truncate cursor-pointer hover:text-white flex-1"
+                  title="Double-click to edit goal"
+                >
+                  {workflowGoal || `Execute the ${workflowName || 'workflow'} workflow`}
+                </p>
+              )}
+            </div>
             
             {/* Canvas Action Buttons - Bottom Right */}
             <div className="absolute bottom-3 right-3 flex gap-2">
-              {/* Save Workflow Button - only show if there are unsaved changes */}
-              {hasUnsavedChanges && workflowSteps.length > 0 && (
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={handleQuickSave}
-                  className="h-8 text-xs bg-indigo-600/90 hover:bg-indigo-500 border border-indigo-400 text-white"
-                  title="Save workflow to catalog"
-                >
-                  <Save className="h-3 w-3 mr-1.5" />
-                  Save
-                </Button>
-              )}
-              
               {/* Edit Workflow Text Button - only show if workflow loaded */}
               {workflowSteps.length > 0 && (
                 <Button
