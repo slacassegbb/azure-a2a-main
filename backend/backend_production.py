@@ -175,14 +175,14 @@ def test_database_connection():
 async def execute_scheduled_workflow(workflow_name: str, session_id: str, timeout: int = 300):
     """Execute a workflow for the scheduler. Returns result dict.
     
-    Note: We use a unique scheduler-specific session ID to prevent
-    scheduled workflow messages from appearing in the user's active UI.
+    Note: Uses the user's original session_id to access their memory and files.
+    This allows scheduled workflows to access uploaded documents and previous context.
     """
     global agent_server
     
-    # Generate a unique scheduler session ID to isolate from user sessions
-    # This prevents scheduled workflow messages from appearing in the user's conversation
-    scheduler_session_id = f"scheduler_{uuid.uuid4().hex[:12]}"
+    # Use the user's original session_id to access their memory/files
+    # This allows scheduled workflows to search memory and access uploaded documents
+    scheduler_session_id = session_id
     
     from service.workflow_service import WorkflowService
     from service.agent_registry import get_registry, get_session_registry
@@ -2585,15 +2585,13 @@ Read-Host "Press Enter to close this window"
                 
                 print(f"[INFO] Listed {len(files)} files from local filesystem for session: {session_id}")
             
-            # Also include agent-generated files from the registry
-            try:
-                from service.agent_file_registry import get_agent_files
-                agent_files = get_agent_files(session_id)
-                if agent_files:
-                    files.extend(agent_files)
-                    print(f"[INFO] Added {len(agent_files)} agent-generated files for session: {session_id}")
-            except Exception as agent_files_error:
-                print(f"[WARN] Failed to get agent files: {agent_files_error}")
+            # UNIFIED STORAGE: No need to query agent file registry anymore
+            # All files (user uploads + agent-generated) are in uploads/{session_id}/
+            # The agent file registry is deprecated with unified storage
+            
+            # NO DEDUPLICATION - show all files from blob storage as-is
+            # Each file has a unique ID (file_id from path), even if filenames are identical
+            # The file history should be the source of truth for what's in blob storage
             
             # Sort by upload date (most recent first)
             files.sort(key=lambda f: f.get('uploadedAt', ''), reverse=True)
@@ -2656,23 +2654,37 @@ Read-Host "Press Enter to close this window"
                 container_name = os.getenv('AZURE_BLOB_CONTAINER', 'a2a-files')
                 container_client = blob_service_client.get_container_client(container_name)
                 
-                # Search for blobs matching this file_id
-                # Could be: uploads/{session_id}/{file_id}/* or image-generator/{file_id}/*
+                # UNIFIED STORAGE: Delete from uploads/{session_id}/{file_id}/*
+                # This is much faster than scanning all blobs
                 deleted_count = 0
-                for blob in container_client.list_blobs():
-                    # Check if this blob matches the file_id
-                    if file_id in blob.name:
-                        parts = blob.name.split('/')
-                        # Verify it's actually the file_id we want (not just a substring match)
-                        if file_id in parts:
+                prefix = f"uploads/{session_id}/{file_id}/"
+                
+                for blob in container_client.list_blobs(name_starts_with=prefix):
+                    try:
+                        blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob.name)
+                        blob_client.delete_blob()
+                        deleted_count += 1
+                        print(f"[INFO] Deleted blob: {blob.name}")
+                    except Exception as delete_err:
+                        # Ignore errors (file might be expired/already deleted)
+                        print(f"[WARN] Could not delete blob {blob.name}: {delete_err}")
+                
+                # FALLBACK: Also check legacy agent-specific paths (image-generator, video-generator, email-attachments)
+                if deleted_count == 0:
+                    legacy_prefixes = [
+                        f"image-generator/{file_id}/",
+                        f"video-generator/{file_id}/",
+                        f"email-attachments/{file_id}/"
+                    ]
+                    for legacy_prefix in legacy_prefixes:
+                        for blob in container_client.list_blobs(name_starts_with=legacy_prefix):
                             try:
                                 blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob.name)
                                 blob_client.delete_blob()
                                 deleted_count += 1
-                                print(f"[INFO] Deleted blob: {blob.name}")
+                                print(f"[INFO] Deleted legacy blob: {blob.name}")
                             except Exception as delete_err:
-                                # Ignore errors (file might be expired/already deleted)
-                                print(f"[WARN] Could not delete blob {blob.name}: {delete_err}")
+                                print(f"[WARN] Could not delete legacy blob {blob.name}: {delete_err}")
                 
                 if deleted_count > 0:
                     deleted_from_blob = True
@@ -2717,13 +2729,26 @@ Read-Host "Press Enter to close this window"
                 except Exception as memory_error:
                     print(f"[WARN] Memory index delete failed (this is OK): {memory_error}")
             
+            # Delete from agent file registry
+            deleted_from_registry = False
+            try:
+                from service.agent_file_registry import delete_agent_file
+                deleted_from_registry = delete_agent_file(session_id, file_id)
+                if deleted_from_registry:
+                    print(f"[INFO] Deleted file from agent file registry: {file_id}")
+                else:
+                    print(f"[INFO] File not found in agent file registry: {file_id}")
+            except Exception as registry_error:
+                print(f"[WARN] Agent file registry delete failed (this is OK): {registry_error}")
+            
             # Always return success (idempotent operation)
             return {
                 "success": True,
                 "deleted_from_blob": deleted_from_blob,
                 "deleted_from_local": deleted_from_local,
                 "deleted_from_memory": deleted_from_memory,
-                "message": "File deleted successfully" if (deleted_from_blob or deleted_from_local or deleted_from_memory) else "File not found (might be expired or already deleted)"
+                "deleted_from_registry": deleted_from_registry,
+                "message": "File deleted successfully" if (deleted_from_blob or deleted_from_local or deleted_from_memory or deleted_from_registry) else "File not found (might be expired or already deleted)"
             }
         
         except Exception as e:

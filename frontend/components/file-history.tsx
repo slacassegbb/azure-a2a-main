@@ -202,27 +202,24 @@ export function FileHistory({ className, onFileSelect, onFilesLoaded, conversati
   // Use useCallback to prevent recreating the function on every render
   const addFileToHistory = useCallback((fileData: any) => {
     const fileRecord: FileRecord = {
-      id: fileData.file_id || Date.now().toString(),
+      id: fileData.id || fileData.file_id || Date.now().toString(),
       filename: fileData.filename,
       originalName: fileData.filename,
       size: fileData.size || 0,
-      contentType: fileData.content_type || '',
-      uploadedAt: new Date(),
+      contentType: fileData.content_type || fileData.contentType || '',
+      uploadedAt: fileData.uploadedAt ? new Date(fileData.uploadedAt) : new Date(),
       uri: fileData.uri || '',
       status: (fileData.status as FileStatus) || 'uploaded'  // Use provided status or default to 'uploaded'
     }
 
-    // Deduplicate by filename only - replace if same filename exists
+    // Deduplicate by file ID only - each file in blob storage is unique by ID
+    // This allows multiple files with the same filename to appear in the list
     setFiles(prev => {
-      // Check if file with same filename already exists
-      const existingIndex = prev.findIndex(f => f.filename === fileRecord.filename)
+      // Check if file with same ID already exists
+      const existingIndex = prev.findIndex(f => f.id === fileRecord.id)
       
       if (existingIndex !== -1) {
         const existingFile = prev[existingIndex]
-        
-        // IMPORTANT: Preserve the existing ID so that in-flight operations (like processing)
-        // can still find the file by their original ID reference
-        const preservedId = existingFile.id
         
         // IMPORTANT: Preserve advanced status (processing, analyzed) - don't let late events overwrite
         // Status priority: analyzed > processing > error > uploading > uploaded
@@ -239,23 +236,21 @@ export function FileHistory({ className, onFileSelect, onFilesLoaded, conversati
         // Only update status if new status has higher priority
         const preservedStatus = newPriority >= existingPriority ? fileRecord.status : existingFile.status
         
-        console.log('[FileHistory] Updating existing file:', fileRecord.filename, 
-          'preservedId:', preservedId, 'existingStatus:', existingFile.status, 
+        console.log('[FileHistory] Updating existing file by ID:', fileRecord.id, 
+          'existingStatus:', existingFile.status, 
           'newStatus:', fileRecord.status, 'preserved:', preservedStatus)
         
-        // Merge new data but preserve ID and status
-        const mergedRecord = { ...existingFile, ...fileRecord, id: preservedId, status: preservedStatus }
+        // Merge new data but preserve status
+        const mergedRecord = { ...existingFile, ...fileRecord, status: preservedStatus }
         
         const updated = [...prev]
         updated[existingIndex] = mergedRecord
-        // Move it to the front (most recent)
-        updated.splice(existingIndex, 1)
-        return [mergedRecord, ...updated].slice(0, 50)
+        return updated
       }
       
-      // Add new file and keep last 50
-      console.log('[FileHistory] Adding new file:', fileRecord.filename)
-      return [fileRecord, ...prev].slice(0, 50)
+      // Add new file and keep last 100 (increased from 50 to accommodate more files)
+      console.log('[FileHistory] Adding new file:', fileRecord.filename, 'id:', fileRecord.id)
+      return [fileRecord, ...prev].slice(0, 100)
     })
   }, []) // Empty deps - setFiles is stable
 
