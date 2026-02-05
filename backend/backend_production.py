@@ -1321,6 +1321,7 @@ def main():
         timeout: int = 300  # Timeout in seconds (default 5 min)
         enable_routing: bool = True  # Whether to enable intelligent workflow routing
         activated_workflow_ids: Optional[List[str]] = None  # Optional list of activated workflow IDs to filter by
+        workflow: Optional[str] = None  # Optional explicit workflow to execute (bypasses routing)
     
     @app.post("/api/query")
     async def execute_query(
@@ -1453,6 +1454,11 @@ def main():
         
         # Process message with routing enabled
         try:
+            # If explicit workflow provided, use it directly (workflow designer test mode)
+            explicit_workflow = request.workflow if request.workflow else None
+            if explicit_workflow:
+                print(f"[Query API] 🎯 Using explicit workflow (workflow designer mode)")
+            
             print(f"[Query API] 🚀 Processing query (timeout: {request.timeout}s)")
             start_time = time.time()
             
@@ -1462,8 +1468,8 @@ def main():
                     message, 
                     agent_mode=None,  # Auto-detect based on routing
                     enable_inter_agent_memory=True,
-                    workflow=None,  # No pre-defined workflow - let routing decide
-                    available_workflows=available_workflows if available_workflows else None
+                    workflow=explicit_workflow,  # Use explicit workflow if provided, else let routing decide
+                    available_workflows=available_workflows if (available_workflows and not explicit_workflow) else None
                 ), 
                 main_loop
             )

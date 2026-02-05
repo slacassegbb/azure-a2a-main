@@ -3132,18 +3132,35 @@ export function VisualWorkflowDesigner({
               <h3 className="absolute top-3 left-3 text-sm font-semibold text-slate-200">{workflowName}</h3>
             )}
             
-            {/* Edit Workflow Text Button - Bottom Right - only show if workflow loaded */}
-            {workflowSteps.length > 0 && (
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => setShowTextEditorDialog(true)}
-                className="absolute bottom-3 right-3 h-8 text-xs bg-slate-800/90 hover:bg-slate-700 border border-slate-600"
-              >
-                <FileText className="h-3 w-3 mr-1.5" />
-                Edit Text
-              </Button>
-            )}
+            {/* Canvas Action Buttons - Bottom Right */}
+            <div className="absolute bottom-3 right-3 flex gap-2">
+              {/* Save Workflow Button - show if workflow has steps */}
+              {workflowSteps.length > 0 && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={handleQuickSave}
+                  className="h-8 text-xs bg-indigo-600/90 hover:bg-indigo-500 border border-indigo-400 text-white"
+                  title="Save workflow to catalog"
+                >
+                  <Save className="h-3 w-3 mr-1.5" />
+                  Save
+                </Button>
+              )}
+              
+              {/* Edit Workflow Text Button - only show if workflow loaded */}
+              {workflowSteps.length > 0 && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setShowTextEditorDialog(true)}
+                  className="h-8 text-xs bg-slate-800/90 hover:bg-slate-700 border border-slate-600"
+                >
+                  <FileText className="h-3 w-3 mr-1.5" />
+                  Edit Text
+                </Button>
+              )}
+            </div>
           </div>
 
           {/* Text Editor Dialog */}
@@ -3194,6 +3211,7 @@ export function VisualWorkflowDesigner({
                   sessionId={currentSessionId} 
                   contextId={createContextId(workflowConversationId || activeConversationId || 'workflow-test')}
                   conversationId={workflowConversationId || activeConversationId || 'workflow-test'}
+                  workflow={generateWorkflowTextFromRefs()}
                   disabled={isTesting}
                 />
                 <Button

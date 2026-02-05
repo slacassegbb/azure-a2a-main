@@ -6,6 +6,7 @@ interface VoiceRealtimeConfig {
   apiUrl: string;
   sessionId: string;  // Session ID for agent lookup (e.g., sess_xxx)
   contextId: string;  // Full context ID for WebSocket routing (e.g., sess_xxx::conversation-id)
+  workflow?: string;  // Optional explicit workflow for workflow designer testing
   onTranscript?: (text: string, isFinal: boolean) => void;
   onResult?: (result: string) => void;
   onError?: (error: string) => void;
@@ -314,9 +315,15 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig): VoiceRealtimeHook
         timeout: 120,
       };
       
-      // Only include activated_workflow_ids if we have them
-      if (activatedWorkflowIds && activatedWorkflowIds.length > 0) {
+      // Only include activated_workflow_ids if we have them (and no explicit workflow)
+      if (activatedWorkflowIds && activatedWorkflowIds.length > 0 && !config.workflow) {
         requestBody.activated_workflow_ids = activatedWorkflowIds;
+      }
+      
+      // Include explicit workflow if provided (workflow designer testing mode)
+      if (config.workflow) {
+        requestBody.workflow = config.workflow;
+        console.log("[VoiceRealtime] 🎯 Using explicit workflow (workflow designer mode)");
       }
       
       console.log("[VoiceRealtime] Request body:", requestBody);

@@ -21,6 +21,7 @@ interface VoiceButtonProps {
   sessionId: string;  // The session ID for agent lookup (e.g., sess_xxx)
   contextId: string;  // The full context ID for conversation tracking (e.g., sess_xxx::conversation-id)
   conversationId: string;  // The raw conversation ID from URL (to detect 'frontend-chat-context')
+  workflow?: string;  // Optional explicit workflow for workflow designer testing
   onEnsureConversation?: () => Promise<string | null>;  // Callback to create conversation if needed, returns new conversation ID
   onFirstMessage?: (conversationId: string, transcript: string) => void;  // Callback when first voice message is sent (for title update)
   onNewMessage?: (message: VoiceMessage) => void;
@@ -46,7 +47,7 @@ function formatMarkdown(text: string): string {
     .replace(/\n/g, '<br/>');
 }
 
-export function VoiceButton({ sessionId, contextId, conversationId, onEnsureConversation, onFirstMessage, onNewMessage, disabled = false, disabledMessage }: VoiceButtonProps) {
+export function VoiceButton({ sessionId, contextId, conversationId, workflow, onEnsureConversation, onFirstMessage, onNewMessage, disabled = false, disabledMessage }: VoiceButtonProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [isVisible, setIsVisible] = useState(false);
   const [showDisabledTooltip, setShowDisabledTooltip] = useState(false);
@@ -82,6 +83,7 @@ export function VoiceButton({ sessionId, contextId, conversationId, onEnsureConv
     apiUrl: API_BASE_URL,
     sessionId: sessionId,    // Session ID for agent lookup (e.g., sess_xxx)
     contextId: activeContextId,    // Full context ID for conversation tracking (may be updated after conversation creation)
+    workflow: workflow,    // Optional explicit workflow for workflow designer testing
     onTranscript: (text) => {
       console.log("[VoiceButton] Transcript:", text);
       lastTranscriptRef.current = text;
