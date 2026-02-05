@@ -354,7 +354,7 @@ export function ChatHistorySidebar({ isCollapsed, onToggle }: Props) {
 
   return (
     <TooltipProvider delayDuration={0}>
-      <div className={cn("flex flex-col transition-all duration-300")}>
+      <div className={cn("flex flex-col h-full transition-all duration-300")}>
         {isCollapsed ? (
           // Collapsed state - minimal vertical layout
           <div className="flex flex-col items-center justify-start py-2">
@@ -432,7 +432,7 @@ export function ChatHistorySidebar({ isCollapsed, onToggle }: Props) {
               </Tooltip>
             </div>
             
-            <div className="flex-1 overflow-y-auto">
+            <div className="flex-1 overflow-y-auto min-h-0">
               {isLoading && (
                 <div className="p-2 text-sm text-muted-foreground">
                   Loading conversations...

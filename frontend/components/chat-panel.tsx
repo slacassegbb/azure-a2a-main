@@ -2017,9 +2017,23 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       if (data.agentName && data.content) {
         const content = data.content
         
-        // If we receive agent activity, inference is happening - show the workflow panel
-        // This helps collaborators who join mid-workflow see the progress
-        setIsInferencing(true)
+        // Check if this is a completion message - these should trigger isInferencing(false)
+        // and should be added as the final step but not keep the panel spinning
+        const isCompletionMessage = content.includes("completed the task") ||
+                                    content.includes("completed successfully") ||
+                                    content.includes("task complete") ||
+                                    content === "completed"
+        
+        // If we receive a completion message, DON'T set isInferencing to true
+        // In fact, we should add the step but then wait for final_response to clear the panel
+        // However, if final_response doesn't arrive (e.g., in certain edge cases), 
+        // we should still allow the panel to eventually close
+        if (!isCompletionMessage) {
+          // Only set isInferencing(true) for non-completion activity
+          setIsInferencing(true)
+        }
+        // Note: We don't set isInferencing(false) here because final_response should handle that
+        // But we do need to add completion messages as steps (so they show in the panel)
         
         const isNoisyUpdate = content === "task started" ||
                              content === "processing" ||
@@ -2469,6 +2483,10 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       // Check if we've already processed this exact message
       if (processedMessageIds.has(responseId)) {
         console.log("[ChatPanel] Duplicate response detected, skipping:", responseId)
+        // Still clear inferencing state even for duplicates - the workflow is complete
+        setIsInferencing(false)
+        setInferenceSteps([])
+        setActiveNode(null)
         return
       }
       

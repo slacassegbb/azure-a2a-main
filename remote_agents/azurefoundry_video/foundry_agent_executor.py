@@ -183,7 +183,7 @@ class FoundryTemplateAgentExecutor(AgentExecutor):
             tools_called = []
             seen_tools = set()
             
-            async for event in agent.run_conversation_stream(thread_id, user_message):
+            async for event in agent.run_conversation_stream(thread_id, user_message, context_id=context_id):
                 # Check if this is a tool call event from remote agent
                 if event.startswith("🛠️ Remote agent executing:"):
                     tool_description = event.replace("🛠️ Remote agent executing: ", "").strip()

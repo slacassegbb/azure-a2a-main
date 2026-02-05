@@ -523,7 +523,16 @@ async def process_file_part(file_part, artifact_info=None, session_id: str = Non
         # NOTE: Document content is ALWAYS stored regardless of memory toggle setting.
         # This ensures uploaded files are searchable for the search_memory tool.
         # The memory toggle only controls whether A2A conversation interactions are stored.
+        chunks_stored = 0
         if session_id:
+            # Estimate chunks: ~6000 chars per chunk with 500 overlap
+            CHUNK_SIZE = 6000
+            CHUNK_THRESHOLD = 24000
+            if len(processed_content) > CHUNK_THRESHOLD:
+                chunks_stored = max(1, len(processed_content) // (CHUNK_SIZE - 500))
+            else:
+                chunks_stored = 1
+            
             await a2a_memory_service.store_interaction(interaction_data, session_id=session_id)
             print(f"[A2ADocumentProcessor] Successfully processed and stored: {filename} (session: {session_id})")
         else:
@@ -536,7 +545,8 @@ async def process_file_part(file_part, artifact_info=None, session_id: str = Non
             "success": True,
             "content": _strip_markdown_fences(processed_content),
             "filename": filename,
-            "file_type": determine_file_type(filename)
+            "file_type": determine_file_type(filename),
+            "chunks_stored": chunks_stored
         }
         
     except Exception as e:

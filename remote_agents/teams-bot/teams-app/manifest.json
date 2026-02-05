@@ -1,0 +1,35 @@
+{
+  "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.24/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.24",
+  "version": "1.0.0",
+  "id": "44b9003e-c33c-4006-a605-eeba484a8233",
+  "packageName": "com.caydigital.a2abot",
+  "developer": {
+    "name": "CayDigital LLC",
+    "websiteUrl": "https://caydigital.ai",
+    "privacyUrl": "https://caydigital.ai/privacy",
+    "termsOfUseUrl": "https://caydigital.ai/terms"
+  },
+  "name": {
+    "short": "A2A Bot",
+    "full": "A2A Bot"
+  },
+  "description": {
+    "short": "Internal A2A human-in-the-loop bot.",
+    "full": "Teams bot used for A2A human-in-the-loop testing and orchestration."
+  },
+  "icons": {
+    "color": "color.png",
+    "outline": "outline.png"
+  },
+  "accentColor": "#6264A7",
+  "bots": [
+    {
+      "botId": "44b9003e-c33c-4006-a605-eeba484a8233",
+      "scopes": ["personal"],
+      "isNotificationOnly": false
+    }
+  ],
+  "permissions": ["identity", "messageTeamMembers"],
+  "validDomains": []
+}

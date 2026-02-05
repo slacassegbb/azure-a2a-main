@@ -37,7 +37,12 @@ def _get_connection():
             cur.execute("SELECT 1")
             cur.close()
             return _db_conn
-        except Exception:
+        except Exception as e:
+            print(f"[ChatHistoryService] ⚠️ Connection test failed: {e}, reconnecting...")
+            try:
+                _db_conn.close()
+            except:
+                pass
             _db_conn = None
     
     if DATABASE_URL:
@@ -335,6 +340,21 @@ def add_message(conversation_id: str, message: Dict[str, Any]) -> bool:
     task_id = message.get("taskId") or message.get("task_id")
     metadata = message.get("metadata", {})
     
+    # Auto-create conversation if it doesn't exist
+    if conversation_id not in _conversations_cache:
+        # Extract session_id from context_id (format: "user_3::uuid")
+        session_id = conversation_id.split("::")[0] if "::" in conversation_id else "default"
+        # Get first message text for conversation name
+        name = ""
+        if parts and isinstance(parts, list) and len(parts) > 0:
+            first_part = parts[0]
+            if isinstance(first_part, dict):
+                if 'root' in first_part and isinstance(first_part['root'], dict):
+                    name = first_part['root'].get('text', '')[:50]
+                elif 'text' in first_part:
+                    name = first_part.get('text', '')[:50]
+        create_conversation(conversation_id, session_id, name or f"Chat {conversation_id[-8:]}")
+    
     # Serialize parts if needed
     if isinstance(parts, list):
         # Convert Pydantic models to dicts if needed
@@ -375,34 +395,39 @@ def add_message(conversation_id: str, message: Dict[str, Any]) -> bool:
     
     # Persist to database
     conn = _get_connection()
-    if conn:
-        try:
-            cur = conn.cursor()
-            
-            # Insert message
-            cur.execute("""
-                INSERT INTO messages (message_id, conversation_id, role, parts, context_id, task_id, metadata, created_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (conversation_id, message_id) DO UPDATE SET
-                    parts = EXCLUDED.parts,
-                    metadata = EXCLUDED.metadata
-            """, (message_id, conversation_id, role, json.dumps(parts), context_id, task_id, 
-                  json.dumps(metadata) if metadata else None, datetime.utcnow()))
-            
-            # Update conversation timestamp
-            cur.execute("""
-                UPDATE conversations SET updated_at = %s WHERE conversation_id = %s
-            """, (datetime.utcnow(), conversation_id))
-            
-            conn.commit()
-            cur.close()
-            return True
-            
-        except Exception as e:
-            print(f"[ChatHistoryService] Error adding message: {e}")
-            conn.rollback()
+    if not conn:
+        print(f"[ChatHistoryService] ❌ No database connection - message NOT persisted: {message_id[:16]}...")
+        return False
     
-    return False
+    try:
+        cur = conn.cursor()
+        
+        # Insert message
+        cur.execute("""
+            INSERT INTO messages (message_id, conversation_id, role, parts, context_id, task_id, metadata, created_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (conversation_id, message_id) DO UPDATE SET
+                parts = EXCLUDED.parts,
+                metadata = EXCLUDED.metadata
+        """, (message_id, conversation_id, role, json.dumps(parts), context_id, task_id, 
+              json.dumps(metadata) if metadata else None, datetime.utcnow()))
+        
+        # Update conversation timestamp
+        cur.execute("""
+            UPDATE conversations SET updated_at = %s WHERE conversation_id = %s
+        """, (datetime.utcnow(), conversation_id))
+        
+        conn.commit()
+        cur.close()
+        return True
+        
+    except Exception as e:
+        print(f"[ChatHistoryService] ❌ Error adding message: {e}")
+        try:
+            conn.rollback()
+        except:
+            pass
+        return False
 
 
 def get_messages(conversation_id: str) -> List[Dict[str, Any]]:

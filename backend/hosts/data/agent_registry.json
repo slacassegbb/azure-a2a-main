@@ -394,7 +394,7 @@
     "name": "AI Foundry QuickBooks Agent",
     "description": "An intelligent QuickBooks Online agent for accounting and financial management. Manage customers, invoices, bills, vendors, employees, and generate financial reports.",
     "version": "1.0.0",
-    "url": "http://localhost:8020/",
+    "url": "https://azurefoundry-quickbooks.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
     "defaultInputModes": [
       "text"
     ],
@@ -983,6 +983,66 @@
           "compose",
           "write",
           "communication"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Teams Agent",
+    "description": "Human-in-the-loop agent via Microsoft Teams. Can SEND messages to users, WAIT for human responses, and ESCALATE decisions requiring human judgment. Uses A2A input_required state for pause/resume workflows.",
+    "version": "1.0.0",
+    "url": "http://localhost:3978/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "teams_send_message",
+        "name": "Send Teams Message",
+        "description": "Send a message to a user via Microsoft Teams. Use this to communicate with humans, ask questions, or provide updates.",
+        "examples": null,
+        "tags": [
+          "teams",
+          "message",
+          "send",
+          "communicate",
+          "notify",
+          "human"
+        ]
+      },
+      {
+        "id": "teams_wait_response",
+        "name": "Wait for Human Response",
+        "description": "Wait for a human to respond via Microsoft Teams. Use this for approval workflows, getting feedback, or any scenario requiring human input. The workflow will pause until the human responds.",
+        "examples": null,
+        "tags": [
+          "teams",
+          "wait",
+          "response",
+          "human-in-the-loop",
+          "approval",
+          "input",
+          "feedback"
+        ]
+      },
+      {
+        "id": "teams_human_escalation",
+        "name": "Human Escalation",
+        "description": "Escalate a task to a human via Teams when the AI cannot proceed autonomously. The human can provide guidance, make decisions, or take over the task.",
+        "examples": null,
+        "tags": [
+          "escalation",
+          "human",
+          "help",
+          "assistance",
+          "decision",
+          "override"
         ]
       }
     ]

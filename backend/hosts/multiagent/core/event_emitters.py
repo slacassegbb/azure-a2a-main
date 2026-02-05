@@ -188,8 +188,29 @@ class EventEmitters:
             from service.websocket_streamer import get_websocket_streamer
             streamer = await get_websocket_streamer()
             if streamer:
+                # Extract file_id from unified blob path: uploads/{session_id}/{file_id}/{filename}
+                # This ensures the WebSocket event file_id matches the blob storage file_id
+                file_id = None
+                try:
+                    from urllib.parse import urlparse
+                    parsed = urlparse(uri)
+                    path_parts = parsed.path.split('/')
+                    # Find 'uploads' in path and get file_id (2 positions after uploads)
+                    for i, part in enumerate(path_parts):
+                        if part == 'uploads' and i + 2 < len(path_parts):
+                            # path_parts[i+1] = session_id, path_parts[i+2] = file_id
+                            file_id = path_parts[i + 2]
+                            break
+                except Exception as e:
+                    log_debug(f"Could not extract file_id from URI {uri}: {e}")
+                
+                # Fallback to generating UUID if extraction failed
+                if not file_id:
+                    file_id = str(uuid.uuid4())
+                    log_debug(f"Using generated file_id for {filename}: {file_id}")
+                
                 file_info = {
-                    "file_id": str(uuid.uuid4()),
+                    "file_id": file_id,
                     "filename": filename,
                     "uri": uri,
                     "size": size,
@@ -198,13 +219,71 @@ class EventEmitters:
                     "contextId": context_id
                 }
                 await streamer.stream_file_uploaded(file_info, context_id)
-                log_debug(f"File uploaded event sent: {filename} from {agent_name}")
+                log_debug(f"File uploaded event sent: {filename} from {agent_name} (id={file_id})")
                 return True
             else:
                 log_debug(f"No WebSocket streamer available for file event: {filename}")
                 return False
         except Exception as e:
             log_debug(f"Error emitting file artifact event: {e}")
+            return False
+
+    async def _emit_file_analyzed_event(
+        self,
+        filename: str,
+        uri: str,
+        context_id: str,
+        session_id: str
+    ) -> bool:
+        """
+        Emit a file_processing_completed event to notify the UI that a file has been analyzed.
+        This updates the file status from 'uploaded' to 'analyzed' in the file history UI.
+        """
+        try:
+            from service.websocket_streamer import get_websocket_streamer
+            
+            streamer = await get_websocket_streamer()
+            if streamer:
+                # Extract file_id from unified blob path: uploads/{session_id}/{file_id}/{filename}
+                # The URI looks like: https://storage.blob.../a2a-files/uploads/{session_id}/{file_id}/{filename}?sas=...
+                file_id = None
+                try:
+                    # Parse the URI to extract file_id from path
+                    from urllib.parse import urlparse
+                    parsed = urlparse(uri)
+                    path_parts = parsed.path.split('/')
+                    # Find 'uploads' in path and get file_id (2 positions after session_id)
+                    for i, part in enumerate(path_parts):
+                        if part == 'uploads' and i + 2 < len(path_parts):
+                            # path_parts[i+1] = session_id, path_parts[i+2] = file_id
+                            file_id = path_parts[i + 2]
+                            break
+                except Exception as e:
+                    print(f"⚠️ Could not parse file_id from URI {uri}: {e}")
+                
+                # Fallback: generate deterministic ID from URI if path parsing failed
+                if not file_id:
+                    import hashlib
+                    file_id = hashlib.md5(uri.encode()).hexdigest()[:16]
+                    print(f"⚠️ Using fallback hash ID for {filename}: {file_id}")
+                
+                event_data = {
+                    "fileId": file_id,
+                    "filename": filename,
+                    "status": "analyzed",
+                    "contextId": context_id
+                }
+                
+                await streamer._send_event("file_processing_completed", event_data, context_id)
+                print(f"📤 File analyzed event sent: {filename} (id={file_id})")
+                log_debug(f"File analyzed event sent: {filename}")
+                return True
+            else:
+                log_debug(f"No WebSocket streamer available for file analyzed event: {filename}")
+                return False
+        except Exception as e:
+            print(f"❌ Error emitting file analyzed event: {e}")
+            log_debug(f"Error emitting file analyzed event: {e}")
             return False
 
     async def _emit_granular_agent_event(self, agent_name: str, status_text: str, context_id: str = None):

@@ -151,33 +151,17 @@ class StreamingHandlers:
                 print(f"📤 [STREAMING] Calling _emit_task_event for {agent_name}: {event_kind}")
                 self._emit_task_event(event, agent_card)
                 
-                # WORKFLOW VISIBILITY: Also emit granular workflow events
-                # Use stored host context if available, otherwise fall back to event's context
-                context_id_for_event = getattr(self, '_current_host_context_id', None) or get_context_id(event, None)
-                if event_kind == 'status-update':
-                    # Extract actual text from status message
-                    status_text = "processing"
-                    if hasattr(event, 'status') and event.status:
-                        if hasattr(event.status, 'message') and event.status.message:
-                            if hasattr(event.status.message, 'parts') and event.status.message.parts:
-                                for part in event.status.message.parts:
-                                    if hasattr(part, 'root') and hasattr(part.root, 'text'):
-                                        status_text = part.root.text
-                                        break
-                        elif hasattr(event.status, 'state'):
-                            state = event.status.state
-                            state_value = state.value if hasattr(state, 'value') else str(state)
-                            status_text = f"status: {state_value}"
-                    asyncio.create_task(self._emit_granular_agent_event(agent_name, status_text, context_id_for_event))
-                
-                elif event_kind == 'artifact-update':
-                    asyncio.create_task(self._emit_granular_agent_event(agent_name, "generating artifact", context_id_for_event))
+                # NOTE: _emit_granular_agent_event is NOT called here anymore
+                # The custom streaming callback in foundry_agent_a2a.py already emits these events
+                # with proper host_context_id before calling _default_task_callback.
+                # Emitting here caused duplicate remote_agent_activity events in the UI.
             
             elif event_kind == 'task':
                 log_debug(f"[STREAMING] Skipping UI emit for 'task' event from {agent_name} (internal tracking only)")
-                # But still emit to workflow for task started
-                context_id_for_event = getattr(self, '_current_host_context_id', None) or get_context_id(event, None)
-                asyncio.create_task(self._emit_granular_agent_event(agent_name, "task started", context_id_for_event))
+                # NOTE: _emit_granular_agent_event is NOT called here anymore
+                # The custom streaming callback in foundry_agent_a2a.py already emits these events
+                # with proper host_context_id before calling _default_task_callback.
+                # Emitting here caused duplicate remote_agent_activity events in the UI.
             # Skip other intermediate events
         
         # Get or create task for this specific agent

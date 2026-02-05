@@ -122,6 +122,8 @@ from utils.file_parts import (
     extract_all_images,
     convert_artifact_dict_to_file_part,
 )
+# Chat history persistence
+from service.chat_history_service import add_message as persist_message, create_conversation
 import time
 
 # Load environment configuration from project root
@@ -1084,7 +1086,6 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
         Returns:
             JSON string with search results containing relevant excerpts
         """
-        import json
         import traceback
         
         print(f"\n🧠🧠🧠 [SEARCH_MEMORY_SYNC] CALLED by Azure SDK!")
@@ -1251,8 +1252,6 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
         Returns:
             JSON string with response text, file URIs, and video metadata
         """
-        import json
-        
         if not response_parts:
             return json.dumps({
                 "agent": agent_name,
@@ -1769,7 +1768,6 @@ Answer with just JSON:
             
             # Parse JSON response
             try:
-                import json
                 # Extract JSON from response (in case there's extra text)
                 start_idx = evaluation_response.find('{')
                 end_idx = evaluation_response.rfind('}') + 1
@@ -2206,7 +2204,9 @@ Answer with just JSON:
         Returns:
             Response list if HITL was handled, None if no pending agent (fall through to normal flow)
         """
+        log_info(f"🔄 [HITL CHECK] pending_input_agent = '{session_context.pending_input_agent}', pending_workflow = '{session_context.pending_workflow[:50] if session_context.pending_workflow else None}'")
         if not session_context.pending_input_agent:
+            log_info(f"🔄 [HITL CHECK] No pending agent, falling through to normal processing")
             return None
             
         pending_agent = session_context.pending_input_agent
@@ -2216,7 +2216,8 @@ Answer with just JSON:
         
         log_info(f"🔄 [HITL] Found pending input_required agent: '{pending_agent}' (task_id: {pending_task_id})")
         log_info(f"🔄 [HITL] Routing user response directly to waiting agent instead of orchestration")
-        if pending_workflow:
+        log_info(f"🔄 [HITL] DEBUG: pending_workflow = '{pending_workflow[:100] if pending_workflow else None}...', type={type(pending_workflow)}")
+        if pending_workflow and pending_workflow.strip():
             log_info(f"🔄 [HITL] Workflow will resume after agent completes ({len(pending_workflow_outputs)} outputs collected)")
         
         # Clear the pending state before routing
@@ -2251,28 +2252,52 @@ Answer with just JSON:
                 log_info(f"🔄 [HITL] Agent still requires more input - staying paused")
                 return clean_response(hitl_response)
             
-            # Agent completed! Check if we need to resume a paused workflow
-            if pending_workflow:
-                log_info(f"▶️ [HITL] Agent completed - RESUMING WORKFLOW")
+            # Agent completed! Check if we need to resume a paused workflow or ad-hoc orchestration
+            # Get the original user message for ad-hoc resume
+            pending_user_message = session_context.pending_workflow_user_message
+            
+            # Resume if we have a workflow OR an original user message (ad-hoc)
+            if (pending_workflow and pending_workflow.strip()) or pending_user_message:
+                is_adhoc = not (pending_workflow and pending_workflow.strip())
+                mode_str = "AD-HOC ORCHESTRATION" if is_adhoc else "WORKFLOW"
+                log_info(f"▶️ [HITL] Agent completed - RESUMING {mode_str}")
                 
                 # Add this agent's response to the collected outputs
                 hitl_outputs = clean_response(hitl_response)
                 all_outputs = pending_workflow_outputs + hitl_outputs
                 
-                # Clear workflow pause state
+                # Clear workflow pause state BEFORE resuming to prevent loops
+                saved_workflow = pending_workflow
+                saved_user_message = pending_user_message
                 session_context.pending_workflow = None
                 session_context.pending_workflow_outputs = []
                 session_context.pending_workflow_user_message = None
                 
-                log_info(f"▶️ [HITL] Resuming workflow with {len(all_outputs)} total outputs")
+                log_info(f"▶️ [HITL] Resuming with {len(all_outputs)} total outputs")
                 
-                # Continue the workflow from where we left off
+                # Build the resume message
+                # For workflows: "Continue the workflow..."
+                # For ad-hoc: Include original goal + context about completed step
+                if is_adhoc:
+                    hitl_output = hitl_outputs[0] if hitl_outputs else 'Step completed.'
+                    resume_message = f"""## HUMAN-IN-THE-LOOP STEP COMPLETED
+
+**Original User Goal:** {saved_user_message}
+
+**The human-in-the-loop step has completed. Here is the result:**
+{hitl_output}
+
+**IMPORTANT:** If the result above indicates the user's goal has been achieved (e.g., approval was granted, confirmation received, etc.), respond with a final summary and mark the goal as COMPLETED. Do NOT call any more agents unless the result explicitly requires follow-up action."""
+                else:
+                    resume_message = "Continue the workflow. The previous step has completed."
+                
+                # Continue the orchestration from where we left off
                 remaining_outputs = await self._agent_mode_orchestration_loop(
-                    user_message="Continue the workflow. The previous step has completed.",
+                    user_message=resume_message,
                     context_id=context_id,
                     session_context=session_context,
                     event_logger=event_logger,
-                    workflow=pending_workflow
+                    workflow=saved_workflow  # None for ad-hoc, workflow string for Visual Designer
                 )
                 
                 # Clean any remaining outputs too
@@ -2620,7 +2645,6 @@ Answer with just JSON:
             if isinstance(message, str) and message.strip().startswith('{') and 'contextId' in message:
                 # This looks like a stringified A2A message - extract just the text
                 try:
-                    import json
                     msg_obj = json.loads(message)
                     if isinstance(msg_obj, dict) and 'parts' in msg_obj:
                         for part in msg_obj['parts']:
@@ -2774,91 +2798,89 @@ Answer with just JSON:
                         event_kind = getattr(event, 'kind', 'unknown')
                         
                         if event_kind == 'status-update':
-                            # Extract detailed status information
-                            status_text = "processing"
-                            if hasattr(event, 'status') and event.status:
-                                if hasattr(event.status, 'message') and event.status.message:
-                                    if hasattr(event.status.message, 'parts') and event.status.message.parts:
-                                        # Process ALL parts - don't break early so we catch all image artifacts
-                                        for part in event.status.message.parts:
-                                            # Check for text parts
-                                            if hasattr(part, 'root') and hasattr(part.root, 'text'):
-                                                status_text = part.root.text
-                                                # Continue processing to find image artifacts - don't break!
-                                            # Check for image artifacts in DataPart
-                                            elif hasattr(part, 'root') and hasattr(part.root, 'data') and isinstance(part.root.data, dict):
-                                                artifact_uri = part.root.data.get('artifact-uri')
-                                                if artifact_uri:
-                                                    log_debug(f"Found image artifact in streaming event: {artifact_uri}")
-                                                    # Register in agent file registry for file history persistence
-                                                    session_id = host_context_id.split('::')[0] if '::' in host_context_id else host_context_id
-                                                    from service.agent_file_registry import register_agent_file
-                                                    register_agent_file(
-                                                        session_id=session_id,
-                                                        uri=artifact_uri,
-                                                        filename=part.root.data.get("file-name", "agent-artifact.png"),
-                                                        content_type="image/png",
-                                                        source_agent=agent_name
-                                                    )
-                                                    # Emit file_uploaded event - USE HOST'S contextId for routing!
-                                                    asyncio.create_task(self._emit_file_artifact_event(
-                                                        filename=part.root.data.get("file-name", "agent-artifact.png"),
-                                                        uri=artifact_uri,
-                                                        context_id=host_context_id,
-                                                        agent_name=agent_name,
-                                                        content_type="image/png",
-                                                        size=part.root.data.get("file-size", 0)
-                                                    ))
-                                            # Check for image artifacts in FilePart
-                                            elif hasattr(part, 'root') and hasattr(part.root, 'file'):
-                                                file_obj = part.root.file
-                                                if isinstance(file_obj, FileWithUri):
-                                                    file_uri = file_obj.uri
-                                                    if file_uri and str(file_uri).startswith(("http://", "https://")):
-                                                        log_debug(f"Found image artifact in streaming event (FilePart): {file_uri}")
-                                                        # Capture values to avoid closure issues
-                                                        file_name = file_obj.name
-                                                        mime_type = file_obj.mimeType if hasattr(file_obj, 'mimeType') else 'image/png'
-                                                        # Register in agent file registry for file history persistence
-                                                        session_id = host_context_id.split('::')[0] if '::' in host_context_id else host_context_id
-                                                        from service.agent_file_registry import register_agent_file
-                                                        register_agent_file(
-                                                            session_id=session_id,
-                                                            uri=str(file_uri),
-                                                            filename=file_name,
-                                                            content_type=mime_type,
-                                                            source_agent=agent_name
-                                                        )
+                            # Extract task state to decide if we should emit a UI event
+                            task_state = None
+                            if hasattr(event, 'status') and event.status and hasattr(event.status, 'state'):
+                                state_obj = event.status.state
+                                task_state = state_obj.value if hasattr(state_obj, 'value') else str(state_obj)
+                            
+                            # SKIP emitting UI events for final states (completed, input_required)
+                            # These are handled separately after the streaming completes
+                            # Only emit for intermediate states (working, submitted)
+                            if task_state in ('completed', 'input_required', 'input-required', 'failed'):
+                                log_debug(f"[STREAMING] Skipping UI emit for final state {task_state} from {agent_name}")
+                            else:
+                                # Extract detailed status information for intermediate states
+                                status_text = "processing"
+                                if hasattr(event, 'status') and event.status:
+                                    if hasattr(event.status, 'message') and event.status.message:
+                                        if hasattr(event.status.message, 'parts') and event.status.message.parts:
+                                            # Process ALL parts - don't break early so we catch all image artifacts
+                                            for part in event.status.message.parts:
+                                                # Check for text parts
+                                                if hasattr(part, 'root') and hasattr(part.root, 'text'):
+                                                    status_text = part.root.text
+                                                    # Continue processing to find image artifacts - don't break!
+                                                # Check for image artifacts in DataPart
+                                                elif hasattr(part, 'root') and hasattr(part.root, 'data') and isinstance(part.root.data, dict):
+                                                    artifact_uri = part.root.data.get('artifact-uri')
+                                                    if artifact_uri:
+                                                        log_debug(f"Found image artifact in streaming event: {artifact_uri}")
+                                                        # UNIFIED STORAGE: No need to register - files are already in uploads/{session_id}/
+                                                        # The /api/files endpoint queries blob storage directly
+                                                        
                                                         # Emit file_uploaded event - USE HOST'S contextId for routing!
                                                         asyncio.create_task(self._emit_file_artifact_event(
-                                                            filename=file_name,
-                                                            uri=str(file_uri),
+                                                            filename=part.root.data.get("file-name", "agent-artifact.png"),
+                                                            uri=artifact_uri,
                                                             context_id=host_context_id,
                                                             agent_name=agent_name,
-                                                            content_type=mime_type,
-                                                            size=0
+                                                            content_type="image/png",
+                                                            size=part.root.data.get("file-size", 0)
                                                         ))
-                                elif hasattr(event.status, 'state'):
-                                    state = event.status.state
-                                    if hasattr(state, 'value'):
-                                        state_value = state.value
-                                    else:
-                                        state_value = str(state)
-                                    
-                                    # Calculate elapsed time for context
-                                    elapsed_seconds = int(time.time() - start_time)
-                                    elapsed_str = f" ({elapsed_seconds}s)" if elapsed_seconds >= 5 else ""
-                                    
-                                    # Make status messages friendly and personalized with user's query context
-                                    if state_value == "working":
-                                        status_text = f"{agent_name} is working on: \"{query_preview}\"{elapsed_str}"
-                                    elif state_value == "submitted":
-                                        status_text = f"Request sent to {agent_name}: \"{query_preview}\""
-                                    else:
-                                        status_text = f"{agent_name}: {state_value}{elapsed_str}"
-                            
-                            # Stream detailed status to UI - USE HOST'S contextId for routing!
-                            asyncio.create_task(self._emit_granular_agent_event(agent_name, status_text, host_context_id))
+                                                # Check for image artifacts in FilePart
+                                                elif hasattr(part, 'root') and hasattr(part.root, 'file'):
+                                                    file_obj = part.root.file
+                                                    if isinstance(file_obj, FileWithUri):
+                                                        file_uri = file_obj.uri
+                                                        if file_uri and str(file_uri).startswith(("http://", "https://")):
+                                                            log_debug(f"Found image artifact in streaming event (FilePart): {file_uri}")
+                                                            # Capture values to avoid closure issues
+                                                            file_name = file_obj.name
+                                                            mime_type = file_obj.mimeType if hasattr(file_obj, 'mimeType') else 'image/png'
+                                                            # UNIFIED STORAGE: No need to register - files are already in uploads/{session_id}/
+                                                            # The /api/files endpoint queries blob storage directly
+                                                            
+                                                            # Emit file_uploaded event - USE HOST'S contextId for routing!
+                                                            asyncio.create_task(self._emit_file_artifact_event(
+                                                                filename=file_name,
+                                                                uri=str(file_uri),
+                                                                context_id=host_context_id,
+                                                                agent_name=agent_name,
+                                                                content_type=mime_type,
+                                                                size=0
+                                                            ))
+                                    elif hasattr(event.status, 'state'):
+                                        state = event.status.state
+                                        if hasattr(state, 'value'):
+                                            state_value = state.value
+                                        else:
+                                            state_value = str(state)
+                                        
+                                        # Calculate elapsed time for context
+                                        elapsed_seconds = int(time.time() - start_time)
+                                        elapsed_str = f" ({elapsed_seconds}s)" if elapsed_seconds >= 5 else ""
+                                        
+                                        # Make status messages friendly and personalized with user's query context
+                                        if state_value == "working":
+                                            status_text = f"{agent_name} is working on: \"{query_preview}\"{elapsed_str}"
+                                        elif state_value == "submitted":
+                                            status_text = f"Request sent to {agent_name}: \"{query_preview}\""
+                                        else:
+                                            status_text = f"{agent_name}: {state_value}{elapsed_str}"
+                                
+                                # Stream detailed status to UI - USE HOST'S contextId for routing!
+                                asyncio.create_task(self._emit_granular_agent_event(agent_name, status_text, host_context_id))
                             
                         elif event_kind == 'artifact-update':
                             # Agent is generating artifacts - USE HOST'S contextId for routing!
@@ -2965,16 +2987,9 @@ Answer with just JSON:
                                         mime_type = getattr(file_obj, 'mimeType', 'application/octet-stream')
                                         if file_uri.startswith(('http://', 'https://')):
                                             log_debug(f"🎬 Emitting file artifact event for completed task: {file_name}")
-                                            # Register in agent file registry
-                                            session_id = contextId.split('::')[0] if '::' in contextId else contextId
-                                            from service.agent_file_registry import register_agent_file
-                                            register_agent_file(
-                                                session_id=session_id,
-                                                uri=file_uri,
-                                                filename=file_name,
-                                                content_type=mime_type,
-                                                source_agent=agent_name
-                                            )
+                                            # UNIFIED STORAGE: No need to register - files are already in uploads/{session_id}/
+                                            # The /api/files endpoint queries blob storage directly
+                                            
                                             asyncio.create_task(self._emit_file_artifact_event(
                                                 filename=file_name,
                                                 uri=file_uri,
@@ -2985,6 +3000,41 @@ Answer with just JSON:
                                             ))
                                 except Exception as e:
                                     log_debug(f"Error emitting file artifact event: {e}")
+
+                    # ========================================================================
+                    # AUTO-INDEX FILE ARTIFACTS: Process documents for memory search
+                    # This enables future agents to search/reference files from previous agents
+                    # ========================================================================
+                    file_artifacts_to_index = []
+                    for item in response_parts:
+                        is_file = isinstance(item, FilePart) or (hasattr(item, 'root') and isinstance(item.root, FilePart))
+                        if is_file:
+                            try:
+                                file_part = item.root if hasattr(item, 'root') else item
+                                file_obj = getattr(file_part, 'file', None)
+                                if file_obj:
+                                    file_uri = str(getattr(file_obj, 'uri', ''))
+                                    file_name = getattr(file_obj, 'name', 'agent-artifact')
+                                    mime_type = getattr(file_obj, 'mimeType', 'application/octet-stream')
+                                    if file_uri.startswith(('http://', 'https://')):
+                                        file_artifacts_to_index.append({
+                                            'uri': file_uri,
+                                            'name': file_name,
+                                            'mime_type': mime_type,
+                                            'source_agent': agent_name
+                                        })
+                            except Exception as e:
+                                log_debug(f"Error extracting file artifact for indexing: {e}")
+                    
+                    # Index documents if we have any file artifacts
+                    if file_artifacts_to_index:
+                        session_id = contextId.split('::')[0] if '::' in contextId else contextId
+                        await self._index_agent_file_artifacts(
+                            file_artifacts=file_artifacts_to_index,
+                            session_id=session_id,
+                            context_id=contextId,
+                            agent_name=agent_name
+                        )
 
                     self._update_last_host_turn(session_context, agent_name, response_parts)
                     
@@ -3188,7 +3238,11 @@ Answer with just JSON:
         
         context_parts = []
         
-        # Primary approach: Use semantic memory search for relevant context (only if enabled)
+        # Primary approach: Use semantic memory search for relevant context (ONLY if memory is enabled)
+        if not enable_memory:
+            log_debug(f"[{mode_label}] Memory disabled - skipping context injection for agent message")
+            return message
+            
         try:
             memory_results = await self._search_relevant_memory(
                 query=message,
@@ -3393,7 +3447,6 @@ Answer with just JSON:
             if message.strip().startswith('{') and 'contextId' in message:
                 # This is a raw message structure, try to extract just the text
                 try:
-                    import json
                     msg_obj = json.loads(message)
                     if isinstance(msg_obj, dict) and 'parts' in msg_obj:
                         for part in msg_obj['parts']:
@@ -3431,6 +3484,134 @@ Answer with just JSON:
         except Exception as e:
             print(f"❌ Background A2A interaction storage failed for {agent_name}: {e}")
             # Don't let storage errors affect parallel execution
+
+    async def _index_agent_file_artifacts(
+        self,
+        file_artifacts: List[Dict[str, Any]],
+        session_id: str,
+        context_id: str,
+        agent_name: str
+    ):
+        """
+        Process and index file artifacts returned by remote agents for memory search.
+        
+        This enables powerful cross-agent workflows:
+        - Email Agent downloads invoice PDF → indexed → search_memory can find it
+        - Document Agent analyzes contract → indexed → future queries can reference it
+        - Any agent that produces documents → automatically searchable
+        
+        Args:
+            file_artifacts: List of dicts with uri, name, mime_type, source_agent
+            session_id: Session ID for tenant isolation
+            context_id: Context ID for status updates
+            agent_name: Agent that produced these files
+        """
+        from .a2a_document_processor import process_file_part, determine_file_type
+        
+        # Filter to only indexable document types
+        indexable_extensions = ['.pdf', '.docx', '.pptx', '.xlsx', '.doc', '.txt', '.md', '.json', '.csv']
+        files_to_index = []
+        
+        for artifact in file_artifacts:
+            file_name = artifact.get('name', '')
+            file_ext = '.' + file_name.split('.')[-1].lower() if '.' in file_name else ''
+            
+            if file_ext in indexable_extensions:
+                files_to_index.append(artifact)
+                print(f"📄 Queuing for indexing: {file_name} ({artifact.get('mime_type', 'unknown')})")
+            else:
+                print(f"⏭️ Skipping non-document: {file_name} (not indexable)")
+        
+        if not files_to_index:
+            print(f"📭 No indexable documents from {agent_name}")
+            return
+        
+        # Emit status to UI
+        asyncio.create_task(self._emit_granular_agent_event(
+            "foundry-host-agent", 
+            f"Indexing {len(files_to_index)} document(s) from {agent_name}...", 
+            context_id
+        ))
+        
+        indexed_count = 0
+        for artifact in files_to_index:
+            try:
+                file_uri = artifact.get('uri', '')
+                file_name = artifact.get('name', 'unknown')
+                
+                print(f"📥 Downloading {file_name} from {file_uri[:50]}...")
+                
+                # Download file bytes from Azure Blob
+                import httpx
+                async with httpx.AsyncClient() as client:
+                    response = await client.get(file_uri, timeout=60.0)
+                    response.raise_for_status()
+                    file_bytes = response.content
+                
+                print(f"📄 Processing {file_name} ({len(file_bytes)} bytes)...")
+                
+                # Process and index the file
+                result = await process_file_part(
+                    file_part=None,  # We'll pass artifact_info instead
+                    artifact_info={
+                        'file_name': file_name,
+                        'file_bytes': file_bytes,
+                        'artifact_uri': file_uri,
+                        'source_agent': agent_name
+                    },
+                    session_id=session_id
+                )
+                
+                if result and result.get('success'):
+                    chunks_stored = result.get('chunks_stored', 0)
+                    indexed_count += 1
+                    print(f"✅ Indexed {file_name}: {chunks_stored} chunks stored in memory")
+                    
+                    # Get the extracted content for display in inferencing steps
+                    extracted_content = result.get('content', '')
+                    
+                    # Format content preview like Email Agent response style
+                    if extracted_content:
+                        # Truncate for display but keep meaningful context
+                        content_preview = extracted_content[:1500] if len(extracted_content) > 1500 else extracted_content
+                        if len(extracted_content) > 1500:
+                            content_preview += "... [truncated]"
+                        
+                        # Emit detailed extraction result - formatted like agent response
+                        extraction_message = f"📄 **Extracted from {file_name}:**\n\n{content_preview}\n\n---\n📊 Stored {chunks_stored} searchable chunks in memory"
+                        asyncio.create_task(self._emit_granular_agent_event(
+                            "foundry-host-agent",
+                            extraction_message,
+                            context_id
+                        ))
+                    
+                    # Emit file_processing_completed event so frontend updates status to 'analyzed'
+                    # This uses the same event type that the /api/files/process endpoint uses
+                    asyncio.create_task(self._emit_file_analyzed_event(
+                        filename=file_name,
+                        uri=file_uri,
+                        context_id=context_id,
+                        session_id=session_id
+                    ))
+                else:
+                    error = result.get('error', 'Unknown error') if result else 'No result'
+                    print(f"⚠️ Failed to index {file_name}: {error}")
+                    
+            except Exception as e:
+                print(f"❌ Error indexing {artifact.get('name', 'unknown')}: {e}")
+                import traceback
+                traceback.print_exc()
+        
+        # Final status
+        if indexed_count > 0:
+            asyncio.create_task(self._emit_granular_agent_event(
+                "foundry-host-agent", 
+                f"✓ Indexed {indexed_count} document(s) - now searchable via memory", 
+                context_id
+            ))
+            print(f"🎉 Successfully indexed {indexed_count}/{len(files_to_index)} documents from {agent_name}")
+        else:
+            print(f"⚠️ No documents were successfully indexed from {agent_name}")
 
     async def _store_a2a_interaction(
         self, 
@@ -3747,6 +3928,28 @@ Answer with just JSON:
             
             log_debug(f"Extracted user message: {user_message}")
             print(f"Processing {len(message_parts)} parts including files")
+            
+            # Persist user message to chat history database
+            try:
+                session_id = context_id.split("::")[0] if "::" in context_id else "default"
+                message_id = str(uuid.uuid4())
+                parts_data = []
+                for p in message_parts:
+                    if hasattr(p, 'model_dump'):
+                        parts_data.append(p.model_dump())
+                    elif hasattr(p, 'dict'):
+                        parts_data.append(p.dict())
+                    else:
+                        parts_data.append({"text": str(p)})
+                persist_message(context_id, {
+                    "messageId": message_id,
+                    "role": "user",
+                    "parts": parts_data,
+                    "contextId": context_id,
+                    "metadata": {"type": "user_message"}
+                })
+            except Exception as e:
+                print(f"[ChatHistory] Error persisting user message: {e}")
             
             # Ensure agent is created (may be lazy creation if startup creation failed)
             log_debug(f"Step: About to ensure agent exists...")
@@ -4168,6 +4371,21 @@ Answer with just JSON:
                         span=span
                     )
                     
+                    # Persist agent response to chat history database
+                    try:
+                        text_responses = [r for r in final_responses if isinstance(r, str)]
+                        response_text = "\n\n".join(text_responses) if text_responses else ""
+                        if response_text:
+                            persist_message(context_id, {
+                                "messageId": str(uuid.uuid4()),
+                                "role": "agent",
+                                "parts": [{"root": {"kind": "text", "text": response_text}}],
+                                "contextId": context_id,
+                                "metadata": {"type": "agent_response"}
+                            })
+                    except Exception as e:
+                        print(f"[ChatHistory] Error persisting agent response: {e}")
+                    
                     log_debug(f"🎯 [Workflow Mode] Orchestration complete, returning 1 combined response")
                     return final_responses
                     
@@ -4201,10 +4419,34 @@ Answer with just JSON:
                                 log_debug(f"📦 [Agent Mode] Including {len(artifact_dicts)} agent-generated artifact(s) in fallback response")
                                 final_responses.extend(artifact_dicts)
                         
+                        # Persist agent response to chat history database
+                        try:
+                            response_text = "\n\n".join([r for r in final_responses if isinstance(r, str)])
+                            persist_message(context_id, {
+                                "messageId": str(uuid.uuid4()),
+                                "role": "agent",
+                                "parts": [{"root": {"kind": "text", "text": response_text}}],
+                                "contextId": context_id,
+                                "metadata": {"type": "agent_response"}
+                            })
+                        except Exception as e:
+                            print(f"[ChatHistory] Error persisting agent response: {e}")
+                        
                         return final_responses
                     else:
                         # No outputs to return, show error
                         final_responses = [f"Agent Mode orchestration encountered an error: {error_msg}"]
+                        # Persist error response
+                        try:
+                            persist_message(context_id, {
+                                "messageId": str(uuid.uuid4()),
+                                "role": "agent",
+                                "parts": [{"root": {"kind": "text", "text": final_responses[0]}}],
+                                "contextId": context_id,
+                                "metadata": {"type": "agent_response", "error": True}
+                            })
+                        except Exception as e:
+                            print(f"[ChatHistory] Error persisting error response: {e}")
                         return final_responses
             
             # Continue with standard conversation flow using Responses API (streaming)
@@ -4443,6 +4685,22 @@ Answer with just JSON:
                     span=span,
                     artifact_info=artifact_info  # Pass artifact info for URI replacement
                 ))
+                
+                # Persist agent response to chat history database
+                try:
+                    # Filter to only string responses for text content
+                    text_responses = [r for r in final_responses if isinstance(r, str)]
+                    response_text = "\n\n".join(text_responses) if text_responses else ""
+                    if response_text:
+                        persist_message(context_id, {
+                            "messageId": str(uuid.uuid4()),
+                            "role": "agent",
+                            "parts": [{"root": {"kind": "text", "text": response_text}}],
+                            "contextId": context_id,
+                            "metadata": {"type": "agent_response"}
+                        })
+                except Exception as e:
+                    print(f"[ChatHistory] Error persisting agent response: {e}")
                 
                 log_foundry_debug(f"About to return final_responses: {final_responses} (FIRST PATH)")
                 

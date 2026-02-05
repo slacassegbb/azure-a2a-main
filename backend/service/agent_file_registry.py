@@ -37,6 +37,39 @@ DATABASE_URL = os.getenv('DATABASE_URL')
 _db_conn = None
 _use_database = False
 
+def _get_db_connection():
+    """Get a working database connection, reconnecting if needed."""
+    global _db_conn, _use_database
+    
+    if not DATABASE_URL:
+        return None
+    
+    try:
+        # Check if connection is still alive
+        if _db_conn:
+            try:
+                _db_conn.cursor().execute("SELECT 1")
+            except:
+                # Connection is dead, reconnect
+                print("[AgentFileRegistry] 🔄 Reconnecting to database...")
+                try:
+                    _db_conn.close()
+                except:
+                    pass
+                _db_conn = None
+        
+        if not _db_conn:
+            _db_conn = psycopg2.connect(DATABASE_URL)
+            _db_conn.autocommit = False
+            _use_database = True
+            print("[AgentFileRegistry] ✅ Connected to PostgreSQL database")
+        
+        return _db_conn
+    except Exception as e:
+        print(f"[AgentFileRegistry] ❌ Database connection failed: {e}")
+        _use_database = False
+        return None
+
 def _init_database():
     """Initialize database connection if DATABASE_URL is available."""
     global _db_conn, _use_database
@@ -86,11 +119,12 @@ def _save_registry():
 
 def _save_to_database(file_record: Dict[str, Any], session_id: str):
     """Save file record to database."""
-    if not _db_conn:
+    db_conn = _get_db_connection()
+    if not db_conn:
         return
     
     try:
-        cur = _db_conn.cursor()
+        cur = db_conn.cursor()
         
         # Parse uploaded_at datetime
         uploaded_at = file_record.get('uploadedAt')
@@ -122,12 +156,12 @@ def _save_to_database(file_record: Dict[str, Any], session_id: str):
             file_record.get('type', 'agent_generated')
         ))
         
-        _db_conn.commit()
+        db_conn.commit()
         cur.close()
     except Exception as e:
         print(f"[AgentFileRegistry] Error saving to database: {e}")
-        if _db_conn:
-            _db_conn.rollback()
+        if db_conn:
+            db_conn.rollback()
 
 
 
@@ -159,18 +193,22 @@ def register_agent_file(
         # Generate file_id if not provided
         actual_file_id = file_id or str(uuid.uuid4())
         
-        # Check for duplicates by URI (strip query params to compare base URL)
+        # Check for duplicates by URI (strip query params to compare base URL) OR by filename
         base_uri = uri.split('?')[0] if '?' in uri else uri
         
-        if _use_database and _db_conn:
-            # Check database for existing file
+        # Use connection helper for reliable database access
+        db_conn = _get_db_connection()
+        
+        if _use_database and db_conn:
+            # Check database for existing file by URI or filename
             try:
-                cur = _db_conn.cursor(cursor_factory=RealDictCursor)
+                cur = db_conn.cursor(cursor_factory=RealDictCursor)
+                # Check by base URI OR exact filename (for same session)
                 cur.execute("""
                     SELECT * FROM agent_files 
-                    WHERE session_id = %s AND uri LIKE %s
+                    WHERE session_id = %s AND (uri LIKE %s OR filename = %s)
                     LIMIT 1
-                """, (session_id, f"{base_uri}%"))
+                """, (session_id, f"{base_uri}%", filename))
                 existing = cur.fetchone()
                 cur.close()
                 
@@ -184,7 +222,9 @@ def register_agent_file(
             if session_id not in _registry:
                 _registry[session_id] = []
             
-            existing = next((f for f in _registry[session_id] if f.get('uri', '').split('?')[0] == base_uri), None)
+            # Check by URI base or filename
+            existing = next((f for f in _registry[session_id] 
+                           if f.get('uri', '').split('?')[0] == base_uri or f.get('filename') == filename), None)
             if existing:
                 print(f"[AgentFileRegistry] File already registered: {filename}")
                 return existing
@@ -214,23 +254,26 @@ def register_agent_file(
 
 def get_agent_files(session_id: str) -> List[Dict[str, Any]]:
     """
-    Get all agent-generated files for a session.
+    Get all agent-generated files for a session (deduplicated by filename).
     
     Args:
         session_id: The user's session ID
         
     Returns:
-        List of file records
+        List of file records (unique by filename, most recent first)
     """
     with _lock:
-        if _use_database and _db_conn:
-            # Query from database
+        db_conn = _get_db_connection()
+        if _use_database and db_conn:
+            # Query from database - use DISTINCT ON to get only one record per filename
             try:
-                cur = _db_conn.cursor(cursor_factory=RealDictCursor)
+                cur = db_conn.cursor(cursor_factory=RealDictCursor)
+                # Use DISTINCT ON (filename) to get only the most recent record per filename
                 cur.execute("""
-                    SELECT * FROM agent_files
+                    SELECT DISTINCT ON (filename) *
+                    FROM agent_files
                     WHERE session_id = %s
-                    ORDER BY uploaded_at DESC
+                    ORDER BY filename, uploaded_at DESC
                 """, (session_id,))
                 
                 rows = cur.fetchall()
@@ -296,6 +339,51 @@ def clear_session_files(session_id: str) -> int:
                 del _registry[session_id]
                 _save_registry()
             return count
+
+
+def delete_agent_file(session_id: str, file_id: str) -> bool:
+    """
+    Delete a specific file from the agent file registry.
+    
+    Args:
+        session_id: The user's session ID
+        file_id: The ID of the file to delete
+        
+    Returns:
+        True if file was deleted, False otherwise
+    """
+    with _lock:
+        if _use_database and _db_conn:
+            # Delete from database
+            try:
+                cur = _db_conn.cursor()
+                cur.execute("DELETE FROM agent_files WHERE session_id = %s AND id = %s", (session_id, file_id))
+                deleted = cur.rowcount > 0
+                _db_conn.commit()
+                cur.close()
+                
+                # Also remove from in-memory cache if present
+                if session_id in _registry:
+                    _registry[session_id] = [f for f in _registry[session_id] if f.get('id') != file_id]
+                
+                if deleted:
+                    print(f"[AgentFileRegistry] Deleted file {file_id} from database")
+                return deleted
+            except Exception as e:
+                print(f"[AgentFileRegistry] Error deleting file from database: {e}")
+                _db_conn.rollback()
+                return False
+        else:
+            # Fallback to JSON file
+            if session_id in _registry:
+                original_count = len(_registry[session_id])
+                _registry[session_id] = [f for f in _registry[session_id] if f.get('id') != file_id]
+                deleted = len(_registry[session_id]) < original_count
+                if deleted:
+                    _save_registry()
+                    print(f"[AgentFileRegistry] Deleted file {file_id} from JSON registry")
+                return deleted
+            return False
 
 
 def get_all_sessions() -> List[str]:

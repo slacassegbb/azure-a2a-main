@@ -349,8 +349,18 @@ Current date: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}
         logger.info(f"Created message in thread {thread_id}")
         return message
     
-    async def run_conversation_stream(self, thread_id: str, user_message: str):
-        """Run the conversation and yield responses."""
+    async def run_conversation_stream(self, thread_id: str, user_message: str, context_id: str = None):
+        """Run the conversation and yield responses.
+        
+        Args:
+            thread_id: The conversation thread ID
+            user_message: The user's message
+            context_id: The A2A context ID (format: {session_id}::{conversation_id})
+                       Used for uploading files to the user's session blob storage path
+        """
+        # Store context_id for use in file upload methods
+        self._current_context_id = context_id
+        
         if not self.agent:
             await self.create_agent()
 
@@ -607,7 +617,11 @@ Current date: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}
             return f"❌ Failed to fetch emails: {str(e)}", clean_content
     
     def _upload_attachment_to_blob(self, content: bytes, filename: str, content_type: str) -> Optional[str]:
-        """Upload an email attachment to Azure Blob Storage and return the URL with SAS token."""
+        """Upload an email attachment to Azure Blob Storage and return the URL with SAS token.
+        
+        Uses the unified blob path: uploads/{session_id}/{file_id}/{filename}
+        This allows the file to appear in the user's file history automatically.
+        """
         from datetime import datetime, timedelta
         from azure.core.credentials import AzureNamedKeyCredential, AzureSasCredential
         
@@ -618,8 +632,28 @@ Current date: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}
 
         container_name = os.getenv("AZURE_BLOB_CONTAINER", "a2a-files")
         
-        # Create unique blob path: email-attachments/{uuid}/{filename}
-        blob_name = f"email-attachments/{uuid.uuid4().hex}/{filename}"
+        # Extract session_id from context_id (format: {session_id}::{conversation_id})
+        # This allows files to be stored in the user's session path
+        context_id = getattr(self, '_current_context_id', None)
+        if context_id and '::' in context_id:
+            session_id = context_id.split('::')[0]
+        else:
+            # Fallback to legacy path if no context_id available
+            session_id = None
+            logger.warning(f"No context_id available, using legacy path for {filename}")
+        
+        # Generate unique file_id
+        file_id = uuid.uuid4().hex
+        
+        # Use unified path: uploads/{session_id}/{file_id}/{filename}
+        # This matches the path used by user uploads, so files appear in file history
+        if session_id:
+            blob_name = f"uploads/{session_id}/{file_id}/{filename}"
+            logger.info(f"📁 Uploading to unified path: {blob_name}")
+        else:
+            # Legacy fallback path (for backwards compatibility)
+            blob_name = f"email-attachments/{file_id}/{filename}"
+            logger.warning(f"📁 Using legacy path: {blob_name}")
         
         try:
             container_client = blob_client.get_container_client(container_name)

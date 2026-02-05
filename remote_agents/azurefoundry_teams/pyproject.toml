@@ -1,0 +1,21 @@
+[project]
+name = "a2a-teams-agent"
+version = "1.0.0"
+description = "A2A Teams Agent for human-in-the-loop interactions via Microsoft Teams"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "a2a-sdk[http-server]>=0.2.6",
+    "azure-ai-agents>=1.0.0",
+    "azure-ai-projects>=1.0.0",
+    "azure-identity>=1.23.0",
+    "botbuilder-core>=4.17.1",
+    "botbuilder-schema>=4.17.1",
+    "botframework-connector>=4.17.1",
+    "uvicorn>=0.34.2",
+    "click>=8.0.0",
+    "python-dotenv>=1.0.0",
+    "starlette>=0.35.0",
+    "httpx>=0.25.0",
+    "aiohttp>=3.9.0",
+]

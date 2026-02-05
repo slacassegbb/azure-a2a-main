@@ -167,7 +167,21 @@ class FoundryTemplateAgent:
             logger.error(f"File not found for blob upload: {file_path}")
             return None
 
-        blob_name = f"video-generator/{uuid.uuid4().hex}/{file_path.name}"
+        # NEW: Extract session_id from context_id for unified storage path
+        file_id = uuid.uuid4().hex
+        context_id = getattr(self, '_current_context_id', None)
+        session_id = None
+        if context_id and '::' in context_id:
+            session_id = context_id.split('::')[0]
+        
+        # Use unified path if session_id available, else fallback to agent-specific path
+        if session_id:
+            blob_name = f"uploads/{session_id}/{file_id}/{file_path.name}"
+            logger.info(f"Using unified storage path: {blob_name}")
+        else:
+            blob_name = f"video-generator/{file_id}/{file_path.name}"
+            logger.info(f"Using fallback agent path: {blob_name}")
+        
         try:
             container_client = blob_client.get_container_client(container_name)
             if not container_client.exists():
@@ -1630,8 +1644,11 @@ Current date and time: {datetime.datetime.now().isoformat()}
 
         return message
     
-    async def run_conversation_stream(self, thread_id: str, user_message: str):
+    async def run_conversation_stream(self, thread_id: str, user_message: str, context_id: str = None):
         """Async generator: yields progress/tool call messages and final assistant response(s) in real time."""
+        # Store context_id for unified blob storage path
+        self._current_context_id = context_id
+        
         if not self.agent:
             await self.create_agent()
 

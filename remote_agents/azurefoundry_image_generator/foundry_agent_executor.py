@@ -178,6 +178,7 @@ class FoundryImageGeneratorAgentExecutor(AgentExecutor):
                         thread_id,
                         user_message,
                         attachments=attachments,
+                        context_id=context_id,
                     ):
                         # Check if this is a tool call event from remote agent
                         if event.startswith("🎨 Creating"):

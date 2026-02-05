@@ -398,19 +398,7 @@ class FoundryHostManager(ApplicationManager):
         self._messages.append(message)
         if conversation:
             conversation.messages.append(message)
-            # Persist message to database
-            try:
-                session_id = parse_session_from_context(context_id)
-                chat_history_service.add_message(conversation.conversation_id, {
-                    "messageId": get_message_id(message) or str(uuid.uuid4()),
-                    "role": getattr(message, 'role', 'user'),
-                    "parts": [p.model_dump() if hasattr(p, 'model_dump') else p.dict() if hasattr(p, 'dict') else str(p) for p in (message.parts or [])],
-                    "contextId": context_id,
-                    "taskId": None,
-                    "metadata": {"type": "user_message"}
-                })
-            except Exception as e:
-                log_debug(f"Error persisting message to database: {e}")
+            # Note: Message persistence is now handled in foundry_agent_a2a.py run_conversation_with_parts
         log_debug("About to add event...")
         self.add_event(Event(
             id=str(uuid.uuid4()),
@@ -699,23 +687,11 @@ class FoundryHostManager(ApplicationManager):
             if isinstance(resp, dict):
                 log_debug(f"Response {resp_index} dict keys: {list(resp.keys())}")
                 log_debug(f"Response {resp_index} has artifact-uri: {'artifact-uri' in resp}")
-            print("[DEBUG] Response parts:", getattr(resp, 'parts', None))
             msg = self.foundry_content_to_message(resp, context_id, task_id)
             log_debug(f"Message created with {len(msg.parts) if hasattr(msg, 'parts') else 0} parts")
             if conversation:
                 conversation.messages.append(msg)
-                # Persist agent response to database
-                try:
-                    chat_history_service.add_message(conversation.conversation_id, {
-                        "messageId": get_message_id(msg) or str(uuid.uuid4()),
-                        "role": getattr(msg, 'role', 'agent'),
-                        "parts": [p.model_dump() if hasattr(p, 'model_dump') else p.dict() if hasattr(p, 'dict') else str(p) for p in (msg.parts or [])],
-                        "contextId": context_id,
-                        "taskId": task_id,
-                        "metadata": {"type": "agent_response", "response_index": resp_index}
-                    })
-                except Exception as e:
-                    log_debug(f"Error persisting agent response to database: {e}")
+                # Note: Message persistence is now handled in foundry_agent_a2a.py run_conversation_with_parts
             if not hasattr(task, 'history') or task.history is None:
                 task.history = []
             task.history.append(msg)
@@ -932,23 +908,8 @@ class FoundryHostManager(ApplicationManager):
                             await streamer.stream_file_uploaded(file_info, context_id)
                             log_debug(f"File uploaded event sent for agent artifact: {file_info['filename']}")
                             
-                            # Register file in agent file registry for session persistence
-                            # Extract session_id from context_id (format: sessionId::conversationId)
-                            try:
-                                from service.agent_file_registry import register_agent_file
-                                session_id = context_id.split('::')[0] if '::' in context_id else context_id
-                                register_agent_file(
-                                    session_id=session_id,
-                                    file_id=file_info["file_id"],
-                                    filename=file_info["filename"],
-                                    uri=file_uri,
-                                    content_type=file_info["content_type"],
-                                    size=file_info.get("size", 0),
-                                    source_agent=status_agent_name
-                                )
-                                print(f"📁 [FILE_REGISTRY] Registered agent file for session {session_id[:8]}...")
-                            except Exception as reg_error:
-                                print(f"⚠️ [FILE_REGISTRY] Failed to register file: {reg_error}")
+                            # UNIFIED STORAGE: No need to register - files are already in uploads/{session_id}/
+                            # The /api/files endpoint queries blob storage directly
                             
                             # Note: File availability is already communicated via file_uploaded event
                             # No need to send additional remote_agent_activity events
