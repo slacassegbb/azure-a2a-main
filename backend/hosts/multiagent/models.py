@@ -25,7 +25,7 @@ class SessionContext(BaseModel):
     session_active: bool = True
     retry_count: int = 0
     agent_mode: bool = False
-    enable_inter_agent_memory: bool = True
+    enable_inter_agent_memory: bool = False
     agent_task_ids: dict[str, str] = Field(default_factory=dict)
     agent_task_states: dict[str, str] = Field(default_factory=dict)
     agent_cooldowns: dict[str, float] = Field(default_factory=dict)

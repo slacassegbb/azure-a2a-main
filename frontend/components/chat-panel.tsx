@@ -638,12 +638,19 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
   // This prevents cross-pollination: only accept messages for THIS conversation, not any conversation
   const pendingConversationIdRef = useRef<string | null>(null)
   
-  // Clear pending conversation when URL updates to a real conversation
-  // This means the router.replace succeeded and we're now on the conversation page
+  // Clear pending conversation when URL updates to a DIFFERENT real conversation
+  // This handles navigating away from a conversation we just created
+  // IMPORTANT: Don't clear if the new conversationId matches the pending one - 
+  // we still need to accept events for it during the transition
   useEffect(() => {
     if (conversationId !== 'frontend-chat-context') {
-      // We're now on a real conversation page, clear the pending ref
-      pendingConversationIdRef.current = null
+      // Only clear if we're navigating to a DIFFERENT conversation
+      // If conversationId matches our pending one, keep accepting events
+      if (pendingConversationIdRef.current && pendingConversationIdRef.current !== conversationId) {
+        console.log('[ChatPanel] Navigated to different conversation, clearing pending:', pendingConversationIdRef.current, '->', conversationId)
+        pendingConversationIdRef.current = null
+      }
+      // If they match, don't clear - we're just transitioning to the page we created
     }
   }, [conversationId])
   
@@ -687,6 +694,13 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
     // If no conversationId in the event, accept it (backward compatibility)
     if (!eventConvId) return false
     
+    // PRIORITY CHECK: If we have a pending conversation (just created from home page),
+    // accept events for it regardless of current URL state. This handles the race condition
+    // where events arrive before the URL update from router.replace() takes effect.
+    if (pendingConversationIdRef.current && eventConvId === pendingConversationIdRef.current) {
+      return false // Accept - it's for our pending conversation
+    }
+    
     // If the event is for our current conversation, accept it
     if (eventConvId === conversationId) return false
     
@@ -700,19 +714,9 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       return true
     }
     
-    // On the home page, ONLY accept messages for a conversation we just created
-    // This prevents cross-pollination where messages from other tabs/users could leak through
+    // On the home page with no pending conversation, filter all events
+    // This is a clean home page state - shouldn't receive messages
     if (conversationId === 'frontend-chat-context') {
-      // If we have a pending conversation (just created), only accept events for that
-      if (pendingConversationIdRef.current) {
-        if (eventConvId === pendingConversationIdRef.current) {
-          return false // Accept - it's for our pending conversation
-        }
-        console.log("[ChatPanel] Home page: filtering event for different conversation:", eventConvId, "pending:", pendingConversationIdRef.current)
-        return true // Filter - it's for a different conversation
-      }
-      // No pending conversation - we shouldn't receive any messages
-      // This is a clean home page state
       console.log("[ChatPanel] Home page: filtering event - no pending conversation, received:", eventConvId)
       return true
     }

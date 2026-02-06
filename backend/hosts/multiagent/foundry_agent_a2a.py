@@ -260,11 +260,12 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
             ),
         )
         
-        # Maximum characters for memory search summaries
-        # Default 6000 chars to capture full invoice content including totals
+        # Maximum characters for memory search summaries (PER RESULT)
+        # Default 4000 chars per result - enough for full invoice content including totals
+        # With top_k=2, max context injection is 8000 chars which is reasonable
         self.memory_summary_max_chars = max(
             200,
-            normalize_env_int(os.environ.get("A2A_MEMORY_SUMMARY_MAX_CHARS"), 6000),
+            normalize_env_int(os.environ.get("A2A_MEMORY_SUMMARY_MAX_CHARS"), 4000),
         )
 
         self._azure_blob_client = None
@@ -2943,7 +2944,7 @@ Answer with just JSON:
                     self._update_last_host_turn(session_context, agent_name, response_parts)
                     
                     # Store interaction in background (only if inter-agent memory is enabled)
-                    enable_memory = getattr(session_context, 'enable_inter_agent_memory', True)
+                    enable_memory = getattr(session_context, 'enable_inter_agent_memory', False)
                     if enable_memory:
                         asyncio.create_task(self._store_a2a_interaction_background(
                             outbound_request=request,
@@ -3082,7 +3083,7 @@ Answer with just JSON:
                 self._update_last_host_turn(session_context, agent_name, result)
                 
                 # Store interaction in background (only if inter-agent memory is enabled)
-                enable_memory = getattr(session_context, 'enable_inter_agent_memory', True)
+                enable_memory = getattr(session_context, 'enable_inter_agent_memory', False)
                 if enable_memory:
                     asyncio.create_task(self._store_a2a_interaction_background(
                         outbound_request=request,
@@ -3170,7 +3171,7 @@ Answer with just JSON:
                 query=message,
                 context_id=session_context.contextId,
                 agent_name=None,
-                top_k=5
+                top_k=2
             )
             
             if memory_results:
