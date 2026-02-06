@@ -597,7 +597,21 @@ class A2AMemoryService:
                 top=top_k
             )
 
-            return [dict(result) for result in results]
+            # Dedupe by content - remove exact duplicate documents
+            # This handles the case where same file is uploaded multiple times
+            # Different content (even 1 char different) will be kept
+            seen_content = set()
+            deduped_results = []
+            for result in results:
+                content = result.get('inbound_payload', '')
+                if content not in seen_content:
+                    seen_content.add(content)
+                    deduped_results.append(dict(result))
+            
+            if len(deduped_results) < top_k:
+                log_memory_debug(f"Deduped {top_k - len(deduped_results)} duplicate results")
+            
+            return deduped_results
 
         except Exception as e:
             log_memory_debug(f"Error searching interactions: {str(e)}")
