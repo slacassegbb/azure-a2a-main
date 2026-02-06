@@ -2204,11 +2204,14 @@ Answer with just JSON:
         Returns:
             Response list if HITL was handled, None if no pending agent (fall through to normal flow)
         """
+        print(f"🔄 [HITL CHECK] context_id='{context_id}', pending_input_agent='{session_context.pending_input_agent}'")
         log_info(f"🔄 [HITL CHECK] pending_input_agent = '{session_context.pending_input_agent}', pending_workflow = '{session_context.pending_workflow[:50] if session_context.pending_workflow else None}'")
         if not session_context.pending_input_agent:
+            print(f"🔄 [HITL CHECK] No pending agent - falling through to normal processing")
             log_info(f"🔄 [HITL CHECK] No pending agent, falling through to normal processing")
             return None
-            
+        
+        print(f"✅ [HITL CHECK] Found pending agent '{session_context.pending_input_agent}' - routing HITL response!")
         pending_agent = session_context.pending_input_agent
         pending_task_id = session_context.pending_input_task_id
         pending_workflow = session_context.pending_workflow
@@ -2275,11 +2278,23 @@ Answer with just JSON:
                 
                 log_info(f"▶️ [HITL] Resuming with {len(all_outputs)} total outputs")
                 
-                # Build the resume message
-                # For workflows: "Continue the workflow..."
-                # For ad-hoc: Include original goal + context about completed step
+                # For ad-hoc HITL: Check if the agent's response indicates completion
+                # If the HITL output shows success (✅, approved, confirmed, etc.), skip orchestration
+                # This prevents the LLM from redundantly re-processing already-completed goals
                 if is_adhoc:
                     hitl_output = hitl_outputs[0] if hitl_outputs else 'Step completed.'
+                    hitl_output_lower = hitl_output.lower()
+                    
+                    # Check for completion indicators in the HITL response
+                    completion_indicators = ['✅', 'approved', 'confirmed', 'completed', 'success', 'sent successfully']
+                    is_completed = any(indicator.lower() in hitl_output_lower or indicator in hitl_output for indicator in completion_indicators)
+                    
+                    if is_completed:
+                        log_info(f"▶️ [HITL] Ad-hoc HITL completed with success indicators - skipping further orchestration")
+                        log_info(f"▶️ [HITL] Returning outputs directly: {len(all_outputs)} items")
+                        return all_outputs
+                    
+                    # Not completed - continue with orchestration
                     resume_message = f"""## HUMAN-IN-THE-LOOP STEP COMPLETED
 
 **Original User Goal:** {saved_user_message}
@@ -2680,13 +2695,23 @@ Answer with just JSON:
             except Exception:
                 pass
             
-            # Use per-agent taskId only if the previous task for this agent is not in a terminal state
+            # Use per-agent taskId only if the previous task for this agent is actively in-progress
+            # NOTE: Do NOT reuse task_id for "input-required" state - when the remote agent returns
+            # input_required, it means the task is paused waiting for human input. If the human
+            # responds OR if a new message comes in, we should create a NEW task, not reuse the old one.
+            # The A2A SDK will reject reusing a task that has already completed or been processed.
             taskId = None
             last_task_id = session_context.agent_task_ids.get(agent_name)
             last_task_state = session_context.agent_task_states.get(agent_name)
-            # Continue same task only if we believe it's in-progress or awaiting input
-            if last_task_id and last_task_state in {"working", "submitted", "input-required"}:
+            # Only reuse task if it's actively working (not paused, not terminal)
+            if last_task_id and last_task_state in {"working", "submitted"}:
                 taskId = last_task_id
+            else:
+                # Clear stale task state to ensure clean slate for new task
+                if agent_name in session_context.agent_task_ids:
+                    del session_context.agent_task_ids[agent_name]
+                if agent_name in session_context.agent_task_states:
+                    del session_context.agent_task_states[agent_name]
             contextId = session_context.contextId
             messageId = str(uuid.uuid4())  # Generate fresh message ID for this specific call
 
@@ -2747,7 +2772,8 @@ Answer with just JSON:
                 ),
             )
             
-            log_debug(f"🚀 Calling agent: {agent_name} with context: {contextId}")
+            log_debug(f"🚀 Calling agent: {agent_name} with context: {contextId}, task_id: {taskId}")
+            print(f"🔍 [SEND_MESSAGE] taskId={taskId}, last_task_id={last_task_id}, last_task_state={last_task_state}")
             
             # Track start time for processing duration
             start_time = time.time()
@@ -2918,6 +2944,7 @@ Answer with just JSON:
             # Process response based on type
             if isinstance(response, Task):
                 task = response
+                print(f"📊 [TASK RESPONSE] Agent {agent_name} returned Task with state={task.status.state}")
                 log_debug(f"📊 Task response from {agent_name}: state={task.status.state if hasattr(task, 'status') else 'N/A'}")
                 
                 # Update session context
@@ -2934,6 +2961,19 @@ Answer with just JSON:
                 
                 # Handle task states
                 if task.status.state == TaskState.completed:
+                    # IMPORTANT: Clear the task_id so future requests create new tasks
+                    # The A2A protocol treats completed tasks as terminal - we can't reuse them
+                    print(f"🧹 [TASK COMPLETED] Clearing task_id and state for '{agent_name}'")
+                    print(f"   Before: agent_task_ids={dict(session_context.agent_task_ids)}")
+                    print(f"   Before: agent_task_states={dict(session_context.agent_task_states)}")
+                    if agent_name in session_context.agent_task_ids:
+                        del session_context.agent_task_ids[agent_name]
+                    if agent_name in session_context.agent_task_states:
+                        del session_context.agent_task_states[agent_name]
+                    print(f"   After: agent_task_ids={dict(session_context.agent_task_ids)}")
+                    print(f"   After: agent_task_states={dict(session_context.agent_task_states)}")
+                    log_debug(f"🧹 Cleared completed task state for {agent_name} to allow new tasks")
+                    
                     # Emit completed status for remote agent - the streaming callback doesn't always
                     # receive a final status-update event with state=completed from remote agents
                     asyncio.create_task(self._emit_simple_task_status(agent_name, "completed", contextId, taskId))
@@ -3116,6 +3156,12 @@ Answer with just JSON:
                                 return retry_parts
 
                             if task2.status.state == TaskState.input_required:
+                                # Set pending_input_agent for HITL routing
+                                current_task_id = session_context.agent_task_ids.get(agent_name)
+                                session_context.pending_input_agent = agent_name
+                                session_context.pending_input_task_id = current_task_id
+                                log_info(f"🔄 [HITL] Retry task input_required from '{agent_name}', setting pending_input_agent (task_id: {current_task_id})")
+                                
                                 if task2.status.message:
                                     retry_input = await self.convert_parts(task2.status.message.parts, tool_context)
                                     self._update_last_host_turn(session_context, agent_name, retry_input)
@@ -3136,10 +3182,26 @@ Answer with just JSON:
 
                         return [str(retry_response)]
 
+                    # IMPORTANT: Clear the task_id so future requests to this agent create a NEW task
+                    # Without this, the A2A SDK rejects new messages with "Task is in terminal state: failed"
+                    if agent_name in session_context.agent_task_ids:
+                        del session_context.agent_task_ids[agent_name]
+                        log_debug(f"🧹 Cleared task_id for {agent_name} after failed task")
                     return [f"Agent {agent_name} failed to complete the task"]
 
                 elif task.status.state == TaskState.input_required:
+                    print(f"⚠️ [HITL] Agent {agent_name} requires input - SETTING pending_input_agent!")
                     log_debug(f"⚠️ [STREAMING] Agent {agent_name} requires input")
+                    
+                    # CRITICAL: Set pending_input_agent so the human response gets routed correctly
+                    # The streaming callback also sets this, but we need it here as a fallback
+                    # in case the response comes directly without a streaming status-update event
+                    current_task_id = session_context.agent_task_ids.get(agent_name)
+                    session_context.pending_input_agent = agent_name
+                    session_context.pending_input_task_id = current_task_id
+                    print(f"🔄 [HITL] Task response input_required from '{agent_name}', setting pending_input_agent='{agent_name}' (task_id: {current_task_id})")
+                    log_info(f"🔄 [HITL] Task response input_required from '{agent_name}', setting pending_input_agent (task_id: {current_task_id})")
+                    
                     if task.status.message:
                         response_parts = await self.convert_parts(task.status.message.parts, tool_context)
                         self._update_last_host_turn(session_context, agent_name, response_parts)

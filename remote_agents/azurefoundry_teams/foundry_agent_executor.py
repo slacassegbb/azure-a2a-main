@@ -116,6 +116,8 @@ class FoundryTeamsAgentExecutor(AgentExecutor):
     ) -> None:
         """Process an A2A request, handling human-in-the-loop via Teams."""
         
+        logger.info(f"🟢 [_process_request ENTRY] context_id={context_id}, parts_count={len(message_parts)}")
+        
         try:
             user_message = self._convert_parts_to_text(message_parts)
             if user_message:
@@ -306,7 +308,10 @@ Based on the user's response, please confirm what action was taken. If they appr
         event_queue: EventQueue,
     ):
         """Execute an A2A request."""
-        logger.info(f"Executing Teams request for context {context.context_id}")
+        logger.info(f"🔵 [EXECUTE ENTRY] Executing Teams request for context {context.context_id}")
+        logger.info(f"🔵 [EXECUTE ENTRY] Task ID: {context.task_id}, Has message: {context.message is not None}")
+        if context.message:
+            logger.info(f"🔵 [EXECUTE ENTRY] Message parts count: {len(context.message.parts)}")
         
         async with FoundryTeamsAgentExecutor._request_semaphore:
             # Rate limiting

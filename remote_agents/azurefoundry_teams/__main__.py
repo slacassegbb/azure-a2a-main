@@ -29,7 +29,7 @@ from botbuilder.schema import Activity
 from a2a.server.apps import A2AStarletteApplication
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.tasks import InMemoryTaskStore
-from a2a.types import AgentCard, AgentSkill
+from a2a.types import AgentCard, AgentSkill, Task
 
 load_dotenv()
 
@@ -222,7 +222,11 @@ async def handle_teams_webhook(request: Request) -> JSONResponse:
                     logger.info(f"🔍 DEBUG: _waiting_for_input has {len(waiting_contexts)} pending contexts: {waiting_contexts}")
                     
                     # Look for a pending request that matches this user
-                    for context_id, request_info in list(agent_executor_instance._waiting_for_input.items()):
+                    # Use LIFO (most recent first) - the human is most likely responding to the latest request
+                    pending_items = list(agent_executor_instance._waiting_for_input.items())
+                    pending_items.reverse()  # Most recent first
+                    
+                    for context_id, request_info in pending_items:
                         logger.info(f"🔍 DEBUG: Checking context {context_id}, request_info type: {type(request_info)}")
                         if isinstance(request_info, dict):
                             # Found a pending request - forward to backend via A2A message
@@ -320,10 +324,12 @@ def create_combined_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
 
     agent_card = _create_agent_card(host, port)
     agent_executor_instance = create_foundry_agent_executor(agent_card)
+    
+    task_store = InMemoryTaskStore()
 
     request_handler = DefaultRequestHandler(
         agent_executor=agent_executor_instance, 
-        task_store=InMemoryTaskStore()
+        task_store=task_store
     )
 
     a2a_app = A2AStarletteApplication(

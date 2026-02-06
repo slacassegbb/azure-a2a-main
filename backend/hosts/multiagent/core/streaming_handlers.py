@@ -117,6 +117,7 @@ class StreamingHandlers:
         try:
             context_id_cb = get_context_id(event, None)
             task_id_cb = get_task_id(event, None)
+            print(f"🔔 [CALLBACK] context_id_cb='{context_id_cb}', task_id_cb='{task_id_cb}'")
             if context_id_cb and task_id_cb:
                 session_ctx = self.get_session_context(context_id_cb)
                 session_ctx.agent_task_ids[agent_name] = task_id_cb
@@ -125,12 +126,14 @@ class StreamingHandlers:
                     state_obj = getattr(getattr(event, 'status', None), 'state', None)
                     if state_obj is not None:
                         state_str = state_obj.value if hasattr(state_obj, 'value') else str(state_obj)
+                        print(f"🔔 [CALLBACK] Setting agent_task_states['{agent_name}'] = '{state_str}'")
                         session_ctx.agent_task_states[agent_name] = state_str
                         
                         # HUMAN-IN-THE-LOOP: Track input_required state from remote agents
                         if state_str == 'input_required' or state_str == 'input-required':
                             session_ctx.pending_input_agent = agent_name
                             session_ctx.pending_input_task_id = task_id_cb
+                            print(f"🔄 [HITL CALLBACK] Streaming callback detected input_required from '{agent_name}', context_id='{context_id_cb}'")
                             log_info(f"🔄 [HITL] Callback detected input_required from '{agent_name}', setting pending_input_agent (task_id: {task_id_cb})")
         except Exception as e:
             # Non-fatal; continue normal processing
