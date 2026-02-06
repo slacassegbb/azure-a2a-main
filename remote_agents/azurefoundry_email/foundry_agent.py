@@ -366,7 +366,12 @@ Current date: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}
 
         await self.send_message(thread_id, user_message)
         client = self._get_client()
-        run = client.runs.create(thread_id=thread_id, agent_id=self.agent.id)
+        # Reduced to 3 messages to prevent token accumulation in workflow execution
+        run = client.runs.create(
+            thread_id=thread_id,
+            agent_id=self.agent.id,
+            truncation_strategy={"type": "last_messages", "last_messages": 3}
+        )
         
         logger.info(f"Created run {run.id} with status {run.status}")
 

@@ -985,7 +985,7 @@ Analyze this request and decide the best approach."""
         # This preserves the full task history and allows the orchestrator to continue.
         # =====================================================================
         existing_plan = session_context.current_plan
-        if existing_plan and not workflow:
+        if existing_plan:
             log_info(f"📋 [Agent Mode] Resuming existing plan with {len(existing_plan.tasks)} tasks")
             log_info(f"📋 [Agent Mode] PLAN DETAILS: {existing_plan.model_dump_json(indent=2)}")
             await self._emit_status_event("Resuming workflow with your input...", context_id)

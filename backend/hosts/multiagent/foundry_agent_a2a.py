@@ -2942,7 +2942,7 @@ Answer with just JSON:
                     self._update_last_host_turn(session_context, agent_name, response_parts)
                     
                     # Store interaction in background (only if inter-agent memory is enabled)
-                    enable_memory = getattr(session_context, 'enable_inter_agent_memory', False)
+                    enable_memory = getattr(session_context, 'enable_inter_agent_memory', True)
                     if enable_memory:
                         asyncio.create_task(self._store_a2a_interaction_background(
                             outbound_request=request,
@@ -3081,7 +3081,7 @@ Answer with just JSON:
                 self._update_last_host_turn(session_context, agent_name, result)
                 
                 # Store interaction in background (only if inter-agent memory is enabled)
-                enable_memory = getattr(session_context, 'enable_inter_agent_memory', False)
+                enable_memory = getattr(session_context, 'enable_inter_agent_memory', True)
                 if enable_memory:
                     asyncio.create_task(self._store_a2a_interaction_background(
                         outbound_request=request,
@@ -3157,17 +3157,13 @@ Answer with just JSON:
           - Vector search: Enabled when memory ON, disabled when OFF
           - Use case: User conversations with multi-turn context
         """
-        enable_memory = getattr(session_context, 'enable_inter_agent_memory', True)
         is_agent_mode = hasattr(session_context, 'agent_mode') and session_context.agent_mode
         mode_label = "Agent Mode" if is_agent_mode else "Standard Mode"
         
         context_parts = []
         
-        # Primary approach: Use semantic memory search for relevant context (ONLY if memory is enabled)
-        if not enable_memory:
-            log_debug(f"[{mode_label}] Memory disabled - skipping context injection for agent message")
-            return message
-            
+        # Always search memory for relevant context (retrieval is always enabled)
+        # The memory toggle only controls STORAGE of new interactions, not retrieval
         try:
             memory_results = await self._search_relevant_memory(
                 query=message,
@@ -3181,111 +3177,109 @@ Answer with just JSON:
                 
                 # Process memory results to extract key information
                 for i, result in enumerate(memory_results, 1):
-                    try:
-                        agent_name = result.get('agent_name', 'Unknown')
-                        timestamp = result.get('timestamp', 'Unknown')
+                        try:
+                            agent_name = result.get('agent_name', 'Unknown')
+                            timestamp = result.get('timestamp', 'Unknown')
+                                
+                            # Get the actual content - try multiple possible locations
+                            content_summary = ""
                             
-                        # Get the actual content - try multiple possible locations
-                        content_summary = ""
+                            # Method 1: Look for content in inbound payload
+                            if 'inbound_payload' in result and result['inbound_payload']:
+                                inbound = result['inbound_payload']
+                                
+                                # Parse JSON string if needed
+                                if isinstance(inbound, str):
+                                    try:
+                                        inbound = json.loads(inbound)
+                                    except json.JSONDecodeError:
+                                        inbound = {}
+                                
+                                # Try direct content field (DocumentProcessor format)
+                                if isinstance(inbound, dict) and 'content' in inbound:
+                                    content_summary = str(inbound['content'])
+                                
+                                # Try Task structure: status.message.parts (A2A Task format)
+                                elif isinstance(inbound, dict) and 'status' in inbound:
+                                    status = inbound['status']
+                                    if isinstance(status, dict) and 'message' in status:
+                                        status_message = status['message']
+                                        if isinstance(status_message, dict) and 'parts' in status_message:
+                                            parts_content = []
+                                            for part in status_message['parts']:
+                                                if isinstance(part, dict):
+                                                    if 'text' in part:
+                                                        parts_content.append(str(part['text']))
+                                                    elif 'kind' in part and part['kind'] == 'text' and 'text' in part:
+                                                        parts_content.append(str(part['text']))
+                                            if parts_content:
+                                                content_summary = " ".join(parts_content)
+                                
+                                # Try parts array at root (A2A Message structure)
+                                elif isinstance(inbound, dict) and 'parts' in inbound:
+                                    parts_content = []
+                                    for part in inbound['parts']:
+                                        if isinstance(part, dict):
+                                            if 'text' in part:
+                                                parts_content.append(str(part['text']))
+                                            elif 'root' in part and isinstance(part['root'], dict) and 'text' in part['root']:
+                                                parts_content.append(str(part['root']['text']))
+                                    if parts_content:
+                                        content_summary = " ".join(parts_content)
+                            
+                            # Method 2: Look in outbound payload if inbound didn't work
+                            if not content_summary and 'outbound_payload' in result:
+                                outbound = result['outbound_payload']
+                                
+                                if isinstance(outbound, str):
+                                    try:
+                                        outbound = json.loads(outbound)
+                                    except json.JSONDecodeError:
+                                        outbound = {}
+                                
+                                # Try message.parts structure (A2A response format)
+                                if isinstance(outbound, dict) and 'message' in outbound and 'parts' in outbound['message']:
+                                    parts_content = []
+                                    for part in outbound['message']['parts']:
+                                        if isinstance(part, dict):
+                                            # Try direct text field
+                                            if 'text' in part:
+                                                parts_content.append(str(part['text']))
+                                            # Try root.text structure
+                                            elif 'root' in part and isinstance(part['root'], dict) and 'text' in part['root']:
+                                                parts_content.append(str(part['root']['text']))
+                                            # Try kind=text structure
+                                            elif part.get('kind') == 'text' and 'text' in part:
+                                                parts_content.append(str(part['text']))
+                                    if parts_content:
+                                        content_summary = " ".join(parts_content)
+                            
+                            # Method 3: Skip - don't dump raw JSON, just skip if we can't extract text
+                            if not content_summary:
+                                # Skip this memory result - we couldn't extract meaningful text
+                                print(f"⚠️ Skipping memory result {i} from {agent_name} - no clean text extracted")
+                                continue
+                            
+                            # Add to context if we found content
+                            if content_summary:
+                                # Truncate long content for context efficiency
+                                # Use configured max_chars (default 2000) - enough for invoices/documents
+                                if len(content_summary) > self.memory_summary_max_chars:
+                                    content_summary = content_summary[:self.memory_summary_max_chars] + "..."
+                                context_parts.append(f"  {i}. From {agent_name}: {content_summary}")
+                            else:
+                                print(f"⚠️ No content found in memory result {i} from {agent_name}")
                         
-                        # Method 1: Look for content in inbound payload
-                        if 'inbound_payload' in result and result['inbound_payload']:
-                            inbound = result['inbound_payload']
-                            
-                            # Parse JSON string if needed
-                            if isinstance(inbound, str):
-                                try:
-                                    inbound = json.loads(inbound)
-                                except json.JSONDecodeError:
-                                    inbound = {}
-                            
-                            # Try direct content field (DocumentProcessor format)
-                            if isinstance(inbound, dict) and 'content' in inbound:
-                                content_summary = str(inbound['content'])
-                            
-                            # Try Task structure: status.message.parts (A2A Task format)
-                            elif isinstance(inbound, dict) and 'status' in inbound:
-                                status = inbound['status']
-                                if isinstance(status, dict) and 'message' in status:
-                                    status_message = status['message']
-                                    if isinstance(status_message, dict) and 'parts' in status_message:
-                                        parts_content = []
-                                        for part in status_message['parts']:
-                                            if isinstance(part, dict):
-                                                if 'text' in part:
-                                                    parts_content.append(str(part['text']))
-                                                elif 'kind' in part and part['kind'] == 'text' and 'text' in part:
-                                                    parts_content.append(str(part['text']))
-                                        if parts_content:
-                                            content_summary = " ".join(parts_content)
-                            
-                            # Try parts array at root (A2A Message structure)
-                            elif isinstance(inbound, dict) and 'parts' in inbound:
-                                parts_content = []
-                                for part in inbound['parts']:
-                                    if isinstance(part, dict):
-                                        if 'text' in part:
-                                            parts_content.append(str(part['text']))
-                                        elif 'root' in part and isinstance(part['root'], dict) and 'text' in part['root']:
-                                            parts_content.append(str(part['root']['text']))
-                                if parts_content:
-                                    content_summary = " ".join(parts_content)
-                        
-                        # Method 2: Look in outbound payload if inbound didn't work
-                        if not content_summary and 'outbound_payload' in result:
-                            outbound = result['outbound_payload']
-                            
-                            if isinstance(outbound, str):
-                                try:
-                                    outbound = json.loads(outbound)
-                                except json.JSONDecodeError:
-                                    outbound = {}
-                            
-                            # Try message.parts structure (A2A response format)
-                            if isinstance(outbound, dict) and 'message' in outbound and 'parts' in outbound['message']:
-                                parts_content = []
-                                for part in outbound['message']['parts']:
-                                    if isinstance(part, dict):
-                                        # Try direct text field
-                                        if 'text' in part:
-                                            parts_content.append(str(part['text']))
-                                        # Try root.text structure
-                                        elif 'root' in part and isinstance(part['root'], dict) and 'text' in part['root']:
-                                            parts_content.append(str(part['root']['text']))
-                                        # Try kind=text structure
-                                        elif part.get('kind') == 'text' and 'text' in part:
-                                            parts_content.append(str(part['text']))
-                                if parts_content:
-                                    content_summary = " ".join(parts_content)
-                        
-                        # Method 3: Skip - don't dump raw JSON, just skip if we can't extract text
-                        if not content_summary:
-                            # Skip this memory result - we couldn't extract meaningful text
-                            print(f"⚠️ Skipping memory result {i} from {agent_name} - no clean text extracted")
+                        except Exception as e:
+                            print(f"⚠️ Error processing memory result {i}: {e}")
                             continue
-                        
-                        # Add to context if we found content
-                        if content_summary:
-                            # Truncate long content for context efficiency
-                            # Use configured max_chars (default 2000) - enough for invoices/documents
-                            if len(content_summary) > self.memory_summary_max_chars:
-                                content_summary = content_summary[:self.memory_summary_max_chars] + "..."
-                            context_parts.append(f"  {i}. From {agent_name}: {content_summary}")
-                        else:
-                            print(f"⚠️ No content found in memory result {i} from {agent_name}")
-                    
-                    except Exception as e:
-                        print(f"⚠️ Error processing memory result {i}: {e}")
-                        continue
-            
+                
             else:
                 log_debug(f"🧠 No relevant memory context found")
         
         except Exception as e:
             print(f"❌ Error searching memory: {e}")
             context_parts.append("Note: Unable to retrieve relevant context from memory")
-        else:
-            log_debug(f"🎯 [{mode_label}] Inter-agent memory disabled - skipping vector search")
         
         # Include recent host-side turns (previous agent outputs)
         # Behavior depends on mode and inter-agent memory setting:
@@ -3305,14 +3299,9 @@ Answer with just JSON:
                 ]
 
             # Determine how many previous responses to include
-            if is_agent_mode and not enable_memory:
-                # Agent Mode with memory OFF: Only pass immediate previous agent
-                max_turns = 1
-                log_debug(f"🎯 [Agent Mode] Memory disabled - passing only immediate previous agent output")
-            else:
-                # Standard mode or Agent Mode with memory ON: Use configured limit
-                max_turns = self.last_host_turns
-                log_debug(f"🎯 [{mode_label}] Passing up to {max_turns} recent agent outputs")
+            # Always use configured limit - the memory toggle only affects storage, not retrieval
+            max_turns = self.last_host_turns
+            log_debug(f"🎯 [{mode_label}] Passing up to {max_turns} recent agent outputs")
 
             selected: List[Dict[str, str]] = []
             for entry in reversed(history):  # newest first

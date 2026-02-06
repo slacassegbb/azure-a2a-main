@@ -222,10 +222,13 @@ class FoundryStripeAgent:
         agents_client = self._get_agents_client()
         
         # Create run with MCP tool resources
+        # Reduced to 3 messages to prevent token accumulation in workflow execution
+        # where the same agent is called multiple times with large context.
         run = agents_client.runs.create(
             thread_id=thread_id,
             agent_id=self.agent.id,
             tool_resources=self._mcp_tool_resources,
+            truncation_strategy={"type": "last_messages", "last_messages": 3},
         )
         
         logger.info(f"Created run {run.id} on thread {thread_id}")

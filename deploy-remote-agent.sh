@@ -267,6 +267,30 @@ if [ -n "$AGENT_EXISTS" ]; then
         fi
     fi
     
+    # Add Microsoft Teams env vars for teams agents
+    if [[ "$AGENT_NAME" == *"teams"* ]]; then
+        if [ -n "$MICROSOFT_APP_ID" ] && [ -n "$MICROSOFT_APP_PASSWORD" ]; then
+            ENV_VARS+=("MICROSOFT_APP_ID=$MICROSOFT_APP_ID")
+            ENV_VARS+=("MICROSOFT_APP_PASSWORD=$MICROSOFT_APP_PASSWORD")
+            echo -e "${GREEN}✅ Microsoft Teams configuration added${NC}"
+        else
+            echo -e "${YELLOW}⚠️  Teams agent detected but credentials not found in environment${NC}"
+        fi
+    fi
+    
+    # Add Microsoft Graph Email env vars for email agents
+    if [[ "$AGENT_NAME" == *"email"* ]]; then
+        if [ -n "$TENANT_ID" ] && [ -n "$CLIENT_ID" ] && [ -n "$CLIENT_SECRET" ] && [ -n "$SENDER_EMAIL" ]; then
+            ENV_VARS+=("TENANT_ID=$TENANT_ID")
+            ENV_VARS+=("CLIENT_ID=$CLIENT_ID")
+            ENV_VARS+=("CLIENT_SECRET=$CLIENT_SECRET")
+            ENV_VARS+=("SENDER_EMAIL=$SENDER_EMAIL")
+            echo -e "${GREEN}✅ Microsoft Graph Email configuration added${NC}"
+        else
+            echo -e "${YELLOW}⚠️  Email agent detected but credentials not found in environment${NC}"
+        fi
+    fi
+    
     az containerapp update \
         --name "$CONTAINER_NAME" \
         --resource-group "$RESOURCE_GROUP" \
@@ -305,6 +329,26 @@ else
             echo -e "${GREEN}✅ Twilio SMS configuration added${NC}"
         else
             echo -e "${YELLOW}⚠️  Twilio agent detected but credentials not found in environment${NC}"
+        fi
+    fi
+    
+    # Add Microsoft Teams env vars for teams agents
+    if [[ "$AGENT_NAME" == *"teams"* ]]; then
+        if [ -n "$MICROSOFT_APP_ID" ] && [ -n "$MICROSOFT_APP_PASSWORD" ]; then
+            ENV_VARS_CREATE="$ENV_VARS_CREATE MICROSOFT_APP_ID=$MICROSOFT_APP_ID MICROSOFT_APP_PASSWORD=\"$MICROSOFT_APP_PASSWORD\""
+            echo -e "${GREEN}✅ Microsoft Teams configuration added${NC}"
+        else
+            echo -e "${YELLOW}⚠️  Teams agent detected but credentials not found in environment${NC}"
+        fi
+    fi
+    
+    # Add Microsoft Graph Email env vars for email agents
+    if [[ "$AGENT_NAME" == *"email"* ]]; then
+        if [ -n "$TENANT_ID" ] && [ -n "$CLIENT_ID" ] && [ -n "$CLIENT_SECRET" ] && [ -n "$SENDER_EMAIL" ]; then
+            ENV_VARS_CREATE="$ENV_VARS_CREATE TENANT_ID=$TENANT_ID CLIENT_ID=$CLIENT_ID CLIENT_SECRET=\"$CLIENT_SECRET\" SENDER_EMAIL=$SENDER_EMAIL"
+            echo -e "${GREEN}✅ Microsoft Graph Email configuration added${NC}"
+        else
+            echo -e "${YELLOW}⚠️  Email agent detected but credentials not found in environment${NC}"
         fi
     fi
     

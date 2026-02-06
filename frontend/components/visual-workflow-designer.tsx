@@ -151,6 +151,7 @@ export function VisualWorkflowDesigner({
   const goalInputRef = useRef<HTMLInputElement>(null)
   const [catalogRefreshTrigger, setCatalogRefreshTrigger] = useState(0)
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(null)
+  const [isWorkflowSavedToBackend, setIsWorkflowSavedToBackend] = useState(false) // Track if workflow exists on backend
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
   const [autoSaveStatus, setAutoSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const autoSaveTimerRef = useRef<NodeJS.Timeout | null>(null)
@@ -207,10 +208,22 @@ export function VisualWorkflowDesigner({
   useEffect(() => {
     // Skip auto-save if:
     // 1. Initial load (haven't loaded a workflow yet)
-    // 2. No workflow is selected (it's a brand new workflow)
-    // 3. No name yet (workflow hasn't been saved once)
-    if (isInitialLoadRef.current || !selectedWorkflowId || !workflowName.trim()) {
+    // 2. No steps to save (empty canvas)
+    if (isInitialLoadRef.current || workflowSteps.length === 0) {
       return
+    }
+    
+    // Generate a workflow ID for new workflows if we don't have one yet
+    // This enables auto-save for brand new workflows
+    if (!selectedWorkflowId) {
+      const newId = `workflow_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`
+      setSelectedWorkflowId(newId)
+      console.log('[AutoSave] Generated new workflow ID for auto-save:', newId)
+      // Also set a default name if empty
+      if (!workflowName.trim()) {
+        setWorkflowName("Untitled Workflow")
+      }
+      return // Wait for next render with the new ID
     }
     
     // Clear existing timer
@@ -228,9 +241,10 @@ export function VisualWorkflowDesigner({
         setAutoSaveStatus('saving')
         
         const workflowData = {
-          name: workflowName,
+          id: selectedWorkflowId, // Include ID for creation
+          name: workflowName || "Untitled Workflow",
           description: workflowDescription || "Custom workflow",
-          category: workflowCategory,
+          category: workflowCategory || "Custom",
           goal: workflowGoal || "",
           steps: workflowSteps.map(step => ({
             id: step.id,
@@ -245,14 +259,24 @@ export function VisualWorkflowDesigner({
             id: conn.id,
             fromStepId: conn.fromStepId,
             toStepId: conn.toStepId
-          }))
+          })),
+          isCustom: true
         }
         
         const token = sessionStorage.getItem('auth_token') || localStorage.getItem('auth_token')
         
         if (token && selectedWorkflowId) {
-          const response = await fetch(`${process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'}/api/workflows/${selectedWorkflowId}`, {
-            method: 'PUT',
+          // Decide whether to CREATE (POST) or UPDATE (PUT)
+          const isNewWorkflow = !isWorkflowSavedToBackend
+          const url = isNewWorkflow 
+            ? `${process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'}/api/workflows`
+            : `${process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'}/api/workflows/${selectedWorkflowId}`
+          const method = isNewWorkflow ? 'POST' : 'PUT'
+          
+          console.log(`[AutoSave] ${isNewWorkflow ? 'Creating' : 'Updating'} workflow:`, selectedWorkflowId)
+          
+          const response = await fetch(url, {
+            method,
             headers: {
               'Content-Type': 'application/json',
               'Authorization': `Bearer ${token}`
@@ -261,15 +285,39 @@ export function VisualWorkflowDesigner({
           })
           
           if (response.ok) {
+            const data = await response.json()
             console.log('[AutoSave] Workflow saved successfully')
             setAutoSaveStatus('saved')
             setHasUnsavedChanges(false)
+            setIsWorkflowSavedToBackend(true) // Mark as saved to backend
+            // Update workflow ID if returned from backend (for new workflows)
+            if (data.workflow?.id && data.workflow.id !== selectedWorkflowId) {
+              setSelectedWorkflowId(data.workflow.id)
+            }
+            // Always trigger catalog refresh so the workflow list is up to date
+            setCatalogRefreshTrigger(prev => prev + 1)
             // Reset to idle after 2 seconds
             setTimeout(() => setAutoSaveStatus('idle'), 2000)
           } else {
             console.error('[AutoSave] Failed to save workflow:', response.status)
             setAutoSaveStatus('error')
           }
+        } else if (!token && selectedWorkflowId) {
+          // Not authenticated - save to localStorage
+          console.log('[AutoSave] User not authenticated, saving to localStorage')
+          const saved = localStorage.getItem('custom-workflows')
+          const existing = saved ? JSON.parse(saved) : []
+          const index = existing.findIndex((w: any) => w.id === selectedWorkflowId)
+          if (index >= 0) {
+            existing[index] = workflowData
+          } else {
+            existing.push(workflowData)
+          }
+          localStorage.setItem('custom-workflows', JSON.stringify(existing))
+          setAutoSaveStatus('saved')
+          setHasUnsavedChanges(false)
+          setCatalogRefreshTrigger(prev => prev + 1)
+          setTimeout(() => setAutoSaveStatus('idle'), 2000)
         }
       } catch (error) {
         console.error('[AutoSave] Error saving workflow:', error)
@@ -283,7 +331,7 @@ export function VisualWorkflowDesigner({
         clearTimeout(autoSaveTimerRef.current)
       }
     }
-  }, [workflowSteps, connections, workflowName, workflowDescription, workflowCategory, workflowGoal, selectedWorkflowId])
+  }, [workflowSteps, connections, workflowName, workflowDescription, workflowCategory, workflowGoal, selectedWorkflowId, isWorkflowSavedToBackend])
   
   const [waitingResponse, setWaitingResponse] = useState("")
   const [waitingMessage, setWaitingMessage] = useState<string | null>(null) // Captured agent message when waiting
@@ -1293,7 +1341,7 @@ export function VisualWorkflowDesigner({
       agentName: draggedAgent.name,
       agentColor: getAgentColor(agentIndex),
       agentIconUrl: (draggedAgent as any).iconUrl || (draggedAgent as any).avatar,
-      description: `Use the ${draggedAgent.name} agent`,
+      description: `Use the ${draggedAgent.name}`,
       x,
       y,
       order
@@ -1354,7 +1402,11 @@ export function VisualWorkflowDesigner({
     setConnections([])
     setSelectedStepId(null)
     setSelectedWorkflowId(null) // Clear selected workflow highlight
+    setIsWorkflowSavedToBackend(false) // Reset saved state for new workflows
     setHasUnsavedChanges(false) // Clear unsaved changes when clearing canvas
+    setWorkflowName("") // Reset workflow name
+    setWorkflowDescription("") // Reset description
+    setWorkflowGoal("") // Reset goal
     // Clear saved data from localStorage
     localStorage.removeItem('workflow-visual-data')
   }
@@ -1596,7 +1648,7 @@ export function VisualWorkflowDesigner({
   }, [])
 
   // Load workflow from template
-  const loadWorkflow = (template: any) => {
+  const loadWorkflow = async (template: any) => {
     // Clear existing workflow first
     setWorkflowSteps([])
     setConnections([])
@@ -1604,12 +1656,37 @@ export function VisualWorkflowDesigner({
     
     // Set the selected workflow ID to highlight it in the catalog
     setSelectedWorkflowId(template.id)
+    // Mark as saved to backend since we're loading an existing workflow
+    setIsWorkflowSavedToBackend(true)
+    
+    // Try to fetch fresh data from backend to ensure we have the latest steps
+    let workflowData = template
+    try {
+      const token = sessionStorage.getItem('auth_token') || localStorage.getItem('auth_token')
+      if (token && template.id) {
+        const response = await fetch(`${process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'}/api/workflows/${template.id}`, {
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          }
+        })
+        if (response.ok) {
+          const data = await response.json()
+          if (data.workflow) {
+            workflowData = data.workflow
+            console.log('[VisualWorkflowDesigner] Fetched fresh workflow data with', workflowData.steps?.length || 0, 'steps')
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('[VisualWorkflowDesigner] Could not fetch fresh workflow data, using cached:', err)
+    }
     
     // Load workflow metadata
-    setWorkflowName(template.name || "")
-    setWorkflowDescription(template.description || "")
-    setWorkflowCategory(template.category || "Custom")
-    setWorkflowGoal(template.goal || "")
+    setWorkflowName(workflowData.name || "")
+    setWorkflowDescription(workflowData.description || "")
+    setWorkflowCategory(workflowData.category || "Custom")
+    setWorkflowGoal(workflowData.goal || "")
     
     // Notify parent of the workflow name and goal
     // (now safe - parent won't auto-create workflows)
@@ -1617,30 +1694,30 @@ export function VisualWorkflowDesigner({
       onWorkflowNameChange(template.name)
     }
     if (onWorkflowGoalChange) {
-      onWorkflowGoalChange(template.goal || "")
+      onWorkflowGoalChange(workflowData.goal || "")
     }
     
     // NEW: Notify parent that a workflow was loaded from catalog (includes ID and metadata)
     if (onWorkflowLoaded) {
       onWorkflowLoaded({
-        id: template.id,
-        name: template.name || "",
-        description: template.description || "",
-        category: template.category || "Custom",
-        goal: template.goal || ""
+        id: workflowData.id,
+        name: workflowData.name || "",
+        description: workflowData.description || "",
+        category: workflowData.category || "Custom",
+        goal: workflowData.goal || ""
       })
     }
     
     // Small delay to ensure state is cleared
     setTimeout(() => {
       // Guard against empty/undefined steps
-      if (!template.steps || template.steps.length === 0) {
-        console.log('[VisualWorkflowDesigner] No steps in template, keeping canvas empty')
+      if (!workflowData.steps || workflowData.steps.length === 0) {
+        console.log('[VisualWorkflowDesigner] No steps in workflow, keeping canvas empty')
         return
       }
       
-      // Map template steps to workflow steps with colors
-      const steps = template.steps.map((step: any) => {
+      // Map workflow steps to workflow steps with colors
+      const steps = workflowData.steps.map((step: any) => {
         // Find the agent in registeredAgents to get the correct color and icon
         const matchedAgent = registeredAgents.find(a => 
           (a.id || a.name.toLowerCase().replace(/\s+/g, '-')) === step.agentId ||
@@ -1665,14 +1742,14 @@ export function VisualWorkflowDesigner({
       })
       
       setWorkflowSteps(steps)
-      setConnections(template.connections || [])
+      setConnections(workflowData.connections || [])
       
       // Clear unsaved changes flag when loading a workflow
       setHasUnsavedChanges(false)
       
       // Update refs immediately to ensure test workflow uses latest data
       workflowStepsRef.current = steps
-      connectionsRef.current = template.connections || []
+      connectionsRef.current = workflowData.connections || []
       
       // Update workflow steps map ref for event handlers
       const newMap = new Map<string, WorkflowStep>()
@@ -1683,17 +1760,17 @@ export function VisualWorkflowDesigner({
       workflowStepsMapRef.current = newMap
       
       // Calculate and update workflow order map immediately
-      if (template.connections && template.connections.length > 0) {
+      if (workflowData.connections && workflowData.connections.length > 0) {
         const visited = new Set<string>()
         const result: WorkflowStep[] = []
         
         const connectedStepIds = new Set<string>()
-        template.connections.forEach((conn: Connection) => {
+        workflowData.connections.forEach((conn: Connection) => {
           connectedStepIds.add(conn.fromStepId)
           connectedStepIds.add(conn.toStepId)
         })
         
-        const hasIncoming = new Set(template.connections.map((c: Connection) => c.toStepId))
+        const hasIncoming = new Set(workflowData.connections.map((c: Connection) => c.toStepId))
         const rootNodes = steps.filter((step: WorkflowStep) => 
           connectedStepIds.has(step.id) && !hasIncoming.has(step.id)
         )
@@ -1705,7 +1782,7 @@ export function VisualWorkflowDesigner({
           const step = steps.find((s: WorkflowStep) => s.id === stepId)
           if (step) {
             result.push(step)
-            const outgoing = template.connections.filter((c: Connection) => c.fromStepId === stepId)
+            const outgoing = workflowData.connections.filter((c: Connection) => c.fromStepId === stepId)
             outgoing.forEach((conn: Connection) => dfs(conn.toStepId))
           }
         }
@@ -1733,7 +1810,7 @@ export function VisualWorkflowDesigner({
           order: step.order,
           description: step.description
         })),
-        connections: template.connections.map((conn: any) => ({
+        connections: (workflowData.connections || []).map((conn: any) => ({
           id: conn.id,
           fromStepId: conn.fromStepId,
           toStepId: conn.toStepId
@@ -1821,6 +1898,7 @@ export function VisualWorkflowDesigner({
         
         if (response.ok) {
           console.log('[VisualWorkflowDesigner] Workflow updated successfully')
+          setIsWorkflowSavedToBackend(true)
         } else {
           console.error('[VisualWorkflowDesigner] Failed to update workflow')
           alert("Failed to save workflow. Please try again.")
@@ -1841,6 +1919,7 @@ export function VisualWorkflowDesigner({
         if (response.ok) {
           const data = await response.json()
           setSelectedWorkflowId(data.workflow?.id || newId)
+          setIsWorkflowSavedToBackend(true)
           console.log('[VisualWorkflowDesigner] New workflow created:', data.workflow?.id || newId)
         } else {
           console.error('[VisualWorkflowDesigner] Failed to create workflow')
@@ -1958,6 +2037,7 @@ export function VisualWorkflowDesigner({
         if (savedWorkflow) {
           console.log('[VisualWorkflowDesigner] Workflow saved to backend:', savedWorkflow.id)
           savedToBackend = true
+          setIsWorkflowSavedToBackend(true) // Mark workflow as saved to backend
         } else {
           console.error('[VisualWorkflowDesigner] Backend save failed')
           alert("Failed to save workflow. Please try again.")
@@ -3963,6 +4043,8 @@ export function VisualWorkflowDesigner({
                         if (response.ok) {
                           const data = await response.json()
                           setSelectedWorkflowId(data.workflow?.id || newWorkflowId)
+                          setIsWorkflowSavedToBackend(true) // Mark as saved to backend
+                          isInitialLoadRef.current = false // Enable auto-save
                         }
                       } else {
                         // Save to localStorage
@@ -3970,6 +4052,7 @@ export function VisualWorkflowDesigner({
                         customWorkflows.push(workflowData)
                         localStorage.setItem('customWorkflows', JSON.stringify(customWorkflows))
                         setSelectedWorkflowId(newWorkflowId)
+                        isInitialLoadRef.current = false // Enable auto-save
                       }
                       
                       // Trigger catalog refresh
@@ -3977,6 +4060,9 @@ export function VisualWorkflowDesigner({
                       
                     } catch (error) {
                       console.error('Failed to create workflow:', error)
+                      // Still enable auto-save even if initial save failed - we'll retry on next change
+                      isInitialLoadRef.current = false
+                      setSelectedWorkflowId(newWorkflowId)
                     }
                     
                     // Notify parent

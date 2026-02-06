@@ -326,6 +326,25 @@ class FoundryHostManager(ApplicationManager):
         # Auto-detect agent_mode based on workflow presence (backward compatible)
         # If agent_mode is explicitly passed, use it; otherwise detect from workflow
         effective_agent_mode = agent_mode if agent_mode is not None else (workflow is not None and workflow.strip() != "")
+        
+        # CRITICAL FIX: Check if this is a HITL resume (human response after input_required)
+        # If the session context has a pending workflow plan, force agent_mode to True
+        # so the orchestrator can resume the workflow instead of treating it as a new request
+        try:
+            session_ctx = self._host_agent.get_session_context(context_id)
+            if session_ctx and session_ctx.current_plan:
+                log_debug(f"🔄 [HITL RESUME] Found pending workflow plan for context {context_id}, forcing agent_mode=True")
+                effective_agent_mode = True
+                # Restore workflow and workflow_goal from the saved plan
+                if session_ctx.current_plan.workflow:
+                    workflow = session_ctx.current_plan.workflow
+                    log_debug(f"🔄 [HITL RESUME] Restored workflow from plan ({len(workflow)} chars)")
+                if session_ctx.current_plan.workflow_goal:
+                    workflow_goal = session_ctx.current_plan.workflow_goal
+                    log_debug(f"🔄 [HITL RESUME] Restored workflow_goal from plan")
+        except Exception as e:
+            log_debug(f"⚠️ [HITL RESUME] Error checking for pending plan: {e}")
+        
         log_debug(f"process_message: Agent Mode = {effective_agent_mode} (explicit={agent_mode}), Inter-Agent Memory = {enable_inter_agent_memory}, Workflow = {workflow[:50] if workflow else None}")
         conversation = self.get_conversation(context_id)
         if not conversation:

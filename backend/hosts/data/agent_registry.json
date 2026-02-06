@@ -3,7 +3,7 @@
     "name": "AI Foundry Classification Triage Agent",
     "description": "An intelligent incident classification and triage agent powered by Azure AI Foundry. Specializes in analyzing customer issues, classifying incidents into proper categories, assessing priority levels, and routing cases to appropriate teams using ServiceNow standards.",
     "version": "1.0.0",
-    "url": "http://localhost:8009/",
+    "url": "https://azurefoundry-classification.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
     "defaultInputModes": [
       "text"
     ],
@@ -18,12 +18,7 @@
         "id": "incident_classification",
         "name": "Incident Classification",
         "description": "Classify customer incidents into categories such as Fraud, Technical Issues, Payment Issues, Card Issues, Account Services, Security, and Inquiries",
-        "examples": [
-          "I lost my card while traveling",
-          "There is an unauthorized charge on my account",
-          "I cannot log into my banking app",
-          "My payment failed to go through"
-        ],
+        "examples": null,
         "tags": [
           "classification",
           "incident",
@@ -35,12 +30,7 @@
         "id": "priority_assessment",
         "name": "Priority Assessment",
         "description": "Determine urgency, impact, and priority levels for incidents using ServiceNow standard mapping",
-        "examples": [
-          "Assess priority for fraud incident",
-          "Determine urgency for account blocked",
-          "Evaluate impact of system outage",
-          "Calculate priority matrix for technical issue"
-        ],
+        "examples": null,
         "tags": [
           "priority",
           "urgency",
@@ -53,12 +43,7 @@
         "id": "routing_triage",
         "name": "Routing & Triage",
         "description": "Route incidents to appropriate teams and provide triage recommendations based on classification",
-        "examples": [
-          "Route fraud case to security team",
-          "Escalate critical payment issue",
-          "Assign technical issue to IT support",
-          "Triage account service request"
-        ],
+        "examples": null,
         "tags": [
           "routing",
           "triage",
@@ -70,12 +55,7 @@
         "id": "field_mapping",
         "name": "ServiceNow Field Mapping",
         "description": "Map incident details to proper ServiceNow fields including category, subcategory, description, and metadata",
-        "examples": [
-          "Map incident to ServiceNow fields",
-          "Generate proper short description",
-          "Categorize into subcategory",
-          "Create structured ticket data"
-        ],
+        "examples": null,
         "tags": [
           "servicenow",
           "mapping",
@@ -87,12 +67,7 @@
         "id": "keyword_analysis",
         "name": "Keyword Analysis",
         "description": "Analyze customer messages for classification keywords and context cues to determine incident type",
-        "examples": [
-          "Analyze message for fraud keywords",
-          "Identify technical issue indicators",
-          "Extract payment problem signals",
-          "Detect security concerns"
-        ],
+        "examples": null,
         "tags": [
           "keywords",
           "analysis",
@@ -104,9 +79,9 @@
   },
   {
     "name": "AI Foundry Branding & Content Agent",
-    "description": "An intelligent branding partner powered by Azure AI Foundry. Delivers on-brand messaging, visual direction, and creative prompts grounded in the Company Branding Guide.",
+    "description": "An intelligent branding partner powered by Azure AI Foundry. Provides on-brand messaging, visual direction, and creative prompts grounded in the Company Branding Guide.",
     "version": "1.0.0",
-    "url": "http://localhost:9020/",
+    "url": "https://azurefoundry-branding.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
     "defaultInputModes": [
       "text"
     ],
@@ -121,12 +96,7 @@
         "id": "brand_strategy_alignment",
         "name": "Brand Strategy Alignment",
         "description": "Map campaign goals, audiences, and messaging pillars to the Company Branding Guide, ensuring voice, tone, and terminology remain on-brand.",
-        "examples": [
-          "Outline messaging pillars for a product-launch email aligned to the brand voice",
-          "Review draft tagline options and recommend the on-brand choice with rationale",
-          "Summarize how a campaign concept supports our innovation + trust positioning",
-          "Identify missing brand attributes in a draft hero statement and propose fixes"
-        ],
+        "examples": null,
         "tags": [
           "branding",
           "strategy",
@@ -138,12 +108,7 @@
         "id": "visual_identity_direction",
         "name": "Visual Identity Direction",
         "description": "Provide art direction, mood, and composition notes anchored in brand colors, lighting, and imagery guidelines from `company_branding.md`.",
-        "examples": [
-          "Translate the brand palette into a prompt for a hero illustration",
-          "Advise on lighting and depth for a LinkedIn carousel background",
-          "Recommend iconography and layout for a landing page hero graphic",
-          "Evaluate a storyboard concept for adherence to brand mood and colors"
-        ],
+        "examples": null,
         "tags": [
           "visual",
           "design",
@@ -155,12 +120,7 @@
         "id": "brand_voice_copywriting",
         "name": "Brand Voice Copywriting",
         "description": "Draft or refine copy so it reflects the confident, professional, forward-looking voice defined in the branding guide.",
-        "examples": [
-          "Rewrite social captions to emphasize calm confidence and innovation",
-          "Transform a technical paragraph into on-brand website copy",
-          "Craft CTA variations that stay within voice and typography rules",
-          "Edit onboarding email copy to remove off-brand phrasing"
-        ],
+        "examples": null,
         "tags": [
           "copywriting",
           "voice",
@@ -172,12 +132,7 @@
         "id": "generative_prompt_engineering",
         "name": "Generative Prompt Engineering",
         "description": "Create positive and negative prompts for image/video generation that encode brand palette, lighting, typography, and prohibited elements.",
-        "examples": [
-          "Draft a stable diffusion prompt for a brand-aligned product hero image",
-          "Provide Midjourney prompt + negatives for a futuristic workspace scene",
-          "Generate prompt variants for thumbnails following brand composition rules",
-          "Audit an existing AI prompt and adjust it to match company branding"
-        ],
+        "examples": null,
         "tags": [
           "prompt",
           "imaging",
@@ -189,12 +144,7 @@
         "id": "brand_review_feedback",
         "name": "Brand Review & QA",
         "description": "Evaluate supplied copy, prompts, or visuals and document brand compliance gaps with actionable corrections.",
-        "examples": [
-          "Assess a video script for voice consistency and suggest edits",
-          "Flag off-brand colors in a design mock and propose replacements",
-          "Provide a brand compliance checklist for a cross-channel campaign",
-          "Summarize risks before publishing content created by external partners"
-        ],
+        "examples": null,
         "tags": [
           "review",
           "qa",
@@ -208,7 +158,7 @@
     "name": "AI Foundry Image Generator Agent",
     "description": "An Azure AI Foundry agent that can generate and edit images.",
     "version": "1.0.0",
-    "url": "http://localhost:9010/",
+    "url": "https://azurefoundry-image-generator.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
     "defaultInputModes": [
       "text"
     ],
@@ -223,12 +173,7 @@
         "id": "generate_image",
         "name": "Generate Image",
         "description": "Create new images from text prompts with various styles, subjects, and compositions.",
-        "examples": [
-          "Generate a mountain landscape with a dog",
-          "Create a product visualization for marketing materials",
-          "Design concept art for a fantasy scene",
-          "Produce an image matching specific brand guidelines"
-        ],
+        "examples": null,
         "tags": [
           "image-generation",
           "text-to-image",
@@ -239,12 +184,7 @@
         "id": "edit_image",
         "name": "Edit Image",
         "description": "Modify existing images through inpainting, outpainting, style transfer, or targeted edits.",
-        "examples": [
-          "Remove background from an image",
-          "Change the color scheme of an existing image",
-          "Add or remove objects from a scene",
-          "Extend an image beyond its original boundaries"
-        ],
+        "examples": null,
         "tags": [
           "image-editing",
           "modification",
@@ -257,7 +197,7 @@
     "name": "Sora 2 Video Generator",
     "description": "Generate stunning AI videos from text prompts using Azure OpenAI's Sora 2 model. Create cinematic scenes, product demos, animations, and creative visual content with natural language descriptions. Supports 4-12 second videos in landscape or portrait format.",
     "version": "1.0.0",
-    "url": "http://localhost:9028/",
+    "url": "https://azurefoundry-video.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
     "defaultInputModes": [
       "text"
     ],
@@ -272,11 +212,7 @@
         "id": "video_generation",
         "name": "AI Video Generation",
         "description": "Generate high-quality AI videos from text prompts using Azure OpenAI's Sora 2 model. Create cinematic scenes, animations, and visual content with natural language descriptions.",
-        "examples": [
-          "Generate a video of a golden retriever running through a sunlit meadow at sunset",
-          "Create a cinematic shot of waves crashing on a rocky coastline at dawn",
-          "Make a video of a futuristic city with flying cars at night"
-        ],
+        "examples": null,
         "tags": [
           "video",
           "sora",
@@ -290,11 +226,7 @@
         "id": "video_from_image",
         "name": "Image-to-Video Generation",
         "description": "Transform static images into dynamic videos. Provide a reference image and describe the motion or animation you want to create.",
-        "examples": [
-          "Animate this landscape image with gentle wind blowing through the trees",
-          "Turn this portrait into a video where the person slowly smiles",
-          "Make the water in this photo start flowing naturally"
-        ],
+        "examples": null,
         "tags": [
           "video",
           "image",
@@ -307,11 +239,7 @@
         "id": "video_to_video",
         "name": "Video-to-Video Generation",
         "description": "Transform existing videos using AI. Upload a reference video and describe the transformation you want - change styles, atmospheres, or subjects while maintaining motion and structure.",
-        "examples": [
-          "Transform this daytime scene into a moonlit nighttime video",
-          "Convert this video into an animated cartoon style",
-          "Change this urban scene to a post-apocalyptic landscape"
-        ],
+        "examples": null,
         "tags": [
           "video",
           "transform",
@@ -324,11 +252,7 @@
         "id": "video_remix",
         "name": "Video Remix",
         "description": "Modify specific aspects of previously generated Sora 2 videos while preserving core elements like scene transitions and visual layout. Make targeted adjustments to color palettes, lighting, or style.",
-        "examples": [
-          "Shift the color palette to warm sunset tones",
-          "Change the lighting to dramatic noir style",
-          "Transform the season from summer to winter"
-        ],
+        "examples": null,
         "tags": [
           "video",
           "remix",
@@ -341,11 +265,7 @@
         "id": "video_prompt_assistance",
         "name": "Video Prompt Crafting",
         "description": "Help craft effective prompts for video generation. Get advice on describing scenes, camera movements, lighting, and style for optimal results.",
-        "examples": [
-          "How do I describe a tracking shot in my video prompt?",
-          "What details should I include for a cinematic video?",
-          "Help me write a prompt for a product showcase video"
-        ],
+        "examples": null,
         "tags": [
           "prompt",
           "assistance",
@@ -394,7 +314,7 @@
     "name": "AI Foundry QuickBooks Agent",
     "description": "An intelligent QuickBooks Online agent for accounting and financial management. Manage customers, invoices, bills, vendors, employees, and generate financial reports.",
     "version": "1.0.0",
-    "url": "https://azurefoundry-quickbooks.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
+    "url": "http://localhost:8020/",
     "defaultInputModes": [
       "text"
     ],
@@ -520,9 +440,9 @@
   },
   {
     "name": "AI Foundry HubSpot Agent",
-    "description": "An intelligent agent specialized in HubSpot CRM management. Can manage contacts, companies, deals, tickets, notes, and associations. Also supports web search and document search capabilities.",
+    "description": "Intelligent agent for HubSpot payment processing - customers, payments, subscriptions, invoices, and balance.",
     "version": "1.0.0",
-    "url": "http://localhost:9040/",
+    "url": "https://azurefoundry-hubspot.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
     "defaultInputModes": [
       "text"
     ],
@@ -534,149 +454,42 @@
     },
     "skills": [
       {
-        "id": "hubspot_contacts",
-        "name": "HubSpot Contact Management",
-        "description": "Create, search, update, and manage contact records in HubSpot CRM. Access contact details, track interactions, and manage contact properties.",
-        "examples": [
-          "List all my HubSpot contacts",
-          "Create a new contact with email john@example.com",
-          "Search for contacts with the last name Smith",
-          "Get contact details for contact ID 123",
-          "Update the phone number for a contact"
-        ],
+        "id": "hubspot_customers",
+        "name": "HubSpot Customer Management",
+        "description": "Create, search, update, and manage customer records in HubSpot.",
+        "examples": null,
         "tags": [
           "hubspot",
-          "contacts",
-          "crm",
-          "people"
+          "customers",
+          "payments"
         ]
       },
       {
-        "id": "hubspot_companies",
-        "name": "HubSpot Company Management",
-        "description": "Create, search, update, and manage company records in HubSpot CRM. Track company information, industry, and relationships.",
-        "examples": [
-          "List all companies in HubSpot",
-          "Create a new company called Acme Corp",
-          "Search for companies in the tech industry",
-          "Get company details for company ID 456",
-          "Update company website information"
-        ],
+        "id": "hubspot_payments",
+        "name": "HubSpot Payment Processing",
+        "description": "Create payment intents, process charges, and handle refunds.",
+        "examples": null,
         "tags": [
           "hubspot",
-          "companies",
-          "crm",
-          "organizations"
+          "payments",
+          "charges"
         ]
       },
       {
-        "id": "hubspot_deals",
-        "name": "HubSpot Deal Management",
-        "description": "Create, search, update, and manage deals/opportunities in HubSpot CRM. Track deal stages, amounts, and close dates.",
-        "examples": [
-          "List all open deals",
-          "Create a new deal for $50,000",
-          "Search for deals closing this month",
-          "Update deal stage to Closed Won",
-          "Show me deals in the negotiation stage"
-        ],
+        "id": "hubspot_balance",
+        "name": "HubSpot Balance",
+        "description": "Check balance and view available funds.",
+        "examples": null,
         "tags": [
           "hubspot",
-          "deals",
-          "crm",
-          "sales",
-          "opportunities"
-        ]
-      },
-      {
-        "id": "hubspot_associations",
-        "name": "HubSpot Associations & Relationships",
-        "description": "View and manage relationships between HubSpot objects. See which contacts are associated with which companies and deals.",
-        "examples": [
-          "Show me all contacts associated with company ID 123",
-          "What deals are linked to this contact?",
-          "List associations between contacts and companies",
-          "Find all companies connected to this deal"
-        ],
-        "tags": [
-          "hubspot",
-          "associations",
-          "relationships",
-          "crm"
-        ]
-      },
-      {
-        "id": "hubspot_notes",
-        "name": "HubSpot Notes & Engagements",
-        "description": "Create notes and engagement records on HubSpot CRM objects. Track interactions, meetings, and communications.",
-        "examples": [
-          "Add a note to contact ID 123",
-          "Create a meeting note for a deal",
-          "Log an interaction with a company",
-          "Add follow-up notes after a call"
-        ],
-        "tags": [
-          "hubspot",
-          "notes",
-          "engagements",
-          "crm",
-          "activities"
-        ]
-      },
-      {
-        "id": "hubspot_account",
-        "name": "HubSpot Account Information",
-        "description": "View HubSpot account details, owners, and permissions. Get information about the connected HubSpot portal.",
-        "examples": [
-          "What HubSpot account am I connected to?",
-          "List all owners in this HubSpot portal",
-          "Show me account details",
-          "What permissions do I have?"
-        ],
-        "tags": [
-          "hubspot",
-          "account",
-          "portal",
-          "owners"
-        ]
-      },
-      {
-        "id": "web_search",
-        "name": "Web Search",
-        "description": "Search the web for current information using Bing or other integrated search tools.",
-        "examples": [
-          "Search for HubSpot best practices",
-          "Find information about PCI compliance",
-          "Get the latest HubSpot API updates"
-        ],
-        "tags": [
-          "web",
-          "search",
-          "bing",
-          "internet"
-        ]
-      },
-      {
-        "id": "human_interaction",
-        "name": "Human Expert Escalation",
-        "description": "Escalate complex CRM issues to human experts or facilitate human-in-the-loop interactions when automated responses are insufficient.",
-        "examples": [
-          "Escalate this CRM issue to a human expert",
-          "I need to speak with a person about data migration",
-          "Connect me with support for a complex workflow"
-        ],
-        "tags": [
-          "human-interaction",
-          "escalation",
-          "expert",
-          "human-capable"
+          "balance"
         ]
       }
     ]
   },
   {
     "name": "Benjamin School English Teacher",
-    "description": "High school English teacher specializing in essay grading and literary analysis",
+    "description": "This agent provides detailed feedback on English essays based on a provided rubric, checking for accuracy, adherence to the rubric, and overall quality of writing.",
     "version": "1.0.0",
     "url": "https://azurefoundry-english.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
     "defaultInputModes": [
@@ -686,8 +499,21 @@
       "text"
     ],
     "capabilities": {
-      "streaming": false
-    }
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "grade-english-essays",
+        "name": "Grade English Essays",
+        "description": "This agent takes an English essay submitted by a student and provides detailed feedback based on a provided rubric. It checks for accuracy, adherence to the rubric, and overall quality of writing.",
+        "examples": null,
+        "tags": [
+          "english",
+          "essay grading",
+          "writing feedback"
+        ]
+      }
+    ]
   },
   {
     "name": "Benjamin School Biology Teacher",
@@ -708,9 +534,7 @@
         "id": "precalc",
         "name": "Pre-calculus Study Buddy",
         "description": "This agent knows the Pre-Calculus curriculum and can help students study for the exam by providing explanations, answering questions, and offering practice problems.",
-        "examples": [
-          "Example query 1 - Create a study guide for chapter 5 in Pre-Calculus."
-        ],
+        "examples": null,
         "tags": [
           "precalculus",
           "math",
@@ -739,9 +563,7 @@
         "id": "apcalc",
         "name": "AP-Calculus Study Buddy",
         "description": "This agent knows the AP-Calculus curriculum and can help students study for the exam by providing explanations, answering questions, and offering practice problems.",
-        "examples": [
-          "Example query 1 - Create a study guide for chapter 5 in AP-Calculus."
-        ],
+        "examples": null,
         "tags": [
           "apcalculus",
           "math",
@@ -770,9 +592,7 @@
         "id": "apes",
         "name": "AP Environmental Science Study Guide",
         "description": "This agent knows the AP Environmental Science curriculum and can help students study for the exam by providing explanations, answering questions, and offering practice problems.",
-        "examples": [
-          "Create a study guide for chapter 5 in AP Environmental Science"
-        ],
+        "examples": null,
         "tags": [
           "environmental science",
           "APES",

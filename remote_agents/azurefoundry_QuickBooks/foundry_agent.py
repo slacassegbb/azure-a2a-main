@@ -528,6 +528,8 @@ Current date: {datetime.datetime.now().isoformat()}
         # IMPORTANT: max_prompt_tokens limits context window to prevent rate limit errors
         # when MCP tool results accumulate (each tool call can add 2-3K tokens).
         # truncation_strategy="last_messages" keeps the N most recent complete messages.
+        # Reduced to 3 messages to prevent token accumulation in workflow execution
+        # where the same agent is called multiple times with large context.
         if mcp_tool and hasattr(mcp_tool, 'resources'):
             logger.info("🔧 Creating run with MCP tool_resources (max_prompt_tokens=25000)")
             run = client.runs.create(
@@ -535,7 +537,7 @@ Current date: {datetime.datetime.now().isoformat()}
                 agent_id=self.agent.id,
                 tool_resources=mcp_tool.resources,
                 max_prompt_tokens=25000,  # Limit context to prevent 39K+ token accumulation
-                truncation_strategy={"type": "last_messages", "last_messages": 15}
+                truncation_strategy={"type": "last_messages", "last_messages": 3}
             )
         else:
             logger.info("Creating run without MCP tool_resources (max_prompt_tokens=25000)")
@@ -543,7 +545,7 @@ Current date: {datetime.datetime.now().isoformat()}
                 thread_id=thread_id, 
                 agent_id=self.agent.id,
                 max_prompt_tokens=25000,
-                truncation_strategy={"type": "last_messages", "last_messages": 15}
+                truncation_strategy={"type": "last_messages", "last_messages": 3}
             )
         
         logger.info(f"   Run completed: {run.id}")
