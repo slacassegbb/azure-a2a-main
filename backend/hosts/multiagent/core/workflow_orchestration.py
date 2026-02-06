@@ -1032,7 +1032,15 @@ DECISION-MAKING RULES:
 - If no agent fits, set recommended_agent=null
 - Mark goal_status="completed" ONLY when: (1) ALL MANDATORY WORKFLOW steps are completed (if workflow exists), AND (2) the objective is fully achieved
 
-### 🔀 PARALLEL EXECUTION SUPPORT
+### � AGENT ASKS FOR MORE INFO - STOP AND COMPLETE
+If an agent's response asks for more information (e.g., "I need customer details", "Please provide..."):
+- Do NOT call the same agent again trying to provide the info
+- Do NOT fabricate or make up the missing information
+- Mark goal_status="completed" and include the agent's question in your reasoning
+- The user will see the agent's question and can provide the needed info in their next message
+- This prevents infinite loops of calling the same agent repeatedly
+
+### �🔀 PARALLEL EXECUTION SUPPORT
 When the workflow contains parallel steps (indicated by letter suffixes like 2a., 2b., 2c.):
 - These steps can be executed SIMULTANEOUSLY - they do not depend on each other
 - Use `next_tasks` (list) instead of `next_task` (single) to propose multiple parallel tasks

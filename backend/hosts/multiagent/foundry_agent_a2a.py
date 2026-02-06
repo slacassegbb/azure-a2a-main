@@ -1015,6 +1015,11 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
         EXPLICIT FILE ROUTING (Option 3):
         - file_uris: List of file URIs from previous agent responses to pass along
         - video_metadata: Dict with video_id for remix operations
+        
+        HITL (Human-in-the-Loop) Support:
+        - When an agent returns input_required, this function returns a special
+          STOP message that tells GPT-4 to halt and wait for human input
+        - The original user goal is saved for automatic resumption when the human responds
         """
         print(f"\n🔥🔥🔥 [SEND_MESSAGE_SYNC] CALLED by Azure SDK!")
         print(f"🔥 agent_name: {agent_name}")
@@ -1042,6 +1047,9 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
                 plan=None,
                 contextId=context_id_to_use  # CRITICAL: Pass contextId to prevent UUID generation
             )
+            # CRITICAL: Store the new session context so it persists for HITL resumption
+            self.session_contexts[context_id_to_use] = session_ctx
+            log_debug(f"🔍 [send_message_sync] Stored new SessionContext in self.session_contexts")
         else:
             log_debug(f"🔍 [send_message_sync] SessionContext FOUND with contextId={session_ctx.contextId}")
         
@@ -1053,7 +1061,7 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
         # Call the async send_message - SDK will await it
         # NOTE: suppress_streaming=False allows status updates to flow to sidebar
         # EXPLICIT FILE ROUTING: Pass file_uris and video_metadata
-        return await self.send_message(
+        result = await self.send_message(
             agent_name=agent_name,
             message=message,
             tool_context=tool_context,
@@ -1061,6 +1069,53 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
             file_uris=file_uris,
             video_metadata=video_metadata
         )
+        
+        # =====================================================================
+        # HITL CHECK: If agent returned input_required, tell GPT-4 to STOP
+        # =====================================================================
+        # When pending_input_agent is set, it means the agent needs human input
+        # We must tell GPT-4 to STOP calling more tools and wait for the human
+        if session_ctx.pending_input_agent:
+            print(f"⏸️ [HITL] Agent '{agent_name}' returned input_required - telling GPT-4 to STOP!")
+            log_info(f"⏸️ [HITL] Agent '{agent_name}' returned input_required, saving state for resumption")
+            
+            # Save the original user goal for resumption when human responds
+            # This is stored so _handle_pending_input_agent can resume the workflow
+            if not session_ctx.pending_workflow_user_message:
+                # Get the original user message from the current conversation
+                original_user_message = getattr(self, '_current_user_message', None)
+                if original_user_message:
+                    session_ctx.pending_workflow_user_message = original_user_message
+                    print(f"💾 [HITL] Saved original user goal for resumption: {original_user_message[:100]}...")
+                    log_info(f"💾 [HITL] Saved pending_workflow_user_message for ad-hoc resume")
+            
+            # Extract the agent's response text
+            agent_response_text = ""
+            if isinstance(result, list):
+                for item in result:
+                    if isinstance(item, str):
+                        agent_response_text = item
+                        break
+                    elif hasattr(item, 'root') and hasattr(item.root, 'text'):
+                        agent_response_text = item.root.text
+                        break
+            elif isinstance(result, str):
+                agent_response_text = result
+            
+            # Return a special response that tells GPT-4 to STOP
+            # The key is the [WORKFLOW PAUSED] marker and explicit instruction
+            hitl_stop_response = f"""[WORKFLOW PAUSED - WAITING FOR HUMAN INPUT]
+
+{agent_response_text}
+
+⚠️ IMPORTANT: The {agent_name} is waiting for the user to respond (human-in-the-loop).
+DO NOT call any more agents or tools. Wait for the user to provide their response.
+The workflow will automatically resume after the user responds."""
+            
+            print(f"🛑 [HITL] Returning STOP response to GPT-4")
+            return [hitl_stop_response]
+        
+        return result
 
     async def search_memory_sync(
         self,
@@ -2259,11 +2314,23 @@ Answer with just JSON:
             # Get the original user message for ad-hoc resume
             pending_user_message = session_context.pending_workflow_user_message
             
+            # DEBUG: Log the state for troubleshooting
+            print(f"🔍 [HITL DEBUG] Agent '{pending_agent}' completed. Checking resume conditions:")
+            print(f"🔍 [HITL DEBUG]   pending_workflow = '{pending_workflow[:50] if pending_workflow else None}'")
+            print(f"🔍 [HITL DEBUG]   pending_user_message = '{pending_user_message[:50] if pending_user_message else None}'")
+            print(f"🔍 [HITL DEBUG]   pending_workflow_outputs = {len(pending_workflow_outputs)} items")
+            
             # Resume if we have a workflow OR an original user message (ad-hoc)
             if (pending_workflow and pending_workflow.strip()) or pending_user_message:
                 is_adhoc = not (pending_workflow and pending_workflow.strip())
                 mode_str = "AD-HOC ORCHESTRATION" if is_adhoc else "WORKFLOW"
+                print(f"✅ [HITL DEBUG] RESUMING {mode_str}!")
                 log_info(f"▶️ [HITL] Agent completed - RESUMING {mode_str}")
+                
+                # CRITICAL: Mark this agent as completed HITL so orchestrator won't call it again
+                if pending_agent not in session_context.completed_hitl_agents:
+                    session_context.completed_hitl_agents.append(pending_agent)
+                    print(f"🚫 [HITL] Added '{pending_agent}' to completed_hitl_agents - will NOT be called again")
                 
                 # Add this agent's response to the collected outputs
                 hitl_outputs = clean_response(hitl_response)
@@ -2278,41 +2345,36 @@ Answer with just JSON:
                 
                 log_info(f"▶️ [HITL] Resuming with {len(all_outputs)} total outputs")
                 
-                # For ad-hoc HITL: Check if the agent's response indicates completion
-                # If the HITL output shows success (✅, approved, confirmed, etc.), skip orchestration
-                # This prevents the LLM from redundantly re-processing already-completed goals
+                # For ad-hoc HITL: Always continue with orchestration to check if more steps are needed
+                # The orchestration loop will determine if the goal is fully achieved
+                # DO NOT try to detect "completion" here - that's the orchestrator's job
                 if is_adhoc:
                     hitl_output = hitl_outputs[0] if hitl_outputs else 'Step completed.'
-                    hitl_output_lower = hitl_output.lower()
                     
-                    # Check for completion indicators in the HITL response
-                    completion_indicators = ['✅', 'approved', 'confirmed', 'completed', 'success', 'sent successfully']
-                    is_completed = any(indicator.lower() in hitl_output_lower or indicator in hitl_output for indicator in completion_indicators)
+                    # Simple, clear resume message - let the LLM figure out what's left to do
+                    # The key info: what was done, what was the original goal
+                    resume_message = f"""The "{pending_agent}" step has completed successfully.
+
+Result: {hitl_output[:300]}
+
+Original request: "{saved_user_message}"
+
+Continue with any remaining steps to complete the original request. Do NOT repeat the {pending_agent} step - it's already done."""
                     
-                    if is_completed:
-                        log_info(f"▶️ [HITL] Ad-hoc HITL completed with success indicators - skipping further orchestration")
-                        log_info(f"▶️ [HITL] Returning outputs directly: {len(all_outputs)} items")
-                        return all_outputs
-                    
-                    # Not completed - continue with orchestration
-                    resume_message = f"""## HUMAN-IN-THE-LOOP STEP COMPLETED
-
-**Original User Goal:** {saved_user_message}
-
-**The human-in-the-loop step has completed. Here is the result:**
-{hitl_output}
-
-**IMPORTANT:** If the result above indicates the user's goal has been achieved (e.g., approval was granted, confirmation received, etc.), respond with a final summary and mark the goal as COMPLETED. Do NOT call any more agents unless the result explicitly requires follow-up action."""
+                    print(f"🎯 [HITL RESUME] Resume message: {resume_message[:200]}...")
                 else:
                     resume_message = "Continue the workflow. The previous step has completed."
                 
                 # Continue the orchestration from where we left off
+                # CRITICAL: Pass resume_message as workflow_goal so the orchestrator uses it as the goal
+                # Do NOT pass saved_user_message - that would restart the entire workflow
                 remaining_outputs = await self._agent_mode_orchestration_loop(
                     user_message=resume_message,
                     context_id=context_id,
                     session_context=session_context,
                     event_logger=event_logger,
-                    workflow=saved_workflow  # None for ad-hoc, workflow string for Visual Designer
+                    workflow=saved_workflow,  # None for ad-hoc, workflow string for Visual Designer
+                    workflow_goal=resume_message  # Use resume message as the goal, NOT original
                 )
                 
                 # Clean any remaining outputs too
@@ -3987,6 +4049,11 @@ Answer with just JSON:
                     user_message = part.root.text
                     break
             log_debug(f"Step: Extracted text message")
+            
+            # Store the original user message for HITL resumption
+            # This allows send_message_sync to save the goal when an agent returns input_required
+            self._current_user_message = user_message
+            log_debug(f"💾 [HITL] Stored _current_user_message for potential HITL resumption")
             
             log_debug(f"Extracted user message: {user_message}")
             print(f"Processing {len(message_parts)} parts including files")

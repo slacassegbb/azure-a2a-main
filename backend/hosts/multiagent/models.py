@@ -39,6 +39,8 @@ class SessionContext(BaseModel):
     pending_workflow: Optional[str] = Field(default=None, description="Workflow definition to resume after HITL completes")
     pending_workflow_outputs: List[str] = Field(default_factory=list, description="Task outputs collected before HITL pause")
     pending_workflow_user_message: Optional[str] = Field(default=None, description="Original user message for workflow")
+    # Track agents that have completed HITL to prevent re-calling them
+    completed_hitl_agents: List[str] = Field(default_factory=list, description="Agents that completed HITL - do not call again in same workflow")
     
     class Config:
         arbitrary_types_allowed = True
