@@ -32,22 +32,19 @@ class SessionContext(BaseModel):
     last_host_turn_text: Optional[str] = Field(default=None)
     last_host_turn_agent: Optional[str] = Field(default=None)
     host_turn_history: List[Dict[str, str]] = Field(default_factory=list)
-    # Human-in-the-loop tracking: which agent is waiting for user input
-    pending_input_agent: Optional[str] = Field(default=None, description="Agent name waiting for input_required response")
+    # Human-in-the-loop detection: which agent returned input_required
+    pending_input_agent: Optional[str] = Field(default=None, description="Agent name that returned input_required state")
     pending_input_task_id: Optional[str] = Field(default=None, description="Task ID of the pending input_required task")
-    # Workflow state for pausing/resuming on input_required
-    pending_workflow: Optional[str] = Field(default=None, description="Workflow definition to resume after HITL completes")
-    pending_workflow_outputs: List[str] = Field(default_factory=list, description="Task outputs collected before HITL pause")
-    pending_workflow_user_message: Optional[str] = Field(default=None, description="Original user message for workflow")
-    # Track agents that have completed HITL to prevent re-calling them
-    completed_hitl_agents: List[str] = Field(default_factory=list, description="Agents that completed HITL - do not call again in same workflow")
+    # Persist orchestration plan for multi-turn conversations
+    # When an agent asks for info, we save the plan so we can resume it when user provides the answer
+    current_plan: Optional["AgentModePlan"] = Field(default=None, description="Current orchestration plan for resuming multi-turn workflows")
     
     class Config:
         arbitrary_types_allowed = True
 
 
 # Agent Mode Orchestration Models
-TaskStateEnum = Literal["pending", "running", "completed", "failed", "cancelled"]
+TaskStateEnum = Literal["pending", "running", "completed", "failed", "cancelled", "input_required"]
 GoalStatus = Literal["incomplete", "completed"]
 
 
@@ -68,6 +65,8 @@ class AgentModePlan(BaseModel):
     goal: str = Field(..., description="User query or objective.")
     goal_status: GoalStatus = Field("incomplete", description="Completion state of the goal.")
     tasks: List[AgentModeTask] = Field(default_factory=list, description="List of all tasks in the plan.")
+    workflow: Optional[str] = Field(None, description="Original workflow text for HITL resume.")
+    workflow_goal: Optional[str] = Field(None, description="Original workflow goal for HITL resume.")
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -171,3 +170,7 @@ class ParsedWorkflow:
                 step = group.steps[0]
                 lines.append(f"{step.step_label}. {step.description}")
         return "\n".join(lines)
+
+
+# Resolve forward references for Pydantic models
+SessionContext.model_rebuild()

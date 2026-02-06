@@ -258,10 +258,9 @@ class WorkflowOrchestration:
                         # Check for HITL pause
                         if result.get("hitl_pause"):
                             log_info(f"⏸️ [Workflow] HITL pause triggered by step {step.step_label}")
-                            # Store workflow state for resumption
-                            session_context.pending_workflow = str(parsed_workflow)
-                            session_context.pending_workflow_outputs = all_task_outputs.copy()
-                            session_context.pending_workflow_user_message = user_message
+                            # Store plan for resumption via plan persistence
+                            session_context.current_plan = plan
+                            log_info(f"💾 [Workflow] Saved plan for HITL resume")
                             return all_task_outputs
                         
                         if result.get("output"):
@@ -301,9 +300,9 @@ class WorkflowOrchestration:
                     # Check for HITL pause
                     if result.get("hitl_pause"):
                         log_info(f"⏸️ [Workflow] HITL pause triggered by step {step.step_label}")
-                        session_context.pending_workflow = str(parsed_workflow)
-                        session_context.pending_workflow_outputs = all_task_outputs.copy()
-                        session_context.pending_workflow_user_message = user_message
+                        # Store plan for resumption via plan persistence
+                        session_context.current_plan = plan
+                        log_info(f"💾 [Workflow] Saved plan for HITL resume")
                         return all_task_outputs
                     
                     if result.get("output"):
@@ -979,40 +978,108 @@ Analyze this request and decide the best approach."""
         await self._emit_status_event("Initializing orchestration...", context_id)
         
         # =====================================================================
-        # LLM ORCHESTRATION PATH: All workflows go through the orchestrator
+        # PLAN PERSISTENCE: Resume existing plan if user is providing follow-up info
         # =====================================================================
-        # The LLM orchestrator handles both sequential and parallel workflows.
-        # For parallel steps (e.g., 2a., 2b.), the LLM will return next_tasks
-        # with parallel=True, and we execute them via asyncio.gather().
+        # If an agent asked for more info in the previous turn, we saved the plan.
+        # Now we resume it with the user's follow-up message instead of starting fresh.
+        # This preserves the full task history and allows the orchestrator to continue.
         # =====================================================================
-        # orchestrator LLM decides which agents to call and in what order.
-        # =====================================================================
-        
-        # Handle conversation continuity - distinguish new goals from follow-up clarifications
-        if context_id in self._active_conversations and not workflow:
-            original_goal = self._active_conversations[context_id]
-            goal_text = f"{original_goal}\n\n[Additional Information Provided]: {user_message}"
+        existing_plan = session_context.current_plan
+        if existing_plan and not workflow:
+            log_info(f"📋 [Agent Mode] Resuming existing plan with {len(existing_plan.tasks)} tasks")
+            log_info(f"📋 [Agent Mode] PLAN DETAILS: {existing_plan.model_dump_json(indent=2)}")
+            await self._emit_status_event("Resuming workflow with your input...", context_id)
+            
+            # Restore workflow and workflow_goal from the saved plan
+            # This ensures the workflow instructions are re-injected into the planner prompt
+            if existing_plan.workflow:
+                workflow = existing_plan.workflow
+                log_info(f"📋 [Agent Mode] Restored workflow from plan ({len(workflow)} chars)")
+            if existing_plan.workflow_goal:
+                workflow_goal = existing_plan.workflow_goal
+                log_info(f"📋 [Agent Mode] Restored workflow_goal from plan")
+            
+            # Update the goal to include the user's follow-up
+            original_goal = existing_plan.goal
+            existing_plan.goal = f"{original_goal}\n\n[User Provided Additional Info]: {user_message}"
+            existing_plan.goal_status = "incomplete"  # Reset to continue processing
+            existing_plan.updated_at = datetime.now(timezone.utc)
+            
+            # Mark input_required tasks as completed with the user's response
+            # This tells the orchestrator that the HITL step is done
+            for task in existing_plan.tasks:
+                if task.state == "input_required":
+                    task.state = "completed"
+                    task.output = task.output or {}
+                    task.output["user_response"] = user_message
+                    task.updated_at = datetime.now(timezone.utc)
+                    log_info(f"✅ [Agent Mode] Marked task '{task.task_id}' as completed with user response")
+            
+            # Use the existing plan instead of creating a new one
+            plan = existing_plan
+            
+            # Clear the saved plan and HITL flag - we're resuming now
+            session_context.current_plan = None
+            session_context.pending_input_agent = None
+            session_context.pending_input_task_id = None
+            
+            # Collect outputs from previously completed tasks for context
+            all_task_outputs = []
+            for task in plan.tasks:
+                if task.state == "completed" and task.output:
+                    output_text = task.output.get("text", "") or str(task.output)
+                    if output_text:
+                        all_task_outputs.append(output_text)
+            
+            log_info(f"📋 [Agent Mode] Resumed plan: {len(plan.tasks)} existing tasks, {len(all_task_outputs)} outputs")
+            
+            # Variables needed for the orchestration loop
+            iteration = 0
+            max_iterations = 20
+            workflow_step_count = 0
+            extract_text_from_response = self._extract_text_from_response
         else:
-            # Use workflow_goal from the designer if provided, otherwise fall back to user_message
-            if workflow_goal and workflow_goal.strip():
-                goal_text = workflow_goal
-                log_debug(f"🎯 [Workflow Mode] Using workflow designer goal: {goal_text[:100]}...")
+            # =====================================================================
+            # LLM ORCHESTRATION PATH: All workflows go through the orchestrator
+            # =====================================================================
+            # The LLM orchestrator handles both sequential and parallel workflows.
+            # For parallel steps (e.g., 2a., 2b.), the LLM will return next_tasks
+            # with parallel=True, and we execute them via asyncio.gather().
+            # =====================================================================
+            # orchestrator LLM decides which agents to call and in what order.
+            # =====================================================================
+            
+            # Handle conversation continuity - distinguish new goals from follow-up clarifications
+            if context_id in self._active_conversations and not workflow:
+                original_goal = self._active_conversations[context_id]
+                goal_text = f"{original_goal}\n\n[Additional Information Provided]: {user_message}"
             else:
-                goal_text = user_message
-            if context_id not in self._active_conversations:
-                self._active_conversations[context_id] = goal_text
-        
-        # Use the class method for extracting clean text from A2A response objects
-        extract_text_from_response = self._extract_text_from_response
-        
-        # Initialize execution plan with empty task list
-        plan = AgentModePlan(goal=goal_text, goal_status="incomplete")
-        iteration = 0
-        max_iterations = 20
-        workflow_step_count = 0
-        
-        # Accumulate outputs from all completed tasks
-        all_task_outputs = []
+                # Use workflow_goal from the designer if provided, otherwise fall back to user_message
+                if workflow_goal and workflow_goal.strip():
+                    goal_text = workflow_goal
+                    log_debug(f"🎯 [Workflow Mode] Using workflow designer goal: {goal_text[:100]}...")
+                else:
+                    goal_text = user_message
+                if context_id not in self._active_conversations:
+                    self._active_conversations[context_id] = goal_text
+            
+            # Use the class method for extracting clean text from A2A response objects
+            extract_text_from_response = self._extract_text_from_response
+            
+            # Initialize execution plan with empty task list
+            # Store workflow and workflow_goal for HITL resume scenarios
+            plan = AgentModePlan(
+                goal=goal_text, 
+                goal_status="incomplete",
+                workflow=workflow if workflow and workflow.strip() else None,
+                workflow_goal=workflow_goal if workflow_goal and workflow_goal.strip() else None
+            )
+            iteration = 0
+            max_iterations = 20
+            workflow_step_count = 0
+            
+            # Accumulate outputs from all completed tasks
+            all_task_outputs = []
         
         # System prompt that guides the orchestrator's decision-making
         # This is the "brain" that decides which agents to use and when
@@ -1233,8 +1300,24 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                 
                 if next_step.goal_status == "completed":
                     completed_tasks_count = len([t for t in plan.tasks if t.state == "completed"])
-                    log_info(f"✅ [Agent Mode] Goal completed after {iteration} iterations ({completed_tasks_count} tasks)")
+                    input_required_tasks = [t for t in plan.tasks if t.state == "input_required"]
+                    log_info(f"✅ [Agent Mode] Goal completed after {iteration} iterations ({completed_tasks_count} completed, {len(input_required_tasks)} input_required)")
                     await self._emit_status_event("Goal achieved! Generating final response...", context_id)
+                    
+                    # =========================================================
+                    # PLAN PERSISTENCE: Save plan if agent needs user input
+                    # =========================================================
+                    # If any task has state="input_required", save the plan so
+                    # the next turn can resume. This handles the HITL case where 
+                    # an agent asks for more info - we save the plan so we can 
+                    # resume when user provides the requested information.
+                    # =========================================================
+                    if input_required_tasks:
+                        log_info(f"💾 [Agent Mode] Saving plan for resume - agent(s) need user input")
+                        for t in input_required_tasks:
+                            log_info(f"   ⏸️ Task '{t.task_id}': {t.task_description[:50]}...")
+                        session_context.current_plan = plan
+                    
                     break
                 
                 # =========================================================
@@ -1349,11 +1432,10 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                                 all_task_outputs.append(result["output"])
                         task.updated_at = datetime.now(timezone.utc)
                     
-                    # If any task triggered HITL pause, pause the workflow
+                    # If any task triggered HITL pause, save plan and return
                     if hitl_pause:
-                        session_context.pending_workflow = workflow
-                        session_context.pending_workflow_outputs = all_task_outputs.copy()
-                        session_context.pending_workflow_user_message = user_message
+                        session_context.current_plan = plan
+                        log_info(f"💾 [Agent Mode] Saved plan for HITL resume (parallel tasks)")
                         return all_task_outputs
                     
                     log_info(f"✅ [Agent Mode] {len(pydantic_tasks)} parallel tasks completed")
@@ -1382,9 +1464,10 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                         if result.get("hitl_pause"):
                             if result.get("output"):
                                 all_task_outputs.append(result["output"])
-                            session_context.pending_workflow = workflow
-                            session_context.pending_workflow_outputs = all_task_outputs.copy()
-                            session_context.pending_workflow_user_message = user_message
+                            # Save plan for resume on next turn
+                            session_context.current_plan = plan
+                            log_info(f"💾 [Agent Mode] Saved plan for HITL resume (sequential task)")
+                            log_info(f"💾 [Agent Mode] SAVED PLAN: {plan.model_dump_json(indent=2)}")
                             return all_task_outputs
                         
                         if result.get("output"):

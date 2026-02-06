@@ -164,15 +164,15 @@ class FoundryTeamsAgentExecutor(AgentExecutor):
                     del self._waiting_for_input[context_id]
                 
                 # Enhance the message with context so the LLM understands this is a response
-                user_message = f"""The user has responded to the approval request.
+                user_message = f"""The user has responded to your Teams message.
 
-**Original request sent to user:**
+**Original message sent to user:**
 {original_prompt}
 
 **User's response:**
 {user_message}
 
-Based on the user's response, please confirm what action was taken. If they approved, confirm the approval. If they rejected, confirm the rejection. Use TEAMS_SEND to notify the user of the outcome."""
+Based on the user's response, take the appropriate action. Use TEAMS_SEND to acknowledge or confirm the outcome if needed."""
                 
                 logger.info(f"🔄 [HITL RESUME] Enhanced message for LLM:\n{user_message[:500]}...")
             else:
