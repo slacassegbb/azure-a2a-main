@@ -261,9 +261,10 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
         )
         
         # Maximum characters for memory search summaries
+        # Default 6000 chars to capture full invoice content including totals
         self.memory_summary_max_chars = max(
             200,
-            normalize_env_int(os.environ.get("A2A_MEMORY_SUMMARY_MAX_CHARS"), 2000),
+            normalize_env_int(os.environ.get("A2A_MEMORY_SUMMARY_MAX_CHARS"), 6000),
         )
 
         self._azure_blob_client = None
