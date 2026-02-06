@@ -132,6 +132,42 @@ class FoundryAgentExecutor(AgentExecutor):
                 logger.info(f"📤 Stripe agent response: {response_preview}")
                 
                 import uuid
+                
+                # Check if agent needs user input (HITL pattern)
+                if response.strip().startswith("NEEDS_INPUT:"):
+                    # Extract the question (remove the marker)
+                    question = response.replace("NEEDS_INPUT:", "", 1).strip()
+                    logger.info(f"⏸️ Stripe agent needs user input: {question[:100]}...")
+                    
+                    # Store context for resume
+                    self._waiting_for_input[context_id] = {
+                        "question": question,
+                        "thread_id": thread_id,
+                    }
+                    
+                    message_parts = [TextPart(text=question)]
+                    
+                    # Add token usage if available
+                    if hasattr(agent, 'last_token_usage') and agent.last_token_usage:
+                        message_parts.append(DataPart(data={
+                            'type': 'token_usage',
+                            **agent.last_token_usage
+                        }))
+                    
+                    # Signal input_required - workflow will pause and resume when user responds
+                    await task_updater.update_status(
+                        TaskState.input_required,
+                        message=Message(
+                            role="agent",
+                            messageId=str(uuid.uuid4()),
+                            parts=message_parts,
+                            contextId=context_id
+                        )
+                    )
+                    logger.info(f"📱 Returning input_required state - waiting for user response")
+                    return
+                
+                # Normal completion
                 message_parts = [TextPart(text=response)]
                 
                 # Add token usage if available

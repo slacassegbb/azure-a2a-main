@@ -3260,6 +3260,18 @@ Answer with just JSON:
                                 print(f"⚠️ Skipping memory result {i} from {agent_name} - no clean text extracted")
                                 continue
                             
+                            # CLEANUP: Handle legacy malformed format {'result': '...'} stored in text field
+                            # This was caused by str(task.output) being stored instead of task.output.get("result")
+                            if content_summary.startswith("{'result':") or content_summary.startswith('{"result":'):
+                                try:
+                                    import ast
+                                    parsed = ast.literal_eval(content_summary) if content_summary.startswith("{'") else json.loads(content_summary)
+                                    if isinstance(parsed, dict) and 'result' in parsed:
+                                        content_summary = str(parsed['result'])
+                                        print(f"🔧 Cleaned malformed result format from memory entry {i}")
+                                except:
+                                    pass  # Keep original if parsing fails
+                            
                             # Add to context if we found content
                             if content_summary:
                                 # Truncate long content for context efficiency
@@ -3590,9 +3602,21 @@ Answer with just JSON:
         host_response: List[str],
         context_id: str,
         span: Any,
-        artifact_info: Dict[int, Dict[str, str]] = None
+        artifact_info: Dict[int, Dict[str, str]] = None,
+        session_context: Any = None
     ):
-        """Safe wrapper for User→Host memory storage that won't block conversation"""
+        """Safe wrapper for User→Host memory storage that won't block conversation.
+        
+        NOTE: Respects the inter-agent memory toggle. If memory is disabled,
+        this function returns early without storing anything.
+        """
+        # Check memory toggle - if disabled, skip storage entirely
+        if session_context is not None:
+            enable_memory = getattr(session_context, 'enable_inter_agent_memory', False)
+            if not enable_memory:
+                log_debug(f"[Memory] Skipping User→Host interaction storage (memory disabled)")
+                return
+        
         try:
             await self._store_user_host_interaction(
                 user_message_parts=user_message_parts,
@@ -4079,7 +4103,8 @@ Answer with just JSON:
                                 user_message_text=enhanced_message,
                                 host_response=[combined_response],
                                 context_id=context_id,
-                                span=span
+                                span=span,
+                                session_context=session_context
                             )
                             return [combined_response]
                         else:
@@ -4132,7 +4157,8 @@ Answer with just JSON:
                                 user_message_text=enhanced_message,
                                 host_response=[f"I couldn't find an agent named '{single_agent_name}'. Please make sure the agent is registered and available."],
                                 context_id=context_id,
-                                span=span
+                                span=span,
+                                session_context=session_context
                             )
                             return [f"I couldn't find an agent named '{single_agent_name}'. Please make sure the agent is registered and available."]
                     
@@ -4231,7 +4257,8 @@ Answer with just JSON:
                         user_message_text=enhanced_message,
                         host_response=final_responses,
                         context_id=context_id,
-                        span=span
+                        span=span,
+                        session_context=session_context
                     )
                     
                     # Persist agent response to chat history database
@@ -4248,6 +4275,44 @@ Answer with just JSON:
                             })
                     except Exception as e:
                         print(f"[ChatHistory] Error persisting agent response: {e}")
+                    
+                    # =========================================================
+                    # CONVERSATION HISTORY: Record workflow in Responses API
+                    # =========================================================
+                    # After workflow completes, make a Responses API call to record
+                    # the user message and workflow result in the conversation history.
+                    # This ensures follow-up messages have proper context via
+                    # previous_response_id chaining.
+                    # =========================================================
+                    try:
+                        tools = self._format_tools_for_responses_api()
+                        # Create a context-recording response - include user's original request
+                        # and the workflow result so LLM has full context for follow-ups
+                        workflow_context_message = f"""User request: {enhanced_message}
+
+Workflow completed with result:
+{combined_response[:3000] if len(combined_response) > 3000 else combined_response}"""
+                        
+                        # Use non-streaming call just to record context
+                        await self._ensure_project_client()
+                        previous_response_id = self._response_ids.get(context_id)
+                        
+                        context_response = await self.openai_client.responses.create(
+                            input=workflow_context_message,
+                            previous_response_id=previous_response_id,
+                            instructions="You are a helpful assistant. The user just completed a workflow. Acknowledge the completion briefly.",
+                            model=self.model_name,
+                            tools=tools,
+                        )
+                        
+                        # Store the response ID for conversation continuity
+                        if hasattr(context_response, 'id') and context_response.id:
+                            self._response_ids[context_id] = context_response.id
+                            log_info(f"📝 [Workflow] Recorded workflow context in conversation history: {context_response.id}")
+                        
+                    except Exception as ctx_err:
+                        log_debug(f"⚠️ [Workflow] Failed to record workflow context: {ctx_err}")
+                        # Non-critical - workflow still completed successfully
                     
                     log_debug(f"🎯 [Workflow Mode] Orchestration complete, returning 1 combined response")
                     return final_responses
@@ -4546,7 +4611,8 @@ Answer with just JSON:
                     host_response=final_responses,
                     context_id=context_id,
                     span=span,
-                    artifact_info=artifact_info  # Pass artifact info for URI replacement
+                    artifact_info=artifact_info,  # Pass artifact info for URI replacement
+                    session_context=session_context
                 ))
                 
                 # Persist agent response to chat history database

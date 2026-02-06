@@ -478,6 +478,14 @@ When asked to create an invoice, ALWAYS follow these steps:
 3. Create the invoice with qbo_create_invoice using the EXACT format shown above
 4. NEVER skip the DetailType field - it is REQUIRED by QuickBooks API
 
+## CRITICAL: When You Need User Input
+If you need clarification, confirmation, or additional information from the user before proceeding:
+- Start your response EXACTLY with: NEEDS_INPUT:
+- Then provide your question or request for information
+- Example: "NEEDS_INPUT: I found customer 'Cay Digital' but there are multiple matches. Which one should I use?"
+- Do NOT proceed with operations if you're uncertain about key details
+- ONLY use NEEDS_INPUT when you genuinely need user confirmation to proceed safely
+
 Current date: {datetime.datetime.now().isoformat()}
 """
     

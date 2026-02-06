@@ -179,9 +179,18 @@ class FoundryStripeAgent:
 - Use clear headers and bullet points for readability
 - Include relevant IDs (customer IDs, payment IDs) for reference
 - Summarize results concisely but completely
+
+## CRITICAL: When You Need User Input
+If you need clarification, confirmation, or additional information from the user before proceeding:
+- Start your response EXACTLY with: NEEDS_INPUT:
+- Then provide your question or request for information
+- Example: "NEEDS_INPUT: Could you confirm the payment amount? I found $25,928.00 in the invoice."
+- Do NOT proceed with operations if you're uncertain about key details like amounts, customer info, etc.
+- ONLY use NEEDS_INPUT when you genuinely need user confirmation to proceed safely
 """
         
         logger.info(f"Creating Stripe agent with model: {model}")
+
         
         # Use AgentsClient directly to create agent
         agents_client = self._get_agents_client()

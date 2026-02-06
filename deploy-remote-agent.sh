@@ -291,6 +291,18 @@ if [ -n "$AGENT_EXISTS" ]; then
         fi
     fi
     
+    # Add Stripe MCP URL for Stripe agents
+    if [[ "$AGENT_NAME" == *"Stripe"* ]] || [[ "$AGENT_NAME" == *"stripe"* ]]; then
+        # Read from agent's .env file
+        STRIPE_MCP_URL=$(grep "^STRIPE_MCP_URL" "$AGENT_PATH/.env" 2>/dev/null | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
+        if [ -n "$STRIPE_MCP_URL" ]; then
+            ENV_VARS+=("STRIPE_MCP_URL=$STRIPE_MCP_URL")
+            echo -e "${GREEN}✅ Stripe MCP URL configuration added${NC}"
+        else
+            echo -e "${YELLOW}⚠️  Stripe agent detected but STRIPE_MCP_URL not found in .env${NC}"
+        fi
+    fi
+    
     az containerapp update \
         --name "$CONTAINER_NAME" \
         --resource-group "$RESOURCE_GROUP" \
@@ -349,6 +361,18 @@ else
             echo -e "${GREEN}✅ Microsoft Graph Email configuration added${NC}"
         else
             echo -e "${YELLOW}⚠️  Email agent detected but credentials not found in environment${NC}"
+        fi
+    fi
+    
+    # Add Stripe MCP URL for Stripe agents
+    if [[ "$AGENT_NAME" == *"Stripe"* ]] || [[ "$AGENT_NAME" == *"stripe"* ]]; then
+        # Read from agent's .env file
+        STRIPE_MCP_URL=$(grep "^STRIPE_MCP_URL" "$AGENT_PATH/.env" 2>/dev/null | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
+        if [ -n "$STRIPE_MCP_URL" ]; then
+            ENV_VARS_CREATE="$ENV_VARS_CREATE STRIPE_MCP_URL=$STRIPE_MCP_URL"
+            echo -e "${GREEN}✅ Stripe MCP URL configuration added${NC}"
+        else
+            echo -e "${YELLOW}⚠️  Stripe agent detected but STRIPE_MCP_URL not found in .env${NC}"
         fi
     fi
     

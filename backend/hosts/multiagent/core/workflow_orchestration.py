@@ -1027,7 +1027,9 @@ Analyze this request and decide the best approach."""
             all_task_outputs = []
             for task in plan.tasks:
                 if task.state == "completed" and task.output:
-                    output_text = task.output.get("text", "") or str(task.output)
+                    # Task outputs use "result" key (set in _process_workflow_response)
+                    # Fall back to "text" for compatibility, then str() as last resort
+                    output_text = task.output.get("result", "") or task.output.get("text", "") or str(task.output)
                     if output_text:
                         all_task_outputs.append(output_text)
             
@@ -1099,7 +1101,7 @@ DECISION-MAKING RULES:
 - If no agent fits, set recommended_agent=null
 - Mark goal_status="completed" ONLY when: (1) ALL MANDATORY WORKFLOW steps are completed (if workflow exists), AND (2) the objective is fully achieved
 
-### � AGENT ASKS FOR MORE INFO - STOP AND COMPLETE
+### 🛑 AGENT ASKS FOR MORE INFO - STOP AND COMPLETE
 If an agent's response asks for more information (e.g., "I need customer details", "Please provide..."):
 - Do NOT call the same agent again trying to provide the info
 - Do NOT fabricate or make up the missing information
@@ -1107,7 +1109,7 @@ If an agent's response asks for more information (e.g., "I need customer details
 - The user will see the agent's question and can provide the needed info in their next message
 - This prevents infinite loops of calling the same agent repeatedly
 
-### �🔀 PARALLEL EXECUTION SUPPORT
+### 🔀 PARALLEL EXECUTION SUPPORT
 When the workflow contains parallel steps (indicated by letter suffixes like 2a., 2b., 2c.):
 - These steps can be executed SIMULTANEOUSLY - they do not depend on each other
 - Use `next_tasks` (list) instead of `next_task` (single) to propose multiple parallel tasks

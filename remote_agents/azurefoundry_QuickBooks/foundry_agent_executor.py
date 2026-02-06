@@ -309,6 +309,40 @@ class FoundryAgentExecutor(AgentExecutor):
                     self._pending_updaters.pop(context_id, None)
                     self._input_events.pop(context_id, None)
                     return
+                # Check for NEEDS_INPUT marker (agent needs user clarification)
+                elif event.strip().startswith("NEEDS_INPUT:"):
+                    # Extract the question (remove the marker)
+                    question = event.replace("NEEDS_INPUT:", "", 1).strip()
+                    logger.info(f"⏸️ QuickBooks agent needs user input: {question[:100]}...")
+                    
+                    # Store context for resume
+                    self._waiting_for_input[context_id] = {
+                        "question": question,
+                        "thread_id": thread_id,
+                    }
+                    
+                    import uuid
+                    message_parts = [TextPart(text=question)]
+                    
+                    # Add token usage if available
+                    if hasattr(agent, 'last_token_usage') and agent.last_token_usage:
+                        message_parts.append(DataPart(data={
+                            'type': 'token_usage',
+                            **agent.last_token_usage
+                        }))
+                    
+                    # Signal input_required - workflow will pause and resume when user responds
+                    await task_updater.update_status(
+                        TaskState.input_required,
+                        message=Message(
+                            role="agent",
+                            messageId=str(uuid.uuid4()),
+                            parts=message_parts,
+                            contextId=context_id
+                        )
+                    )
+                    logger.info(f"📱 Returning input_required state - waiting for user response")
+                    return
                 # Otherwise, treat as a regular response
                 else:
                     responses.append(event)
@@ -316,6 +350,37 @@ class FoundryAgentExecutor(AgentExecutor):
             # Emit the final response
             if responses:
                 final_response = responses[-1]
+                
+                # Check if final response starts with NEEDS_INPUT (in case it wasn't caught in streaming)
+                if final_response.strip().startswith("NEEDS_INPUT:"):
+                    question = final_response.replace("NEEDS_INPUT:", "", 1).strip()
+                    logger.info(f"⏸️ QuickBooks agent needs user input (from final): {question[:100]}...")
+                    
+                    self._waiting_for_input[context_id] = {
+                        "question": question,
+                        "thread_id": thread_id,
+                    }
+                    
+                    import uuid
+                    message_parts = [TextPart(text=question)]
+                    
+                    if hasattr(agent, 'last_token_usage') and agent.last_token_usage:
+                        message_parts.append(DataPart(data={
+                            'type': 'token_usage',
+                            **agent.last_token_usage
+                        }))
+                    
+                    await task_updater.update_status(
+                        TaskState.input_required,
+                        message=Message(
+                            role="agent",
+                            messageId=str(uuid.uuid4()),
+                            parts=message_parts,
+                            contextId=context_id
+                        )
+                    )
+                    return
+                
                 # Log a preview of the response (first 500 chars)
                 response_preview = final_response[:500] + "..." if len(final_response) > 500 else final_response
                 logger.info(f"📤 Agent response ({len(final_response)} chars): {response_preview}")
