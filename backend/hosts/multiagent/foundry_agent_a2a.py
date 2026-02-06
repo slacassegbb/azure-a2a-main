@@ -3281,57 +3281,11 @@ Answer with just JSON:
             print(f"❌ Error searching memory: {e}")
             context_parts.append("Note: Unable to retrieve relevant context from memory")
         
-        # Include recent host-side turns (previous agent outputs)
-        # Behavior depends on mode and inter-agent memory setting:
-        # - Agent Mode + Memory OFF: Only immediate previous agent (limit=1)
-        # - Agent Mode + Memory ON: Last few agents (limit=self.last_host_turns)
-        # - Standard Mode: Always use self.last_host_turns setting
-        if self.include_last_host_turn:
-            history: List[Dict[str, str]] = list(getattr(session_context, "host_turn_history", []))
-
-            # Back-compat: fall back to single cached turn if list empty
-            if not history and getattr(session_context, "last_host_turn_text", None):
-                history = [
-                    {
-                        "agent": getattr(session_context, "last_host_turn_agent", "host_agent"),
-                        "text": getattr(session_context, "last_host_turn_text", ""),
-                    }
-                ]
-
-            # Determine how many previous responses to include
-            # Always use configured limit - the memory toggle only affects storage, not retrieval
-            max_turns = self.last_host_turns
-            log_debug(f"🎯 [{mode_label}] Passing up to {max_turns} recent agent outputs")
-
-            selected: List[Dict[str, str]] = []
-            for entry in reversed(history):  # newest first
-                agent = entry.get("agent")
-                text = (entry.get("text") or "").strip()
-                if not text:
-                    continue
-                if target_agent_name and agent == target_agent_name:
-                    continue
-                selected.append({"agent": agent or "host_agent", "text": text})
-                if len(selected) >= max_turns:
-                    break
-
-            if selected:
-                logger.debug(
-                    "[A2A] Injecting %d host turn(s) into message for %s",
-                    len(selected),
-                    target_agent_name or "unknown",
-                )
-                context_parts.append("Previous context from host conversation:")
-                for idx, entry in enumerate(selected, start=1):
-                    truncated_text = entry["text"]
-                    if len(truncated_text) > self.last_host_turn_max_chars:
-                        truncated_text = truncated_text[: self.last_host_turn_max_chars] + "..."
-                    context_parts.append(f"  {idx}. From {entry['agent']}: {truncated_text}")
-            else:
-                logger.debug(
-                    "[A2A] No eligible host turns to inject for agent %s",
-                    target_agent_name,
-                )
+        # NOTE: host_turn_history injection has been removed.
+        # GPT-4 is now instructed to include all relevant context from previous agents
+        # in its message parameter when calling send_message. This eliminates redundant
+        # context injection and prevents payload bloat in multi-step workflows.
+        # See instructions.py "CONTEXT PASSING (CRITICAL)" section.
 
         # Fallback: Add minimal recent thread context only if memory search failed
         if not context_parts and thread_id:

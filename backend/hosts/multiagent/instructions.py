@@ -48,6 +48,17 @@ When agents return files, you MUST pass them explicitly to the next agent:
 - Include in next call: `send_message(..., file_uris=["https://..."])`
 - For video remix: `send_message(..., video_metadata={{"video_id": "..."}})` 
 
+### 📝 CONTEXT PASSING (CRITICAL)
+When calling an agent that depends on a previous agent's output, you MUST include ALL relevant data in your message:
+- Extract and include key values from the previous agent's response (IDs, amounts, names, dates, results, etc.)
+- Do NOT assume the next agent has access to previous agent outputs
+- Each agent only sees what you explicitly include in the message parameter
+- Apply this pattern to ANY agent output - always pass forward the specific data the next agent needs
+
+**Example pattern:**
+- ❌ WRONG: "Process the data from the previous agent" (next agent won't know what data)
+- ✅ CORRECT: "Process [actual values/results extracted from previous agent response]"
+
 Focus on precision and clarity in agent-to-agent coordination."""
 
 
@@ -262,6 +273,20 @@ send_message(
 ```
 
 **⚠️ If you don't include file_uris, the agent won't receive the files!**
+
+---
+
+### 📝 CONTEXT PASSING (CRITICAL)
+
+When calling an agent that depends on a previous agent's output, you MUST include ALL relevant data in your message:
+- Extract and include key values from the previous agent's response (IDs, amounts, names, dates, results, etc.)
+- Do NOT assume the next agent has access to previous agent outputs
+- Each agent only sees what you explicitly include in the message parameter
+- Apply this pattern to ANY agent output - always pass forward the specific data the next agent needs
+
+**Example pattern:**
+- ❌ WRONG: "Process the data from the previous agent" (next agent won't know what data)
+- ✅ CORRECT: "Process [actual values/results extracted from previous agent response]"
 
 ---
 
