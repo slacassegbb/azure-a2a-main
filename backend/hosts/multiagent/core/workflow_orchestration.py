@@ -521,12 +521,20 @@ class WorkflowOrchestration:
             
             response_obj = responses[0] if isinstance(responses, list) else responses
             
-            # Check for HITL (input_required)
-            if session_context.pending_input_agent:
+            # Check for HITL (input_required) - only if THIS agent requested input
+            # BUGFIX: Only pause if pending_input_agent matches the current agent
+            # This prevents stale values from a previous agent from blocking workflow
+            if session_context.pending_input_agent and session_context.pending_input_agent == agent_name:
                 task.state = "input_required"
                 task.updated_at = datetime.now(timezone.utc)
                 output_text = extract_text_fn(response_obj)
                 return self._make_step_result(step.step_label, agent_name, "input_required", output=output_text, hitl_pause=True)
+            
+            # Clear any stale pending_input_agent that doesn't match this agent
+            if session_context.pending_input_agent and session_context.pending_input_agent != agent_name:
+                log_info(f"🧹 [Workflow] Clearing stale pending_input_agent '{session_context.pending_input_agent}' (current agent: {agent_name})")
+                session_context.pending_input_agent = None
+                session_context.pending_input_task_id = None
             
             # Process response
             output_text = self._process_workflow_response(response_obj, task, session_context, extract_text_fn)
@@ -727,8 +735,9 @@ Use the above output from the previous workflow step to complete your task."""
         
         response_obj = responses[0] if isinstance(responses, list) else responses
         
-        # Check for HITL (input_required)
-        if session_context.pending_input_agent:
+        # Check for HITL (input_required) - only if THIS agent requested input
+        # BUGFIX: Only pause if pending_input_agent matches the current agent
+        if session_context.pending_input_agent and session_context.pending_input_agent == recommended_agent:
             log_info(f"⏸️ [Agent Mode] Agent '{recommended_agent}' returned input_required")
             task.state = "input_required"
             task.updated_at = datetime.now(timezone.utc)
@@ -738,6 +747,12 @@ Use the above output from the previous workflow step to complete your task."""
             await self._emit_status_event(f"Waiting for your response...", context_id)
             
             return {"output": output_text, "hitl_pause": True}
+        
+        # Clear any stale pending_input_agent that doesn't match this agent
+        if session_context.pending_input_agent and session_context.pending_input_agent != recommended_agent:
+            log_info(f"🧹 [Agent Mode] Clearing stale pending_input_agent '{session_context.pending_input_agent}' (current agent: {recommended_agent})")
+            session_context.pending_input_agent = None
+            session_context.pending_input_task_id = None
         
         # Parse response
         if isinstance(response_obj, Task):

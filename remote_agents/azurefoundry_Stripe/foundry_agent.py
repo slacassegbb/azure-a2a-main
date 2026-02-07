@@ -380,11 +380,17 @@ You have ONE powerful tool called `stripe_action` that can perform all Stripe op
 - **retrieve_balance** - Get account balance
   - Example: `{{"action": "retrieve_balance", "params": {{}}}}`
 
-- **list_payment_intents** - List payment intents
+- **list_payment_intents** - List payment intents (READ ONLY - cannot create payment intents directly)
   - Example: `{{"action": "list_payment_intents", "params": {{"limit": 10}}}}`
 
 - **create_refund** - Create a refund
   - Example: `{{"action": "create_refund", "params": {{"payment_intent": "pi_xxx"}}}}`
+
+**⚠️ IMPORTANT: To collect payments, use the INVOICE workflow (NOT payment intents):**
+1. Create invoice: `create_invoice` with customer ID
+2. Add line items: `create_invoice_item` 
+3. Finalize: `finalize_invoice`
+OR use `create_payment_link` for a hosted checkout page.
 
 ### Products & Prices
 - **list_products** - List all products

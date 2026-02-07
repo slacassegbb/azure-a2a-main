@@ -135,6 +135,15 @@ class StreamingHandlers:
                             session_ctx.pending_input_task_id = task_id_cb
                             print(f"🔄 [HITL CALLBACK] Streaming callback detected input_required from '{agent_name}', context_id='{context_id_cb}'")
                             log_info(f"🔄 [HITL] Callback detected input_required from '{agent_name}', setting pending_input_agent (task_id: {task_id_cb})")
+                        
+                        # BUGFIX: Clear pending_input_agent when task completes or fails
+                        # This prevents stale input_required flags from blocking subsequent workflow steps
+                        elif state_str in ('completed', 'failed', 'canceled', 'cancelled'):
+                            if session_ctx.pending_input_agent == agent_name:
+                                print(f"🧹 [HITL CALLBACK] Clearing pending_input_agent (was '{agent_name}') - task {state_str}")
+                                log_info(f"🧹 [HITL] Clearing pending_input_agent for '{agent_name}' - task {state_str}")
+                                session_ctx.pending_input_agent = None
+                                session_ctx.pending_input_task_id = None
         except Exception as e:
             # Non-fatal; continue normal processing
             log_debug(f"[STREAMING] Error in task callback context tracking: {e}")
