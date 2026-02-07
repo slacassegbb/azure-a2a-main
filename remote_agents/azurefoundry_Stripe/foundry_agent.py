@@ -201,25 +201,23 @@ You have access to Stripe MCP tools that can:
 - **Subscriptions**: List, update, and cancel subscriptions
 - **Coupons & Disputes**: Manage coupons and disputes
 
-## Important Payment Flow
+## General Guidelines
 
-⚠️ **To collect payments, use the INVOICE workflow:**
-1. Create invoice: `create_invoice` with customer ID
-2. Add line items: `create_invoice_item`
-3. Finalize: `finalize_invoice`
-
-OR use `create_payment_link` for a hosted checkout page.
+- Use the appropriate Stripe MCP tools for each task
+- If you need information that's not provided, ask for it using NEEDS_INPUT
+- Be efficient with tool calls - don't make unnecessary searches
+- Provide clear summaries of actions taken
 
 ## Response Format
 - Use clear headers and bullet points
 - Include Stripe IDs for reference
 - Summarize results concisely
 
-## CRITICAL: When You Need User Input
+## When You Need User Input
 If you need clarification or confirmation:
 - Start your response EXACTLY with: NEEDS_INPUT:
 - Then provide your question
-- Example: "NEEDS_INPUT: What email should I use for the customer?"
+- Example: "NEEDS_INPUT: What email address should I use for this customer?"
 """
     
     async def create_thread(self) -> str:

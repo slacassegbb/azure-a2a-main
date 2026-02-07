@@ -388,15 +388,18 @@ Use this for ANY message that does NOT explicitly require a response:
 - ✅ "Forward this to Teams"
 - ✅ Any informational/notification message
 
-### USE TEAMS_ASK (ONLY when response is explicitly needed)
-ONLY use this when the request EXPLICITLY mentions needing a response, approval, or decision:
+### USE TEAMS_ASK (WHEN response/approval is needed)
+Use this when the request mentions needing a response, approval, or decision:
 - ✅ "Ask for approval"
 - ✅ "Get confirmation from the user"
 - ✅ "Request their decision"
 - ✅ "Wait for their response"
 - ✅ "Human-in-the-loop approval needed"
+- ✅ "APPROVAL REQUIRED" (anywhere in the request)
+- ✅ "Use TEAMS_ASK" (explicit instruction)
+- ✅ Any request asking to "approve" or "reject" something
 
-**If unsure, use TEAMS_SEND. It's the safe default.**
+**If the request contains "APPROVAL REQUIRED" or "TEAMS_ASK", ALWAYS use TEAMS_ASK.**
 
 ## SYNTAX
 

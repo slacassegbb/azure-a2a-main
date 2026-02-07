@@ -176,8 +176,8 @@ Based on the user's response, take the appropriate action. Use TEAMS_SEND to ack
                 
                 logger.info(f"🔄 [HITL RESUME] Enhanced message for LLM:\n{user_message[:500]}...")
             else:
-                # New request - create a new thread
-                thread_id = await self._get_or_create_thread(context_id, agent, force_new=True)
+                # New request - reuse thread for same context_id to maintain conversation history
+                thread_id = await self._get_or_create_thread(context_id, agent, force_new=False)
             
             responses = []
             
@@ -201,7 +201,8 @@ Based on the user's response, take the appropriate action. Use TEAMS_SEND to ack
                         message=new_agent_text_message(
                             f"📱 Waiting for human response via Microsoft Teams.\n\nMessage sent to user: {wait_info}",
                             context_id=context_id
-                        )
+                        ),
+                        final=True  # This closes the event queue properly
                     )
                     
                     # Return immediately - don't block. Human response will come as new A2A message.

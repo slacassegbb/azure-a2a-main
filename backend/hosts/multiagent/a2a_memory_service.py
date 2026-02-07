@@ -597,19 +597,59 @@ class A2AMemoryService:
                 top=top_k
             )
 
-            # Dedupe by content - remove exact duplicate documents
-            # This handles the case where same file is uploaded multiple times
-            # Different content (even 1 char different) will be kept
-            seen_content = set()
-            deduped_results = []
-            for result in results:
-                content = result.get('inbound_payload', '')
-                if content not in seen_content:
-                    seen_content.add(content)
-                    deduped_results.append(dict(result))
+            # Filter by minimum relevance score to avoid injecting unrelated content
+            # Azure AI Search vector scores are typically 0-1, with higher being more relevant
+            # Note: text-embedding-3-large produces scores typically in 0.5-0.8 range for relevant content
+            MIN_RELEVANCE_SCORE = 0.58  # Only include results with >= 58% similarity (filters out truly unrelated)
             
-            if len(deduped_results) < top_k:
-                log_memory_debug(f"Deduped {top_k - len(deduped_results)} duplicate results")
+            # Dedupe by content - remove exact duplicate documents
+            # This handles the case where same file is uploaded multiple times OR
+            # when chunked documents return multiple chunks from the same parent doc
+            seen_content = set()
+            seen_parent_docs = set()
+            deduped_results = []
+            total_results_count = 0
+            skipped_low_score = 0
+            for result in results:
+                total_results_count += 1
+                
+                # Check relevance score - skip low-scoring results
+                search_score = result.get('@search.score', 0)
+                if search_score < MIN_RELEVANCE_SCORE:
+                    skipped_low_score += 1
+                    log_memory_debug(f"Skipping result with low score {search_score:.3f} < {MIN_RELEVANCE_SCORE}")
+                    continue
+                
+                # Try to extract the actual content from the JSON payload
+                inbound_payload_str = result.get('inbound_payload', '')
+                try:
+                    inbound_payload = json.loads(inbound_payload_str) if isinstance(inbound_payload_str, str) else inbound_payload_str
+                    # For chunked documents, dedupe by parent_document_id
+                    parent_doc_id = inbound_payload.get('parent_document_id') if isinstance(inbound_payload, dict) else None
+                    # For non-chunked documents, dedupe by the full content
+                    content = inbound_payload.get('content', inbound_payload_str) if isinstance(inbound_payload, dict) else inbound_payload_str
+                except:
+                    # If JSON parsing fails, fall back to string comparison
+                    parent_doc_id = None
+                    content = inbound_payload_str
+                
+                # Check if we've seen this parent document or this exact content
+                if parent_doc_id and parent_doc_id in seen_parent_docs:
+                    continue  # Skip this chunk - we already have one from this parent doc
+                elif content in seen_content:
+                    continue  # Skip exact duplicate content
+                
+                # This is a new document/chunk with sufficient relevance
+                if parent_doc_id:
+                    seen_parent_docs.add(parent_doc_id)
+                seen_content.add(content)
+                deduped_results.append(dict(result))
+                log_memory_debug(f"Including result with score {search_score:.3f}")
+            
+            if skipped_low_score > 0:
+                log_memory_debug(f"Filtered out {skipped_low_score} low-relevance results (score < {MIN_RELEVANCE_SCORE})")
+            if len(deduped_results) < total_results_count - skipped_low_score:
+                log_memory_debug(f"Deduped {total_results_count - skipped_low_score - len(deduped_results)} duplicate results")
             
             return deduped_results
 

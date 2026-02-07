@@ -180,8 +180,10 @@ class FoundryAgentExecutor(AgentExecutor):
                 if hasattr(part, 'root'):
                     logger.info(f"Part {i} root: {part.root}")
             agent = await self._get_or_create_agent()
-            # Use force_new=True to create separate threads for parallel requests
-            thread_id = await self._get_or_create_thread(context_id, agent, force_new=True)
+            # Reuse thread for same context_id to maintain conversation history
+            # This helps the agent remember previous interactions within the same workflow
+            # Note: force_new=False means we reuse threads based on context_id
+            thread_id = await self._get_or_create_thread(context_id, agent, force_new=False)
             
             # Use streaming to show tool calls in real-time
             responses = []
@@ -300,7 +302,8 @@ class FoundryAgentExecutor(AgentExecutor):
                         TaskState.input_required,
                         message=new_agent_text_message(
                             f"Human expert input required: {user_message}", context_id=context_id
-                        )
+                        ),
+                        final=True  # This closes the event queue properly
                     )
                     # Wait for human input
                     await self._input_events[context_id].wait()
@@ -309,10 +312,21 @@ class FoundryAgentExecutor(AgentExecutor):
                     self._pending_updaters.pop(context_id, None)
                     self._input_events.pop(context_id, None)
                     return
-                # Check for NEEDS_INPUT marker (agent needs user clarification)
-                elif event.strip().startswith("NEEDS_INPUT:"):
-                    # Extract the question (remove the marker)
-                    question = event.replace("NEEDS_INPUT:", "", 1).strip()
+                # Check for NEEDS_INPUT block (agent needs user clarification)
+                # Supports both formats:
+                # 1. ```NEEDS_INPUT\nquestion\n```END_NEEDS_INPUT
+                # 2. NEEDS_INPUT: question
+                elif "```NEEDS_INPUT" in event or event.strip().startswith("NEEDS_INPUT:"):
+                    # Extract the question from either format
+                    import re
+                    block_pattern = r'```NEEDS_INPUT\s*\n(.*?)\n```END_NEEDS_INPUT'
+                    block_match = re.search(block_pattern, event, re.DOTALL)
+                    
+                    if block_match:
+                        question = block_match.group(1).strip()
+                    else:
+                        question = event.replace("NEEDS_INPUT:", "", 1).strip()
+                    
                     logger.info(f"⏸️ QuickBooks agent needs user input: {question[:100]}...")
                     
                     # Store context for resume
@@ -332,6 +346,7 @@ class FoundryAgentExecutor(AgentExecutor):
                         }))
                     
                     # Signal input_required - workflow will pause and resume when user responds
+                    # CRITICAL: Must set final=True so the SSE stream knows this is the last event
                     await task_updater.update_status(
                         TaskState.input_required,
                         message=Message(
@@ -339,7 +354,8 @@ class FoundryAgentExecutor(AgentExecutor):
                             messageId=str(uuid.uuid4()),
                             parts=message_parts,
                             contextId=context_id
-                        )
+                        ),
+                        final=True  # This closes the event queue properly
                     )
                     logger.info(f"📱 Returning input_required state - waiting for user response")
                     return
@@ -351,9 +367,17 @@ class FoundryAgentExecutor(AgentExecutor):
             if responses:
                 final_response = responses[-1]
                 
-                # Check if final response starts with NEEDS_INPUT (in case it wasn't caught in streaming)
-                if final_response.strip().startswith("NEEDS_INPUT:"):
-                    question = final_response.replace("NEEDS_INPUT:", "", 1).strip()
+                # Check if final response contains NEEDS_INPUT block or prefix (in case it wasn't caught in streaming)
+                import re
+                block_pattern = r'```NEEDS_INPUT\s*\n(.*?)\n```END_NEEDS_INPUT'
+                block_match = re.search(block_pattern, final_response, re.DOTALL)
+                
+                if block_match or final_response.strip().startswith("NEEDS_INPUT:"):
+                    if block_match:
+                        question = block_match.group(1).strip()
+                    else:
+                        question = final_response.replace("NEEDS_INPUT:", "", 1).strip()
+                    
                     logger.info(f"⏸️ QuickBooks agent needs user input (from final): {question[:100]}...")
                     
                     self._waiting_for_input[context_id] = {
@@ -377,7 +401,8 @@ class FoundryAgentExecutor(AgentExecutor):
                             messageId=str(uuid.uuid4()),
                             parts=message_parts,
                             contextId=context_id
-                        )
+                        ),
+                        final=True  # This closes the event queue properly
                     )
                     return
                 

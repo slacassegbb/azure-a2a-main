@@ -3167,8 +3167,11 @@ Answer with just JSON:
         # Always search memory for relevant context (retrieval is always enabled)
         # The memory toggle only controls STORAGE of new interactions, not retrieval
         try:
-            # Reduce top_k=1 for QuickBooks to avoid duplicate context (saves ~500-1000 tokens)
-            top_k_results = 1 if (target_agent_name and 'quickbooks' in target_agent_name.lower()) else 2
+            # Reduce top_k=1 for QuickBooks and Stripe to avoid duplicate context (saves ~500-1000 tokens)
+            if target_agent_name and ('quickbooks' in target_agent_name.lower() or 'stripe' in target_agent_name.lower()):
+                top_k_results = 1
+            else:
+                top_k_results = 2
             memory_results = await self._search_relevant_memory(
                 query=message,
                 context_id=session_context.contextId,
@@ -3281,7 +3284,14 @@ Answer with just JSON:
                                 # Truncate long content for context efficiency
                                 # Use configured max_chars (default 2000) - enough for invoices/documents
                                 # For QuickBooks agent, reduce to 500 chars since structured data is verbose
-                                max_chars = 500 if target_agent_name and 'quickbooks' in target_agent_name.lower() else self.memory_summary_max_chars
+                                # For Stripe agent, reduce to 800 chars (needs customer name but not full invoice details)
+                                if target_agent_name and 'quickbooks' in target_agent_name.lower():
+                                    max_chars = 500
+                                elif target_agent_name and 'stripe' in target_agent_name.lower():
+                                    max_chars = 800
+                                else:
+                                    max_chars = self.memory_summary_max_chars
+                                    
                                 if len(content_summary) > max_chars:
                                     content_summary = content_summary[:max_chars] + "..."
                                 context_parts.append(f"  {i}. From {agent_name}: {content_summary}")
@@ -3988,6 +3998,42 @@ Answer with just JSON:
                 enhanced_message = f"{image_guidance}\n\n{enhanced_message}" if enhanced_message else image_guidance
             
             log_debug(f"Enhanced message prepared")
+            
+            # =====================================================================
+            # HITL RESUME CHECK: Skip routing if an agent is waiting for user input
+            # =====================================================================
+            # If there's a pending_input_agent, this message is a HITL response
+            # Route directly to that agent instead of doing intelligent routing
+            if session_context.pending_input_agent:
+                pending_agent = session_context.pending_input_agent
+                pending_task_id = session_context.pending_input_task_id
+                print(f"🔄 [HITL RESUME] Detected pending_input_agent='{pending_agent}', skipping routing")
+                log_info(f"🔄 [HITL RESUME] Detected pending_input_agent='{pending_agent}', routing directly to agent")
+                await self._emit_status_event(f"Resuming workflow with your input...", context_id)
+                
+                # IMPORTANT: Emit a "completed" status for the pending agent to clear "Waiting" in sidebar
+                # This ensures the UI updates when the human provides their response
+                try:
+                    asyncio.create_task(self._emit_simple_task_status(
+                        pending_agent, 
+                        "completed", 
+                        context_id, 
+                        pending_task_id or str(uuid.uuid4())
+                    ))
+                    log_info(f"📤 [HITL RESUME] Emitted 'completed' status for {pending_agent} to clear Waiting state")
+                except Exception as e:
+                    log_debug(f"⚠️ [HITL RESUME] Failed to emit completed status: {e}")
+                
+                # Force single-agent workflow mode to resume with the pending agent
+                agent_mode = True
+                workflow = f"1. [{pending_agent}] Resume with user input: {enhanced_message}"
+                workflow_goal = f"Complete the pending task with user input: {enhanced_message}"
+                
+                # Clear the pending_input_agent so subsequent requests don't loop
+                # (The agent will set it again if it needs more input)
+                session_context.pending_input_agent = None
+                session_context.pending_input_task_id = None
+                log_info(f"🧹 [HITL RESUME] Cleared pending_input_agent after routing")
             
             # =====================================================================
             # MULTI-WORKFLOW ROUTING: LLM selects best approach when multiple workflows available

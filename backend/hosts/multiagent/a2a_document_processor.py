@@ -28,11 +28,14 @@ markdown_path = str(RUNTIME_DIR / 'markdown')
 json_path = 'json'
 
 # File extensions - from user's original code
-AUDIO_EXTENSIONS = ['.mp3', '.wav', '.m4a', '.flac', '.aac']
-VIDEO_EXTENSIONS = ['.mp4', '.mov', '.avi', '.mkv', '.webm']
-IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff']
-DOCUMENT_EXTENSIONS = ['.pdf', '.docx', '.pptx', '.xlsx', '.doc', '.ppt', '.xls']
-TEXT_EXTENSIONS = ['.txt', '.md', '.json', '.xml', '.csv', '.html', '.htm', '.js', '.py', '.java', '.c', '.cpp', '.h', '.yaml', '.yml', '.log', '.sh', '.bat', '.ps1', '.sql', '.css']
+# Updated to include all Azure Content Understanding supported formats
+AUDIO_EXTENSIONS = ['.mp3', '.wav', '.m4a', '.flac', '.aac', '.wma', '.amr', '.3gp', '.webm', '.spx', '.opus', '.ogg']
+VIDEO_EXTENSIONS = ['.mp4', '.mov', '.avi', '.mkv', '.webm', '.m4v', '.flv', '.wmv', '.asf']
+IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.tif', '.heif', '.heic', '.jpe']
+# Azure Content Understanding document formats: PDF, TIFF, Office docs
+DOCUMENT_EXTENSIONS = ['.pdf', '.docx', '.pptx', '.xlsx', '.doc', '.ppt', '.xls', '.tiff', '.tif']
+# Plain text/code files (read directly, not processed by Content Understanding)
+TEXT_EXTENSIONS = ['.json', '.csv', '.js', '.py', '.java', '.c', '.cpp', '.h', '.yaml', '.yml', '.log', '.sh', '.bat', '.ps1', '.sql', '.css']
 
 # Azure Content Understanding configuration
 def get_content_understanding_client():
@@ -79,6 +82,10 @@ def sanitize_doc_id(doc_id):
     # Replace periods with underscores
     return doc_id.replace('.', '_')
 
+# Text-based formats that Azure Content Understanding can process as documents
+# These will be routed through the document analyzer for structured extraction
+CU_TEXT_FORMATS = ['.html', '.htm', '.md', '.rtf', '.eml', '.msg', '.xml', '.txt']
+
 def determine_file_type(file_path):
     """Determine the type of file based on its extension."""
     _, extension = os.path.splitext(file_path.lower())
@@ -90,6 +97,9 @@ def determine_file_type(file_path):
     elif extension in IMAGE_EXTENSIONS:
         return "image"
     elif extension in DOCUMENT_EXTENSIONS:
+        return "document"
+    elif extension in CU_TEXT_FORMATS:
+        # Route these text formats through Content Understanding for structured extraction
         return "document"
     elif extension in TEXT_EXTENSIONS:
         return "text"
@@ -279,8 +289,99 @@ def process_video(video_path):
         return []
 
 def process_document(document_path):
-    """Process document files - from user's original working code"""
+    """Process document files using Azure Content Understanding (like video/audio)"""
     print(f"Processing document: {document_path}")
+    client = get_content_understanding_client()
+    
+    # Check if client is available
+    if client is None:
+        print("Content Understanding client not available. Falling back to GPT-4 Vision method.")
+        return process_document_legacy(document_path)
+    
+    # Create a unique analyzer ID for the document
+    analyzer_id = f"document-analyzer-{str(uuid.uuid4())}"
+    
+    try:
+        # Create the document analyzer using the template
+        module_dir = os.path.dirname(os.path.abspath(__file__))
+        template_path = os.path.join(module_dir, "analyzer_templates", "content_document.json")
+        print(f"Looking for document analyzer template at: {template_path}")
+        
+        response = client.begin_create_analyzer(
+            analyzer_id=analyzer_id,
+            analyzer_template_path=template_path
+        )
+        result = client.poll_result(response)
+        print(f"Successfully created document analyzer: {analyzer_id}")
+        
+        # Analyze the document content
+        response = client.begin_analyze(analyzer_id, document_path)
+        result = client.poll_result(response)
+        print(f"Successfully analyzed document with analyzer: {analyzer_id}")
+        
+        # DEBUG: Log the full result structure to understand what we're getting
+        print(f"[DEBUG] Result keys: {list(result.keys()) if isinstance(result, dict) else 'Not a dict'}")
+        if "result" in result:
+            print(f"[DEBUG] result['result'] keys: {list(result['result'].keys()) if isinstance(result.get('result'), dict) else 'Not a dict'}")
+        
+        # Extract content from the result
+        document_content = result.get("result", {})
+        
+        full_content = f"Document: {os.path.basename(document_path)}\n\n"
+        
+        # Extract text content from the analysis result
+        if "contents" in document_content:
+            print(f"[DEBUG] Found {len(document_content['contents'])} content sections")
+            for i, content in enumerate(document_content["contents"]):
+                print(f"[DEBUG] Content {i} keys: {list(content.keys()) if isinstance(content, dict) else 'Not a dict'}")
+                
+                # Extract markdown/text content if available
+                if "markdown" in content:
+                    full_content += content["markdown"] + "\n\n"
+                elif "text" in content:
+                    full_content += content["text"] + "\n\n"
+                elif "content" in content:
+                    full_content += content["content"] + "\n\n"
+                    
+                # Extract any fields (tables, key-value pairs, etc.)
+                if "fields" in content:
+                    for field_name, field_value in content["fields"].items():
+                        if isinstance(field_value, dict) and "valueString" in field_value:
+                            full_content += f"{field_name}: {field_value['valueString']}\n"
+                        elif isinstance(field_value, dict) and "content" in field_value:
+                            full_content += f"{field_name}: {field_value['content']}\n"
+        
+        # Also check for top-level markdown or content
+        if "markdown" in document_content:
+            full_content += document_content["markdown"]
+        elif "content" in document_content:
+            full_content += document_content["content"]
+        
+        # Cleanup
+        client.delete_analyzer(analyzer_id)
+        
+        print(f"Document extracted content length: {len(full_content)} chars")
+        return full_content
+        
+    except Exception as e:
+        print(f"Error processing document with Content Understanding: {e}")
+        import traceback
+        print(traceback.format_exc())
+        
+        # Try to clean up analyzer even if there was an error
+        try:
+            client.delete_analyzer(analyzer_id)
+        except:
+            pass
+        
+        # Fall back to legacy GPT-4 Vision method
+        print("Falling back to GPT-4 Vision method...")
+        return process_document_legacy(document_path)
+
+
+def process_document_legacy(document_path):
+    """Legacy document processing using GPT-4 Vision (fallback method)"""
+    print(f"Processing document (legacy): {document_path}")
     
     # Convert file to PDF
     pdf_path = doc2md_utils.convert_to_pdf(document_path)

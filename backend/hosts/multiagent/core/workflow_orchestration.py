@@ -218,6 +218,10 @@ class WorkflowOrchestration:
                     parallel_tasks.append(task)
                 
                 # Execute all steps in parallel
+                # Note: For parallel steps, we pass the outputs accumulated BEFORE this group
+                # (each parallel step sees the same prior context)
+                prior_outputs = list(all_task_outputs)  # Snapshot of outputs before this parallel group
+                
                 async def execute_parallel_step(step: ParsedWorkflowStep, task: AgentModeTask):
                     """Execute a single step and update its task state."""
                     task.state = "running"
@@ -230,7 +234,8 @@ class WorkflowOrchestration:
                             session_context=session_context,
                             context_id=context_id,
                             user_message=user_message,
-                            extract_text_fn=extract_text_from_response
+                            extract_text_fn=extract_text_from_response,
+                            previous_task_outputs=prior_outputs  # Pass accumulated outputs from prior steps
                         )
                         return result
                     except Exception as e:
@@ -294,7 +299,8 @@ class WorkflowOrchestration:
                         session_context=session_context,
                         context_id=context_id,
                         user_message=user_message,
-                        extract_text_fn=extract_text_from_response
+                        extract_text_fn=extract_text_from_response,
+                        previous_task_outputs=list(all_task_outputs)  # Pass accumulated outputs from prior steps
                     )
                     
                     # Check for HITL pause
@@ -445,12 +451,14 @@ class WorkflowOrchestration:
         session_context: SessionContext,
         context_id: str,
         user_message: str,
-        extract_text_fn: Callable
+        extract_text_fn: Callable,
+        previous_task_outputs: Optional[List[str]] = None
     ) -> Dict[str, Any]:
         """
         Execute a single workflow step with full state tracking.
         
-        Includes HITL detection, artifact collection, and proper error handling.
+        Includes HITL detection, artifact collection, proper error handling,
+        and passing previous step outputs as context.
         """
         # Resolve agent (by hint or LLM selection)
         agent_name = self._resolve_agent_for_step(step)
@@ -498,7 +506,33 @@ class WorkflowOrchestration:
             log_debug(f"[Workflow] Passing {len(file_uris)} file URIs to {agent_name}")
         
         try:
-            task_message = f"{step.description}\n\nContext: {user_message}"
+            # Build enhanced task message with previous step outputs as context
+            # This enables step N to access outputs from steps 1 through N-1
+            task_message = f"{step.description}\n\nOriginal Request: {user_message}"
+            
+            # Include ONLY the most recent step's output to minimize token usage
+            # Azure AI agents maintain their own thread history, so we only need inter-agent context
+            if previous_task_outputs and len(previous_task_outputs) > 0:
+                # Get just the last step's output (most relevant for sequential workflows)
+                last_output = previous_task_outputs[-1]
+                
+                # Truncate if too long (keep essential info, avoid token bloat)
+                max_context_chars = 3000  # Enough for invoice details, but not excessive
+                if len(last_output) > max_context_chars:
+                    last_output = last_output[:max_context_chars] + "\n... [truncated for brevity]"
+                
+                print(f"📋 [Workflow] Passing previous step output ({len(last_output)} chars) as context")
+                
+                task_message = f"""{step.description}
+
+## Previous Step Output:
+{last_output}
+
+## Original Request:
+{user_message}
+
+Use the data from the previous step to complete your task."""
+            
             dummy_context = DummyToolContext(session_context, self._azure_blob_client)
             
             responses = await self.send_message(
@@ -545,6 +579,14 @@ class WorkflowOrchestration:
             return self._make_step_result(step.step_label, agent_name, "completed", output=output_text)
                 
         except Exception as e:
+            # IMPORTANT: Check if HITL was triggered before the error
+            # Sometimes the SSE stream errors out AFTER input_required was set
+            if session_context.pending_input_agent and session_context.pending_input_agent == agent_name:
+                log_info(f"⏸️ [Workflow] Exception occurred but HITL was triggered - treating as input_required")
+                task.state = "input_required"
+                task.updated_at = datetime.now(timezone.utc)
+                return self._make_step_result(step.step_label, agent_name, "input_required", output=str(e), hitl_pause=True)
+            
             task.state = "failed"
             task.error_message = str(e)
             task.updated_at = datetime.now(timezone.utc)
@@ -1417,6 +1459,14 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                             )
                             return result
                         except Exception as e:
+                            # IMPORTANT: Check if HITL was triggered before the error
+                            recommended_agent = task.recommended_agent
+                            if session_context.pending_input_agent and session_context.pending_input_agent == recommended_agent:
+                                log_info(f"⏸️ [Agent Mode] Parallel task exception but HITL triggered")
+                                task.state = "input_required"
+                                task.updated_at = datetime.now(timezone.utc)
+                                return {"output": str(e), "hitl_pause": True, "task_id": task.task_id}
+                            
                             task.state = "failed"
                             task.error_message = str(e)
                             task.updated_at = datetime.now(timezone.utc)
@@ -1491,6 +1541,18 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                             all_task_outputs.append(result["output"])
                         
                     except Exception as e:
+                        # IMPORTANT: Check if HITL was triggered before the error
+                        # Sometimes the SSE stream errors out AFTER input_required was set
+                        recommended_agent = task.recommended_agent
+                        if session_context.pending_input_agent and session_context.pending_input_agent == recommended_agent:
+                            log_info(f"⏸️ [Agent Mode] Exception but HITL triggered - treating as input_required")
+                            task.state = "input_required"
+                            task.updated_at = datetime.now(timezone.utc)
+                            # Save plan for resume
+                            session_context.current_plan = plan
+                            log_info(f"💾 [Agent Mode] Saved plan for HITL resume (exception with pending input)")
+                            return all_task_outputs
+                        
                         task.state = "failed"
                         task.error_message = str(e)
                         log_error(f"[Agent Mode] Task execution error: {e}")

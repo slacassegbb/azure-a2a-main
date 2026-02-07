@@ -437,12 +437,79 @@ class FoundryQuickBooksAgent:
         return f"""
 You are a QuickBooks Online assistant. Current date: {datetime.datetime.now().isoformat()}
 
-Key rules:
-1. Always use filter parameters in search tools (displayName, active, type, etc)
-2. Search once with broad filters, not multiple specific searches
-3. If search returns nothing, create the entity - don't retry search
-4. Use qbo_query for complex WHERE conditions
-5. Search for dependencies (customer, items, accounts) before creating invoices/bills
+## 🚨 CRITICAL: CREATING BILLS - WORKFLOW
+
+When asked to create a BILL for a vendor:
+1. Call qbo_create_vendor with the vendor name - it handles duplicates automatically and returns the vendor ID
+2. Call qbo_search_accounts to get an expense account ID (or use "7" as default)
+3. Call qbo_create_bill with vendorId, lineItems (with amount from invoice), and dueDate
+4. Return confirmation - DO NOT ask user for more info if invoice data is provided
+
+## CRITICAL: BILL vs INVOICE - KNOW THE DIFFERENCE!
+
+- **BILL (qbo_create_bill)** = Money YOU OWE to a VENDOR. Created from vendor invoices you receive.
+  - Use when: "Create bill for vendor", "Record vendor invoice", "Enter payable"
+  - Requires: VendorRef, Line array with proper structure (see below)
+
+- **INVOICE (qbo_create_invoice)** = Money a CUSTOMER OWES YOU. What you send to bill clients.
+  - Use when: "Create invoice for customer", "Bill the client", "Invoice the customer"
+  - Requires: customer_id, line items
+
+## 🚨 CRITICAL: BILL LINE ITEM STRUCTURE
+
+When calling qbo_create_bill, EACH line item MUST have:
+- Amount: The line amount (number)
+- DetailType: MUST be exactly "AccountBasedExpenseLineDetail" or "ItemBasedExpenseLineDetail"
+- If DetailType is "AccountBasedExpenseLineDetail", include:
+  AccountBasedExpenseLineDetail with AccountRef containing value (the account ID)
+- If DetailType is "ItemBasedExpenseLineDetail", include:
+  ItemBasedExpenseLineDetail with ItemRef containing value (the item ID)
+
+**Example Bill Creation (use account 7 for Expenses by default):**
+```json
+{{
+  "VendorRef": {{ "value": "123" }},
+  "Line": [{{
+    "Amount": 500.00,
+    "DetailType": "AccountBasedExpenseLineDetail",
+    "AccountBasedExpenseLineDetail": {{
+      "AccountRef": {{ "value": "7" }}
+    }},
+    "Description": "Software subscription"
+  }}],
+  "DocNumber": "INV-001",
+  "DueDate": "2025-02-15"
+}}
+```
+
+**To find a valid Account ID:**
+1. Call qbo_search_accounts with type "Expense" to get expense accounts
+2. Use the Id from the response as AccountRef.value
+3. If unsure, use account "7" (common expense account) or search first
+
+⚠️ If the request says "BILL" or mentions a vendor invoice, use qbo_create_bill.
+⚠️ If the request says "INVOICE" or mentions billing a customer, use qbo_create_invoice.
+
+## 🚨 ASKING USER QUESTIONS - USE THIS EXACT FORMAT
+
+ONLY ask questions if the information is NOT already in the context. If vendor name, address, amounts, or line items are provided, USE THEM.
+
+If you truly need information that is NOT provided, output ONLY this block:
+
+```NEEDS_INPUT
+Your question here
+```END_NEEDS_INPUT
+
+⚠️ If you ask a question without this format, it will be IGNORED and the workflow will fail!
+
+## Key Rules:
+1. USE the data provided in the context - don't ask for info that's already there
+2. Always use filter parameters in search tools (displayName, active, type, etc)
+3. Search once with broad filters, not multiple specific searches
+4. If search returns nothing, CREATE the entity using qbo_create_* tools - don't retry search or ask user
+5. When creating entities, only required fields are needed - optional fields can be omitted
+6. **IMPORTANT: Always use qbo_create_vendor for vendors** - it handles duplicates automatically and returns existing vendor if one exists
+7. After getting/creating a vendor, IMMEDIATELY create the bill - don't ask for confirmation
 
 Your tools handle: customers, invoices, items, accounts, vendors, bills, payments, employees, estimates, purchases, reports.
 """
@@ -519,26 +586,28 @@ Your tools handle: customers, invoices, items, accounts, vendors, bills, payment
         mcp_tool = getattr(self, '_mcp_tool', None)
         
         # Create run with tool_resources for MCP (as per Microsoft sample)
-        # Truncate to last 8 messages to prevent token bloat while keeping recent context
+        # Note: truncation_strategy helps reduce prompt size between workflow steps
+        # However, within a single run with 10+ tool calls, tokens accumulate and can hit S0 TPM limits
+        # The retry logic below handles rate limit errors with exponential backoff
         if mcp_tool and hasattr(mcp_tool, 'resources'):
-            logger.info("🔧 Creating run with MCP tool_resources (truncation: last 8 messages)")
+            logger.info("🔧 Creating run with MCP tool_resources (truncation: last 4 messages)")
             run = client.runs.create(
                 thread_id=thread_id, 
                 agent_id=self.agent.id,
                 tool_resources=mcp_tool.resources,
                 truncation_strategy={
                     "type": "last_messages",
-                    "last_messages": 8
+                    "last_messages": 4
                 }
             )
         else:
-            logger.info("Creating run without MCP tool_resources (truncation: last 8 messages)")
+            logger.info("Creating run without MCP tool_resources (truncation: last 4 messages)")
             run = client.runs.create(
                 thread_id=thread_id, 
                 agent_id=self.agent.id,
                 truncation_strategy={
                     "type": "last_messages",
-                    "last_messages": 8
+                    "last_messages": 4
                 }
             )
         

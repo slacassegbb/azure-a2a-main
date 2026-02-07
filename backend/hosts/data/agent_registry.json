@@ -329,13 +329,7 @@
         "id": "quickbooks_customers",
         "name": "QuickBooks Customer Management",
         "description": "Search, create, update, and manage customer records in QuickBooks Online. Access customer details, contact information, and transaction history.",
-        "examples": [
-          "Show me all customers with Tech in their name",
-          "Create a new customer for XYZ Corporation",
-          "Get details for customer ABC Corp",
-          "Update the email for customer John Smith",
-          "List all active customers"
-        ],
+        "examples": null,
         "tags": [
           "quickbooks",
           "customers",
@@ -347,12 +341,7 @@
         "id": "quickbooks_invoices",
         "name": "QuickBooks Invoice Management",
         "description": "Create, search, and manage invoices in QuickBooks Online. Track payments, view invoice details, and manage accounts receivable.",
-        "examples": [
-          "Show me all unpaid invoices",
-          "Create an invoice for customer ABC Corp for $500",
-          "Get details for invoice #1001",
-          "What invoices are overdue?"
-        ],
+        "examples": null,
         "tags": [
           "quickbooks",
           "invoices",
@@ -364,12 +353,7 @@
         "id": "quickbooks_bills",
         "name": "QuickBooks Bills & Expenses",
         "description": "Manage bills, purchases, and expenses in QuickBooks Online. Track vendor payments, record expenses, and manage accounts payable.",
-        "examples": [
-          "Show me all bills due this week",
-          "Create a bill from vendor Office Supplies Inc",
-          "Record a payment for bill #2001",
-          "List all purchases this month"
-        ],
+        "examples": null,
         "tags": [
           "quickbooks",
           "bills",
@@ -382,12 +366,7 @@
         "id": "quickbooks_reports",
         "name": "QuickBooks Financial Reports",
         "description": "Generate financial reports including Profit & Loss, Balance Sheet, and custom queries. Access company information and financial summaries.",
-        "examples": [
-          "Show me the Profit and Loss report",
-          "Get the Balance Sheet",
-          "What is our company information?",
-          "Query all accounts receivable over $1000"
-        ],
+        "examples": null,
         "tags": [
           "quickbooks",
           "reports",
@@ -400,11 +379,7 @@
         "id": "human_interaction",
         "name": "Human Expert Escalation",
         "description": "Escalate complex issues to human experts or facilitate human-in-the-loop interactions when automated responses are insufficient.",
-        "examples": [
-          "Escalate this issue to a human expert",
-          "I need to speak with a person",
-          "Connect me with a human agent"
-        ],
+        "examples": null,
         "tags": [
           "human-interaction",
           "escalation",
@@ -433,9 +408,7 @@
         "id": "stripe_customers",
         "name": "Stripe Customer Management",
         "description": "Create, search, update, and manage customer records in Stripe.",
-        "examples": [
-          "List all my Stripe customers"
-        ],
+        "examples": null,
         "tags": [
           "stripe",
           "customers",
@@ -446,9 +419,7 @@
         "id": "stripe_payments",
         "name": "Stripe Payment Processing",
         "description": "Create payment intents, process charges, and handle refunds.",
-        "examples": [
-          "Create a payment intent for $100"
-        ],
+        "examples": null,
         "tags": [
           "stripe",
           "payments",
@@ -459,9 +430,7 @@
         "id": "stripe_balance",
         "name": "Stripe Balance",
         "description": "Check balance and view available funds.",
-        "examples": [
-          "What is my current Stripe balance?"
-        ],
+        "examples": null,
         "tags": [
           "stripe",
           "balance"
@@ -473,7 +442,7 @@
     "name": "AI Foundry HubSpot Agent",
     "description": "Intelligent agent for HubSpot payment processing - customers, payments, subscriptions, invoices, and balance.",
     "version": "1.0.0",
-    "url": "https://azurefoundry-hubspot.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
+    "url": "http://localhost:9020/",
     "defaultInputModes": [
       "text"
     ],

@@ -122,7 +122,8 @@ class FoundryAgentExecutor(AgentExecutor):
             logger.info(f"Processing HubSpot request: {user_message[:100]}...")
             
             agent = await self._get_or_create_agent()
-            thread_id = await self._get_or_create_thread(context_id, agent, force_new=True)
+            # Reuse thread for same context_id to maintain conversation history
+            thread_id = await self._get_or_create_thread(context_id, agent, force_new=False)
             
             # Run the agent and get response
             response = await agent.chat(thread_id, user_message)

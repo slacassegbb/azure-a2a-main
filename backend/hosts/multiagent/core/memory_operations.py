@@ -50,6 +50,10 @@ class MemoryOperations:
             # Extract session_id for tenant isolation
             session_id = get_tenant_from_context(context_id)
             
+            print(f"🔍 [_search_relevant_memory] context_id: {context_id}")
+            print(f"🔍 [_search_relevant_memory] extracted session_id: {session_id}")
+            print(f"🔍 [_search_relevant_memory] query: {query}")
+            
             # Build filters if agent name is specified
             filters = {}
             if agent_name:
@@ -62,6 +66,8 @@ class MemoryOperations:
                 filters=filters,
                 top_k=top_k
             )
+            
+            print(f"🔍 [_search_relevant_memory] results count: {len(memory_results) if memory_results else 0}")
             
             return memory_results
             

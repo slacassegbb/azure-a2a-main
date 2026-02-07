@@ -122,7 +122,8 @@ class FoundryAgentExecutor(AgentExecutor):
             logger.info(f"Processing Stripe request: {user_message[:100]}...")
             
             agent = await self._get_or_create_agent()
-            thread_id = await self._get_or_create_thread(context_id, agent, force_new=True)
+            # Reuse thread for same context_id to maintain conversation history
+            thread_id = await self._get_or_create_thread(context_id, agent, force_new=False)
             
             # Run the agent and get response
             response = await agent.chat(thread_id, user_message)
@@ -155,6 +156,7 @@ class FoundryAgentExecutor(AgentExecutor):
                         }))
                     
                     # Signal input_required - workflow will pause and resume when user responds
+                    # CRITICAL: Must set final=True so the SSE stream knows this is the last event
                     await task_updater.update_status(
                         TaskState.input_required,
                         message=Message(
@@ -162,7 +164,8 @@ class FoundryAgentExecutor(AgentExecutor):
                             messageId=str(uuid.uuid4()),
                             parts=message_parts,
                             contextId=context_id
-                        )
+                        ),
+                        final=True  # This closes the event queue properly
                     )
                     logger.info(f"📱 Returning input_required state - waiting for user response")
                     return

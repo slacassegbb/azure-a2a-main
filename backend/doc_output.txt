@@ -1,0 +1,198 @@
+Searching for invoice documents
+
+=== Document 1 ===
+ID: ca4c6913-b2d3-4bb2-93ae-eef39acfb2db
+Session: user_3
+Timestamp: 2026-02-07T17:04:09.723Z
+Filename: 2512-036-1-U1Software-CayDigital-Invoice.pdf
+Inbound length: 3373 chars
+
+=== EXTRACTED CONTENT (3127 chars) ===
+# Invoice Details
+
+## General Information
+- **Issue Date:** December 31, 2025  
+- **Billing Period:** December 2025  
+
+### Service Provider
+- **Name:** UI Software LLC  
+- **Tax Number:** 446543491  
+- **Address:** Shyroka str. 69/75, Lviv, 79052, Ukraine  
+
+### Customer
+- **Name:** Cay Digital, LLC  
+- **Tax Number:** 39-2081742  
+- **Address:** 13901 Willow Cay Dr, North Palm Beach, USA, 33408  
+
+### Beneficiary Account
+- **Account Number:** UA93035299000002607010118173  
+- **Beneficiary Bank:** JSC CB "PRIVATBANK", 1D HRUSHEVSKOHO STR, KYIV, 01001, UKRAINE  
+- **SWIFT/BIC:** PBANUA2X  
+
+---
+
+## Invoice # 2512-036-1
+
+| **Services**                                        | **Resource**         | **Unit**   | **Qty (Hour)** | **Rate USD** | **Net Price USD** | **VAT** | **Gross Price USD** |
+|-----------------------------------------------------|----------------------|------------|----------------|--------------|-------------------|---------|---------------------|
+| Prompt engineering, Azure AI Search indexes evaluation | Yurii Polyak        | Hour       | 160            | 20.00        | 3,200.00          | N/A     | 3,200.00            |
+| Quality assurance, retesting of bugs               | Oleksii Shevchuk     | Hour       | 176            | 22.00        | 3,872.00          | N/A     | 3,872.00            |
+| R&D: PDF generator, Python environment, responsive designs | Kateryna Ynokurova  | Hour       | 7              | 28.00        | 196.00            | N/A     | 196.00              |
+| Sector keyword search implementation, code reviews, responsive designs tuning | Bohdan Vivchar    | Hour       | 177.5          | 32.00        | 5,680.00          | N/A     | 5,680.00            |
+| Email configuration service, Terraform configuration for PROD environment | Pavlo Mochurad   | Hour       | 168            | 35.00        | 5,880.00          | N/A     | 5,880.00            |
+| Coding of persisting tags in session; capturing of AI feedback | Sviatoslav Skobakskyi | Hour       | 177.5          | 40.00        | 7,100.00          | N/A     | 7,100.00            |
+| Error handling, Crunchbase MCP integration, vectorization fixes | Roman Yurents     | Hour       | 173.5          | 40.00        | 6,940.00          | N/A     | 6,940.00            |
+
+### Total to Pay
+- **Net Total:** 32,868.00 USD  
+- **VAT:** N/A  
+- **Gross Total:** 32,868.00 USD  
+
+---
+
+## Notes
+- All charges by correspondent banks are at the Contractor’s expense.
+- Payment according to this invoice serves as evidence of work performance and service delivery in full scope.
+
+Payment according hereto shall be also the confirmation that Parties have no claims to each other and have no intention to submit any claims. The agreement shall not include penalty and fine clauses.
+
+The Parties shall not be liable for non-performance or improper performance of the obligations under the agreement during the term of insuperable force circumstances.
+
+**Authorized Signatory:**
+
+Oleh Deneka  
+CEO, U1 Software LLC  
+
+(Signature)
+
+_NOTE: No charts, graphs, or additional numerical data visualizations were identified in the image._
+
+====================================================================================================
+
+=== Document 2 ===
+ID: f3d96c1e-9a00-4a73-ba1d-ce8932302154
+Session: user_3
+Timestamp: 2026-02-07T16:53:26.229Z
+Filename: 2512-036-1-U1Software-CayDigital-Invoice.pdf
+Inbound length: 3748 chars
+
+=== EXTRACTED CONTENT (3505 chars) ===
+# Invoice Details
+
+## General Information
+- **Issue Date:** December 31, 2025
+- **Billing Period:** December 2025
+
+### Service Provider:
+- **Name:** U1 Software LLC  
+- **Tax Number:** 44654941  
+- **Address:** Shyroka Str. 69/75, Lviv, 79052, Ukraine  
+
+### Customer:
+- **Name:** Cay Digital, LLC  
+- **Tax Number:** 39-2081742  
+- **Address:** 13901 Willow Cay Dr, North Palm Beach, USA, 33408  
+
+### Beneficiary Account:
+- **Account Number:** UA3930529900002607011018173  
+- **Beneficiary Bank:** JSC CB "PRIVATBANK", 1D Hrushevskoho Str., Kyiv, 01001, Ukraine  
+- **SWIFT/BIC:** PBANUA2X  
+
+---
+
+## Invoice # 2512-036-1
+
+| **#** | **Services**                                                                                              | **Resource**         | **Unit** | **Qty**  | **Rate USD** | **Net Price USD** | **VAT** | **Gross Price USD** |
+|-------|-----------------------------------------------------------------------------------------------------------|----------------------|----------|----------|---------------|--------------------|---------|---------------------|
+| 1     | Prompt engineering, Azure AI Search indexes evaluation                                                    | Yurii Polyak         | Hour     | 160      | 20.00         | 3,200.00          | N/A     | 3,200.00           |
+| 2     | Quality assurance, retesting of bugs                                                                      | Oleksii Shevchuk     | Hour     | 176      | 22.00         | 3,872.00          | N/A     | 3,872.00           |
+| 3     | R&D: PDF generator, Python environment, responsive designs                                                | Kateryna Vynokurova  | Hour     | 7        | 28.00         | 196.00            | N/A     | 196.00             |
+| 4     | Sector keyword search implementation, code reviews, responsive designs tuning                             | Bohdan Vichar        | Hour     | 177.5    | 32.00         | 5,680.00          | N/A     | 5,680.00           |
+| 5     | Email configuration service, Terraform configuration for PROD environment                                 | Pavlo Mochurad       | Hour     | 168      | 35.00         | 5,880.00          | N/A     | 5,880.00           |
+| 6     | Coding of persisting tags in session, capturing of AI feedback                                            | Sviatoslav Skobialskyi | Hour    | 177.5    | 40.00         | 7,100.00          | N/A     | 7,100.00           |
+| 7     | Error handling, Crunchbase MCP integration, vectorization fixes                                           | Roman Yurents        | Hour     | 173.5    | 40.00         | 6,940.00          | N/A     | 6,940.00           |
+
+### Total to Pay:
+| **Net Price USD** | **VAT** | **Gross Price USD** |
+|--------------------|---------|---------------------|
+| 32,868.00         | N/A     | 32,868.00          |
+
+---
+
+## Additional Notes
+- All charges of correspondent banks are at the Contractor’s expense.
+- This Invoice serves as an agreement between the involved parties.
+
+Payment according hereto shall be also the confirmation that Parties have no claims to each other and have no intention to submit any claims. The agreement shall not include penalty and fine clauses.
+
+The Parties shall not be liable for non-performance or improper performance of the obligations under the agreement during the term of insuperable force circumstances.
+
+**Authorized Signatory:**  
+Oleh Deneka  
+CEO, UI Software LLC  
+
+*Signature appears below.*
+
+====================================================================================================
+
+=== Document 3 ===
+ID: e8cba612-eecb-48fb-8cee-ffa418d6bf72
+Session: user_3
+Timestamp: 2026-02-07T16:48:36.674Z
+Filename: 2512-036-1-U1Software-CayDigital-Invoice.pdf
+Inbound length: 3811 chars
+
+=== EXTRACTED CONTENT (3577 chars) ===
+# Invoice Details
+
+### General Information
+
+**Issue Date:** December 31, 2025  
+**Billing Period:** December 2025  
+
+**Service Provider:** UI Software LLC  
+- **Tax Number:** 44654941  
+- **Address:** Shyroka str. 69/75, Lviv, 79052, Ukraine  
+
+**Beneficiary Account #:** UA3930529900002607011018173  
+**Beneficiary Bank:** JSC CB "PRIVATBANK," 1D HRUSHEVSKOHO STR., KYIV, 01001, UKRAINE  
+**SWIFT/BIC:** PBANUA2X  
+
+**Customer:** Cay Digital, LLC  
+- **Tax Number:** 39-2081742  
+- **Address:** 13901 WILLOW CAY DR, NORTH PALM BEACH, USA, 33408  
+
+---
+
+## **INVOICE # 2512-036-1**
+
+| #   | Services                                                                                       | Resource               | Unit | Qty    | Rate (USD) | Net Price (USD) | VAT  | Gross Price (USD) |
+|-----|-----------------------------------------------------------------------------------------------|------------------------|------|--------|------------|----------------|------|-------------------|
+| 1   | Prompt engineering, Azure AI Search indexes evaluation                                        | Yurii Polyak          | Hour | 160    | 20.00      | 3,200.00       | N/A  | 3,200.00          |
+| 2   | Quality assurance, retesting of bugs                                                          | Oleksii Shevchuk      | Hour | 176    | 22.00      | 3,872.00       | N/A  | 3,872.00          |
+| 3   | R&D: PDF generator, Python environment, responsive designs                                    | Kateryna Vynokurova   | Hour | 7      | 28.00      | 196.00         | N/A  | 196.00            |
+| 4   | Sector keyword search implementation, code reviews, responsive designs tuning                | Bohdan Vichar         | Hour | 177.5  | 32.00      | 5,680.00       | N/A  | 5,680.00          |
+| 5   | Email configuration service, Terraform configuration for PROD environment                     | Pavlo Mochurad        | Hour | 168    | 35.00      | 5,880.00       | N/A  | 5,880.00          |
+| 6   | Coding of persisting tags in session, capturing of AI feedback                                | Sviatoslav Skobalskyi | Hour | 177.5  | 40.00      | 7,100.00       | N/A  | 7,100.00          |
+| 7   | Error handling, Crunchbase MCP integration, vectorization fixes                               | Roman Yurents         | Hour | 173.5  | 40.00      | 6,940.00       | N/A  | 6,940.00          |
+
+| **Total to Pay:**                                                                                   |                        |      |        |            | **32,868.00**  | N/A  | **32,868.00**      |
+
+---
+
+### Notes
+- All changes of correspondent banks are at the Contractor's expenses.
+- This Invoice is an offer to enter into the agreement. Payment according hereto shall be deemed as an acceptance of the offer to enter into the agreement on the terms and conditions set out herein.
+- Please note that payment according hereto at the same time is the evidence of the work performance and the service delivery in full scope, acceptance thereof, and the confirmation of final mutual installments between Parties.
+
+Payment according hereto shall be also the confirmation that Parties have no claims to each other and have no intention to submit any claims. The agreement shall not include penalty and fine clauses.
+
+The Parties shall not be liable for non-performance or improper performance of the obligations under the agreement during the term of insuperable force circumstances.
+
+**Authorized Signatory:**  
+Oleh Denyeka  
+CEO, U1 Software LLC  
+
+*Signature image included.*
+
+====================================================================================================

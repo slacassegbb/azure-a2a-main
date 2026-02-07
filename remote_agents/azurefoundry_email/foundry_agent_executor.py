@@ -175,8 +175,8 @@ class FoundryTemplateAgentExecutor(AgentExecutor):
             else:
                 logger.info("🧾 Received empty A2A conversation payload for context %s", context_id)
             agent = await self._get_or_create_agent()
-            # Use force_new=True to create separate threads for parallel requests
-            thread_id = await self._get_or_create_thread(context_id, agent, force_new=True)
+            # Reuse thread for same context_id to maintain conversation history
+            thread_id = await self._get_or_create_thread(context_id, agent, force_new=False)
             
             # Use streaming to show tool calls in real-time
             responses = []
