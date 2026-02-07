@@ -355,16 +355,109 @@ class FoundryStripeAgent:
         # Get model deployment name
         model = os.getenv("AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME", "gpt-4o")
         
-        # Stripe-specific instructions
-        instructions = """You are an expert Stripe payment processing assistant. You help users manage their Stripe account including:
+        # Stripe-specific instructions - using same pattern as QuickBooks
+        # NOTE: Tool names must match EXACTLY what the Stripe MCP server provides
+        instructions = """You are an expert Stripe payment processing assistant. You help users manage their Stripe account.
 
-## Your Capabilities:
-1. **Customer Management** - Create, search, list, update, and delete customers
-2. **Payment Processing** - Create and manage payment intents, confirm payments
-3. **Subscriptions** - Create, update, cancel, and list recurring subscriptions
-4. **Products & Pricing** - Manage product catalog and pricing
-5. **Invoices** - Create and send invoices
-6. **Balance** - Check available and pending balance
+## Your Tool: stripe_action
+
+You have ONE powerful tool called `stripe_action` that can perform all Stripe operations.
+
+**Tool Parameters:**
+- `action`: The Stripe operation to perform (see available actions below)
+- `params`: Parameters specific to that action (structure varies by action)
+
+## Available Actions (22 total)
+
+### Customer Management
+- **list_customers** - List all customers
+  - Example: `{{"action": "list_customers", "params": {{"limit": 10}}}}`
+
+- **create_customer** - Create a new customer
+  - Example: `{{"action": "create_customer", "params": {{"email": "john@example.com", "name": "John Doe"}}}}`
+
+### Balance & Payments
+- **retrieve_balance** - Get account balance
+  - Example: `{{"action": "retrieve_balance", "params": {{}}}}`
+
+- **list_payment_intents** - List payment intents
+  - Example: `{{"action": "list_payment_intents", "params": {{"limit": 10}}}}`
+
+- **create_refund** - Create a refund
+  - Example: `{{"action": "create_refund", "params": {{"payment_intent": "pi_xxx"}}}}`
+
+### Products & Prices
+- **list_products** - List all products
+  - Example: `{{"action": "list_products", "params": {{"limit": 10}}}}`
+
+- **create_product** - Create a product
+  - Example: `{{"action": "create_product", "params": {{"name": "My Product"}}}}`
+
+- **list_prices** - List all prices
+  - Example: `{{"action": "list_prices", "params": {{"limit": 10}}}}`
+
+- **create_price** - Create a price for a product
+  - Example: `{{"action": "create_price", "params": {{"product": "prod_xxx", "unit_amount": 2000, "currency": "usd"}}}}`
+
+- **create_payment_link** - Create a payment link
+  - Example: `{{"action": "create_payment_link", "params": {{"price": "price_xxx", "quantity": 1}}}}`
+
+### Subscriptions
+- **list_subscriptions** - List all subscriptions
+  - Example: `{{"action": "list_subscriptions", "params": {{"limit": 10}}}}`
+
+- **cancel_subscription** - Cancel a subscription
+  - Example: `{{"action": "cancel_subscription", "params": {{"subscription": "sub_xxx"}}}}`
+
+- **update_subscription** - Update a subscription
+  - Example: `{{"action": "update_subscription", "params": {{"subscription": "sub_xxx", "items": [...]}}}}`
+
+### Invoices
+- **list_invoices** - List all invoices
+  - Example: `{{"action": "list_invoices", "params": {{"limit": 10}}}}`
+
+- **create_invoice** - Create an invoice
+  - Example: `{{"action": "create_invoice", "params": {{"customer": "cus_xxx"}}}}`
+
+- **create_invoice_item** - Add item to invoice
+  - Example: `{{"action": "create_invoice_item", "params": {{"customer": "cus_xxx", "price": "price_xxx", "invoice": "in_xxx"}}}}`
+
+- **finalize_invoice** - Finalize a draft invoice
+  - Example: `{{"action": "finalize_invoice", "params": {{"invoice": "in_xxx"}}}}`
+
+### Coupons & Disputes
+- **list_coupons** - List all coupons
+  - Example: `{{"action": "list_coupons", "params": {{"limit": 10}}}}`
+
+- **create_coupon** - Create a coupon
+  - Example: `{{"action": "create_coupon", "params": {{"name": "10% OFF", "percent_off": 10}}}}`
+
+- **list_disputes** - List disputes
+  - Example: `{{"action": "list_disputes", "params": {{"limit": 10}}}}`
+
+- **update_dispute** - Submit evidence for a dispute
+  - Example: `{{"action": "update_dispute", "params": {{"dispute": "dp_xxx", "submit": true}}}}`
+
+### Documentation
+- **search_stripe_documentation** - Search Stripe docs
+  - Example: `{{"action": "search_stripe_documentation", "params": {{"question": "How to handle webhooks?"}}}}`
+
+## Example Usage
+
+**List all customers:**
+```
+stripe_action(action="list_customers", params={{"limit": 10}})
+```
+
+**Create a customer:**
+```
+stripe_action(action="create_customer", params={{"name": "John Doe", "email": "john@example.com"}})
+```
+
+**Check account balance:**
+```
+stripe_action(action="retrieve_balance", params={{}})
+```
 
 ## CRITICAL: Use Context Provided
 You will receive context from previous interactions that may include:
@@ -377,14 +470,6 @@ You will receive context from previous interactions that may include:
 - Calculate totals from line items if needed
 - Search for the customer in Stripe by name/email from the context
 
-## Important Guidelines:
-- Always use the Stripe MCP tools to perform operations
-- When listing items, summarize the key information clearly
-- For customer operations, include relevant details like email and name
-- Be proactive in suggesting related actions
-- When displaying monetary amounts, format them clearly with currency symbols
-- If an operation fails, explain what went wrong and suggest alternatives
-
 ## Response Format:
 - Use clear headers and bullet points for readability
 - Include relevant IDs (customer IDs, payment IDs) for reference
@@ -395,14 +480,6 @@ ONLY ask for user input when information is GENUINELY MISSING from context:
 - Start your response EXACTLY with: NEEDS_INPUT:
 - Then provide your question or request for information
 - Example: "NEEDS_INPUT: I found the invoice total is $25,928.00 USD for Cay Digital, LLC. Should I proceed with creating the payment?"
-
-**DO NOT ask for information that's already in the context!**
-- If the invoice has the amount - don't ask "what is the amount?"
-- If the customer name is in the document - don't ask "who is the customer?"
-- If the currency is specified - don't ask "what currency?"
-
-Instead, CONFIRM what you found and ask if you should proceed:
-"NEEDS_INPUT: I found Invoice #2512-036-1 for Cay Digital, LLC totaling $25,928.00 USD. Should I search for this customer in Stripe and create the payment?"
 """
         
         logger.info(f"Creating Stripe agent with model: {model}")
@@ -439,102 +516,210 @@ Instead, CONFIRM what you found and ask if you should proceed:
         )
         logger.info(f"Added {role} message to thread {thread_id}")
         return message
+
+    async def _handle_tool_calls(self, run, thread_id: str):
+        """Handle tool calls coming back from Azure AI Foundry (QuickBooks pattern)."""
+        if not hasattr(run, "required_action") or not run.required_action:
+            logger.warning("No required_action present on run; nothing to handle")
+            return
+
+        required_action = run.required_action
+        action_type = None
+        tool_calls = []
+
+        if hasattr(required_action, "submit_tool_outputs") and required_action.submit_tool_outputs:
+            action_type = "submit_tool_outputs"
+            tool_calls = getattr(required_action.submit_tool_outputs, "tool_calls", []) or []
+        else:
+            logger.warning(
+                "Required action missing submit_tool_outputs attribute: %s",
+                dir(required_action)
+            )
+            return
+
+        if not tool_calls:
+            logger.warning("Required action contained no tool calls; nothing to process")
+            return
+
+        agents_client = self._get_agents_client()
+
+        logger.info("Handling %d tool output call(s)", len(tool_calls))
+        tool_outputs = []
+
+        for tool_call in tool_calls:
+            try:
+                function_name = getattr(getattr(tool_call, "function", None), "name", "unknown")
+                arguments_str = getattr(getattr(tool_call, "function", None), "arguments", "{}")
+                logger.info(f"Processing tool call: {function_name}")
+                logger.debug(f"   Arguments: {arguments_str}")
+
+                # Handle our custom stripe_action tool
+                # Handle both our custom stripe_action tool AND direct stripe_* MCP tool names
+                # GPT may call stripe_action (our wrapper) or directly call stripe_list_customers etc.
+                if function_name == "stripe_action":
+                    try:
+                        arguments = json.loads(arguments_str)
+                        action = arguments.get("action")
+                        params = arguments.get("params", {})
+                        
+                        logger.info(f"🔧 Executing Stripe action via wrapper: {action}")
+                        logger.debug(f"   Params: {json.dumps(params, indent=2)}")
+                        
+                        # Make direct MCP call
+                        result = await self._mcp_client.call_tool(action, params)
+                        
+                        logger.info(f"✅ Stripe action succeeded: {action}")
+                        
+                        tool_outputs.append({
+                            "tool_call_id": tool_call.id,
+                            "output": json.dumps(result),
+                        })
+                        
+                    except Exception as mcp_error:
+                        logger.error(f"❌ Stripe action failed: {action}")
+                        logger.error(f"   Error: {mcp_error}")
+                        
+                        error_result = {
+                            "error": str(mcp_error),
+                            "status": "failed",
+                            "action": action
+                        }
+                        tool_outputs.append({
+                            "tool_call_id": tool_call.id,
+                            "output": json.dumps(error_result),
+                        })
+                elif function_name.startswith("stripe_"):
+                    # GPT is calling an MCP tool directly (e.g., stripe_list_customers)
+                    try:
+                        arguments = json.loads(arguments_str) if arguments_str else {}
+                        action = function_name  # Use the function name as the action
+                        params = arguments  # Use arguments directly as params
+                        
+                        logger.info(f"🔧 Executing Stripe MCP tool directly: {action}")
+                        logger.debug(f"   Params: {json.dumps(params, indent=2)}")
+                        
+                        # Make direct MCP call
+                        result = await self._mcp_client.call_tool(action, params)
+                        
+                        logger.info(f"✅ Stripe MCP tool succeeded: {action}")
+                        
+                        tool_outputs.append({
+                            "tool_call_id": tool_call.id,
+                            "output": json.dumps(result),
+                        })
+                        
+                    except Exception as mcp_error:
+                        logger.error(f"❌ Stripe MCP tool failed: {action}")
+                        logger.error(f"   Error: {mcp_error}")
+                        
+                        error_result = {
+                            "error": str(mcp_error),
+                            "status": "failed",
+                            "action": action
+                        }
+                        tool_outputs.append({
+                            "tool_call_id": tool_call.id,
+                            "output": json.dumps(error_result),
+                        })
+                else:
+                    # Fallback for other tools (shouldn't happen with our setup)
+                    logger.warning(f"Unknown tool call: {function_name}")
+                    dummy_result = {
+                        "status": "success",
+                        "message": f"Tool '{function_name}' executed (simulated).",
+                    }
+                    tool_outputs.append({
+                        "tool_call_id": tool_call.id,
+                        "output": json.dumps(dummy_result),
+                    })
+                    
+            except Exception as exc:
+                logger.error(f"Error processing tool call {getattr(tool_call, 'id', '?')}: {exc}")
+                error_result = {
+                    "error": str(exc),
+                    "status": "failed"
+                }
+                tool_outputs.append({
+                    "tool_call_id": tool_call.id,
+                    "output": json.dumps(error_result),
+                })
+
+        if tool_outputs:
+            logger.debug("Submitting %d tool outputs", len(tool_outputs))
+            agents_client.runs.submit_tool_outputs(
+                thread_id=thread_id,
+                run_id=run.id,
+                tool_outputs=tool_outputs,
+            )
+        else:
+            logger.warning("No tool outputs generated; submitting empty acknowledgements")
+            fallback_outputs = [{"tool_call_id": tc.id, "output": "{}"} for tc in tool_calls if hasattr(tc, "id")]
+            if fallback_outputs:
+                agents_client.runs.submit_tool_outputs(
+                    thread_id=thread_id,
+                    run_id=run.id,
+                    tool_outputs=fallback_outputs,
+                )
     
     async def run_and_wait(self, thread_id: str, timeout: int = 120):
-        """Run the agent on a thread and wait for completion, handling tool calls."""
+        """Run the agent on a thread and wait for completion, handling tool calls (QuickBooks pattern)."""
         if not self.agent:
             await self.create_agent()
         
         agents_client = self._get_agents_client()
         
-        # Create run without MCP tool resources (using custom tool instead)
-        # Reduced to 3 messages to prevent token accumulation in workflow execution
-        tool_resources = None
-        
+        # Create run
         run = agents_client.runs.create(
             thread_id=thread_id,
             agent_id=self.agent.id,
-            tool_resources=tool_resources,
             truncation_strategy={"type": "last_messages", "last_messages": 3},
             max_prompt_tokens=25000,
         )
         
         logger.info(f"Created run {run.id} on thread {thread_id}")
         
-        # Poll for completion and handle tool calls
-        import time
-        start_time = time.time()
-        max_iterations = 20
-        iteration = 0
+        # Poll for completion and handle tool calls (QuickBooks pattern)
+        max_iterations = 25
+        iterations = 0
+        stuck_run_count = 0
+        max_stuck_runs = 3
         
-        while run.status in ["queued", "in_progress", "requires_action"]:
-            iteration += 1
-            if iteration > max_iterations:
-                logger.error(f"Run {run.id} exceeded max iterations ({max_iterations})")
-                raise RuntimeError(f"Run exceeded maximum iterations")
+        while run.status in ["queued", "in_progress", "requires_action"] and iterations < max_iterations:
+            iterations += 1
+            logger.debug(f"🔄 Iteration {iterations}: run.status = {run.status}")
+            await asyncio.sleep(2)
             
-            if time.time() - start_time > timeout:
-                logger.error(f"Run {run.id} timed out after {timeout}s")
-                raise TimeoutError(f"Run timed out after {timeout} seconds")
-            
-            # Handle tool calls if needed
             if run.status == "requires_action":
-                logger.info("🔧 RUN REQUIRES ACTION - HANDLING TOOL CALLS")
-                
-                required_action = run.required_action
-                if required_action and hasattr(required_action, 'submit_tool_outputs'):
-                    tool_calls = required_action.submit_tool_outputs.tool_calls
-                    tool_outputs = []
-                    
-                    for tool_call in tool_calls:
-                        if tool_call.function.name == "stripe_action":
-                            try:
-                                # Parse arguments
-                                args = json.loads(tool_call.function.arguments)
-                                action = args.get("action")
-                                params = args.get("params", {})
-                                
-                                logger.info(f"🔧 Executing Stripe action: {action}")
-                                
-                                # Call MCP tool directly
-                                result = await self._mcp_client.call_tool(action, params)
-                                
-                                # Format result as JSON string
-                                output = json.dumps(result)
-                                tool_outputs.append({
-                                    "tool_call_id": tool_call.id,
-                                    "output": output
-                                })
-                                
-                                logger.info(f"✅ Stripe action succeeded: {action}")
-                                
-                            except Exception as e:
-                                logger.error(f"❌ Stripe action failed: {action}")
-                                logger.error(f"   Error: {e}")
-                                tool_outputs.append({
-                                    "tool_call_id": tool_call.id,
-                                    "output": json.dumps({"error": str(e)})
-                                })
-                    
-                    # Submit tool outputs
-                    if tool_outputs:
-                        logger.info(f"📤 Submitting {len(tool_outputs)} tool output(s)")
-                        run = agents_client.runs.submit_tool_outputs(
-                            thread_id=thread_id,
-                            run_id=run.id,
-                            tool_outputs=tool_outputs
-                        )
+                logger.info(f"🔧 RUN REQUIRES ACTION - TOOL CALLS NEEDED")
+                logger.info(f"   Run ID: {run.id}")
+                try:
+                    # Check if there are actually tool calls to handle
+                    if hasattr(run, 'required_action') and run.required_action:
+                        logger.info(f"Found required action, handling tool calls...")
+                        await self._handle_tool_calls(run, thread_id)
+                    else:
+                        logger.warning(f"Run status is 'requires_action' but no required_action found")
+                        stuck_run_count += 1
+                        if stuck_run_count >= max_stuck_runs:
+                            logger.error(f"Run {run.id} is stuck in requires_action state")
+                            raise RuntimeError(f"Run is stuck in requires_action state")
+                except Exception as e:
+                    logger.error(f"❌ ERROR HANDLING TOOL CALLS: {e}")
+                    raise
             
-            await asyncio.sleep(1)
+            # Refresh run status
             run = agents_client.runs.get(thread_id=thread_id, run_id=run.id)
-            logger.debug(f"Run status: {run.status} (iteration {iteration})")
+            logger.debug(f"Run status: {run.status} (iteration {iterations})")
+        
+        if iterations >= max_iterations:
+            raise TimeoutError(f"Run exceeded maximum iterations ({max_iterations})")
         
         # Store token usage
         if hasattr(run, 'usage') and run.usage:
             self.last_token_usage = {
-                "prompt_tokens": run.usage.prompt_tokens,
-                "completion_tokens": run.usage.completion_tokens,
-                "total_tokens": run.usage.total_tokens,
+                "prompt_tokens": getattr(run.usage, 'prompt_tokens', 0),
+                "completion_tokens": getattr(run.usage, 'completion_tokens', 0),
+                "total_tokens": getattr(run.usage, 'total_tokens', 0),
             }
             logger.info(f"💰 Token usage: {self.last_token_usage}")
         

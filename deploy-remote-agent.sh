@@ -303,6 +303,38 @@ if [ -n "$AGENT_EXISTS" ]; then
         fi
     fi
     
+    # Add HubSpot MCP URL for HubSpot agents
+    if [[ "$AGENT_NAME" == *"HubSpot"* ]] || [[ "$AGENT_NAME" == *"hubspot"* ]]; then
+        # Read from agent's .env file
+        HUBSPOT_MCP_URL=$(grep "^HUBSPOT_MCP_URL" "$AGENT_PATH/.env" 2>/dev/null | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
+        if [ -n "$HUBSPOT_MCP_URL" ]; then
+            ENV_VARS+=("HUBSPOT_MCP_URL=$HUBSPOT_MCP_URL")
+            echo -e "${GREEN}✅ HubSpot MCP URL configuration added${NC}"
+        else
+            echo -e "${YELLOW}⚠️  HubSpot agent detected but HUBSPOT_MCP_URL not found in .env${NC}"
+        fi
+    fi
+    
+    # Add QuickBooks MCP URL for QuickBooks agents
+    if [[ "$AGENT_NAME" == *"QuickBooks"* ]] || [[ "$AGENT_NAME" == *"quickbooks"* ]]; then
+        # Read from agent's .env file
+        QUICKBOOKS_MCP_URL=$(grep "^QUICKBOOKS_MCP_URL" "$AGENT_PATH/.env" 2>/dev/null | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
+        if [ -n "$QUICKBOOKS_MCP_URL" ]; then
+            ENV_VARS+=("QUICKBOOKS_MCP_URL=$QUICKBOOKS_MCP_URL")
+            echo -e "${GREEN}✅ QuickBooks MCP URL configuration added${NC}"
+        else
+            echo -e "${YELLOW}⚠️  QuickBooks agent detected but QUICKBOOKS_MCP_URL not found in .env${NC}"
+        fi
+    fi
+    
+    # Update target port to ensure it matches the A2A_PORT
+    echo -e "${CYAN}  Updating ingress target port to $PORT...${NC}"
+    az containerapp ingress update \
+        --name "$CONTAINER_NAME" \
+        --resource-group "$RESOURCE_GROUP" \
+        --target-port "$PORT" \
+        --output none
+    
     az containerapp update \
         --name "$CONTAINER_NAME" \
         --resource-group "$RESOURCE_GROUP" \
@@ -373,6 +405,30 @@ else
             echo -e "${GREEN}✅ Stripe MCP URL configuration added${NC}"
         else
             echo -e "${YELLOW}⚠️  Stripe agent detected but STRIPE_MCP_URL not found in .env${NC}"
+        fi
+    fi
+    
+    # Add HubSpot MCP URL for HubSpot agents
+    if [[ "$AGENT_NAME" == *"HubSpot"* ]] || [[ "$AGENT_NAME" == *"hubspot"* ]]; then
+        # Read from agent's .env file
+        HUBSPOT_MCP_URL=$(grep "^HUBSPOT_MCP_URL" "$AGENT_PATH/.env" 2>/dev/null | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
+        if [ -n "$HUBSPOT_MCP_URL" ]; then
+            ENV_VARS_CREATE="$ENV_VARS_CREATE HUBSPOT_MCP_URL=$HUBSPOT_MCP_URL"
+            echo -e "${GREEN}✅ HubSpot MCP URL configuration added${NC}"
+        else
+            echo -e "${YELLOW}⚠️  HubSpot agent detected but HUBSPOT_MCP_URL not found in .env${NC}"
+        fi
+    fi
+    
+    # Add QuickBooks MCP URL for QuickBooks agents
+    if [[ "$AGENT_NAME" == *"QuickBooks"* ]] || [[ "$AGENT_NAME" == *"quickbooks"* ]]; then
+        # Read from agent's .env file
+        QUICKBOOKS_MCP_URL=$(grep "^QUICKBOOKS_MCP_URL" "$AGENT_PATH/.env" 2>/dev/null | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
+        if [ -n "$QUICKBOOKS_MCP_URL" ]; then
+            ENV_VARS_CREATE="$ENV_VARS_CREATE QUICKBOOKS_MCP_URL=$QUICKBOOKS_MCP_URL"
+            echo -e "${GREEN}✅ QuickBooks MCP URL configuration added${NC}"
+        else
+            echo -e "${YELLOW}⚠️  QuickBooks agent detected but QUICKBOOKS_MCP_URL not found in .env${NC}"
         fi
     fi
     
