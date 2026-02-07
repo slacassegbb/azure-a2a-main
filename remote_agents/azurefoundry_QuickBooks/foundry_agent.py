@@ -435,59 +435,16 @@ class FoundryQuickBooksAgent:
     def _get_agent_instructions(self) -> str:
         """Get the agent instructions for QuickBooks Online accounting capabilities."""
         return f"""
-You are a QuickBooks Online accounting assistant powered by Azure AI Foundry.
+You are a QuickBooks Online assistant. Current date: {datetime.datetime.now().isoformat()}
 
-## Smart Tool Usage
-Be efficient with tool calls:
+Key rules:
+1. Always use filter parameters in search tools (displayName, active, type, etc)
+2. Search once with broad filters, not multiple specific searches
+3. If search returns nothing, create the entity - don't retry search
+4. Use qbo_query for complex WHERE conditions
+5. Search for dependencies (customer, items, accounts) before creating invoices/bills
 
-1. **Use filters**: All search tools accept filter parameters - use them to get exactly what you need
-2. **One broad query, not many specific ones**: If you need to find items matching criteria, search once with broad filters rather than searching for each item individually  
-3. **Don't retry failed searches**: If a search returns no results, the item doesn't exist - move on or create it, don't search again with different wording
-4. **Use qbo_query for flexible lookups**: When search tools don't have the filter you need, use qbo_query with WHERE clauses
-
-## Your Available Tools
-
-### Query & Reports
-- **qbo_query** - SQL-like queries for any entity. Example: `SELECT * FROM Item WHERE Type = 'Service'`
-- **qbo_report** - Financial reports (ProfitAndLoss, BalanceSheet, CashFlow)
-- **qbo_company_info** - Get company information
-
-### Search Tools (use filters!)
-- **qbo_search_customers**(displayName?, active?) → Find customer by name: `qbo_search_customers(displayName="Acme")`
-- **qbo_search_items**(name?, type?, active?) → Find services only: `qbo_search_items(type="Service")`
-- **qbo_search_accounts**(name?, accountType?, active?) → Find expense accounts: `qbo_search_accounts(accountType="Expense")`
-- **qbo_search_vendors**(displayName?, companyName?, active?) → Find vendor: `qbo_search_vendors(displayName="Dell")`
-- **qbo_search_invoices**(customerId?, docNumber?, txnDateFrom?, txnDateTo?, unpaidOnly?) → Unpaid invoices: `qbo_search_invoices(unpaidOnly=true)`
-- **qbo_search_bills**(vendorId?, docNumber?, txnDateFrom?, txnDateTo?) → Bills for vendor: `qbo_search_bills(vendorId="123")`
-- **qbo_search_employees**(displayName?, givenName?, familyName?, active?) → Find employee: `qbo_search_employees(givenName="John")`
-- **qbo_search_estimates**(customerId?, docNumber?, txnDateFrom?, txnDateTo?) → Customer estimates: `qbo_search_estimates(customerId="456")`
-- **qbo_search_bill_payments**(vendorId?, txnDateFrom?, txnDateTo?) → Recent payments: `qbo_search_bill_payments(txnDateFrom="2026-01-01")`
-- **qbo_search_purchases**(accountId?, vendorId?, txnDateFrom?, txnDateTo?, paymentType?) → Cash purchases: `qbo_search_purchases(paymentType="Cash")`
-- **qbo_search_journal_entries**(docNumber?, txnDateFrom?, txnDateTo?) → Find by number: `qbo_search_journal_entries(docNumber="JE-001")`
-
-### Get by ID
-- **qbo_get_customer**, **qbo_get_invoice**, **qbo_get_item**, **qbo_get_account**
-- **qbo_get_vendor**, **qbo_get_bill**, **qbo_get_employee**, **qbo_get_estimate**
-- **qbo_get_bill_payment**, **qbo_get_purchase**, **qbo_get_journal_entry**
-
-### Create
-- **qbo_create_customer**, **qbo_create_invoice**, **qbo_create_item**
-- **qbo_create_vendor**, **qbo_create_bill**, **qbo_create_employee**
-- **qbo_create_estimate**, **qbo_create_bill_payment**, **qbo_create_purchase**
-- **qbo_create_journal_entry**, **qbo_create_account**
-
-### Update/Delete
-- **qbo_update_customer**, **qbo_delete_customer**
-- **qbo_update_item**, **qbo_update_vendor**, **qbo_update_bill**
-- **qbo_delete_invoice**, **qbo_delete_bill**, **qbo_delete_estimate**
-
-## Efficiency Principles
-- **Always use filters** - never call a search tool with empty parameters
-- **One search, not many** - if you need multiple items, search once with broad filters
-- **Use qbo_query** for complex conditions (WHERE Balance > 0, multiple ANDs)
-- **Search dependencies first** - get IDs you need before creating/updating
-
-Current date: {datetime.datetime.now().isoformat()}
+Your tools handle: customers, invoices, items, accounts, vendors, bills, payments, employees, estimates, purchases, reports.
 """
     
     async def create_thread(self, thread_id: Optional[str] = None) -> AgentThread:
@@ -562,18 +519,27 @@ Current date: {datetime.datetime.now().isoformat()}
         mcp_tool = getattr(self, '_mcp_tool', None)
         
         # Create run with tool_resources for MCP (as per Microsoft sample)
+        # Truncate to last 8 messages to prevent token bloat while keeping recent context
         if mcp_tool and hasattr(mcp_tool, 'resources'):
-            logger.info("🔧 Creating run with MCP tool_resources")
+            logger.info("🔧 Creating run with MCP tool_resources (truncation: last 8 messages)")
             run = client.runs.create(
                 thread_id=thread_id, 
                 agent_id=self.agent.id,
-                tool_resources=mcp_tool.resources
+                tool_resources=mcp_tool.resources,
+                truncation_strategy={
+                    "type": "last_messages",
+                    "last_messages": 8
+                }
             )
         else:
-            logger.info("Creating run without MCP tool_resources")
+            logger.info("Creating run without MCP tool_resources (truncation: last 8 messages)")
             run = client.runs.create(
                 thread_id=thread_id, 
-                agent_id=self.agent.id
+                agent_id=self.agent.id,
+                truncation_strategy={
+                    "type": "last_messages",
+                    "last_messages": 8
+                }
             )
         
         logger.info(f"   Run completed: {run.id}")
