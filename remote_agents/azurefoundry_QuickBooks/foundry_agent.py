@@ -262,27 +262,45 @@ class FoundryQuickBooksAgent:
             mcp_tool = McpTool(
                 server_label="QuickBooks",
                 server_url=QUICKBOOKS_MCP_URL,
-                # ALL 15 QuickBooks tools with simplified flat schemas
+                # Essential QuickBooks tools (22 total - reduced from 55 to save tokens)
                 allowed_tools=[
-                    # Query & Reports
+                    # === Query & Reports ===
                     "qbo_query",            # SQL-like queries (SELECT * FROM Customer)
                     "qbo_report",           # Financial reports (ProfitAndLoss, BalanceSheet, CashFlow)
                     "qbo_company_info",     # Get company information
-                    # Customer Tools
-                    "qbo_search_customers", # Search customers (filter by displayName, active, limit)
-                    "qbo_get_customer",     # Get customer by ID
-                    "qbo_create_customer",  # Create customer (displayName, email, phone, companyName)
-                    "qbo_update_customer",  # Update customer
-                    "qbo_delete_customer",  # Deactivate customer
-                    # Invoice Tools
-                    "qbo_search_invoices",  # Search invoices (filter by customerId, docNumber, limit)
+                    
+                    # === Invoices (AR) ===
+                    "qbo_search_invoices",  # Search invoices
                     "qbo_get_invoice",      # Get invoice by ID
-                    "qbo_create_invoice",   # Create invoice (customerId, lineItems, dueDate)
-                    # Other Entity Tools
-                    "qbo_search_accounts",  # Search chart of accounts
+                    "qbo_create_invoice",   # Create invoice
+                    
+                    # === Customers ===
+                    "qbo_search_customers", # Search customers
+                    "qbo_get_customer",     # Get customer by ID
+                    "qbo_create_customer",  # Create customer
+                    
+                    # === Items (Products/Services) ===
                     "qbo_search_items",     # Search products/services
+                    "qbo_get_item",         # Get item by ID
+                    
+                    # === Bills (AP) ===
+                    "qbo_search_bills",     # Search bills/payables
+                    "qbo_get_bill",         # Get bill by ID
+                    "qbo_create_bill",      # Create bill
+                    
+                    # === Vendors ===
                     "qbo_search_vendors",   # Search vendors/suppliers
-                    "qbo_search_bills"      # Search bills/payables
+                    "qbo_get_vendor",       # Get vendor by ID
+                    "qbo_create_vendor",    # Create vendor
+                    
+                    # === Bill Payments ===
+                    "qbo_search_bill_payments",  # Search bill payments
+                    "qbo_get_bill_payment",      # Get payment by ID
+                    "qbo_create_bill_payment",   # Pay a bill
+                    
+                    # === Accounts (Chart of Accounts) ===
+                    "qbo_search_accounts",  # Search chart of accounts
+                    "qbo_get_account",      # Get account by ID
                 ]
             )
             # Store the mcp_tool so we can access headers during tool approvals
@@ -419,36 +437,55 @@ class FoundryQuickBooksAgent:
         return f"""
 You are a QuickBooks Online accounting assistant powered by Azure AI Foundry.
 
-## Your Available Tools (15 total)
+## Smart Tool Usage
+Be efficient with tool calls:
+
+1. **Use filters**: All search tools accept filter parameters - use them to get exactly what you need
+2. **One broad query, not many specific ones**: If you need to find items matching criteria, search once with broad filters rather than searching for each item individually  
+3. **Don't retry failed searches**: If a search returns no results, the item doesn't exist - move on or create it, don't search again with different wording
+4. **Use qbo_query for flexible lookups**: When search tools don't have the filter you need, use qbo_query with WHERE clauses
+
+## Your Available Tools
 
 ### Query & Reports
-- **qbo_query** - Run SQL-like queries (e.g., SELECT * FROM Customer WHERE Balance > 0)
-- **qbo_report** - Generate financial reports (ProfitAndLoss, BalanceSheet, CashFlow, CustomerSales)
+- **qbo_query** - SQL-like queries for any entity. Example: `SELECT * FROM Item WHERE Type = 'Service'`
+- **qbo_report** - Financial reports (ProfitAndLoss, BalanceSheet, CashFlow)
 - **qbo_company_info** - Get company information
 
-### Customer Tools
-- **qbo_search_customers** - Search customers (filter by displayName, active, limit)
-- **qbo_get_customer** - Get customer details by ID
-- **qbo_create_customer** - Create new customer (displayName, email, phone, companyName)
-- **qbo_update_customer** - Update existing customer
-- **qbo_delete_customer** - Deactivate customer
+### Search Tools (use filters!)
+- **qbo_search_customers**(displayName?, active?) → Find customer by name: `qbo_search_customers(displayName="Acme")`
+- **qbo_search_items**(name?, type?, active?) → Find services only: `qbo_search_items(type="Service")`
+- **qbo_search_accounts**(name?, accountType?, active?) → Find expense accounts: `qbo_search_accounts(accountType="Expense")`
+- **qbo_search_vendors**(displayName?, companyName?, active?) → Find vendor: `qbo_search_vendors(displayName="Dell")`
+- **qbo_search_invoices**(customerId?, docNumber?, txnDateFrom?, txnDateTo?, unpaidOnly?) → Unpaid invoices: `qbo_search_invoices(unpaidOnly=true)`
+- **qbo_search_bills**(vendorId?, docNumber?, txnDateFrom?, txnDateTo?) → Bills for vendor: `qbo_search_bills(vendorId="123")`
+- **qbo_search_employees**(displayName?, givenName?, familyName?, active?) → Find employee: `qbo_search_employees(givenName="John")`
+- **qbo_search_estimates**(customerId?, docNumber?, txnDateFrom?, txnDateTo?) → Customer estimates: `qbo_search_estimates(customerId="456")`
+- **qbo_search_bill_payments**(vendorId?, txnDateFrom?, txnDateTo?) → Recent payments: `qbo_search_bill_payments(txnDateFrom="2026-01-01")`
+- **qbo_search_purchases**(accountId?, vendorId?, txnDateFrom?, txnDateTo?, paymentType?) → Cash purchases: `qbo_search_purchases(paymentType="Cash")`
+- **qbo_search_journal_entries**(docNumber?, txnDateFrom?, txnDateTo?) → Find by number: `qbo_search_journal_entries(docNumber="JE-001")`
 
-### Invoice Tools
-- **qbo_search_invoices** - Search invoices (filter by customerId, docNumber, limit)
-- **qbo_get_invoice** - Get invoice details by ID
-- **qbo_create_invoice** - Create invoice (customerId, lineItems, dueDate)
+### Get by ID
+- **qbo_get_customer**, **qbo_get_invoice**, **qbo_get_item**, **qbo_get_account**
+- **qbo_get_vendor**, **qbo_get_bill**, **qbo_get_employee**, **qbo_get_estimate**
+- **qbo_get_bill_payment**, **qbo_get_purchase**, **qbo_get_journal_entry**
 
-### Other Entity Tools
-- **qbo_search_accounts** - Search chart of accounts
-- **qbo_search_items** - Search products/services
-- **qbo_search_vendors** - Search vendors/suppliers
-- **qbo_search_bills** - Search bills/payables
+### Create
+- **qbo_create_customer**, **qbo_create_invoice**, **qbo_create_item**
+- **qbo_create_vendor**, **qbo_create_bill**, **qbo_create_employee**
+- **qbo_create_estimate**, **qbo_create_bill_payment**, **qbo_create_purchase**
+- **qbo_create_journal_entry**, **qbo_create_account**
 
-## Example Queries
-- "Show all customers with outstanding balances" → use qbo_query: SELECT * FROM Customer WHERE Balance > 0
-- "Create a new customer ABC Corp" → use qbo_create_customer
-- "Find all unpaid invoices" → use qbo_search_invoices or qbo_query: SELECT * FROM Invoice WHERE Balance > 0
-- "Run a profit and loss report" → use qbo_report with type ProfitAndLoss
+### Update/Delete
+- **qbo_update_customer**, **qbo_delete_customer**
+- **qbo_update_item**, **qbo_update_vendor**, **qbo_update_bill**
+- **qbo_delete_invoice**, **qbo_delete_bill**, **qbo_delete_estimate**
+
+## Efficiency Principles
+- **Always use filters** - never call a search tool with empty parameters
+- **One search, not many** - if you need multiple items, search once with broad filters
+- **Use qbo_query** for complex conditions (WHERE Balance > 0, multiple ANDs)
+- **Search dependencies first** - get IDs you need before creating/updating
 
 Current date: {datetime.datetime.now().isoformat()}
 """
@@ -492,7 +529,8 @@ Current date: {datetime.datetime.now().isoformat()}
         """Async generator: yields progress/tool call messages and final assistant response(s) in real time."""
         logger.info(f"🚀 STARTING CONVERSATION STREAM")
         logger.info(f"   Thread ID: {thread_id}")
-        logger.info(f"   User message: {user_message[:100]}{'...' if len(user_message) > 100 else ''}")
+        logger.info(f"   User message length: {len(user_message)} chars (~{len(user_message)//4} tokens)")
+        logger.info(f"   User message preview: {user_message[:200]}{'...' if len(user_message) > 200 else ''}")
         
         if not self.agent:
             logger.info("   Agent not found, creating new agent...")
@@ -565,7 +603,20 @@ Current date: {datetime.datetime.now().isoformat()}
         while run.status in ["queued", "in_progress", "requires_action"] and iterations < max_iterations:
             iterations += 1
             logger.warning(f"   🔄 Iteration {iterations}: run.status = {run.status}")
-            await asyncio.sleep(2)
+            
+            # Use adaptive polling: start fast, slow down to reduce API calls and token usage
+            # First 3 polls: 2s (fast startup)
+            # Next 5 polls: 3s (moderate)
+            # After that: 5s (conserve TPM)
+            if iterations <= 3:
+                poll_interval = 2
+            elif iterations <= 8:
+                poll_interval = 3
+            else:
+                poll_interval = 5
+            
+            logger.debug(f"   Polling interval: {poll_interval}s")
+            await asyncio.sleep(poll_interval)
             
             # Check for new tool calls in real-time (only show what we can actually detect)
             try:
@@ -614,10 +665,47 @@ Current date: {datetime.datetime.now().isoformat()}
                     logger.error(f"   🔍 LAST_ERROR DETAILS:")
                     logger.error(f"      Type: {type(run.last_error)}")
                     logger.error(f"      Attributes: {dir(run.last_error)}")
+                    
+                    error_code = None
+                    error_message = None
                     if hasattr(run.last_error, 'code'):
-                        logger.error(f"      Error code: {run.last_error.code}")
+                        error_code = run.last_error.code
+                        logger.error(f"      Error code: {error_code}")
                     if hasattr(run.last_error, 'message'):
-                        logger.error(f"      Error message: {run.last_error.message}")
+                        error_message = run.last_error.message
+                        logger.error(f"      Error message: {error_message}")
+                    
+                    # CHECK FOR RATE LIMIT ERROR - Retry with exponential backoff
+                    if error_code == 'rate_limit_exceeded' or (error_message and 'rate limit' in error_message.lower()):
+                        logger.warning(f"🔄 RATE LIMIT DETECTED - Implementing retry logic")
+                        retry_count += 1
+                        if retry_count <= max_retries:
+                            # Exponential backoff: 15s, 30s, 60s
+                            backoff_time = min(15 * (2 ** retry_count), 60)
+                            logger.warning(f"   Retry {retry_count}/{max_retries} after {backoff_time}s backoff")
+                            yield f"⏳ Rate limit hit - retrying in {backoff_time}s (attempt {retry_count}/{max_retries})..."
+                            await asyncio.sleep(backoff_time)
+                            
+                            # Reset run and continue the loop
+                            logger.info(f"🔄 Retrying run creation after rate limit backoff...")
+                            if mcp_tool and hasattr(mcp_tool, 'resources'):
+                                run = client.runs.create(
+                                    thread_id=thread_id, 
+                                    agent_id=self.agent.id,
+                                    tool_resources=mcp_tool.resources
+                                )
+                            else:
+                                run = client.runs.create(
+                                    thread_id=thread_id, 
+                                    agent_id=self.agent.id
+                                )
+                            logger.info(f"   New run created: {run.id}")
+                            iterations = 0  # Reset iteration counter for the new run
+                            continue  # Continue the while loop with the new run
+                        else:
+                            logger.error(f"❌ Max retries ({max_retries}) exceeded for rate limit")
+                            yield f"❌ Rate limit exceeded after {max_retries} retries - please wait and try again later"
+                            return
                     # Try to serialize the error
                     try:
                         import json
@@ -781,9 +869,53 @@ Current date: {datetime.datetime.now().isoformat()}
                 'completion_tokens': getattr(run.usage, 'completion_tokens', 0),
                 'total_tokens': getattr(run.usage, 'total_tokens', 0)
             }
-            logger.debug(f"💰 Token usage: {self.last_token_usage}")
+            logger.warning(f"💰 TOTAL RUN TOKEN USAGE: {self.last_token_usage}")
         else:
             self.last_token_usage = None
+        
+        # 📊 DETAILED PER-STEP TOKEN ANALYSIS
+        # This helps us understand where tokens are being consumed
+        try:
+            run_steps = client.run_steps.list(thread_id, run.id)
+            logger.warning(f"� ===== PER-STEP TOKEN BREAKDOWN =====")
+            total_prompt_tokens = 0
+            total_completion_tokens = 0
+            step_count = 0
+            
+            for step in run_steps:
+                step_count += 1
+                step_type = getattr(step, 'type', 'unknown')
+                step_status = getattr(step, 'status', 'unknown')
+                
+                # Get per-step usage
+                step_usage = getattr(step, 'usage', None)
+                if step_usage:
+                    step_prompt = getattr(step_usage, 'prompt_tokens', 0)
+                    step_completion = getattr(step_usage, 'completion_tokens', 0)
+                    step_total = getattr(step_usage, 'total_tokens', 0)
+                    total_prompt_tokens += step_prompt
+                    total_completion_tokens += step_completion
+                    
+                    logger.warning(f"   Step {step_count} [{step_type}]: prompt={step_prompt}, completion={step_completion}, total={step_total}")
+                    
+                    # Log tool call details if this is a tool_calls step
+                    if step_type == 'tool_calls' and hasattr(step, 'step_details'):
+                        details = step.step_details
+                        if hasattr(details, 'tool_calls') and details.tool_calls:
+                            for tc in details.tool_calls:
+                                tc_type = getattr(tc, 'type', 'unknown')
+                                if hasattr(tc, 'function'):
+                                    func_name = getattr(tc.function, 'name', 'unknown')
+                                    logger.warning(f"      └─ Tool: {func_name} (type={tc_type})")
+                                elif tc_type == 'mcp':
+                                    logger.warning(f"      └─ MCP tool call")
+                else:
+                    logger.warning(f"   Step {step_count} [{step_type}]: No usage data available")
+            
+            logger.warning(f"📊 TOTAL FROM STEPS: prompt={total_prompt_tokens}, completion={total_completion_tokens}")
+            logger.warning(f"📊 =====================================")
+        except Exception as e:
+            logger.warning(f"📊 Could not get per-step token breakdown: {e}")
 
         # After run is complete, yield the assistant's response(s) with citation formatting
         messages = list(client.messages.list(thread_id=thread_id, order=ListSortOrder.ASCENDING))
