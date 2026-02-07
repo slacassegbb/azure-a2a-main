@@ -71,23 +71,22 @@ class FoundryStripeAgent:
         tools = []
         
         try:
-            # Test MCP server connectivity first
+            # Test MCP server connectivity using health endpoint
             logger.info("🧪 TESTING MCP SERVER CONNECTIVITY...")
             async def test_mcp_basic():
                 try:
-                    headers = {"Accept": "text/event-stream"}
+                    # Test base URL (returns server info)
+                    base_url = STRIPE_MCP_URL.rstrip('/sse')
                     async with httpx.AsyncClient(timeout=10.0) as client:
-                        async with client.stream("GET", STRIPE_MCP_URL, headers=headers) as response:
-                            logger.info(f"   MCP Server Response: {response.status_code}")
-                            if response.status_code == 200:
-                                logger.info("✅ MCP Server connectivity test PASSED")
-                                return True
-                            else:
-                                logger.error(f"❌ MCP Server returned status: {response.status_code}")
-                                return False
-                except asyncio.TimeoutError:
-                    logger.info("✅ MCP Server connectivity test PASSED (SSE stream timeout - expected)")
-                    return True
+                        response = await client.get(base_url)
+                        logger.info(f"   MCP Server Response: {response.status_code}")
+                        logger.info(f"   Response Content (first 100 chars): {response.text[:100]}")
+                        if response.status_code == 200:
+                            logger.info("✅ MCP Server connectivity test PASSED")
+                            return True
+                        else:
+                            logger.error(f"❌ MCP Server returned status: {response.status_code}")
+                            return False
                 except Exception as e:
                     logger.error(f"   MCP Server Test FAILED: {e}")
                     return False
