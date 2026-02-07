@@ -133,11 +133,62 @@ class FoundryAgentExecutor(AgentExecutor):
                 logger.info(f"📤 HubSpot agent response: {response_preview}")
                 
                 import uuid
-                message_parts = [TextPart(text=response)]
+                import re
+                
+                # Check for NEEDS_INPUT block (agent needs user clarification)
+                # Supports both formats:
+                # 1. ```NEEDS_INPUT\nquestion\n```END_NEEDS_INPUT
+                # 2. NEEDS_INPUT: question
+                block_pattern = r'```NEEDS_INPUT\s*\n(.*?)\n```END_NEEDS_INPUT'
+                block_match = re.search(block_pattern, response, re.DOTALL)
+                
+                if block_match or response.strip().startswith("NEEDS_INPUT:"):
+                    # Extract the question from either format
+                    if block_match:
+                        question = block_match.group(1).strip()
+                    else:
+                        question = response.replace("NEEDS_INPUT:", "", 1).strip()
+                    
+                    logger.info(f"⏸️ HubSpot agent needs user input: {question[:100]}...")
+                    
+                    # Store context for resume
+                    self._waiting_for_input[context_id] = {
+                        "question": question,
+                        "thread_id": thread_id
+                    }
+                    self._pending_updaters[context_id] = task_updater
+                    
+                    # Build message parts with the question
+                    message_parts_out = [TextPart(text=question)]
+                    
+                    # Add token usage if available
+                    if hasattr(agent, 'last_token_usage') and agent.last_token_usage:
+                        message_parts_out.append(DataPart(data={
+                            'type': 'token_usage',
+                            **agent.last_token_usage
+                        }))
+                    
+                    # Signal input_required - workflow will pause and resume when user responds
+                    # CRITICAL: Must set final=True so the SSE stream knows this is the last event
+                    await task_updater.update_status(
+                        TaskState.input_required,
+                        message=Message(
+                            role="agent",
+                            messageId=str(uuid.uuid4()),
+                            parts=message_parts_out,
+                            contextId=context_id
+                        ),
+                        final=True  # This closes the event queue properly
+                    )
+                    logger.info(f"📱 Returning input_required state - waiting for user response")
+                    return
+                
+                # Normal response - complete the task
+                message_parts_out = [TextPart(text=response)]
                 
                 # Add token usage if available
                 if hasattr(agent, 'last_token_usage') and agent.last_token_usage:
-                    message_parts.append(DataPart(data={
+                    message_parts_out.append(DataPart(data={
                         'type': 'token_usage',
                         **agent.last_token_usage
                     }))
@@ -146,7 +197,7 @@ class FoundryAgentExecutor(AgentExecutor):
                     message=Message(
                         role="agent",
                         messageId=str(uuid.uuid4()),
-                        parts=message_parts,
+                        parts=message_parts_out,
                         contextId=context_id
                     )
                 )

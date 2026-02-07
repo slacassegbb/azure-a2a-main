@@ -3167,8 +3167,8 @@ Answer with just JSON:
         # Always search memory for relevant context (retrieval is always enabled)
         # The memory toggle only controls STORAGE of new interactions, not retrieval
         try:
-            # Reduce top_k=1 for QuickBooks and Stripe to avoid duplicate context (saves ~500-1000 tokens)
-            if target_agent_name and ('quickbooks' in target_agent_name.lower() or 'stripe' in target_agent_name.lower()):
+            # Reduce top_k=1 for QuickBooks, Stripe, and HubSpot to avoid duplicate context (saves ~500-1000 tokens)
+            if target_agent_name and ('quickbooks' in target_agent_name.lower() or 'stripe' in target_agent_name.lower() or 'hubspot' in target_agent_name.lower()):
                 top_k_results = 1
             else:
                 top_k_results = 2
@@ -3284,10 +3284,10 @@ Answer with just JSON:
                                 # Truncate long content for context efficiency
                                 # Use configured max_chars (default 2000) - enough for invoices/documents
                                 # For QuickBooks agent, reduce to 500 chars since structured data is verbose
-                                # For Stripe agent, reduce to 800 chars (needs customer name but not full invoice details)
+                                # For Stripe/HubSpot agents, reduce to 800 chars (needs customer name but not full details)
                                 if target_agent_name and 'quickbooks' in target_agent_name.lower():
                                     max_chars = 500
-                                elif target_agent_name and 'stripe' in target_agent_name.lower():
+                                elif target_agent_name and ('stripe' in target_agent_name.lower() or 'hubspot' in target_agent_name.lower()):
                                     max_chars = 800
                                 else:
                                     max_chars = self.memory_summary_max_chars

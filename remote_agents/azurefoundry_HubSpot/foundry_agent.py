@@ -197,6 +197,7 @@ To minimize API costs and response times, ALWAYS use filters when possible:
         
         # Create run
         logger.info("Creating run with MCP tool resources...")
+        mcp_tool = self._mcp_tool
         if self._mcp_tool_resources:
             run = client.runs.create(
                 thread_id=thread_id, 
@@ -215,14 +216,36 @@ To minimize API costs and response times, ALWAYS use filters when possible:
         
         logger.info(f"   Run created: {run.id}")
         
+        # Check if run failed immediately (before the while loop)
+        if run.status == "failed":
+            logger.error(f"❌ RUN FAILED IMMEDIATELY ON CREATION!")
+            logger.error(f"   Run ID: {run.id}")
+            logger.error(f"   Last error: {run.last_error}")
+            yield f"❌ **Run Failed Immediately:** {run.last_error}"
+            return
+        
         max_iterations = 25
         iterations = 0
+        retry_count = 0
+        max_retries = 3
         tool_calls_yielded = set()
 
         while run.status in ["queued", "in_progress", "requires_action"] and iterations < max_iterations:
             iterations += 1
             logger.info(f"   Iteration {iterations}: run.status = {run.status}")
-            await asyncio.sleep(2)
+            
+            # Use adaptive polling: start fast, slow down to reduce API calls and token usage
+            # First 3 polls: 2s (fast startup)
+            # Next 5 polls: 3s (moderate)
+            # After that: 5s (conserve TPM)
+            if iterations <= 3:
+                poll_interval = 2
+            elif iterations <= 8:
+                poll_interval = 3
+            else:
+                poll_interval = 5
+            
+            await asyncio.sleep(poll_interval)
             
             try:
                 run_steps = client.run_steps.list(thread_id, run.id)
@@ -245,14 +268,69 @@ To minimize API costs and response times, ALWAYS use filters when possible:
                 run = client.runs.get(thread_id=thread_id, run_id=run.id)
             except Exception as e:
                 if "rate limit" in str(e).lower() or "429" in str(e):
-                    await asyncio.sleep(15)
-                    continue
+                    retry_count += 1
+                    if retry_count <= max_retries:
+                        backoff_time = min(15 * (2 ** retry_count), 45)
+                        logger.warning(f"🔄 Rate limit on polling - retry {retry_count}/{max_retries} after {backoff_time}s")
+                        await asyncio.sleep(backoff_time)
+                        continue
+                    else:
+                        yield "Error: Rate limit exceeded, please try again later"
+                        return
                 else:
                     yield f"Error: {str(e)}"
                     return
 
             if run.status == "failed":
-                logger.error(f"RUN FAILED: {run.last_error}")
+                logger.error(f"❌ RUN FAILED!")
+                logger.error(f"   Run ID: {run.id}")
+                logger.error(f"   Last error: {run.last_error}")
+                
+                # Check for rate limit error and retry with exponential backoff
+                error_code = None
+                error_message = None
+                if run.last_error:
+                    if hasattr(run.last_error, 'code'):
+                        error_code = run.last_error.code
+                    if hasattr(run.last_error, 'message'):
+                        error_message = run.last_error.message
+                    
+                    # CHECK FOR RATE LIMIT ERROR - Retry with exponential backoff
+                    if error_code == 'rate_limit_exceeded' or (error_message and 'rate limit' in error_message.lower()):
+                        logger.warning(f"🔄 RATE LIMIT DETECTED - Implementing retry logic")
+                        retry_count += 1
+                        if retry_count <= max_retries:
+                            # Exponential backoff: 15s, 30s, 60s
+                            backoff_time = min(15 * (2 ** retry_count), 60)
+                            logger.warning(f"   Retry {retry_count}/{max_retries} after {backoff_time}s backoff")
+                            yield f"⏳ Rate limit hit - retrying in {backoff_time}s (attempt {retry_count}/{max_retries})..."
+                            await asyncio.sleep(backoff_time)
+                            
+                            # Reset run and continue the loop
+                            logger.info(f"🔄 Retrying run creation after rate limit backoff...")
+                            if self._mcp_tool_resources:
+                                run = client.runs.create(
+                                    thread_id=thread_id, 
+                                    agent_id=self.agent.id,
+                                    tool_resources=self._mcp_tool_resources,
+                                    max_prompt_tokens=25000,
+                                    truncation_strategy={"type": "last_messages", "last_messages": 3}
+                                )
+                            else:
+                                run = client.runs.create(
+                                    thread_id=thread_id, 
+                                    agent_id=self.agent.id,
+                                    max_prompt_tokens=25000,
+                                    truncation_strategy={"type": "last_messages", "last_messages": 3}
+                                )
+                            logger.info(f"   New run created: {run.id}")
+                            iterations = 0  # Reset iteration counter for the new run
+                            continue  # Continue the while loop with the new run
+                        else:
+                            logger.error(f"❌ Max retries ({max_retries}) exceeded for rate limit")
+                            yield f"❌ Rate limit exceeded after {max_retries} retries - please wait and try again later"
+                            return
+                
                 yield f"❌ Run Failed: {run.last_error}"
                 return
 
@@ -332,14 +410,33 @@ To minimize API costs and response times, ALWAYS use filters when possible:
         
         logger.info(f"   Run created: {run.id}")
         
+        # Check if run failed immediately (before the while loop)
+        if run.status == "failed":
+            logger.error(f"❌ RUN FAILED IMMEDIATELY ON CREATION!")
+            logger.error(f"   Run ID: {run.id}")
+            logger.error(f"   Last error: {run.last_error}")
+            yield f"❌ **Run Failed Immediately:** {run.last_error}"
+            return
+        
         max_iterations = 25
         iterations = 0
+        retry_count = 0
+        max_retries = 3
         tool_calls_yielded = set()
 
         while run.status in ["queued", "in_progress", "requires_action"] and iterations < max_iterations:
             iterations += 1
             logger.info(f"   Iteration {iterations}: run.status = {run.status}")
-            await asyncio.sleep(2)
+            
+            # Use adaptive polling: start fast, slow down to reduce API calls and token usage
+            if iterations <= 3:
+                poll_interval = 2
+            elif iterations <= 8:
+                poll_interval = 3
+            else:
+                poll_interval = 5
+            
+            await asyncio.sleep(poll_interval)
             
             try:
                 run_steps = client.run_steps.list(thread_id, run.id)
@@ -362,14 +459,66 @@ To minimize API costs and response times, ALWAYS use filters when possible:
                 run = client.runs.get(thread_id=thread_id, run_id=run.id)
             except Exception as e:
                 if "rate limit" in str(e).lower() or "429" in str(e):
-                    await asyncio.sleep(15)
-                    continue
+                    retry_count += 1
+                    if retry_count <= max_retries:
+                        backoff_time = min(15 * (2 ** retry_count), 45)
+                        logger.warning(f"🔄 Rate limit on polling - retry {retry_count}/{max_retries} after {backoff_time}s")
+                        await asyncio.sleep(backoff_time)
+                        continue
+                    else:
+                        yield "Error: Rate limit exceeded, please try again later"
+                        return
                 else:
                     yield f"Error: {str(e)}"
                     return
 
             if run.status == "failed":
-                logger.error(f"RUN FAILED: {run.last_error}")
+                logger.error(f"❌ RUN FAILED!")
+                logger.error(f"   Run ID: {run.id}")
+                logger.error(f"   Last error: {run.last_error}")
+                
+                # Check for rate limit error and retry with exponential backoff
+                error_code = None
+                error_message = None
+                if run.last_error:
+                    if hasattr(run.last_error, 'code'):
+                        error_code = run.last_error.code
+                    if hasattr(run.last_error, 'message'):
+                        error_message = run.last_error.message
+                    
+                    # CHECK FOR RATE LIMIT ERROR - Retry with exponential backoff
+                    if error_code == 'rate_limit_exceeded' or (error_message and 'rate limit' in error_message.lower()):
+                        logger.warning(f"🔄 RATE LIMIT DETECTED - Implementing retry logic")
+                        retry_count += 1
+                        if retry_count <= max_retries:
+                            backoff_time = min(15 * (2 ** retry_count), 60)
+                            logger.warning(f"   Retry {retry_count}/{max_retries} after {backoff_time}s backoff")
+                            yield f"⏳ Rate limit hit - retrying in {backoff_time}s (attempt {retry_count}/{max_retries})..."
+                            await asyncio.sleep(backoff_time)
+                            
+                            # Reset run and continue the loop
+                            if self._mcp_tool_resources:
+                                run = client.runs.create(
+                                    thread_id=thread_id, 
+                                    agent_id=self.agent.id,
+                                    tool_resources=self._mcp_tool_resources,
+                                    max_prompt_tokens=25000,
+                                    truncation_strategy={"type": "last_messages", "last_messages": 3}
+                                )
+                            else:
+                                run = client.runs.create(
+                                    thread_id=thread_id, 
+                                    agent_id=self.agent.id,
+                                    max_prompt_tokens=25000,
+                                    truncation_strategy={"type": "last_messages", "last_messages": 3}
+                                )
+                            logger.info(f"   New run created: {run.id}")
+                            iterations = 0
+                            continue
+                        else:
+                            yield f"❌ Rate limit exceeded after {max_retries} retries - please wait and try again later"
+                            return
+                
                 yield f"Run Failed: {run.last_error}"
                 return
 
