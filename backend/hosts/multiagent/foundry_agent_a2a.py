@@ -3167,8 +3167,11 @@ Answer with just JSON:
         # Always search memory for relevant context (retrieval is always enabled)
         # The memory toggle only controls STORAGE of new interactions, not retrieval
         try:
-            # Reduce top_k=1 for QuickBooks, Stripe, and HubSpot to avoid duplicate context (saves ~500-1000 tokens)
-            if target_agent_name and ('quickbooks' in target_agent_name.lower() or 'stripe' in target_agent_name.lower() or 'hubspot' in target_agent_name.lower()):
+            # top_k=2 for QuickBooks to find invoice data past HITL responses
+            # top_k=1 for Stripe/HubSpot is sufficient (they get data from QuickBooks output)
+            if target_agent_name and 'quickbooks' in target_agent_name.lower():
+                top_k_results = 2  # Increased to find invoice data past HITL approvals
+            elif target_agent_name and ('stripe' in target_agent_name.lower() or 'hubspot' in target_agent_name.lower()):
                 top_k_results = 1
             else:
                 top_k_results = 2
@@ -3283,12 +3286,12 @@ Answer with just JSON:
                             if content_summary:
                                 # Truncate long content for context efficiency
                                 # Use configured max_chars (default 2000) - enough for invoices/documents
-                                # For QuickBooks agent, reduce to 500 chars since structured data is verbose
-                                # For Stripe/HubSpot agents, reduce to 800 chars (needs customer name but not full details)
+                                # For QuickBooks agent: 1500 chars to include invoice tables with totals
+                                # For Stripe/HubSpot agents: 1000 chars (needs customer name and amounts)
                                 if target_agent_name and 'quickbooks' in target_agent_name.lower():
-                                    max_chars = 500
+                                    max_chars = 1500  # Increased from 500 to fit full invoice tables
                                 elif target_agent_name and ('stripe' in target_agent_name.lower() or 'hubspot' in target_agent_name.lower()):
-                                    max_chars = 800
+                                    max_chars = 1000  # Increased from 800 to include more context
                                 else:
                                     max_chars = self.memory_summary_max_chars
                                     

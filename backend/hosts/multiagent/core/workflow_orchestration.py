@@ -510,28 +510,46 @@ class WorkflowOrchestration:
             # This enables step N to access outputs from steps 1 through N-1
             task_message = f"{step.description}\n\nOriginal Request: {user_message}"
             
-            # Include ONLY the most recent step's output to minimize token usage
-            # Azure AI agents maintain their own thread history, so we only need inter-agent context
+            # SMART CONTEXT SELECTION: Find the most substantial previous output
+            # HITL steps often return short responses like "approve", so we need to find
+            # the actual data (like invoice details) from earlier steps
             if previous_task_outputs and len(previous_task_outputs) > 0:
-                # Get just the last step's output (most relevant for sequential workflows)
-                last_output = previous_task_outputs[-1]
+                # Strategy: Find the longest output that looks like actual data (not just a short HITL response)
+                # This ensures invoice data from step 1 isn't lost when step 2 is HITL
+                best_output = None
+                best_output_len = 0
+                
+                for idx, output in enumerate(previous_task_outputs):
+                    output_len = len(output) if output else 0
+                    # Prefer outputs that are substantial (>200 chars) and contain data indicators
+                    is_data_output = output_len > 200 or any(keyword in output.lower() for keyword in 
+                        ['invoice', 'amount', 'total', 'bill', 'customer', 'vendor', '$', 'usd'])
+                    
+                    if output_len > best_output_len and is_data_output:
+                        best_output = output
+                        best_output_len = output_len
+                
+                # If no substantial output found, fall back to the last one
+                if not best_output:
+                    best_output = previous_task_outputs[-1]
+                    best_output_len = len(best_output) if best_output else 0
                 
                 # Truncate if too long (keep essential info, avoid token bloat)
-                max_context_chars = 3000  # Enough for invoice details, but not excessive
-                if len(last_output) > max_context_chars:
-                    last_output = last_output[:max_context_chars] + "\n... [truncated for brevity]"
+                max_context_chars = 4000  # Increased to fit full invoice tables
+                if best_output_len > max_context_chars:
+                    best_output = best_output[:max_context_chars] + "\n... [truncated for brevity]"
                 
-                print(f"📋 [Workflow] Passing previous step output ({len(last_output)} chars) as context")
+                print(f"📋 [Workflow] Selected best context output ({len(best_output)} chars) from {len(previous_task_outputs)} available outputs")
                 
                 task_message = f"""{step.description}
 
-## Previous Step Output:
-{last_output}
+## Context from Previous Steps:
+{best_output}
 
 ## Original Request:
 {user_message}
 
-Use the data from the previous step to complete your task."""
+Use the data from the previous steps to complete your task."""
             
             dummy_context = DummyToolContext(session_context, self._azure_blob_client)
             
@@ -732,19 +750,42 @@ Use the data from the previous step to complete your task."""
         # This enables agents to build upon previous work in the workflow
         enhanced_task_message = task_desc
         
-        # For sequential workflows: Include ONLY the immediately previous task output as context
-        # This allows step N to access the output from step N-1 without context window explosion
+        # SMART CONTEXT SELECTION: Find the most substantial previous output
+        # HITL steps often return short responses like "approve", so we need to find
+        # the actual data (like invoice details) from earlier steps
         if previous_task_outputs and len(previous_task_outputs) > 0:
-            print(f"📋 [Agent Mode] Including previous task output as context (limited to last step only)")
-            # Truncate to prevent context overflow (keep first 1000 chars)
-            prev_output = previous_task_outputs[0]
-            if len(prev_output) > 1000:
-                prev_output = prev_output[:1000] + "... [truncated for context window management]"
+            print(f"📋 [Agent Mode] Searching {len(previous_task_outputs)} outputs for best context")
+            
+            # Strategy: Find the longest output that looks like actual data
+            best_output = None
+            best_output_len = 0
+            
+            for idx, output in enumerate(previous_task_outputs):
+                output_len = len(output) if output else 0
+                # Prefer outputs that are substantial (>200 chars) and contain data indicators
+                is_data_output = output_len > 200 or any(keyword in output.lower() for keyword in 
+                    ['invoice', 'amount', 'total', 'bill', 'customer', 'vendor', '$', 'usd'])
+                
+                if output_len > best_output_len and is_data_output:
+                    best_output = output
+                    best_output_len = output_len
+            
+            # If no substantial output found, fall back to the first one
+            if not best_output:
+                best_output = previous_task_outputs[0]
+                best_output_len = len(best_output) if best_output else 0
+            
+            # Truncate to prevent context overflow
+            max_context_chars = 4000  # Increased to fit full invoice tables
+            if best_output_len > max_context_chars:
+                best_output = best_output[:max_context_chars] + "... [truncated for context window management]"
+            
+            print(f"📋 [Agent Mode] Selected best context ({len(best_output)} chars)")
             
             enhanced_task_message = f"""{task_desc}
 
-## Context from Previous Step:
-{prev_output}
+## Context from Previous Steps:
+{best_output}
 
 Use the above output from the previous workflow step to complete your task."""
         
@@ -785,6 +826,11 @@ Use the above output from the previous workflow step to complete your task."""
             task.updated_at = datetime.now(timezone.utc)
             
             output_text = extract_text_fn(response_obj)
+            
+            # CRITICAL: Store output in task so it's available when resuming
+            # Without this, the HITL task's output would be lost on resume
+            task.output = {"result": output_text}
+            
             log_info(f"⏸️ [Agent Mode] Waiting for user response to '{recommended_agent}'")
             await self._emit_status_event(f"Waiting for your response...", context_id)
             
@@ -1089,8 +1135,14 @@ Analyze this request and decide the best approach."""
                     output_text = task.output.get("result", "") or task.output.get("text", "") or str(task.output)
                     if output_text:
                         all_task_outputs.append(output_text)
+                        # Debug: Log output lengths to help diagnose context issues
+                        log_info(f"   � Task '{task.task_id}': output={len(output_text)} chars")
             
-            log_info(f"📋 [Agent Mode] Resumed plan: {len(plan.tasks)} existing tasks, {len(all_task_outputs)} outputs")
+            log_info(f"�📋 [Agent Mode] Resumed plan: {len(plan.tasks)} existing tasks, {len(all_task_outputs)} outputs")
+            # Debug: Log which output is longest (likely has the data we need)
+            if all_task_outputs:
+                sizes = [(i, len(o)) for i, o in enumerate(all_task_outputs)]
+                log_info(f"   📊 Output sizes: {sizes}")
             
             # Variables needed for the orchestration loop
             iteration = 0
@@ -1444,9 +1496,10 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                         task.updated_at = datetime.now(timezone.utc)
                         
                         try:
-                            # For parallel tasks, pass only the LAST task output (from the step before parallel group)
-                            # Don't pass all accumulated outputs - that would grow context exponentially
-                            previous_output = [all_task_outputs[-1]] if all_task_outputs else None
+                            # Pass ALL accumulated outputs - smart context selection will pick the best one
+                            # This is critical for HITL workflows where step N-1 may return a short response
+                            # like "approved", but step N-2 has the actual data (e.g., invoice details)
+                            previous_output = list(all_task_outputs) if all_task_outputs else None
                             
                             result = await self._execute_orchestrated_task(
                                 task=task,
@@ -1516,7 +1569,10 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                     task.updated_at = datetime.now(timezone.utc)
                     
                     try:
-                        previous_output = [all_task_outputs[-1]] if all_task_outputs else None
+                        # Pass ALL accumulated outputs - smart context selection will pick the best one
+                        # This is critical for HITL workflows where step N-1 may return a short response
+                        # like "approved", but step N-2 has the actual data (e.g., invoice details)
+                        previous_output = list(all_task_outputs) if all_task_outputs else None
                         
                         result = await self._execute_orchestrated_task(
                             task=task,
