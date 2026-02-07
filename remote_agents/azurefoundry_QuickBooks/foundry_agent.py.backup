@@ -196,148 +196,72 @@ class FoundryQuickBooksAgent:
         
         logger.info("🚀 CREATING NEW AZURE FOUNDRY AGENT...")
         
-        # Start with MCP tools using the new McpTool class
-        logger.info("🔍 CREATING MCP TOOL CONNECTION...")
-        logger.info(f"   Server URL: {QUICKBOOKS_MCP_URL}")
-        logger.info(f"   Server Label: QuickBooks")
+        # Create custom QuickBooks action tool (replaces Azure's McpTool with 15 schemas)
+        logger.info("� CREATING CUSTOM QUICKBOOKS ACTION TOOL...")
+        logger.info(f"   MCP Server: {self._mcp_client.server_url}")
         
-        try:
-            # Test MCP server connectivity first
-            logger.info("🧪 TESTING MCP SERVER CONNECTIVITY...")
-            
-            async def test_mcp_basic():
-                try:
-                    # Test SSE endpoint properly - don't try to read the full response
-                    headers = {
-                        "Accept": "text/event-stream"
-                    }
-                    async with httpx.AsyncClient(timeout=10.0) as client:
-                        async with client.stream("GET", QUICKBOOKS_MCP_URL, headers=headers) as response:
-                            logger.info(f"   MCP Server Response: {response.status_code}")
-                            logger.info(f"   Response Headers: {dict(response.headers)}")
-                            
-                            # For SSE endpoints, just check status and headers
-                            if response.status_code == 200:
-                                # Check if it looks like an SSE endpoint
-                                content_type = response.headers.get('content-type', '')
-                                if 'text/event-stream' in content_type or 'text/plain' in content_type:
-                                    logger.info("✅ MCP Server connectivity test PASSED (SSE endpoint detected)")
-                                    return True
-                                else:
-                                    # Try to read a small amount of content to verify it's working
-                                    try:
-                                        content_chunk = ""
-                                        async for chunk in response.aiter_text():
-                                            content_chunk += chunk
-                                            if len(content_chunk) > 100:  # Just read first 100 chars
-                                                break
-                                        logger.info(f"   Response Content (first 100 chars): {content_chunk[:100]}")
-                                        logger.info("✅ MCP Server connectivity test PASSED")
-                                        return True
-                                    except asyncio.TimeoutError:
-                                        # This is expected for SSE endpoints
-                                        logger.info("✅ MCP Server connectivity test PASSED (SSE stream detected)")
-                                        return True
-                            else:
-                                logger.error(f"❌ MCP Server returned status: {response.status_code}")
-                                return False
-                            
-                except asyncio.TimeoutError:
-                    # For SSE endpoints, timeout during streaming is actually success
-                    logger.info("✅ MCP Server connectivity test PASSED (SSE stream timeout - expected)")
-                    return True
-                except Exception as e:
-                    logger.error(f"   MCP Server Test FAILED: {e}")
-                    logger.error(f"   Error type: {type(e)}")
-                    import traceback
-                    logger.error(f"   Full traceback: {traceback.format_exc()}")
-                    return False
-            
-            # Run the connectivity test
-            await test_mcp_basic()
-            
-            # Create MCP tool - ALL 15 tools work with simplified flat schemas!
-            logger.info("🔧 CREATING McpTool OBJECT...")
-            logger.info(f"🔧 Using MCP server URL: {QUICKBOOKS_MCP_URL}")
-            mcp_tool = McpTool(
-                server_label="QuickBooks",
-                server_url=QUICKBOOKS_MCP_URL,
-                # ALL 15 QuickBooks tools with simplified flat schemas
-                allowed_tools=[
-                    # Query & Reports
-                    "qbo_query",            # SQL-like queries (SELECT * FROM Customer)
-                    "qbo_report",           # Financial reports (ProfitAndLoss, BalanceSheet, CashFlow)
-                    "qbo_company_info",     # Get company information
-                    # Customer Tools
-                    "qbo_search_customers", # Search customers (filter by displayName, active, limit)
-                    "qbo_get_customer",     # Get customer by ID
-                    "qbo_create_customer",  # Create customer (displayName, email, phone, companyName)
-                    "qbo_update_customer",  # Update customer
-                    "qbo_delete_customer",  # Deactivate customer
-                    # Invoice Tools
-                    "qbo_search_invoices",  # Search invoices (filter by customerId, docNumber, limit)
-                    "qbo_get_invoice",      # Get invoice by ID
-                    "qbo_create_invoice",   # Create invoice (customerId, lineItems, dueDate)
-                    # Other Entity Tools
-                    "qbo_search_accounts",  # Search chart of accounts
-                    "qbo_search_items",     # Search products/services
-                    "qbo_search_vendors",   # Search vendors/suppliers
-                    "qbo_search_bills"      # Search bills/payables
-                ]
-            )
-            # Store the mcp_tool so we can access headers during tool approvals
-            self._mcp_tool = mcp_tool
-            logger.info("✅ McpTool object created successfully")
+        # Define the tool as a function definition (Azure AI Agents format)
+        # This is a single tool schema that replaces 15 MCP tool schemas
+        # Parameter descriptions help the LLM fill in appropriate values from conversation context
+        quickbooks_tool_definition = {
+            "type": "function",
+            "function": {
+                "name": "quickbooks_action",
+                "description": """Execute QuickBooks Online accounting operations. Use this tool for ALL QuickBooks operations.
 
-            mcp_tool.set_approval_mode("never")  # Disable approval requirement
-            logger.info("✅ Set approval mode to 'never'")
-            
-            # Set headers for MCP communication
-            mcp_tool.update_headers("Content-Type", "application/json")
-            mcp_tool.update_headers("User-Agent", "Azure-AI-Foundry-Agent")
-            mcp_tool.update_headers("Accept", "application/json, text/event-stream")
-            logger.info("✅ Set MCP headers")
-            
-            # Log the headers that will be used
-            if hasattr(mcp_tool, 'headers'):
-                logger.info(f"✅ MCP headers stored: {mcp_tool.headers}")
-            
-            # Use ToolSet as recommended by Microsoft sample
-            toolset = ToolSet()
-            toolset.add(mcp_tool)
-            self._toolset = toolset  # Store for use with create_and_process
-            self._mcp_tool = mcp_tool  # Store MCP tool reference
-            
-            # Also keep definitions for compatibility
-            tools = mcp_tool.definitions
-            
-            # CRITICAL FIX: Store MCP tool resources - needed for runs.create() per Microsoft docs!
-            # The mcp_tool.resources contains the server connection info needed at runtime
-            self._mcp_tool_resources = mcp_tool.resources
-            tool_resources = None  # For agent creation, but we'll use _mcp_tool_resources for run creation
-            
-            logger.info(f"🔍 MCP TOOL DETAILS:")
-            logger.info(f"   Tools count: {len(tools) if tools else 0}")
-            logger.info(f"   Tool definitions: {[str(t) for t in tools[:3]] if tools else 'None'}")
-            logger.info(f"   MCP Tool resources (for run creation): {self._mcp_tool_resources}")
-            logger.info(f"   MCP Tool resources type: {type(self._mcp_tool_resources)}")
-            logger.info("🔧 CRITICAL: mcp_tool.resources will be passed to runs.create()")
-            
-            logger.info("✅ Added QuickBooks MCP server integration using McpTool")
-            
-        except Exception as e:
-            logger.error(f"❌ FAILED TO CREATE MCP TOOL: {e}")
-            logger.error(f"   Error type: {type(e)}")
-            import traceback
-            logger.error(f"   Full traceback: {traceback.format_exc()}")
-            
-            # Fallback: create empty tools list if MCP fails
-            tools = []
-            tool_resources = None
-            logger.warning("⚠️ Continuing without MCP tools due to connection failure")
+IMPORTANT: Use the params to filter results - don't fetch everything!
+- When searching customers, use displayName to filter by name
+- When searching items, use name to filter  
+- When searching invoices, use customerId or docNumber to filter""",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "action": {
+                            "type": "string",
+                            "description": "The QuickBooks action to perform",
+                            "enum": [
+                                "qbo_query",
+                                "qbo_report",
+                                "qbo_company_info",
+                                "qbo_search_customers",
+                                "qbo_get_customer",
+                                "qbo_create_customer",
+                                "qbo_update_customer",
+                                "qbo_delete_customer",
+                                "qbo_search_invoices",
+                                "qbo_get_invoice",
+                                "qbo_create_invoice",
+                                "qbo_search_accounts",
+                                "qbo_search_items",
+                                "qbo_search_vendors",
+                                "qbo_search_bills"
+                            ]
+                        },
+                        "params": {
+                            "type": "object",
+                            "description": """Parameters vary by action:
+- qbo_search_customers: {displayName?: string (filter by name), active?: boolean, limit?: number}
+- qbo_get_customer: {customerId: string}
+- qbo_create_customer: {displayName: string (required), email?: string, phone?: string, companyName?: string}
+- qbo_search_items: {name?: string (filter by name), type?: 'Service'|'Inventory'|'NonInventory', limit?: number}
+- qbo_search_invoices: {customerId?: string, docNumber?: string, limit?: number}
+- qbo_create_invoice: {customerId: string, lineItems: [{DetailType: 'SalesItemLineDetail', Amount: number, SalesItemLineDetail: {ItemRef: {value: string}, Qty: number, UnitPrice: number}}]}
+- qbo_query: {query: string} - SQL-like query e.g. "SELECT * FROM Customer WHERE DisplayName LIKE '%Acme%'"
+- qbo_report: {reportType: 'ProfitAndLoss'|'BalanceSheet'|'CashFlow', start_date?: string, end_date?: string}""",
+                            "additionalProperties": True
+                        }
+                    },
+                    "required": ["action", "params"]
+                }
+            }
+        }
         
-        # Using QuickBooks MCP tools only - no local simulation tools needed
-        logger.info("🔧 Using QuickBooks MCP tools from remote server")
+        tools = [quickbooks_tool_definition]
+        logger.info(f"✅ Created custom QuickBooks tool with parameter hints")
+        logger.info(f"   Token savings: ~14,000 tokens (15 schemas -> 1 with param descriptions)")
+        
+        # Using custom QuickBooks tool - direct MCP calls
+        logger.info("🔧 Using custom QuickBooks tool with direct MCP calls")
         
         project_client = self._get_project_client()
         
@@ -352,6 +276,7 @@ class FoundryQuickBooksAgent:
             logger.info("Agent will work without web search capabilities")
         
         # Add file search tool if files are available
+        tool_resources = None  # Initialize tool_resources
         if self._file_search_tool is None:
             self._file_search_tool = await self._setup_file_search()
         
@@ -369,18 +294,9 @@ class FoundryQuickBooksAgent:
                 
             logger.info("Added file search capability")
         
-        # Use context manager and create agent with ToolSet (Microsoft recommended approach)
+        # Use context manager and create agent with tools list
         with project_client:
-            # Use toolset approach for MCP as per Microsoft sample
-            if hasattr(self, '_toolset') and self._toolset:
-                logger.info("🔧 Creating agent with ToolSet (Microsoft recommended for MCP)")
-                self.agent = project_client.agents.create_agent(
-                    model="gpt-4o",
-                    name="foundry-QB-agent",
-                    instructions=self._get_agent_instructions(),
-                    toolset=self._toolset
-                )
-            elif tool_resources:
+            if tool_resources:
                 self.agent = project_client.agents.create_agent(
                     model="gpt-4o",
                     name="foundry-QB-agent",
@@ -397,21 +313,9 @@ class FoundryQuickBooksAgent:
                 )
         
         logger.info(f"Created AI Foundry agent: {self.agent.id}")
+        logger.info(f"   Tools: {len(tools)} definitions")
+        logger.info(f"   Custom QuickBooks tool for direct MCP calls")
         
-        # Debug: Log what Azure stored for the agent
-        logger.warning(f"🔍 AGENT DEBUG INFO:")
-        logger.warning(f"   Agent ID: {self.agent.id}")
-        logger.warning(f"   Agent name: {getattr(self.agent, 'name', 'N/A')}")
-        logger.warning(f"   Agent model: {getattr(self.agent, 'model', 'N/A')}")
-        if hasattr(self.agent, 'tools'):
-            logger.warning(f"   Agent tools count: {len(self.agent.tools) if self.agent.tools else 0}")
-            for i, tool in enumerate(self.agent.tools or []):
-                tool_type = getattr(tool, 'type', 'unknown')
-                logger.warning(f"   Tool {i+1}: type={tool_type}")
-                if tool_type == 'mcp':
-                    logger.warning(f"      server_label: {getattr(tool, 'server_label', 'N/A')}")
-                    logger.warning(f"      server_url: {getattr(tool, 'server_url', 'N/A')}")
-                    logger.warning(f"      allowed_tools: {getattr(tool, 'allowed_tools', 'N/A')}")
         return self.agent
     
     def _get_agent_instructions(self) -> str:
@@ -419,24 +323,77 @@ class FoundryQuickBooksAgent:
         return f"""
 You are a QuickBooks Online accounting assistant powered by Azure AI Foundry.
 
-## Your Available Tools (15 total)
+## Your Tool: quickbooks_action
+
+You have ONE powerful tool called `quickbooks_action` that can perform all QuickBooks operations.
+
+**Tool Parameters:**
+- `action`: The QuickBooks operation to perform (see available actions below)
+- `params`: Parameters specific to that action (structure varies by action)
+
+## Available Actions (15 total)
 
 ### Query & Reports
-- **qbo_query** - Run SQL-like queries (e.g., SELECT * FROM Customer WHERE Balance > 0)
+- **qbo_query** - Run SQL-like queries
+  - Example: `{{"action": "qbo_query", "params": {{"query": "SELECT * FROM Customer WHERE Balance > 0"}}}}`
+  
 - **qbo_report** - Generate financial reports (ProfitAndLoss, BalanceSheet, CashFlow, CustomerSales)
+  - Example: `{{"action": "qbo_report", "params": {{"reportType": "ProfitAndLoss", "start_date": "2024-01-01", "end_date": "2024-12-31"}}}}`
+  
 - **qbo_company_info** - Get company information
+  - Example: `{{"action": "qbo_company_info", "params": {{}}}}`
 
 ### Customer Tools
-- **qbo_search_customers** - Search customers (filter by displayName, active, limit)
-- **qbo_get_customer** - Get customer details by ID
-- **qbo_create_customer** - Create new customer (displayName, email, phone, companyName)
+- **qbo_search_customers** - Search customers
+  - Params: displayName (string), active (boolean), limit (number)
+  - Example: `{{"action": "qbo_search_customers", "params": {{"displayName": "Acme", "active": true, "limit": 10}}}}`
+  
+- **qbo_get_customer** - Get customer by ID
+  - Params: id (string)
+  
+- **qbo_create_customer** - Create new customer
+  - Params: displayName (required), email, phone, companyName
+  
 - **qbo_update_customer** - Update existing customer
+  - Params: id (required), plus any fields to update
+  
 - **qbo_delete_customer** - Deactivate customer
+  - Params: id (required)
 
 ### Invoice Tools
-- **qbo_search_invoices** - Search invoices (filter by customerId, docNumber, limit)
-- **qbo_get_invoice** - Get invoice details by ID
-- **qbo_create_invoice** - Create invoice (customerId, lineItems, dueDate)
+- **qbo_search_invoices** - Search invoices
+  - Params: customerId (string), docNumber (string), limit (number)
+  
+- **qbo_get_invoice** - Get invoice by ID
+  - Params: id (string)
+  
+- **qbo_create_invoice** - Create invoice with REQUIRED format
+  - Params MUST include:
+    - customerId: The QuickBooks customer ID (get from qbo_search_customers first)
+    - lineItems: Array where EACH item MUST have:
+      - DetailType: "SalesItemLineDetail" (REQUIRED!)
+      - Amount: The line total amount
+      - SalesItemLineDetail: object with ItemRef.value (item ID)
+  - Example:
+    ```json
+    {{
+      "action": "qbo_create_invoice",
+      "params": {{
+        "customerId": "123",
+        "lineItems": [
+          {{
+            "DetailType": "SalesItemLineDetail",
+            "Amount": 500.00,
+            "SalesItemLineDetail": {{
+              "ItemRef": {{"value": "1", "name": "Services"}},
+              "Qty": 1,
+              "UnitPrice": 500.00
+            }}
+          }}
+        ]
+      }}
+    }}
+    ```
 
 ### Other Entity Tools
 - **qbo_search_accounts** - Search chart of accounts
@@ -444,11 +401,36 @@ You are a QuickBooks Online accounting assistant powered by Azure AI Foundry.
 - **qbo_search_vendors** - Search vendors/suppliers
 - **qbo_search_bills** - Search bills/payables
 
-## Example Queries
-- "Show all customers with outstanding balances" → use qbo_query: SELECT * FROM Customer WHERE Balance > 0
-- "Create a new customer ABC Corp" → use qbo_create_customer
-- "Find all unpaid invoices" → use qbo_search_invoices or qbo_query: SELECT * FROM Invoice WHERE Balance > 0
-- "Run a profit and loss report" → use qbo_report with type ProfitAndLoss
+## Example Usage
+
+**Find outstanding balances:**
+```
+quickbooks_action(action="qbo_query", params={{"query": "SELECT * FROM Customer WHERE Balance > 0"}})
+```
+
+**Create a customer:**
+```
+quickbooks_action(action="qbo_create_customer", params={{"displayName": "ABC Corp", "email": "contact@abc.com"}})
+```
+
+**Create an invoice (3-step workflow):**
+1. Get customer ID: `quickbooks_action(action="qbo_search_customers", params={{"displayName": "ABC Corp"}})`
+2. Get item IDs: `quickbooks_action(action="qbo_search_items", params={{}})`
+3. Create invoice: `quickbooks_action(action="qbo_create_invoice", params={{...}})`
+
+## CRITICAL: Invoice Creation Workflow
+When creating invoices, ALWAYS:
+1. Search for customer first to get customer ID
+2. Search for items to get valid item IDs
+3. Create invoice with EXACT format shown above (DetailType field is REQUIRED!)
+4. NEVER skip the DetailType field
+
+## CRITICAL: When You Need User Input
+If you need clarification or confirmation:
+- Start your response EXACTLY with: NEEDS_INPUT:
+- Then provide your question
+- Example: "NEEDS_INPUT: I found multiple customers. Which one?"
+- ONLY use NEEDS_INPUT when you genuinely need user confirmation
 
 Current date: {datetime.datetime.now().isoformat()}
 """
@@ -494,6 +476,13 @@ Current date: {datetime.datetime.now().isoformat()}
         logger.info(f"   Thread ID: {thread_id}")
         logger.info(f"   User message: {user_message[:100]}{'...' if len(user_message) > 100 else ''}")
         
+        # Estimate input token count (rough estimate: 1 token ≈ 4 chars)
+        input_char_count = len(user_message)
+        estimated_input_tokens = input_char_count // 4
+        logger.warning(f"📊 INPUT TO QUICKBOOKS AGENT:")
+        logger.warning(f"   Character count: {input_char_count:,} chars")
+        logger.warning(f"   Estimated tokens: ~{estimated_input_tokens:,} tokens (rough estimate)")
+        
         if not self.agent:
             logger.info("   Agent not found, creating new agent...")
             await self.create_agent()
@@ -524,18 +513,27 @@ Current date: {datetime.datetime.now().isoformat()}
         mcp_tool = getattr(self, '_mcp_tool', None)
         
         # Create run with tool_resources for MCP (as per Microsoft sample)
+        # IMPORTANT: max_prompt_tokens limits context window to prevent rate limit errors
+        # when MCP tool results accumulate (each tool call can add 2-3K tokens).
+        # truncation_strategy="last_messages" keeps the N most recent complete messages.
+        # Reduced to 3 messages to prevent token accumulation in workflow execution
+        # where the same agent is called multiple times with large context.
         if mcp_tool and hasattr(mcp_tool, 'resources'):
-            logger.info("🔧 Creating run with MCP tool_resources")
+            logger.info("🔧 Creating run with MCP tool_resources (max_prompt_tokens=25000)")
             run = client.runs.create(
                 thread_id=thread_id, 
                 agent_id=self.agent.id,
-                tool_resources=mcp_tool.resources
+                tool_resources=mcp_tool.resources,
+                max_prompt_tokens=25000,  # Limit context to prevent 39K+ token accumulation
+                truncation_strategy={"type": "last_messages", "last_messages": 3}
             )
         else:
-            logger.info("Creating run without MCP tool_resources")
+            logger.info("Creating run without MCP tool_resources (max_prompt_tokens=25000)")
             run = client.runs.create(
                 thread_id=thread_id, 
-                agent_id=self.agent.id
+                agent_id=self.agent.id,
+                max_prompt_tokens=25000,
+                truncation_strategy={"type": "last_messages", "last_messages": 3}
             )
         
         logger.info(f"   Run completed: {run.id}")
@@ -570,21 +568,44 @@ Current date: {datetime.datetime.now().isoformat()}
             # Check for new tool calls in real-time (only show what we can actually detect)
             try:
                 run_steps = client.run_steps.list(thread_id, run.id)
+                step_count = 0
                 for run_step in run_steps:
+                    step_count += 1
+                    # Use run_step.id to track unique tool calls (not tool_type which is always "mcp" for MCP tools)
+                    step_id = getattr(run_step, 'id', f'step_{step_count}')
+                    logger.info(f"   📋 Run step {step_count} (id={step_id}): type={getattr(run_step, 'type', 'N/A')}, status={getattr(run_step, 'status', 'N/A')}")
+                    if hasattr(run_step, "step_details"):
+                        logger.info(f"      step_details.type={getattr(run_step.step_details, 'type', 'N/A')}")
                     if (hasattr(run_step, "step_details") and
                         hasattr(run_step.step_details, "type") and
                         run_step.step_details.type == "tool_calls" and
                         hasattr(run_step.step_details, "tool_calls")):
-                        for tool_call in run_step.step_details.tool_calls:
-                            if tool_call and hasattr(tool_call, "type"):
-                                tool_type = tool_call.type
-                                if tool_type not in tool_calls_yielded:
+                        logger.info(f"      Found tool_calls: {len(run_step.step_details.tool_calls)} calls")
+                        for idx, tool_call in enumerate(run_step.step_details.tool_calls):
+                            if tool_call:
+                                # Use a unique key combining step_id and tool call index
+                                tool_call_id = getattr(tool_call, 'id', f'{step_id}_call_{idx}')
+                                tool_type = getattr(tool_call, 'type', 'unknown')
+                                # Log all attributes of MCP tool call for debugging
+                                logger.info(f"      Tool call {idx}: type={tool_type}, id={tool_call_id}")
+                                logger.info(f"      Tool call attributes: {dir(tool_call)}")
+                                # For MCP tools, try to get the mcp attribute
+                                if hasattr(tool_call, 'mcp'):
+                                    mcp_details = tool_call.mcp
+                                    logger.info(f"      MCP details: {mcp_details}")
+                                    logger.info(f"      MCP attributes: {dir(mcp_details)}")
+                                
+                                if tool_call_id not in tool_calls_yielded:
                                     # Show actual tool calls that we can detect
                                     tool_description = self._get_tool_description(tool_type, tool_call)
+                                    logger.info(f"      🛠️ Yielding: {tool_description}")
                                     yield f"🛠️ Remote agent executing: {tool_description}"
-                                    tool_calls_yielded.add(tool_type)
+                                    tool_calls_yielded.add(tool_call_id)
+                if step_count == 0:
+                    logger.info(f"   📋 No run steps found yet")
             except Exception as e:
                 # Continue if we can't get run steps yet
+                logger.warning(f"   ⚠️ Error getting run steps: {e}")
                 pass
 
             try:
@@ -1090,24 +1111,69 @@ Current date: {datetime.datetime.now().isoformat()}
             for tool_call in tool_calls:
                 try:
                     function_name = getattr(getattr(tool_call, "function", None), "name", "unknown")
-                    arguments = getattr(getattr(tool_call, "function", None), "arguments", "{}")
-                    logger.info("Processing tool output call %s with args %s", function_name, arguments)
+                    arguments_str = getattr(getattr(tool_call, "function", None), "arguments", "{}")
+                    logger.info(f"Processing tool call: {function_name}")
+                    logger.debug(f"   Arguments: {arguments_str}")
 
-                    dummy_result = {
-                        "status": "success",
-                        "message": f"Tool '{function_name}' executed (simulated).",
-                        "data": {
-                            "result": "simulated_result",
-                            "arguments": arguments,
-                        },
+                    # Handle our custom quickbooks_action tool
+                    if function_name == "quickbooks_action":
+                        try:
+                            arguments = json.loads(arguments_str)
+                            action = arguments.get("action")
+                            params = arguments.get("params", {})
+                            
+                            logger.info(f"🔧 Executing QuickBooks action: {action}")
+                            logger.debug(f"   Params: {json.dumps(params, indent=2)}")
+                            
+                            # Make direct MCP call
+                            result = await self._mcp_client.call_tool(action, params)
+                            
+                            logger.info(f"✅ QuickBooks action succeeded: {action}")
+                            
+                            tool_outputs.append({
+                                "tool_call_id": tool_call.id,
+                                "output": json.dumps(result),
+                            })
+                            
+                        except Exception as mcp_error:
+                            logger.error(f"❌ QuickBooks action failed: {action}")
+                            logger.error(f"   Error: {mcp_error}")
+                            
+                            error_result = {
+                                "error": str(mcp_error),
+                                "status": "failed",
+                                "action": action
+                            }
+                            tool_outputs.append({
+                                "tool_call_id": tool_call.id,
+                                "output": json.dumps(error_result),
+                            })
+                    else:
+                        # Fallback for other tools (shouldn't happen with our setup)
+                        logger.warning(f"Unknown tool call: {function_name}")
+                        dummy_result = {
+                            "status": "success",
+                            "message": f"Tool '{function_name}' executed (simulated).",
+                            "data": {
+                                "result": "simulated_result",
+                                "arguments": arguments_str,
+                            },
+                        }
+                        tool_outputs.append({
+                            "tool_call_id": tool_call.id,
+                            "output": json.dumps(dummy_result),
+                        })
+                        
+                except Exception as exc:
+                    logger.error(f"Error processing tool call {getattr(tool_call, 'id', '?')}: {exc}")
+                    error_result = {
+                        "error": str(exc),
+                        "status": "failed"
                     }
-
                     tool_outputs.append({
                         "tool_call_id": tool_call.id,
-                        "output": json.dumps(dummy_result),
+                        "output": json.dumps(error_result),
                     })
-                except Exception as exc:
-                    logger.error("Error constructing tool output for call %s: %s", getattr(tool_call, "id", "?"), exc)
 
             if tool_outputs:
                 logger.debug("Submitting %d tool outputs", len(tool_outputs))
@@ -1133,6 +1199,8 @@ Current date: {datetime.datetime.now().isoformat()}
         approvals = []
 
         # Get the MCP headers to include with tool approvals
+        # This is CRITICAL for ngrok - without the ngrok-skip-browser-warning header,
+        # ngrok will return an HTML interstitial page instead of JSON
         mcp_headers = {}
         if self._mcp_tool and hasattr(self._mcp_tool, 'headers'):
             mcp_headers = self._mcp_tool.headers
@@ -1142,6 +1210,7 @@ Current date: {datetime.datetime.now().isoformat()}
             mcp_headers = {
                 "Content-Type": "application/json",
                 "User-Agent": "Azure-AI-Foundry-Agent",
+                "ngrok-skip-browser-warning": "true",
                 "Accept": "application/json, text/event-stream"
             }
             logger.warning(f"MCP tool not available, using fallback headers: {mcp_headers}")
@@ -1220,7 +1289,56 @@ Current date: {datetime.datetime.now().isoformat()}
     def _get_tool_description(self, tool_type: str, tool_call) -> str:
         """Helper to get a more meaningful tool description from the tool call."""
         try:
-            # Try to get the actual function name from the tool call
+            # Handle MCP tool calls - Azure AI Foundry MCP tool calls have name, server_label, arguments
+            # directly on the tool_call object (which is a dict-like MutableMapping)
+            if tool_type == "mcp":
+                tool_name = None
+                server_label = None
+                
+                # MCP tool calls are dict-like, try both dict access and attribute access
+                if hasattr(tool_call, 'get'):
+                    tool_name = tool_call.get('name')
+                    server_label = tool_call.get('server_label')
+                if not tool_name and hasattr(tool_call, 'name'):
+                    tool_name = tool_call.name
+                if not server_label and hasattr(tool_call, 'server_label'):
+                    server_label = tool_call.server_label
+                
+                logger.info(f"      MCP tool: name={tool_name}, server_label={server_label}")
+                
+                if tool_name:
+                    # Parse QuickBooks tool names (qbo_*)
+                    if tool_name.startswith("qbo_"):
+                        tool_parts = tool_name.replace("qbo_", "").split("_")
+                        action = tool_parts[0] if tool_parts else "executing"
+                        entity = "_".join(tool_parts[1:]) if len(tool_parts) > 1 else "data"
+                        
+                        if action == "search":
+                            return f"Searching QuickBooks {entity.replace('_', ' ')}"
+                        elif action == "get":
+                            return f"Getting QuickBooks {entity.replace('_', ' ')}"
+                        elif action == "create":
+                            return f"Creating QuickBooks {entity.replace('_', ' ')}"
+                        elif action == "update":
+                            return f"Updating QuickBooks {entity.replace('_', ' ')}"
+                        elif action == "delete":
+                            return f"Deleting QuickBooks {entity.replace('_', ' ')}"
+                        elif action == "query":
+                            return "Executing QuickBooks query"
+                        elif action == "company":
+                            return "Getting QuickBooks company info"
+                        elif action == "report":
+                            return "Generating QuickBooks report"
+                        else:
+                            return f"QuickBooks: {tool_name.replace('qbo_', '').replace('_', ' ').title()}"
+                    else:
+                        return f"Executing {tool_name}"
+                elif server_label:
+                    return f"Calling {server_label} API"
+                else:
+                    return "Executing QuickBooks operation"
+            
+            # Try to get the actual function name from the tool call (for non-MCP tools)
             if hasattr(tool_call, 'function') and hasattr(tool_call.function, 'name'):
                 function_name = tool_call.function.name
                 # Try to get arguments if available
@@ -1295,14 +1413,14 @@ Current date: {datetime.datetime.now().isoformat()}
 
 
 async def create_foundry_quickbooks_agent() -> FoundryQuickBooksAgent:
-    """Factory function to create and initialize a Foundry QuickBooks Online agent."""
+    """Factory function to create and initialize an AI Foundry QuickBooks agent."""
     agent = FoundryQuickBooksAgent()
     await agent.create_agent()
     return agent
 
 
 async def demo_agent_interaction():
-    """Demo function showing how to use the Foundry QuickBooks Online agent."""
+    """Demo function showing how to use the AI Foundry QuickBooks agent."""
     agent = await create_foundry_quickbooks_agent()
     
     try:

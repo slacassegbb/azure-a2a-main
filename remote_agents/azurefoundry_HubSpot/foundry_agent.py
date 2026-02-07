@@ -2,8 +2,8 @@
 AI Foundry Agent implementation with HubSpot CRM Capabilities.
 Uses AgentsClient directly for Azure AI Foundry with HubSpot MCP integration.
 
-IMPORTANT: Uses custom MCPClient to bypass Azure's McpTool and reduce token usage.
-Token savings: ~89% (from ~18k to ~2k tokens per request)
+Uses native McpTool to enable the LLM to see filter parameters and reduce token usage
+through smart filtering (e.g., searching for specific contacts instead of listing all).
 """
 import os
 import asyncio
@@ -14,7 +14,7 @@ import httpx
 
 from azure.ai.agents import AgentsClient
 from azure.ai.agents.models import (
-    Agent, ListSortOrder, ToolSet, FunctionTool, RequiredFunctionToolCall
+    Agent, ListSortOrder, ToolSet, McpTool
 )
 from azure.identity import DefaultAzureCredential
 
@@ -28,100 +28,12 @@ HUBSPOT_MCP_URL = os.getenv(
 )
 
 
-class MCPClient:
-    """
-    Direct MCP client that calls MCP servers via HTTP/SSE without loading all tool schemas.
-    This reduces token usage by ~15k tokens compared to Azure's McpTool approach.
-    """
-    
-    def __init__(self, server_url: str):
-        self.server_url = server_url
-        self.client = httpx.AsyncClient(timeout=30.0)
-        
-    async def call_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Call an MCP tool directly using JSON-RPC over HTTP/SSE.
-        """
-        try:
-            # MCP JSON-RPC request format
-            request_payload = {
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "tools/call",
-                "params": {
-                    "name": tool_name,
-                    "arguments": arguments
-                }
-            }
-            
-            headers = {
-                "Content-Type": "application/json",
-                "Accept": "application/json, text/event-stream",
-                "User-Agent": "Azure-AI-Foundry-Agent",
-            }
-            
-            logger.info(f"🔧 Calling MCP tool: {tool_name}")
-            logger.debug(f"   Arguments: {json.dumps(arguments, indent=2)}")
-            
-            response = await self.client.post(
-                self.server_url,
-                json=request_payload,
-                headers=headers
-            )
-            
-            response.raise_for_status()
-            
-            # Parse SSE response format
-            response_text = response.text
-            logger.debug(f"   Raw response: {response_text[:500]}...")
-            
-            # SSE format: "event: message\ndata: {json}\n\n"
-            if "event: message" in response_text and "data: " in response_text:
-                lines = response_text.strip().split('\n')
-                for line in lines:
-                    if line.startswith("data: "):
-                        json_str = line[6:]
-                        result = json.loads(json_str)
-                        
-                        if "result" in result:
-                            mcp_result = result["result"]
-                            if isinstance(mcp_result, dict) and "content" in mcp_result:
-                                content = mcp_result["content"]
-                                if isinstance(content, list) and len(content) > 0:
-                                    text_content = content[0].get("text", "")
-                                    try:
-                                        actual_result = json.loads(text_content)
-                                    except json.JSONDecodeError:
-                                        actual_result = {"result": text_content}
-                                    logger.info(f"✅ MCP tool call succeeded: {tool_name}")
-                                    return actual_result
-                            else:
-                                logger.info(f"✅ MCP tool call succeeded: {tool_name}")
-                                return mcp_result
-                        elif "error" in result:
-                            logger.error(f"❌ MCP returned error: {result['error']}")
-                            raise Exception(f"MCP error: {result['error']}")
-            else:
-                result = response.json()
-                if "result" in result:
-                    logger.info(f"✅ MCP tool call succeeded: {tool_name}")
-                    return result["result"]
-                else:
-                    return result
-            
-        except Exception as e:
-            logger.error(f"❌ MCP tool call failed: {tool_name} - {e}")
-            raise
-    
-    async def close(self):
-        """Close the HTTP client."""
-        await self.client.aclose()
-
-
 class FoundryHubSpotAgent:
     """
-    AI Foundry Agent with HubSpot CRM capabilities.
-    Uses AgentsClient directly for the new SDK version with custom MCP client.
+    AI Foundry Agent with HubSpot CRM capabilities using native McpTool.
+    
+    Uses McpTool which exposes filter parameters to the LLM, enabling smart filtering
+    to reduce token usage (e.g., 3k tokens for filtered query vs 19k for unfiltered).
     """
     
     def __init__(self):
@@ -130,10 +42,12 @@ class FoundryHubSpotAgent:
         self.agent: Optional[Agent] = None
         self.threads: Dict[str, str] = {}
         self._agents_client = None
-        self._mcp_client: Optional[MCPClient] = None
+        self._mcp_tool = None
+        self._mcp_tool_resources = None
+        self._toolset = None
         self.last_token_usage: Optional[Dict[str, int]] = None
         
-    def _get_agents_client(self) -> AgentsClient:
+    def _get_client(self) -> AgentsClient:
         """Get a cached AgentsClient instance."""
         if self._agents_client is None:
             self._agents_client = AgentsClient(
@@ -141,462 +55,376 @@ class FoundryHubSpotAgent:
                 credential=self.credential,
             )
         return self._agents_client
-        
+    
     async def create_agent(self) -> Agent:
-        """Create the AI Foundry agent with HubSpot capabilities using custom MCP client."""
+        """Create the AI Foundry agent with HubSpot MCP capabilities."""
         if self.agent:
             logger.info("Agent already exists, returning existing instance")
             return self.agent
         
-        logger.info("🚀 CREATING NEW AZURE FOUNDRY HUBSPOT AGENT...")
+        logger.info("Creating new Azure Foundry HubSpot agent...")
+        logger.info(f"   MCP Server URL: {HUBSPOT_MCP_URL}")
         
-        # Initialize direct MCP client (bypasses Azure's McpTool to save ~15k tokens per request)
-        logger.info("🔍 INITIALIZING DIRECT HUBSPOT MCP CLIENT...")
-        logger.info(f"   Server URL: {HUBSPOT_MCP_URL}")
-        self._mcp_client = MCPClient(HUBSPOT_MCP_URL)
-        
-        # Test connectivity
-        logger.info("🧪 TESTING HUBSPOT MCP SERVER CONNECTIVITY...")
         try:
-            headers = {"Accept": "text/event-stream"}
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                response = await client.get(HUBSPOT_MCP_URL.replace("/sse", "/health"))
-                if response.status_code == 200:
-                    logger.info("✅ HubSpot MCP Server connectivity test PASSED")
+            # Test MCP server connectivity
+            logger.info("Testing MCP server connectivity...")
+            async with httpx.AsyncClient(timeout=10.0) as http_client:
+                try:
+                    async with http_client.stream("GET", HUBSPOT_MCP_URL, headers={"Accept": "text/event-stream"}) as response:
+                        logger.info(f"   MCP Server Response: {response.status_code}")
+                        if response.status_code == 200:
+                            logger.info("MCP Server connectivity test PASSED")
+                except asyncio.TimeoutError:
+                    logger.info("MCP Server connectivity test PASSED (SSE stream timeout - expected)")
+                except Exception as e:
+                    logger.warning(f"MCP connectivity test warning: {e}")
+            
+            # Create MCP tool with all HubSpot tools
+            logger.info("Creating McpTool with HubSpot tools...")
+            mcp_tool = McpTool(
+                server_label="HubSpot",
+                server_url=HUBSPOT_MCP_URL,
+                # All 10 HubSpot tools (with hubspot_ prefix)
+                allowed_tools=[
+                    "hubspot_get_user_details",
+                    "hubspot_list_objects",
+                    "hubspot_search_objects",
+                    "hubspot_get_object",
+                    "hubspot_create_contact",
+                    "hubspot_create_company",
+                    "hubspot_create_deal",
+                    "hubspot_update_object",
+                    "hubspot_list_associations",
+                    "hubspot_create_note"
+                ]
+            )
+            
+            self._mcp_tool = mcp_tool
+            logger.info("McpTool object created successfully")
+
+            mcp_tool.set_approval_mode("never")
+            logger.info("Set approval mode to never")
+            
+            mcp_tool.update_headers("Content-Type", "application/json")
+            mcp_tool.update_headers("User-Agent", "Azure-AI-Foundry-Agent")
+            mcp_tool.update_headers("Accept", "application/json, text/event-stream")
+            logger.info("Set MCP headers")
+            
+            toolset = ToolSet()
+            toolset.add(mcp_tool)
+            self._toolset = toolset
+            
+            self._mcp_tool_resources = mcp_tool.resources
+            
+            logger.info(f"MCP Tool Details:")
+            logger.info(f"   Tools: {len(mcp_tool.definitions) if mcp_tool.definitions else 0}")
+            logger.info(f"   Resources: {self._mcp_tool_resources}")
+            
         except Exception as e:
-            logger.warning(f"⚠️ MCP connectivity test: {e}")
+            logger.error(f"Failed to create MCP tool: {e}")
+            import traceback
+            logger.error(f"   Traceback: {traceback.format_exc()}")
+            raise
         
-        # Define custom tool that replaces all 10 HubSpot MCP tool schemas with a single tool
-        custom_hubspot_tool = {
-            "type": "function",
-            "function": {
-                "name": "hubspot_action",
-                "description": "Execute HubSpot CRM operations including contacts, companies, deals, and engagements. This is a unified interface to all HubSpot operations.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "action": {
-                            "type": "string",
-                            "enum": [
-                                # Account & Info
-                                "hubspot_get_user_details",
-                                # Object Operations (CRUD)
-                                "hubspot_list_objects",
-                                "hubspot_search_objects",
-                                "hubspot_get_object",
-                                "hubspot_update_object",
-                                # Create Operations
-                                "hubspot_create_contact",
-                                "hubspot_create_company",
-                                "hubspot_create_deal",
-                                # Associations & Engagements
-                                "hubspot_list_associations",
-                                "hubspot_create_note",
-                            ],
-                            "description": "The HubSpot action to perform"
-                        },
-                        "params": {
-                            "type": "object",
-                            "description": "Parameters for the action. Varies by action type.",
-                            "additionalProperties": True
-                        }
-                    },
-                    "required": ["action"]
-                }
-            }
-        }
+        client = self._get_client()
         
-        logger.info("✅ Created custom hubspot_action tool (replaces 10 tool schemas)")
-        
-        # Get model deployment name
-        model = os.getenv("AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME", "gpt-4o")
-        
-        # HubSpot-specific instructions
-        instructions = """You are an expert HubSpot CRM assistant. You help users manage their HubSpot account.
-
-## Your Tool: hubspot_action
-
-You have ONE powerful tool called `hubspot_action` that can perform all HubSpot CRM operations.
-
-**Tool Parameters:**
-- `action`: The HubSpot operation to perform (see available actions below)
-- `params`: Parameters specific to that action (structure varies by action)
-
-## Available Actions (10 total)
-
-### Account Info
-- **hubspot_get_user_details** - Get account and user information
-  - Example: `{{"action": "hubspot_get_user_details", "params": {{}}}}`
-
-### List Objects
-- **hubspot_list_objects** - List CRM objects (contacts, companies, deals)
-  - Example: `{{"action": "hubspot_list_objects", "params": {{"objectType": "contacts", "limit": 10, "properties": "firstname,lastname,email"}}}}`
-
-### Search Objects
-- **hubspot_search_objects** - Search CRM objects with filters
-  - Example: `{{"action": "hubspot_search_objects", "params": {{"objectType": "contacts", "filters": "email EQ john@example.com", "properties": "firstname,lastname,email"}}}}`
-
-### Get Single Object
-- **hubspot_get_object** - Get a specific CRM object by ID
-  - Example: `{{"action": "hubspot_get_object", "params": {{"objectType": "contacts", "objectId": "123", "properties": "firstname,lastname,email"}}}}`
-
-### Create Objects
-- **hubspot_create_contact** - Create a new contact
-  - Example: `{{"action": "hubspot_create_contact", "params": {{"email": "john@example.com", "firstname": "John", "lastname": "Doe"}}}}`
-
-- **hubspot_create_company** - Create a new company
-  - Example: `{{"action": "hubspot_create_company", "params": {{"name": "Acme Corp", "domain": "acme.com"}}}}`
-
-- **hubspot_create_deal** - Create a new deal
-  - Example: `{{"action": "hubspot_create_deal", "params": {{"dealname": "New Deal", "amount": "10000", "dealstage": "appointmentscheduled"}}}}`
-
-- **hubspot_create_note** - Create a note on a CRM object
-  - Example: `{{"action": "hubspot_create_note", "params": {{"objectType": "contacts", "objectId": "123", "body": "Called customer today"}}}}`
-
-### Update Objects
-- **hubspot_update_object** - Update an existing CRM object
-  - Example: `{{"action": "hubspot_update_object", "params": {{"objectType": "contacts", "objectId": "123", "properties": {{"phone": "555-1234"}}}}}}`
-
-### Associations
-- **hubspot_get_associations** - Get associations between objects
-  - Example: `{{"action": "hubspot_get_associations", "params": {{"fromObjectType": "contacts", "fromObjectId": "123", "toObjectType": "companies"}}}}`
-
-## Example Usage
-
-**List all contacts:**
-```
-hubspot_action(action="hubspot_list_objects", params={{"objectType": "contacts", "limit": 10}})
-```
-
-**Search for a contact by email:**
-```
-hubspot_action(action="hubspot_search_objects", params={{"objectType": "contacts", "filters": "email EQ john@example.com"}})
-```
-
-**Create a new contact:**
-```
-hubspot_action(action="hubspot_create_contact", params={{"email": "jane@example.com", "firstname": "Jane", "lastname": "Doe"}})
-```
-
-## Response Format:
-- Use clear headers and bullet points
-- Include HubSpot record IDs for reference
-- Summarize results concisely
-"""
-        
-        logger.info(f"Creating HubSpot agent with model: {model}")
-        
-        # Use AgentsClient directly to create agent with custom tool
-        agents_client = self._get_agents_client()
-        
-        self.agent = agents_client.create_agent(
-            model=model,
-            name="AI Foundry HubSpot Agent",
-            instructions=instructions,
-            tools=[custom_hubspot_tool],
+        self.agent = client.create_agent(
+            model="gpt-4o",
+            name="foundry-hubspot-agent",
+            instructions=self._get_agent_instructions(),
+            toolset=self._toolset
         )
         
-        logger.info(f"✅ Created HubSpot agent: {self.agent.id}")
-        logger.info(f"   Agent uses custom hubspot_action tool (saves ~15k tokens per request)")
+        logger.info(f"Created AI Foundry HubSpot agent: {self.agent.id}")
         return self.agent
     
+    def _get_agent_instructions(self) -> str:
+        return """You are a specialized HubSpot CRM assistant with direct access to HubSpot data.
+
+## Your Capabilities
+You can perform the following CRM operations:
+- **Contacts**: List, search, create, update contacts
+- **Companies**: List, search, create, update companies  
+- **Deals**: List, search, create, update deals
+- **Associations**: View relationships between objects
+- **Notes**: Add notes to records
+
+## CRITICAL: Smart Filtering Rules
+To minimize API costs and response times, ALWAYS use filters when possible:
+
+1. **hubspot_search_objects** - Use this with filters for finding specific records:
+   - Search by email, name, company, or other properties
+   - Always specify just the properties you need
+   
+2. **hubspot_list_objects** - Use pagination (limit parameter) when browsing:
+   - Default to small limits (10-25 records)
+   - Only request needed properties
+
+3. **hubspot_get_object** - Use when you have a specific object ID
+
+## Response Format
+- Be concise and focused on the CRM data
+- Format contact/company/deal information clearly
+- When showing lists, summarize key fields
+- Mention record counts and if there are more records available
+
+## Error Handling
+- If a search returns no results, suggest alternative search terms
+- If an operation fails, explain what went wrong
+- Offer to try alternative approaches when appropriate"""
+
     async def create_thread(self) -> str:
-        """Create a new conversation thread."""
-        agents_client = self._get_agents_client()
-        thread = agents_client.threads.create()
+        """Create a new thread for conversation."""
+        client = self._get_client()
+        thread = client.threads.create()
         logger.info(f"Created new thread: {thread.id}")
         return thread.id
-    
-    async def add_message(self, thread_id: str, content: str, role: str = "user"):
-        """Add a message to a thread."""
-        agents_client = self._get_agents_client()
-        message = agents_client.messages.create(
-            thread_id=thread_id,
-            role=role,
-            content=content,
-        )
-        logger.info(f"Added {role} message to thread {thread_id}")
-        return message
 
-    async def _handle_tool_calls(self, run, thread_id: str):
-        """Handle tool calls coming back from Azure AI Foundry (QuickBooks pattern)."""
-        if not hasattr(run, "required_action") or not run.required_action:
-            logger.warning("No required_action present on run; nothing to handle")
-            return
-
-        required_action = run.required_action
-        action_type = None
-        tool_calls = []
-
-        if hasattr(required_action, "submit_tool_outputs") and required_action.submit_tool_outputs:
-            action_type = "submit_tool_outputs"
-            tool_calls = getattr(required_action.submit_tool_outputs, "tool_calls", []) or []
-        else:
-            logger.warning(
-                "Required action missing submit_tool_outputs attribute: %s",
-                dir(required_action)
-            )
-            return
-
-        if not tool_calls:
-            logger.warning("Required action contained no tool calls; nothing to process")
-            return
-
-        agents_client = self._get_agents_client()
-
-        logger.info("Handling %d tool output call(s)", len(tool_calls))
-        tool_outputs = []
-
-        for tool_call in tool_calls:
-            try:
-                function_name = getattr(getattr(tool_call, "function", None), "name", "unknown")
-                arguments_str = getattr(getattr(tool_call, "function", None), "arguments", "{}")
-                logger.info(f"Processing tool call: {function_name}")
-                logger.debug(f"   Arguments: {arguments_str}")
-
-                # Handle our custom hubspot_action tool
-                if function_name == "hubspot_action":
-                    try:
-                        arguments = json.loads(arguments_str)
-                        action = arguments.get("action")
-                        params = arguments.get("params", {})
-                        
-                        logger.info(f"🔧 Executing HubSpot action: {action}")
-                        logger.debug(f"   Params: {json.dumps(params, indent=2)}")
-                        
-                        # Make direct MCP call
-                        result = await self._mcp_client.call_tool(action, params)
-                        
-                        logger.info(f"✅ HubSpot action succeeded: {action}")
-                        
-                        tool_outputs.append({
-                            "tool_call_id": tool_call.id,
-                            "output": json.dumps(result),
-                        })
-                        
-                    except Exception as mcp_error:
-                        logger.error(f"❌ HubSpot action failed: {action}")
-                        logger.error(f"   Error: {mcp_error}")
-                        
-                        error_result = {
-                            "error": str(mcp_error),
-                            "status": "failed",
-                            "action": action
-                        }
-                        tool_outputs.append({
-                            "tool_call_id": tool_call.id,
-                            "output": json.dumps(error_result),
-                        })
-                elif function_name.startswith("hubspot_"):
-                    # Handle direct HubSpot MCP tool calls (model may call these directly)
-                    try:
-                        arguments = json.loads(arguments_str) if arguments_str else {}
-                        
-                        logger.info(f"🔧 Executing direct HubSpot MCP call: {function_name}")
-                        logger.debug(f"   Arguments: {json.dumps(arguments, indent=2)}")
-                        
-                        # Make direct MCP call with the tool name
-                        result = await self._mcp_client.call_tool(function_name, arguments)
-                        
-                        logger.info(f"✅ HubSpot MCP call succeeded: {function_name}")
-                        
-                        tool_outputs.append({
-                            "tool_call_id": tool_call.id,
-                            "output": json.dumps(result),
-                        })
-                        
-                    except Exception as mcp_error:
-                        logger.error(f"❌ HubSpot MCP call failed: {function_name}")
-                        logger.error(f"   Error: {mcp_error}")
-                        
-                        error_result = {
-                            "error": str(mcp_error),
-                            "status": "failed",
-                            "action": function_name
-                        }
-                        tool_outputs.append({
-                            "tool_call_id": tool_call.id,
-                            "output": json.dumps(error_result),
-                        })
-                else:
-                    # Fallback for other tools (shouldn't happen with our setup)
-                    logger.warning(f"Unknown tool call: {function_name}")
-                    dummy_result = {
-                        "status": "success",
-                        "message": f"Tool '{function_name}' executed (simulated).",
-                    }
-                    tool_outputs.append({
-                        "tool_call_id": tool_call.id,
-                        "output": json.dumps(dummy_result),
-                    })
-                    
-            except Exception as exc:
-                logger.error(f"Error processing tool call {getattr(tool_call, 'id', '?')}: {exc}")
-                error_result = {
-                    "error": str(exc),
-                    "status": "failed"
-                }
-                tool_outputs.append({
-                    "tool_call_id": tool_call.id,
-                    "output": json.dumps(error_result),
-                })
-
-        if tool_outputs:
-            logger.debug("Submitting %d tool outputs", len(tool_outputs))
-            agents_client.runs.submit_tool_outputs(
-                thread_id=thread_id,
-                run_id=run.id,
-                tool_outputs=tool_outputs,
-            )
-        else:
-            logger.warning("No tool outputs generated; submitting empty acknowledgements")
-            fallback_outputs = [{"tool_call_id": tc.id, "output": "{}"} for tc in tool_calls if hasattr(tc, "id")]
-            if fallback_outputs:
-                agents_client.runs.submit_tool_outputs(
-                    thread_id=thread_id,
-                    run_id=run.id,
-                    tool_outputs=fallback_outputs,
-                )
-    
-    async def run_and_wait(self, thread_id: str, timeout: int = 120):
-        """Run the agent on a thread and wait for completion, handling tool calls (QuickBooks pattern)."""
+    async def run_conversation_stream(self, thread_id: str, user_message: str):
+        """Streaming version - yields responses as they come."""
         if not self.agent:
             await self.create_agent()
         
-        agents_client = self._get_agents_client()
+        client = self._get_client()
+        
+        # Add user message
+        client.messages.create(
+            thread_id=thread_id,
+            role="user",
+            content=user_message
+        )
+        logger.info(f"Added user message to thread {thread_id}")
         
         # Create run
-        run = agents_client.runs.create(
-            thread_id=thread_id,
-            agent_id=self.agent.id,
-            truncation_strategy={"type": "last_messages", "last_messages": 3},
-            max_prompt_tokens=25000,
-        )
+        logger.info("Creating run with MCP tool resources...")
+        if self._mcp_tool_resources:
+            run = client.runs.create(
+                thread_id=thread_id, 
+                agent_id=self.agent.id,
+                tool_resources=self._mcp_tool_resources,
+                max_prompt_tokens=25000,
+                truncation_strategy={"type": "last_messages", "last_messages": 3}
+            )
+        else:
+            run = client.runs.create(
+                thread_id=thread_id, 
+                agent_id=self.agent.id,
+                max_prompt_tokens=25000,
+                truncation_strategy={"type": "last_messages", "last_messages": 3}
+            )
         
-        logger.info(f"Created run {run.id} on thread {thread_id}")
+        logger.info(f"   Run created: {run.id}")
         
-        # Poll for completion and handle tool calls (QuickBooks pattern)
         max_iterations = 25
         iterations = 0
-        stuck_run_count = 0
-        max_stuck_runs = 3
-        
+        tool_calls_yielded = set()
+
         while run.status in ["queued", "in_progress", "requires_action"] and iterations < max_iterations:
             iterations += 1
-            logger.debug(f"🔄 Iteration {iterations}: run.status = {run.status}")
+            logger.info(f"   Iteration {iterations}: run.status = {run.status}")
             await asyncio.sleep(2)
             
-            if run.status == "requires_action":
-                logger.info(f"🔧 RUN REQUIRES ACTION - TOOL CALLS NEEDED")
-                logger.info(f"   Run ID: {run.id}")
-                try:
-                    # Check if there are actually tool calls to handle
-                    if hasattr(run, 'required_action') and run.required_action:
-                        logger.info(f"Found required action, handling tool calls...")
-                        await self._handle_tool_calls(run, thread_id)
-                    else:
-                        logger.warning(f"Run status is 'requires_action' but no required_action found")
-                        stuck_run_count += 1
-                        if stuck_run_count >= max_stuck_runs:
-                            logger.error(f"Run {run.id} is stuck in requires_action state")
-                            raise RuntimeError(f"Run is stuck in requires_action state")
-                except Exception as e:
-                    logger.error(f"❌ ERROR HANDLING TOOL CALLS: {e}")
-                    raise
-            
-            # Refresh run status
-            run = agents_client.runs.get(thread_id=thread_id, run_id=run.id)
-            logger.debug(f"Run status: {run.status} (iteration {iterations})")
-        
-        if iterations >= max_iterations:
-            raise TimeoutError(f"Run exceeded maximum iterations ({max_iterations})")
-        
-        # Store token usage
+            try:
+                run_steps = client.run_steps.list(thread_id, run.id)
+                for run_step in run_steps:
+                    step_id = getattr(run_step, 'id', f'step_{iterations}')
+                    if (hasattr(run_step, "step_details") and
+                        hasattr(run_step.step_details, "type") and
+                        run_step.step_details.type == "tool_calls" and
+                        hasattr(run_step.step_details, "tool_calls")):
+                        for idx, tool_call in enumerate(run_step.step_details.tool_calls):
+                            tool_call_id = getattr(tool_call, 'id', f'{step_id}_call_{idx}')
+                            if tool_call_id not in tool_calls_yielded:
+                                tool_type = getattr(tool_call, 'type', 'unknown')
+                                yield f"🛠️ Remote agent executing: {tool_type}"
+                                tool_calls_yielded.add(tool_call_id)
+            except Exception as e:
+                logger.warning(f"   Error getting run steps: {e}")
+
+            try:
+                run = client.runs.get(thread_id=thread_id, run_id=run.id)
+            except Exception as e:
+                if "rate limit" in str(e).lower() or "429" in str(e):
+                    await asyncio.sleep(15)
+                    continue
+                else:
+                    yield f"Error: {str(e)}"
+                    return
+
+            if run.status == "failed":
+                logger.error(f"RUN FAILED: {run.last_error}")
+                yield f"❌ Run Failed: {run.last_error}"
+                return
+
+        # Get token usage
         if hasattr(run, 'usage') and run.usage:
             self.last_token_usage = {
                 "prompt_tokens": getattr(run.usage, 'prompt_tokens', 0),
                 "completion_tokens": getattr(run.usage, 'completion_tokens', 0),
-                "total_tokens": getattr(run.usage, 'total_tokens', 0),
+                "total_tokens": getattr(run.usage, 'total_tokens', 0)
             }
-            logger.info(f"💰 Token usage: {self.last_token_usage}")
+            logger.info(f"Token usage: {self.last_token_usage}")
+
+        # Get final response
+        messages = list(client.messages.list(thread_id=thread_id, order=ListSortOrder.DESCENDING, limit=5))
         
-        if run.status == "failed":
-            logger.error(f"Run failed: {run.last_error}")
-            raise RuntimeError(f"Run failed: {run.last_error}")
+        if messages:
+            latest = messages[0]
+            if hasattr(latest, 'content'):
+                for content_item in latest.content:
+                    if hasattr(content_item, 'text') and hasattr(content_item.text, 'value'):
+                        yield content_item.text.value
+                        return
         
-        logger.info(f"✅ Run {run.id} completed with status: {run.status}")
-        return run
-    
-    async def get_response(self, thread_id: str) -> str:
-        """Get the latest assistant response from a thread."""
-        agents_client = self._get_agents_client()
-        messages = agents_client.messages.list(
-            thread_id=thread_id,
-            order=ListSortOrder.DESCENDING,
-            limit=10,
-        )
-        
-        for message in messages:
-            if message.role == "assistant":
-                response_text = ""
-                for content in message.content:
-                    if hasattr(content, 'text'):
-                        response_text += content.text.value
-                return response_text
-        
-        return ""
-    
-    async def run_with_streaming(self, thread_id: str, user_message: str):
-        """Run the agent with streaming response."""
-        if not self.agent:
-            await self.create_agent()
-        
-        # Add user message
-        await self.add_message(thread_id, user_message)
-        
-        # Run and wait
-        await self.run_and_wait(thread_id)
-        
-        # Get response
-        response = await self.get_response(thread_id)
-        
-        # Yield response
-        yield response
-    
+        yield "No response generated."
+
+    async def run_conversation(self, thread_id: str, user_message: str) -> str:
+        """Non-streaming version - collects all responses."""
+        responses = []
+        async for response in self.run_conversation_stream(thread_id, user_message):
+            responses.append(response)
+        return "\n".join(responses)
+
     async def chat(self, thread_id: str, user_message: str) -> str:
-        """Simple chat interface - add message, run, return response."""
+        """Alias for run_conversation - for executor compatibility."""
+        return await self.run_conversation(thread_id, user_message)
+
+
+    async def process_message(self, message: str, session_id: str = "default"):
+        logger.info(f"Processing HubSpot message: {message[:100]}...")
+        
         if not self.agent:
             await self.create_agent()
         
-        # Add user message
-        await self.add_message(thread_id, user_message)
+        client = self._get_client()
         
-        # Run and wait
-        await self.run_and_wait(thread_id)
+        if session_id not in self.threads:
+            thread = client.threads.create()
+            self.threads[session_id] = thread.id
+            logger.info(f"Created new thread: {thread.id}")
         
-        # Get and return response
-        return await self.get_response(thread_id)
-    
-    async def cleanup(self):
-        """Clean up agent resources."""
-        if self.agent:
+        thread_id = self.threads[session_id]
+        
+        client.messages.create(
+            thread_id=thread_id,
+            role="user",
+            content=message
+        )
+        logger.info(f"Added user message to thread {thread_id}")
+        
+        logger.info("Creating run with MCP tool resources...")
+        
+        if self._mcp_tool_resources:
+            run = client.runs.create(
+                thread_id=thread_id, 
+                agent_id=self.agent.id,
+                tool_resources=self._mcp_tool_resources,
+                max_prompt_tokens=25000,
+                truncation_strategy={"type": "last_messages", "last_messages": 3}
+            )
+        else:
+            run = client.runs.create(
+                thread_id=thread_id, 
+                agent_id=self.agent.id,
+                max_prompt_tokens=25000,
+                truncation_strategy={"type": "last_messages", "last_messages": 3}
+            )
+        
+        logger.info(f"   Run created: {run.id}")
+        
+        max_iterations = 25
+        iterations = 0
+        tool_calls_yielded = set()
+
+        while run.status in ["queued", "in_progress", "requires_action"] and iterations < max_iterations:
+            iterations += 1
+            logger.info(f"   Iteration {iterations}: run.status = {run.status}")
+            await asyncio.sleep(2)
+            
             try:
-                agents_client = self._get_agents_client()
-                agents_client.delete_agent(self.agent.id)
-                logger.info(f"Deleted agent: {self.agent.id}")
-                self.agent = None
+                run_steps = client.run_steps.list(thread_id, run.id)
+                for run_step in run_steps:
+                    step_id = getattr(run_step, 'id', f'step_{iterations}')
+                    if (hasattr(run_step, "step_details") and
+                        hasattr(run_step.step_details, "type") and
+                        run_step.step_details.type == "tool_calls" and
+                        hasattr(run_step.step_details, "tool_calls")):
+                        for idx, tool_call in enumerate(run_step.step_details.tool_calls):
+                            tool_call_id = getattr(tool_call, 'id', f'{step_id}_call_{idx}')
+                            if tool_call_id not in tool_calls_yielded:
+                                tool_type = getattr(tool_call, 'type', 'unknown')
+                                yield f"Remote agent executing: {tool_type}"
+                                tool_calls_yielded.add(tool_call_id)
             except Exception as e:
-                logger.warning(f"Failed to delete agent: {e}")
+                logger.warning(f"   Error getting run steps: {e}")
 
+            try:
+                run = client.runs.get(thread_id=thread_id, run_id=run.id)
+            except Exception as e:
+                if "rate limit" in str(e).lower() or "429" in str(e):
+                    await asyncio.sleep(15)
+                    continue
+                else:
+                    yield f"Error: {str(e)}"
+                    return
 
-# Global singleton for the agent
-_hubspot_agent_instance: Optional[FoundryHubSpotAgent] = None
+            if run.status == "failed":
+                logger.error(f"RUN FAILED: {run.last_error}")
+                yield f"Run Failed: {run.last_error}"
+                return
 
+        if hasattr(run, 'usage') and run.usage:
+            self.last_token_usage = {
+                "prompt_tokens": getattr(run.usage, 'prompt_tokens', 0),
+                "completion_tokens": getattr(run.usage, 'completion_tokens', 0),
+                "total_tokens": getattr(run.usage, 'total_tokens', 0)
+            }
+            logger.info(f"Token usage: {self.last_token_usage}")
 
-async def get_hubspot_agent() -> FoundryHubSpotAgent:
-    """Get or create the global HubSpot agent instance."""
-    global _hubspot_agent_instance
-    if _hubspot_agent_instance is None:
-        _hubspot_agent_instance = FoundryHubSpotAgent()
-        await _hubspot_agent_instance.create_agent()
-    return _hubspot_agent_instance
+        messages = list(client.messages.list(thread_id=thread_id, order=ListSortOrder.DESCENDING, limit=5))
+        
+        if messages:
+            latest = messages[0]
+            if hasattr(latest, 'content'):
+                for content_item in latest.content:
+                    if hasattr(content_item, 'text') and hasattr(content_item.text, 'value'):
+                        response_text = content_item.text.value
+                        yield response_text
+                        return
+        
+        yield "No response generated."
+    
+    def get_agent_card(self) -> Dict[str, Any]:
+        return {
+            "name": "HubSpot CRM Agent",
+            "description": "AI agent for HubSpot CRM operations - manage contacts, companies, deals, and more",
+            "url": f"http://localhost:{os.getenv('A2A_PORT', '8021')}",
+            "version": "1.0.0",
+            "capabilities": {
+                "streaming": True,
+                "pushNotifications": False,
+                "stateTransitionHistory": False
+            },
+            "defaultInputModes": ["text"],
+            "defaultOutputModes": ["text"],
+            "skills": [
+                {
+                    "id": "hubspot_contacts",
+                    "name": "Contact Management",
+                    "description": "List, search, create, and update HubSpot contacts",
+                    "tags": ["crm", "contacts", "hubspot"]
+                },
+                {
+                    "id": "hubspot_companies", 
+                    "name": "Company Management",
+                    "description": "List, search, create, and update HubSpot companies",
+                    "tags": ["crm", "companies", "hubspot"]
+                },
+                {
+                    "id": "hubspot_deals",
+                    "name": "Deal Management", 
+                    "description": "List, search, create, and update HubSpot deals",
+                    "tags": ["crm", "deals", "hubspot"]
+                }
+            ]
+        }

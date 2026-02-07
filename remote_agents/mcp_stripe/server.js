@@ -148,6 +148,21 @@ const server = http.createServer(async (req, res) => {
         const jsonRpcRequest = JSON.parse(body);
         console.error('JSON-RPC request:', JSON.stringify(jsonRpcRequest, null, 2));
         
+        // Check if this is a notification (no id = no response expected)
+        const isNotification = jsonRpcRequest.id === undefined || jsonRpcRequest.method?.startsWith('notifications/');
+        
+        if (isNotification) {
+          // For notifications, just forward and don't wait for response
+          const requestLine = JSON.stringify(jsonRpcRequest) + '\n';
+          console.error('Sending notification to Stripe MCP:', requestLine.trim().substring(0, 200));
+          stripeMcp.stdin.write(requestLine);
+          
+          // Send empty success response
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ jsonrpc: '2.0', result: {} }));
+          return;
+        }
+        
         // Forward to Stripe MCP and wait for response
         const response = await callStripeMcp(jsonRpcRequest);
         console.error('JSON-RPC response:', JSON.stringify(response).substring(0, 200));
