@@ -44,6 +44,7 @@ import asyncio
 import logging
 import json
 from typing import Optional, Dict, List, Any
+import httpx
 
 from azure.ai.agents import AgentsClient
 from azure.ai.agents.models import Agent, ThreadMessage, ThreadRun, AgentThread, BingGroundingTool, ListSortOrder, FilePurpose, FileSearchTool, McpTool, ToolApproval, ToolSet
@@ -53,6 +54,121 @@ import glob
 import re
 
 logger = logging.getLogger(__name__)
+
+
+class MCPClient:
+    """
+    Direct MCP client that calls MCP servers via HTTP/SSE without loading all tool schemas.
+    This reduces token usage by ~15k tokens compared to Azure's McpTool approach.
+    """
+    
+    def __init__(self, server_url: str):
+        self.server_url = server_url
+        self.client = httpx.AsyncClient(timeout=30.0)
+        
+    async def call_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Call an MCP tool directly using JSON-RPC over HTTP/SSE.
+        
+        Args:
+            tool_name: Name of the MCP tool to call (e.g., "qbo_query")
+            arguments: Tool arguments as a dictionary
+            
+        Returns:
+            Tool execution result as a dictionary
+        """
+        try:
+            # MCP JSON-RPC request format
+            request_payload = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {
+                    "name": tool_name,
+                    "arguments": arguments
+                }
+            }
+            
+            headers = {
+                "Content-Type": "application/json",
+                "Accept": "application/json, text/event-stream",
+                "User-Agent": "Azure-AI-Foundry-Agent",
+                "ngrok-skip-browser-warning": "true"
+            }
+            
+            logger.info(f"🔧 Calling MCP tool: {tool_name}")
+            logger.debug(f"   Arguments: {json.dumps(arguments, indent=2)}")
+            
+            response = await self.client.post(
+                self.server_url,
+                json=request_payload,
+                headers=headers
+            )
+            
+            response.raise_for_status()
+            
+            # Parse SSE response format
+            response_text = response.text
+            logger.debug(f"   Raw response: {response_text[:500]}...")
+            
+            # SSE format: "event: message\ndata: {json}\n\n"
+            # Parse SSE events
+            if "event: message" in response_text and "data: " in response_text:
+                # Extract JSON from SSE data line
+                lines = response_text.strip().split('\n')
+                for line in lines:
+                    if line.startswith("data: "):
+                        json_str = line[6:]  # Remove "data: " prefix
+                        result = json.loads(json_str)
+                        
+                        # MCP JSON-RPC response format:
+                        # {"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"..."}]}}
+                        if "result" in result:
+                            mcp_result = result["result"]
+                            
+                            # Check if result has content array (MCP protocol format)
+                            if isinstance(mcp_result, dict) and "content" in mcp_result:
+                                content = mcp_result["content"]
+                                if isinstance(content, list) and len(content) > 0:
+                                    # Extract text from first content item
+                                    text_content = content[0].get("text", "")
+                                    # Parse the nested JSON string
+                                    actual_result = json.loads(text_content)
+                                    logger.info(f"✅ MCP tool call succeeded: {tool_name}")
+                                    logger.debug(f"   Result: {json.dumps(actual_result, indent=2)[:500]}...")
+                                    return actual_result
+                            else:
+                                # Direct result (not content array)
+                                logger.info(f"✅ MCP tool call succeeded: {tool_name}")
+                                logger.debug(f"   Result: {json.dumps(mcp_result, indent=2)[:500]}...")
+                                return mcp_result
+                        elif "error" in result:
+                            logger.error(f"❌ MCP returned error: {result['error']}")
+                            raise Exception(f"MCP error: {result['error']}")
+            else:
+                # Try parsing as plain JSON
+                result = response.json()
+                if "result" in result:
+                    logger.info(f"✅ MCP tool call succeeded: {tool_name}")
+                    logger.debug(f"   Result: {json.dumps(result['result'], indent=2)[:500]}...")
+                    return result["result"]
+                else:
+                    logger.info(f"✅ MCP tool call succeeded: {tool_name}")
+                    return result
+            
+        except json.JSONDecodeError as e:
+            logger.error(f"❌ MCP tool call failed: {tool_name}")
+            logger.error(f"   JSON decode error: {e}")
+            logger.error(f"   Response text: {response_text[:1000]}...")
+            raise
+        except Exception as e:
+            logger.error(f"❌ MCP tool call failed: {tool_name}")
+            logger.error(f"   Error: {e}")
+            raise
+    
+    async def close(self):
+        """Close the HTTP client."""
+        await self.client.aclose()
 
 
 class FoundryQuickBooksAgent:
@@ -81,6 +197,11 @@ class FoundryQuickBooksAgent:
         self._mcp_tool = None  # Cache the MCP tool for header access during approvals
         self._mcp_tool_resources = None  # Cache MCP tool resources for run creation
         self.last_token_usage: Optional[Dict[str, int]] = None  # Store token usage from last run
+        
+        # Initialize custom MCP client (replaces Azure's McpTool wrapper)
+        mcp_server_url = "https://mcp-quickbooks.ambitioussky-6c709152.westus2.azurecontainerapps.io/sse"
+        self._mcp_client = MCPClient(mcp_server_url)
+        logger.info(f"✅ Initialized custom MCP client: {mcp_server_url}")
         
     def _get_client(self) -> AgentsClient:
         """Get a cached AgentsClient instance to reduce API calls."""
@@ -188,157 +309,58 @@ class FoundryQuickBooksAgent:
         
         logger.info("🚀 CREATING NEW AZURE FOUNDRY AGENT...")
         
-        # Start with MCP tools using the new McpTool class - FIXED FOR AZURE FOUNDRY
-        logger.info("🔍 CREATING MCP TOOL CONNECTION...")
-        logger.info(f"   Server URL: https://mcp-quickbooks.ambitioussky-6c709152.westus2.azurecontainerapps.io/sse")
-        logger.info(f"   Server Label: QuickBooks")
+        # Create custom QuickBooks action tool (replaces Azure's McpTool with 15 schemas)
+        logger.info("� CREATING CUSTOM QUICKBOOKS ACTION TOOL...")
+        logger.info(f"   MCP Server: {self._mcp_client.server_url}")
         
-        try:
-            # Test MCP server connectivity first
-            logger.info("🧪 TESTING MCP SERVER CONNECTIVITY...")
-            import httpx
-            import asyncio
-            
-            async def test_mcp_basic():
-                try:
-                    # Test SSE endpoint properly - don't try to read the full response
-                    # Include ngrok-skip-browser-warning header to avoid ngrok interstitial page
-                    headers = {
-                        "ngrok-skip-browser-warning": "true",
-                        "Accept": "text/event-stream"
-                    }
-                    async with httpx.AsyncClient(timeout=10.0) as client:
-                        async with client.stream("GET", "https://mcp-quickbooks.ambitioussky-6c709152.westus2.azurecontainerapps.io/sse", headers=headers) as response:
-                            logger.info(f"   MCP Server Response: {response.status_code}")
-                            logger.info(f"   Response Headers: {dict(response.headers)}")
-                            
-                            # For SSE endpoints, just check status and headers
-                            if response.status_code == 200:
-                                # Check if it looks like an SSE endpoint
-                                content_type = response.headers.get('content-type', '')
-                                if 'text/event-stream' in content_type or 'text/plain' in content_type:
-                                    logger.info("✅ MCP Server connectivity test PASSED (SSE endpoint detected)")
-                                    return True
-                                else:
-                                    # Try to read a small amount of content to verify it's working
-                                    try:
-                                        content_chunk = ""
-                                        async for chunk in response.aiter_text():
-                                            content_chunk += chunk
-                                            if len(content_chunk) > 100:  # Just read first 100 chars
-                                                break
-                                        logger.info(f"   Response Content (first 100 chars): {content_chunk[:100]}")
-                                        logger.info("✅ MCP Server connectivity test PASSED")
-                                        return True
-                                    except asyncio.TimeoutError:
-                                        # This is expected for SSE endpoints
-                                        logger.info("✅ MCP Server connectivity test PASSED (SSE stream detected)")
-                                        return True
-                            else:
-                                logger.error(f"❌ MCP Server returned status: {response.status_code}")
-                                return False
-                            
-                except asyncio.TimeoutError:
-                    # For SSE endpoints, timeout during streaming is actually success
-                    logger.info("✅ MCP Server connectivity test PASSED (SSE stream timeout - expected)")
-                    return True
-                except Exception as e:
-                    logger.error(f"   MCP Server Test FAILED: {e}")
-                    logger.error(f"   Error type: {type(e)}")
-                    import traceback
-                    logger.error(f"   Full traceback: {traceback.format_exc()}")
-                    return False
-            
-            # Run the connectivity test
-            await test_mcp_basic()
-            
-            # Create MCP tool - ALL 15 tools work with simplified flat schemas!
-            logger.info("🔧 CREATING McpTool OBJECT...")
-            # QuickBooks MCP server via Azure Container Apps
-            self._mcp_server_url = "https://mcp-quickbooks.ambitioussky-6c709152.westus2.azurecontainerapps.io/sse"
-            logger.info(f"🔧 Using MCP server URL: {self._mcp_server_url}")
-            mcp_tool = McpTool(
-                server_label="QuickBooks",
-                server_url=self._mcp_server_url,
-                # ALL 15 QuickBooks tools with simplified flat schemas
-                allowed_tools=[
-                    # Query & Reports
-                    "qbo_query",            # SQL-like queries (SELECT * FROM Customer)
-                    "qbo_report",           # Financial reports (ProfitAndLoss, BalanceSheet, CashFlow)
-                    "qbo_company_info",     # Get company information
-                    # Customer Tools
-                    "qbo_search_customers", # Search customers (filter by displayName, active, limit)
-                    "qbo_get_customer",     # Get customer by ID
-                    "qbo_create_customer",  # Create customer (displayName, email, phone, companyName)
-                    "qbo_update_customer",  # Update customer
-                    "qbo_delete_customer",  # Deactivate customer
-                    # Invoice Tools
-                    "qbo_search_invoices",  # Search invoices (filter by customerId, docNumber, limit)
-                    "qbo_get_invoice",      # Get invoice by ID
-                    "qbo_create_invoice",   # Create invoice (customerId, lineItems, dueDate)
-                    # Other Entity Tools
-                    "qbo_search_accounts",  # Search chart of accounts
-                    "qbo_search_items",     # Search products/services
-                    "qbo_search_vendors",   # Search vendors/suppliers
-                    "qbo_search_bills"      # Search bills/payables
-                ]
-            )
-            # Store the mcp_tool so we can access headers during tool approvals
-            self._mcp_tool = mcp_tool
-            logger.info("✅ McpTool object created successfully")
-
-            mcp_tool.set_approval_mode("never")  # Disable approval requirement
-            logger.info("✅ Set approval mode to 'never'")
-            
-            # Set headers using the official method from Microsoft documentation
-            # CRITICAL: ngrok-skip-browser-warning is required for ngrok to work with Azure
-            # CRITICAL: Accept must include BOTH application/json and text/event-stream for Streamable HTTP
-            mcp_tool.update_headers("Content-Type", "application/json")
-            mcp_tool.update_headers("User-Agent", "Azure-AI-Foundry-Agent")
-            mcp_tool.update_headers("ngrok-skip-browser-warning", "true")
-            mcp_tool.update_headers("Accept", "application/json, text/event-stream")
-            logger.info("✅ Set MCP headers using update_headers method (including ngrok-skip-browser-warning)")
-            
-            # Log the headers that will be used
-            if hasattr(mcp_tool, 'headers'):
-                logger.info(f"✅ MCP headers stored: {mcp_tool.headers}")
-            
-            # Use ToolSet as recommended by Microsoft sample
-            toolset = ToolSet()
-            toolset.add(mcp_tool)
-            self._toolset = toolset  # Store for use with create_and_process
-            self._mcp_tool = mcp_tool  # Store MCP tool reference
-            
-            # Also keep definitions for compatibility
-            tools = mcp_tool.definitions
-            
-            # CRITICAL FIX: Store MCP tool resources - needed for runs.create() per Microsoft docs!
-            # The mcp_tool.resources contains the server connection info needed at runtime
-            self._mcp_tool_resources = mcp_tool.resources
-            tool_resources = None  # For agent creation, but we'll use _mcp_tool_resources for run creation
-            
-            logger.info(f"🔍 MCP TOOL DETAILS:")
-            logger.info(f"   Tools count: {len(tools) if tools else 0}")
-            logger.info(f"   Tool definitions: {[str(t) for t in tools[:3]] if tools else 'None'}")
-            logger.info(f"   MCP Tool resources (for run creation): {self._mcp_tool_resources}")
-            logger.info(f"   MCP Tool resources type: {type(self._mcp_tool_resources)}")
-            logger.info("🔧 CRITICAL: mcp_tool.resources will be passed to runs.create()")
-            
-            logger.info("✅ Added QuickBooks MCP server integration using McpTool")
-            
-        except Exception as e:
-            logger.error(f"❌ FAILED TO CREATE MCP TOOL: {e}")
-            logger.error(f"   Error type: {type(e)}")
-            import traceback
-            logger.error(f"   Full traceback: {traceback.format_exc()}")
-            
-            # Fallback: create empty tools list if MCP fails
-            tools = []
-            tool_resources = None
-            logger.warning("⚠️ Continuing without MCP tools due to connection failure")
+        # Define the tool as a function definition (Azure AI Agents format)
+        # This is a single tool schema that replaces 15 MCP tool schemas
+        quickbooks_tool_definition = {
+            "type": "function",
+            "function": {
+                "name": "quickbooks_action",
+                "description": "Execute QuickBooks Online accounting operations. Use this tool for ALL QuickBooks operations including queries, reports, customer management, invoices, and more.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "action": {
+                            "type": "string",
+                            "description": "The QuickBooks action to perform",
+                            "enum": [
+                                "qbo_query",
+                                "qbo_report",
+                                "qbo_company_info",
+                                "qbo_search_customers",
+                                "qbo_get_customer",
+                                "qbo_create_customer",
+                                "qbo_update_customer",
+                                "qbo_delete_customer",
+                                "qbo_search_invoices",
+                                "qbo_get_invoice",
+                                "qbo_create_invoice",
+                                "qbo_search_accounts",
+                                "qbo_search_items",
+                                "qbo_search_vendors",
+                                "qbo_search_bills"
+                            ]
+                        },
+                        "params": {
+                            "type": "object",
+                            "description": "Parameters for the action (structure varies by action)",
+                            "additionalProperties": True
+                        }
+                    },
+                    "required": ["action", "params"]
+                }
+            }
+        }
         
-        # Using QuickBooks MCP tools only - no local simulation tools needed
-        logger.info("🔧 Using QuickBooks MCP tools from remote server")
+        tools = [quickbooks_tool_definition]
+        logger.info(f"✅ Created custom QuickBooks tool (replaces 15 MCP tool schemas)")
+        logger.info(f"   Token savings: ~15,000 tokens (15 schemas eliminated)")
+        
+        # Using custom QuickBooks tool - direct MCP calls
+        logger.info("🔧 Using custom QuickBooks tool with direct MCP calls")
         
         project_client = self._get_project_client()
         
@@ -353,6 +375,7 @@ class FoundryQuickBooksAgent:
             logger.info("Agent will work without web search capabilities")
         
         # Add file search tool if files are available
+        tool_resources = None  # Initialize tool_resources
         if self._file_search_tool is None:
             self._file_search_tool = await self._setup_file_search()
         
@@ -370,18 +393,9 @@ class FoundryQuickBooksAgent:
                 
             logger.info("Added file search capability")
         
-        # Use context manager and create agent with ToolSet (Microsoft recommended approach)
+        # Use context manager and create agent with tools list
         with project_client:
-            # Use toolset approach for MCP as per Microsoft sample
-            if hasattr(self, '_toolset') and self._toolset:
-                logger.info("🔧 Creating agent with ToolSet (Microsoft recommended for MCP)")
-                self.agent = project_client.agents.create_agent(
-                    model="gpt-4o",
-                    name="foundry-QB-agent",
-                    instructions=self._get_agent_instructions(),
-                    toolset=self._toolset
-                )
-            elif tool_resources:
+            if tool_resources:
                 self.agent = project_client.agents.create_agent(
                     model="gpt-4o",
                     name="foundry-QB-agent",
@@ -398,21 +412,9 @@ class FoundryQuickBooksAgent:
                 )
         
         logger.info(f"Created AI Foundry agent: {self.agent.id}")
+        logger.info(f"   Tools: {len(tools)} definitions")
+        logger.info(f"   Custom QuickBooks tool for direct MCP calls")
         
-        # Debug: Log what Azure stored for the agent
-        logger.warning(f"🔍 AGENT DEBUG INFO:")
-        logger.warning(f"   Agent ID: {self.agent.id}")
-        logger.warning(f"   Agent name: {getattr(self.agent, 'name', 'N/A')}")
-        logger.warning(f"   Agent model: {getattr(self.agent, 'model', 'N/A')}")
-        if hasattr(self.agent, 'tools'):
-            logger.warning(f"   Agent tools count: {len(self.agent.tools) if self.agent.tools else 0}")
-            for i, tool in enumerate(self.agent.tools or []):
-                tool_type = getattr(tool, 'type', 'unknown')
-                logger.warning(f"   Tool {i+1}: type={tool_type}")
-                if tool_type == 'mcp':
-                    logger.warning(f"      server_label: {getattr(tool, 'server_label', 'N/A')}")
-                    logger.warning(f"      server_url: {getattr(tool, 'server_url', 'N/A')}")
-                    logger.warning(f"      allowed_tools: {getattr(tool, 'allowed_tools', 'N/A')}")
         return self.agent
     
     def _get_agent_instructions(self) -> str:
@@ -420,42 +422,76 @@ class FoundryQuickBooksAgent:
         return f"""
 You are a QuickBooks Online accounting assistant powered by Azure AI Foundry.
 
-## Your Available Tools (15 total)
+## Your Tool: quickbooks_action
+
+You have ONE powerful tool called `quickbooks_action` that can perform all QuickBooks operations.
+
+**Tool Parameters:**
+- `action`: The QuickBooks operation to perform (see available actions below)
+- `params`: Parameters specific to that action (structure varies by action)
+
+## Available Actions (15 total)
 
 ### Query & Reports
-- **qbo_query** - Run SQL-like queries (e.g., SELECT * FROM Customer WHERE Balance > 0)
+- **qbo_query** - Run SQL-like queries
+  - Example: `{{"action": "qbo_query", "params": {{"query": "SELECT * FROM Customer WHERE Balance > 0"}}}}`
+  
 - **qbo_report** - Generate financial reports (ProfitAndLoss, BalanceSheet, CashFlow, CustomerSales)
+  - Example: `{{"action": "qbo_report", "params": {{"reportType": "ProfitAndLoss", "start_date": "2024-01-01", "end_date": "2024-12-31"}}}}`
+  
 - **qbo_company_info** - Get company information
+  - Example: `{{"action": "qbo_company_info", "params": {{}}}}`
 
 ### Customer Tools
-- **qbo_search_customers** - Search customers (filter by displayName, active, limit)
-- **qbo_get_customer** - Get customer details by ID
-- **qbo_create_customer** - Create new customer (displayName, email, phone, companyName)
+- **qbo_search_customers** - Search customers
+  - Params: displayName (string), active (boolean), limit (number)
+  - Example: `{{"action": "qbo_search_customers", "params": {{"displayName": "Acme", "active": true, "limit": 10}}}}`
+  
+- **qbo_get_customer** - Get customer by ID
+  - Params: id (string)
+  
+- **qbo_create_customer** - Create new customer
+  - Params: displayName (required), email, phone, companyName
+  
 - **qbo_update_customer** - Update existing customer
+  - Params: id (required), plus any fields to update
+  
 - **qbo_delete_customer** - Deactivate customer
+  - Params: id (required)
 
 ### Invoice Tools
-- **qbo_search_invoices** - Search invoices (filter by customerId, docNumber, limit)
-- **qbo_get_invoice** - Get invoice details by ID
-- **qbo_create_invoice** - Create invoice with REQUIRED format:
-  - customerId: The QuickBooks customer ID (get from qbo_search_customers first)
-  - lineItems: Array of line items, EACH must have:
-    - DetailType: "SalesItemLineDetail" (REQUIRED - will fail without this!)
-    - Amount: The line total amount
-    - SalesItemLineDetail: object with ItemRef.value (item ID) or Description
-  - Example lineItems format:
+- **qbo_search_invoices** - Search invoices
+  - Params: customerId (string), docNumber (string), limit (number)
+  
+- **qbo_get_invoice** - Get invoice by ID
+  - Params: id (string)
+  
+- **qbo_create_invoice** - Create invoice with REQUIRED format
+  - Params MUST include:
+    - customerId: The QuickBooks customer ID (get from qbo_search_customers first)
+    - lineItems: Array where EACH item MUST have:
+      - DetailType: "SalesItemLineDetail" (REQUIRED!)
+      - Amount: The line total amount
+      - SalesItemLineDetail: object with ItemRef.value (item ID)
+  - Example:
     ```json
-    [
-      {{
-        "DetailType": "SalesItemLineDetail",
-        "Amount": 500.00,
-        "SalesItemLineDetail": {{
-          "ItemRef": {{"value": "1", "name": "Services"}},
-          "Qty": 1,
-          "UnitPrice": 500.00
-        }}
+    {{
+      "action": "qbo_create_invoice",
+      "params": {{
+        "customerId": "123",
+        "lineItems": [
+          {{
+            "DetailType": "SalesItemLineDetail",
+            "Amount": 500.00,
+            "SalesItemLineDetail": {{
+              "ItemRef": {{"value": "1", "name": "Services"}},
+              "Qty": 1,
+              "UnitPrice": 500.00
+            }}
+          }}
+        ]
       }}
-    ]
+    }}
     ```
 
 ### Other Entity Tools
@@ -464,27 +500,36 @@ You are a QuickBooks Online accounting assistant powered by Azure AI Foundry.
 - **qbo_search_vendors** - Search vendors/suppliers
 - **qbo_search_bills** - Search bills/payables
 
-## Example Queries
-- "Show all customers with outstanding balances" → use qbo_query: SELECT * FROM Customer WHERE Balance > 0
-- "Create a new customer ABC Corp" → use qbo_create_customer
-- "Find all unpaid invoices" → use qbo_search_invoices or qbo_query: SELECT * FROM Invoice WHERE Balance > 0
-- "Run a profit and loss report" → use qbo_report with type ProfitAndLoss
-- "Create an invoice for customer X" → FIRST use qbo_search_customers to get customer ID, THEN use qbo_search_items to get item IDs, THEN use qbo_create_invoice with proper DetailType format
+## Example Usage
+
+**Find outstanding balances:**
+```
+quickbooks_action(action="qbo_query", params={{"query": "SELECT * FROM Customer WHERE Balance > 0"}})
+```
+
+**Create a customer:**
+```
+quickbooks_action(action="qbo_create_customer", params={{"displayName": "ABC Corp", "email": "contact@abc.com"}})
+```
+
+**Create an invoice (3-step workflow):**
+1. Get customer ID: `quickbooks_action(action="qbo_search_customers", params={{"displayName": "ABC Corp"}})`
+2. Get item IDs: `quickbooks_action(action="qbo_search_items", params={{}})`
+3. Create invoice: `quickbooks_action(action="qbo_create_invoice", params={{...}})`
 
 ## CRITICAL: Invoice Creation Workflow
-When asked to create an invoice, ALWAYS follow these steps:
-1. Search for the customer using qbo_search_customers to get the customer ID
-2. Search for items/products using qbo_search_items to get valid item IDs  
-3. Create the invoice with qbo_create_invoice using the EXACT format shown above
-4. NEVER skip the DetailType field - it is REQUIRED by QuickBooks API
+When creating invoices, ALWAYS:
+1. Search for customer first to get customer ID
+2. Search for items to get valid item IDs
+3. Create invoice with EXACT format shown above (DetailType field is REQUIRED!)
+4. NEVER skip the DetailType field
 
 ## CRITICAL: When You Need User Input
-If you need clarification, confirmation, or additional information from the user before proceeding:
+If you need clarification or confirmation:
 - Start your response EXACTLY with: NEEDS_INPUT:
-- Then provide your question or request for information
-- Example: "NEEDS_INPUT: I found customer 'Cay Digital' but there are multiple matches. Which one should I use?"
-- Do NOT proceed with operations if you're uncertain about key details
-- ONLY use NEEDS_INPUT when you genuinely need user confirmation to proceed safely
+- Then provide your question
+- Example: "NEEDS_INPUT: I found multiple customers. Which one?"
+- ONLY use NEEDS_INPUT when you genuinely need user confirmation
 
 Current date: {datetime.datetime.now().isoformat()}
 """
@@ -529,6 +574,13 @@ Current date: {datetime.datetime.now().isoformat()}
         logger.info(f"🚀 STARTING CONVERSATION STREAM")
         logger.info(f"   Thread ID: {thread_id}")
         logger.info(f"   User message: {user_message[:100]}{'...' if len(user_message) > 100 else ''}")
+        
+        # Estimate input token count (rough estimate: 1 token ≈ 4 chars)
+        input_char_count = len(user_message)
+        estimated_input_tokens = input_char_count // 4
+        logger.warning(f"📊 INPUT TO QUICKBOOKS AGENT:")
+        logger.warning(f"   Character count: {input_char_count:,} chars")
+        logger.warning(f"   Estimated tokens: ~{estimated_input_tokens:,} tokens (rough estimate)")
         
         if not self.agent:
             logger.info("   Agent not found, creating new agent...")
@@ -1158,24 +1210,69 @@ Current date: {datetime.datetime.now().isoformat()}
             for tool_call in tool_calls:
                 try:
                     function_name = getattr(getattr(tool_call, "function", None), "name", "unknown")
-                    arguments = getattr(getattr(tool_call, "function", None), "arguments", "{}")
-                    logger.info("Processing tool output call %s with args %s", function_name, arguments)
+                    arguments_str = getattr(getattr(tool_call, "function", None), "arguments", "{}")
+                    logger.info(f"Processing tool call: {function_name}")
+                    logger.debug(f"   Arguments: {arguments_str}")
 
-                    dummy_result = {
-                        "status": "success",
-                        "message": f"Tool '{function_name}' executed (simulated).",
-                        "data": {
-                            "result": "simulated_result",
-                            "arguments": arguments,
-                        },
+                    # Handle our custom quickbooks_action tool
+                    if function_name == "quickbooks_action":
+                        try:
+                            arguments = json.loads(arguments_str)
+                            action = arguments.get("action")
+                            params = arguments.get("params", {})
+                            
+                            logger.info(f"🔧 Executing QuickBooks action: {action}")
+                            logger.debug(f"   Params: {json.dumps(params, indent=2)}")
+                            
+                            # Make direct MCP call
+                            result = await self._mcp_client.call_tool(action, params)
+                            
+                            logger.info(f"✅ QuickBooks action succeeded: {action}")
+                            
+                            tool_outputs.append({
+                                "tool_call_id": tool_call.id,
+                                "output": json.dumps(result),
+                            })
+                            
+                        except Exception as mcp_error:
+                            logger.error(f"❌ QuickBooks action failed: {action}")
+                            logger.error(f"   Error: {mcp_error}")
+                            
+                            error_result = {
+                                "error": str(mcp_error),
+                                "status": "failed",
+                                "action": action
+                            }
+                            tool_outputs.append({
+                                "tool_call_id": tool_call.id,
+                                "output": json.dumps(error_result),
+                            })
+                    else:
+                        # Fallback for other tools (shouldn't happen with our setup)
+                        logger.warning(f"Unknown tool call: {function_name}")
+                        dummy_result = {
+                            "status": "success",
+                            "message": f"Tool '{function_name}' executed (simulated).",
+                            "data": {
+                                "result": "simulated_result",
+                                "arguments": arguments_str,
+                            },
+                        }
+                        tool_outputs.append({
+                            "tool_call_id": tool_call.id,
+                            "output": json.dumps(dummy_result),
+                        })
+                        
+                except Exception as exc:
+                    logger.error(f"Error processing tool call {getattr(tool_call, 'id', '?')}: {exc}")
+                    error_result = {
+                        "error": str(exc),
+                        "status": "failed"
                     }
-
                     tool_outputs.append({
                         "tool_call_id": tool_call.id,
-                        "output": json.dumps(dummy_result),
+                        "output": json.dumps(error_result),
                     })
-                except Exception as exc:
-                    logger.error("Error constructing tool output for call %s: %s", getattr(tool_call, "id", "?"), exc)
 
             if tool_outputs:
                 logger.debug("Submitting %d tool outputs", len(tool_outputs))
