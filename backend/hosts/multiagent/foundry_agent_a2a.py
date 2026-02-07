@@ -261,11 +261,11 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
         )
         
         # Maximum characters for memory search summaries (PER RESULT)
-        # Default 4000 chars per result - enough for full invoice content including totals
-        # With top_k=2, max context injection is 8000 chars which is reasonable
+        # Default 2000 chars per result - enough for key invoice details but not bloated
+        # With top_k=2, max context injection is ~4000 chars (~1000 tokens)
         self.memory_summary_max_chars = max(
             200,
-            normalize_env_int(os.environ.get("A2A_MEMORY_SUMMARY_MAX_CHARS"), 4000),
+            normalize_env_int(os.environ.get("A2A_MEMORY_SUMMARY_MAX_CHARS"), 2000),
         )
 
         self._azure_blob_client = None
@@ -3167,11 +3167,13 @@ Answer with just JSON:
         # Always search memory for relevant context (retrieval is always enabled)
         # The memory toggle only controls STORAGE of new interactions, not retrieval
         try:
+            # Reduce top_k=1 for QuickBooks to avoid duplicate context (saves ~500-1000 tokens)
+            top_k_results = 1 if (target_agent_name and 'quickbooks' in target_agent_name.lower()) else 2
             memory_results = await self._search_relevant_memory(
                 query=message,
                 context_id=session_context.contextId,
                 agent_name=None,
-                top_k=2
+                top_k=top_k_results
             )
             
             if memory_results:
@@ -3278,8 +3280,10 @@ Answer with just JSON:
                             if content_summary:
                                 # Truncate long content for context efficiency
                                 # Use configured max_chars (default 2000) - enough for invoices/documents
-                                if len(content_summary) > self.memory_summary_max_chars:
-                                    content_summary = content_summary[:self.memory_summary_max_chars] + "..."
+                                # For QuickBooks agent, reduce to 500 chars since structured data is verbose
+                                max_chars = 500 if target_agent_name and 'quickbooks' in target_agent_name.lower() else self.memory_summary_max_chars
+                                if len(content_summary) > max_chars:
+                                    content_summary = content_summary[:max_chars] + "..."
                                 context_parts.append(f"  {i}. From {agent_name}: {content_summary}")
                             else:
                                 print(f"⚠️ No content found in memory result {i} from {agent_name}")
