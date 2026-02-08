@@ -4027,10 +4027,22 @@ Answer with just JSON:
                 except Exception as e:
                     log_debug(f"⚠️ [HITL RESUME] Failed to emit completed status: {e}")
                 
-                # Force single-agent workflow mode to resume with the pending agent
+                # Enable agent mode for orchestration
                 agent_mode = True
-                workflow = f"1. [{pending_agent}] Resume with user input: {enhanced_message}"
-                workflow_goal = f"Complete the pending task with user input: {enhanced_message}"
+                
+                # CRITICAL FIX: Do NOT create a synthetic one-step workflow here!
+                # The workflow was already restored from the saved plan by foundry_host_manager.py
+                # Creating a synthetic workflow here would overwrite the full multi-step workflow
+                # and cause the orchestrator to mark the goal as "completed" after just the HITL step.
+                # If no workflow was passed in (edge case), use the saved plan's workflow
+                if not workflow and session_context.current_plan and session_context.current_plan.workflow:
+                    workflow = session_context.current_plan.workflow
+                    log_info(f"🔄 [HITL RESUME] Restored workflow from saved plan ({len(workflow)} chars)")
+                if not workflow_goal and session_context.current_plan and session_context.current_plan.workflow_goal:
+                    workflow_goal = session_context.current_plan.workflow_goal
+                    log_info(f"🔄 [HITL RESUME] Restored workflow_goal from saved plan")
+                
+                log_info(f"🔄 [HITL RESUME] Using workflow with {len(workflow) if workflow else 0} chars (not synthetic)")
                 
                 # Clear the pending_input_agent so subsequent requests don't loop
                 # (The agent will set it again if it needs more input)
