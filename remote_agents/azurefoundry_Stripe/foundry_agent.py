@@ -192,32 +192,52 @@ class FoundryStripeAgent:
 
 ## Your Capabilities
 
-You have access to Stripe MCP tools that can:
-- **Customer Management**: Create, list, and search customers
-- **Products & Prices**: Create and list products and prices
-- **Payment Links**: Create hosted checkout payment links
-- **Invoices**: Create, list, finalize invoices and add line items
-- **Balance & Payments**: Check balance, create refunds, list payment intents
-- **Subscriptions**: List, update, and cancel subscriptions
-- **Coupons & Disputes**: Manage coupons and disputes
+You have access to Stripe MCP tools for:
+- **Customer Management**: create_customer, list_customers
+- **Invoices**: create_invoice, list_invoices, create_invoice_item, finalize_invoice
+- **Balance & Payments**: retrieve_balance, create_refund, list_payment_intents
+- **Products & Prices**: create_product, list_products, create_price, list_prices (rarely needed)
 
-## General Guidelines
+## KEY RULES:
 
-- Use the appropriate Stripe MCP tools for each task
-- If you need information that's not provided, ask for it using NEEDS_INPUT
-- Be efficient with tool calls - don't make unnecessary searches
-- Provide clear summaries of actions taken
+1. **USE THE DATA PROVIDED** - Don't ask for info already in the context
+2. **Be MINIMAL** - Use the FEWEST tool calls possible
+3. **Don't ask for confirmation** - If you have the data, just do the task
 
-## Response Format
-- Use clear headers and bullet points
-- Include Stripe IDs for reference
-- Summarize results concisely
+## CRITICAL: CREATING INVOICES (3 STEPS ONLY!)
 
-## When You Need User Input
-If you need clarification or confirmation:
-- Start your response EXACTLY with: NEEDS_INPUT:
-- Then provide your question
-- Example: "NEEDS_INPUT: What email address should I use for this customer?"
+⚠️ DO NOT create products or prices for invoices! Use amount directly.
+
+**Step 1: Find or create customer**
+```
+list_customers with: {"email": "customer@example.com"}
+```
+If not found: create_customer with email
+
+**Step 2: Create invoice + add items**
+```
+create_invoice with: {"customer": "cus_xxxxx"}
+```
+Then for EACH line item:
+```
+create_invoice_item with: {"invoice": "in_xxxxx", "amount": 32000, "description": "Item"}
+```
+- amount is in CENTS (100 = $1.00, so $320 = 32000)
+- DO NOT use create_product or create_price!
+
+**Step 3: Finalize (optional)**
+```
+finalize_invoice with: {"invoice": "in_xxxxx"}
+```
+
+TOTAL: 3-5 tool calls max for an invoice!
+
+## ASKING FOR INPUT:
+
+Only if information is genuinely MISSING:
+```
+NEEDS_INPUT: Your specific question here
+```
 """
     
     async def create_thread(self) -> str:
@@ -259,16 +279,16 @@ If you need clarification or confirmation:
                 thread_id=thread_id, 
                 agent_id=self.agent.id,
                 tool_resources=mcp_tool.resources,
-                max_prompt_tokens=25000,
-                truncation_strategy={"type": "last_messages", "last_messages": 3}
+                max_prompt_tokens=8000,
+                truncation_strategy={"type": "last_messages", "last_messages": 4}
             )
         else:
             logger.info("Creating run without MCP tool_resources")
             run = client.runs.create(
                 thread_id=thread_id, 
                 agent_id=self.agent.id,
-                max_prompt_tokens=25000,
-                truncation_strategy={"type": "last_messages", "last_messages": 3}
+                max_prompt_tokens=8000,
+                truncation_strategy={"type": "last_messages", "last_messages": 4}
             )
         
         logger.info(f"   Run created: {run.id}")
@@ -372,14 +392,14 @@ If you need clarification or confirmation:
                                     agent_id=self.agent.id,
                                     tool_resources=mcp_tool.resources,
                                     max_prompt_tokens=25000,
-                                    truncation_strategy={"type": "last_messages", "last_messages": 3}
+                                    truncation_strategy={"type": "last_messages", "last_messages": 8}
                                 )
                             else:
                                 run = client.runs.create(
                                     thread_id=thread_id, 
                                     agent_id=self.agent.id,
                                     max_prompt_tokens=25000,
-                                    truncation_strategy={"type": "last_messages", "last_messages": 3}
+                                    truncation_strategy={"type": "last_messages", "last_messages": 8}
                                 )
                             logger.info(f"   New run created: {run.id}")
                             iterations = 0  # Reset iteration counter for the new run

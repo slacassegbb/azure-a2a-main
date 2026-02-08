@@ -204,14 +204,14 @@ To minimize API costs and response times, ALWAYS use filters when possible:
                 agent_id=self.agent.id,
                 tool_resources=self._mcp_tool_resources,
                 max_prompt_tokens=25000,
-                truncation_strategy={"type": "last_messages", "last_messages": 3}
+                truncation_strategy={"type": "last_messages", "last_messages": 8}
             )
         else:
             run = client.runs.create(
                 thread_id=thread_id, 
                 agent_id=self.agent.id,
                 max_prompt_tokens=25000,
-                truncation_strategy={"type": "last_messages", "last_messages": 3}
+                truncation_strategy={"type": "last_messages", "last_messages": 8}
             )
         
         logger.info(f"   Run created: {run.id}")
@@ -314,14 +314,14 @@ To minimize API costs and response times, ALWAYS use filters when possible:
                                     agent_id=self.agent.id,
                                     tool_resources=self._mcp_tool_resources,
                                     max_prompt_tokens=25000,
-                                    truncation_strategy={"type": "last_messages", "last_messages": 3}
+                                    truncation_strategy={"type": "last_messages", "last_messages": 8}
                                 )
                             else:
                                 run = client.runs.create(
                                     thread_id=thread_id, 
                                     agent_id=self.agent.id,
                                     max_prompt_tokens=25000,
-                                    truncation_strategy={"type": "last_messages", "last_messages": 3}
+                                    truncation_strategy={"type": "last_messages", "last_messages": 8}
                                 )
                             logger.info(f"   New run created: {run.id}")
                             iterations = 0  # Reset iteration counter for the new run
@@ -398,14 +398,14 @@ To minimize API costs and response times, ALWAYS use filters when possible:
                 agent_id=self.agent.id,
                 tool_resources=self._mcp_tool_resources,
                 max_prompt_tokens=25000,
-                truncation_strategy={"type": "last_messages", "last_messages": 3}
+                truncation_strategy={"type": "last_messages", "last_messages": 8}
             )
         else:
             run = client.runs.create(
                 thread_id=thread_id, 
                 agent_id=self.agent.id,
                 max_prompt_tokens=25000,
-                truncation_strategy={"type": "last_messages", "last_messages": 3}
+                truncation_strategy={"type": "last_messages", "last_messages": 8}
             )
         
         logger.info(f"   Run created: {run.id}")
@@ -503,14 +503,14 @@ To minimize API costs and response times, ALWAYS use filters when possible:
                                     agent_id=self.agent.id,
                                     tool_resources=self._mcp_tool_resources,
                                     max_prompt_tokens=25000,
-                                    truncation_strategy={"type": "last_messages", "last_messages": 3}
+                                    truncation_strategy={"type": "last_messages", "last_messages": 8}
                                 )
                             else:
                                 run = client.runs.create(
                                     thread_id=thread_id, 
                                     agent_id=self.agent.id,
                                     max_prompt_tokens=25000,
-                                    truncation_strategy={"type": "last_messages", "last_messages": 3}
+                                    truncation_strategy={"type": "last_messages", "last_messages": 8}
                                 )
                             logger.info(f"   New run created: {run.id}")
                             iterations = 0

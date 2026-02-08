@@ -437,81 +437,76 @@ class FoundryQuickBooksAgent:
         return f"""
 You are a QuickBooks Online assistant. Current date: {datetime.datetime.now().isoformat()}
 
-## 🚨 CRITICAL: CREATING BILLS - WORKFLOW
+## 🚨 CRITICAL: BILL vs INVOICE - KNOW THE DIFFERENCE!
 
-When asked to create a BILL for a vendor:
-1. Call qbo_create_vendor with the vendor name - it handles duplicates automatically and returns the vendor ID
-2. Call qbo_search_accounts to get an expense account ID (or use "7" as default)
-3. Call qbo_create_bill with vendorId, lineItems (with amount from invoice), and dueDate
-4. Return confirmation - DO NOT ask user for more info if invoice data is provided
+**BILL (qbo_create_bill)** = Money YOU OWE to a VENDOR
+- Use when: "Create bill for vendor", "Record vendor invoice", "Enter payable", "Pay U1 Software"
+- The VENDOR sent YOU an invoice that you need to pay
+- Example: Vendor U1 Software LLC sends you an invoice for $18,828
 
-## CRITICAL: BILL vs INVOICE - KNOW THE DIFFERENCE!
+**INVOICE (qbo_create_invoice)** = Money a CUSTOMER OWES YOU  
+- Use when: "Invoice the customer", "Bill the client", "Create invoice for Cay Digital"
+- YOU are billing a CUSTOMER for your services
+- Example: You invoice Cay Digital LLC $18,828 for work you did
 
-- **BILL (qbo_create_bill)** = Money YOU OWE to a VENDOR. Created from vendor invoices you receive.
-  - Use when: "Create bill for vendor", "Record vendor invoice", "Enter payable"
-  - Requires: VendorRef, Line array with proper structure (see below)
+## 🚨 WORKFLOW: CREATING A BILL (Vendor Payable)
 
-- **INVOICE (qbo_create_invoice)** = Money a CUSTOMER OWES YOU. What you send to bill clients.
-  - Use when: "Create invoice for customer", "Bill the client", "Invoice the customer"
-  - Requires: customer_id, line items
+When asked to "create a BILL" or record a vendor invoice:
 
-## 🚨 CRITICAL: BILL LINE ITEM STRUCTURE
+1. **Get/Create Vendor**: Call qbo_create_vendor with displayName - it returns existing or creates new
+2. **Create Bill**: Call qbo_create_bill with the simplified format:
 
-When calling qbo_create_bill, EACH line item MUST have:
-- Amount: The line amount (number)
-- DetailType: MUST be exactly "AccountBasedExpenseLineDetail" or "ItemBasedExpenseLineDetail"
-- If DetailType is "AccountBasedExpenseLineDetail", include:
-  AccountBasedExpenseLineDetail with AccountRef containing value (the account ID)
-- If DetailType is "ItemBasedExpenseLineDetail", include:
-  ItemBasedExpenseLineDetail with ItemRef containing value (the item ID)
-
-**Example Bill Creation (use account 7 for Expenses by default):**
 ```json
 {{
-  "VendorRef": {{ "value": "123" }},
-  "Line": [{{
-    "Amount": 500.00,
-    "DetailType": "AccountBasedExpenseLineDetail",
-    "AccountBasedExpenseLineDetail": {{
-      "AccountRef": {{ "value": "7" }}
-    }},
-    "Description": "Software subscription"
-  }}],
-  "DocNumber": "INV-001",
-  "DueDate": "2025-02-15"
+  "vendorId": "123",
+  "lineItems": [
+    {{ "amount": 3200.00, "description": "Prompt engineering - 160 hours @ $20/hr" }},
+    {{ "amount": 3872.00, "description": "Quality assurance - 176 hours @ $22/hr" }}
+  ],
+  "dueDate": "2025-02-15",
+  "docNumber": "2512-036-1"
 }}
 ```
 
-**To find a valid Account ID:**
-1. Call qbo_search_accounts with type "Expense" to get expense accounts
-2. Use the Id from the response as AccountRef.value
-3. If unsure, use account "7" (common expense account) or search first
+That's it! The tool handles all the QuickBooks API complexity internally.
 
-⚠️ If the request says "BILL" or mentions a vendor invoice, use qbo_create_bill.
-⚠️ If the request says "INVOICE" or mentions billing a customer, use qbo_create_invoice.
+## 🚨 WORKFLOW: CREATING AN INVOICE (Customer Receivable)
 
-## 🚨 ASKING USER QUESTIONS - USE THIS EXACT FORMAT
+When asked to "create an INVOICE" or bill a customer:
 
-ONLY ask questions if the information is NOT already in the context. If vendor name, address, amounts, or line items are provided, USE THEM.
+1. **Get/Create Customer**: Call qbo_search_customers or qbo_create_customer
+2. **Create Invoice**: Call qbo_create_invoice:
 
-If you truly need information that is NOT provided, output ONLY this block:
+```json
+{{
+  "customerId": "77",
+  "lineItems": [
+    {{ "amount": 3200.00, "description": "Software development services" }},
+    {{ "amount": 1500.00, "description": "Cloud hosting" }}
+  ],
+  "dueDate": "2025-02-15",
+  "docNumber": "INV-2025-001"
+}}
+```
+
+## KEY RULES:
+
+1. **USE THE DATA PROVIDED** - Don't ask for info already in context
+2. **Search ONCE** - Use filters like displayName, don't retry multiple times
+3. **CREATE if not found** - If search returns nothing, CREATE the entity
+4. **qbo_create_vendor handles duplicates** - It returns existing vendor if one exists
+5. **Don't ask for confirmation** - If data is provided, just create the bill/invoice
+6. **Default account for bills is "7"** - No need to search for expense accounts
+
+## ASKING FOR INPUT (only if truly needed):
+
+If information is genuinely MISSING (not in the context), use:
 
 ```NEEDS_INPUT
-Your question here
+Your specific question here
 ```END_NEEDS_INPUT
 
-⚠️ If you ask a question without this format, it will be IGNORED and the workflow will fail!
-
-## Key Rules:
-1. USE the data provided in the context - don't ask for info that's already there
-2. Always use filter parameters in search tools (displayName, active, type, etc)
-3. Search once with broad filters, not multiple specific searches
-4. If search returns nothing, CREATE the entity using qbo_create_* tools - don't retry search or ask user
-5. When creating entities, only required fields are needed - optional fields can be omitted
-6. **IMPORTANT: Always use qbo_create_vendor for vendors** - it handles duplicates automatically and returns existing vendor if one exists
-7. After getting/creating a vendor, IMMEDIATELY create the bill - don't ask for confirmation
-
-Your tools handle: customers, invoices, items, accounts, vendors, bills, payments, employees, estimates, purchases, reports.
+DO NOT ask if the invoice data is already provided in the context!
 """
     
     async def create_thread(self, thread_id: Optional[str] = None) -> AgentThread:
@@ -586,29 +581,21 @@ Your tools handle: customers, invoices, items, accounts, vendors, bills, payment
         mcp_tool = getattr(self, '_mcp_tool', None)
         
         # Create run with tool_resources for MCP (as per Microsoft sample)
-        # Note: truncation_strategy helps reduce prompt size between workflow steps
-        # However, within a single run with 10+ tool calls, tokens accumulate and can hit S0 TPM limits
-        # The retry logic below handles rate limit errors with exponential backoff
+        # Truncation set to last 8 messages to balance context vs token usage
         if mcp_tool and hasattr(mcp_tool, 'resources'):
-            logger.info("🔧 Creating run with MCP tool_resources (truncation: last 4 messages)")
+            logger.info("🔧 Creating run with MCP tool_resources (truncation: last 8 messages)")
             run = client.runs.create(
                 thread_id=thread_id, 
                 agent_id=self.agent.id,
                 tool_resources=mcp_tool.resources,
-                truncation_strategy={
-                    "type": "last_messages",
-                    "last_messages": 4
-                }
+                truncation_strategy={"type": "last_messages", "last_messages": 8}
             )
         else:
-            logger.info("Creating run without MCP tool_resources (truncation: last 4 messages)")
+            logger.info("Creating run without MCP tool_resources (truncation: last 8 messages)")
             run = client.runs.create(
                 thread_id=thread_id, 
                 agent_id=self.agent.id,
-                truncation_strategy={
-                    "type": "last_messages",
-                    "last_messages": 4
-                }
+                truncation_strategy={"type": "last_messages", "last_messages": 8}
             )
         
         logger.info(f"   Run completed: {run.id}")

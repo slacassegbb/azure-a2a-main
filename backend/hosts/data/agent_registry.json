@@ -314,7 +314,7 @@
     "name": "AI Foundry QuickBooks Agent",
     "description": "An intelligent QuickBooks Online agent for accounting and financial management. Manage customers, invoices, bills, vendors, employees, and generate financial reports.",
     "version": "1.0.0",
-    "url": "http://localhost:8020/",
+    "url": "https://azurefoundry-quickbooks.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
     "defaultInputModes": [
       "text"
     ],
@@ -393,7 +393,7 @@
     "name": "AI Foundry Stripe Agent",
     "description": "Intelligent agent for Stripe payment processing - customers, payments, subscriptions, invoices, and balance.",
     "version": "1.0.0",
-    "url": "http://localhost:9030/",
+    "url": "https://azurefoundry-stripe.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
     "defaultInputModes": [
       "text"
     ],
@@ -811,7 +811,7 @@
     "name": "Teams Agent",
     "description": "Human-in-the-loop agent via Microsoft Teams. Can SEND messages to users, WAIT for human responses, and ESCALATE decisions requiring human judgment. Uses A2A input_required state for pause/resume workflows.",
     "version": "1.0.0",
-    "url": "http://localhost:3978/",
+    "url": "https://azurefoundry-teams.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
     "defaultInputModes": [
       "text"
     ],

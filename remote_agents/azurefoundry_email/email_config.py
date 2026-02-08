@@ -355,7 +355,7 @@ def get_emails(
     Fetch emails from the inbox using Microsoft Graph API.
     
     Args:
-        count: Number of emails to retrieve (default: 10, max: 50)
+        count: Number of emails to retrieve (default: 10, max: 200)
         unread_only: If True, only fetch unread emails
         from_address: Filter by sender email address (partial match)
         subject_contains: Filter by subject line (partial match)
@@ -383,7 +383,7 @@ def get_emails(
         
         # Build the Graph API URL with filters
         user_email = credentials["sender_email"]
-        count = min(count, 50)  # Cap at 50
+        count = min(count, 200)  # Cap at 200 (Graph API supports up to 999)
         
         # Build filter query
         filters = []
