@@ -451,11 +451,11 @@ export function ChatHistorySidebar({ isCollapsed, onToggle }: Props) {
                     <TooltipTrigger asChild>
                       <Button 
                         variant="ghost"
-                        size="icon"
-                        className="h-7 w-7 rounded-md hover:bg-destructive/10 hover:text-destructive"
+                        size="sm"
+                        className="h-7 px-2 text-xs rounded-md hover:bg-destructive/10 hover:text-destructive"
                         onClick={handleClearAllChats}
                       >
-                        <Trash2 size={14} />
+                        Clear All
                       </Button>
                     </TooltipTrigger>
                     <TooltipContent side="right">Clear all chats</TooltipContent>
