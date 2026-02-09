@@ -199,8 +199,8 @@ async def handle_teams_webhook(request: Request) -> JSONResponse:
         # Get auth header
         auth_header = request.headers.get("Authorization", "")
         
-        # Backend URL for forwarding human responses
-        backend_url = os.environ.get("BACKEND_URL", "http://localhost:12000")
+        # Backend URL for forwarding human responses (check both env var names for compatibility)
+        backend_url = os.environ.get("BACKEND_SERVER_URL") or os.environ.get("BACKEND_URL", "http://localhost:12000")
         
         async def process_activity(turn_context):
             """Process the incoming activity."""
