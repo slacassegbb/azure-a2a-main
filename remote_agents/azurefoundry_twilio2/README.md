@@ -1,28 +1,34 @@
 # Twilio SMS Agent
 
-A2A Remote Agent for sending SMS text messages via Twilio, powered by Azure AI Foundry.
+A2A Remote Agent for **two-way SMS communication** via Twilio, powered by Azure AI Foundry.
 
 ## Overview
 
-This agent uses **Azure AI Foundry** with **function calling** to send SMS messages via the Twilio API. It's designed to be used as the **final step in a workflow** to deliver results, summaries, or alerts to users' phones.
+This agent uses **Azure AI Foundry** with **function calling** to send and receive SMS messages via the Twilio API. It can be used for:
+- **Sending** SMS notifications and alerts to users
+- **Receiving** SMS replies from users  
+- **Two-way SMS conversations** with users
+- **Monitoring** incoming messages
 
 ## Architecture
 
 ```
 User Request → Host Orchestrator → Previous Agents → Twilio SMS Agent → SMS to User
+                                                     ↑
+                                              User SMS Reply
 ```
 
 The agent:
-1. Receives a message from the orchestrator (e.g., "Send this summary: Your balance is $1,234.56")
-2. Uses Azure AI Foundry with GPT-4o to process the request
-3. Calls the `send_sms` function to deliver the message via Twilio
-4. Returns confirmation of successful delivery
+1. **Send**: Receives a message from the orchestrator and delivers it via Twilio SMS
+2. **Receive**: Retrieves recent incoming SMS messages from Twilio's message log
+3. Returns confirmation and message details
 
 ## Skills
 
 | Skill | Description |
 |-------|-------------|
 | **Send SMS Message** | Send an SMS text message to a phone number via Twilio |
+| **Receive SMS Messages** | Retrieve and read recent incoming SMS messages |
 | **User Notification** | Notify a user via SMS with workflow results or updates |
 
 ## Configuration
@@ -76,19 +82,48 @@ Options:
   --port INTEGER  Port for A2A server (default: 8016)
 ```
 
-## Function Tool
+## Function Tools
 
-The agent has one function tool available:
+The agent has two function tools available:
 
 ### `send_sms`
 
 Sends an SMS message via Twilio.
 
 **Parameters:**
-- `message` (required): The SMS message content
+- `message` (required): The SMS message content (max ~1600 characters)
 - `to_number` (optional): Recipient phone number in E.164 format (e.g., +15147715943)
 
+**Example:**
+```python
+send_sms(
+    message="Your account balance is $1,234.56",
+    to_number="+15147715943"
+)
+```
+
+### `receive_sms`
+
+Retrieves recent incoming SMS messages from Twilio.
+
+**Parameters:**
+- `from_number` (optional): Filter messages from a specific phone number
+- `limit` (optional): Maximum number of messages to retrieve (default: 10, max: 50)
+
+**Example:**
+```python
+# Get last 10 messages from any sender
+receive_sms()
+
+# Get last 5 messages from specific number
+receive_sms(from_number="+15147715943", limit=5)
+```
+
+**Output:** Messages will be printed to the terminal with details including sender, timestamp, and content.
+
 ## Example Workflow Usage
+
+### Example 1: Send SMS Notification
 
 In a multi-agent workflow:
 
@@ -99,7 +134,28 @@ workflow:
     - name: stripe
       task: "Get current account balance"
     - name: twilio
-      task: "Send the balance summary via SMS"
+      task: "Send the balance summary via SMS to +15147715943"
+```
+
+### Example 2: Two-Way SMS Conversation
+
+```yaml
+workflow:
+  name: "SMS Conversation"
+  agents:
+    - name: twilio
+      task: "Check if any users have replied to our SMS"
+    - name: processor
+      task: "Process the user's reply and determine next action"
+    - name: twilio
+      task: "Send a follow-up SMS based on the user's response"
+```
+
+### Example 3: Monitor Specific User Replies
+
+```
+User: "Check if John (+15147715943) has replied to my text"
+Twilio Agent: Uses receive_sms(from_number="+15147715943") to check for replies
 ```
 
 The orchestrator will:

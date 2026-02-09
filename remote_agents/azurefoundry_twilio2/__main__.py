@@ -99,12 +99,25 @@ def create_a2a_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
             id='send_sms',
             name='Send SMS Message',
             description="Send an SMS text message to a phone number via Twilio. Can receive message content from previous workflow steps and deliver it via SMS notification.",
-            tags=['sms', 'text', 'message', 'notification', 'twilio', 'phone'],
+            tags=['sms', 'text', 'message', 'notification', 'twilio', 'phone', 'send'],
             examples=[
                 'Send SMS: Your account balance is $1,234.56',
                 'Text me a summary of the results',
                 'Send a notification via SMS',
                 'Message my phone with the workflow output'
+            ],
+        ),
+        AgentSkill(
+            id='receive_sms',
+            name='Receive SMS Messages',
+            description="Retrieve and read recent SMS messages received by this Twilio number. Check for user replies, monitor incoming messages, and retrieve conversation history.",
+            tags=['sms', 'text', 'message', 'receive', 'inbox', 'twilio', 'phone', 'read'],
+            examples=[
+                'Check my SMS messages',
+                'Has anyone texted me?',
+                'Show me recent SMS replies',
+                'Read messages from +15147715943',
+                'Get the last 10 SMS messages'
             ],
         ),
         AgentSkill(
@@ -124,7 +137,7 @@ def create_a2a_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
     # Create agent card
     agent_card = AgentCard(
         name='Twilio SMS Agent',
-        description="A notification agent powered by Azure AI Foundry that sends SMS text messages via Twilio. Use this agent to deliver workflow results, send alerts, or notify users via SMS. Ideal as the final step in a workflow to deliver summaries or confirmations to users' phones.",
+        description="A two-way SMS communication agent powered by Azure AI Foundry and Twilio. Send SMS messages to users and retrieve incoming messages. Perfect for notifications, alerts, user replies, and two-way SMS conversations. Can be used as the final step in a workflow to deliver results, or to monitor user responses.",
         url=resolve_agent_url(host, port),
         version='1.0.0',
         defaultInputModes=['text'],

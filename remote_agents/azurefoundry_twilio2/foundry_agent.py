@@ -151,6 +151,72 @@ class FoundryTwilioAgent:
                 "error": str(e)
             }
     
+    def receive_sms(self, from_number: Optional[str] = None, limit: int = 10) -> Dict:
+        """
+        Retrieve recent SMS messages received by this Twilio number.
+        
+        Args:
+            from_number: Optional filter to only get messages from a specific phone number
+            limit: Maximum number of messages to retrieve (default: 10, max: 50)
+            
+        Returns:
+            Dict with success status and list of messages
+        """
+        try:
+            client = self._get_twilio_client()
+            
+            # Limit to reasonable bounds
+            limit = min(max(1, limit), 50)
+            
+            # Build filter parameters
+            filter_params = {
+                'to': self.twilio_from_number,  # Messages received by our Twilio number
+                'limit': limit
+            }
+            
+            if from_number:
+                filter_params['from_'] = from_number
+            
+            # Retrieve messages
+            messages = client.messages.list(**filter_params)
+            
+            # Format message data
+            message_list = []
+            for msg in messages:
+                message_list.append({
+                    "message_sid": msg.sid,
+                    "from": msg.from_,
+                    "to": msg.to,
+                    "body": msg.body,
+                    "status": msg.status,
+                    "direction": msg.direction,
+                    "date_sent": msg.date_sent.isoformat() if msg.date_sent else None,
+                    "date_created": msg.date_created.isoformat() if msg.date_created else None
+                })
+            
+            result = {
+                "success": True,
+                "message_count": len(message_list),
+                "messages": message_list
+            }
+            
+            logger.info(f"✅ Retrieved {len(message_list)} SMS message(s)")
+            return result
+            
+        except TwilioRestException as e:
+            logger.error(f"❌ Twilio API error: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "error_code": e.code if hasattr(e, 'code') else None
+            }
+        except Exception as e:
+            logger.error(f"❌ Unexpected error retrieving SMS: {e}")
+            return {
+                "success": False,
+                "error": str(e)
+            }
+    
     def _get_send_sms_tool_definition(self) -> Dict:
         """Get the function tool definition for send_sms."""
         return {
@@ -183,9 +249,44 @@ If no phone number is provided, the default configured number will be used.""",
                 }
             }
         }
+    
+    def _get_receive_sms_tool_definition(self) -> Dict:
+        """Get the function tool definition for receive_sms."""
+        return {
+            "type": "function",
+            "function": {
+                "name": "receive_sms",
+                "description": """Retrieve recent SMS messages received by this Twilio number.
+                
+Use this function to:
+- Check for replies from users after sending them an SMS
+- Read incoming messages from a specific phone number
+- Monitor recent SMS conversations
+- Get the latest inbound messages
+
+This retrieves messages from Twilio's message log, showing what users have texted to your Twilio number.""",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "from_number": {
+                            "type": "string",
+                            "description": "Optional filter to only retrieve messages from a specific phone number in E.164 format (e.g., +15147715943). If not provided, retrieves from all senders."
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of recent messages to retrieve. Default is 10, maximum is 50.",
+                            "minimum": 1,
+                            "maximum": 50
+                        }
+                    },
+                    "required": [],
+                    "additionalProperties": False
+                }
+            }
+        }
         
     async def create_agent(self) -> Agent:
-        """Create the AI Foundry agent with SMS sending capabilities."""
+        """Create the AI Foundry agent with SMS sending and receiving capabilities."""
         if self.agent:
             logger.info("Twilio SMS agent already exists, returning existing instance")
             return self.agent
@@ -199,6 +300,10 @@ If no phone number is provided, the default configured number will be used.""",
         # Add the send_sms function tool
         tools.append(self._get_send_sms_tool_definition())
         logger.info("Added send_sms function tool")
+        
+        # Add the receive_sms function tool
+        tools.append(self._get_receive_sms_tool_definition())
+        logger.info("Added receive_sms function tool")
         
         project_client = self._get_project_client()
         
@@ -215,20 +320,27 @@ If no phone number is provided, the default configured number will be used.""",
     
     def _get_agent_instructions(self) -> str:
         """Get the agent instructions for SMS messaging."""
-        return f"""You are an SMS notification agent powered by Azure AI Foundry and Twilio.
+        return f"""You are an SMS communication agent powered by Azure AI Foundry and Twilio.
 
 ## Your Purpose
-You send SMS text messages to users. You are typically used as the final step in a multi-agent workflow to deliver results, confirmations, or notifications to users' phones.
+You send and receive SMS text messages to/from users. You can be used for two-way SMS conversations, notifications, and monitoring user responses.
 
 ## Your Capabilities
-You have ONE tool available:
+You have TWO tools available:
 - **send_sms**: Send an SMS message to a phone number
+- **receive_sms**: Retrieve recent SMS messages received by this Twilio number
 
 ## CRITICAL: How to Process Requests
 
-1. **Extract the message content from the user's request**: The user will provide text that needs to be sent as an SMS. You MUST extract this content.
+### When SENDING messages:
+1. **Extract the message content from the user's request**: The user will provide text that needs to be sent as an SMS.
 2. **Compose a clear, concise SMS from that content**: Adapt it for SMS format (brief and to the point)
 3. **Call the send_sms function with the message parameter**: The `message` parameter is REQUIRED and must contain the actual text to send.
+
+### When RECEIVING messages:
+1. **Check for recent incoming SMS**: Use receive_sms to retrieve messages sent to your Twilio number
+2. **Filter by phone number if needed**: Optionally specify a from_number to see messages from a specific sender
+3. **Report the messages back**: Display the message content, sender, and timestamp
 
 ## IMPORTANT: The `message` parameter MUST NOT be empty!
 
@@ -257,6 +369,13 @@ For a workflow completion:
 For an alert:
 "ALERT: Unusual activity detected on your account. Please review your recent transactions."
 
+## Use Cases for Receiving Messages
+
+- Check if a user has replied to your SMS
+- Monitor incoming messages from specific phone numbers
+- Retrieve conversation history
+- Implement two-way SMS workflows (send question, wait for reply, process answer)
+
 ## Response Format
 
 After sending an SMS, provide a brief confirmation:
@@ -269,11 +388,24 @@ After sending an SMS, provide a brief confirmation:
 **Message SID**: [Twilio message ID]
 ```
 
+After receiving messages, format them clearly:
+```
+📥 RECEIVED MESSAGES
+
+**From**: +15551234567
+**Date**: 2026-02-08 10:30:00
+**Message**: "Yes, I confirm the order"
+
+**From**: +15551234567
+**Date**: 2026-02-08 10:25:00
+**Message**: "What's my balance?"
+```
+
 If the SMS fails, explain the error and suggest alternatives.
 
 Current date and time: {datetime.datetime.now().isoformat()}
 
-Remember: Your job is to SEND the SMS, not just describe what you would send. Always call the send_sms function!
+Remember: You can both SEND and RECEIVE SMS messages. Always call the appropriate function!
 """
 
     async def create_thread(self, thread_id: Optional[str] = None) -> AgentThread:
@@ -340,7 +472,38 @@ Remember: Your job is to SEND the SMS, not just describe what you would send. Al
                     tool_call_id=tool_call.id,
                     output=json.dumps(result)
                 ))
-                logger.info(f"📱 SMS function result: {result}")
+                logger.info(f"📱 SMS send result: {result}")
+                
+            elif function_name == "receive_sms":
+                # Execute the receive_sms function
+                result = self.receive_sms(
+                    from_number=function_args.get("from_number"),
+                    limit=function_args.get("limit", 10)
+                )
+                tool_outputs.append(ToolOutput(
+                    tool_call_id=tool_call.id,
+                    output=json.dumps(result)
+                ))
+                logger.info(f"📥 SMS receive result: Found {result.get('message_count', 0)} message(s)")
+                
+                # Print messages to terminal for visibility
+                if result.get("success") and result.get("messages"):
+                    print("\n" + "="*60)
+                    print("📥 INCOMING SMS MESSAGES")
+                    print("="*60)
+                    for msg in result["messages"]:
+                        print(f"\n🔹 From: {msg['from']}")
+                        print(f"   To: {msg['to']}")
+                        print(f"   Date: {msg['date_sent']}")
+                        print(f"   Status: {msg['status']}")
+                        print(f"   Message: {msg['body']}")
+                        print(f"   SID: {msg['message_sid']}")
+                    print("\n" + "="*60 + "\n")
+                elif result.get("success"):
+                    print("\n📭 No SMS messages found\n")
+                else:
+                    print(f"\n❌ Error retrieving messages: {result.get('error')}\n")
+                    
             else:
                 # Unknown function
                 tool_outputs.append(ToolOutput(
