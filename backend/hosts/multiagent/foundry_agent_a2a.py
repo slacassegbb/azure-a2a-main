@@ -4053,7 +4053,7 @@ Answer with just JSON:
                     # The Teams agent has already processed the response in its webhook
                     # We don't need to call it again - just tell the user we got it
                     ack_message = f"✅ Response received: \"{enhanced_message}\"\n\nThe {pending_agent} has processed your input."
-                    await self._emit_message_event(ack_message, context_id)
+                    await self._emit_status_event(ack_message, context_id)
                     
                     log_info(f"✅ [HITL RESUME] Non-workflow HITL completed, acknowledged response")
                     return [ack_message]
