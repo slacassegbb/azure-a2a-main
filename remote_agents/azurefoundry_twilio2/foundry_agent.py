@@ -4,6 +4,11 @@ Uses Azure AI Agents SDK with function calling to send SMS messages via Twilio.
 
 This agent is designed to be the final step in a workflow, receiving message content
 from previous agents and sending it via SMS to the user.
+
+HITL (Human-in-the-Loop) Support:
+- Uses TWILIO_ASK tool to send SMS and wait for human response
+- Incoming SMS responses are received via Twilio webhook
+- Responses are forwarded to host orchestrator via A2A input_required state
 """
 import os
 import time
@@ -11,7 +16,8 @@ import datetime
 import asyncio
 import logging
 import json
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Any
+from dataclasses import dataclass
 
 from azure.ai.agents import AgentsClient
 from azure.ai.agents.models import (
@@ -28,13 +34,31 @@ from twilio.base.exceptions import TwilioRestException
 logger = logging.getLogger(__name__)
 
 
+# HITL support
+@dataclass
+class PendingSMSRequest:
+    """Tracks a pending SMS request waiting for human response."""
+    context_id: str
+    to_number: str
+    question: str
+    timestamp: float
+    thread_id: Optional[str] = None
+
+
 class FoundryTwilioAgent:
     """
     AI Foundry Twilio SMS Agent with function calling capabilities.
     
     This agent uses Azure AI Foundry to process requests and call the send_sms
     function when appropriate to deliver messages via Twilio.
+    
+    HITL Support:
+    - pending_requests: Dict tracking SMS conversations waiting for human response
+    - request_human_input(): Sends SMS and waits for response via webhook
     """
+    
+    # Class-level pending requests (shared across instances for webhook access)
+    pending_requests: Dict[str, 'PendingSMSRequest'] = {}
     
     def __init__(self):
         self.endpoint = os.environ["AZURE_AI_FOUNDRY_PROJECT_ENDPOINT"]
@@ -217,6 +241,94 @@ class FoundryTwilioAgent:
                 "error": str(e)
             }
     
+    def twilio_ask(self, question: str, context_id: str, to_number: Optional[str] = None, thread_id: Optional[str] = None) -> Dict:
+        """
+        Send an SMS question and wait for human response via HITL.
+        
+        This function:
+        1. Sends an SMS to the user with the question
+        2. Stores the pending request for webhook processing
+        3. Returns immediately - the response will come via webhook
+        
+        Args:
+            question: The question or message to send to the user
+            context_id: The A2A context ID for tracking this request
+            to_number: Recipient phone number (uses default if not provided)
+            thread_id: Optional thread ID for context tracking
+            
+        Returns:
+            Dict with success status and pending request info
+        """
+        try:
+            # First, send the SMS
+            recipient = to_number or self.twilio_default_to_number
+            
+            if not recipient:
+                return {
+                    "success": False,
+                    "error": "No recipient phone number provided and no default configured",
+                    "hitl_triggered": False
+                }
+            
+            # Send the SMS
+            send_result = self.send_sms(question, recipient)
+            
+            if not send_result.get("success"):
+                return {
+                    "success": False,
+                    "error": send_result.get("error", "Failed to send SMS"),
+                    "hitl_triggered": False
+                }
+            
+            # Store pending request for webhook processing
+            pending_request = PendingSMSRequest(
+                context_id=context_id,
+                to_number=recipient,
+                question=question,
+                timestamp=time.time(),
+                thread_id=thread_id
+            )
+            
+            # Store by phone number for webhook lookup
+            FoundryTwilioAgent.pending_requests[recipient] = pending_request
+            
+            logger.info(f"📱 HITL: Stored pending SMS request for {recipient}, context_id={context_id}")
+            logger.info(f"📱 HITL: Question sent: {question[:100]}...")
+            
+            return {
+                "success": True,
+                "hitl_triggered": True,
+                "message_sid": send_result.get("message_sid"),
+                "to_number": recipient,
+                "question": question,
+                "context_id": context_id,
+                "status": "waiting_for_response",
+                "instruction": "SMS sent. Waiting for user response via webhook."
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ Error in twilio_ask: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "hitl_triggered": False
+            }
+    
+    @classmethod
+    def get_pending_request(cls, phone_number: str) -> Optional['PendingSMSRequest']:
+        """Get a pending request by phone number."""
+        return cls.pending_requests.get(phone_number)
+    
+    @classmethod
+    def clear_pending_request(cls, phone_number: str) -> Optional['PendingSMSRequest']:
+        """Clear and return a pending request by phone number."""
+        return cls.pending_requests.pop(phone_number, None)
+    
+    @classmethod
+    def get_all_pending_requests(cls) -> Dict[str, 'PendingSMSRequest']:
+        """Get all pending requests."""
+        return cls.pending_requests.copy()
+    
     def _get_send_sms_tool_definition(self) -> Dict:
         """Get the function tool definition for send_sms."""
         return {
@@ -284,9 +396,49 @@ This retrieves messages from Twilio's message log, showing what users have texte
                 }
             }
         }
+    
+    def _get_twilio_ask_tool_definition(self) -> Dict:
+        """Get the function tool definition for twilio_ask (HITL)."""
+        return {
+            "type": "function",
+            "function": {
+                "name": "twilio_ask",
+                "description": """Send an SMS question to a user and wait for their response (Human-in-the-Loop).
+
+IMPORTANT: Use this function when you need INTERACTIVE input from a human via SMS.
+
+This function:
+1. Sends an SMS to the user with your question
+2. Pauses the workflow and waits for the user to reply via SMS
+3. When the user replies, the response is automatically forwarded back to continue the workflow
+
+Use this for:
+- Asking for confirmation ("Do you want to proceed? Reply YES or NO")
+- Gathering user input ("What is your order number?")
+- Two-way conversations that require human decisions
+- Approval workflows ("Please reply APPROVE or REJECT")
+
+Do NOT use this for one-way notifications - use send_sms instead.""",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "question": {
+                            "type": "string",
+                            "description": "The question or prompt to send to the user. Should be clear and tell the user what kind of response you expect."
+                        },
+                        "to_number": {
+                            "type": "string",
+                            "description": "Optional recipient phone number in E.164 format (e.g., +15147715943). If not provided, uses the default configured number."
+                        }
+                    },
+                    "required": ["question"],
+                    "additionalProperties": False
+                }
+            }
+        }
         
     async def create_agent(self) -> Agent:
-        """Create the AI Foundry agent with SMS sending and receiving capabilities."""
+        """Create the AI Foundry agent with SMS sending, receiving, and HITL capabilities."""
         if self.agent:
             logger.info("Twilio SMS agent already exists, returning existing instance")
             return self.agent
@@ -304,6 +456,10 @@ This retrieves messages from Twilio's message log, showing what users have texte
         # Add the receive_sms function tool
         tools.append(self._get_receive_sms_tool_definition())
         logger.info("Added receive_sms function tool")
+        
+        # Add the twilio_ask function tool (HITL)
+        tools.append(self._get_twilio_ask_tool_definition())
+        logger.info("Added twilio_ask function tool (HITL)")
         
         project_client = self._get_project_client()
         
@@ -323,30 +479,42 @@ This retrieves messages from Twilio's message log, showing what users have texte
         return f"""You are an SMS communication agent powered by Azure AI Foundry and Twilio.
 
 ## Your Purpose
-You send and receive SMS text messages to/from users. You can be used for two-way SMS conversations, notifications, and monitoring user responses.
+You send and receive SMS text messages to/from users. You support both one-way notifications and interactive two-way conversations.
 
 ## Your Capabilities
-You have TWO tools available:
-- **send_sms**: Send an SMS message to a phone number
-- **receive_sms**: Retrieve recent SMS messages received by this Twilio number
+You have THREE tools available:
 
-## CRITICAL: How to Process Requests
+1. **send_sms**: Send a one-way SMS notification (fire and forget, no response expected)
+2. **receive_sms**: Retrieve past SMS messages from the inbox
+3. **twilio_ask**: Send an SMS and WAIT for the user to reply (Human-in-the-Loop, pauses workflow)
 
-### When SENDING messages:
-1. **Extract the message content from the user's request**: The user will provide text that needs to be sent as an SMS.
-2. **Compose a clear, concise SMS from that content**: Adapt it for SMS format (brief and to the point)
-3. **Call the send_sms function with the message parameter**: The `message` parameter is REQUIRED and must contain the actual text to send.
+## When to Use Each Tool
 
-### When RECEIVING messages:
-1. **Check for recent incoming SMS**: Use receive_sms to retrieve messages sent to your Twilio number
-2. **Filter by phone number if needed**: Optionally specify a from_number to see messages from a specific sender
-3. **Report the messages back**: Display the message content, sender, and timestamp
+### twilio_ask (Interactive - Use this for conversations)
+Use when the intent is to have a dialogue or get information back from the user.
+- Asking the user a question and needing their answer
+- Requesting confirmation or approval  
+- Gathering input or preferences
+- Any scenario where you need to wait for the user's response before continuing
 
-## IMPORTANT: The `message` parameter MUST NOT be empty!
+### send_sms (One-way - Use this for notifications)
+Use when the intent is simply to inform without expecting a reply.
+- Delivering results, summaries, or status updates
+- Sending alerts or notifications
+- Final messages in a workflow where no response is needed
 
-When calling send_sms, you MUST provide a non-empty `message` parameter. Example:
-- ✅ CORRECT: send_sms(message="Your balance is $500. Thanks for checking!", to_number="+15551234567")
-- ❌ WRONG: send_sms(message="", to_number="+15551234567")
+### receive_sms (Polling - Use this to check inbox)
+Use to retrieve messages that have already been received.
+- Checking message history
+- Reviewing past conversations
+
+## Key Distinction
+
+The difference between send_sms and twilio_ask is whether you need a response:
+- **Need response?** → twilio_ask (workflow pauses until user replies)
+- **Just informing?** → send_sms (workflow continues immediately)
+
+## IMPORTANT: The `message` and `question` parameters MUST NOT be empty!
 
 If the user says "Send an SMS saying hello", you should call: send_sms(message="Hello!")
 
@@ -503,6 +671,45 @@ Remember: You can both SEND and RECEIVE SMS messages. Always call the appropriat
                     print("\n📭 No SMS messages found\n")
                 else:
                     print(f"\n❌ Error retrieving messages: {result.get('error')}\n")
+            
+            elif function_name == "twilio_ask":
+                # HITL: Send SMS and wait for response
+                question = function_args.get("question", "")
+                
+                if not question or not question.strip():
+                    logger.error(f"❌ Empty question received for twilio_ask. Full args: {function_args}")
+                    result = {
+                        "success": False,
+                        "error": "Question is empty. Please provide a question to ask the user.",
+                        "hitl_triggered": False
+                    }
+                else:
+                    # Get context_id from thread tracking (will be passed via executor)
+                    context_id = getattr(self, '_current_context_id', f"sms_{thread_id}")
+                    
+                    # Execute twilio_ask which sends SMS and stores pending request
+                    result = self.twilio_ask(
+                        question=question,
+                        context_id=context_id,
+                        to_number=function_args.get("to_number"),
+                        thread_id=thread_id
+                    )
+                    
+                    if result.get("hitl_triggered"):
+                        logger.info(f"📱 HITL triggered - waiting for SMS response from {result.get('to_number')}")
+                        print("\n" + "="*60)
+                        print("📱 HITL: SMS SENT - WAITING FOR HUMAN RESPONSE")
+                        print("="*60)
+                        print(f"   To: {result.get('to_number')}")
+                        print(f"   Question: {question[:100]}...")
+                        print(f"   Context ID: {context_id}")
+                        print(f"   Status: Waiting for user to reply via SMS")
+                        print("="*60 + "\n")
+                
+                tool_outputs.append(ToolOutput(
+                    tool_call_id=tool_call.id,
+                    output=json.dumps(result)
+                ))
                     
             else:
                 # Unknown function
@@ -520,10 +727,19 @@ Remember: You can both SEND and RECEIVE SMS messages. Always call the appropriat
             )
             logger.info(f"Submitted {len(tool_outputs)} tool outputs")
     
-    async def run_conversation_stream(self, thread_id: str, user_message: str):
-        """Async generator: yields progress messages and final response."""
+    async def run_conversation_stream(self, thread_id: str, user_message: str, context_id: Optional[str] = None):
+        """Async generator: yields progress messages and final response.
+        
+        Args:
+            thread_id: The thread ID for this conversation
+            user_message: The user's message
+            context_id: Optional A2A context ID for HITL tracking
+        """
         if not self.agent:
             await self.create_agent()
+        
+        # Store context_id for HITL tool calls
+        self._current_context_id = context_id or f"sms_{thread_id}"
 
         await self.send_message(thread_id, user_message)
         client = self._get_client()
@@ -532,6 +748,7 @@ Remember: You can both SEND and RECEIVE SMS messages. Always call the appropriat
         max_iterations = 25
         iterations = 0
         tool_calls_yielded = set()
+        hitl_triggered = False
 
         while run.status in ["queued", "in_progress", "requires_action"] and iterations < max_iterations:
             iterations += 1
@@ -550,7 +767,11 @@ Remember: You can both SEND and RECEIVE SMS messages. Always call the appropriat
                                 tool_type = tool_call.type
                                 if tool_type not in tool_calls_yielded:
                                     if hasattr(tool_call, 'function') and hasattr(tool_call.function, 'name'):
-                                        yield f"🛠️ Calling function: {tool_call.function.name}"
+                                        func_name = tool_call.function.name
+                                        yield f"🛠️ Calling function: {func_name}"
+                                        # Check if this is a HITL call
+                                        if func_name == "twilio_ask":
+                                            hitl_triggered = True
                                     else:
                                         yield f"🛠️ Executing tool: {tool_type}"
                                     tool_calls_yielded.add(tool_type)
@@ -571,6 +792,16 @@ Remember: You can both SEND and RECEIVE SMS messages. Always call the appropriat
                 logger.info(f"Run {run.id} requires action")
                 try:
                     await self._handle_tool_calls(run, thread_id)
+                    
+                    # After handling tool calls, check if HITL was triggered
+                    # If so, yield special HITL marker and return
+                    if hitl_triggered and FoundryTwilioAgent.pending_requests:
+                        # Find pending request for this context
+                        for phone, pending in FoundryTwilioAgent.pending_requests.items():
+                            if pending.context_id == self._current_context_id:
+                                yield f"HITL_WAITING:{phone}:{pending.question[:100]}"
+                                return
+                                
                 except Exception as e:
                     yield f"Error handling tool calls: {str(e)}"
                     return

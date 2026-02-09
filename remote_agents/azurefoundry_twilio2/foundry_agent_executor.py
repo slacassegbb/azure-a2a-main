@@ -1,6 +1,11 @@
 """
 AI Foundry Twilio SMS Agent Executor for A2A framework.
 Handles sending SMS messages via Twilio using Azure AI Foundry function calling.
+
+HITL (Human-in-the-Loop) Support:
+- Tracks pending SMS conversations waiting for human responses
+- Emits input_required state when waiting for SMS replies
+- Resumes conversations when human responses arrive via webhook
 """
 import asyncio
 import logging
@@ -8,9 +13,9 @@ import base64
 import os
 import tempfile
 import time
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Any
 
-from foundry_agent import FoundryTwilioAgent
+from foundry_agent import FoundryTwilioAgent, PendingSMSRequest
 
 from a2a.server.agent_execution import AgentExecutor
 from a2a.server.agent_execution.context import RequestContext
@@ -26,7 +31,7 @@ from a2a.types import (
     TaskState,
     TextPart,
 )
-from a2a.utils.message import new_agent_text_message
+from a2a.utils.message import new_agent_text_message, new_agent_parts_message
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -35,6 +40,10 @@ logger.setLevel(logging.INFO)
 class FoundryTwilioAgentExecutor(AgentExecutor):
     """
     An AgentExecutor that runs Azure AI Foundry-based Twilio SMS agent.
+    
+    HITL Support:
+    - _waiting_for_input: Tracks context IDs waiting for human SMS responses
+    - _hitl_resume_info: Stores context for resuming after human response
     """
 
     # Class-level shared agent instance
@@ -47,6 +56,10 @@ class FoundryTwilioAgentExecutor(AgentExecutor):
     _api_call_window_start: float = 0
     _max_api_calls_per_minute: int = 30
     _startup_complete: bool = False
+    
+    # HITL: Class-level tracking for webhook access
+    _waiting_for_input: Dict[str, Dict[str, Any]] = {}  # context_id -> wait info
+    _hitl_resume_info: Dict[str, Dict[str, Any]] = {}   # context_id -> resume context
 
     @classmethod
     async def get_shared_agent(cls) -> Optional[FoundryTwilioAgent]:
@@ -73,7 +86,6 @@ class FoundryTwilioAgentExecutor(AgentExecutor):
 
     def __init__(self, card: AgentCard):
         self._active_threads: Dict[str, str] = {}
-        self._waiting_for_input: Dict[str, str] = {}
         self._pending_updaters: Dict[str, TaskUpdater] = {}
         self._input_events: Dict[str, asyncio.Event] = {}
 
@@ -121,6 +133,38 @@ class FoundryTwilioAgentExecutor(AgentExecutor):
     ) -> None:
         try:
             user_message = self._convert_parts_to_text(message_parts)
+            
+            # Check if this is a HITL resume (human response arriving)
+            if context_id in FoundryTwilioAgentExecutor._hitl_resume_info:
+                resume_info = FoundryTwilioAgentExecutor._hitl_resume_info.pop(context_id)
+                logger.info(f"📱 HITL RESUME: Processing human response for context {context_id}")
+                logger.info(f"📱 Original question: {resume_info.get('question', 'N/A')[:50]}...")
+                logger.info(f"📱 Human response: {user_message[:100]}...")
+                
+                # Enhanced message with context for the LLM
+                enhanced_message = f"""HUMAN RESPONSE RECEIVED via SMS:
+
+The user was asked: "{resume_info.get('question', 'a question')}"
+
+The user replied via SMS: "{user_message}"
+
+Please process this human response and continue the workflow accordingly."""
+                user_message = enhanced_message
+            
+            # Check if this message is already in waiting_for_input context
+            if context_id in FoundryTwilioAgentExecutor._waiting_for_input:
+                wait_info = FoundryTwilioAgentExecutor._waiting_for_input.pop(context_id)
+                logger.info(f"📱 Found waiting context for {context_id}, processing as HITL resume")
+                
+                enhanced_message = f"""HUMAN RESPONSE RECEIVED via SMS:
+
+The user was asked: "{wait_info.get('question', 'a question')}"
+
+The user replied via SMS: "{user_message}"
+
+Please process this human response and continue the workflow accordingly."""
+                user_message = enhanced_message
+            
             agent = await self._get_or_create_agent()
             # Use force_new=True to create separate threads for parallel requests
             thread_id = await self._get_or_create_thread(context_id, agent, force_new=True)
@@ -130,23 +174,55 @@ class FoundryTwilioAgentExecutor(AgentExecutor):
             tools_called = []
             seen_tools = set()
             
-            async for event in agent.run_conversation_stream(thread_id, user_message):
+            async for event in agent.run_conversation_stream(thread_id, user_message, context_id=context_id):
+                # Check for HITL waiting signal
+                if event.startswith("HITL_WAITING:"):
+                    # Parse HITL signal: HITL_WAITING:phone_number:question
+                    parts = event.split(":", 2)
+                    phone_number = parts[1] if len(parts) > 1 else "unknown"
+                    question = parts[2] if len(parts) > 2 else "Waiting for response"
+                    
+                    # Store waiting info for webhook
+                    FoundryTwilioAgentExecutor._waiting_for_input[context_id] = {
+                        "phone_number": phone_number,
+                        "question": question,
+                        "thread_id": thread_id,
+                        "timestamp": time.time()
+                    }
+                    
+                    logger.info(f"📱 HITL: Setting input_required state for context {context_id}")
+                    logger.info(f"📱 HITL: Waiting for SMS response from {phone_number}")
+                    
+                    # Emit input_required state
+                    await task_updater.update_status(
+                        TaskState.input_required,
+                        message=new_agent_text_message(
+                            f"📱 Waiting for human response via SMS.\n\nMessage sent to {phone_number}: {question}",
+                            context_id=context_id
+                        ),
+                        final=True  # This closes the event queue properly
+                    )
+                    
+                    # Return immediately - don't block. Human response will come as new A2A message.
+                    logger.info(f"📱 Returning input_required state - human SMS response will arrive as new message")
+                    return
+                
                 # Check if this is a tool call event from remote agent
-                if event.startswith("🛠️ Remote agent executing:"):
-                    tool_description = event.replace("🛠️ Remote agent executing: ", "").strip()
+                if event.startswith("🛠️ Remote agent executing:") or event.startswith("🛠️ Calling function:"):
+                    tool_description = event.replace("🛠️ Remote agent executing: ", "").replace("🛠️ Calling function: ", "").strip()
                     if tool_description not in seen_tools:
                         seen_tools.add(tool_description)
                         tools_called.append(tool_description)
                         # Emit tool call in real-time
                         tool_event_msg = new_agent_text_message(
-                            f"🛠️ Remote agent executing: {tool_description}", context_id=context_id
+                            f"🛠️ Executing: {tool_description}", context_id=context_id
                         )
                         await task_updater.update_status(
                             TaskState.working,
                             message=tool_event_msg
                         )
                 # Check if this is a processing message
-                elif event.startswith("🤖") or event.startswith("🧠") or event.startswith("🔍") or event.startswith("📝"):
+                elif event.startswith("🤖") or event.startswith("🧠") or event.startswith("🔍") or event.startswith("📝") or event.startswith("📱"):
                     # Emit processing message in real-time
                     processing_msg = new_agent_text_message(
                         event, context_id=context_id
@@ -175,11 +251,11 @@ class FoundryTwilioAgentExecutor(AgentExecutor):
                 
                 # Build message parts with text and optional token usage
                 import uuid
-                message_parts = [TextPart(text=final_response)]
+                message_parts_out = [TextPart(text=final_response)]
                 
                 # Add token usage if available
                 if hasattr(agent, 'last_token_usage') and agent.last_token_usage:
-                    message_parts.append(DataPart(data={
+                    message_parts_out.append(DataPart(data={
                         'type': 'token_usage',
                         **agent.last_token_usage
                     }))
@@ -189,7 +265,7 @@ class FoundryTwilioAgentExecutor(AgentExecutor):
                     message=Message(
                         role="agent",
                         messageId=str(uuid.uuid4()),
-                        parts=message_parts,
+                        parts=message_parts_out,
                         contextId=context_id
                     )
                 )
@@ -202,7 +278,7 @@ class FoundryTwilioAgentExecutor(AgentExecutor):
                 
                 # Add token usage even if no response (in case run consumed tokens)
                 if hasattr(agent, 'last_token_usage') and agent.last_token_usage:
-                    message_parts.append(DataPart(data={
+                    message_parts_out.append(DataPart(data={
                         'type': 'token_usage',
                         **agent.last_token_usage
                     }))
@@ -212,7 +288,7 @@ class FoundryTwilioAgentExecutor(AgentExecutor):
                     message=Message(
                         role="agent",
                         messageId=str(uuid.uuid4()),
-                        parts=message_parts,
+                        parts=message_parts_out,
                         contextId=context_id
                     )
                 )
@@ -300,10 +376,46 @@ class FoundryTwilioAgentExecutor(AgentExecutor):
 
     async def cleanup(self):
         self._active_threads.clear()
-        self._waiting_for_input.clear()
+        FoundryTwilioAgentExecutor._waiting_for_input.clear()
+        FoundryTwilioAgentExecutor._hitl_resume_info.clear()
         self._pending_updaters.clear()
         self._input_events.clear()
         logger.info("Executor cleaned up")
+
+    @classmethod
+    def get_pending_context(cls, context_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get pending input context for a given context_id.
+        Used by webhook to check if there's a pending request.
+        """
+        return cls._waiting_for_input.get(context_id)
+    
+    @classmethod
+    def get_pending_context_by_phone(cls, phone_number: str) -> Optional[tuple]:
+        """
+        Get pending input context for a given phone number.
+        Returns (context_id, wait_info) tuple if found.
+        """
+        for context_id, wait_info in cls._waiting_for_input.items():
+            if wait_info.get("phone_number") == phone_number:
+                return (context_id, wait_info)
+        return None
+    
+    @classmethod
+    def clear_pending_context(cls, context_id: str) -> Optional[Dict[str, Any]]:
+        """Clear pending input context after it's been handled."""
+        return cls._waiting_for_input.pop(context_id, None)
+    
+    @classmethod
+    def set_hitl_resume_info(cls, context_id: str, info: Dict[str, Any]):
+        """Store info needed to resume HITL conversation."""
+        cls._hitl_resume_info[context_id] = info
+        logger.info(f"📱 HITL: Stored resume info for context {context_id}")
+    
+    @classmethod 
+    def get_all_waiting_contexts(cls) -> Dict[str, Dict[str, Any]]:
+        """Get all contexts waiting for human input."""
+        return cls._waiting_for_input.copy()
 
 
 def create_foundry_agent_executor(card: AgentCard) -> FoundryTwilioAgentExecutor:

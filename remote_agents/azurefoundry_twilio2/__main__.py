@@ -1,19 +1,27 @@
 """
 Twilio SMS Agent - A2A Remote Agent for sending SMS messages via Azure AI Foundry.
+
+HITL (Human-in-the-Loop) Support:
+- Supports interactive SMS conversations with users
+- Webhook endpoint receives Twilio inbound SMS and forwards to host orchestrator
+- Uses A2A input_required state for HITL pause/resume
 """
 import asyncio
 import logging
 import os
 import threading
+import httpx
+import json
 
 import click
 import uvicorn
 
-from foundry_agent_executor import create_foundry_agent_executor, initialize_foundry_twilio_agents_at_startup
+from foundry_agent_executor import create_foundry_agent_executor, initialize_foundry_twilio_agents_at_startup, FoundryTwilioAgentExecutor
+from foundry_agent import FoundryTwilioAgent
 from dotenv import load_dotenv
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import PlainTextResponse
+from starlette.responses import PlainTextResponse, Response
 from starlette.routing import Route
 
 from a2a.server.apps import A2AStarletteApplication
@@ -89,6 +97,54 @@ HOST_AGENT_URL = _normalize_env_value(get_host_agent_url())
 agent_executor_instance = None
 
 
+async def forward_sms_to_backend(
+    backend_url: str,
+    context_id: str,
+    from_number: str,
+    message: str,
+    original_question: str = ""
+):
+    """
+    Forward an SMS response to the host orchestrator via A2A message format.
+    
+    This follows the same pattern as the Teams agent webhook handler.
+    The backend expects the A2A Message format with params wrapper.
+    """
+    try:
+        # Build the A2A message payload - same format as Teams webhook
+        payload = {
+            "params": {
+                "contextId": context_id,
+                "parts": [
+                    {"root": {"kind": "text", "text": message}}
+                ]
+            }
+        }
+        
+        url = f"{backend_url.rstrip('/')}/message/send"
+        
+        logger.info(f"📤 Forwarding SMS to backend: {url}")
+        logger.info(f"   Context ID: {context_id}")
+        logger.info(f"   From: {from_number}")
+        logger.info(f"   Message: {message[:100]}...")
+        logger.info(f"   Payload: {payload}")
+        
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                url,
+                json=payload,
+                headers={"Content-Type": "application/json"}
+            )
+            
+            if response.status_code == 200:
+                logger.info(f"✅ Successfully forwarded SMS to backend")
+            else:
+                logger.error(f"❌ Backend returned {response.status_code}: {response.text}")
+                
+    except Exception as e:
+        logger.error(f"❌ Error forwarding SMS to backend: {e}", exc_info=True)
+
+
 def create_a2a_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
     """Create A2A server application for Twilio SMS agent."""
     global agent_executor_instance
@@ -121,6 +177,19 @@ def create_a2a_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
             ],
         ),
         AgentSkill(
+            id='twilio_ask',
+            name='Ask User via SMS (HITL)',
+            description="Send a question via SMS and wait for the user's response. Human-in-the-Loop (HITL) capability for interactive SMS conversations. The workflow will pause until the user replies via SMS.",
+            tags=['sms', 'hitl', 'human-in-the-loop', 'interactive', 'question', 'ask', 'input', 'approval'],
+            examples=[
+                'Ask the user to confirm: Do you want to proceed?',
+                'Request approval via SMS',
+                'Ask for user input before continuing',
+                'Get confirmation: Reply YES or NO',
+                'Ask the user: What is your order number?'
+            ],
+        ),
+        AgentSkill(
             id='notify_user',
             name='User Notification',
             description="Notify a user via SMS with workflow results, alerts, or important updates. Ideal as the final step in a workflow to deliver results to users' phones.",
@@ -137,9 +206,9 @@ def create_a2a_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
     # Create agent card
     agent_card = AgentCard(
         name='Twilio SMS Agent',
-        description="A two-way SMS communication agent powered by Azure AI Foundry and Twilio. Send SMS messages to users and retrieve incoming messages. Perfect for notifications, alerts, user replies, and two-way SMS conversations. Can be used as the final step in a workflow to deliver results, or to monitor user responses.",
+        description="A two-way SMS communication agent powered by Azure AI Foundry and Twilio. Supports Human-in-the-Loop (HITL) for interactive SMS conversations. Send SMS messages, receive replies, and ask users questions that pause the workflow until they respond. Perfect for notifications, approvals, confirmations, and two-way SMS workflows.",
         url=resolve_agent_url(host, port),
-        version='1.0.0',
+        version='1.1.0',
         defaultInputModes=['text'],
         defaultOutputModes=['text'],
         capabilities=AgentCapabilities(streaming=True),
@@ -173,6 +242,117 @@ def create_a2a_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
             path='/health',
             methods=['GET'],
             endpoint=health_check
+        )
+    )
+    
+    # Add Twilio SMS webhook endpoint for HITL
+    async def handle_sms_webhook(request: Request) -> Response:
+        """
+        Handle incoming SMS from Twilio webhook.
+        
+        Twilio sends POST requests with form data when SMS is received:
+        - From: sender phone number
+        - To: Twilio number
+        - Body: SMS message content
+        - MessageSid: unique message ID
+        
+        If there's a pending HITL request for this phone number,
+        forward the response to the host orchestrator.
+        """
+        try:
+            # Parse form data from Twilio
+            form_data = await request.form()
+            from_number = form_data.get("From", "")
+            to_number = form_data.get("To", "")
+            body = form_data.get("Body", "")
+            message_sid = form_data.get("MessageSid", "")
+            
+            logger.info(f"📥 SMS Webhook received:")
+            logger.info(f"   From: {from_number}")
+            logger.info(f"   To: {to_number}")
+            logger.info(f"   Body: {body}")
+            logger.info(f"   SID: {message_sid}")
+            
+            # Check if there's a pending HITL request for this phone number
+            pending = FoundryTwilioAgentExecutor.get_pending_context_by_phone(from_number)
+            
+            if pending:
+                context_id, wait_info = pending
+                logger.info(f"📱 HITL: Found pending request for {from_number}, context_id={context_id}")
+                
+                # Forward to host orchestrator (check both env var names for compatibility)
+                backend_url = os.environ.get("BACKEND_SERVER_URL") or os.environ.get("BACKEND_URL", "")
+                if backend_url:
+                    await forward_sms_to_backend(
+                        backend_url=backend_url,
+                        context_id=context_id,
+                        from_number=from_number,
+                        message=body,
+                        original_question=wait_info.get("question", "")
+                    )
+                    
+                    # Clear the pending request from executor
+                    FoundryTwilioAgentExecutor.clear_pending_context(context_id)
+                    
+                    # Store resume info for when the new message arrives
+                    FoundryTwilioAgentExecutor.set_hitl_resume_info(context_id, {
+                        "question": wait_info.get("question", ""),
+                        "phone_number": from_number,
+                        "response": body
+                    })
+                else:
+                    logger.warning("⚠️ BACKEND_URL not set - cannot forward HITL response")
+                
+                # Also clear from agent's pending requests
+                FoundryTwilioAgent.clear_pending_request(from_number)
+            else:
+                logger.info(f"📭 No pending HITL request for {from_number} - message logged only")
+                # Still log to pending requests in agent for polling-based retrieval
+            
+            # Send acknowledgment SMS back to user (optional)
+            # Uncomment if you want to confirm receipt:
+            # agent = await FoundryTwilioAgentExecutor.get_shared_agent()
+            # if agent:
+            #     agent.send_sms("Got it! Processing your response...", from_number)
+            
+            # Return TwiML response (empty to not send any SMS back by default)
+            twiml_response = '<?xml version="1.0" encoding="UTF-8"?><Response></Response>'
+            return Response(content=twiml_response, media_type="application/xml")
+            
+        except Exception as e:
+            logger.error(f"❌ SMS Webhook error: {e}", exc_info=True)
+            twiml_response = '<?xml version="1.0" encoding="UTF-8"?><Response></Response>'
+            return Response(content=twiml_response, media_type="application/xml", status_code=200)
+    
+    routes.append(
+        Route(
+            path='/webhook/sms',
+            methods=['POST'],
+            endpoint=handle_sms_webhook
+        )
+    )
+    
+    # Add debug endpoint to check pending HITL requests
+    async def debug_pending_hitl(request: Request) -> PlainTextResponse:
+        """Debug endpoint to see pending HITL requests."""
+        waiting = FoundryTwilioAgentExecutor.get_all_waiting_contexts()
+        agent_pending = FoundryTwilioAgent.get_all_pending_requests()
+        
+        result = f"Executor waiting contexts: {len(waiting)}\n"
+        for ctx_id, info in waiting.items():
+            result += f"  - {ctx_id}: phone={info.get('phone_number')}, question={info.get('question', '')[:50]}...\n"
+        
+        result += f"\nAgent pending requests: {len(agent_pending)}\n"
+        for phone, req in agent_pending.items():
+            result += f"  - {phone}: context={req.context_id}, question={req.question[:50]}...\n"
+        
+        return PlainTextResponse(result)
+    
+    routes.append(
+        Route(
+            path='/debug/hitl',
+            methods=['GET'],
+            endpoint=debug_pending_hitl
         )
     )
 

@@ -4,24 +4,28 @@ A2A Remote Agent for **two-way SMS communication** via Twilio, powered by Azure 
 
 ## Overview
 
-This agent uses **Azure AI Foundry** with **function calling** to send and receive SMS messages via the Twilio API. It can be used for:
+This agent uses **Azure AI Foundry** with **function calling** to send and receive SMS messages via the Twilio API. It supports:
 - **Sending** SMS notifications and alerts to users
 - **Receiving** SMS replies from users  
-- **Two-way SMS conversations** with users
+- **Human-in-the-Loop (HITL)** - Ask users questions via SMS and wait for their response
+- **Two-way SMS conversations** with automatic workflow pause/resume
 - **Monitoring** incoming messages
 
 ## Architecture
 
 ```
 User Request → Host Orchestrator → Previous Agents → Twilio SMS Agent → SMS to User
-                                                     ↑
-                                              User SMS Reply
+                                                           ↓
+                                                     [HITL: Wait]
+                                                           ↓
+User SMS Reply → Twilio Webhook → Twilio SMS Agent → Host Orchestrator → Continue Workflow
 ```
 
 The agent:
 1. **Send**: Receives a message from the orchestrator and delivers it via Twilio SMS
 2. **Receive**: Retrieves recent incoming SMS messages from Twilio's message log
-3. Returns confirmation and message details
+3. **Ask (HITL)**: Sends an SMS question and waits for user's SMS reply to continue
+4. Returns confirmation and message details
 
 ## Skills
 
@@ -29,6 +33,7 @@ The agent:
 |-------|-------------|
 | **Send SMS Message** | Send an SMS text message to a phone number via Twilio |
 | **Receive SMS Messages** | Retrieve and read recent incoming SMS messages |
+| **Ask User via SMS (HITL)** | Send a question and wait for user's SMS response |
 | **User Notification** | Notify a user via SMS with workflow results or updates |
 
 ## Configuration
@@ -52,6 +57,25 @@ TWILIO_DEFAULT_TO_NUMBER=+1234567890    # Default recipient
 A2A_ENDPOINT=localhost
 A2A_PORT=8016
 A2A_HOST=http://localhost:12000         # Host agent for registration
+
+# HITL Configuration
+BACKEND_URL=http://localhost:12000      # Backend URL for forwarding HITL responses
+```
+
+## Twilio Webhook Setup (Required for HITL)
+
+To receive incoming SMS, configure Twilio to send webhooks to your agent:
+
+1. Go to your Twilio Console: https://console.twilio.com/
+2. Navigate to Phone Numbers → Manage → Active numbers
+3. Click on your Twilio number
+4. Under "Messaging", set the webhook URL for "A message comes in":
+   - **URL**: `https://your-agent-url/webhook/sms`
+   - **Method**: HTTP POST
+
+Example for Azure Container Apps deployment:
+```
+https://azurefoundry-twilio2.ambitioussky-6c709152.westus2.azurecontainerapps.io/webhook/sms
 ```
 
 ## Running the Agent
@@ -84,11 +108,11 @@ Options:
 
 ## Function Tools
 
-The agent has two function tools available:
+The agent has three function tools available:
 
 ### `send_sms`
 
-Sends an SMS message via Twilio.
+Sends a one-way SMS message via Twilio (no response expected).
 
 **Parameters:**
 - `message` (required): The SMS message content (max ~1600 characters)
@@ -120,6 +144,30 @@ receive_sms(from_number="+15147715943", limit=5)
 ```
 
 **Output:** Messages will be printed to the terminal with details including sender, timestamp, and content.
+
+### `twilio_ask` (HITL - Human-in-the-Loop)
+
+Sends an SMS question and waits for the user's response. The workflow will pause until the user replies via SMS.
+
+**Parameters:**
+- `question` (required): The question or prompt to send to the user
+- `to_number` (optional): Recipient phone number in E.164 format
+
+**Example:**
+```python
+twilio_ask(
+    question="Do you want to proceed with the order? Reply YES or NO",
+    to_number="+15147715943"
+)
+```
+
+**How it works:**
+1. SMS is sent to the user with the question
+2. Workflow enters `input_required` state (paused)
+3. User replies via SMS
+4. Twilio webhook receives the reply
+5. Reply is forwarded to host orchestrator
+6. Workflow resumes with the user's response
 
 ## Example Workflow Usage
 

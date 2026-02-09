@@ -112,6 +112,14 @@ if [ -f "$AGENT_PATH/.env" ]; then
     AZURE_OPENAI_ENDPOINT=$(grep "^AZURE_OPENAI_ENDPOINT" "$AGENT_PATH/.env" | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
     # Read blob storage configuration for image generator
     AZURE_STORAGE_CONNECTION_STRING=$(grep "^AZURE_STORAGE_CONNECTION_STRING" "$AGENT_PATH/.env" | cut -d '=' -f2- | tr -d '"')
+    # Read Twilio credentials for Twilio agents
+    TWILIO_ACCOUNT_SID=$(grep "^TWILIO_ACCOUNT_SID" "$AGENT_PATH/.env" | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
+    TWILIO_AUTH_TOKEN=$(grep "^TWILIO_AUTH_TOKEN" "$AGENT_PATH/.env" | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
+    TWILIO_FROM_NUMBER=$(grep "^TWILIO_FROM_NUMBER" "$AGENT_PATH/.env" | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
+    TWILIO_DEFAULT_TO_NUMBER=$(grep "^TWILIO_DEFAULT_TO_NUMBER" "$AGENT_PATH/.env" | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
+    # Read Microsoft Teams credentials for Teams agents
+    MICROSOFT_APP_ID=$(grep "^MICROSOFT_APP_ID" "$AGENT_PATH/.env" | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
+    MICROSOFT_APP_PASSWORD=$(grep "^MICROSOFT_APP_PASSWORD" "$AGENT_PATH/.env" | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
 elif [ -f ".env" ]; then
     DEFAULT_AI_ENDPOINT=$(grep "AZURE_AI_FOUNDRY_PROJECT_ENDPOINT" .env | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
     DEFAULT_AI_MODEL=$(grep "AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME" .env | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
@@ -120,6 +128,14 @@ elif [ -f ".env" ]; then
     AZURE_OPENAI_ENDPOINT=$(grep "^AZURE_OPENAI_ENDPOINT" .env | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
     # Read blob storage configuration from root .env
     AZURE_STORAGE_CONNECTION_STRING=$(grep "^AZURE_STORAGE_CONNECTION_STRING" .env | cut -d '=' -f2- | tr -d '"')
+    # Read Twilio credentials from root .env
+    TWILIO_ACCOUNT_SID=$(grep "^TWILIO_ACCOUNT_SID" .env | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
+    TWILIO_AUTH_TOKEN=$(grep "^TWILIO_AUTH_TOKEN" .env | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
+    TWILIO_FROM_NUMBER=$(grep "^TWILIO_FROM_NUMBER" .env | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
+    TWILIO_DEFAULT_TO_NUMBER=$(grep "^TWILIO_DEFAULT_TO_NUMBER" .env | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
+    # Read Microsoft Teams credentials from root .env
+    MICROSOFT_APP_ID=$(grep "^MICROSOFT_APP_ID" .env | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
+    MICROSOFT_APP_PASSWORD=$(grep "^MICROSOFT_APP_PASSWORD" .env | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
 fi
 
 # If .env values exist, use them automatically; otherwise prompt
@@ -134,6 +150,12 @@ if [ -n "$DEFAULT_AI_ENDPOINT" ] && [ -n "$DEFAULT_AI_MODEL" ]; then
     fi
     if [ -n "$AZURE_OPENAI_ENDPOINT" ]; then
         echo -e "${WHITE}  Azure OpenAI Endpoint: $AZURE_OPENAI_ENDPOINT${NC}"
+    fi
+    if [ -n "$TWILIO_ACCOUNT_SID" ]; then
+        echo -e "${WHITE}  Twilio Account SID: ${TWILIO_ACCOUNT_SID:0:8}...${NC}"
+    fi
+    if [ -n "$MICROSOFT_APP_ID" ]; then
+        echo -e "${WHITE}  Microsoft App ID: ${MICROSOFT_APP_ID:0:8}...${NC}"
     fi
 else
     echo -e "${YELLOW}No .env file found, please enter configuration:${NC}"

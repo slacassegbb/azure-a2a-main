@@ -4040,6 +4040,20 @@ Answer with just JSON:
                     workflow_goal = session_context.current_plan.workflow_goal
                     log_info(f"🔄 [HITL RESUME] Restored workflow_goal from saved plan")
                 
+                # SYNTHETIC WORKFLOW DETECTION: Workflows auto-generated for single-agent routing
+                # (e.g., "1. [Agent Name] Complete the user's request") should be treated as non-workflow HITL
+                # because the single task is now complete with the human's response
+                is_synthetic_single_step = False
+                if workflow and workflow.strip():
+                    workflow_stripped = workflow.strip()
+                    # Check if it's a single-step synthetic workflow
+                    if "Complete the user's request" in workflow_stripped:
+                        lines = [l for l in workflow_stripped.split('\n') if l.strip()]
+                        if len(lines) == 1:
+                            is_synthetic_single_step = True
+                            log_info(f"🔄 [HITL RESUME] Detected synthetic single-step workflow - treating as non-workflow HITL")
+                            workflow = None  # Clear workflow so it uses non-workflow path
+                
                 # Check if we have a workflow - if not, just acknowledge the HITL response
                 if not workflow:
                     print(f"🔄 [HITL RESUME] No workflow - HITL completed, acknowledging response")
@@ -4226,12 +4240,13 @@ Answer with just JSON:
                                 log_debug(f"✅ [Single Agent] Loaded agent '{single_agent_name}' from catalog")
                         
                         if agent_exists:
-                            # Use orchestration but with a forced single-agent task
-                            # This ensures proper session handling, file passing, etc.
+                            # Use agent mode orchestration WITHOUT a synthetic workflow
+                            # This allows the orchestrator to route to the agent naturally
+                            # and properly handles HITL (input_required) without workflow complications
                             agent_mode = True
-                            workflow = f"1. [{single_agent_name}] Complete the user's request"
-                            workflow_goal = enhanced_message
-                            log_debug(f"🎯 [Single Agent] Forcing single-task workflow for {single_agent_name}")
+                            workflow = None  # Don't create synthetic workflow - causes HITL issues
+                            workflow_goal = None
+                            log_debug(f"🎯 [Single Agent] Using agent mode for {single_agent_name} (no synthetic workflow)")
                         else:
                             # Agent not found even in catalog - give clear error
                             log_error(f"[Single Agent] Agent '{single_agent_name}' not found in session or catalog")
