@@ -4040,41 +4040,23 @@ Answer with just JSON:
                     workflow_goal = session_context.current_plan.workflow_goal
                     log_info(f"🔄 [HITL RESUME] Restored workflow_goal from saved plan")
                 
-                # Check if we have a workflow - if not, call agent directly and return
+                # Check if we have a workflow - if not, just acknowledge the HITL response
                 if not workflow:
-                    print(f"🔄 [HITL RESUME] No workflow - calling {pending_agent} directly with human response")
-                    log_info(f"🔄 [HITL RESUME] No workflow context - calling {pending_agent} directly")
+                    print(f"🔄 [HITL RESUME] No workflow - HITL completed, acknowledging response")
+                    log_info(f"🔄 [HITL RESUME] No workflow context - just acknowledging HITL response")
                     
-                    # Clear the pending_input_agent before calling the agent
+                    # Clear the pending_input_agent
                     session_context.pending_input_agent = None
                     session_context.pending_input_task_id = None
                     
-                    try:
-                        # Create a tool context for send_message
-                        tool_context_obj = type('ToolContext', (), {'state': session_context})()
-                        
-                        # Call the agent directly with the human's response using send_message
-                        agent_responses = await self.send_message(
-                            agent_name=pending_agent,
-                            message=enhanced_message,  # The human's response (e.g., "approve")
-                            tool_context=tool_context_obj,
-                            suppress_streaming=False  # Show response in UI
-                        )
-                        
-                        # Emit the agent's response
-                        if agent_responses:
-                            for resp in agent_responses:
-                                if isinstance(resp, str):
-                                    await self._emit_message_event(resp, context_id)
-                        
-                        hitl_direct_return = True
-                        log_info(f"✅ [HITL RESUME] Direct agent call completed, returning responses")
-                        return agent_responses if agent_responses else ["Response received."]
-                    except Exception as e:
-                        log_error(f"❌ [HITL RESUME] Error calling agent directly: {e}")
-                        import traceback
-                        traceback.print_exc()
-                        return [f"Error resuming with {pending_agent}: {str(e)}"]
+                    # For non-workflow HITL, just acknowledge the response was received
+                    # The Teams agent has already processed the response in its webhook
+                    # We don't need to call it again - just tell the user we got it
+                    ack_message = f"✅ Response received: \"{enhanced_message}\"\n\nThe {pending_agent} has processed your input."
+                    await self._emit_message_event(ack_message, context_id)
+                    
+                    log_info(f"✅ [HITL RESUME] Non-workflow HITL completed, acknowledged response")
+                    return [ack_message]
                 else:
                     # We have a workflow - enable agent mode for orchestration
                     agent_mode = True
