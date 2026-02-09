@@ -2720,9 +2720,10 @@ Answer with just JSON:
                                                         # UNIFIED STORAGE: No need to register - files are already in uploads/{session_id}/
                                                         # The /api/files endpoint queries blob storage directly
                                                         
-                                                        # Determine if file will be auto-indexed
+                                                        # Determine if file will be auto-indexed via Content Understanding
                                                         stream_file_name = part.root.data.get("file-name", "agent-artifact.png")
-                                                        indexable_exts = ['.pdf', '.docx', '.pptx', '.xlsx', '.doc', '.txt', '.md', '.json', '.csv']
+                                                        from .a2a_document_processor import AUDIO_EXTENSIONS, VIDEO_EXTENSIONS, IMAGE_EXTENSIONS, DOCUMENT_EXTENSIONS, TEXT_EXTENSIONS, CU_TEXT_FORMATS
+                                                        indexable_exts = DOCUMENT_EXTENSIONS + IMAGE_EXTENSIONS + VIDEO_EXTENSIONS + AUDIO_EXTENSIONS + TEXT_EXTENSIONS + CU_TEXT_FORMATS
                                                         stream_file_ext = '.' + stream_file_name.split('.')[-1].lower() if '.' in stream_file_name else ''
                                                         stream_status = 'processing' if stream_file_ext in indexable_exts else 'uploaded'
                                                         
@@ -2747,8 +2748,9 @@ Answer with just JSON:
                                                             file_name = file_obj.name
                                                             mime_type = file_obj.mimeType if hasattr(file_obj, 'mimeType') else 'image/png'
                                                             
-                                                            # Determine if file will be auto-indexed
-                                                            indexable_exts = ['.pdf', '.docx', '.pptx', '.xlsx', '.doc', '.txt', '.md', '.json', '.csv']
+                                                            # Determine if file will be auto-indexed via Content Understanding
+                                                            from .a2a_document_processor import AUDIO_EXTENSIONS, VIDEO_EXTENSIONS, IMAGE_EXTENSIONS, DOCUMENT_EXTENSIONS, TEXT_EXTENSIONS, CU_TEXT_FORMATS
+                                                            indexable_exts = DOCUMENT_EXTENSIONS + IMAGE_EXTENSIONS + VIDEO_EXTENSIONS + AUDIO_EXTENSIONS + TEXT_EXTENSIONS + CU_TEXT_FORMATS
                                                             stream_file_ext = '.' + file_name.split('.')[-1].lower() if '.' in file_name else ''
                                                             stream_status = 'processing' if stream_file_ext in indexable_exts else 'uploaded'
                                                             
@@ -2909,8 +2911,10 @@ Answer with just JSON:
                                             # UNIFIED STORAGE: No need to register - files are already in uploads/{session_id}/
                                             # The /api/files endpoint queries blob storage directly
                                             
-                                            # Determine if file will be auto-indexed (to show processing animation)
-                                            indexable_extensions = ['.pdf', '.docx', '.pptx', '.xlsx', '.doc', '.txt', '.md', '.json', '.csv']
+                                            # Determine if file will be auto-indexed via Content Understanding
+                                            # Includes: documents, images, audio, video - all processed by Azure CU
+                                            from .a2a_document_processor import AUDIO_EXTENSIONS, VIDEO_EXTENSIONS, IMAGE_EXTENSIONS, DOCUMENT_EXTENSIONS, TEXT_EXTENSIONS, CU_TEXT_FORMATS
+                                            indexable_extensions = DOCUMENT_EXTENSIONS + IMAGE_EXTENSIONS + VIDEO_EXTENSIONS + AUDIO_EXTENSIONS + TEXT_EXTENSIONS + CU_TEXT_FORMATS
                                             file_ext = '.' + file_name.split('.')[-1].lower() if '.' in file_name else ''
                                             is_indexable = file_ext in indexable_extensions
                                             file_status = 'processing' if is_indexable else 'uploaded'
@@ -3418,7 +3422,8 @@ Answer with just JSON:
         This enables powerful cross-agent workflows:
         - Email Agent downloads invoice PDF → indexed → search_memory can find it
         - Document Agent analyzes contract → indexed → future queries can reference it
-        - Any agent that produces documents → automatically searchable
+        - Image Agent generates image → indexed via Content Understanding → searchable
+        - Any agent that produces files → automatically processed and searchable
         
         Args:
             file_artifacts: List of dicts with uri, name, mime_type, source_agent
@@ -3426,10 +3431,10 @@ Answer with just JSON:
             context_id: Context ID for status updates
             agent_name: Agent that produced these files
         """
-        from .a2a_document_processor import process_file_part, determine_file_type
+        from .a2a_document_processor import process_file_part, determine_file_type, AUDIO_EXTENSIONS, VIDEO_EXTENSIONS, IMAGE_EXTENSIONS, DOCUMENT_EXTENSIONS, TEXT_EXTENSIONS, CU_TEXT_FORMATS
         
-        # Filter to only indexable document types
-        indexable_extensions = ['.pdf', '.docx', '.pptx', '.xlsx', '.doc', '.txt', '.md', '.json', '.csv']
+        # All Content Understanding supported formats are indexable
+        indexable_extensions = DOCUMENT_EXTENSIONS + IMAGE_EXTENSIONS + VIDEO_EXTENSIONS + AUDIO_EXTENSIONS + TEXT_EXTENSIONS + CU_TEXT_FORMATS
         files_to_index = []
         
         for artifact in file_artifacts:
