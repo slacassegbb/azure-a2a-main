@@ -194,6 +194,9 @@ class ConversationServer:
             '/conversation/delete', self._delete_conversation, methods=['POST']
         )
         app.add_api_route(
+            '/conversation/delete-all', self._delete_all_conversations, methods=['POST']
+        )
+        app.add_api_route(
             '/conversation/update-title', self._update_conversation_title, methods=['POST']
         )
         app.add_api_route('/message/send', self._send_message, methods=['POST'])
@@ -664,6 +667,52 @@ class ConversationServer:
             return {"success": True}
         except Exception as e:
             log_debug(f"❌  Error updating title: {e}")
+            return {"success": False, "error": str(e)}
+
+    async def _delete_all_conversations(self, request: Request):
+        """Delete all conversations for a session.
+        
+        This clears both in-memory conversations and database records.
+        """
+        try:
+            message_data = await request.json()
+            params = message_data.get('params', {})
+            session_id = params.get('sessionId')
+            
+            if not session_id:
+                return {"success": False, "error": "sessionId required"}
+            
+            log_debug(f"🗑️  Delete ALL conversations request for session: {session_id}")
+            
+            # Clear from in-memory manager
+            conversations = self.manager.conversations
+            original_length = len(conversations)
+            
+            # Filter out all conversations for this session
+            filtered = [
+                c for c in conversations
+                if not (
+                    c.conversation_id.startswith(f"{session_id}::") or
+                    c.conversation_id == session_id
+                )
+            ]
+            
+            # Update the internal list
+            self.manager._conversations = filtered
+            
+            deleted_memory_count = original_length - len(filtered)
+            log_debug(f"🗑️  Deleted {deleted_memory_count} conversations from memory")
+            
+            # Delete from database
+            try:
+                chat_history_service.delete_all_conversations(session_id)
+            except Exception as db_error:
+                log_debug(f"Error deleting all from database: {db_error}")
+            
+            log_debug(f"✅  Deleted all conversations for session {session_id}")
+            return {"success": True, "deleted_count": deleted_memory_count}
+        except Exception as e:
+            log_debug(f"❌  Error deleting all conversations: {e}")
             return {"success": False, "error": str(e)}
 
     def _get_events(self):

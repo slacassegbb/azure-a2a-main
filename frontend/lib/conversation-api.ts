@@ -264,3 +264,45 @@ export function notifyConversationCreated(conversation: Conversation): void {
   window.dispatchEvent(event)
   console.log('[ConversationAPI] Conversation created event emitted successfully:', conversation)
 }
+
+/**
+ * Delete all conversations for the current session
+ */
+export async function deleteAllConversations(): Promise<boolean> {
+  try {
+    const baseUrl = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
+    const sessionId = getOrCreateSessionId()
+    
+    console.log('[ConversationAPI] Deleting all conversations for session:', sessionId)
+    
+    const response = await fetch(`${baseUrl}/conversation/delete-all`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        params: {
+          sessionId
+        }
+      })
+    })
+    
+    if (!response.ok) {
+      console.error('[ConversationAPI] Failed to delete all conversations:', response.statusText)
+      return false
+    }
+    
+    const result = await response.json()
+    
+    if (result.success) {
+      console.log('[ConversationAPI] Successfully deleted all conversations, count:', result.deleted_count)
+      return true
+    } else {
+      console.error('[ConversationAPI] Delete all conversations failed:', result.error)
+      return false
+    }
+  } catch (error) {
+    console.error('[ConversationAPI] Error deleting all conversations:', error)
+    return false
+  }
+}

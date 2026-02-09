@@ -291,6 +291,53 @@ def delete_conversation(conversation_id: str) -> bool:
     return True  # Return true even if only cache was cleared
 
 
+def delete_all_conversations(session_id: str) -> bool:
+    """Delete all conversations and messages for a session.
+    
+    Args:
+        session_id: The session ID to delete all conversations for
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    global _conversations_cache, _messages_cache
+    
+    # Find and remove all conversations for this session from cache
+    conv_ids_to_delete = [
+        conv_id for conv_id, conv in _conversations_cache.items()
+        if conv.get("session_id") == session_id or conv_id.startswith(f"{session_id}::")
+    ]
+    
+    for conv_id in conv_ids_to_delete:
+        if conv_id in _conversations_cache:
+            del _conversations_cache[conv_id]
+        if conv_id in _messages_cache:
+            del _messages_cache[conv_id]
+    
+    print(f"[ChatHistoryService] Cleared {len(conv_ids_to_delete)} conversations from cache for session {session_id[:8]}...")
+    
+    # Delete from database
+    conn = _get_connection()
+    if conn:
+        try:
+            cur = conn.cursor()
+            # Delete by session_id column OR by conversation_id prefix (for legacy format)
+            cur.execute("""
+                DELETE FROM conversations 
+                WHERE session_id = %s OR conversation_id LIKE %s
+            """, (session_id, f"{session_id}::%"))
+            deleted_count = cur.rowcount
+            conn.commit()
+            cur.close()
+            print(f"[ChatHistoryService] Deleted {deleted_count} conversations from database for session {session_id[:8]}...")
+            return True
+        except Exception as e:
+            print(f"[ChatHistoryService] Error deleting all conversations: {e}")
+            conn.rollback()
+    
+    return True  # Return true even if only cache was cleared
+
+
 def update_conversation_name(conversation_id: str, name: str) -> bool:
     """Update conversation name.
     

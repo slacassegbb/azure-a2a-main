@@ -6,7 +6,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { MessageSquarePlus, PanelLeftClose, PanelLeftOpen, Trash2, LogOut, SquarePen } from "lucide-react"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { cn } from "@/lib/utils"
-import { listConversations, createConversation, deleteConversation, listMessages, notifyConversationCreated, updateConversationTitle, type Conversation } from "@/lib/conversation-api"
+import { listConversations, createConversation, deleteConversation, deleteAllConversations, listMessages, notifyConversationCreated, updateConversationTitle, type Conversation } from "@/lib/conversation-api"
 import { LoginDialog } from "@/components/login-dialog"
 import { useEventHub } from "@/hooks/use-event-hub"
 import { getOrCreateSessionId, leaveCollaborativeSession, isInCollaborativeSession } from "@/lib/session"
@@ -352,6 +352,34 @@ export function ChatHistorySidebar({ isCollapsed, onToggle }: Props) {
     }
   }, [currentConversationId, router])
 
+  const handleClearAllChats = useCallback(async () => {
+    if (conversations.length === 0) return
+    
+    // Confirm before deleting all
+    if (!window.confirm(`Are you sure you want to delete all ${conversations.length} chat(s)? This cannot be undone.`)) {
+      return
+    }
+    
+    try {
+      console.log('[ChatHistorySidebar] Clearing all chats...')
+      const success = await deleteAllConversations()
+      if (success) {
+        // Clear the conversations list
+        setConversations([])
+        // Navigate away if we're viewing a conversation
+        if (currentConversationId) {
+          router.push("/")
+        }
+        console.log('[ChatHistorySidebar] All chats cleared successfully')
+      } else {
+        setError("Failed to clear all chats")
+      }
+    } catch (err) {
+      setError("Failed to clear all chats")
+      console.error("Error clearing all chats:", err)
+    }
+  }, [conversations.length, currentConversationId, router])
+
   return (
     <TooltipProvider delayDuration={0}>
       <div className={cn("flex flex-col h-full transition-all duration-300")}>
@@ -417,19 +445,36 @@ export function ChatHistorySidebar({ isCollapsed, onToggle }: Props) {
             {/* Chats Header with New Chat Button */}
             <div className="px-3 py-2 flex items-center justify-between">
               <span className="text-sm font-medium text-muted-foreground">Chats</span>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button 
-                    variant="ghost"
-                    size="icon"
-                    className="h-7 w-7 rounded-md hover:bg-accent"
-                    onClick={handleNewChat}
-                  >
-                    <SquarePen size={16} />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent side="right">New chat</TooltipContent>
-              </Tooltip>
+              <div className="flex items-center gap-1">
+                {conversations.length > 0 && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button 
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 rounded-md hover:bg-destructive/10 hover:text-destructive"
+                        onClick={handleClearAllChats}
+                      >
+                        <Trash2 size={14} />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent side="right">Clear all chats</TooltipContent>
+                  </Tooltip>
+                )}
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button 
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7 rounded-md hover:bg-accent"
+                      onClick={handleNewChat}
+                    >
+                      <SquarePen size={16} />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="right">New chat</TooltipContent>
+                </Tooltip>
+              </div>
             </div>
             
             <div className="flex-1 overflow-y-auto min-h-0">
