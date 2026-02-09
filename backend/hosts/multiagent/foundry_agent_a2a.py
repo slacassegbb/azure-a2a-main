@@ -4050,25 +4050,30 @@ Answer with just JSON:
                     session_context.pending_input_task_id = None
                     
                     try:
-                        # Call the agent directly with the human's response
-                        agent_responses = await self._call_remote_agent(
+                        # Create a tool context for send_message
+                        tool_context_obj = type('ToolContext', (), {'state': session_context})()
+                        
+                        # Call the agent directly with the human's response using send_message
+                        agent_responses = await self.send_message(
                             agent_name=pending_agent,
-                            task=enhanced_message,  # The human's response (e.g., "approve")
-                            session_context=session_context,
-                            context_id=context_id,
-                            tool_context=tool_context
+                            message=enhanced_message,  # The human's response (e.g., "approve")
+                            tool_context=tool_context_obj,
+                            suppress_streaming=False  # Show response in UI
                         )
                         
                         # Emit the agent's response
-                        for resp in agent_responses:
-                            if isinstance(resp, str):
-                                await self._emit_message_event(resp, context_id)
+                        if agent_responses:
+                            for resp in agent_responses:
+                                if isinstance(resp, str):
+                                    await self._emit_message_event(resp, context_id)
                         
                         hitl_direct_return = True
                         log_info(f"✅ [HITL RESUME] Direct agent call completed, returning responses")
-                        return agent_responses
+                        return agent_responses if agent_responses else ["Response received."]
                     except Exception as e:
                         log_error(f"❌ [HITL RESUME] Error calling agent directly: {e}")
+                        import traceback
+                        traceback.print_exc()
                         return [f"Error resuming with {pending_agent}: {str(e)}"]
                 else:
                     # We have a workflow - enable agent mode for orchestration
