@@ -4007,12 +4007,13 @@ Answer with just JSON:
             # =====================================================================
             # If there's a pending_input_agent, this message is a HITL response
             # Route directly to that agent instead of doing intelligent routing
+            hitl_direct_return = False  # Flag to skip orchestration for non-workflow HITL
             if session_context.pending_input_agent:
                 pending_agent = session_context.pending_input_agent
                 pending_task_id = session_context.pending_input_task_id
                 print(f"🔄 [HITL RESUME] Detected pending_input_agent='{pending_agent}', skipping routing")
                 log_info(f"🔄 [HITL RESUME] Detected pending_input_agent='{pending_agent}', routing directly to agent")
-                await self._emit_status_event(f"Resuming workflow with your input...", context_id)
+                await self._emit_status_event(f"Resuming with your input...", context_id)
                 
                 # IMPORTANT: Emit a "completed" status for the pending agent to clear "Waiting" in sidebar
                 # This ensures the UI updates when the human provides their response
@@ -4027,9 +4028,6 @@ Answer with just JSON:
                 except Exception as e:
                     log_debug(f"⚠️ [HITL RESUME] Failed to emit completed status: {e}")
                 
-                # Enable agent mode for orchestration
-                agent_mode = True
-                
                 # CRITICAL FIX: Do NOT create a synthetic one-step workflow here!
                 # The workflow was already restored from the saved plan by foundry_host_manager.py
                 # Creating a synthetic workflow here would overwrite the full multi-step workflow
@@ -4042,7 +4040,40 @@ Answer with just JSON:
                     workflow_goal = session_context.current_plan.workflow_goal
                     log_info(f"🔄 [HITL RESUME] Restored workflow_goal from saved plan")
                 
-                log_info(f"🔄 [HITL RESUME] Using workflow with {len(workflow) if workflow else 0} chars (not synthetic)")
+                # Check if we have a workflow - if not, call agent directly and return
+                if not workflow:
+                    print(f"🔄 [HITL RESUME] No workflow - calling {pending_agent} directly with human response")
+                    log_info(f"🔄 [HITL RESUME] No workflow context - calling {pending_agent} directly")
+                    
+                    # Clear the pending_input_agent before calling the agent
+                    session_context.pending_input_agent = None
+                    session_context.pending_input_task_id = None
+                    
+                    try:
+                        # Call the agent directly with the human's response
+                        agent_responses = await self._call_remote_agent(
+                            agent_name=pending_agent,
+                            task=enhanced_message,  # The human's response (e.g., "approve")
+                            session_context=session_context,
+                            context_id=context_id,
+                            tool_context=tool_context
+                        )
+                        
+                        # Emit the agent's response
+                        for resp in agent_responses:
+                            if isinstance(resp, str):
+                                await self._emit_message_event(resp, context_id)
+                        
+                        hitl_direct_return = True
+                        log_info(f"✅ [HITL RESUME] Direct agent call completed, returning responses")
+                        return agent_responses
+                    except Exception as e:
+                        log_error(f"❌ [HITL RESUME] Error calling agent directly: {e}")
+                        return [f"Error resuming with {pending_agent}: {str(e)}"]
+                else:
+                    # We have a workflow - enable agent mode for orchestration
+                    agent_mode = True
+                    log_info(f"🔄 [HITL RESUME] Using workflow with {len(workflow)} chars (continuing orchestration)")
                 
                 # Clear the pending_input_agent so subsequent requests don't loop
                 # (The agent will set it again if it needs more input)
