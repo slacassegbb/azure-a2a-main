@@ -1526,21 +1526,9 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
           // Instead, we pass attachments through final_response so they appear
           // AFTER the workflow, not before it.
           
-          // Add agent-generated artifacts/files to file history (session-scoped)
-          if (allImageAttachments.length > 0) {
-            allImageAttachments.forEach((artifact: any) => {
-              if ((window as any).addFileToHistory) {
-                (window as any).addFileToHistory({
-                  file_id: artifact.uri,
-                  filename: artifact.fileName || artifact.filename || "Agent artifact",
-                  size: artifact.fileSize || artifact.size || 0,
-                  content_type: artifact.mediaType || artifact.content_type || artifact.mime_type || "application/octet-stream",
-                  uri: artifact.uri,
-                })
-                console.log("[ChatPanel] Added agent artifact to file history:", artifact.fileName || artifact.filename)
-              }
-            })
-          }
+          // NOTE: File history is handled by file_uploaded events via ChatLayout.handleFileUploaded
+          // Adding files here with artifact.uri as file_id causes duplicates because
+          // the file_uploaded event uses the actual file_id from blob storage.
           
           console.log("[ChatPanel] Processing assistant message:", {
             messageId: data.messageId,
@@ -2122,19 +2110,9 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
         // The image will be included in the final_response message via attachments
         // This ensures the image appears AFTER the workflow, not before it
         
-        // Add to file history so it appears in the sidebar
-        if (isMedia && data.fileInfo.uri) {
-          if ((window as any).addFileToHistory) {
-            (window as any).addFileToHistory({
-              file_id: data.fileInfo.uri,
-              filename: data.fileInfo.filename || (isVideo ? "Generated video" : "Generated image"),
-              size: data.fileInfo.size || 0,
-              content_type: data.fileInfo.content_type || (isVideo ? "video/mp4" : "image/png"),
-              uri: data.fileInfo.uri,
-            })
-            console.log("[ChatPanel] Added media to file history:", data.fileInfo.filename)
-          }
-        }
+        // NOTE: File history is already handled by ChatLayout.handleFileUploaded
+        // which also subscribes to file_uploaded events. Adding here would cause
+        // duplicates with different IDs (uri vs file_id).
       }
     }
 

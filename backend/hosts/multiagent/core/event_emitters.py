@@ -179,10 +179,15 @@ class EventEmitters:
         context_id: str,
         agent_name: str,
         content_type: str = "image/png",
-        size: int = 0
+        size: int = 0,
+        status: str = "uploaded"
     ) -> bool:
         """
         Emit a file artifact event to notify the UI of a new file from an agent.
+        
+        Args:
+            status: File processing status - 'uploaded', 'processing', or 'analyzed'
+                    Use 'processing' when the file will be auto-indexed so the UI shows animation.
         """
         try:
             from service.websocket_streamer import get_websocket_streamer
@@ -216,10 +221,11 @@ class EventEmitters:
                     "size": size,
                     "content_type": content_type,
                     "source_agent": agent_name,
-                    "contextId": context_id
+                    "contextId": context_id,
+                    "status": status  # 'uploaded', 'processing', or 'analyzed'
                 }
                 await streamer.stream_file_uploaded(file_info, context_id)
-                log_debug(f"File uploaded event sent: {filename} from {agent_name} (id={file_id})")
+                log_debug(f"File uploaded event sent: {filename} from {agent_name} (id={file_id}, status={status})")
                 return True
             else:
                 log_debug(f"No WebSocket streamer available for file event: {filename}")
@@ -233,11 +239,15 @@ class EventEmitters:
         filename: str,
         uri: str,
         context_id: str,
-        session_id: str
+        session_id: str,
+        status: str = "analyzed"
     ) -> bool:
         """
-        Emit a file_processing_completed event to notify the UI that a file has been analyzed.
-        This updates the file status from 'uploaded' to 'analyzed' in the file history UI.
+        Emit a file_processing_completed event to notify the UI that a file has been processed.
+        This updates the file status in the file history UI.
+        
+        Args:
+            status: Final status - 'analyzed' (success) or 'error' (failed)
         """
         try:
             from service.websocket_streamer import get_websocket_streamer
@@ -270,12 +280,12 @@ class EventEmitters:
                 event_data = {
                     "fileId": file_id,
                     "filename": filename,
-                    "status": "analyzed",
+                    "status": status,  # 'analyzed' or 'error'
                     "contextId": context_id
                 }
                 
                 await streamer._send_event("file_processing_completed", event_data, context_id)
-                print(f"📤 File analyzed event sent: {filename} (id={file_id})")
+                print(f"📤 File {status} event sent: {filename} (id={file_id})")
                 log_debug(f"File analyzed event sent: {filename}")
                 return True
             else:

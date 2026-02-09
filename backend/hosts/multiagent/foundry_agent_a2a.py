@@ -2720,14 +2720,21 @@ Answer with just JSON:
                                                         # UNIFIED STORAGE: No need to register - files are already in uploads/{session_id}/
                                                         # The /api/files endpoint queries blob storage directly
                                                         
+                                                        # Determine if file will be auto-indexed
+                                                        stream_file_name = part.root.data.get("file-name", "agent-artifact.png")
+                                                        indexable_exts = ['.pdf', '.docx', '.pptx', '.xlsx', '.doc', '.txt', '.md', '.json', '.csv']
+                                                        stream_file_ext = '.' + stream_file_name.split('.')[-1].lower() if '.' in stream_file_name else ''
+                                                        stream_status = 'processing' if stream_file_ext in indexable_exts else 'uploaded'
+                                                        
                                                         # Emit file_uploaded event - USE HOST'S contextId for routing!
                                                         asyncio.create_task(self._emit_file_artifact_event(
-                                                            filename=part.root.data.get("file-name", "agent-artifact.png"),
+                                                            filename=stream_file_name,
                                                             uri=artifact_uri,
                                                             context_id=host_context_id,
                                                             agent_name=agent_name,
                                                             content_type="image/png",
-                                                            size=part.root.data.get("file-size", 0)
+                                                            size=part.root.data.get("file-size", 0),
+                                                            status=stream_status
                                                         ))
                                                 # Check for image artifacts in FilePart
                                                 elif hasattr(part, 'root') and hasattr(part.root, 'file'):
@@ -2739,6 +2746,12 @@ Answer with just JSON:
                                                             # Capture values to avoid closure issues
                                                             file_name = file_obj.name
                                                             mime_type = file_obj.mimeType if hasattr(file_obj, 'mimeType') else 'image/png'
+                                                            
+                                                            # Determine if file will be auto-indexed
+                                                            indexable_exts = ['.pdf', '.docx', '.pptx', '.xlsx', '.doc', '.txt', '.md', '.json', '.csv']
+                                                            stream_file_ext = '.' + file_name.split('.')[-1].lower() if '.' in file_name else ''
+                                                            stream_status = 'processing' if stream_file_ext in indexable_exts else 'uploaded'
+                                                            
                                                             # UNIFIED STORAGE: No need to register - files are already in uploads/{session_id}/
                                                             # The /api/files endpoint queries blob storage directly
                                                             
@@ -2749,7 +2762,8 @@ Answer with just JSON:
                                                                 context_id=host_context_id,
                                                                 agent_name=agent_name,
                                                                 content_type=mime_type,
-                                                                size=0
+                                                                size=0,
+                                                                status=stream_status
                                                             ))
                                     elif hasattr(event.status, 'state'):
                                         state = event.status.state
@@ -2895,13 +2909,20 @@ Answer with just JSON:
                                             # UNIFIED STORAGE: No need to register - files are already in uploads/{session_id}/
                                             # The /api/files endpoint queries blob storage directly
                                             
+                                            # Determine if file will be auto-indexed (to show processing animation)
+                                            indexable_extensions = ['.pdf', '.docx', '.pptx', '.xlsx', '.doc', '.txt', '.md', '.json', '.csv']
+                                            file_ext = '.' + file_name.split('.')[-1].lower() if '.' in file_name else ''
+                                            is_indexable = file_ext in indexable_extensions
+                                            file_status = 'processing' if is_indexable else 'uploaded'
+                                            
                                             asyncio.create_task(self._emit_file_artifact_event(
                                                 filename=file_name,
                                                 uri=file_uri,
                                                 context_id=contextId,
                                                 agent_name=agent_name,
                                                 content_type=mime_type,
-                                                size=0
+                                                size=0,
+                                                status=file_status
                                             ))
                                 except Exception as e:
                                     log_debug(f"Error emitting file artifact event: {e}")
@@ -3495,11 +3516,27 @@ Answer with just JSON:
                 else:
                     error = result.get('error', 'Unknown error') if result else 'No result'
                     print(f"⚠️ Failed to index {file_name}: {error}")
+                    # Emit file_processing_completed with 'error' status so UI updates
+                    asyncio.create_task(self._emit_file_analyzed_event(
+                        filename=file_name,
+                        uri=file_uri,
+                        context_id=context_id,
+                        session_id=session_id,
+                        status='error'
+                    ))
                     
             except Exception as e:
                 print(f"❌ Error indexing {artifact.get('name', 'unknown')}: {e}")
                 import traceback
                 traceback.print_exc()
+                # Emit file_processing_completed with 'error' status so UI updates
+                asyncio.create_task(self._emit_file_analyzed_event(
+                    filename=artifact.get('name', 'unknown'),
+                    uri=artifact.get('uri', ''),
+                    context_id=context_id,
+                    session_id=session_id,
+                    status='error'
+                ))
         
         # Final status
         if indexed_count > 0:
