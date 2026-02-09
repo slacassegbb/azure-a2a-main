@@ -292,13 +292,27 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
         return prev
       }
       
-      // Check timestamp ordering
-      if (currentTimestamp && timestamp) {
-        const currentTime = new Date(currentTimestamp).getTime()
-        const newTime = new Date(timestamp).getTime()
-        if (newTime < currentTime) {
-          console.log('[AgentNetwork] ⏭️ Ignoring older event')
-          return prev
+      // ALWAYS allow completed to override input-required (HITL resume)
+      // The "completed" event means the human has responded and the task is done
+      if (currentTaskState === "input-required" && (mappedState === "completed" || mappedState === "failed")) {
+        console.log('[AgentNetwork] ✅ HITL complete: allowing', mappedState, 'to override input-required')
+        // Skip timestamp check - completed always wins over waiting
+      } else {
+        // Check timestamp ordering (with timezone normalization)
+        if (currentTimestamp && timestamp) {
+          // Normalize timestamps: if no timezone, treat as UTC by appending Z
+          const normalizeTs = (ts: string) => {
+            if (!ts.includes('+') && !ts.includes('Z') && !ts.includes('-', 10)) {
+              return ts + 'Z'
+            }
+            return ts
+          }
+          const currentTime = new Date(normalizeTs(currentTimestamp)).getTime()
+          const newTime = new Date(normalizeTs(timestamp)).getTime()
+          if (newTime < currentTime) {
+            console.log('[AgentNetwork] ⏭️ Ignoring older event')
+            return prev
+          }
         }
       }
       

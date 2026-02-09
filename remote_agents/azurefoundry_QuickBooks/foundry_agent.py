@@ -495,18 +495,23 @@ When asked to "create an INVOICE" or bill a customer:
 2. **Search ONCE** - Use filters like displayName, don't retry multiple times
 3. **CREATE if not found** - If search returns nothing, CREATE the entity
 4. **qbo_create_vendor handles duplicates** - It returns existing vendor if one exists
-5. **Don't ask for confirmation** - If data is provided, just create the bill/invoice
+5. **Don't ask for confirmation** - If data is provided, just create the bill/invoice (UNLESS the instruction says "HITL REQUIRED" or "ask the user")
 6. **Default account for bills is "7"** - No need to search for expense accounts
 
-## ASKING FOR INPUT (only if truly needed):
+## NEEDS_INPUT - Human-in-the-Loop (HITL)
 
-If information is genuinely MISSING (not in the context), use:
+Use NEEDS_INPUT to pause and ask the user a question. This will pause the workflow until the user responds.
 
 ```NEEDS_INPUT
-Your specific question here
+Your question to the user here
 ```END_NEEDS_INPUT
 
-DO NOT ask if the invoice data is already provided in the context!
+**When to use NEEDS_INPUT:**
+1. When information is genuinely MISSING from the context
+2. When the workflow instruction says "HITL REQUIRED" or "ask the user" - you MUST ask even if you have some data
+
+**IMPORTANT:** If a workflow step says "HITL REQUIRED", ALWAYS use NEEDS_INPUT to ask the user.
+Do NOT skip asking just because you have some data - the workflow explicitly wants human confirmation.
 """
     
     async def create_thread(self, thread_id: Optional[str] = None) -> AgentThread:
