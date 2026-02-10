@@ -141,12 +141,45 @@ class FoundryTeamsAgentExecutor(AgentExecutor):
             logger.info(f"🔍 [HITL CHECK] Incoming context_id: {context_id}")
             logger.info(f"🔍 [HITL CHECK] _waiting_for_input keys: {list(self._waiting_for_input.keys())}")
             
-            # First check _hitl_resume_info (set by webhook when it forwards the human response)
-            # This is the preferred source since the webhook clears _waiting_for_input
+            # Get the HITL resume info (set by webhook when it forwards the human response)
             hitl_resume_info = getattr(self, '_hitl_resume_info', {})
             logger.info(f"🔍 [HITL CHECK] _hitl_resume_info keys: {list(hitl_resume_info.keys())}")
-            pending_info = hitl_resume_info.get(context_id) or self._waiting_for_input.get(context_id)
-            source = "hitl_resume_info" if hitl_resume_info.get(context_id) else "waiting_for_input" if pending_info else None
+            
+            # CRITICAL FIX: Only treat as HITL resume if BOTH conditions are true:
+            # 1. We have _hitl_resume_info entry (webhook stored the thread info)
+            # 2. The message contains the human response pattern (not a fresh workflow request)
+            # 
+            # The bug was: stale entries in _hitl_resume_info would cause new workflow
+            # requests to be incorrectly treated as HITL resumes
+            
+            pending_info = None
+            source = None
+            
+            # Check if this looks like a genuine HITL resume (human responded)
+            # vs a new workflow request (has structured workflow metadata)
+            is_workflow_request = (
+                "**Workflow Task**" in user_message or 
+                "workflow" in context_id.lower() or
+                user_message.strip().startswith("{")  # JSON metadata from workflow
+            )
+            
+            if hitl_resume_info.get(context_id) and not is_workflow_request:
+                pending_info = hitl_resume_info.get(context_id)
+                source = "hitl_resume_info"
+                logger.info(f"✅ [HITL CHECK] Valid HITL resume detected")
+            elif self._waiting_for_input.get(context_id) and not is_workflow_request:
+                pending_info = self._waiting_for_input.get(context_id)
+                source = "waiting_for_input"
+                logger.info(f"✅ [HITL CHECK] Valid HITL resume from waiting_for_input")
+            else:
+                # This is a new workflow request - clean up any stale entries for this context
+                if context_id in hitl_resume_info:
+                    logger.info(f"🧹 [HITL CHECK] Cleaning stale hitl_resume_info for {context_id}")
+                    del hitl_resume_info[context_id]
+                if context_id in self._waiting_for_input:
+                    logger.info(f"🧹 [HITL CHECK] Cleaning stale waiting_for_input for {context_id}")
+                    del self._waiting_for_input[context_id]
+                logger.info(f"📝 [HITL CHECK] Processing as NEW workflow request (is_workflow_request={is_workflow_request})")
             
             if pending_info:
                 # This is a human response to a pending HITL request

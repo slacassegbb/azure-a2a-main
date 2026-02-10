@@ -244,11 +244,14 @@ async def handle_teams_webhook(request: Request) -> JSONResponse:
                             
                             # Store the HITL resume info so the executor can find it
                             # Key by context_id so the executor can retrieve it
+                            # Include timestamp for debugging and stale entry detection
+                            import time as time_module
                             if not hasattr(agent_executor_instance, '_hitl_resume_info'):
                                 agent_executor_instance._hitl_resume_info = {}
                             agent_executor_instance._hitl_resume_info[context_id] = {
                                 "thread_id": thread_id,
                                 "wait_info": wait_info,
+                                "timestamp": time_module.time(),  # For stale entry detection
                             }
                             logger.info(f"💾 Stored HITL resume info for {context_id}: thread={thread_id}")
                             
