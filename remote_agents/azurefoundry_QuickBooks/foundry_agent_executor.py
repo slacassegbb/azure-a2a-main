@@ -217,10 +217,23 @@ class FoundryAgentExecutor(AgentExecutor):
                         TaskState.working,
                         message=processing_msg
                     )
-                # Check if this is an error
-                elif event.startswith("Error:"):
+                # Check if this is an error (multiple formats)
+                elif event.startswith("Error:") or event.startswith("❌") or "Run Failed" in event:
+                    # Check for unrecoverable auth errors
+                    auth_error_keywords = [
+                        "connection is inactive", "invalid_grant", "token expired", 
+                        "authentication required", "re-authenticate", "refresh token",
+                        "unauthorized", "401"
+                    ]
+                    is_auth_error = any(kw.lower() in event.lower() for kw in auth_error_keywords)
+                    
+                    error_msg = event
+                    if is_auth_error:
+                        error_msg = f"⚠️ QuickBooks authentication error: {event}. Please re-authenticate the QuickBooks connection manually."
+                        logger.error(f"🔐 AUTH ERROR DETECTED: {event}")
+                    
                     await task_updater.failed(
-                        message=new_agent_text_message(event, context_id=context_id)
+                        message=new_agent_text_message(error_msg, context_id=context_id)
                     )
                     return
                 # Check for human escalation
@@ -409,6 +422,22 @@ class FoundryAgentExecutor(AgentExecutor):
                 # Log a preview of the response (first 500 chars)
                 response_preview = final_response[:500] + "..." if len(final_response) > 500 else final_response
                 logger.info(f"📤 Agent response ({len(final_response)} chars): {response_preview}")
+                
+                # Check if the response contains auth/connection errors that should be marked as failed
+                auth_error_keywords = [
+                    "connection is inactive", "invalid_grant", "token expired", 
+                    "authentication required", "re-authenticate", "refresh token",
+                    "unauthorized", "401", "oauth", "credentials"
+                ]
+                is_auth_error = any(kw.lower() in final_response.lower() for kw in auth_error_keywords)
+                
+                if is_auth_error:
+                    logger.error(f"🔐 AUTH ERROR IN RESPONSE: {final_response[:200]}")
+                    error_msg = f"⚠️ QuickBooks authentication error - please re-authenticate the connection manually.\n\nDetails: {final_response}"
+                    await task_updater.failed(
+                        message=new_agent_text_message(error_msg, context_id=context_id)
+                    )
+                    return
                 
                 # Build message parts with text and optional token usage
                 import uuid
