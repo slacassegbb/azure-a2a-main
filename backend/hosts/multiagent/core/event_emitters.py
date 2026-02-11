@@ -15,6 +15,7 @@ The class is designed to be used as a mixin with FoundryHostAgent2.
 """
 
 import asyncio
+import contextvars
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -23,6 +24,14 @@ from a2a.types import AgentCard, Task
 
 from ..utils import get_context_id, get_task_id
 from ..remote_agent_connection import TaskCallbackArg
+
+# Import the shared context variable from the main module
+# This is used for async-safe context_id tracking
+try:
+    from ..foundry_agent_a2a import _current_context_id
+except ImportError:
+    # Fallback: create a local context variable if import fails
+    _current_context_id: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar('current_context_id', default=None)
 
 # Import logging utilities
 import sys
@@ -309,7 +318,8 @@ class EventEmitters:
             
             streamer = await get_websocket_streamer()
             if streamer:
-                stored_host_context = getattr(self, '_current_host_context_id', None)
+                # Use contextvars for async-safe context_id (prevents race conditions)
+                stored_host_context = _current_context_id.get() or getattr(self, '_current_host_context_id', None)
                 routing_context_id = context_id or stored_host_context
                 
                 if not routing_context_id:
@@ -503,7 +513,9 @@ class EventEmitters:
                         except Exception:
                             pass
 
-                        routing_context_id = (getattr(self, '_current_host_context_id', None) or 
+                        # Use contextvars for async-safe context_id (prevents race conditions)
+                        routing_context_id = (_current_context_id.get() or
+                                             getattr(self, '_current_host_context_id', None) or 
                                              contextId or 
                                              getattr(self, 'default_contextId', str(uuid.uuid4())))
                         

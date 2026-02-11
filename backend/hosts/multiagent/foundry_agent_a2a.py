@@ -28,11 +28,16 @@ import os
 import sys
 import logging
 import time
+import contextvars
 from dataclasses import dataclass
 from enum import Enum
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Iterable, Literal
+
+# Context variable for async-safe context_id tracking
+# This replaces the race-condition-prone self._current_host_context_id
+_current_context_id: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar('current_context_id', default=None)
 import httpx
 from dotenv import load_dotenv
 
@@ -1029,15 +1034,18 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
         print(f"🔥 file_uris: {file_uris}")
         print(f"🔥 video_metadata: {video_metadata}")
         
-        # Use the current host context ID - NO FALLBACK to UUID!
-        context_id_to_use = getattr(self, '_current_host_context_id', None)
+        # Use contextvars for async-safe context_id (prevents race conditions between concurrent workflows)
+        # Fall back to instance variable for backwards compatibility
+        context_id_to_use = _current_context_id.get() or getattr(self, '_current_host_context_id', None)
         
-        log_debug(f"🔍 [send_message_sync] _current_host_context_id: {context_id_to_use}")
+        log_debug(f"🔍 [send_message_sync] context_id from contextvar: {_current_context_id.get()}")
+        log_debug(f"🔍 [send_message_sync] context_id from instance: {getattr(self, '_current_host_context_id', None)}")
+        log_debug(f"🔍 [send_message_sync] using context_id: {context_id_to_use}")
         log_debug(f"🔍 [send_message_sync] session_contexts keys: {list(self.session_contexts.keys())}")
         
         # CRITICAL: If we don't have the current context_id, this is a bug
         if not context_id_to_use:
-            raise ValueError(f"send_message_sync called but _current_host_context_id not set! This should be set by run_conversation_with_parts. Available keys: {list(self.session_contexts.keys())}")
+            raise ValueError(f"send_message_sync called but context_id not set! This should be set by run_conversation_with_parts. Available keys: {list(self.session_contexts.keys())}")
         
         # Get existing session context or create new one with proper contextId
         session_ctx = self.session_contexts.get(context_id_to_use)
@@ -1110,9 +1118,11 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
         except (ValueError, TypeError):
             top_k = 5
         
-        # Get current context ID
-        context_id = getattr(self, '_current_host_context_id', None)
-        print(f"🧠 context_id: {context_id}")
+        # Use contextvars for async-safe context_id (prevents race conditions)
+        context_id = _current_context_id.get() or getattr(self, '_current_host_context_id', None)
+        print(f"🧠 context_id (contextvar): {_current_context_id.get()}")
+        print(f"🧠 context_id (instance): {getattr(self, '_current_host_context_id', None)}")
+        print(f"🧠 context_id (using): {context_id}")
         
         if not context_id:
             print(f"🧠 ERROR: No active context!")
@@ -2662,6 +2672,8 @@ Answer with just JSON:
                 # CRITICAL: Store HOST's contextId for use in callbacks
                 # Callbacks receive events with remote agent's contextId, but we need
                 # to route WebSocket events using the host's session contextId
+                # Use BOTH contextvars (async-safe) and instance variable (backwards compat)
+                _current_context_id.set(contextId)
                 self._current_host_context_id = contextId
                 host_context_id = contextId
                 
@@ -3865,10 +3877,12 @@ Answer with just JSON:
             
             log_debug(f"🔍 [run_conversation_with_parts] Using context_id: {context_id}")
             
-            # CRITICAL: Store the context_id so send_message_sync can access it
-            # This is THE source of truth for the current request's contextId
+            # CRITICAL: Store the context_id using contextvars for async-safe isolation
+            # This ensures each async task sees its own context_id, preventing race conditions
+            # between concurrent workflows. Also keep instance variable for backwards compat.
+            _current_context_id.set(context_id)
             self._current_host_context_id = context_id
-            log_debug(f"🔍 [run_conversation_with_parts] SET _current_host_context_id to: {context_id}")
+            log_debug(f"🔍 [run_conversation_with_parts] SET context_id (contextvar + instance) to: {context_id}")
             
             # Extract text message for thread
             log_debug(f"Step: About to extract text message...")
