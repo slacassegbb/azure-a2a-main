@@ -199,9 +199,9 @@ class FoundryTemplateAgentExecutor(AgentExecutor):
                             TaskState.working,
                             message=tool_event_msg
                         )
-                # Check if this is a processing message
-                elif event.startswith("🤖") or event.startswith("🧠") or event.startswith("🔍") or event.startswith("📝") or event.startswith("📬") or event.startswith("📎"):
-                    # Emit processing message in real-time
+                # Check if this is a processing message - BUT include email results in responses
+                elif event.startswith("🤖") or event.startswith("🧠") or event.startswith("🔍") or event.startswith("📝"):
+                    # Emit processing message in real-time (but don't add to final response)
                     processing_msg = new_agent_text_message(
                         event, context_id=context_id
                     )
@@ -209,6 +209,18 @@ class FoundryTemplateAgentExecutor(AgentExecutor):
                         TaskState.working,
                         message=processing_msg
                     )
+                # Email results (📬 and 📎) should be included in the final response
+                elif event.startswith("📬") or event.startswith("📎"):
+                    # Emit as processing message for real-time UI
+                    processing_msg = new_agent_text_message(
+                        event, context_id=context_id
+                    )
+                    await task_updater.update_status(
+                        TaskState.working,
+                        message=processing_msg
+                    )
+                    # ALSO add to responses so it appears in final output
+                    responses.append(event)
                 # Check if this is an error
                 elif event.startswith("Error:"):
                     await task_updater.failed(
@@ -260,6 +272,24 @@ class FoundryTemplateAgentExecutor(AgentExecutor):
                     final_parts.extend(artifact_parts)
                 
                 # Add token usage if available
+                if hasattr(agent, 'last_token_usage') and agent.last_token_usage:
+                    final_parts.append(Part(root=DataPart(data={
+                        'type': 'token_usage',
+                        **agent.last_token_usage
+                    })))
+                    logger.info(f"💰 Including token usage in response: {agent.last_token_usage}")
+                
+                await task_updater.complete(
+                    message=new_agent_parts_message(parts=final_parts, context_id=context_id)
+                )
+            elif artifact_parts:
+                # No text response but we have artifacts - return artifacts with a summary
+                logger.info(f"📎 No text response but {len(artifact_parts)} artifacts found - returning artifacts")
+                import uuid
+                artifact_summary = f"📎 Retrieved {len(artifact_parts)} attachment(s)"
+                final_parts = [Part(root=TextPart(text=artifact_summary))]
+                final_parts.extend(artifact_parts)
+                
                 if hasattr(agent, 'last_token_usage') and agent.last_token_usage:
                     final_parts.append(Part(root=DataPart(data={
                         'type': 'token_usage',
