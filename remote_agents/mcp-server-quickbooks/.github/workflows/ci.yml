@@ -1,0 +1,22 @@
+name: ci
+on:
+  pull_request:
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3
+      - uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903
+        with:
+          node-version: '20'
+      - name: Install dependencies
+        run: |
+          if [ -f package-lock.json ]; then npm ci
+          elif [ -f yarn.lock ]; then yarn install --frozen-lockfile
+          elif [ -f pnpm-lock.yaml ]; then corepack enable && pnpm install --frozen-lockfile
+          else npm install --no-audit --no-fund; fi
+      - name: Run tests
+        run: npm test

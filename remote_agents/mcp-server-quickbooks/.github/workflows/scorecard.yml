@@ -1,0 +1,42 @@
+name: Scorecard supply-chain security
+on:
+  branch_protection_rule:
+  schedule:
+    - cron: '24 0 * * 3'
+  workflow_dispatch: {}
+
+permissions: read-all
+
+jobs:
+  analysis:
+    name: Scorecard analysis
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      id-token: write
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@95d9a5deda9de15063e7595e9719c11c38c90ae2
+        with:
+          egress-policy: audit
+      - name: Checkout code
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3
+        with:
+          persist-credentials: false
+      - name: Run analysis
+        uses: ossf/scorecard-action@4eaacf0543bb3f2c246792bd56e8cdeffafb205a
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          publish_results: true
+          # repo_token: ${{ secrets.SCORECARD_TOKEN }}  # optional PAT
+      - name: Upload artifact
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+        with:
+          name: SARIF file
+          path: results.sarif
+          retention-days: 5
+      - name: Upload to code-scanning
+        uses: github/codeql-action/upload-sarif@0499de31b99561a6d14a36a5f662c2a54f91beee
+        with:
+          sarif_file: results.sarif

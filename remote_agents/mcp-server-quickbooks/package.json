@@ -1,0 +1,46 @@
+{
+    "name": "@caydigital/mcp-server-quickbooks",
+    "version": "1.0.0",
+    "description": "A QuickBooks Online connector MCP Server.",
+    "main": "dist/index.js",
+    "types": "dist/index.d.ts",
+    "type": "module",
+    "bin": {
+        "quickbooks-mcp": "dist/index.js"
+    },
+    "files": [
+        "dist"
+    ],
+    "scripts": {
+        "build": "tsc && shx chmod +x dist/*.js",
+        "prepare": "npm run build",
+        "watch": "tsc --watch",
+        "test": "node --test",
+        "start:stdio": "node dist/index.js",
+        "start:http": "TRANSPORT_MODE=http PORT=3000 node dist/index.js",
+        "auth": "node dist/auth-server.js"
+    },
+    "keywords": [
+        "mcp",
+        "quickbooks",
+        "qbo",
+        "claude",
+        "ai",
+        "intuit"
+    ],
+    "author": "caydigital",
+    "license": "MIT",
+    "dependencies": {
+        "@modelcontextprotocol/sdk": "^1.6.0",
+        "dotenv": "^16.4.7",
+        "intuit-oauth": "^4.0.0",
+        "node-quickbooks": "^2.0.43",
+        "open": "^9.1.0",
+        "zod": "^3.24.2"
+    },
+    "devDependencies": {
+        "@types/node": "^22.13.10",
+        "shx": "^0.4.0",
+        "typescript": "^5.8.2"
+    }
+}
