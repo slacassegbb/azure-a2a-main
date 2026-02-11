@@ -1468,6 +1468,52 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                     print(f"⚠️ [Agent Mode] No valid tasks after validation, breaking loop")
                     break
                 
+                # =========================================================
+                # LOOP DETECTION: Prevent infinite loops on failing agents
+                # =========================================================
+                # Track how many times we've called the same agent with similar tasks
+                # If an agent keeps failing/completing without progress, stop
+                # =========================================================
+                max_same_agent_attempts = 3
+                for task_dict in tasks_to_execute[:]:  # Use slice copy to allow removal
+                    agent_name = task_dict.get("recommended_agent", "")
+                    task_desc = task_dict.get("task_description", "").lower()
+                    
+                    # Count previous attempts to this agent
+                    same_agent_tasks = [
+                        t for t in plan.tasks 
+                        if t.recommended_agent == agent_name
+                    ]
+                    
+                    # Check for repeated similar tasks (e.g., "re-authenticate", same keywords)
+                    similar_keywords = ["re-authenticate", "reconnect", "retry", "token", "auth"]
+                    is_retry_task = any(kw in task_desc for kw in similar_keywords)
+                    
+                    if len(same_agent_tasks) >= max_same_agent_attempts:
+                        # Check if we're making progress (different task types)
+                        recent_tasks = same_agent_tasks[-max_same_agent_attempts:]
+                        recent_descs = [t.task_description.lower() for t in recent_tasks]
+                        
+                        # If recent tasks all have retry keywords, we're looping
+                        retry_count = sum(1 for d in recent_descs if any(kw in d for kw in similar_keywords))
+                        
+                        if retry_count >= 2 or is_retry_task:
+                            log_error(f"🔁 [LOOP DETECTION] Agent '{agent_name}' has been called {len(same_agent_tasks)} times with repeated retry tasks. Breaking loop.")
+                            print(f"🔁 [LOOP DETECTION] Breaking loop - '{agent_name}' called too many times with retry tasks")
+                            await self._emit_status_event(f"⚠️ {agent_name} connection issue - cannot complete automatically. Please re-authenticate manually.", context_id)
+                            
+                            # Remove this task from execution
+                            tasks_to_execute.remove(task_dict)
+                            
+                            # Mark goal as completed to break the loop
+                            plan.goal_status = "completed"
+                            plan.updated_at = datetime.now(timezone.utc)
+                
+                if not tasks_to_execute or plan.goal_status == "completed":
+                    if plan.goal_status == "completed":
+                        log_info(f"🔁 [LOOP DETECTION] Goal marked completed due to loop detection")
+                    break
+                
                 # Create AgentModeTask objects for all tasks
                 pydantic_tasks = []
                 for task_dict in tasks_to_execute:
