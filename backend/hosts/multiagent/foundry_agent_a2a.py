@@ -4391,15 +4391,12 @@ Answer with just JSON:
                         print(f"⏸️ [HITL PAUSE] Detected saved plan - workflow paused for human input")
                         log_info(f"⏸️ [HITL PAUSE] Plan saved for resume, returning HITL response only")
                         
-                        # Return only the last output (the HITL agent's question/message)
-                        # Don't combine all outputs - that would show intermediate results
-                        if orchestration_outputs:
-                            # The last output should be the HITL agent's message
-                            hitl_message = orchestration_outputs[-1] if orchestration_outputs else "Waiting for your response..."
-                            log_info(f"⏸️ [HITL PAUSE] Returning HITL message: {hitl_message[:100]}...")
-                            final_responses = [hitl_message]
-                        else:
-                            final_responses = ["Waiting for your response..."]
+                        # Return a clean status message indicating we're waiting for human input
+                        # Don't show the agent's full output - that's already in the sidebar/status
+                        pending_agent = session_context.pending_input_agent or "an agent"
+                        hitl_message = f"⏸️ Workflow paused - waiting for your response in {pending_agent.replace(' Agent', '')}."
+                        log_info(f"⏸️ [HITL PAUSE] Returning HITL status message")
+                        final_responses = [hitl_message]
                         
                         # Persist the HITL waiting message to chat history
                         try:
