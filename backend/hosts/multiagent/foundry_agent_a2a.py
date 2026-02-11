@@ -4391,11 +4391,14 @@ Answer with just JSON:
                         print(f"⏸️ [HITL PAUSE] Detected saved plan - workflow paused for human input")
                         log_info(f"⏸️ [HITL PAUSE] Plan saved for resume, returning HITL response only")
                         
-                        # Return a clean status message indicating we're waiting for human input
-                        # Don't show the agent's full output - that's already in the sidebar/status
+                        # Show the message that was sent (so user knows what they're approving)
+                        # Plus a clear status indicator that we're waiting
                         pending_agent = session_context.pending_input_agent or "an agent"
-                        hitl_message = f"⏸️ Workflow paused - waiting for your response in {pending_agent.replace(' Agent', '')}."
-                        log_info(f"⏸️ [HITL PAUSE] Returning HITL status message")
+                        agent_output = orchestration_outputs[-1] if orchestration_outputs else ""
+                        
+                        # Build response: show what was sent + status
+                        hitl_message = f"{agent_output}\n\n⏸️ **Workflow paused** - waiting for your response in {pending_agent.replace(' Agent', '')}."
+                        log_info(f"⏸️ [HITL PAUSE] Returning HITL message with agent output")
                         final_responses = [hitl_message]
                         
                         # Persist the HITL waiting message to chat history
