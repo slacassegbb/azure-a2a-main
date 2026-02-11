@@ -4379,6 +4379,43 @@ Answer with just JSON:
                         workflow_goal=workflow_goal
                     )
                     
+                    # =========================================================
+                    # HITL CHECK: If plan was saved, we're waiting for human input
+                    # =========================================================
+                    # When the orchestration loop pauses for HITL, it saves the plan
+                    # to session_context.current_plan. In that case, we should NOT
+                    # combine all outputs and return "Workflow completed" - we should
+                    # return only the HITL agent's message (the last output).
+                    # =========================================================
+                    if session_context.current_plan is not None:
+                        print(f"⏸️ [HITL PAUSE] Detected saved plan - workflow paused for human input")
+                        log_info(f"⏸️ [HITL PAUSE] Plan saved for resume, returning HITL response only")
+                        
+                        # Return only the last output (the HITL agent's question/message)
+                        # Don't combine all outputs - that would show intermediate results
+                        if orchestration_outputs:
+                            # The last output should be the HITL agent's message
+                            hitl_message = orchestration_outputs[-1] if orchestration_outputs else "Waiting for your response..."
+                            log_info(f"⏸️ [HITL PAUSE] Returning HITL message: {hitl_message[:100]}...")
+                            final_responses = [hitl_message]
+                        else:
+                            final_responses = ["Waiting for your response..."]
+                        
+                        # Persist the HITL waiting message to chat history
+                        try:
+                            persist_message(context_id, {
+                                "messageId": str(uuid.uuid4()),
+                                "role": "agent",
+                                "parts": [{"root": {"kind": "text", "text": final_responses[0]}}],
+                                "contextId": context_id,
+                                "metadata": {"type": "hitl_waiting", "pending_agent": session_context.pending_input_agent}
+                            })
+                        except Exception as e:
+                            print(f"[ChatHistory] Error persisting HITL response: {e}")
+                        
+                        log_debug(f"⏸️ [HITL PAUSE] Returning early, workflow will resume on next message")
+                        return final_responses
+                    
                     # WORKFLOW MODE: Combine outputs into single response without calling agents
                     # The orchestration loop has executed all workflow steps in order
                     print(f"✅ [Workflow Mode] Workflow completed - {len(orchestration_outputs)} task outputs")
