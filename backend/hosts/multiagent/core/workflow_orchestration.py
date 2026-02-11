@@ -1591,6 +1591,9 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                             session_context.current_plan = plan
                             log_info(f"💾 [Agent Mode] Saved plan for HITL resume (sequential task)")
                             log_info(f"💾 [Agent Mode] SAVED PLAN: {plan.model_dump_json(indent=2)}")
+                            # VERIFICATION: Confirm the plan was actually set
+                            log_info(f"💾 [Agent Mode] VERIFY: session_context.current_plan is not None: {session_context.current_plan is not None}")
+                            log_info(f"💾 [Agent Mode] VERIFY: session_context.contextId: {session_context.contextId}")
                             return all_task_outputs
                         
                         if result.get("output"):

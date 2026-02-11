@@ -332,6 +332,10 @@ class FoundryHostManager(ApplicationManager):
         # so the orchestrator can resume the workflow instead of treating it as a new request
         try:
             session_ctx = self._host_agent.get_session_context(context_id)
+            # DEBUG: Log the session context state
+            log_debug(f"🔍 [HITL CHECK] session_ctx.contextId: {session_ctx.contextId}")
+            log_debug(f"🔍 [HITL CHECK] session_ctx.current_plan is not None: {session_ctx.current_plan is not None}")
+            log_debug(f"🔍 [HITL CHECK] session_ctx.pending_input_agent: {session_ctx.pending_input_agent}")
             if session_ctx and session_ctx.current_plan:
                 log_debug(f"🔄 [HITL RESUME] Found pending workflow plan for context {context_id}, forcing agent_mode=True")
                 effective_agent_mode = True
@@ -342,6 +346,8 @@ class FoundryHostManager(ApplicationManager):
                 if session_ctx.current_plan.workflow_goal:
                     workflow_goal = session_ctx.current_plan.workflow_goal
                     log_debug(f"🔄 [HITL RESUME] Restored workflow_goal from plan")
+            else:
+                log_debug(f"🔍 [HITL CHECK] No current_plan found - proceeding as new request")
         except Exception as e:
             log_debug(f"⚠️ [HITL RESUME] Error checking for pending plan: {e}")
         
