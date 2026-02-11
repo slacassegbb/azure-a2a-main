@@ -2565,7 +2565,9 @@ Answer with just JSON:
                 if cool_until and cool_until > now_ts:
                     wait_s = min(60, max(0, int(cool_until - now_ts)))
                     if wait_s > 0:
-                        asyncio.create_task(self._emit_granular_agent_event(agent_name, f"throttled; waiting {wait_s}s", session_context.contextId))
+                        # Use contextvar for async-safe context isolation
+                        throttle_context_id = _current_context_id.get() or session_context.contextId
+                        asyncio.create_task(self._emit_granular_agent_event(agent_name, f"throttled; waiting {wait_s}s", throttle_context_id))
                         await asyncio.sleep(wait_s)
             except Exception:
                 pass
@@ -2587,7 +2589,11 @@ Answer with just JSON:
                     del session_context.agent_task_ids[agent_name]
                 if agent_name in session_context.agent_task_states:
                     del session_context.agent_task_states[agent_name]
-            contextId = session_context.contextId
+            # CRITICAL FIX: Use contextvar for async-safe context isolation
+            # The contextvar is set correctly in run_conversation_with_parts, but session_context
+            # may have a stale contextId from a previous workflow when passed through function params
+            contextId = _current_context_id.get() or session_context.contextId
+            print(f"🔗 [send_message] Using contextId: {contextId} (contextvar: {_current_context_id.get()}, session: {session_context.contextId})")
             messageId = str(uuid.uuid4())  # Generate fresh message ID for this specific call
 
             prepared_parts: List[Any] = [Part(root=TextPart(text=contextualized_message))]
@@ -3004,13 +3010,15 @@ Answer with just JSON:
                     retry_after = self._parse_retry_after_from_task(task)
                     max_rate_limit_retries = 3
                     retry_attempt = 0
+                    # Use contextvar for async-safe context isolation in retry path
+                    retry_context_id = _current_context_id.get() or session_context.contextId
 
                     while retry_after and retry_after > 0 and retry_attempt < max_rate_limit_retries:
                         retry_attempt += 1
                         session_context.agent_task_states[agent_name] = 'failed'
                         session_context.agent_cooldowns[agent_name] = time.time() + retry_after
                         try:
-                            asyncio.create_task(self._emit_granular_agent_event(agent_name, f"rate limited; retrying in {retry_after}s (attempt {retry_attempt}/{max_rate_limit_retries})", session_context.contextId))
+                            asyncio.create_task(self._emit_granular_agent_event(agent_name, f"rate limited; retrying in {retry_after}s (attempt {retry_attempt}/{max_rate_limit_retries})", retry_context_id))
                         except Exception:
                             pass
 
@@ -3022,7 +3030,7 @@ Answer with just JSON:
                                 role='user',
                                 parts=[Part(root=TextPart(text=contextualized_message))],
                                 messageId=str(uuid.uuid4()),
-                                contextId=session_context.contextId,
+                                contextId=retry_context_id,
                                 taskId=None,
                             ),
                             configuration=MessageSendConfiguration(
@@ -3212,9 +3220,12 @@ Answer with just JSON:
                 top_k_results = 1
             else:
                 top_k_results = 2
+            # Use contextvar for async-safe context isolation (fixes stale session_context issue)
+            effective_context_id = _current_context_id.get() or session_context.contextId
+            print(f"🔗 [_add_context_to_message] Using context_id: {effective_context_id} (contextvar: {_current_context_id.get()}, session: {session_context.contextId})")
             memory_results = await self._search_relevant_memory(
                 query=message,
-                context_id=session_context.contextId,
+                context_id=effective_context_id,
                 agent_name=None,
                 top_k=top_k_results
             )
