@@ -602,54 +602,82 @@ class A2AMemoryService:
             # Note: text-embedding-3-large produces scores typically in 0.5-0.8 range for relevant content
             MIN_RELEVANCE_SCORE = 0.58  # Only include results with >= 58% similarity (filters out truly unrelated)
             
-            # Dedupe by content - remove exact duplicate documents
-            # This handles the case where same file is uploaded multiple times OR
-            # when chunked documents return multiple chunks from the same parent doc
+            # Dedupe and reassemble chunked documents
+            # For chunked documents: collect all chunks and reassemble the full content
+            # For non-chunked documents: dedupe by exact content match
             seen_content = set()
-            seen_parent_docs = set()
-            deduped_results = []
+            chunked_docs = {}  # parent_doc_id -> list of chunks
+            regular_results = []  # non-chunked documents
             total_results_count = 0
             skipped_low_score = 0
+
             for result in results:
                 total_results_count += 1
-                
+
                 # Check relevance score - skip low-scoring results
                 search_score = result.get('@search.score', 0)
                 if search_score < MIN_RELEVANCE_SCORE:
                     skipped_low_score += 1
                     log_memory_debug(f"Skipping result with low score {search_score:.3f} < {MIN_RELEVANCE_SCORE}")
                     continue
-                
+
                 # Try to extract the actual content from the JSON payload
                 inbound_payload_str = result.get('inbound_payload', '')
                 try:
                     inbound_payload = json.loads(inbound_payload_str) if isinstance(inbound_payload_str, str) else inbound_payload_str
-                    # For chunked documents, dedupe by parent_document_id
                     parent_doc_id = inbound_payload.get('parent_document_id') if isinstance(inbound_payload, dict) else None
-                    # For non-chunked documents, dedupe by the full content
                     content = inbound_payload.get('content', inbound_payload_str) if isinstance(inbound_payload, dict) else inbound_payload_str
+                    chunk_index = inbound_payload.get('chunk_index', 0) if isinstance(inbound_payload, dict) else 0
                 except:
-                    # If JSON parsing fails, fall back to string comparison
                     parent_doc_id = None
                     content = inbound_payload_str
-                
-                # Check if we've seen this parent document or this exact content
-                if parent_doc_id and parent_doc_id in seen_parent_docs:
-                    continue  # Skip this chunk - we already have one from this parent doc
-                elif content in seen_content:
-                    continue  # Skip exact duplicate content
-                
-                # This is a new document/chunk with sufficient relevance
+                    chunk_index = 0
+
+                # Handle chunked documents - collect all chunks for reassembly
                 if parent_doc_id:
-                    seen_parent_docs.add(parent_doc_id)
-                seen_content.add(content)
-                deduped_results.append(dict(result))
-                log_memory_debug(f"Including result with score {search_score:.3f}")
-            
+                    if parent_doc_id not in chunked_docs:
+                        chunked_docs[parent_doc_id] = []
+                    chunked_docs[parent_doc_id].append({
+                        'chunk_index': chunk_index,
+                        'content': content,
+                        'result': dict(result),
+                        'inbound_payload': inbound_payload,
+                        'score': search_score
+                    })
+                    log_memory_debug(f"Collected chunk {chunk_index} for parent doc {parent_doc_id[:8]}...")
+                # Handle regular documents - dedupe by exact content
+                elif content not in seen_content:
+                    seen_content.add(content)
+                    regular_results.append(dict(result))
+                    log_memory_debug(f"Including regular result with score {search_score:.3f}")
+
+            # Reassemble chunked documents
+            deduped_results = []
+            for parent_doc_id, chunks in chunked_docs.items():
+                # Sort chunks by index
+                chunks.sort(key=lambda x: x['chunk_index'])
+                log_memory_debug(f"Reassembling {len(chunks)} chunks for parent doc {parent_doc_id[:8]}...")
+
+                # Reassemble full content from all chunks
+                full_content = ' '.join(chunk['content'] for chunk in chunks)
+
+                # Use the first chunk's result as template but update the content
+                reassembled_result = chunks[0]['result'].copy()
+                reassembled_inbound = chunks[0]['inbound_payload'].copy() if isinstance(chunks[0]['inbound_payload'], dict) else {}
+                reassembled_inbound['content'] = full_content
+                reassembled_inbound['reassembled'] = True
+                reassembled_inbound['chunks_count'] = len(chunks)
+                reassembled_result['inbound_payload'] = json.dumps(reassembled_inbound)
+
+                deduped_results.append(reassembled_result)
+                log_memory_debug(f"Reassembled document: {len(full_content)} chars from {len(chunks)} chunks")
+
+            # Add regular results
+            deduped_results.extend(regular_results)
+
             if skipped_low_score > 0:
                 log_memory_debug(f"Filtered out {skipped_low_score} low-relevance results (score < {MIN_RELEVANCE_SCORE})")
-            if len(deduped_results) < total_results_count - skipped_low_score:
-                log_memory_debug(f"Deduped {total_results_count - skipped_low_score - len(deduped_results)} duplicate results")
+            log_memory_debug(f"Final results: {len(deduped_results)} documents ({len(chunked_docs)} reassembled, {len(regular_results)} regular)")
             
             return deduped_results
 
