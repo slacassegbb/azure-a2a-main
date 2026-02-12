@@ -82,7 +82,40 @@ export async function getQuickbooksInvoice(
  */
 function sanitizeInvoiceData(invoiceData: Record<string, any>): Record<string, any> {
   const sanitized = { ...invoiceData };
-  
+
+  // Validate and fix dates
+  if (sanitized.TxnDate) {
+    const txnDate = new Date(sanitized.TxnDate);
+    if (isNaN(txnDate.getTime())) {
+      console.warn(`Invalid TxnDate: ${sanitized.TxnDate}, removing`);
+      delete sanitized.TxnDate;
+    }
+  }
+
+  if (sanitized.DueDate) {
+    const dueDate = new Date(sanitized.DueDate);
+    if (isNaN(dueDate.getTime())) {
+      console.warn(`Invalid DueDate: ${sanitized.DueDate}, removing`);
+      delete sanitized.DueDate;
+    } else {
+      // Validate that the date actually exists (e.g., not Feb 29 on non-leap year)
+      const year = dueDate.getUTCFullYear();
+      const month = dueDate.getUTCMonth();
+      const day = dueDate.getUTCDate();
+      const reconstructed = new Date(Date.UTC(year, month, day));
+
+      if (reconstructed.getUTCDate() !== day ||
+          reconstructed.getUTCMonth() !== month ||
+          reconstructed.getUTCFullYear() !== year) {
+        console.warn(`Invalid date (doesn't exist): ${sanitized.DueDate}, adjusting to last day of month`);
+        // Set to last valid day of that month
+        const lastDay = new Date(Date.UTC(year, month + 1, 0));
+        sanitized.DueDate = lastDay.toISOString().split('T')[0];
+        console.log(`Adjusted DueDate to: ${sanitized.DueDate}`);
+      }
+    }
+  }
+
   // Sanitize Line items
   if (sanitized.Line && Array.isArray(sanitized.Line)) {
     sanitized.Line = sanitized.Line.map((line: any) => {
@@ -90,12 +123,12 @@ function sanitizeInvoiceData(invoiceData: Record<string, any>): Record<string, a
         Amount: line.Amount,
         DetailType: "SalesItemLineDetail",
       };
-      
+
       // Add Description only if it exists and is non-empty
       if (line.Description && typeof line.Description === 'string' && line.Description.trim()) {
         cleanLine.Description = line.Description;
       }
-      
+
       // Sanitize SalesItemLineDetail - only include valid properties
       if (line.SalesItemLineDetail) {
         cleanLine.SalesItemLineDetail = {
@@ -112,11 +145,11 @@ function sanitizeInvoiceData(invoiceData: Record<string, any>): Record<string, a
           UnitPrice: line.Amount || 0,
         };
       }
-      
+
       return cleanLine;
     });
   }
-  
+
   return sanitized;
 }
 
