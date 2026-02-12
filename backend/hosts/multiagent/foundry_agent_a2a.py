@@ -266,11 +266,11 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
         )
         
         # Maximum characters for memory search summaries (PER RESULT)
-        # Default 2000 chars per result - enough for key invoice details but not bloated
-        # With top_k=2, max context injection is ~4000 chars (~1000 tokens)
+        # Default 5000 chars per result - enough for full invoices, documents, and complex data
+        # With top_k=2, max context injection is ~10000 chars (~2500 tokens)
         self.memory_summary_max_chars = max(
             200,
-            normalize_env_int(os.environ.get("A2A_MEMORY_SUMMARY_MAX_CHARS"), 2000),
+            normalize_env_int(os.environ.get("A2A_MEMORY_SUMMARY_MAX_CHARS"), 5000),
         )
 
         self._azure_blob_client = None
@@ -2660,7 +2660,7 @@ Answer with just JSON:
             start_time = time.time()
             
             # Create a user-friendly query preview for status messages
-            query_preview = message[:60] + "..." if len(message) > 60 else message
+            query_preview = message[:200] + "..." if len(message) > 200 else message
             query_preview = " ".join(query_preview.split())
             
             # ========================================================================
@@ -3212,14 +3212,9 @@ Answer with just JSON:
         # Always search memory for relevant context (retrieval is always enabled)
         # The memory toggle only controls STORAGE of new interactions, not retrieval
         try:
-            # top_k=2 for QuickBooks to find invoice data past HITL responses
-            # top_k=1 for Stripe/HubSpot is sufficient (they get data from QuickBooks output)
-            if target_agent_name and 'quickbooks' in target_agent_name.lower():
-                top_k_results = 2  # Increased to find invoice data past HITL approvals
-            elif target_agent_name and ('stripe' in target_agent_name.lower() or 'hubspot' in target_agent_name.lower()):
-                top_k_results = 1
-            else:
-                top_k_results = 2
+            # Retrieve top 2 memory results for all agents to ensure sufficient context
+            # This allows agents to find relevant data even past HITL responses or multi-step workflows
+            top_k_results = 2
             # Use contextvar for async-safe context isolation (fixes stale session_context issue)
             effective_context_id = _current_context_id.get() or session_context.contextId
             print(f"🔗 [_add_context_to_message] Using context_id: {effective_context_id} (contextvar: {_current_context_id.get()}, session: {session_context.contextId})")
@@ -3333,15 +3328,8 @@ Answer with just JSON:
                             # Add to context if we found content
                             if content_summary:
                                 # Truncate long content for context efficiency
-                                # Use configured max_chars (default 2000) - enough for invoices/documents
-                                # For QuickBooks agent: 1500 chars to include invoice tables with totals
-                                # For Stripe/HubSpot agents: 1000 chars (needs customer name and amounts)
-                                if target_agent_name and 'quickbooks' in target_agent_name.lower():
-                                    max_chars = 1500  # Increased from 500 to fit full invoice tables
-                                elif target_agent_name and ('stripe' in target_agent_name.lower() or 'hubspot' in target_agent_name.lower()):
-                                    max_chars = 1000  # Increased from 800 to include more context
-                                else:
-                                    max_chars = self.memory_summary_max_chars
+                                # Use configured max_chars - applies to all agents uniformly
+                                max_chars = self.memory_summary_max_chars
                                     
                                 if len(content_summary) > max_chars:
                                     content_summary = content_summary[:max_chars] + "..."
