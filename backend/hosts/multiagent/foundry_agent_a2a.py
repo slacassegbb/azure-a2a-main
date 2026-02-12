@@ -4026,9 +4026,18 @@ Answer with just JSON:
                         file_info.append(f"File uploaded: {file_name}")
                         if file_uri:
                             file_uris_for_gpt4.append({"name": file_name, "uri": file_uri})
+
+                        # CRITICAL FIX: Include extracted content in enhanced_message
+                        # This was missing - file content was never being added to the message!
+                        if 'extracted_content' in result.data and result.data['extracted_content']:
+                            extracted = result.data['extracted_content']
+                            formatted_content = f"\n\n--- Extracted from {file_name} ---\n{extracted}\n--- End of {file_name} ---\n"
+                            file_contents.append(formatted_content)
+                            print(f"📄 Added extracted content to message: {len(extracted)} characters from {file_name}")
+
                 elif isinstance(result, str) and result.startswith("File:") and "Content:" in result:
-                    # This is processed file content from uploaded files
-                    print(f"📄 Found processed file content: {len(result)} characters")
+                    # Legacy format - this is processed file content from uploaded files
+                    print(f"📄 Found processed file content (legacy format): {len(result)} characters")
                     file_contents.append(result)
             
             # Emit completion status if files were processed
