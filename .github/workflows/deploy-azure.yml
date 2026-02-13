@@ -142,6 +142,7 @@ jobs:
               "DATABASE_URL=${{ secrets.DATABASE_URL }}" \
               "WEBSOCKET_SERVER_URL=https://websocket-uami.ambitioussky-6c709152.westus2.azurecontainerapps.io" \
               "A2A_HOST=FOUNDRY" \
+              "A2A_MEMORY_SUMMARY_MAX_CHARS=10000" \
               "VERBOSE_LOGGING=true"
       
       - name: Verify Deployment
