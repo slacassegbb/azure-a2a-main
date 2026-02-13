@@ -430,13 +430,36 @@ NEEDS_INPUT: Your specific question here
                 logger.warning(f"📊 Token usage: {self.last_token_usage}")
             
             # Get messages
-            messages = client.messages.list(thread_id=thread_id, order=ListSortOrder.DESCENDING)
-            for msg in messages:
-                if msg.role == "assistant":
-                    for content in msg.content:
-                        if hasattr(content, 'text') and hasattr(content.text, 'value'):
-                            yield content.text.value
-                    break
+            try:
+                messages = client.messages.list(thread_id=thread_id, order=ListSortOrder.DESCENDING)
+                logger.info(f"📨 Retrieved {len(list(messages))} messages from thread")
+
+                found_response = False
+                for msg in messages:
+                    logger.info(f"   Message role: {msg.role}")
+                    if msg.role == "assistant":
+                        logger.info(f"   Assistant message has {len(msg.content)} content parts")
+                        for idx, content in enumerate(msg.content):
+                            logger.info(f"   Content {idx}: type={type(content)}, hasText={hasattr(content, 'text')}")
+                            if hasattr(content, 'text') and hasattr(content.text, 'value'):
+                                response_text = content.text.value
+                                logger.info(f"✅ Found response text ({len(response_text)} chars)")
+                                yield response_text
+                                found_response = True
+                            elif hasattr(content, 'text'):
+                                logger.warning(f"   Text object exists but no 'value' attribute: {dir(content.text)}")
+                        break
+
+                if not found_response:
+                    logger.error("❌ No assistant response text found in messages")
+                    yield "Error: Agent completed but no response text was found"
+
+            except Exception as e:
+                logger.error(f"❌ Error extracting messages: {e}")
+                logger.error(f"   Exception type: {type(e)}")
+                import traceback
+                logger.error(f"   Traceback: {traceback.format_exc()}")
+                yield f"Error extracting response: {str(e)}"
         else:
             yield f"Run ended with status: {run.status}"
 
