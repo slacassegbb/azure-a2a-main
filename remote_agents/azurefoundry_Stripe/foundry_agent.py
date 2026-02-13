@@ -461,6 +461,35 @@ NEEDS_INPUT: Your specific question here
                 logger.error(f"   Traceback: {traceback.format_exc()}")
                 yield f"Error extracting response: {str(e)}"
         else:
+            logger.error(f"❌ RUN ENDED WITH NON-COMPLETED STATUS: {run.status}")
+            logger.error(f"   Run ID: {run.id}")
+            logger.error(f"   Thread ID: {thread_id}")
+
+            # Log detailed error information
+            if hasattr(run, 'last_error') and run.last_error:
+                logger.error(f"   Last Error: {run.last_error}")
+
+            if hasattr(run, 'incomplete_details') and run.incomplete_details:
+                logger.error(f"   Incomplete Details: {run.incomplete_details}")
+
+            # Log token usage if available
+            if hasattr(run, 'usage') and run.usage:
+                logger.error(f"   Token Usage: prompt={run.usage.prompt_tokens}, completion={run.usage.completion_tokens}, total={run.usage.total_tokens}")
+
+            # Log all run attributes for debugging
+            logger.error(f"   Run attributes: {dir(run)}")
+
+            # Try to get run steps to see what actually happened
+            try:
+                run_steps = client.run_steps.list(thread_id, run.id)
+                logger.error(f"   Run steps count: {len(list(run_steps))}")
+                for step in run_steps:
+                    logger.error(f"     Step {step.id}: status={step.status}, type={step.type}")
+                    if hasattr(step, 'step_details'):
+                        logger.error(f"       Details: {step.step_details}")
+            except Exception as e:
+                logger.error(f"   Could not retrieve run steps: {e}")
+
             yield f"Run ended with status: {run.status}"
 
     async def run_conversation(self, thread_id: str, user_message: str) -> str:

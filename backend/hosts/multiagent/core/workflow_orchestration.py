@@ -753,22 +753,60 @@ Use the data from the previous steps to complete your task."""
         # SMART CONTEXT SELECTION: Find the most substantial previous output
         # HITL steps often return short responses like "approve", so we need to find
         # the actual data (like invoice details) from earlier steps
+
+        # IMPORTANT: Also search Azure Search memory for DocumentProcessor content
+        # The memory search may have the original document content (e.g., full invoice)
+        # while previous_task_outputs only has agent summaries (e.g., Teams message)
+        document_content = None
+        try:
+            memory_results = await self.foundry_host._search_relevant_memory(
+                query=task_desc,
+                context_id=session_context.contextId,
+                agent_name=None,
+                top_k=5
+            )
+
+            # Look for DocumentProcessor results with full document content
+            if memory_results:
+                for result in memory_results:
+                    agent_name = result.get('agent_name', '')
+                    if agent_name == 'DocumentProcessor':
+                        inbound = result.get('inbound_payload', {})
+                        if isinstance(inbound, str):
+                            try:
+                                import json
+                                inbound = json.loads(inbound)
+                            except:
+                                pass
+                        if isinstance(inbound, dict) and 'content' in inbound:
+                            document_content = str(inbound['content'])
+                            print(f"📋 [Agent Mode] Found DocumentProcessor content: {len(document_content)} chars")
+                            break
+        except Exception as e:
+            print(f"⚠️ [Agent Mode] Error searching memory for document content: {e}")
+
         if previous_task_outputs and len(previous_task_outputs) > 0:
             print(f"📋 [Agent Mode] Searching {len(previous_task_outputs)} outputs for best context")
-            
-            # Strategy: Find the longest output that looks like actual data
+
+            # Strategy: Prefer DocumentProcessor content if available, otherwise find the longest output
             best_output = None
             best_output_len = 0
-            
+
             for idx, output in enumerate(previous_task_outputs):
                 output_len = len(output) if output else 0
                 # Prefer outputs that are substantial (>200 chars) and contain data indicators
-                is_data_output = output_len > 200 or any(keyword in output.lower() for keyword in 
+                is_data_output = output_len > 200 or any(keyword in output.lower() for keyword in
                     ['invoice', 'amount', 'total', 'bill', 'customer', 'vendor', '$', 'usd'])
-                
+
                 if output_len > best_output_len and is_data_output:
                     best_output = output
                     best_output_len = output_len
+
+            # If we have DocumentProcessor content and it's more substantial, prefer it
+            if document_content and len(document_content) > best_output_len:
+                print(f"📋 [Agent Mode] Preferring DocumentProcessor content ({len(document_content)} chars) over workflow output ({best_output_len} chars)")
+                best_output = document_content
+                best_output_len = len(document_content)
             
             # If no substantial output found, fall back to the first one
             if not best_output:

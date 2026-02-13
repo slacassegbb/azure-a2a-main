@@ -3241,20 +3241,31 @@ Answer with just JSON:
                             # Method 1: Look for content in inbound payload
                             if 'inbound_payload' in result and result['inbound_payload']:
                                 inbound = result['inbound_payload']
-                                
+
+                                print(f"[DEBUG MEMORY] Result {i} from {agent_name}:")
+                                print(f"[DEBUG MEMORY]   Inbound type: {type(inbound)}")
+                                print(f"[DEBUG MEMORY]   Inbound keys: {inbound.keys() if isinstance(inbound, dict) else 'N/A'}")
+
                                 # Parse JSON string if needed
                                 if isinstance(inbound, str):
+                                    print(f"[DEBUG MEMORY]   Inbound is string, length: {len(inbound)} chars, parsing JSON...")
                                     try:
                                         inbound = json.loads(inbound)
-                                    except json.JSONDecodeError:
+                                        print(f"[DEBUG MEMORY]   Parsed JSON keys: {inbound.keys() if isinstance(inbound, dict) else 'N/A'}")
+                                    except json.JSONDecodeError as e:
+                                        print(f"[DEBUG MEMORY]   JSON parse failed: {e}")
                                         inbound = {}
-                                
+
                                 # Try direct content field (DocumentProcessor format)
                                 if isinstance(inbound, dict) and 'content' in inbound:
+                                    content_length = len(str(inbound['content']))
+                                    print(f"[DEBUG MEMORY]   Found 'content' field: {content_length} chars")
                                     content_summary = str(inbound['content'])
-                                
+                                    print(f"[DEBUG MEMORY]   Content summary length: {len(content_summary)} chars")
+                                    print(f"[DEBUG MEMORY]   Content preview: {content_summary[:200]}...")
+
                                 # Try Task structure: status.message.parts (A2A Task format)
-                                elif isinstance(inbound, dict) and 'status' in inbound:
+                                if not content_summary and isinstance(inbound, dict) and 'status' in inbound:
                                     status = inbound['status']
                                     if isinstance(status, dict) and 'message' in status:
                                         status_message = status['message']
@@ -3268,9 +3279,9 @@ Answer with just JSON:
                                                         parts_content.append(str(part['text']))
                                             if parts_content:
                                                 content_summary = " ".join(parts_content)
-                                
+
                                 # Try parts array at root (A2A Message structure)
-                                elif isinstance(inbound, dict) and 'parts' in inbound:
+                                if not content_summary and isinstance(inbound, dict) and 'parts' in inbound:
                                     parts_content = []
                                     for part in inbound['parts']:
                                         if isinstance(part, dict):

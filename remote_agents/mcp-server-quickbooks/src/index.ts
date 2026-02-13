@@ -292,6 +292,35 @@ async function runServer() {
         return;
       }
 
+      // OAuth start endpoint - initiates QuickBooks OAuth flow
+      if (req.url === "/oauth/start") {
+        try {
+          console.error("Starting OAuth flow...");
+          const authUri = quickbooksClient["oauthClient"].authorizeUri({
+            scope: [
+              "com.intuit.quickbooks.accounting",
+              "com.intuit.quickbooks.payment"
+            ],
+            state: "oauth-state-" + Date.now()
+          });
+
+          res.writeHead(302, { "Location": authUri });
+          res.end();
+        } catch (error: any) {
+          console.error("Error starting OAuth:", error);
+          res.writeHead(500, { "Content-Type": "text/html" });
+          res.end(`
+            <html>
+              <body style="font-family: Arial, sans-serif; padding: 20px;">
+                <h2 style="color: #d32f2f;">Error starting OAuth flow</h2>
+                <p>${error.message}</p>
+              </body>
+            </html>
+          `);
+        }
+        return;
+      }
+
       // OAuth callback endpoint
       if (req.url?.startsWith("/oauth/callback")) {
         console.error("Received OAuth callback");
