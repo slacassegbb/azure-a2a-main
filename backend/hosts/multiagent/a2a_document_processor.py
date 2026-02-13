@@ -40,11 +40,7 @@ TEXT_EXTENSIONS = ['.json', '.csv', '.js', '.py', '.java', '.c', '.cpp', '.h', '
 # Azure Content Understanding configuration
 def get_content_understanding_client():
     from azure.identity import DefaultAzureCredential, get_bearer_token_provider
-    
-    # Create credentials using exactly the same approach as in the user's code
-    credential = DefaultAzureCredential()
-    token_provider = get_bearer_token_provider(credential, "https://cognitiveservices.azure.com/.default")
-    
+
     azure_ai_service_endpoint = (
         os.getenv("AZURE_CONTENT_UNDERSTANDING_ENDPOINT")
         or os.getenv("AZURE_AI_SERVICE_ENDPOINT")
@@ -59,19 +55,34 @@ def get_content_understanding_client():
         "AZURE_CONTENT_UNDERSTANDING_API_VERSION",
         "2024-12-01-preview",
     )
-    
+
+    # Check if API key is provided, otherwise use managed identity
+    api_key = os.getenv("AZURE_CONTENT_UNDERSTANDING_API_KEY")
+
     print(f"Azure Content Understanding endpoint: {azure_ai_service_endpoint}")
     print(f"Azure Content Understanding API version: {azure_ai_service_api_version}")
+    print(f"Azure Content Understanding auth: {'API Key' if api_key else 'Managed Identity'}")
 
     try:
-        # Create client with the exact same parameters as in the user's code
-        client = AzureContentUnderstandingClient(
-            endpoint=azure_ai_service_endpoint,
-            api_version=azure_ai_service_api_version,
-            token_provider=token_provider,
-            x_ms_useragent="azure-ai-content-understanding-python/content_extraction"
-        )
-        
+        if api_key:
+            # Use API key authentication
+            client = AzureContentUnderstandingClient(
+                endpoint=azure_ai_service_endpoint,
+                api_version=azure_ai_service_api_version,
+                subscription_key=api_key,
+                x_ms_useragent="azure-ai-content-understanding-python/content_extraction"
+            )
+        else:
+            # Use managed identity authentication
+            credential = DefaultAzureCredential()
+            token_provider = get_bearer_token_provider(credential, "https://cognitiveservices.azure.com/.default")
+            client = AzureContentUnderstandingClient(
+                endpoint=azure_ai_service_endpoint,
+                api_version=azure_ai_service_api_version,
+                token_provider=token_provider,
+                x_ms_useragent="azure-ai-content-understanding-python/content_extraction"
+            )
+
         return client
     except Exception as e:
         print(f"Error initializing Content Understanding client: {e}")
