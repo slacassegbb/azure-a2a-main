@@ -35,6 +35,7 @@ class QuickbooksClient {
   private oauthClient: OAuthClient;
   private isAuthenticating: boolean = false;
   private redirectUri: string;
+  private tokenRefreshInterval?: NodeJS.Timeout;
 
   constructor(config: {
     clientId: string;
@@ -294,7 +295,51 @@ class QuickbooksClient {
     );
 
     console.error("✓ QuickBooks client authenticated successfully");
+
+    // Start proactive token refresh to prevent expiration
+    this.startProactiveTokenRefresh();
+
     return this.quickbooksInstance;
+  }
+
+  /**
+   * Starts a background interval that proactively refreshes tokens every 50 minutes.
+   * This prevents the refresh token from expiring by keeping it actively used.
+   * QuickBooks extends the refresh token lifetime each time it's used to get a new access token.
+   */
+  private startProactiveTokenRefresh() {
+    // Clear any existing interval
+    if (this.tokenRefreshInterval) {
+      clearInterval(this.tokenRefreshInterval);
+    }
+
+    // Refresh access token every 50 minutes (before 1-hour expiry)
+    // This keeps the refresh token active and extends its lifetime
+    const REFRESH_INTERVAL_MS = 50 * 60 * 1000; // 50 minutes
+
+    this.tokenRefreshInterval = setInterval(async () => {
+      try {
+        console.error("🔄 Proactive token refresh starting...");
+        await this.refreshAccessToken();
+        console.error("✓ Proactive token refresh completed successfully");
+      } catch (error: any) {
+        console.error("❌ Proactive token refresh failed:", error.message);
+        // Don't stop the interval - maybe next refresh will succeed
+      }
+    }, REFRESH_INTERVAL_MS);
+
+    console.error(`✓ Proactive token refresh enabled (every ${REFRESH_INTERVAL_MS / 60000} minutes)`);
+  }
+
+  /**
+   * Stops the proactive token refresh interval (for cleanup)
+   */
+  stopProactiveTokenRefresh() {
+    if (this.tokenRefreshInterval) {
+      clearInterval(this.tokenRefreshInterval);
+      this.tokenRefreshInterval = undefined;
+      console.error("✓ Proactive token refresh stopped");
+    }
   }
 
   getQuickbooks() {
