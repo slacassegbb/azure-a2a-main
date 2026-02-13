@@ -136,6 +136,8 @@ jobs:
               "AZURE_SEARCH_SERVICE_ENDPOINT=${{ secrets.AZURE_SEARCH_SERVICE_ENDPOINT }}" \
               "AZURE_SEARCH_ADMIN_KEY=${{ secrets.AZURE_SEARCH_ADMIN_KEY }}" \
               "AZURE_SEARCH_INDEX_NAME=${{ secrets.AZURE_SEARCH_INDEX_NAME }}" \
+              "AZURE_CONTENT_UNDERSTANDING_ENDPOINT=${{ secrets.AZURE_CONTENT_UNDERSTANDING_ENDPOINT }}" \
+              "AZURE_CONTENT_UNDERSTANDING_API_KEY=${{ secrets.AZURE_CONTENT_UNDERSTANDING_API_KEY }}" \
               "BING_CONNECTION_ID=${{ secrets.BING_CONNECTION_ID }}" \
               "DATABASE_URL=${{ secrets.DATABASE_URL }}" \
               "WEBSOCKET_SERVER_URL=https://websocket-uami.ambitioussky-6c709152.westus2.azurecontainerapps.io" \
