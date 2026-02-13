@@ -759,7 +759,7 @@ Use the data from the previous steps to complete your task."""
         # while previous_task_outputs only has agent summaries (e.g., Teams message)
         document_content = None
         try:
-            memory_results = await self.foundry_host._search_relevant_memory(
+            memory_results = await self._search_relevant_memory(
                 query=task_desc,
                 context_id=session_context.contextId,
                 agent_name=None,
