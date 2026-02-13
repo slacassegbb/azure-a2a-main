@@ -35,7 +35,6 @@ class QuickbooksClient {
   private oauthClient: OAuthClient;
   private isAuthenticating: boolean = false;
   private redirectUri: string;
-  private tokenRefreshInterval?: NodeJS.Timeout;
 
   constructor(config: {
     clientId: string;
@@ -266,18 +265,25 @@ class QuickbooksClient {
     console.error(`- Environment: ${this.environment}`);
     console.error(`- Refresh Token: ${this.refreshToken?.substring(0, 10)}...`);
 
-    // Check if token exists and is still valid
+    // Check if token exists and is still valid (or will expire soon)
+    // Refresh proactively if token expires within 10 minutes
+    // This keeps refresh token active even with scale-to-zero (min replicas = 0)
     const now = new Date();
+    const tenMinutesFromNow = new Date(now.getTime() + 10 * 60 * 1000);
+
     if (
       !this.accessToken ||
       !this.accessTokenExpiry ||
-      this.accessTokenExpiry <= now
+      this.accessTokenExpiry <= tenMinutesFromNow
     ) {
-      console.error("Access token missing or expired, refreshing...");
+      console.error("Access token missing or expiring soon, refreshing...");
+      console.error(`- Current time: ${now.toISOString()}`);
+      console.error(`- Token expiry: ${this.accessTokenExpiry?.toISOString() || 'unknown'}`);
       const tokenResponse = await this.refreshAccessToken();
       this.accessToken = tokenResponse.access_token;
     } else {
-      console.error("✓ Using cached access token (still valid)");
+      const minutesRemaining = Math.floor((this.accessTokenExpiry.getTime() - now.getTime()) / 60000);
+      console.error(`✓ Using cached access token (valid for ${minutesRemaining} more minutes)`);
     }
 
     // At this point we know all tokens are available
@@ -296,50 +302,7 @@ class QuickbooksClient {
 
     console.error("✓ QuickBooks client authenticated successfully");
 
-    // Start proactive token refresh to prevent expiration
-    this.startProactiveTokenRefresh();
-
     return this.quickbooksInstance;
-  }
-
-  /**
-   * Starts a background interval that proactively refreshes tokens every 50 minutes.
-   * This prevents the refresh token from expiring by keeping it actively used.
-   * QuickBooks extends the refresh token lifetime each time it's used to get a new access token.
-   */
-  private startProactiveTokenRefresh() {
-    // Clear any existing interval
-    if (this.tokenRefreshInterval) {
-      clearInterval(this.tokenRefreshInterval);
-    }
-
-    // Refresh access token every 50 minutes (before 1-hour expiry)
-    // This keeps the refresh token active and extends its lifetime
-    const REFRESH_INTERVAL_MS = 50 * 60 * 1000; // 50 minutes
-
-    this.tokenRefreshInterval = setInterval(async () => {
-      try {
-        console.error("🔄 Proactive token refresh starting...");
-        await this.refreshAccessToken();
-        console.error("✓ Proactive token refresh completed successfully");
-      } catch (error: any) {
-        console.error("❌ Proactive token refresh failed:", error.message);
-        // Don't stop the interval - maybe next refresh will succeed
-      }
-    }, REFRESH_INTERVAL_MS);
-
-    console.error(`✓ Proactive token refresh enabled (every ${REFRESH_INTERVAL_MS / 60000} minutes)`);
-  }
-
-  /**
-   * Stops the proactive token refresh interval (for cleanup)
-   */
-  stopProactiveTokenRefresh() {
-    if (this.tokenRefreshInterval) {
-      clearInterval(this.tokenRefreshInterval);
-      this.tokenRefreshInterval = undefined;
-      console.error("✓ Proactive token refresh stopped");
-    }
   }
 
   getQuickbooks() {
