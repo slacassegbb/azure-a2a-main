@@ -7,6 +7,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { randomUUID } from "crypto";
 import * as dotenv from "dotenv";
 import http from "http";
+import { quickbooksClient } from "./clients/quickbooks-client.js";
 
 // Customer tools
 import {

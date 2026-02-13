@@ -93,23 +93,26 @@ function sanitizeInvoiceData(invoiceData: Record<string, any>): Record<string, a
   }
 
   if (sanitized.DueDate) {
-    const dueDate = new Date(sanitized.DueDate);
-    if (isNaN(dueDate.getTime())) {
-      console.warn(`Invalid DueDate: ${sanitized.DueDate}, removing`);
+    // Parse the original date string to validate it exists
+    const dateStr = sanitized.DueDate;
+    const [yearStr, monthStr, dayStr] = dateStr.split('-');
+    const year = parseInt(yearStr, 10);
+    const month = parseInt(monthStr, 10);
+    const day = parseInt(dayStr, 10);
+
+    if (isNaN(year) || isNaN(month) || isNaN(day)) {
+      console.warn(`Invalid DueDate format: ${sanitized.DueDate}, removing`);
       delete sanitized.DueDate;
     } else {
-      // Validate that the date actually exists (e.g., not Feb 29 on non-leap year)
-      const year = dueDate.getUTCFullYear();
-      const month = dueDate.getUTCMonth();
-      const day = dueDate.getUTCDate();
-      const reconstructed = new Date(Date.UTC(year, month, day));
+      // Create date and check if it matches the input (catches Feb 29 on non-leap years)
+      const reconstructed = new Date(Date.UTC(year, month - 1, day));  // month-1 because JS months are 0-indexed
 
-      if (reconstructed.getUTCDate() !== day ||
-          reconstructed.getUTCMonth() !== month ||
-          reconstructed.getUTCFullYear() !== year) {
+      if (reconstructed.getUTCFullYear() !== year ||
+          reconstructed.getUTCMonth() !== month - 1 ||
+          reconstructed.getUTCDate() !== day) {
         console.warn(`Invalid date (doesn't exist): ${sanitized.DueDate}, adjusting to last day of month`);
         // Set to last valid day of that month
-        const lastDay = new Date(Date.UTC(year, month + 1, 0));
+        const lastDay = new Date(Date.UTC(year, month, 0));  // day=0 gives last day of previous month
         sanitized.DueDate = lastDay.toISOString().split('T')[0];
         console.log(`Adjusted DueDate to: ${sanitized.DueDate}`);
       }

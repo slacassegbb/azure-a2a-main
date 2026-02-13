@@ -203,6 +203,7 @@ You have access to Stripe MCP tools for:
 1. **USE THE DATA PROVIDED** - Don't ask for info already in the context
 2. **Be MINIMAL** - Use the FEWEST tool calls possible
 3. **Don't ask for confirmation** - If you have the data, just do the task
+4. **ALWAYS PROVIDE A SUMMARY** - After completing tool calls, write a brief summary of what you did
 
 ## CRITICAL: CREATING INVOICES (3 STEPS ONLY!)
 
@@ -231,6 +232,9 @@ finalize_invoice with: {"invoice": "in_xxxxx"}
 ```
 
 TOTAL: 3-5 tool calls max for an invoice!
+
+**After completing the invoice, ALWAYS write a summary like:**
+"✅ Created invoice [invoice_id] for [customer_name] with [X] line items totaling $[amount]"
 
 ## ASKING FOR INPUT:
 
@@ -262,7 +266,8 @@ NEEDS_INPUT: Your specific question here
         """Run conversation and yield responses."""
         logger.info(f"🚀 STARTING CONVERSATION STREAM")
         logger.info(f"   Thread ID: {thread_id}")
-        logger.info(f"   User message: {user_message[:100]}...")
+        logger.warning(f"📥 FULL INCOMING CONTEXT (length={len(user_message)} chars):")
+        logger.warning(f"{user_message}")
         
         if not self.agent:
             await self.create_agent()
@@ -276,18 +281,16 @@ NEEDS_INPUT: Your specific question here
         if mcp_tool and hasattr(mcp_tool, 'resources'):
             logger.info("🔧 Creating run with MCP tool_resources")
             run = client.runs.create(
-                thread_id=thread_id, 
+                thread_id=thread_id,
                 agent_id=self.agent.id,
                 tool_resources=mcp_tool.resources,
-                max_prompt_tokens=8000,
                 truncation_strategy={"type": "last_messages", "last_messages": 4}
             )
         else:
             logger.info("Creating run without MCP tool_resources")
             run = client.runs.create(
-                thread_id=thread_id, 
+                thread_id=thread_id,
                 agent_id=self.agent.id,
-                max_prompt_tokens=8000,
                 truncation_strategy={"type": "last_messages", "last_messages": 4}
             )
         
@@ -388,17 +391,15 @@ NEEDS_INPUT: Your specific question here
                             logger.info(f"🔄 Retrying run creation after rate limit backoff...")
                             if mcp_tool and hasattr(mcp_tool, 'resources'):
                                 run = client.runs.create(
-                                    thread_id=thread_id, 
+                                    thread_id=thread_id,
                                     agent_id=self.agent.id,
                                     tool_resources=mcp_tool.resources,
-                                    max_prompt_tokens=25000,
                                     truncation_strategy={"type": "last_messages", "last_messages": 8}
                                 )
                             else:
                                 run = client.runs.create(
-                                    thread_id=thread_id, 
+                                    thread_id=thread_id,
                                     agent_id=self.agent.id,
-                                    max_prompt_tokens=25000,
                                     truncation_strategy={"type": "last_messages", "last_messages": 8}
                                 )
                             logger.info(f"   New run created: {run.id}")
@@ -428,15 +429,47 @@ NEEDS_INPUT: Your specific question here
                     "total_tokens": run.usage.total_tokens
                 }
                 logger.warning(f"📊 Token usage: {self.last_token_usage}")
+
+            # LOG ALL RUN STEPS TO DEBUG TOOL CALLS
+            try:
+                logger.info("🔍 RETRIEVING RUN STEPS TO DEBUG TOOL CALLS...")
+                run_steps = list(client.run_steps.list(thread_id, run.id))
+                logger.warning(f"📋 Total run steps: {len(run_steps)}")
+
+                for i, step in enumerate(run_steps):
+                    logger.warning(f"  Step {i+1}: type={step.type}, status={step.status}")
+                    if hasattr(step, 'step_details'):
+                        details = step.step_details
+                        logger.warning(f"    Details type: {type(details)}")
+
+                        # Log tool calls
+                        if hasattr(details, 'tool_calls'):
+                            for j, tool_call in enumerate(details.tool_calls):
+                                logger.warning(f"    Tool call {j+1}:")
+                                logger.warning(f"      Type: {tool_call.type if hasattr(tool_call, 'type') else 'unknown'}")
+                                if hasattr(tool_call, 'function'):
+                                    logger.warning(f"      Function: {tool_call.function.name if hasattr(tool_call.function, 'name') else 'unknown'}")
+                                    logger.warning(f"      Arguments: {tool_call.function.arguments if hasattr(tool_call.function, 'arguments') else 'none'}")
+                                if hasattr(tool_call, 'output'):
+                                    output_preview = str(tool_call.output)[:200] if tool_call.output else 'none'
+                                    logger.warning(f"      Output: {output_preview}")
+            except Exception as e:
+                logger.error(f"❌ Error retrieving run steps: {e}")
+                import traceback
+                logger.error(f"   Traceback: {traceback.format_exc()}")
             
             # Get messages
             try:
-                messages = client.messages.list(thread_id=thread_id, order=ListSortOrder.DESCENDING)
-                logger.info(f"📨 Retrieved {len(list(messages))} messages from thread")
+                messages_list = list(client.messages.list(thread_id=thread_id, order=ListSortOrder.DESCENDING))
+                logger.info(f"📨 Retrieved {len(messages_list)} messages from thread")
+
+                # Log all messages for debugging
+                for i, msg in enumerate(messages_list):
+                    logger.info(f"   Message {i}: role={msg.role}, content_parts={len(msg.content) if hasattr(msg, 'content') else 0}")
 
                 found_response = False
-                for msg in messages:
-                    logger.info(f"   Message role: {msg.role}")
+                for msg in messages_list:
+                    logger.info(f"   Checking message with role: {msg.role}")
                     if msg.role == "assistant":
                         logger.info(f"   Assistant message has {len(msg.content)} content parts")
                         for idx, content in enumerate(msg.content):
@@ -448,6 +481,8 @@ NEEDS_INPUT: Your specific question here
                                 found_response = True
                             elif hasattr(content, 'text'):
                                 logger.warning(f"   Text object exists but no 'value' attribute: {dir(content.text)}")
+                            else:
+                                logger.warning(f"   Content has no text attribute. Attributes: {dir(content)}")
                         break
 
                 if not found_response:
@@ -495,9 +530,19 @@ NEEDS_INPUT: Your specific question here
     async def run_conversation(self, thread_id: str, user_message: str) -> str:
         """Non-streaming version - collects all responses."""
         responses = []
-        async for response in self.run_conversation_stream(thread_id, user_message):
-            responses.append(response)
-        return "\n".join(responses)
+        try:
+            async for response in self.run_conversation_stream(thread_id, user_message):
+                logger.info(f"📥 Collected response chunk ({len(response)} chars): {response[:100]}...")
+                responses.append(response)
+            logger.info(f"✅ Collected {len(responses)} total response chunks")
+            final_response = "\n".join(responses)
+            logger.info(f"📤 Returning final response ({len(final_response)} chars): {final_response[:200]}...")
+            return final_response
+        except Exception as e:
+            logger.error(f"❌ Error in run_conversation: {e}")
+            import traceback
+            logger.error(f"   Traceback: {traceback.format_exc()}")
+            raise
 
     async def chat(self, thread_id: str, user_message: str) -> str:
         """Alias for run_conversation - for executor compatibility."""

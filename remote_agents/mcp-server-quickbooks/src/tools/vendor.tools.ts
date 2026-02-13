@@ -113,30 +113,52 @@ This tool is SAFE to call even if the vendor already exists - it will automatica
     if (response.isError) {
       // Check if it's a duplicate error and try to fetch the existing vendor
       if (response.error && response.error.includes("Duplicate")) {
+        console.log('⚠️ Duplicate vendor detected, attempting recovery...');
+
         // Extract vendor ID from error message if available (e.g., "Id=97")
         const idMatch = response.error.match(/Id=(\d+)/);
         if (idMatch) {
-          // Fetch the vendor by ID directly
+          console.log(`🔍 Extracted vendor ID from error: ${idMatch[1]}`);
+
+          // Fetch the vendor by ID directly (works even for inactive vendors)
           const vendorById = await getQuickbooksVendor(idMatch[1]);
+
           if (!vendorById.isError && vendorById.result) {
             const existingVendor = vendorById.result;
+            const isActive = existingVendor.Active !== false;
+            console.log(`✓ Found vendor by ID: ${existingVendor.DisplayName}, Active: ${isActive}`);
+
             const confirmation = summarizeConfirmation(existingVendor, 'Vendor');
+
+            if (!isActive) {
+              return {
+                content: [
+                  { type: "text" as const, text: `Found INACTIVE vendor (ID ${idMatch[1]}): ${JSON.stringify(confirmation)}. This vendor exists but is marked as inactive in QuickBooks. To use this vendor, it must be reactivated in QuickBooks, or you can use qbo_update_vendor to set Active=true.` },
+                ],
+              };
+            }
+
             return {
               content: [
-                { type: "text" as const, text: `Found existing vendor with similar name (ID ${idMatch[1]}): ${JSON.stringify(confirmation)}. QuickBooks detected a name conflict. Please use this existing vendor or provide a different name.` },
+                { type: "text" as const, text: `Found existing vendor (ID ${idMatch[1]}): ${JSON.stringify(confirmation)}. Use this vendor ID for transactions.` },
               ],
             };
+          } else {
+            console.log(`❌ Failed to fetch vendor by ID ${idMatch[1]}: ${vendorById.error || 'Unknown error'}`);
           }
+        } else {
+          console.log('❌ Could not extract vendor ID from duplicate error');
         }
-        
-        // Fallback: Try partial match search
-        const retrySearch = await searchQuickbooksVendors({ displayName: vendorData.displayName });
+
+        // Fallback: Try searching for inactive vendors
+        console.log('🔍 Attempting fallback search including inactive vendors...');
+        const retrySearch = await searchQuickbooksVendors({ displayName: vendorData.displayName, active: false });
         if (!retrySearch.isError && retrySearch.result && retrySearch.result.length > 0) {
           const existingVendor = retrySearch.result[0];
           const confirmation = summarizeConfirmation(existingVendor, 'Vendor');
           return {
             content: [
-              { type: "text" as const, text: `Vendor already exists: ${JSON.stringify(confirmation)}` },
+              { type: "text" as const, text: `Found INACTIVE vendor: ${JSON.stringify(confirmation)}. This vendor exists but is marked as inactive. To use it, reactivate it in QuickBooks or use qbo_update_vendor.` },
             ],
           };
         }

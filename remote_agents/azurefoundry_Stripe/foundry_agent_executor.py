@@ -124,10 +124,49 @@ class FoundryAgentExecutor(AgentExecutor):
             agent = await self._get_or_create_agent()
             # Reuse thread for same context_id to maintain conversation history
             thread_id = await self._get_or_create_thread(context_id, agent, force_new=False)
-            
-            # Run the agent and get response
-            response = await agent.chat(thread_id, user_message)
-            
+
+            # Use streaming to filter out status messages (like QuickBooks executor)
+            responses = []
+            tools_called = []
+            seen_tools = set()
+
+            async for event in agent.run_conversation_stream(thread_id, user_message):
+                # Check if this is a tool call status message
+                if event.startswith("🛠️ Remote agent executing:"):
+                    tool_description = event.replace("🛠️ Remote agent executing: ", "").strip()
+                    if tool_description not in seen_tools:
+                        seen_tools.add(tool_description)
+                        tools_called.append(tool_description)
+                        # Send as real-time status update, DON'T add to responses
+                        logger.info(f"📡 Sending task_updater.update_status(working) for: {tool_description}")
+                        await task_updater.update_status(
+                            TaskState.working,
+                            message=Message(
+                                role="agent",
+                                messageId=str(__import__('uuid').uuid4()),
+                                parts=[TextPart(text=f"🛠️ Remote agent executing: {tool_description}")],
+                                contextId=context_id
+                            )
+                        )
+                # Check if this is an error
+                elif event.startswith("Error:") or event.startswith("❌"):
+                    logger.error(f"❌ Stripe agent error: {event}")
+                    await task_updater.failed(
+                        message=Message(
+                            role="agent",
+                            messageId=str(__import__('uuid').uuid4()),
+                            parts=[TextPart(text=event)],
+                            contextId=context_id
+                        )
+                    )
+                    return
+                else:
+                    # This is actual response text - keep it
+                    responses.append(event)
+
+            # Join all response text (excluding status messages)
+            response = "\n".join(responses) if responses else None
+
             if response:
                 response_preview = response[:500] + "..." if len(response) > 500 else response
                 logger.info(f"📤 Stripe agent response: {response_preview}")
