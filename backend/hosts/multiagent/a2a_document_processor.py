@@ -367,11 +367,12 @@ def process_document(document_path):
             full_content += document_content["markdown"]
         elif "content" in document_content:
             full_content += document_content["content"]
-        
+
         # Cleanup
         client.delete_analyzer(analyzer_id)
-        
+
         print(f"Document extracted content length: {len(full_content)} chars")
+        print(f"[DEBUG] FULL EXTRACTED CONTENT:\n{full_content}\n[END FULL CONTENT]")
         return full_content
         
     except Exception as e:
