@@ -3212,9 +3212,10 @@ Answer with just JSON:
         # Always search memory for relevant context (retrieval is always enabled)
         # The memory toggle only controls STORAGE of new interactions, not retrieval
         try:
-            # Retrieve top 2 memory results for all agents to ensure sufficient context
-            # This allows agents to find relevant data even past HITL responses or multi-step workflows
-            top_k_results = 2
+            # Retrieve top 10 memory results to ensure we get all chunks of large documents
+            # This allows chunk reassembly to work correctly for multi-chunk documents
+            # and ensures agents have sufficient context from past interactions
+            top_k_results = 10
             # Use contextvar for async-safe context isolation (fixes stale session_context issue)
             effective_context_id = _current_context_id.get() or session_context.contextId
             print(f"🔗 [_add_context_to_message] Using context_id: {effective_context_id} (contextvar: {_current_context_id.get()}, session: {session_context.contextId})")
