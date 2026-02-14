@@ -93,45 +93,72 @@ function parseEventsToAgents(steps: StepEvent[]): ParsedData {
     const eventType = step.eventType || ""
     const content = step.status || ""
     
-    // Handle orchestrator events separately
+    // Handle orchestrator events - show useful info about what the orchestrator is doing
     if (agentName === "foundry-host-agent") {
-      activityIndex++
-      
       let activity: OrchestratorActivity | null = null
       
-      if (eventType === "tool_call") {
-        const toolName = step.metadata?.tool_name || "tool"
-        const isDocTool = toolName.includes("file_search") || toolName.includes("document") || toolName.includes("search")
-        const isAgentCall = toolName.includes("send_task") || toolName.includes("agent")
-        activity = {
-          type: isDocTool ? "document" : isAgentCall ? "agent_dispatch" : "tool_call",
-          label: isDocTool ? "Searching documents" : isAgentCall ? "Dispatching to agent" : `Using ${toolName}`,
-          detail: step.metadata?.arguments ? JSON.stringify(step.metadata.arguments).slice(0, 100) : undefined,
-          timestamp: activityIndex,
-        }
-        orchestratorStatus = "dispatching"
-      } else if (eventType === "phase") {
-        // Only use phase events, skip content-based "Planning" detection to avoid dupes
-        const stepNum = step.metadata?.step_number || ""
+      if (eventType === "reasoning" && content) {
+        // The AI's reasoning about what to do - this is the most valuable!
+        activityIndex++
         activity = {
           type: "planning",
-          label: `Planning step ${stepNum}`.trim(),
-          detail: content.slice(0, 60),
+          label: content.length > 80 ? content.slice(0, 77) + "..." : content,
           timestamp: activityIndex,
         }
         orchestratorStatus = "planning"
-      } else if (content.includes("Delegating") || content.includes("Dispatching") || content.includes("agents available")) {
-        const agentMatch = content.match(/(?:to|calling|dispatching)\s+([A-Za-z\s]+(?:Agent)?)/i)
+      } else if (eventType === "phase") {
+        // Phase events describe what step is being executed
+        const phase = step.metadata?.phase
+        if (phase === "step_execution") {
+          activityIndex++
+          const stepLabel = step.metadata?.step_label || ""
+          activity = {
+            type: "agent_dispatch",
+            label: `Executing Step ${stepLabel}`,
+            detail: content,
+            timestamp: activityIndex,
+          }
+          orchestratorStatus = "dispatching"
+        } else if (phase === "complete") {
+          orchestratorStatus = "complete"
+        } else if (phase === "parallel_execution") {
+          activityIndex++
+          activity = {
+            type: "agent_dispatch",
+            label: `Running ${step.metadata?.steps || "multiple"} agents in parallel`,
+            timestamp: activityIndex,
+          }
+          orchestratorStatus = "dispatching"
+        }
+      } else if (eventType === "tool_call") {
+        const toolName = step.metadata?.tool_name || "tool"
+        const isDocTool = toolName.includes("file_search") || toolName.includes("document") || toolName.includes("search")
+        if (isDocTool) {
+          activityIndex++
+          activity = {
+            type: "document",
+            label: "Searching documents",
+            timestamp: activityIndex,
+          }
+        }
+      } else if (content.includes("Goal achieved") || content.includes("Workflow completed")) {
+        orchestratorStatus = "complete"
+      } else if (content.includes("Resuming workflow")) {
+        activityIndex++
         activity = {
-          type: "agent_dispatch",
-          label: agentMatch ? `Calling ${agentMatch[1].trim()}` : content.includes("agents available") ? content.slice(0, 40) : "Dispatching to agent",
+          type: "info",
+          label: "Resuming workflow with your input",
           timestamp: activityIndex,
         }
-        orchestratorStatus = "dispatching"
-      } else if (eventType === "agent_complete" || content.includes("complete") || content.includes("finished")) {
-        orchestratorStatus = "complete"
+      } else if (content.includes("Error in orchestration")) {
+        activityIndex++
+        activity = {
+          type: "info",
+          label: content,
+          timestamp: activityIndex,
+        }
       }
-      // Skip other orchestrator noise - don't add "info" type activities
+      // Skip noise: "Planning step X...", "X agents available", "Initializing orchestration..."
       
       // Dedupe orchestrator activities
       if (activity && !seenOrchestratorLabels.has(activity.label)) {
@@ -194,13 +221,22 @@ function parseEventsToAgents(steps: StepEvent[]): ParsedData {
       agent.status = "complete"
     } else if (eventType === "agent_error") {
       agent.status = "error"
-      if (!agent.output) agent.output = content
+      // Always capture error content
+      if (content) {
+        agent.output = agent.output ? `${agent.output}\n\n❌ Error: ${content}` : `❌ Error: ${content}`
+      }
     } else if (eventType === "info" || eventType === "agent_progress") {
       // Check for HITL waiting state from metadata or content
       if (step.metadata?.hitl || content.includes("Waiting for") || content.includes("input_required")) {
         agent.status = "waiting"
         if (content && content.length > 10 && !agent.progressMessages.includes(content)) {
           agent.progressMessages.push(content)
+        }
+      // Check for failure/error in info events
+      } else if (content.includes("failed") || content.includes("error") || content.includes("Error")) {
+        agent.status = "error"
+        if (content && !agent.output?.includes(content)) {
+          agent.output = agent.output ? `${agent.output}\n\n${content}` : content
         }
       } else if (content && content.length > 5 && !agent.progressMessages.includes(content)) {
         agent.progressMessages.push(content)
@@ -219,6 +255,12 @@ function parseEventsToAgents(steps: StepEvent[]): ParsedData {
         // Also store the content as output if it's substantial
         if (content.length > 50 && (!agent.output || agent.output.length < content.length)) {
           agent.output = content
+        }
+      } else if (content.includes("failed") || content.includes("error") || content.includes("Error")) {
+        // Capture failure/error content
+        agent.status = "error"
+        if (!agent.output?.includes(content)) {
+          agent.output = agent.output ? `${agent.output}\n\n${content}` : content
         }
       } else if (content.includes("completed") || content.includes("Done") || content.includes("✅")) {
         agent.status = "complete"
