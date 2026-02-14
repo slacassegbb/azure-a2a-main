@@ -777,7 +777,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const messagesContainerRef = useRef<HTMLDivElement>(null)
   const [isInferencing, setIsInferencing] = useState(false)
-  const [inferenceSteps, setInferenceSteps] = useState<{ agent: string; status: string; imageUrl?: string; imageName?: string; mediaType?: string; eventType?: string; metadata?: Record<string, any> }[]>([])
+  const [inferenceSteps, setInferenceSteps] = useState<{ agent: string; status: string; imageUrl?: string; imageName?: string; mediaType?: string; eventType?: string; metadata?: Record<string, any>; taskId?: string }[]>([])
   // Workflow plan from backend - the source of truth for workflow state
   const [workflowPlan, setWorkflowPlan] = useState<{
     goal: string
@@ -2071,6 +2071,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
           status: status,
           eventType: "tool_call",
           metadata: { tool_name: data.toolName },
+          taskId: data.taskId,
         }])
       }
     }
@@ -2178,6 +2179,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
               status: displayContent,
               eventType: activityType,
               metadata: data.metadata,
+              taskId: data.taskId,
             }
             return updated
           }
@@ -2194,6 +2196,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                 status: displayContent,
                 eventType: activityType,
                 metadata: data.metadata,
+                taskId: data.taskId,
               }]
             }
           }
@@ -2208,6 +2211,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
             status: displayContent,
             eventType: activityType,
             metadata: data.metadata,
+            taskId: data.taskId,
           }]
         })
       }
