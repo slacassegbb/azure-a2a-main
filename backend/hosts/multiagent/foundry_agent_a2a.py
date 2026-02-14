@@ -4176,6 +4176,18 @@ Answer with just JSON:
                     workflow_goal = session_context.current_plan.workflow_goal
                     log_info(f"🔄 [HITL RESUME] Restored workflow_goal from saved plan")
                 
+                # CRITICAL: Mark the input_required task as completed now that user has responded
+                # This ensures the orchestrator knows to skip this step when resuming
+                if session_context.current_plan and session_context.current_plan.tasks:
+                    for task in session_context.current_plan.tasks:
+                        if task.state == "input_required":
+                            task.state = "completed"
+                            task.output = {"result": f"HITL Response: {enhanced_message[:200]}"}
+                            from datetime import datetime, timezone
+                            task.updated_at = datetime.now(timezone.utc)
+                            log_info(f"✅ [HITL RESUME] Marked task '{task.task_description[:50]}...' as completed")
+                            break  # Only mark the first input_required task
+                
                 # SYNTHETIC WORKFLOW DETECTION: Workflows auto-generated for single-agent routing
                 # (e.g., "1. [Agent Name] Complete the user's request") should be treated as non-workflow HITL
                 # because the single task is now complete with the human's response

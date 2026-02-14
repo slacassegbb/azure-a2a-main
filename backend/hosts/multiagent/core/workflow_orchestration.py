@@ -14,6 +14,7 @@ The class is designed to be used as a mixin with FoundryHostAgent2.
 
 import asyncio
 import json
+import re
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional
@@ -947,8 +948,9 @@ Use the above output from the previous workflow step to complete your task."""
             task.output = {"result": output_text}
             
             # Emit agent output so user can see what the agent sent (e.g., Teams message)
+            # Use a higher limit (2000 chars) to avoid cutting off important info like invoice details
             if output_text and recommended_agent:
-                display_output = output_text[:500] + "…" if len(output_text) > 500 else output_text
+                display_output = output_text[:2000] + "…" if len(output_text) > 2000 else output_text
                 await self._emit_granular_agent_event(
                     recommended_agent, display_output, context_id,
                     event_type="agent_output", metadata={"output_length": len(output_text), "hitl": True}
@@ -993,9 +995,9 @@ Use the above output from the previous workflow step to complete your task."""
                     output_text = f"{output_text}\n\nArtifacts:\n" + "\n".join(artifact_texts)
             
             # Emit agent output to workflow panel so users can see what the agent returned
+            # Use a higher limit (2000 chars) to avoid cutting off important info
             if output_text and recommended_agent:
-                # Truncate very long outputs for the UI (full output is in the final synthesis)
-                display_output = output_text[:500] + "…" if len(output_text) > 500 else output_text
+                display_output = output_text[:2000] + "…" if len(output_text) > 2000 else output_text
                 await self._emit_granular_agent_event(
                     recommended_agent, display_output, context_id,
                     event_type="agent_output", metadata={"output_length": len(output_text)}
@@ -1010,8 +1012,9 @@ Use the above output from the previous workflow step to complete your task."""
             task.updated_at = datetime.now(timezone.utc)
             
             # Emit agent output to workflow panel
+            # Use a higher limit (2000 chars) to avoid cutting off important info
             if output_text and recommended_agent:
-                display_output = output_text[:500] + "…" if len(output_text) > 500 else output_text
+                display_output = output_text[:2000] + "…" if len(output_text) > 2000 else output_text
                 await self._emit_granular_agent_event(
                     recommended_agent, display_output, context_id,
                     event_type="agent_output", metadata={"output_length": len(output_text)}
@@ -1300,6 +1303,17 @@ Analyze this request and decide the best approach."""
             max_iterations = 20
             workflow_step_count = 0
             extract_text_from_response = self._extract_text_from_response
+            
+            # Determine current step number from existing tasks (for HITL resume)
+            # Find the highest step number from existing tasks to continue from there
+            current_step_number = 0
+            for task in plan.tasks:
+                step_match = re.search(r'\[Step\s+(\d+)', task.task_description)
+                if step_match:
+                    step_num = int(step_match.group(1))
+                    if step_num > current_step_number:
+                        current_step_number = step_num
+            log_info(f"🔢 [Agent Mode] Resuming from step {current_step_number}")
         else:
             # =====================================================================
             # LLM ORCHESTRATION PATH: All workflows go through the orchestrator
@@ -1339,6 +1353,9 @@ Analyze this request and decide the best approach."""
             iteration = 0
             max_iterations = 20
             workflow_step_count = 0
+            
+            # Initialize step tracking for workflow mode
+            current_step_number = 0
             
             # Accumulate outputs from all completed tasks
             all_task_outputs = []
@@ -1691,12 +1708,77 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                     break
                 
                 # Create AgentModeTask objects for all tasks
+                # In workflow mode, prepend step labels for proper UI rendering
                 pydantic_tasks = []
-                for task_dict in tasks_to_execute:
+                
+                # For parallel tasks, increment step number ONCE, then use letter suffixes
+                if is_parallel and workflow and workflow.strip():
+                    current_step_number += 1
+                    
+                for task_idx, task_dict in enumerate(tasks_to_execute):
+                    original_description = task_dict["task_description"]
+                    
+                    # Check if this is a retry of an existing step (same agent, similar description)
+                    # If so, DON'T increment step number - it's a retry, not a new step
+                    is_retry = False
+                    retry_step_label = None
+                    recommended_agent = task_dict.get("recommended_agent", "")
+                    
+                    if workflow and workflow.strip() and recommended_agent:
+                        # Check recent tasks for same agent to detect retry
+                        # This handles cases where:
+                        # 1. Agent failed and LLM retries (explicit retry)
+                        # 2. Agent completed but LLM calls again with different input (also a retry)
+                        for prev_task in reversed(plan.tasks[-10:]):  # Check last 10 tasks
+                            if prev_task.recommended_agent == recommended_agent:
+                                prev_step_match = re.search(r'\[Step\s+(\d+[a-z]?)\]', prev_task.task_description)
+                                if prev_step_match:
+                                    prev_step_label = prev_step_match.group(1)
+                                    prev_step_num = int(re.sub(r'[a-z]', '', prev_step_label))
+                                    
+                                    # If the previous task for this agent was in the current step range,
+                                    # this is a retry (not a new workflow step)
+                                    if prev_step_num >= current_step_number:
+                                        is_retry = True
+                                        retry_step_label = prev_step_label
+                                        log_info(f"🔄 [Agent Mode] Detected retry of step {retry_step_label} (same agent {recommended_agent})")
+                                        break
+                                    
+                                    # Also check for explicit retry keywords
+                                    retry_keywords = ["retry", "re-", "again", "fix", "correct", "update", "with the"]
+                                    if any(kw in original_description.lower() for kw in retry_keywords):
+                                        is_retry = True
+                                        retry_step_label = prev_step_label
+                                        log_info(f"🔄 [Agent Mode] Detected retry of step {retry_step_label} (retry keywords)")
+                                        break
+                    
+                    # Determine the step label for this task
+                    if is_retry and retry_step_label:
+                        # Retry - use the same step label
+                        step_label = retry_step_label
+                    elif workflow and workflow.strip():
+                        # New step in workflow mode
+                        if is_parallel:
+                            # Parallel tasks get letter suffixes (e.g., 2a, 2b, 2c)
+                            # current_step_number was already incremented above
+                            step_label = f"{current_step_number}{chr(ord('a') + task_idx)}"
+                        else:
+                            # Sequential task - increment step number
+                            current_step_number += 1
+                            step_label = str(current_step_number)
+                    else:
+                        step_label = None  # No workflow, no step labeling
+                    
+                    # Build task description with step label
+                    if step_label and not re.search(r'\[Step\s+\d+', original_description):
+                        task_description = f"[Step {step_label}] {original_description}"
+                    else:
+                        task_description = original_description
+                    
                     task = AgentModeTask(
                         task_id=str(uuid.uuid4()),
-                        task_description=task_dict["task_description"],
-                        recommended_agent=task_dict.get("recommended_agent"),
+                        task_description=task_description,
+                        recommended_agent=recommended_agent or None,
                         state="pending"
                     )
                     plan.tasks.append(task)
