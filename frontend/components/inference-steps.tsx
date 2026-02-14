@@ -81,7 +81,7 @@ interface AgentBlock {
   displayName: string
   color: string
   steps: StepData[]
-  status: "running" | "complete" | "error"
+  status: "running" | "complete" | "error" | "waiting" | "input_required"
   taskDescription?: string
   output?: string
 }
@@ -487,6 +487,7 @@ function AgentSection({ block, isLive }: { block: AgentBlock; isLive: boolean })
   const isRunning = block.status === "running" && isLive
   const isComplete = block.status === "complete"
   const isError = block.status === "error"
+  const isWaiting = block.status === "waiting" || block.status === "input_required"
 
   // Filter out noise and duplicates from progress steps
   const toolSteps = block.steps.filter(s => (s.eventType || "") === "tool_call")
@@ -515,7 +516,11 @@ function AgentSection({ block, isLive }: { block: AgentBlock; isLive: boolean })
     <div className="ml-5 border-l-2 pl-4 py-2" style={{ borderColor: `${block.color}40` }}>
       {/* Agent header */}
       <div className="flex items-center gap-2 mb-1.5">
-        {isRunning ? (
+        {isWaiting ? (
+          <div className="h-4 w-4 flex items-center justify-center">
+            <div className="h-2 w-2 rounded-full bg-amber-500 animate-pulse" />
+          </div>
+        ) : isRunning ? (
           <div className="relative flex items-center justify-center h-4 w-4">
             <div className="h-2 w-2 rounded-full animate-pulse" style={{ backgroundColor: block.color }} />
             <div className="h-2 w-2 rounded-full absolute animate-ping opacity-50" style={{ backgroundColor: block.color }} />
@@ -535,8 +540,14 @@ function AgentSection({ block, isLive }: { block: AgentBlock; isLive: boolean })
           {block.displayName}
         </span>
 
+        {isWaiting && (
+          <span className="text-[10px] text-amber-600 dark:text-amber-400 font-medium">Waiting</span>
+        )}
         {isComplete && (
           <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium">Done</span>
+        )}
+        {isError && (
+          <span className="text-[10px] text-red-600 dark:text-red-400 font-medium">Error</span>
         )}
       </div>
 
@@ -717,16 +728,26 @@ export function InferenceSteps({ steps, isInferencing, plan }: InferenceStepsPro
           const et = e.eventType || ""
           return et !== "agent_start" && et !== "agent_complete"
         })
+        
+        // Extract step number from task description (e.g., "[Step 3] ..." -> 3)
+        let stepNum = idx + 1  // Default fallback
+        const stepMatch = task.task_description.match(/\[Step\s+(\d+[a-z]?)\]/)
+        if (stepMatch) {
+          // Handle step labels like "2a", "2b" - extract the number part
+          const stepLabel = stepMatch[1]
+          stepNum = parseInt(stepLabel.replace(/[a-z]/g, ''), 10) || idx + 1
+        }
 
         return {
           type: "planning",
-          stepNumber: idx + 1,
+          stepNumber: stepNum,
           agents: [{
             agent: agentName,
             displayName: getDisplayName(agentName),
             color: getAgentColor(agentName),
             status: task.state === "completed" ? "complete" : 
-                    task.state === "failed" ? "error" : "running",
+                    task.state === "failed" ? "error" : 
+                    task.state === "input_required" ? "input_required" : "running",
             taskDescription: task.task_description,
             output: task.output?.result || undefined,
             steps: progressSteps,
@@ -875,39 +896,7 @@ export function InferenceSteps({ steps, isInferencing, plan }: InferenceStepsPro
             </span>
           </div>
 
-          {/* Agent chips with status */}
-          {(uniqueAgents.length > 0 || agentStatusMap.size > 0) && (
-            <div className="flex flex-wrap gap-1.5 mb-3">
-              {(plan && plan.tasks.length > 0 ? 
-                Array.from(new Set(plan.tasks.map(t => t.recommended_agent).filter(Boolean))) : 
-                uniqueAgents
-              ).map(name => {
-                const agentName = name as string
-                const displayName = getDisplayName(agentName)
-                const color = getAgentColor(agentName)
-                const statusInfo = agentStatusMap.get(agentName)
-                const statusStyle = getStatusStyle(statusInfo?.state || "pending")
-                
-                return (
-                  <div key={agentName} className="flex items-center gap-1">
-                    <span
-                      className="text-[10px] font-medium px-2 py-0.5 rounded-l-full"
-                      style={{ backgroundColor: `${color}12`, color, border: `1px solid ${color}30`, borderRight: 'none' }}
-                    >
-                      {displayName}
-                    </span>
-                    <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded-r-full ${statusStyle.bg} ${statusStyle.text}`}
-                      style={{ borderTop: `1px solid ${color}30`, borderRight: `1px solid ${color}30`, borderBottom: `1px solid ${color}30` }}
-                    >
-                      {statusInfo?.state === "running" && <Loader className="h-2 w-2 animate-spin inline mr-0.5" />}
-                      {statusInfo?.state === "completed" && <CheckCircle2 className="h-2 w-2 inline mr-0.5" />}
-                      {statusStyle.label}
-                    </span>
-                  </div>
-                )
-              })}
-            </div>
-          )}
+          {/* Agent status chips removed - redundant with step-level agent display */}
 
           <div ref={containerRef} className="space-y-0.5 max-h-[350px] overflow-y-auto pr-1">
             {phases.map((phase, i) => (
@@ -951,34 +940,7 @@ export function InferenceSteps({ steps, isInferencing, plan }: InferenceStepsPro
             </div>
           )}
           
-          {/* Agent status chips */}
-          {plan && plan.tasks && plan.tasks.length > 0 && (
-            <div className="flex flex-wrap gap-1.5 mb-3">
-              {Array.from(new Set(plan.tasks.map((t: any) => t.recommended_agent).filter(Boolean))).map(agentName => {
-                const displayName = getDisplayName(agentName as string)
-                const color = getAgentColor(agentName as string)
-                const task = plan.tasks.find((t: any) => t.recommended_agent === agentName)
-                const statusStyle = getStatusStyle(task?.state || "completed")
-                
-                return (
-                  <div key={agentName as string} className="flex items-center gap-1">
-                    <span
-                      className="text-[10px] font-medium px-2 py-0.5 rounded-l-full"
-                      style={{ backgroundColor: `${color}12`, color, border: `1px solid ${color}30`, borderRight: 'none' }}
-                    >
-                      {displayName}
-                    </span>
-                    <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded-r-full ${statusStyle.bg} ${statusStyle.text}`}
-                      style={{ borderTop: `1px solid ${color}30`, borderRight: `1px solid ${color}30`, borderBottom: `1px solid ${color}30` }}
-                    >
-                      {task?.state === "completed" && <CheckCircle2 className="h-2 w-2 inline mr-0.5" />}
-                      {statusStyle.label}
-                    </span>
-                  </div>
-                )
-              })}
-            </div>
-          )}
+          {/* Agent status chips removed - redundant with step-level agent display */}
           
           <div className="space-y-0.5 pt-1 pb-2 max-h-[400px] overflow-y-auto">
             {phases.map((phase, i) => (

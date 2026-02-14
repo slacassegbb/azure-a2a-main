@@ -180,9 +180,27 @@ class WorkflowOrchestration:
         # Use the class method for extracting clean text from A2A response objects
         extract_text_from_response = self._extract_text_from_response
         
-        # Initialize Pydantic plan for state tracking (just like dynamic orchestration)
-        plan = AgentModePlan(goal=user_message, goal_status="incomplete")
-        all_task_outputs = []
+        # Check for existing plan from HITL resume - continue from where we left off
+        if session_context.current_plan and len(session_context.current_plan.tasks) > 0:
+            plan = session_context.current_plan
+            log_info(f"🔄 [Workflow] Resuming from existing plan with {len(plan.tasks)} tasks")
+            
+            # Count completed tasks to determine resume point
+            completed_count = sum(1 for t in plan.tasks if t.state == "completed")
+            log_info(f"🔄 [Workflow] {completed_count} tasks already completed, resuming from there")
+            
+            # Build list of existing outputs from completed tasks
+            all_task_outputs = []
+            for task in plan.tasks:
+                if task.state == "completed" and task.output:
+                    output_text = task.output.get("result", "") if isinstance(task.output, dict) else str(task.output)
+                    if output_text:
+                        all_task_outputs.append(output_text)
+            log_info(f"🔄 [Workflow] Restored {len(all_task_outputs)} outputs from completed tasks")
+        else:
+            # Initialize new Pydantic plan for state tracking (fresh start)
+            plan = AgentModePlan(goal=user_message, goal_status="incomplete")
+            all_task_outputs = []
         
         # Log initial plan
         print(f"\n{'='*80}")
@@ -196,6 +214,26 @@ class WorkflowOrchestration:
             group_type = "PARALLEL" if group.group_type == WorkflowStepType.PARALLEL else "SEQUENTIAL"
             log_info(f"📦 [Workflow] Executing group {group.group_number} ({group_type}, {len(group.steps)} steps)")
             
+            # Check if this entire group is already completed (HITL resume case)
+            # Look for tasks matching this group's steps
+            group_step_labels = [step.step_label for step in group.steps]
+            existing_tasks_for_group = [
+                t for t in plan.tasks 
+                if any(f"[Step {label}]" in t.task_description for label in group_step_labels)
+            ]
+            
+            # If all steps in this group have completed tasks, skip the group
+            if existing_tasks_for_group and all(t.state == "completed" for t in existing_tasks_for_group):
+                log_info(f"⏭️ [Workflow] Skipping already completed group {group.group_number} ({len(existing_tasks_for_group)} tasks)")
+                # Emit event so UI knows we're skipping
+                await self._emit_granular_agent_event(
+                    "foundry-host-agent",
+                    f"Step {group.group_number} already completed, continuing...",
+                    context_id,
+                    event_type="info", metadata={"skipped_group": group.group_number}
+                )
+                continue
+            
             if group.group_type == WorkflowStepType.PARALLEL:
                 # ============================================================
                 # PARALLEL EXECUTION with proper state tracking
@@ -207,16 +245,31 @@ class WorkflowOrchestration:
                     event_type="phase", metadata={"phase": "parallel_execution", "group": group.group_number, "steps": len(group.steps)}
                 )
                 
-                # Create AgentModeTask objects for each parallel step
+                # Create or reuse AgentModeTask objects for each parallel step
                 parallel_tasks: List[AgentModeTask] = []
                 for step in group.steps:
-                    task = AgentModeTask(
-                        task_id=str(uuid.uuid4()),
-                        task_description=f"[Step {step.step_label}] {step.description}",
-                        recommended_agent=None,  # Will be resolved during execution
-                        state="pending"
+                    # Check if task for this step already exists (HITL resume case)
+                    existing_task = next(
+                        (t for t in plan.tasks if f"[Step {step.step_label}]" in t.task_description),
+                        None
                     )
-                    plan.tasks.append(task)
+                    
+                    if existing_task:
+                        # Reuse existing task
+                        task = existing_task
+                        if task.state != "completed":
+                            task.state = "pending"
+                        log_info(f"🔄 [Workflow] Reusing existing task for parallel step {step.step_label}")
+                    else:
+                        # Create new task
+                        task = AgentModeTask(
+                            task_id=str(uuid.uuid4()),
+                            task_description=f"[Step {step.step_label}] {step.description}",
+                            recommended_agent=None,  # Will be resolved during execution
+                            state="pending"
+                        )
+                        plan.tasks.append(task)
+                    
                     parallel_tasks.append(task)
                 
                 # Execute all steps in parallel
@@ -283,14 +336,32 @@ class WorkflowOrchestration:
                 # ============================================================
                 step = group.steps[0]
                 
-                # Create AgentModeTask for this step
-                task = AgentModeTask(
-                    task_id=str(uuid.uuid4()),
-                    task_description=f"[Step {step.step_label}] {step.description}",
-                    recommended_agent=None,
-                    state="running"
+                # Check if task for this step already exists (HITL resume case)
+                existing_task = next(
+                    (t for t in plan.tasks if f"[Step {step.step_label}]" in t.task_description),
+                    None
                 )
-                plan.tasks.append(task)
+                
+                if existing_task:
+                    if existing_task.state == "completed":
+                        # This step was already completed, skip it
+                        log_info(f"⏭️ [Workflow] Skipping already completed step {step.step_label}")
+                        continue
+                    else:
+                        # Reuse existing task (may be resuming a running/paused step)
+                        task = existing_task
+                        task.state = "running"
+                        task.updated_at = datetime.now(timezone.utc)
+                        log_info(f"🔄 [Workflow] Resuming existing task for step {step.step_label}")
+                else:
+                    # Create new AgentModeTask for this step
+                    task = AgentModeTask(
+                        task_id=str(uuid.uuid4()),
+                        task_description=f"[Step {step.step_label}] {step.description}",
+                        recommended_agent=None,
+                        state="running"
+                    )
+                    plan.tasks.append(task)
                 
                 await self._emit_granular_agent_event(
                     "foundry-host-agent", f"Executing step {step.step_label}: {step.description[:50]}...", context_id,
