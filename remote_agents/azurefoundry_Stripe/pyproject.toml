@@ -6,8 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "a2a-sdk[http-server]>=0.2.6",
-    "azure-ai-projects>=1.0.0b12",
-    "azure-ai-agents>=1.1.0b2",
+    "openai>=1.0.0",
     "azure-identity>=1.23.0",
     "uvicorn>=0.34.2",
     "click>=8.0.0",

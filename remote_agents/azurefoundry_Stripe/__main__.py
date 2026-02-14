@@ -90,8 +90,8 @@ DEFAULT_UI_PORT = 8095  # UI port for Stripe agent
 # Global reference to the agent executor to check for pending tasks
 agent_executor_instance = None
 
-# Persist a single Azure Foundry thread per UI session
-ui_thread_id: Optional[str] = None
+# Persist a single session ID per UI session
+ui_session_id: Optional[str] = None
 
 HOST_AGENT_URL = _normalize_env_value(get_host_agent_url())
 
@@ -478,7 +478,7 @@ async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_p
 
         # Chat logic
         async def chat_with_agent(message: str, history: list):
-            global ui_thread_id
+            global ui_session_id
             if not message.strip():
                 yield history, ""
                 return
@@ -492,19 +492,16 @@ async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_p
                 agent = FoundryStripeAgent()
                 await agent.create_agent()
 
-                # Create or reuse thread
-                if ui_thread_id is None:
-                    thread = agent._get_project_client().agents.threads.create()
-                    ui_thread_id = thread.id
-                    logger.info(f"Created new UI thread: {ui_thread_id}")
+                # Create or reuse session
+                if ui_session_id is None:
+                    ui_session_id = await agent.create_session()
+                    logger.info(f"Created new UI session: {ui_session_id}")
 
-                # Get response
+                # Get response via streaming
                 response_text = ""
-                async for chunk in agent.run_with_streaming(ui_thread_id, message):
-                    if isinstance(chunk, str):
+                async for chunk in agent.run_conversation_stream(ui_session_id, message):
+                    if isinstance(chunk, str) and not chunk.startswith("🛠️ Remote agent executing:"):
                         response_text += chunk
-                    elif hasattr(chunk, 'text'):
-                        response_text += chunk.text
 
                 history = history + [{"role": "assistant", "content": response_text}]
                 yield history, ""
@@ -517,8 +514,8 @@ async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_p
                 yield history, ""
 
         def clear_chat():
-            global ui_thread_id
-            ui_thread_id = None
+            global ui_session_id
+            ui_session_id = None
             return [], ""
 
         # Wire up events

@@ -1,209 +1,152 @@
 """
 AI Foundry Agent implementation with Stripe Payment Processing Capabilities.
-Uses AgentsClient directly for Azure AI Foundry with Stripe MCP integration.
+Uses the Responses API with native MCP tool support for efficient token usage.
+
+Migrated from Assistants/Agents API (AgentsClient with threads/runs) to the
+Responses API (AsyncAzureOpenAI with responses.create) to eliminate the thread
+re-processing overhead that caused 44K+ prompt tokens per workflow.
 
 IMPORTANT: QUOTA REQUIREMENTS FOR AZURE AI FOUNDRY AGENTS
 =========================================================
-
-Based on Microsoft support documentation, Azure AI Foundry agents require a 
-MINIMUM of 20,000 TPM (Tokens Per Minute) to function properly without rate limiting.
+Ensure your model deployment has at least 20,000 TPM allocated to avoid rate limiting.
 """
 import os
+import time
 import asyncio
 import logging
-import json
-from typing import Optional, Dict, Any
-import httpx
+from typing import Optional, Dict
 
-from azure.ai.agents import AgentsClient
-from azure.ai.agents.models import (
-    Agent, ListSortOrder, ToolSet, McpTool, ToolApproval
-)
-from azure.identity import DefaultAzureCredential
+import httpx
+from openai import AsyncAzureOpenAI
+from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 
 logger = logging.getLogger(__name__)
 
 
 # Stripe MCP Server URL (deployed on Azure Container Apps)
 STRIPE_MCP_URL = os.getenv(
-    "STRIPE_MCP_URL", 
+    "STRIPE_MCP_URL",
     "https://mcp-stripe.ambitioussky-6c709152.westus2.azurecontainerapps.io/sse"
 )
+
+# Allowed Stripe MCP tools (trimmed to ~12 high-value tools)
+# Removing granular invoice tools (superseded by create_full_invoice),
+# product/price management, payment links, coupons, and docs search
+# to reduce token overhead and prevent the LLM from making unnecessary calls.
+# The MCP server still registers ALL tools — other clients can use them.
+STRIPE_ALLOWED_TOOLS = [
+    # Invoices — BATCHED (the primary tool for invoice workflows)
+    "create_full_invoice",
+    # Invoice queries
+    "list_invoices",
+    # Customer Management
+    "create_customer",
+    "list_customers",
+    # Balance & Payments
+    "retrieve_balance",
+    "list_payment_intents",
+    "create_refund",
+    # Subscriptions
+    "list_subscriptions",
+    "cancel_subscription",
+    "update_subscription",
+    # Disputes
+    "list_disputes",
+    "update_dispute",
+]
 
 
 class FoundryStripeAgent:
     """
     AI Foundry Agent with Stripe Payment Processing capabilities.
-    Uses AgentsClient directly for the new SDK version with McpTool integration.
+    Uses the Responses API with native MCP tool support.
     """
-    
+
     def __init__(self):
         self.endpoint = os.environ["AZURE_AI_FOUNDRY_PROJECT_ENDPOINT"]
         self.credential = DefaultAzureCredential()
-        self.agent: Optional[Agent] = None
-        self.threads: Dict[str, str] = {}
-        self._agents_client = None
-        self._mcp_tool = None
-        self._mcp_tool_resources = None
+        self._client: Optional[AsyncAzureOpenAI] = None
+        self._initialized = False
+        self._response_ids: Dict[str, str] = {}  # session_id → last_response_id
         self.last_token_usage: Optional[Dict[str, int]] = None
-        
-    def _get_agents_client(self) -> AgentsClient:
-        """Get a cached AgentsClient instance."""
-        if self._agents_client is None:
-            self._agents_client = AgentsClient(
-                endpoint=self.endpoint,
-                credential=self.credential,
+
+        # MCP tool configuration for Responses API
+        self._mcp_tool_config = {
+            "type": "mcp",
+            "server_label": "Stripe",
+            "server_url": STRIPE_MCP_URL,
+            "require_approval": "never",
+            "allowed_tools": STRIPE_ALLOWED_TOOLS,
+            "headers": {
+                "Content-Type": "application/json",
+                "User-Agent": "Azure-AI-Foundry-Agent",
+                "Accept": "application/json, text/event-stream",
+            },
+        }
+
+    def _get_client(self) -> AsyncAzureOpenAI:
+        """Get a cached AsyncAzureOpenAI client."""
+        if self._client is None:
+            # Convert AI Foundry endpoint to Azure OpenAI endpoint
+            # From: https://RESOURCE.services.ai.azure.com/subscriptions/...
+            # To:   https://RESOURCE.openai.azure.com/openai/v1/
+            if "services.ai.azure.com" in self.endpoint:
+                resource_name = self.endpoint.split("//")[1].split(".")[0]
+                openai_endpoint = f"https://{resource_name}.openai.azure.com/openai/v1/"
+            else:
+                openai_endpoint = (
+                    self.endpoint
+                    if self.endpoint.endswith("/openai/v1/")
+                    else f"{self.endpoint.rstrip('/')}/openai/v1/"
+                )
+
+            token_provider = get_bearer_token_provider(
+                self.credential,
+                "https://cognitiveservices.azure.com/.default",
             )
-        return self._agents_client
-        
-    async def create_agent(self) -> Agent:
-        """Create the AI Foundry agent with Stripe capabilities using McpTool."""
-        if self.agent:
-            logger.info("Agent already exists, returning existing instance")
-            return self.agent
-        
-        logger.info("🚀 CREATING NEW AZURE FOUNDRY STRIPE AGENT...")
-        
-        # Create McpTool with Azure's native MCP integration
-        logger.info("🔧 CREATING McpTool CONNECTION...")
+
+            self._client = AsyncAzureOpenAI(
+                base_url=openai_endpoint,
+                azure_ad_token_provider=token_provider,
+                api_version="preview",
+            )
+            logger.info(f"Created AsyncAzureOpenAI client with endpoint: {openai_endpoint}")
+
+        return self._client
+
+    async def create_agent(self) -> None:
+        """Initialize the agent: test MCP connectivity and create client.
+
+        Named create_agent() for backward compatibility with the executor's
+        initialize_at_startup() which calls this method.
+        """
+        if self._initialized:
+            logger.info("Agent already initialized, skipping")
+            return
+
+        logger.info("🚀 INITIALIZING STRIPE AGENT (Responses API)...")
         logger.info(f"   MCP Server: {STRIPE_MCP_URL}")
-        
-        tools = []
-        
+
+        # Test MCP server connectivity
         try:
-            # Test MCP server connectivity using health endpoint
-            logger.info("🧪 TESTING MCP SERVER CONNECTIVITY...")
-            async def test_mcp_basic():
-                try:
-                    # Test base URL (returns server info)
-                    base_url = STRIPE_MCP_URL.rstrip('/sse')
-                    async with httpx.AsyncClient(timeout=10.0) as client:
-                        response = await client.get(base_url)
-                        logger.info(f"   MCP Server Response: {response.status_code}")
-                        logger.info(f"   Response Content (first 100 chars): {response.text[:100]}")
-                        if response.status_code == 200:
-                            logger.info("✅ MCP Server connectivity test PASSED")
-                            return True
-                        else:
-                            logger.error(f"❌ MCP Server returned status: {response.status_code}")
-                            return False
-                except Exception as e:
-                    logger.error(f"   MCP Server Test FAILED: {e}")
-                    return False
-            
-            await test_mcp_basic()
-            
-            # Create MCP tool with all Stripe tools
-            # NOTE: Stripe MCP tools do NOT have a prefix (e.g., "list_customers" not "stripe_list_customers")
-            logger.info("🔧 CREATING McpTool OBJECT...")
-            mcp_tool = McpTool(
-                server_label="Stripe",
-                server_url=STRIPE_MCP_URL,
-                allowed_tools=[
-                    # Customer Management
-                    "create_customer",
-                    "list_customers",
-                    # Products & Prices
-                    "create_product",
-                    "list_products",
-                    "create_price",
-                    "list_prices",
-                    # Payment Links
-                    "create_payment_link",
-                    # Invoices
-                    "create_invoice",
-                    "list_invoices",
-                    "create_invoice_item",
-                    "finalize_invoice",
-                    # Balance & Payments
-                    "retrieve_balance",
-                    "create_refund",
-                    "list_payment_intents",
-                    # Subscriptions
-                    "list_subscriptions",
-                    "cancel_subscription",
-                    "update_subscription",
-                    # Coupons & Disputes
-                    "list_coupons",
-                    "create_coupon",
-                    "update_dispute",
-                    "list_disputes",
-                    # Documentation
-                    "search_stripe_documentation"
-                ]
-            )
-            
-            # Store the mcp_tool for resources access
-            self._mcp_tool = mcp_tool
-            logger.info("✅ McpTool object created successfully")
-
-            # Set approval mode to "never" - MCP tools execute without human approval
-            mcp_tool.set_approval_mode("never")
-            logger.info("✅ Set approval mode to 'never'")
-            
-            # Set headers for MCP communication
-            mcp_tool.update_headers("Content-Type", "application/json")
-            mcp_tool.update_headers("User-Agent", "Azure-AI-Foundry-Agent")
-            mcp_tool.update_headers("Accept", "application/json, text/event-stream")
-            logger.info("✅ Set MCP headers")
-
-            # Use ToolSet as recommended by Microsoft for MCP (reduces token usage significantly!)
-            toolset = ToolSet()
-            toolset.add(mcp_tool)
-            self._toolset = toolset  # Store for use with create_agent
-            self._mcp_tool = mcp_tool  # Store MCP tool reference
-
-            # Also keep definitions for compatibility
-            tools = mcp_tool.definitions
-
-            # Store MCP tool resources - needed for runs.create()
-            self._mcp_tool_resources = mcp_tool.resources
-
-            logger.info(f"🔍 MCP TOOL DETAILS:")
-            logger.info(f"   Tools count: {len(tools) if tools else 0}")
-            logger.info(f"   Tool definitions: {[str(t) for t in list(tools)[:3]] if tools else 'None'}")
-            logger.info(f"   MCP Tool resources for run creation: {type(self._mcp_tool_resources)}")
-            logger.info("✅ Added Stripe MCP server integration using McpTool with ToolSet")
-            
+            base_url = STRIPE_MCP_URL.rstrip("/sse")
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.get(base_url)
+                if response.status_code == 200:
+                    logger.info("✅ MCP Server connectivity test PASSED")
+                else:
+                    logger.warning(f"⚠️ MCP Server returned status: {response.status_code}")
         except Exception as e:
-            logger.error(f"❌ FAILED TO CREATE MCP TOOL: {e}")
-            import traceback
-            logger.error(f"   Full traceback: {traceback.format_exc()}")
-            logger.warning("⚠️ Continuing without MCP tools due to connection failure")
-        
-        # Get model deployment name
+            logger.warning(f"⚠️ MCP Server connectivity test failed: {e}")
+            logger.warning("Continuing anyway - MCP server may still work via Responses API")
+
+        # Initialize the OpenAI client
+        self._get_client()
+
         model = os.getenv("AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME", "gpt-4o")
-        
-        # Stripe-specific instructions
-        instructions = self._get_agent_instructions()
-        
-        logger.info(f"Creating Stripe agent with model: {model}")
-        
-        # Use AgentsClient to create agent with McpTool
-        agents_client = self._get_agents_client()
+        logger.info(f"✅ Stripe agent initialized (model: {model}, tools: {len(STRIPE_ALLOWED_TOOLS)})")
+        self._initialized = True
 
-        # Use ToolSet approach (Microsoft recommended for MCP - reduces token usage!)
-        if hasattr(self, '_toolset') and self._toolset:
-            logger.info("🔧 Creating agent with ToolSet (Microsoft recommended for MCP)")
-            self.agent = agents_client.create_agent(
-                model=model,
-                name="AI Foundry Stripe Agent",
-                instructions=instructions,
-                toolset=self._toolset
-            )
-        else:
-            logger.warning("⚠️ Falling back to tools approach (higher token usage)")
-            self.agent = agents_client.create_agent(
-                model=model,
-                name="AI Foundry Stripe Agent",
-                instructions=instructions,
-                tools=tools,
-            )
-
-        logger.info(f"✅ Created Stripe agent: {self.agent.id}")
-        logger.info(f"   Tools: {len(tools) if tools else 0} definitions")
-        return self.agent
-    
     def _get_agent_instructions(self) -> str:
         """Get the agent instructions for Stripe payment processing."""
         return """You are an expert Stripe payment processing assistant. You help users manage their Stripe account.
@@ -211,47 +154,49 @@ class FoundryStripeAgent:
 ## Your Capabilities
 
 You have access to Stripe MCP tools for:
+- **Invoices (BATCHED)**: create_full_invoice — creates customer + invoice + all line items + finalizes in ONE call
+- **Invoice Queries**: list_invoices
 - **Customer Management**: create_customer, list_customers
-- **Invoices**: create_invoice, list_invoices, create_invoice_item, finalize_invoice
 - **Balance & Payments**: retrieve_balance, create_refund, list_payment_intents
-- **Products & Prices**: create_product, list_products, create_price, list_prices (rarely needed)
+- **Subscriptions**: list_subscriptions, cancel_subscription, update_subscription
+- **Disputes**: list_disputes, update_dispute
 
 ## KEY RULES:
 
 1. **USE THE DATA PROVIDED** - Don't ask for info already in the context
-2. **Be MINIMAL** - Use the FEWEST tool calls possible
+2. **MINIMIZE TOOL CALLS** - Use batched tools whenever possible
 3. **Don't ask for confirmation** - If you have the data, just do the task
 4. **ALWAYS PROVIDE A SUMMARY** - After completing tool calls, write a brief summary of what you did
+5. **DO NOT create products or prices for invoices** - Use amount in cents directly
 
-## CRITICAL: CREATING INVOICES (3 STEPS ONLY!)
+## CRITICAL: CREATING INVOICES — USE create_full_invoice (1 TOOL CALL!)
 
-⚠️ DO NOT create products or prices for invoices! Use amount directly.
+⚠️ ALWAYS use create_full_invoice for invoice creation. It handles EVERYTHING in one call:
+- Finds existing customer by email OR creates a new one
+- Creates the invoice
+- Adds ALL line items at once
+- Finalizes the invoice
 
-**Step 1: Find or create customer**
+**Example — ONE tool call for a complete invoice:**
 ```
-list_customers with: {"email": "customer@example.com"}
+create_full_invoice with: {
+  "customer_email": "vendor@example.com",
+  "customer_name": "Vendor Name",
+  "line_items": [
+    {"amount": 320000, "description": "Prompt engineering - 160 hours @ $20/hr"},
+    {"amount": 387200, "description": "Quality assurance - 176 hours @ $22/hr"},
+    {"amount": 264000, "description": "Data annotation - 120 hours @ $22/hr"}
+  ],
+  "description": "Invoice for services",
+  "finalize": true
+}
 ```
-If not found: create_customer with email
-
-**Step 2: Create invoice + add items**
-```
-create_invoice with: {"customer": "cus_xxxxx"}
-```
-Then for EACH line item:
-```
-create_invoice_item with: {"invoice": "in_xxxxx", "amount": 32000, "description": "Item"}
-```
-- amount is in CENTS (100 = $1.00, so $320 = 32000)
+- Amounts are in CENTS (100 = $1.00, so $3,200.00 = 320000)
+- DO NOT use create_invoice + create_invoice_item separately!
 - DO NOT use create_product or create_price!
+- DO NOT call list_customers first — create_full_invoice handles customer lookup!
 
-**Step 3: Finalize (optional)**
-```
-finalize_invoice with: {"invoice": "in_xxxxx"}
-```
-
-TOTAL: 3-5 tool calls max for an invoice!
-
-**After completing the invoice, ALWAYS write a summary like:**
+**After the invoice is created, ALWAYS write a summary like:**
 "✅ Created invoice [invoice_id] for [customer_name] with [X] line items totaling $[amount]"
 
 ## ASKING FOR INPUT:
@@ -261,345 +206,195 @@ Only if information is genuinely MISSING:
 NEEDS_INPUT: Your specific question here
 ```
 """
-    
-    async def create_thread(self) -> str:
-        """Create a new conversation thread."""
-        agents_client = self._get_agents_client()
-        thread = agents_client.threads.create()
-        logger.info(f"Created new thread: {thread.id}")
-        return thread.id
-    
-    async def add_message(self, thread_id: str, content: str, role: str = "user"):
-        """Add a message to a thread."""
-        agents_client = self._get_agents_client()
-        message = agents_client.messages.create(
-            thread_id=thread_id,
-            role=role,
-            content=content,
-        )
-        logger.info(f"Added {role} message to thread {thread_id}")
-        return message
 
-    async def run_conversation_stream(self, thread_id: str, user_message: str):
-        """Run conversation and yield responses."""
-        logger.info(f"🚀 STARTING CONVERSATION STREAM")
-        logger.info(f"   Thread ID: {thread_id}")
-        logger.warning(f"📥 FULL INCOMING CONTEXT (length={len(user_message)} chars):")
-        logger.warning(f"{user_message}")
-        
-        if not self.agent:
+    async def create_session(self) -> str:
+        """Create a new conversation session (replaces create_thread)."""
+        session_id = f"session_{int(time.time())}_{os.urandom(4).hex()}"
+        logger.info(f"Created new session: {session_id}")
+        return session_id
+
+    async def run_conversation_stream(self, session_id: str, user_message: str):
+        """Run conversation using Responses API with native MCP and yield responses.
+
+        Yields:
+            - "🛠️ Remote agent executing: ..." for tool call status (real-time)
+            - Final response text (after all tool calls complete)
+            - "Error:" or "❌" prefixed messages on failure
+        """
+        logger.info(f"🚀 STARTING CONVERSATION STREAM (Responses API)")
+        logger.info(f"   Session ID: {session_id}")
+        logger.info(f"   Message length: {len(user_message)} chars")
+
+        if not self._initialized:
             await self.create_agent()
 
-        await self.add_message(thread_id, user_message)
+        client = self._get_client()
+        model = os.getenv("AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME", "gpt-4o")
+        instructions = self._get_agent_instructions()
 
-        # DEBUG: Show ALL thread messages to identify what's causing high token usage
-        try:
-            agents_client = self._get_agents_client()
-            messages_list = list(agents_client.messages.list(thread_id=thread_id, order=ListSortOrder.DESCENDING))
+        kwargs = {
+            "model": model,
+            "instructions": instructions,
+            "input": [{"role": "user", "content": user_message}],
+            "tools": [self._mcp_tool_config],
+            "stream": True,
+            "max_output_tokens": 4000,
+        }
 
-            logger.warning(f"🔍 THREAD CONTENT ANALYSIS:")
-            logger.warning(f"   Thread ID: {thread_id}")
-            logger.warning(f"   Message count: {len(messages_list)}")
-            logger.warning(f"=" * 80)
+        # Chain conversation for multi-turn support
+        if session_id in self._response_ids:
+            kwargs["previous_response_id"] = self._response_ids[session_id]
+            logger.info(f"   Chaining to previous response: {self._response_ids[session_id]}")
 
-            for i, msg in enumerate(messages_list):
-                msg_role = msg.role.upper()
-                msg_content = ""
-                if hasattr(msg, 'content'):
-                    for content in msg.content:
-                        if hasattr(content, 'text') and hasattr(content.text, 'value'):
-                            msg_content += content.text.value
-
-                msg_preview = msg_content[:500].replace('\n', ' ') if msg_content else "[no text content]"
-                logger.warning(f"\n📨 Message {i+1}/{len(messages_list)}: {msg_role} ({len(msg_content):,} chars)")
-                logger.warning(f"   Preview: {msg_preview}")
-                if len(msg_content) > 500:
-                    logger.warning(f"   ... (truncated, full length: {len(msg_content):,} chars)")
-
-            logger.warning(f"\n{'=' * 80}")
-
-            if len(messages_list) > 5:
-                logger.warning(f"⚠️  WARNING: Thread has {len(messages_list)} messages!")
-                logger.warning(f"   This thread is accumulating messages from previous runs.")
-                logger.warning(f"   Consider using force_new=True to create fresh threads.")
-
-        except Exception as e:
-            logger.error(f"❌ Error analyzing thread content: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
-
-
-        client = self._get_agents_client()
-        
-        # Create run with MCP tool resources
-        mcp_tool = self._mcp_tool
-        if mcp_tool and hasattr(mcp_tool, 'resources'):
-            logger.info("🔧 Creating run with MCP tool_resources")
-            run = client.runs.create(
-                thread_id=thread_id,
-                agent_id=self.agent.id,
-                tool_resources=mcp_tool.resources,
-                truncation_strategy={"type": "last_messages", "last_messages": 4}
-            )
-        else:
-            logger.info("Creating run without MCP tool_resources")
-            run = client.runs.create(
-                thread_id=thread_id,
-                agent_id=self.agent.id,
-                truncation_strategy={"type": "last_messages", "last_messages": 4}
-            )
-        
-        logger.info(f"   Run created: {run.id}")
-        
-        # Check if run failed immediately (before the while loop)
-        if run.status == "failed":
-            logger.error(f"❌ RUN FAILED IMMEDIATELY ON CREATION!")
-            logger.error(f"   Run ID: {run.id}")
-            logger.error(f"   Last error: {run.last_error}")
-            yield f"❌ **Run Failed Immediately:** {run.last_error}"
-            return
-        
-        max_iterations = 25
-        iterations = 0
         retry_count = 0
         max_retries = 3
-        tool_calls_yielded = set()
 
-        while run.status in ["queued", "in_progress", "requires_action"] and iterations < max_iterations:
-            iterations += 1
-            logger.info(f"   🔄 Iteration {iterations}: run.status = {run.status}")
-            
-            # Use adaptive polling: start fast, slow down to reduce API calls and token usage
-            # First 3 polls: 2s (fast startup)
-            # Next 5 polls: 3s (moderate)
-            # After that: 5s (conserve TPM)
-            if iterations <= 3:
-                poll_interval = 2
-            elif iterations <= 8:
-                poll_interval = 3
-            else:
-                poll_interval = 5
-            
-            await asyncio.sleep(poll_interval)
-            
-            # Check for tool calls
+        while retry_count <= max_retries:
             try:
-                run_steps = client.run_steps.list(thread_id, run.id)
-                for run_step in run_steps:
-                    step_id = getattr(run_step, 'id', f'step_{iterations}')
-                    if (hasattr(run_step, "step_details") and
-                        hasattr(run_step.step_details, "type") and
-                        run_step.step_details.type == "tool_calls" and
-                        hasattr(run_step.step_details, "tool_calls")):
-                        for idx, tool_call in enumerate(run_step.step_details.tool_calls):
-                            tool_call_id = getattr(tool_call, 'id', f'{step_id}_call_{idx}')
-                            if tool_call_id not in tool_calls_yielded:
-                                tool_type = getattr(tool_call, 'type', 'unknown')
-                                yield f"🛠️ Remote agent executing: {tool_type}"
-                                tool_calls_yielded.add(tool_call_id)
-            except Exception as e:
-                logger.warning(f"   ⚠️ Error getting run steps: {e}")
+                stream_start = time.time()
+                logger.info(f"📡 Calling responses.create() (attempt {retry_count + 1}/{max_retries + 1})...")
+                response = await client.responses.create(**kwargs)
+                api_latency = time.time() - stream_start
+                logger.info(f"📡 responses.create() returned in {api_latency:.2f}s - starting stream iteration")
 
-            try:
-                run = client.runs.get(thread_id=thread_id, run_id=run.id)
+                # Accumulate text deltas, yield tool status immediately
+                text_chunks = []
+                tool_calls_seen = set()
+                event_count = 0
+                tool_call_times = {}
+
+                async for event in response:
+                    event_count += 1
+                    event_type = getattr(event, 'type', None)
+
+                    # Debug: log every event type
+                    if event_type and event_type != "response.output_text.delta":
+                        logger.info(f"🔍 Event #{event_count}: {event_type}")
+
+                    if event_type == "response.output_text.delta":
+                        text_chunks.append(event.delta)
+
+                    elif event_type == "response.mcp_call.in_progress":
+                        # MCP tool call started - yield status for real-time updates
+                        tool_name = getattr(event, 'name', 'mcp_tool')
+                        if tool_name not in tool_calls_seen:
+                            tool_calls_seen.add(tool_name)
+                            tool_call_times[tool_name] = time.time()
+                            elapsed = time.time() - stream_start
+                            logger.info(f"🛠️ MCP tool call: {tool_name} (at +{elapsed:.1f}s)")
+                            tool_description = self._get_tool_description(tool_name)
+                            yield f"🛠️ Remote agent executing: {tool_description}"
+
+                    elif event_type == "response.mcp_call.completed":
+                        tool_name = getattr(event, 'name', 'mcp_tool')
+                        start_t = tool_call_times.get(tool_name, stream_start)
+                        duration = time.time() - start_t
+                        logger.info(f"✅ MCP tool completed: {tool_name} ({duration:.1f}s)")
+
+                    elif event_type == "response.output_item.added":
+                        # Alternative event for tool calls - check if it's an MCP call
+                        item = getattr(event, 'item', None)
+                        if item:
+                            item_type = getattr(item, 'type', None)
+                            if item_type in ("mcp_call", "mcp_tool_call"):
+                                tool_name = getattr(item, 'name', None) or getattr(item, 'tool_name', 'mcp_tool')
+                                if tool_name not in tool_calls_seen:
+                                    tool_calls_seen.add(tool_name)
+                                    tool_call_times[tool_name] = time.time()
+                                    elapsed = time.time() - stream_start
+                                    logger.info(f"🛠️ MCP tool call (via output_item): {tool_name} (at +{elapsed:.1f}s)")
+                                    tool_description = self._get_tool_description(tool_name)
+                                    yield f"🛠️ Remote agent executing: {tool_description}"
+
+                    elif event_type == "response.completed" or event_type == "response.done":
+                        total_time = time.time() - stream_start
+                        # Extract token usage from completed response
+                        resp = getattr(event, 'response', None)
+                        if resp:
+                            usage = getattr(resp, 'usage', None)
+                            if usage:
+                                self.last_token_usage = {
+                                    "prompt_tokens": getattr(usage, 'prompt_tokens', 0) or getattr(usage, 'input_tokens', 0),
+                                    "completion_tokens": getattr(usage, 'completion_tokens', 0) or getattr(usage, 'output_tokens', 0),
+                                    "total_tokens": getattr(usage, 'total_tokens', 0),
+                                }
+                                logger.info(f"📊 Token usage: {self.last_token_usage}")
+                                logger.info(f"📊 Total stream time: {total_time:.1f}s | Events: {event_count} | Tools: {list(tool_calls_seen)}")
+
+                            # Store response ID for conversation continuity
+                            resp_id = getattr(resp, 'id', None)
+                            if resp_id:
+                                self._response_ids[session_id] = resp_id
+
+                # Yield accumulated text as the final response
+                if text_chunks:
+                    full_text = "".join(text_chunks)
+                    logger.info(f"✅ Response text ({len(full_text)} chars)")
+                    yield full_text
+                else:
+                    logger.warning("⚠️ No text content in response")
+                    yield "Error: Agent completed but no response text was generated"
+
+                return  # Success
+
             except Exception as e:
-                if "rate limit" in str(e).lower() or "429" in str(e):
+                elapsed = time.time() - stream_start
+                error_str = str(e).lower()
+                logger.error(f"❌ Exception after {elapsed:.1f}s, {event_count} events, tools so far: {list(tool_calls_seen)}")
+                logger.error(f"❌ Error type: {type(e).__name__} | Message: {e}")
+
+                # Try to extract rate limit details from the exception
+                if hasattr(e, 'response') and e.response is not None:
+                    headers = getattr(e.response, 'headers', {})
+                    retry_after = headers.get('retry-after') or headers.get('Retry-After')
+                    remaining = headers.get('x-ratelimit-remaining-tokens') or headers.get('x-ratelimit-remaining-requests')
+                    limit = headers.get('x-ratelimit-limit-tokens') or headers.get('x-ratelimit-limit-requests')
+                    logger.error(f"❌ Rate limit headers - retry-after: {retry_after}, remaining: {remaining}, limit: {limit}")
+
+                if "rate_limit" in error_str or "429" in error_str or "too many requests" in error_str:
                     retry_count += 1
                     if retry_count <= max_retries:
-                        backoff_time = min(15 * (2 ** retry_count), 45)
-                        logger.warning(f"🔄 Rate limit on polling - retry {retry_count}/{max_retries} after {backoff_time}s")
-                        await asyncio.sleep(backoff_time)
+                        backoff = min(15 * (2 ** retry_count), 60)
+                        logger.warning(f"🔄 Rate limit - retry {retry_count}/{max_retries} after {backoff}s")
+                        yield f"⏳ Rate limit hit - retrying in {backoff}s (attempt {retry_count}/{max_retries})..."
+                        await asyncio.sleep(backoff)
                         continue
                     else:
-                        yield "Error: Rate limit exceeded, please try again later"
+                        logger.error(f"❌ Max retries ({max_retries}) exceeded for rate limit")
+                        yield f"❌ Rate limit exceeded after {max_retries} retries - please wait and try again later"
                         return
                 else:
+                    logger.error(f"❌ Error in conversation stream: {e}")
+                    import traceback
+                    logger.error(traceback.format_exc())
                     yield f"Error: {str(e)}"
                     return
 
-            if run.status == "failed":
-                logger.error(f"❌ RUN FAILED!")
-                logger.error(f"   Run ID: {run.id}")
-                logger.error(f"   Last error: {run.last_error}")
-                
-                # Check for rate limit error and retry with exponential backoff
-                error_code = None
-                error_message = None
-                if run.last_error:
-                    if hasattr(run.last_error, 'code'):
-                        error_code = run.last_error.code
-                    if hasattr(run.last_error, 'message'):
-                        error_message = run.last_error.message
-                    
-                    # CHECK FOR RATE LIMIT ERROR - Retry with exponential backoff
-                    if error_code == 'rate_limit_exceeded' or (error_message and 'rate limit' in error_message.lower()):
-                        logger.warning(f"🔄 RATE LIMIT DETECTED - Implementing retry logic")
-                        retry_count += 1
-                        if retry_count <= max_retries:
-                            # Exponential backoff: 15s, 30s, 60s
-                            backoff_time = min(15 * (2 ** retry_count), 60)
-                            logger.warning(f"   Retry {retry_count}/{max_retries} after {backoff_time}s backoff")
-                            yield f"⏳ Rate limit hit - retrying in {backoff_time}s (attempt {retry_count}/{max_retries})..."
-                            await asyncio.sleep(backoff_time)
-                            
-                            # Reset run and continue the loop
-                            logger.info(f"🔄 Retrying run creation after rate limit backoff...")
-                            if mcp_tool and hasattr(mcp_tool, 'resources'):
-                                run = client.runs.create(
-                                    thread_id=thread_id,
-                                    agent_id=self.agent.id,
-                                    tool_resources=mcp_tool.resources,
-                                    truncation_strategy={"type": "last_messages", "last_messages": 8}
-                                )
-                            else:
-                                run = client.runs.create(
-                                    thread_id=thread_id,
-                                    agent_id=self.agent.id,
-                                    truncation_strategy={"type": "last_messages", "last_messages": 8}
-                                )
-                            logger.info(f"   New run created: {run.id}")
-                            iterations = 0  # Reset iteration counter for the new run
-                            continue  # Continue the while loop with the new run
-                        else:
-                            logger.error(f"❌ Max retries ({max_retries}) exceeded for rate limit")
-                            yield f"❌ Rate limit exceeded after {max_retries} retries - please wait and try again later"
-                            return
-                
-                yield f"❌ **Run Failed:** {run.last_error}"
-                return
-
-            if run.status == "requires_action":
-                logger.info(f"🔧 RUN REQUIRES ACTION")
-                # MCP tools with approval_mode="never" should auto-execute
-                # But if we get here, just wait for it to process
-                await asyncio.sleep(2)
-
-        # Get final response
-        if run.status == "completed":
-            # Extract token usage
-            if hasattr(run, 'usage') and run.usage:
-                self.last_token_usage = {
-                    "prompt_tokens": run.usage.prompt_tokens,
-                    "completion_tokens": run.usage.completion_tokens,
-                    "total_tokens": run.usage.total_tokens
-                }
-                logger.warning(f"📊 Token usage: {self.last_token_usage}")
-
-            # LOG ALL RUN STEPS TO DEBUG TOOL CALLS
-            try:
-                logger.info("🔍 RETRIEVING RUN STEPS TO DEBUG TOOL CALLS...")
-                run_steps = list(client.run_steps.list(thread_id, run.id))
-                logger.warning(f"📋 Total run steps: {len(run_steps)}")
-
-                for i, step in enumerate(run_steps):
-                    logger.warning(f"  Step {i+1}: type={step.type}, status={step.status}")
-                    if hasattr(step, 'step_details'):
-                        details = step.step_details
-                        logger.warning(f"    Details type: {type(details)}")
-
-                        # Log tool calls
-                        if hasattr(details, 'tool_calls'):
-                            for j, tool_call in enumerate(details.tool_calls):
-                                logger.warning(f"    Tool call {j+1}:")
-                                logger.warning(f"      Type: {tool_call.type if hasattr(tool_call, 'type') else 'unknown'}")
-                                if hasattr(tool_call, 'function'):
-                                    logger.warning(f"      Function: {tool_call.function.name if hasattr(tool_call.function, 'name') else 'unknown'}")
-                                    logger.warning(f"      Arguments: {tool_call.function.arguments if hasattr(tool_call.function, 'arguments') else 'none'}")
-                                if hasattr(tool_call, 'output'):
-                                    output_preview = str(tool_call.output)[:200] if tool_call.output else 'none'
-                                    logger.warning(f"      Output: {output_preview}")
-            except Exception as e:
-                logger.error(f"❌ Error retrieving run steps: {e}")
-                import traceback
-                logger.error(f"   Traceback: {traceback.format_exc()}")
-            
-            # Get messages
-            try:
-                messages_list = list(client.messages.list(thread_id=thread_id, order=ListSortOrder.DESCENDING))
-                logger.info(f"📨 Retrieved {len(messages_list)} messages from thread")
-
-                # Log all messages for debugging
-                for i, msg in enumerate(messages_list):
-                    logger.info(f"   Message {i}: role={msg.role}, content_parts={len(msg.content) if hasattr(msg, 'content') else 0}")
-
-                found_response = False
-                for msg in messages_list:
-                    logger.info(f"   Checking message with role: {msg.role}")
-                    if msg.role == "assistant":
-                        logger.info(f"   Assistant message has {len(msg.content)} content parts")
-                        for idx, content in enumerate(msg.content):
-                            logger.info(f"   Content {idx}: type={type(content)}, hasText={hasattr(content, 'text')}")
-                            if hasattr(content, 'text') and hasattr(content.text, 'value'):
-                                response_text = content.text.value
-                                logger.info(f"✅ Found response text ({len(response_text)} chars)")
-                                yield response_text
-                                found_response = True
-                            elif hasattr(content, 'text'):
-                                logger.warning(f"   Text object exists but no 'value' attribute: {dir(content.text)}")
-                            else:
-                                logger.warning(f"   Content has no text attribute. Attributes: {dir(content)}")
-                        break
-
-                if not found_response:
-                    logger.error("❌ No assistant response text found in messages")
-                    yield "Error: Agent completed but no response text was found"
-
-            except Exception as e:
-                logger.error(f"❌ Error extracting messages: {e}")
-                logger.error(f"   Exception type: {type(e)}")
-                import traceback
-                logger.error(f"   Traceback: {traceback.format_exc()}")
-                yield f"Error extracting response: {str(e)}"
-        else:
-            logger.error(f"❌ RUN ENDED WITH NON-COMPLETED STATUS: {run.status}")
-            logger.error(f"   Run ID: {run.id}")
-            logger.error(f"   Thread ID: {thread_id}")
-
-            # Log detailed error information
-            if hasattr(run, 'last_error') and run.last_error:
-                logger.error(f"   Last Error: {run.last_error}")
-
-            if hasattr(run, 'incomplete_details') and run.incomplete_details:
-                logger.error(f"   Incomplete Details: {run.incomplete_details}")
-
-            # Log token usage if available
-            if hasattr(run, 'usage') and run.usage:
-                logger.error(f"   Token Usage: prompt={run.usage.prompt_tokens}, completion={run.usage.completion_tokens}, total={run.usage.total_tokens}")
-
-            # Log all run attributes for debugging
-            logger.error(f"   Run attributes: {dir(run)}")
-
-            # Try to get run steps to see what actually happened
-            try:
-                run_steps = client.run_steps.list(thread_id, run.id)
-                logger.error(f"   Run steps count: {len(list(run_steps))}")
-                for step in run_steps:
-                    logger.error(f"     Step {step.id}: status={step.status}, type={step.type}")
-                    if hasattr(step, 'step_details'):
-                        logger.error(f"       Details: {step.step_details}")
-            except Exception as e:
-                logger.error(f"   Could not retrieve run steps: {e}")
-
-            yield f"Run ended with status: {run.status}"
-
-    async def run_conversation(self, thread_id: str, user_message: str) -> str:
+    async def run_conversation(self, session_id: str, user_message: str) -> str:
         """Non-streaming version - collects all responses."""
         responses = []
-        try:
-            async for response in self.run_conversation_stream(thread_id, user_message):
-                logger.info(f"📥 Collected response chunk ({len(response)} chars): {response[:100]}...")
-                responses.append(response)
-            logger.info(f"✅ Collected {len(responses)} total response chunks")
-            final_response = "\n".join(responses)
-            logger.info(f"📤 Returning final response ({len(final_response)} chars): {final_response[:200]}...")
-            return final_response
-        except Exception as e:
-            logger.error(f"❌ Error in run_conversation: {e}")
-            import traceback
-            logger.error(f"   Traceback: {traceback.format_exc()}")
-            raise
+        async for response in self.run_conversation_stream(session_id, user_message):
+            responses.append(response)
+        return "\n".join(responses)
 
-    async def chat(self, thread_id: str, user_message: str) -> str:
+    def _get_tool_description(self, tool_name: str) -> str:
+        """Get a human-readable description for a Stripe tool call."""
+        descriptions = {
+            "create_full_invoice": "Creating Stripe invoice with all line items",
+            "list_invoices": "Searching Stripe invoices",
+            "create_customer": "Creating Stripe customer",
+            "list_customers": "Looking up Stripe customers",
+            "retrieve_balance": "Retrieving Stripe account balance",
+            "list_payment_intents": "Listing Stripe payments",
+            "create_refund": "Processing Stripe refund",
+            "list_subscriptions": "Listing Stripe subscriptions",
+            "cancel_subscription": "Cancelling Stripe subscription",
+            "update_subscription": "Updating Stripe subscription",
+            "list_disputes": "Listing Stripe disputes",
+            "update_dispute": "Updating Stripe dispute",
+        }
+        return descriptions.get(tool_name, tool_name.replace("_", " ").title() if tool_name else "Processing")
+
+    async def chat(self, session_id: str, user_message: str) -> str:
         """Alias for run_conversation - for executor compatibility."""
-        return await self.run_conversation(thread_id, user_message)
-
+        return await self.run_conversation(session_id, user_message)

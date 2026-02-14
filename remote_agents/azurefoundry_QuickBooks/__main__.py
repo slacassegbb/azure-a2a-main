@@ -89,8 +89,8 @@ DEFAULT_UI_PORT = 8085
 # Global reference to the agent executor to check for pending tasks
 agent_executor_instance = None
 
-# Persist a single Azure Foundry thread per UI session
-ui_thread_id: Optional[str] = None
+# Persist a single session per UI session
+ui_session_id: Optional[str] = None
 
 HOST_AGENT_URL = _normalize_env_value(get_host_agent_url())
 
@@ -422,19 +422,16 @@ async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_p
             history.append({"role": "assistant", "content": "❌ Agent not initialized. Please restart the application."})
             return history
 
-        global ui_thread_id
-        if not ui_thread_id:
-            thread = await foundry_agent.create_thread()
-            ui_thread_id = thread.id
-        else:
-            thread = await foundry_agent.create_thread(ui_thread_id)
-        thread_id = thread.id
+        global ui_session_id
+        if not ui_session_id:
+            ui_session_id = await foundry_agent.create_session()
+        session_id = ui_session_id
 
         history.append({"role": "user", "content": text})
         history.append({"role": "assistant", "content": "🤖 **Processing your request...**"})
         responses: List[str] = []
         try:
-            async for response in foundry_agent.run_conversation_stream(thread_id, text):
+            async for response in foundry_agent.run_conversation_stream(session_id, text):
                 if isinstance(response, str):
                     stripped = response.strip()
                     if stripped and not any(phrase in stripped.lower() for phrase in [
@@ -462,8 +459,8 @@ async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_p
         return "", updated_history, get_pending_status()
 
     def reset_conversation():
-        global ui_thread_id
-        ui_thread_id = None
+        global ui_session_id
+        ui_session_id = None
         return []
 
     def refresh_status():

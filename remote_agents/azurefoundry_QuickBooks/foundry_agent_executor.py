@@ -1,6 +1,6 @@
 """
-AI Foundry Agent Executor for A2A framework.
-Adapted from ADK agent executor pattern to work with Azure AI Foundry agents.
+AI Foundry Agent Executor for A2A framework - QuickBooks Agent.
+Uses the Responses API with native MCP tool support.
 """
 import asyncio
 import logging
@@ -30,72 +30,68 @@ from a2a.types import (
 from a2a.utils.message import new_agent_text_message
 
 logger = logging.getLogger(__name__)
-# Set to INFO to hide verbose debug logs (can be changed to DEBUG for troubleshooting)
 logger.setLevel(logging.INFO)
 
 
 class FoundryAgentExecutor(AgentExecutor):
     """
-    An AgentExecutor that runs Azure AI Foundry-based agents.
-    Adapted from the ADK agent executor pattern.
+    An AgentExecutor that runs Azure AI Foundry QuickBooks agents.
     """
 
-    # Class-level shared agent instance to avoid multiple agent creations
+    # Class-level shared agent instance
     _shared_foundry_agent: Optional[FoundryQuickBooksAgent] = None
     _agent_lock = asyncio.Lock()
     _last_request_time: float = 0
-    _min_request_interval: float = 1.0  # Reduced for parallel execution
-    _request_semaphore = asyncio.Semaphore(3)  # Allow 3 concurrent requests for parallel execution
+    _min_request_interval: float = 1.0
+    _request_semaphore = asyncio.Semaphore(3)
     _api_call_count: int = 0
     _api_call_window_start: float = 0
-    _max_api_calls_per_minute: int = 30  # Increased for parallel execution
+    _max_api_calls_per_minute: int = 30
     _startup_complete: bool = False
 
     @classmethod
     async def get_shared_agent(cls) -> Optional[FoundryQuickBooksAgent]:
-        """Get the shared agent that was initialized at startup (if available)."""
+        """Get the shared agent that was initialized at startup."""
         async with cls._agent_lock:
             return cls._shared_foundry_agent
-    
+
     @classmethod
     async def initialize_at_startup(cls) -> None:
-        """Initialize the shared agent at startup instead of on first request."""
+        """Initialize the shared agent at startup."""
         async with cls._agent_lock:
             if not cls._shared_foundry_agent:
-                logger.info("🚀 Initializing Foundry agent at startup...")
+                logger.info("🚀 Initializing QuickBooks Foundry agent at startup...")
                 try:
                     cls._shared_foundry_agent = FoundryQuickBooksAgent()
                     await cls._shared_foundry_agent.create_agent()
                     cls._startup_complete = True
-                    logger.info("✅ Foundry agent startup initialization completed successfully")
+                    logger.info("✅ QuickBooks Foundry agent startup initialization completed")
                 except Exception as e:
-                    logger.error(f"❌ Failed to initialize agent at startup: {e}")
+                    logger.error(f"❌ Failed to initialize QuickBooks agent at startup: {e}")
                     cls._shared_foundry_agent = None
                     cls._startup_complete = False
                     raise
 
     def __init__(self, card: AgentCard):
-        self._active_threads: Dict[str, str] = {}  # context_id -> thread_id mapping
+        self._active_sessions: Dict[str, str] = {}
         self._waiting_for_input: Dict[str, str] = {}
         self._pending_updaters: Dict[str, TaskUpdater] = {}
         self._input_events: Dict[str, asyncio.Event] = {}
 
     async def _get_or_create_agent(self) -> FoundryQuickBooksAgent:
-        """Get the shared Foundry QuickBooks agent (with fallback to lazy creation)."""
+        """Get the shared Foundry QuickBooks agent."""
         async with FoundryAgentExecutor._agent_lock:
             if not FoundryAgentExecutor._shared_foundry_agent:
                 if FoundryAgentExecutor._startup_complete:
-                    # Startup was supposed to happen but failed
-                    raise RuntimeError("Agent startup initialization failed - agent not available")
-                
-                # Fallback to lazy creation if startup wasn't called
+                    raise RuntimeError("Agent startup initialization failed")
+
                 logger.warning("⚠️ Agent not initialized at startup, falling back to lazy creation...")
                 FoundryAgentExecutor._shared_foundry_agent = FoundryQuickBooksAgent()
                 await FoundryAgentExecutor._shared_foundry_agent.create_agent()
-                logger.info("Fallback agent creation completed")
+                logger.info("Fallback QuickBooks agent creation completed")
             return FoundryAgentExecutor._shared_foundry_agent
 
-    async def _get_or_create_thread(
+    async def _get_or_create_session(
         self,
         context_id: str,
         agent: Optional[FoundryQuickBooksAgent] = None,
@@ -103,21 +99,12 @@ class FoundryAgentExecutor(AgentExecutor):
     ) -> str:
         if agent is None:
             agent = await self._get_or_create_agent()
-        # Force new thread for parallel requests to avoid thread conflicts
-        if force_new:
-            thread = await agent.create_thread()
-            thread_id = thread.id
-            logger.info(f"Created new thread {thread_id} for parallel request (context: {context_id})")
-            self._active_threads[context_id] = thread_id
-            return thread_id
-        # Reuse thread if it exists for this context_id
-        if context_id in self._active_threads:
-            return self._active_threads[context_id]
-        # Otherwise, create a new thread and store it
-        thread = await agent.create_thread()
-        thread_id = thread.id
-        self._active_threads[context_id] = thread_id
-        return thread_id
+        if force_new or context_id not in self._active_sessions:
+            session_id = await agent.create_session()
+            logger.info(f"Created new session {session_id} for context: {context_id}")
+            self._active_sessions[context_id] = session_id
+            return session_id
+        return self._active_sessions[context_id]
 
     def _notify_ui_of_pending_request(self, context_id: str, request_text: str):
         """Log pending requests so dashboards can poll executor state."""
@@ -136,30 +123,6 @@ class FoundryAgentExecutor(AgentExecutor):
             if context_id in self._input_events:
                 self._input_events[context_id].set()
             logger.info(f"Completed input_required task for context {context_id}")
-
-            # Also publish the human response back into the Azure Foundry thread so the
-            # host agent can surface it instead of repeating the escalation banner.
-            try:
-                thread_id = self._active_threads.get(context_id)
-                if thread_id:
-                    agent = await self._get_or_create_agent()
-                    await agent.send_message(thread_id, human_response, role="assistant")
-                    logger.info(
-                        "Posted human response to Foundry thread %s for context %s",
-                        thread_id,
-                        context_id,
-                    )
-                else:
-                    logger.warning(
-                        "No thread id recorded for context %s; human reply not posted to Foundry thread",
-                        context_id,
-                    )
-            except Exception as e:
-                logger.warning(
-                    "Failed to append human response to Foundry thread for context %s: %s",
-                    context_id,
-                    e,
-                )
             return True
         logger.warning(f"No pending input_required task for context {context_id}")
         return False
@@ -173,65 +136,53 @@ class FoundryAgentExecutor(AgentExecutor):
     ) -> None:
         try:
             user_message = self._convert_parts_to_text(message_parts)
-            logger.info(f"Converted user message: {user_message}")
-            logger.info(f"Message parts count: {len(message_parts)}")
-            for i, part in enumerate(message_parts):
-                logger.info(f"Part {i}: {part}")
-                if hasattr(part, 'root'):
-                    logger.info(f"Part {i} root: {part.root}")
+            logger.info(f"Processing QuickBooks request: {user_message[:100]}...")
+
             agent = await self._get_or_create_agent()
-            # Reuse thread for same context_id to maintain conversation history
-            # This helps the agent remember previous interactions within the same workflow
-            # Note: force_new=False means we reuse threads based on context_id
-            thread_id = await self._get_or_create_thread(context_id, agent, force_new=False)
-            
-            # Use streaming to show tool calls in real-time
+            # Reuse session for same context_id to maintain conversation continuity
+            session_id = await self._get_or_create_session(context_id, agent, force_new=False)
+
+            # Use streaming to filter out status messages
             responses = []
             tools_called = []
             seen_tools = set()
-            
-            async for event in agent.run_conversation_stream(thread_id, user_message):
-                # Check if this is a tool call event from remote agent
+
+            async for event in agent.run_conversation_stream(session_id, user_message):
+                # Check if this is a tool call status message
                 if event.startswith("🛠️ Remote agent executing:"):
                     tool_description = event.replace("🛠️ Remote agent executing: ", "").strip()
                     if tool_description not in seen_tools:
                         seen_tools.add(tool_description)
                         tools_called.append(tool_description)
-                        # Emit tool call in real-time
+                        # Send as real-time status update
                         logger.info(f"📡 Sending task_updater.update_status(working) for: {tool_description}")
-                        tool_event_msg = new_agent_text_message(
-                            f"🛠️ Remote agent executing: {tool_description}", context_id=context_id
-                        )
                         await task_updater.update_status(
                             TaskState.working,
-                            message=tool_event_msg
+                            message=new_agent_text_message(
+                                f"🛠️ Remote agent executing: {tool_description}", context_id=context_id
+                            )
                         )
-                        logger.info(f"✅ task_updater.update_status sent for: {tool_description}")
                 # Check if this is a processing message
                 elif event.startswith("🤖") or event.startswith("🧠") or event.startswith("🔍") or event.startswith("📝"):
-                    # Emit processing message in real-time
-                    processing_msg = new_agent_text_message(
-                        event, context_id=context_id
-                    )
                     await task_updater.update_status(
                         TaskState.working,
-                        message=processing_msg
+                        message=new_agent_text_message(event, context_id=context_id)
                     )
-                # Check if this is an error (multiple formats)
+                # Check if this is an error
                 elif event.startswith("Error:") or event.startswith("❌") or "Run Failed" in event:
                     # Check for unrecoverable auth errors
                     auth_error_keywords = [
-                        "connection is inactive", "invalid_grant", "token expired", 
+                        "connection is inactive", "invalid_grant", "token expired",
                         "authentication required", "re-authenticate", "refresh token",
                         "unauthorized", "401"
                     ]
                     is_auth_error = any(kw.lower() in event.lower() for kw in auth_error_keywords)
-                    
+
                     error_msg = event
                     if is_auth_error:
                         error_msg = f"⚠️ QuickBooks authentication error: {event}. Please re-authenticate the QuickBooks connection manually."
                         logger.error(f"🔐 AUTH ERROR DETECTED: {event}")
-                    
+
                     await task_updater.failed(
                         message=new_agent_text_message(error_msg, context_id=context_id)
                     )
@@ -239,73 +190,26 @@ class FoundryAgentExecutor(AgentExecutor):
                 # Check for human escalation
                 elif event.strip().upper().startswith("HUMAN_ESCALATION_REQUIRED"):
                     responses.append(event)
-                    
-                    # Debug: Let's see what's in the RequestContext from the host agent
-                    logger.info(f"RequestContext type: {type(request_context)}")
-                    logger.info(f"RequestContext attributes: {dir(request_context)}")
-                    
-                    # Try to get conversation history from different sources
-                    conversation_history = ""
-                    
-                    # Method 1: Check if we have a task with history
-                    if hasattr(request_context, 'task') and request_context.task:
-                        logger.info(f"Task attributes: {dir(request_context.task)}")
-                        if hasattr(request_context.task, 'history'):
-                            logger.info(f"Task history length: {len(request_context.task.history) if request_context.task.history else 0}")
-                            if request_context.task.history:
-                                for i, msg in enumerate(request_context.task.history):
-                                    logger.info(f"History message {i}: {msg}")
-                                    # Extract text content from message
-                                    if hasattr(msg, 'parts') and msg.parts:
-                                        for part in msg.parts:
-                                            if hasattr(part, 'root') and hasattr(part.root, 'text'):
-                                                text = part.root.text
-                                                if text.strip():
-                                                    conversation_history += f"{text}\n"
-                    
-                    # Method 2: Check if we have a current_task with history
-                    if hasattr(request_context, 'current_task') and request_context.current_task:
-                        logger.info(f"Current task attributes: {dir(request_context.current_task)}")
-                        if hasattr(request_context.current_task, 'history'):
-                            logger.info(f"Current task history length: {len(request_context.current_task.history) if request_context.current_task.history else 0}")
-                            if request_context.current_task.history:
-                                for i, msg in enumerate(request_context.current_task.history):
-                                    logger.info(f"Current task history message {i}: {msg}")
-                                    # Extract text content from message
-                                    if hasattr(msg, 'parts') and msg.parts:
-                                        for part in msg.parts:
-                                            if hasattr(part, 'root') and hasattr(part.root, 'text'):
-                                                text = part.root.text
-                                                if text.strip():
-                                                    conversation_history += f"{text}\n"
-                    
-                    # Method 3: Check if we have related_tasks with history
-                    if hasattr(request_context, 'related_tasks') and request_context.related_tasks:
-                        logger.info(f"Related tasks count: {len(request_context.related_tasks)}")
-                        for i, task in enumerate(request_context.related_tasks):
-                            if hasattr(task, 'history') and task.history:
-                                logger.info(f"Related task {i} history length: {len(task.history)}")
-                                for j, msg in enumerate(task.history):
-                                    logger.info(f"Related task {i} history message {j}: {msg}")
-                                    # Extract text content from message
-                                    if hasattr(msg, 'parts') and msg.parts:
-                                        for part in msg.parts:
-                                            if hasattr(part, 'root') and hasattr(part.root, 'text'):
-                                                text = part.root.text
-                                                if text.strip():
-                                                    conversation_history += f"{text}\n"
-                    
-                    logger.info(f"Extracted conversation history: {conversation_history}")
-                    logger.info(f"Using raw user message from host agent: {user_message}")
-                    
+
                     # Build the full request text with conversation history
+                    conversation_history = ""
+                    if request_context:
+                        for attr_name in ('task', 'current_task'):
+                            task_obj = getattr(request_context, attr_name, None)
+                            if task_obj and hasattr(task_obj, 'history') and task_obj.history:
+                                for msg in task_obj.history:
+                                    if hasattr(msg, 'parts') and msg.parts:
+                                        for part in msg.parts:
+                                            if hasattr(part, 'root') and hasattr(part.root, 'text'):
+                                                text = part.root.text
+                                                if text.strip():
+                                                    conversation_history += f"{text}\n"
+
                     full_request_text = ""
                     if conversation_history.strip():
                         full_request_text += f"Conversation History:\n{conversation_history}\n\n"
                     full_request_text += f"Current Request: {user_message}"
-                    
-                    logger.info(f"Full request text: {full_request_text}")
-                    
+
                     # Set up pending request for human input
                     self._waiting_for_input[context_id] = full_request_text
                     self._pending_updaters[context_id] = task_updater
@@ -316,7 +220,7 @@ class FoundryAgentExecutor(AgentExecutor):
                         message=new_agent_text_message(
                             f"Human expert input required: {user_message}", context_id=context_id
                         ),
-                        final=True  # This closes the event queue properly
+                        final=True
                     )
                     # Wait for human input
                     await self._input_events[context_id].wait()
@@ -326,111 +230,103 @@ class FoundryAgentExecutor(AgentExecutor):
                     self._input_events.pop(context_id, None)
                     return
                 # Check for NEEDS_INPUT block (agent needs user clarification)
-                # Supports both formats:
-                # 1. ```NEEDS_INPUT\nquestion\n```END_NEEDS_INPUT
-                # 2. NEEDS_INPUT: question
                 elif "```NEEDS_INPUT" in event or event.strip().startswith("NEEDS_INPUT:"):
-                    # Extract the question from either format
                     import re
                     block_pattern = r'```NEEDS_INPUT\s*\n(.*?)\n```END_NEEDS_INPUT'
                     block_match = re.search(block_pattern, event, re.DOTALL)
-                    
+
                     if block_match:
                         question = block_match.group(1).strip()
                     else:
                         question = event.replace("NEEDS_INPUT:", "", 1).strip()
-                    
+
                     logger.info(f"⏸️ QuickBooks agent needs user input: {question[:100]}...")
-                    
+
                     # Store context for resume
                     self._waiting_for_input[context_id] = {
                         "question": question,
-                        "thread_id": thread_id,
+                        "session_id": session_id,
                     }
-                    
+
                     import uuid
-                    message_parts = [TextPart(text=question)]
-                    
+                    message_parts_out = [TextPart(text=question)]
+
                     # Add token usage if available
                     if hasattr(agent, 'last_token_usage') and agent.last_token_usage:
-                        message_parts.append(DataPart(data={
+                        message_parts_out.append(DataPart(data={
                             'type': 'token_usage',
                             **agent.last_token_usage
                         }))
-                    
-                    # Signal input_required - workflow will pause and resume when user responds
-                    # CRITICAL: Must set final=True so the SSE stream knows this is the last event
+
                     await task_updater.update_status(
                         TaskState.input_required,
                         message=Message(
                             role="agent",
                             messageId=str(uuid.uuid4()),
-                            parts=message_parts,
+                            parts=message_parts_out,
                             contextId=context_id
                         ),
-                        final=True  # This closes the event queue properly
+                        final=True
                     )
                     logger.info(f"📱 Returning input_required state - waiting for user response")
                     return
-                # Otherwise, treat as a regular response
                 else:
                     responses.append(event)
-            
+
             # Emit the final response
             if responses:
                 final_response = responses[-1]
-                
-                # Check if final response contains NEEDS_INPUT block or prefix (in case it wasn't caught in streaming)
+
+                # Check if final response contains NEEDS_INPUT (in case it wasn't caught in streaming)
                 import re
                 block_pattern = r'```NEEDS_INPUT\s*\n(.*?)\n```END_NEEDS_INPUT'
                 block_match = re.search(block_pattern, final_response, re.DOTALL)
-                
+
                 if block_match or final_response.strip().startswith("NEEDS_INPUT:"):
                     if block_match:
                         question = block_match.group(1).strip()
                     else:
                         question = final_response.replace("NEEDS_INPUT:", "", 1).strip()
-                    
+
                     logger.info(f"⏸️ QuickBooks agent needs user input (from final): {question[:100]}...")
-                    
+
                     self._waiting_for_input[context_id] = {
                         "question": question,
-                        "thread_id": thread_id,
+                        "session_id": session_id,
                     }
-                    
+
                     import uuid
-                    message_parts = [TextPart(text=question)]
-                    
+                    message_parts_out = [TextPart(text=question)]
+
                     if hasattr(agent, 'last_token_usage') and agent.last_token_usage:
-                        message_parts.append(DataPart(data={
+                        message_parts_out.append(DataPart(data={
                             'type': 'token_usage',
                             **agent.last_token_usage
                         }))
-                    
+
                     await task_updater.update_status(
                         TaskState.input_required,
                         message=Message(
                             role="agent",
                             messageId=str(uuid.uuid4()),
-                            parts=message_parts,
+                            parts=message_parts_out,
                             contextId=context_id
                         ),
-                        final=True  # This closes the event queue properly
+                        final=True
                     )
                     return
-                
-                # Log a preview of the response (first 500 chars)
+
                 response_preview = final_response[:500] + "..." if len(final_response) > 500 else final_response
-                logger.info(f"📤 Agent response ({len(final_response)} chars): {response_preview}")
-                
-                # Check if the response contains auth/connection errors that should be marked as failed
+                logger.info(f"📤 QuickBooks agent response: {response_preview}")
+
+                # Check for auth errors in response text
                 auth_error_keywords = [
-                    "connection is inactive", "invalid_grant", "token expired", 
+                    "connection is inactive", "invalid_grant", "token expired",
                     "authentication required", "re-authenticate", "refresh token",
                     "unauthorized", "401", "oauth", "credentials"
                 ]
                 is_auth_error = any(kw.lower() in final_response.lower() for kw in auth_error_keywords)
-                
+
                 if is_auth_error:
                     logger.error(f"🔐 AUTH ERROR IN RESPONSE: {final_response[:200]}")
                     error_msg = f"⚠️ QuickBooks authentication error - please re-authenticate the connection manually.\n\nDetails: {final_response}"
@@ -438,58 +334,56 @@ class FoundryAgentExecutor(AgentExecutor):
                         message=new_agent_text_message(error_msg, context_id=context_id)
                     )
                     return
-                
-                # Build message parts with text and optional token usage
+
                 import uuid
-                message_parts = [TextPart(text=final_response)]
-                
+
+                message_parts_out = [TextPart(text=final_response)]
+
                 # Add token usage if available
                 if hasattr(agent, 'last_token_usage') and agent.last_token_usage:
-                    message_parts.append(DataPart(data={
+                    message_parts_out.append(DataPart(data={
                         'type': 'token_usage',
                         **agent.last_token_usage
                     }))
                     logger.info(f"💰 Including token usage in response: {agent.last_token_usage}")
-                
+
                 await task_updater.complete(
                     message=Message(
                         role="agent",
                         messageId=str(uuid.uuid4()),
-                        parts=message_parts,
+                        parts=message_parts_out,
                         contextId=context_id
                     )
                 )
             else:
-                logger.warning("⚠️ No response generated by agent")
-                
-                # Build message parts (even for error case)
+                logger.warning("⚠️ No response from QuickBooks agent")
                 import uuid
-                message_parts = [TextPart(text="No response generated")]
-                
-                # Add token usage even if no response (in case run consumed tokens)
+
+                message_parts_out = [TextPart(text="No response generated")]
+
                 if hasattr(agent, 'last_token_usage') and agent.last_token_usage:
-                    message_parts.append(DataPart(data={
+                    message_parts_out.append(DataPart(data={
                         'type': 'token_usage',
                         **agent.last_token_usage
                     }))
-                    logger.info(f"💰 Including token usage in response: {agent.last_token_usage}")
-                
+
                 await task_updater.complete(
                     message=Message(
                         role="agent",
                         messageId=str(uuid.uuid4()),
-                        parts=message_parts,
+                        parts=message_parts_out,
                         contextId=context_id
                     )
                 )
-                    
+
         except Exception as e:
+            logger.error(f"Error processing QuickBooks request: {e}")
             await task_updater.failed(
                 message=new_agent_text_message(f"Error: {e}", context_id=context_id)
             )
 
     def _convert_parts_to_text(self, parts: List[Part]) -> str:
-        """Convert message parts to plain text, saving any files locally."""
+        """Convert message parts to plain text."""
         texts: List[str] = []
         for part in parts:
             p = part.root
@@ -509,7 +403,6 @@ class FoundryAgentExecutor(AgentExecutor):
                     except Exception as ex:
                         texts.append(f"[Error saving file: {ex}]")
             elif isinstance(p, DataPart):
-                # Include a compact representation of structured data
                 try:
                     import json as _json
                     payload = getattr(p, "data", None)
@@ -526,26 +419,21 @@ class FoundryAgentExecutor(AgentExecutor):
         context: RequestContext,
         event_queue: EventQueue,
     ):
-        logger.info(f"Executing request for context {context.context_id}")
-        
-        # CRITICAL: Apply rate limiting at the execute level to control between different user requests
+        logger.info(f"Executing QuickBooks request for context {context.context_id}")
+
         async with FoundryAgentExecutor._request_semaphore:
-            # Check API call rate limiting
             current_time = time.time()
-            
-            # Reset the window if it's been more than a minute
+
             if current_time - FoundryAgentExecutor._api_call_window_start > 60:
                 FoundryAgentExecutor._api_call_count = 0
                 FoundryAgentExecutor._api_call_window_start = current_time
-            
-            # Log if approaching API limit (but don't block for parallel execution)
+
             if FoundryAgentExecutor._api_call_count >= FoundryAgentExecutor._max_api_calls_per_minute:
-                logger.warning(f"⚠️ API call count ({FoundryAgentExecutor._api_call_count}) at limit, requests may be throttled by Azure")
-            
+                logger.warning(f"⚠️ API call count at limit")
+
             FoundryAgentExecutor._api_call_count += 1
             FoundryAgentExecutor._last_request_time = time.time()
-            
-            # Now proceed with the actual request processing
+
             updater = TaskUpdater(event_queue, context.task_id, context.context_id)
             if not context.current_task:
                 await updater.submit()
@@ -554,9 +442,9 @@ class FoundryAgentExecutor(AgentExecutor):
                 context.message.parts if context.message else [],
                 context.context_id,
                 updater,
-                context,  # Pass the full RequestContext
+                context,
             )
-            logger.info(f"Completed execution for {context.context_id}")
+            logger.info(f"Completed QuickBooks execution for {context.context_id}")
 
     async def cancel(self, context: RequestContext, event_queue: EventQueue):
         logger.info(f"Cancelling context {context.context_id}")
@@ -568,11 +456,11 @@ class FoundryAgentExecutor(AgentExecutor):
         )
 
     async def cleanup(self):
-        self._active_threads.clear()
+        self._active_sessions.clear()
         self._waiting_for_input.clear()
         self._pending_updaters.clear()
         self._input_events.clear()
-        logger.info("Executor cleaned up")
+        logger.info("QuickBooks executor cleaned up")
 
 
 def create_foundry_agent_executor(card: AgentCard) -> FoundryAgentExecutor:
@@ -580,24 +468,5 @@ def create_foundry_agent_executor(card: AgentCard) -> FoundryAgentExecutor:
 
 
 async def initialize_foundry_agents_at_startup():
-    """
-    Convenience function to initialize shared agent resources at application startup.
-    Call this once during your application's startup phase.
-    
-    Example usage in your main application:
-    
-    ```python
-    # In your main startup code (e.g., main.py or app initialization)
-    import asyncio
-    from foundry_agent_executor import initialize_foundry_agents_at_startup
-    
-    async def startup():
-        print("🚀 Starting application...")
-        await initialize_foundry_agents_at_startup()
-        print("✅ Agent initialization complete, ready to handle requests")
-    
-    # Run at startup
-    asyncio.run(startup())
-    ```
-    """
+    """Initialize shared QuickBooks agent resources at application startup."""
     await FoundryAgentExecutor.initialize_at_startup()

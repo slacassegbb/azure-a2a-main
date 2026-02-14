@@ -73,7 +73,7 @@ class FoundryAgentExecutor(AgentExecutor):
                     raise
 
     def __init__(self, card: AgentCard):
-        self._active_threads: Dict[str, str] = {}
+        self._active_sessions: Dict[str, str] = {}
         self._waiting_for_input: Dict[str, str] = {}
         self._pending_updaters: Dict[str, TaskUpdater] = {}
         self._input_events: Dict[str, asyncio.Event] = {}
@@ -91,7 +91,7 @@ class FoundryAgentExecutor(AgentExecutor):
                 logger.info("Fallback Stripe agent creation completed")
             return FoundryAgentExecutor._shared_foundry_agent
 
-    async def _get_or_create_thread(
+    async def _get_or_create_session(
         self,
         context_id: str,
         agent: Optional[FoundryStripeAgent] = None,
@@ -99,16 +99,12 @@ class FoundryAgentExecutor(AgentExecutor):
     ) -> str:
         if agent is None:
             agent = await self._get_or_create_agent()
-        if force_new:
-            thread_id = await agent.create_thread()
-            logger.info(f"Created new thread {thread_id} for context: {context_id}")
-            self._active_threads[context_id] = thread_id
-            return thread_id
-        if context_id in self._active_threads:
-            return self._active_threads[context_id]
-        thread_id = await agent.create_thread()
-        self._active_threads[context_id] = thread_id
-        return thread_id
+        if force_new or context_id not in self._active_sessions:
+            session_id = await agent.create_session()
+            logger.info(f"Created new session {session_id} for context: {context_id}")
+            self._active_sessions[context_id] = session_id
+            return session_id
+        return self._active_sessions[context_id]
 
     async def _process_request(
         self,
@@ -122,15 +118,15 @@ class FoundryAgentExecutor(AgentExecutor):
             logger.info(f"Processing Stripe request: {user_message[:100]}...")
             
             agent = await self._get_or_create_agent()
-            # Reuse thread for same context_id to maintain conversation history
-            thread_id = await self._get_or_create_thread(context_id, agent, force_new=False)
+            # Reuse session for same context_id to maintain conversation continuity
+            session_id = await self._get_or_create_session(context_id, agent, force_new=False)
 
             # Use streaming to filter out status messages (like QuickBooks executor)
             responses = []
             tools_called = []
             seen_tools = set()
 
-            async for event in agent.run_conversation_stream(thread_id, user_message):
+            async for event in agent.run_conversation_stream(session_id, user_message):
                 # Check if this is a tool call status message
                 if event.startswith("🛠️ Remote agent executing:"):
                     tool_description = event.replace("🛠️ Remote agent executing: ", "").strip()
@@ -182,7 +178,7 @@ class FoundryAgentExecutor(AgentExecutor):
                     # Store context for resume
                     self._waiting_for_input[context_id] = {
                         "question": question,
-                        "thread_id": thread_id,
+                        "session_id": session_id,
                     }
                     
                     message_parts = [TextPart(text=question)]
@@ -319,7 +315,7 @@ class FoundryAgentExecutor(AgentExecutor):
         )
 
     async def cleanup(self):
-        self._active_threads.clear()
+        self._active_sessions.clear()
         self._waiting_for_input.clear()
         self._pending_updaters.clear()
         self._input_events.clear()
