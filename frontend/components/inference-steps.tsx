@@ -1,7 +1,7 @@
 "use client"
 
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
-import { CheckCircle2, Loader, Workflow, Wrench, Brain, ChevronRight, Bot, AlertCircle } from "lucide-react"
+import { CheckCircle2, Loader, Workflow, Wrench, Brain, ChevronRight, Bot, AlertCircle, MessageSquare } from "lucide-react"
 import { useEffect, useRef, useMemo } from "react"
 
 type StepData = {
@@ -66,7 +66,12 @@ interface AgentBlock {
   steps: StepData[]
   status: "running" | "complete" | "error"
   taskDescription?: string
-  output?: string  // Agent's final response text
+  output?: string
+}
+
+interface OrchestratorMessage {
+  text: string
+  type: "info" | "routing" | "progress"
 }
 
 interface Phase {
@@ -74,7 +79,21 @@ interface Phase {
   stepNumber?: number
   reasoning?: string
   agents: AgentBlock[]
+  orchestratorMessages: OrchestratorMessage[]
   isComplete: boolean
+}
+
+function mkPhase(type: PhaseType, opts?: Partial<Phase>): Phase {
+  return { type, agents: [], orchestratorMessages: [], isComplete: false, ...opts }
+}
+
+// Clean up agent status messages for display
+function cleanAgentStatus(text: string): string {
+  let s = text.replace(/📎\s*Generated\s+/g, "📎 Extracted ")
+  s = s.replace(/^[A-Za-z\s]+Agent\s+is working on:\s*"?/i, "Working on: ")
+  s = s.replace(/^[A-Za-z\s]+Agent\s+has started working on:\s*"?/i, "Started: ")
+  s = s.replace(/"?\s*\(\d+s\)\s*$/, "")
+  return s
 }
 
 function buildPhases(steps: StepData[]): Phase[] {
@@ -82,6 +101,15 @@ function buildPhases(steps: StepData[]): Phase[] {
   let currentPhase: Phase | null = null
   let currentAgent: AgentBlock | null = null
   let phaseStepNum = 0
+
+  const ensurePlanningPhase = (): Phase => {
+    if (!currentPhase || currentPhase.type === "complete" || currentPhase.type === "init") {
+      phaseStepNum++
+      currentPhase = mkPhase("planning", { stepNumber: phaseStepNum })
+      phases.push(currentPhase)
+    }
+    return currentPhase
+  }
 
   for (const step of steps) {
     const et = step.eventType || ""
@@ -93,70 +121,66 @@ function buildPhases(steps: StepData[]): Phase[] {
       const phaseName = meta.phase as string || ""
 
       if (phaseName === "init") {
-        currentPhase = { type: "init", agents: [], isComplete: false }
+        currentPhase = mkPhase("init")
         phases.push(currentPhase)
         continue
       }
       if (phaseName === "planning" || phaseName === "planning_ai") {
         phaseStepNum = meta.step_number || phaseStepNum + 1
-        currentPhase = { type: "planning", stepNumber: phaseStepNum, agents: [], isComplete: false }
+        currentPhase = mkPhase("planning", { stepNumber: phaseStepNum })
         currentAgent = null
         phases.push(currentPhase)
         continue
       }
       if (phaseName === "synthesis") {
-        currentPhase = { type: "synthesis", agents: [], isComplete: false }
+        currentPhase = mkPhase("synthesis")
         phases.push(currentPhase)
         continue
       }
       if (phaseName === "complete") {
         if (currentPhase) currentPhase.isComplete = true
-        currentPhase = { type: "complete", agents: [], isComplete: true, stepNumber: meta.iterations }
+        currentPhase = mkPhase("complete", { isComplete: true, stepNumber: meta.iterations })
         phases.push(currentPhase)
         continue
       }
-      // Other phase events (routing, orchestration_start, parallel_execution, step_execution, hitl_resume, etc.)
-      // Create an execution phase so these don't get dropped
       if (phaseName === "routing" || phaseName === "orchestration_start" || phaseName === "hitl_resume") {
-        currentPhase = { type: "init", agents: [], isComplete: false }
+        currentPhase = mkPhase("init")
         phases.push(currentPhase)
         continue
       }
       if (phaseName === "parallel_execution" || phaseName === "step_execution" || phaseName === "parallel_agents" || phaseName === "parallel_workflows") {
-        if (!currentPhase || currentPhase.type === "complete" || currentPhase.type === "init") {
-          phaseStepNum++
-          currentPhase = { type: "planning", stepNumber: phaseStepNum, agents: [], isComplete: false }
-          phases.push(currentPhase)
-        }
+        ensurePlanningPhase()
         continue
       }
       continue
     }
 
-    // ── Info events (routing decisions, status updates) ──
+    // ── Info events ──
     if (et === "info") {
-      // Info events are lightweight status updates — skip orchestrator noise, attach agent ones
-      if (isOrchestrator) continue
-      if (currentAgent && currentAgent.agent === step.agent) {
-        currentAgent.steps.push({ ...step, eventType: "agent_progress" })
+      if (isOrchestrator) {
+        const phase = currentPhase || ensurePlanningPhase()
+        const text = step.status
+        if (text.length > 5) {
+          phase.orchestratorMessages.push({ text, type: "info" })
+        }
+      } else {
+        if (currentAgent && currentAgent.agent === step.agent) {
+          currentAgent.steps.push({ ...step, eventType: "agent_progress" })
+        }
       }
       continue
     }
 
     // ── Reasoning ──
-    if (et === "reasoning" && currentPhase) {
-      currentPhase.reasoning = step.status
+    if (et === "reasoning") {
+      const phase = currentPhase || ensurePlanningPhase()
+      phase.reasoning = step.status
       continue
     }
 
     // ── Agent start ──
     if (et === "agent_start" && !isOrchestrator) {
-      if (!currentPhase || currentPhase.type === "complete" || currentPhase.type === "init") {
-        phaseStepNum++
-        currentPhase = { type: "planning", stepNumber: phaseStepNum, agents: [], isComplete: false }
-        phases.push(currentPhase)
-      }
-
+      const phase = ensurePlanningPhase()
       currentAgent = {
         agent: step.agent,
         displayName: getDisplayName(step.agent),
@@ -165,7 +189,7 @@ function buildPhases(steps: StepData[]): Phase[] {
         status: "running",
         taskDescription: meta.task_description || step.status,
       }
-      currentPhase.agents.push(currentAgent)
+      phase.agents.push(currentAgent)
       continue
     }
 
@@ -194,30 +218,36 @@ function buildPhases(steps: StepData[]): Phase[] {
       continue
     }
 
-    // ── Tool calls and progress from agents ──
-    if ((et === "tool_call" || et === "agent_progress") && !isOrchestrator) {
-      if (currentAgent && currentAgent.agent === step.agent) {
-        currentAgent.steps.push(step)
+    // ── Tool calls and progress ──
+    if (et === "tool_call" || et === "agent_progress") {
+      if (isOrchestrator) {
+        const phase = currentPhase || ensurePlanningPhase()
+        const text = step.status
+        const sl = text.toLowerCase()
+        if (sl.length > 5 &&
+            !sl.includes("planning next task") &&
+            !sl.includes("agents available")) {
+          phase.orchestratorMessages.push({ text, type: "progress" })
+        }
       } else {
-        // Implicit agent block
-        if (!currentPhase || currentPhase.type === "complete" || currentPhase.type === "init") {
-          phaseStepNum++
-          currentPhase = { type: "planning", stepNumber: phaseStepNum, agents: [], isComplete: false }
-          phases.push(currentPhase)
+        if (currentAgent && currentAgent.agent === step.agent) {
+          currentAgent.steps.push(step)
+        } else {
+          const phase = ensurePlanningPhase()
+          currentAgent = {
+            agent: step.agent,
+            displayName: getDisplayName(step.agent),
+            color: getAgentColor(step.agent),
+            steps: [step],
+            status: "running",
+          }
+          phase.agents.push(currentAgent)
         }
-        currentAgent = {
-          agent: step.agent,
-          displayName: getDisplayName(step.agent),
-          color: getAgentColor(step.agent),
-          steps: [step],
-          status: "running",
-        }
-        currentPhase.agents.push(currentAgent)
       }
       continue
     }
 
-    // ── Fallback: untyped events (backwards compat with old backend) ──
+    // ── Fallback: untyped events ──
     if (!et) {
       const statusLower = step.status.toLowerCase()
 
@@ -225,26 +255,29 @@ function buildPhases(steps: StepData[]): Phase[] {
         if (statusLower.includes("planning step")) {
           const match = step.status.match(/step\s*(\d+)/i)
           phaseStepNum = match ? parseInt(match[1]) : phaseStepNum + 1
-          currentPhase = { type: "planning", stepNumber: phaseStepNum, agents: [], isComplete: false }
+          currentPhase = mkPhase("planning", { stepNumber: phaseStepNum })
           currentAgent = null
           phases.push(currentPhase)
           continue
         }
         if (statusLower.startsWith("reasoning:")) {
-          if (currentPhase) currentPhase.reasoning = step.status.replace(/^Reasoning:\s*/i, "")
+          const phase = currentPhase || ensurePlanningPhase()
+          phase.reasoning = step.status.replace(/^Reasoning:\s*/i, "")
           continue
         }
         if (statusLower.includes("goal achieved") || statusLower.includes("generating workflow summary")) {
-          currentPhase = { type: "synthesis", agents: [], isComplete: false }
+          currentPhase = mkPhase("synthesis")
           phases.push(currentPhase)
           continue
         }
-        // Skip generic orchestrator noise
-        if (statusLower.includes("initializing") || statusLower.includes("resuming") ||
-            statusLower.includes("agents available") || statusLower.includes("planning next task") ||
-            statusLower.includes("calling agent")) {
-          continue
+        // Show other orchestrator messages (routing, agent calls, etc.)
+        if (statusLower.length > 5 &&
+            !statusLower.includes("initializing") &&
+            !statusLower.includes("resuming")) {
+          const phase = currentPhase || ensurePlanningPhase()
+          phase.orchestratorMessages.push({ text: step.status, type: "info" })
         }
+        continue
       }
 
       // Agent completion
@@ -264,11 +297,7 @@ function buildPhases(steps: StepData[]): Phase[] {
         if (currentAgent && currentAgent.agent === step.agent) {
           currentAgent.steps.push({ ...step, eventType: isToolLike ? "tool_call" : "agent_progress" })
         } else {
-          if (!currentPhase || currentPhase.type === "complete") {
-            phaseStepNum++
-            currentPhase = { type: "planning", stepNumber: phaseStepNum, agents: [], isComplete: false }
-            phases.push(currentPhase)
-          }
+          const phase = ensurePlanningPhase()
           currentAgent = {
             agent: step.agent,
             displayName: getDisplayName(step.agent),
@@ -276,7 +305,7 @@ function buildPhases(steps: StepData[]): Phase[] {
             steps: [{ ...step, eventType: isToolLike ? "tool_call" : "agent_progress" }],
             status: "running",
           }
-          currentPhase.agents.push(currentAgent)
+          phase.agents.push(currentAgent)
         }
         continue
       }
@@ -293,6 +322,7 @@ function buildPhases(steps: StepData[]): Phase[] {
 function formatToolAction(status: string): string {
   let s = status
     .replace(/^🛠️\s*/, "")
+    .replace(/^Remote agent executing:\s*/i, "")
     .replace(/^Calling:\s*/i, "")
     .replace(/_/g, " ")
   s = s.charAt(0).toUpperCase() + s.slice(1)
@@ -305,17 +335,16 @@ function truncateText(text: string, maxLen: number): string {
   return text.slice(0, maxLen) + "…"
 }
 
-// Strip common markdown formatting for clean display
 function stripMarkdown(text: string): string {
   return text
-    .replace(/#{1,6}\s+/g, "")         // headers
-    .replace(/\*\*(.+?)\*\*/g, "$1")   // bold
-    .replace(/\*(.+?)\*/g, "$1")       // italic
-    .replace(/__(.+?)__/g, "$1")       // bold alt
-    .replace(/_(.+?)_/g, "$1")         // italic alt
-    .replace(/`(.+?)`/g, "$1")         // inline code
-    .replace(/^\s*[-*]\s+/gm, "• ")    // list items → bullet
-    .replace(/\n{3,}/g, "\n\n")        // collapse excess newlines
+    .replace(/#{1,6}\s+/g, "")
+    .replace(/\*\*(.+?)\*\*/g, "$1")
+    .replace(/\*(.+?)\*/g, "$1")
+    .replace(/__(.+?)__/g, "$1")
+    .replace(/_(.+?)_/g, "$1")
+    .replace(/\x60(.+?)\x60/g, "$1")
+    .replace(/^\s*[-*]\s+/gm, "• ")
+    .replace(/\n{3,}/g, "\n\n")
     .trim()
 }
 
@@ -332,9 +361,7 @@ function AgentSection({ block, isLive }: { block: AgentBlock; isLive: boolean })
   const progressSteps = block.steps.filter(s => {
     const et = s.eventType || ""
     if (et === "tool_call") return false
-    const sl = s.status.toLowerCase()
-    // Filter out contacting/working-on/request-sent noise
-    return !sl.includes("contacting ") && !sl.includes("is working on") && !sl.includes("request sent to")
+    return true
   })
 
   return (
@@ -369,7 +396,7 @@ function AgentSection({ block, isLive }: { block: AgentBlock; isLive: boolean })
       {/* Task description */}
       {block.taskDescription && (
         <p className="text-xs text-muted-foreground ml-6 mb-1.5 leading-relaxed">
-          {truncateText(block.taskDescription, 120)}
+          {truncateText(block.taskDescription, 200)}
         </p>
       )}
 
@@ -379,7 +406,7 @@ function AgentSection({ block, isLive }: { block: AgentBlock; isLive: boolean })
           {toolSteps.map((s, i) => (
             <div key={i} className="flex items-center gap-1.5 text-xs">
               <Wrench className="h-3 w-3 text-muted-foreground/70 flex-shrink-0" />
-              <span className="text-muted-foreground">{formatToolAction(s.status)}</span>
+              <span className="text-muted-foreground">{formatToolAction(cleanAgentStatus(s.status))}</span>
             </div>
           ))}
         </div>
@@ -389,7 +416,7 @@ function AgentSection({ block, isLive }: { block: AgentBlock; isLive: boolean })
       {progressSteps.map((s, i) => (
         <div key={`p-${i}`} className="flex items-start gap-1.5 text-xs ml-6">
           <ChevronRight className="h-3 w-3 text-muted-foreground/50 flex-shrink-0 mt-0.5" />
-          <span className="text-muted-foreground">{truncateText(s.status, 150)}</span>
+          <span className="text-muted-foreground">{truncateText(cleanAgentStatus(s.status), 200)}</span>
         </div>
       ))}
 
@@ -400,7 +427,7 @@ function AgentSection({ block, isLive }: { block: AgentBlock; isLive: boolean })
           style={{ borderColor: block.color, backgroundColor: `${block.color}08` }}
         >
           <span className="text-foreground/80 whitespace-pre-wrap">
-            {stripMarkdown(truncateText(block.output, 300))}
+            {stripMarkdown(truncateText(cleanAgentStatus(block.output), 500))}
           </span>
         </div>
       )}
@@ -409,7 +436,19 @@ function AgentSection({ block, isLive }: { block: AgentBlock; isLive: boolean })
 }
 
 function PhaseBlock({ phase, isLive, isLast }: { phase: Phase; isLive: boolean; isLast: boolean }) {
-  if (phase.type === "init") return null
+  if (phase.type === "init") {
+    if (phase.orchestratorMessages.length === 0) return null
+    return (
+      <div className="py-1">
+        {phase.orchestratorMessages.map((msg, i) => (
+          <div key={i} className="flex items-start gap-1.5 text-xs ml-1 mb-0.5">
+            <MessageSquare className="h-3 w-3 text-primary/60 flex-shrink-0 mt-0.5" />
+            <span className="text-muted-foreground">{truncateText(msg.text, 200)}</span>
+          </div>
+        ))}
+      </div>
+    )
+  }
 
   if (phase.type === "complete") {
     return (
@@ -464,8 +503,20 @@ function PhaseBlock({ phase, isLive, isLast }: { phase: Phase; isLive: boolean; 
         <div className="ml-5 mb-1.5 flex items-start gap-1.5">
           <Brain className="h-3 w-3 text-amber-500 flex-shrink-0 mt-0.5" />
           <p className="text-[11px] text-muted-foreground leading-relaxed italic">
-            {truncateText(phase.reasoning, 200)}
+            {truncateText(phase.reasoning, 300)}
           </p>
+        </div>
+      )}
+
+      {/* Orchestrator messages */}
+      {phase.orchestratorMessages.length > 0 && (
+        <div className="ml-5 mb-1.5 space-y-0.5">
+          {phase.orchestratorMessages.map((msg, i) => (
+            <div key={i} className="flex items-start gap-1.5 text-xs">
+              <MessageSquare className="h-3 w-3 text-primary/50 flex-shrink-0 mt-0.5" />
+              <span className="text-muted-foreground">{truncateText(msg.text, 200)}</span>
+            </div>
+          ))}
         </div>
       )}
 
