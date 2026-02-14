@@ -1437,6 +1437,9 @@ Do NOT skip steps. Do NOT mark goal as completed until ALL workflow steps are do
                 event_type="phase", metadata={"phase": "planning", "step_number": iteration}
             )
             
+            # Emit plan at start of each iteration so frontend shows current state
+            await self._emit_plan_update(plan, context_id, reasoning=f"Planning step {iteration}...")
+            
             # Build user prompt with current plan state
             available_agents = []
             for card in self.cards.values():
@@ -1507,6 +1510,9 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                         "foundry-host-agent", "Goal achieved! Generating final response...", context_id,
                         event_type="phase", metadata={"phase": "complete", "tasks_completed": completed_tasks_count, "iterations": iteration}
                     )
+                    
+                    # Emit final plan state
+                    await self._emit_plan_update(plan, context_id, reasoning="Goal completed")
                     
                     # =========================================================
                     # PLAN PERSISTENCE: Save plan if agent needs user input
@@ -1723,9 +1729,12 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                     if hitl_pause:
                         session_context.current_plan = plan
                         log_info(f"💾 [Agent Mode] Saved plan for HITL resume (parallel tasks)")
+                        await self._emit_plan_update(plan, context_id, reasoning=next_step.reasoning if next_step else None)
                         return all_task_outputs
                     
                     log_info(f"✅ [Agent Mode] {len(pydantic_tasks)} parallel tasks completed")
+                    # Emit plan update after parallel tasks complete
+                    await self._emit_plan_update(plan, context_id, reasoning=next_step.reasoning if next_step else None)
                     
                 else:
                     # ============================================
@@ -1803,6 +1812,8 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                     
                     finally:
                         task.updated_at = datetime.now(timezone.utc)
+                        # Emit plan update after each task state change
+                        await self._emit_plan_update(plan, context_id, reasoning=next_step.reasoning if next_step else None)
                 
             except Exception as e:
                 log_error(f"[Agent Mode] Orchestration error: {e}")

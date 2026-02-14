@@ -170,6 +170,12 @@ type Message = {
   }[]
   // Reactions from users
   reactions?: MessageReaction[]
+  // Message metadata (includes workflow_plan for workflow messages)
+  metadata?: {
+    type?: string
+    workflow_plan?: any
+    [key: string]: any
+  }
 }
 
 const initialMessages: Message[] = []
@@ -772,6 +778,20 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
   const messagesContainerRef = useRef<HTMLDivElement>(null)
   const [isInferencing, setIsInferencing] = useState(false)
   const [inferenceSteps, setInferenceSteps] = useState<{ agent: string; status: string; imageUrl?: string; imageName?: string; mediaType?: string; eventType?: string; metadata?: Record<string, any> }[]>([])
+  // Workflow plan from backend - the source of truth for workflow state
+  const [workflowPlan, setWorkflowPlan] = useState<{
+    goal: string
+    goal_status: string
+    tasks: Array<{
+      task_id: string
+      task_description: string
+      recommended_agent: string | null
+      output: { result?: string } | null
+      state: string
+      error_message: string | null
+    }>
+    reasoning?: string
+  } | null>(null)
   const [localActiveNode, setLocalActiveNode] = useState<string | null>(null)
   // Use external activeNode if provided, otherwise use local state
   const activeNode = externalActiveNode !== undefined ? externalActiveNode : localActiveNode
@@ -1141,7 +1161,9 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                     videoId: img.videoId, // Preserve videoId for remix functionality
                   }
                 }) : undefined,
-                agent: (msg.role === 'assistant' || msg.role === 'agent') ? 'Assistant' : undefined
+                agent: (msg.role === 'assistant' || msg.role === 'agent') ? 'Assistant' : undefined,
+                // Preserve metadata including workflow_plan for rendering workflow history
+                metadata: msg.metadata || undefined
               }
             })
             
@@ -1187,46 +1209,112 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
             
             console.log('[ChatPanel] After merge:', mergedMessages.length, 'messages (was', convertedMessages.length, ')')
             
-            // Load stored workflows from localStorage and inject them
-            try {
-              // Strip session prefix from conversationId to match how workflows are saved
-              let workflowConversationId = conversationId
-              if (workflowConversationId && workflowConversationId.includes('::')) {
-                workflowConversationId = workflowConversationId.split('::')[1]
+            // Extract workflow plans from message metadata (for historical workflow display)
+            // Build a map of message index to its workflow plan
+            const plansFromDatabase: Array<{ plan: any, messageIndex: number, messageId: string }> = []
+            for (let i = 0; i < mergedMessages.length; i++) {
+              const msg = mergedMessages[i]
+              if (msg.metadata?.workflow_plan) {
+                plansFromDatabase.push({ 
+                  plan: msg.metadata.workflow_plan, 
+                  messageIndex: i,
+                  messageId: msg.id 
+                })
+                console.log('[ChatPanel] Found workflow_plan in message metadata:', msg.metadata.workflow_plan.goal)
               }
-              const storageKey = `workflow_${workflowConversationId}`
-              const storedData = localStorage.getItem(storageKey)
-              if (storedData) {
-                const workflows = JSON.parse(storedData)
-                // Insert workflows at appropriate positions (before assistant messages)
-                const messagesWithWorkflows: Message[] = []
-                let workflowIndex = 0
+            }
+            
+            // Set the most recent workflow plan for the workflowPlan state
+            if (plansFromDatabase.length > 0) {
+              const mostRecentPlan = plansFromDatabase[plansFromDatabase.length - 1].plan
+              setWorkflowPlan(mostRecentPlan)
+            }
+            
+            // Inject workflow summaries from DATABASE PLANS (preferred) or localStorage (fallback)
+            const messagesWithWorkflows: Message[] = []
+            
+            // Use database plans if available
+            if (plansFromDatabase.length > 0) {
+              console.log('[ChatPanel] Using', plansFromDatabase.length, 'workflow plan(s) from database')
+              
+              // Track which plans have been inserted
+              let planIndex = 0
+              
+              for (let i = 0; i < mergedMessages.length; i++) {
+                const msg = mergedMessages[i]
                 
-                for (let i = 0; i < mergedMessages.length; i++) {
-                  const msg = mergedMessages[i]
+                // Check if this message has a plan and insert inference_summary before it
+                if (planIndex < plansFromDatabase.length && 
+                    plansFromDatabase[planIndex].messageIndex === i) {
+                  const plan = plansFromDatabase[planIndex].plan
                   
-                  // Insert workflow before assistant responses WITH CONTENT
-                  // Don't insert workflow before attachment-only messages
-                  if (msg.role === 'assistant' && msg.content && workflowIndex < workflows.length) {
-                    const workflow = workflows[workflowIndex]
-                    messagesWithWorkflows.push({
-                      id: workflow.id,
-                      role: 'system',
-                      type: 'inference_summary',
-                      steps: workflow.steps
-                    })
-                    workflowIndex++
-                  }
-                  messagesWithWorkflows.push(msg)
+                  // Convert plan to steps format for InferenceSteps compatibility
+                  const steps = plan.tasks?.map((task: any) => ({
+                    agent: task.recommended_agent || 'Unknown Agent',
+                    status: task.state === 'completed' ? 
+                      (task.output?.result || task.task_description) : 
+                      task.task_description,
+                    eventType: task.state === 'completed' ? 'agent_complete' : 
+                               task.state === 'running' ? 'agent_start' : 'pending'
+                  })) || []
+                  
+                  // Insert inference_summary message BEFORE the assistant response
+                  messagesWithWorkflows.push({
+                    id: `workflow_db_${plansFromDatabase[planIndex].messageId}`,
+                    role: 'system',
+                    type: 'inference_summary',
+                    steps: steps,
+                    metadata: { workflow_plan: plan }
+                  })
+                  
+                  planIndex++
                 }
                 
-                setMessages(messagesWithWorkflows.filter(m => m.content || m.images?.length || m.attachments?.length || m.type === 'inference_summary'))
-              } else {
+                messagesWithWorkflows.push(msg)
+              }
+              
+              setMessages(messagesWithWorkflows.filter(m => m.content || m.images?.length || m.attachments?.length || m.type === 'inference_summary'))
+            } else {
+              // Fallback to localStorage workflows (backward compatibility)
+              try {
+                // Strip session prefix from conversationId to match how workflows are saved
+                let workflowConversationId = conversationId
+                if (workflowConversationId && workflowConversationId.includes('::')) {
+                  workflowConversationId = workflowConversationId.split('::')[1]
+                }
+                const storageKey = `workflow_${workflowConversationId}`
+                const storedData = localStorage.getItem(storageKey)
+                if (storedData) {
+                  const workflows = JSON.parse(storedData)
+                  // Insert workflows at appropriate positions (before assistant messages)
+                  let workflowIndex = 0
+                  
+                  for (let i = 0; i < mergedMessages.length; i++) {
+                    const msg = mergedMessages[i]
+                    
+                    // Insert workflow before assistant responses WITH CONTENT
+                    // Don't insert workflow before attachment-only messages
+                    if (msg.role === 'assistant' && msg.content && workflowIndex < workflows.length) {
+                      const workflow = workflows[workflowIndex]
+                      messagesWithWorkflows.push({
+                        id: workflow.id,
+                        role: 'system',
+                        type: 'inference_summary',
+                        steps: workflow.steps
+                      })
+                      workflowIndex++
+                    }
+                    messagesWithWorkflows.push(msg)
+                  }
+                  
+                  setMessages(messagesWithWorkflows.filter(m => m.content || m.images?.length || m.attachments?.length || m.type === 'inference_summary'))
+                } else {
+                  setMessages(mergedMessages.filter(m => m.content || m.images?.length || m.attachments?.length))
+                }
+              } catch (err) {
+                console.error('[ChatPanel] Failed to load workflows from localStorage:', err)
                 setMessages(mergedMessages.filter(m => m.content || m.images?.length || m.attachments?.length))
               }
-            } catch (err) {
-              console.error('[ChatPanel] Failed to load workflows from localStorage:', err)
-              setMessages(mergedMessages.filter(m => m.content || m.images?.length || m.attachments?.length))
             }
             
             if (DEBUG) console.log("[ChatPanel] Converted messages:", convertedMessages.length)
@@ -2169,6 +2257,29 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       }
     }
 
+    // Handle plan_update events - the source of truth for workflow state
+    const handlePlanUpdate = (data: any) => {
+      console.log("[ChatPanel] Plan update received:", data)
+      
+      // Filter by conversationId
+      let planConvId = data.conversationId || data.contextId || ""
+      if (planConvId.includes("::")) {
+        planConvId = planConvId.split("::")[1]
+      }
+      if (shouldFilterByConversationIdRef.current(planConvId)) {
+        console.log("[ChatPanel] Ignoring plan update for different conversation:", planConvId)
+        return
+      }
+      
+      if (data.plan) {
+        setWorkflowPlan({
+          ...data.plan,
+          reasoning: data.reasoning || data.plan.reasoning
+        })
+        setIsInferencing(data.plan.goal_status !== "completed")
+      }
+    }
+
     // Handle typing indicator from other users
     const handleTypingIndicator = (eventData: any) => {
       const userId = eventData.data?.user_id
@@ -2398,6 +2509,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
     subscribe("tool_call", handleToolCall)
     subscribe("tool_response", handleToolResponse)
     subscribe("remote_agent_activity", handleRemoteAgentActivity)
+    subscribe("plan_update", handlePlanUpdate)
     subscribe("file_uploaded", handleFileUploaded)
     subscribe("shared_file_uploaded", handleSharedFileUploaded)
     subscribe("typing_indicator", handleTypingIndicator)
@@ -2421,6 +2533,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       unsubscribe("tool_call", handleToolCall)
       unsubscribe("tool_response", handleToolResponse)
       unsubscribe("remote_agent_activity", handleRemoteAgentActivity)
+      unsubscribe("plan_update", handlePlanUpdate)
       unsubscribe("file_uploaded", handleFileUploaded)
       unsubscribe("shared_file_uploaded", handleSharedFileUploaded)
       unsubscribe("typing_indicator", handleTypingIndicator)
@@ -3077,6 +3190,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
     
     setIsInferencing(true)
     setInferenceSteps([]) // Reset for new inference
+    setWorkflowPlan(null) // Reset plan for new inference
     setActiveNode("User Input")
 
     // Broadcast inference started to all other clients
@@ -3281,11 +3395,17 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
               }
               
               if (message.type === "inference_summary") {
-                // Only render if there are actual steps
-                if (!message.steps || message.steps.length === 0) {
+                // Only render if there are actual steps OR a plan
+                if ((!message.steps || message.steps.length === 0) && !message.metadata?.workflow_plan) {
                   return null
                 }
-                return <InferenceSteps key={`${message.id}-${index}`} steps={message.steps} isInferencing={false} />
+                // Pass the plan from metadata for rich rendering
+                return <InferenceSteps 
+                  key={`${message.id}-${index}`} 
+                  steps={message.steps || []} 
+                  isInferencing={false} 
+                  plan={message.metadata?.workflow_plan}
+                />
               }
               
               // Skip rendering messages with no content, no attachments, and no images
@@ -3714,7 +3834,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
             })}
             
             {/* Workflow steps display - shows current agent activity - BEFORE streaming message */}
-            {isInferencing && <InferenceSteps steps={inferenceSteps} isInferencing={true} />}
+            {isInferencing && <InferenceSteps steps={inferenceSteps} isInferencing={true} plan={workflowPlan} />}
             
             {/* Render streaming message separately AFTER workflow but treat it as a message */}
             {streamingMessageId && messages.find(m => m.id === streamingMessageId) && (() => {

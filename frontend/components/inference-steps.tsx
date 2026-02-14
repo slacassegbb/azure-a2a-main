@@ -1,5 +1,6 @@
 "use client"
 
+import React from "react"
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
 import { CheckCircle2, Loader, Workflow, Wrench, Brain, ChevronRight, Bot, AlertCircle, MessageSquare } from "lucide-react"
 import { useEffect, useRef, useMemo } from "react"
@@ -14,9 +15,25 @@ type StepData = {
   metadata?: Record<string, any>
 }
 
+// Plan-based data structure (source of truth from backend)
+type WorkflowPlan = {
+  goal: string
+  goal_status: string
+  tasks: Array<{
+    task_id: string
+    task_description: string
+    recommended_agent: string | null
+    output: { result?: string } | null
+    state: string
+    error_message: string | null
+  }>
+  reasoning?: string
+}
+
 type InferenceStepsProps = {
   steps: StepData[]
   isInferencing: boolean
+  plan?: WorkflowPlan | null  // Optional plan - if provided, render from plan directly
 }
 
 // Agent color palette
@@ -110,6 +127,9 @@ function isNoiseMessage(text: string): boolean {
   )
 }
 
+// FALLBACK: Build phases from individual events when no plan is available
+// This is used for backward compatibility with old messages or before plan arrives
+// The primary rendering path uses plan.tasks directly (see main component)
 function buildPhases(steps: StepData[]): Phase[] {
   const phases: Phase[] = []
   let currentPhase: Phase | null = null
@@ -393,6 +413,72 @@ function stripMarkdown(text: string): string {
     .trim()
 }
 
+// Parse text and make URLs clickable
+function renderWithLinks(text: string): React.ReactNode {
+  // Match URLs (http/https) and markdown links [text](url)
+  const urlRegex = /\[([^\]]+)\]\(([^)]+)\)|https?:\/\/[^\s<>\[\]"']+/g
+  const parts: React.ReactNode[] = []
+  let lastIndex = 0
+  let match: RegExpExecArray | null
+  let keyIdx = 0
+  
+  while ((match = urlRegex.exec(text)) !== null) {
+    // Add text before the match
+    if (match.index > lastIndex) {
+      parts.push(text.slice(lastIndex, match.index))
+    }
+    
+    if (match[1] && match[2]) {
+      // Markdown link [text](url)
+      parts.push(
+        <a 
+          key={`link-${keyIdx++}`}
+          href={match[2]} 
+          target="_blank" 
+          rel="noopener noreferrer"
+          className="text-primary hover:underline"
+        >
+          {match[1]}
+        </a>
+      )
+    } else {
+      // Plain URL
+      parts.push(
+        <a 
+          key={`link-${keyIdx++}`}
+          href={match[0]} 
+          target="_blank" 
+          rel="noopener noreferrer"
+          className="text-primary hover:underline break-all"
+        >
+          {match[0].length > 60 ? match[0].slice(0, 60) + "…" : match[0]}
+        </a>
+      )
+    }
+    
+    lastIndex = match.index + match[0].length
+  }
+  
+  // Add remaining text
+  if (lastIndex < text.length) {
+    parts.push(text.slice(lastIndex))
+  }
+  
+  return parts.length > 0 ? parts : text
+}
+
+// Renumber planning phases consecutively (1, 2, 3...) to avoid gaps
+function renumberPhases(phases: Phase[]): Phase[] {
+  let stepCounter = 0
+  return phases.map(p => {
+    if (p.type === "planning") {
+      stepCounter++
+      return { ...p, stepNumber: stepCounter }
+    }
+    return p
+  })
+}
+
 // ──────────────────────────────────────────────────────────
 // Sub-components
 // ──────────────────────────────────────────────────────────
@@ -473,22 +559,22 @@ function AgentSection({ block, isLive }: { block: AgentBlock; isLive: boolean })
         </div>
       )}
 
-      {/* Progress messages - show full content */}
+      {/* Progress messages - show full content with clickable links */}
       {uniqueProgressSteps.map((s, i) => (
         <div key={`p-${i}`} className="flex items-start gap-1.5 text-xs ml-6 mb-1">
           <ChevronRight className="h-3 w-3 text-muted-foreground/50 flex-shrink-0 mt-0.5" />
-          <span className="text-muted-foreground whitespace-pre-wrap">{cleanAgentStatus(s.status)}</span>
+          <span className="text-muted-foreground whitespace-pre-wrap">{renderWithLinks(cleanAgentStatus(s.status))}</span>
         </div>
       ))}
 
-      {/* Agent output / result - show more content */}
+      {/* Agent output / result - show full content with clickable links */}
       {block.output && (
         <div
           className="ml-6 mt-1.5 rounded-md px-3 py-2 text-xs leading-relaxed border-l-2 max-h-[300px] overflow-y-auto"
           style={{ borderColor: block.color, backgroundColor: `${block.color}08` }}
         >
           <span className="text-foreground/80 whitespace-pre-wrap">
-            {stripMarkdown(cleanAgentStatus(block.output))}
+            {renderWithLinks(stripMarkdown(cleanAgentStatus(block.output)))}
           </span>
         </div>
       )}
@@ -504,7 +590,7 @@ function PhaseBlock({ phase, isLive, isLast }: { phase: Phase; isLive: boolean; 
         {phase.orchestratorMessages.map((msg, i) => (
           <div key={i} className="flex items-start gap-1.5 text-xs ml-1 mb-0.5">
             <MessageSquare className="h-3 w-3 text-primary/60 flex-shrink-0 mt-0.5" />
-            <span className="text-muted-foreground whitespace-pre-wrap">{msg.text}</span>
+            <span className="text-muted-foreground whitespace-pre-wrap">{renderWithLinks(msg.text)}</span>
           </div>
         ))}
       </div>
@@ -564,7 +650,7 @@ function PhaseBlock({ phase, isLive, isLast }: { phase: Phase; isLive: boolean; 
         <div className="ml-5 mb-1.5 flex items-start gap-1.5">
           <Brain className="h-3 w-3 text-amber-500 flex-shrink-0 mt-0.5" />
           <p className="text-[11px] text-muted-foreground leading-relaxed italic whitespace-pre-wrap">
-            {phase.reasoning}
+            {renderWithLinks(phase.reasoning)}
           </p>
         </div>
       )}
@@ -575,7 +661,7 @@ function PhaseBlock({ phase, isLive, isLast }: { phase: Phase; isLive: boolean; 
           {phase.orchestratorMessages.map((msg, i) => (
             <div key={i} className="flex items-start gap-1.5 text-xs">
               <MessageSquare className="h-3 w-3 text-primary/50 flex-shrink-0 mt-0.5" />
-              <span className="text-muted-foreground whitespace-pre-wrap">{msg.text}</span>
+              <span className="text-muted-foreground whitespace-pre-wrap">{renderWithLinks(msg.text)}</span>
             </div>
           ))}
         </div>
@@ -593,16 +679,103 @@ function PhaseBlock({ phase, isLive, isLast }: { phase: Phase; isLive: boolean; 
 // Main component
 // ──────────────────────────────────────────────────────────
 
-export function InferenceSteps({ steps, isInferencing }: InferenceStepsProps) {
+export function InferenceSteps({ steps, isInferencing, plan }: InferenceStepsProps) {
   const containerRef = useRef<HTMLDivElement>(null)
 
-  const phases = useMemo(() => buildPhases(steps), [steps])
+  // Build phases: prefer plan tasks if available, fall back to event-based
+  const phases = useMemo((): Phase[] => {
+    if (plan && plan.tasks.length > 0) {
+      // Build phases from plan tasks (source of truth)
+      // Match events to tasks based on agent name for real-time progress
+      const eventsByAgent = new Map<string, StepData[]>()
+      for (const step of steps) {
+        const agent = step.agent
+        if (!eventsByAgent.has(agent)) {
+          eventsByAgent.set(agent, [])
+        }
+        eventsByAgent.get(agent)!.push(step)
+      }
+
+      const planPhases = plan.tasks.map((task, idx): Phase => {
+        const agentName = task.recommended_agent || "Unknown Agent"
+        // Try exact match first, then try case-insensitive partial match
+        let agentEvents = eventsByAgent.get(agentName) || []
+        if (agentEvents.length === 0) {
+          // Try to find events by partial match (e.g., "Email Agent" matches "azurefoundry_email-agent")
+          const lowerAgentName = agentName.toLowerCase().replace(/[\s-_]/g, "")
+          for (const [key, events] of eventsByAgent.entries()) {
+            const lowerKey = key.toLowerCase().replace(/[\s-_]/g, "")
+            if (lowerKey.includes(lowerAgentName) || lowerAgentName.includes(lowerKey)) {
+              agentEvents = events
+              break
+            }
+          }
+        }
+        
+        // Filter events relevant to this task (progress messages)
+        const progressSteps = agentEvents.filter(e => {
+          const et = e.eventType || ""
+          return et !== "agent_start" && et !== "agent_complete"
+        })
+
+        return {
+          type: "planning",
+          stepNumber: idx + 1,
+          agents: [{
+            agent: agentName,
+            displayName: getDisplayName(agentName),
+            color: getAgentColor(agentName),
+            status: task.state === "completed" ? "complete" : 
+                    task.state === "failed" ? "error" : "running",
+            taskDescription: task.task_description,
+            output: task.output?.result || undefined,
+            steps: progressSteps,
+          }],
+          orchestratorMessages: [],
+          isComplete: task.state === "completed",
+          reasoning: idx === 0 ? plan.reasoning : undefined,
+        }
+      })
+
+      // Add orchestrator events to the appropriate phases
+      const orchestratorEvents = eventsByAgent.get("foundry-host-agent") || []
+      if (orchestratorEvents.length > 0 && planPhases.length > 0) {
+        // Add reasoning/phase messages to first phase
+        for (const event of orchestratorEvents) {
+          const et = event.eventType || ""
+          if (et === "reasoning" || et === "phase") {
+            // Already have reasoning from plan, skip duplicates
+            continue
+          }
+          // Add as orchestrator message to first phase
+          if (!isNoiseMessage(event.status)) {
+            planPhases[0].orchestratorMessages.push({ text: event.status, type: "info" })
+          }
+        }
+      }
+
+      return planPhases
+    }
+    // Fall back to event-based rendering
+    return renumberPhases(buildPhases(steps))
+  }, [steps, plan])
 
   const uniqueAgents = useMemo(() => {
+    // Prefer plan agents if available (includes agents that may not have emitted events yet)
+    if (plan && plan.tasks.length > 0) {
+      const agents = new Set(plan.tasks.map(t => t.recommended_agent).filter(Boolean))
+      // Also add any agents from events not in plan
+      steps.forEach(st => {
+        if (st.agent !== "foundry-host-agent") {
+          agents.add(st.agent)
+        }
+      })
+      return Array.from(agents).map(a => getDisplayName(a as string))
+    }
     const s = new Set(steps.map(st => st.agent))
     s.delete("foundry-host-agent")
     return Array.from(s).map(getDisplayName)
-  }, [steps])
+  }, [steps, plan])
 
   // Auto-scroll
   useEffect(() => {
@@ -616,6 +789,57 @@ export function InferenceSteps({ steps, isInferencing }: InferenceStepsProps) {
     ? `${uniqueAgents.length} agent${uniqueAgents.length !== 1 ? "s" : ""} · ${planningPhases.length} step${planningPhases.length !== 1 ? "s" : ""}`
     : `${steps.length} events`
 
+  // Build agent status map from plan tasks OR infer from events
+  const agentStatusMap = useMemo(() => {
+    const map = new Map<string, { state: string; task: string }>()
+    
+    if (plan && plan.tasks.length > 0) {
+      // Use plan tasks as source of truth
+      for (const task of plan.tasks) {
+        if (task.recommended_agent) {
+          // Keep the most recent (or running) state per agent
+          const existing = map.get(task.recommended_agent)
+          if (!existing || task.state === "running" || (task.state === "completed" && existing.state !== "running")) {
+            map.set(task.recommended_agent, { state: task.state, task: task.task_description })
+          }
+        }
+      }
+    } else {
+      // No plan - infer status from events for single-agent calls
+      for (const step of steps) {
+        if (step.agent === "foundry-host-agent") continue
+        const existing = map.get(step.agent)
+        const eventType = step.eventType || ""
+        
+        if (eventType === "agent_complete") {
+          map.set(step.agent, { state: "completed", task: step.status })
+        } else if (eventType === "agent_error") {
+          map.set(step.agent, { state: "failed", task: step.status })
+        } else if (!existing || existing.state === "pending") {
+          // Any activity means running
+          map.set(step.agent, { state: "running", task: step.status })
+        }
+      }
+    }
+    return map
+  }, [plan, steps])
+
+  // Get status badge style
+  const getStatusStyle = (state: string) => {
+    switch (state) {
+      case "completed":
+        return { bg: "bg-emerald-500/10", text: "text-emerald-600", label: "Done" }
+      case "running":
+        return { bg: "bg-blue-500/10", text: "text-blue-600", label: "Working" }
+      case "failed":
+        return { bg: "bg-red-500/10", text: "text-red-600", label: "Error" }
+      case "input_required":
+        return { bg: "bg-amber-500/10", text: "text-amber-600", label: "Waiting" }
+      default:
+        return { bg: "bg-muted", text: "text-muted-foreground", label: "Pending" }
+    }
+  }
+
   if (isInferencing) {
     return (
       <div className="flex items-start gap-3 w-full">
@@ -623,6 +847,24 @@ export function InferenceSteps({ steps, isInferencing }: InferenceStepsProps) {
           <Loader className="h-5 w-5 animate-spin text-primary" />
         </div>
         <div className="rounded-xl p-4 bg-muted/50 border border-border/50 flex-1 shadow-sm">
+          {/* Goal display */}
+          {plan?.goal && (
+            <div className="mb-3 pb-2 border-b border-border/30">
+              <div className="flex items-center gap-2 mb-1">
+                <Brain className="h-3.5 w-3.5 text-amber-500" />
+                <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Goal</span>
+                <span className={`text-[9px] px-1.5 py-0.5 rounded-full ml-auto ${
+                  plan.goal_status === "completed" 
+                    ? "bg-emerald-500/10 text-emerald-600" 
+                    : "bg-blue-500/10 text-blue-600"
+                }`}>
+                  {plan.goal_status === "completed" ? "Completed" : "In Progress"}
+                </span>
+              </div>
+              <p className="text-xs text-foreground/80 leading-relaxed">{plan.goal}</p>
+            </div>
+          )}
+
           <div className="flex items-center justify-between mb-2">
             <p className="font-semibold text-sm flex items-center gap-2">
               <Workflow className="h-4 w-4 text-primary" />
@@ -633,19 +875,35 @@ export function InferenceSteps({ steps, isInferencing }: InferenceStepsProps) {
             </span>
           </div>
 
-          {/* Agent chips */}
-          {uniqueAgents.length > 0 && (
+          {/* Agent chips with status */}
+          {(uniqueAgents.length > 0 || agentStatusMap.size > 0) && (
             <div className="flex flex-wrap gap-1.5 mb-3">
-              {uniqueAgents.map(name => {
-                const color = getAgentColor(name)
+              {(plan && plan.tasks.length > 0 ? 
+                Array.from(new Set(plan.tasks.map(t => t.recommended_agent).filter(Boolean))) : 
+                uniqueAgents
+              ).map(name => {
+                const agentName = name as string
+                const displayName = getDisplayName(agentName)
+                const color = getAgentColor(agentName)
+                const statusInfo = agentStatusMap.get(agentName)
+                const statusStyle = getStatusStyle(statusInfo?.state || "pending")
+                
                 return (
-                  <span
-                    key={name}
-                    className="text-[10px] font-medium px-2 py-0.5 rounded-full"
-                    style={{ backgroundColor: `${color}12`, color, border: `1px solid ${color}30` }}
-                  >
-                    {name}
-                  </span>
+                  <div key={agentName} className="flex items-center gap-1">
+                    <span
+                      className="text-[10px] font-medium px-2 py-0.5 rounded-l-full"
+                      style={{ backgroundColor: `${color}12`, color, border: `1px solid ${color}30`, borderRight: 'none' }}
+                    >
+                      {displayName}
+                    </span>
+                    <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded-r-full ${statusStyle.bg} ${statusStyle.text}`}
+                      style={{ borderTop: `1px solid ${color}30`, borderRight: `1px solid ${color}30`, borderBottom: `1px solid ${color}30` }}
+                    >
+                      {statusInfo?.state === "running" && <Loader className="h-2 w-2 animate-spin inline mr-0.5" />}
+                      {statusInfo?.state === "completed" && <CheckCircle2 className="h-2 w-2 inline mr-0.5" />}
+                      {statusStyle.label}
+                    </span>
+                  </div>
                 )
               })}
             </div>
@@ -675,6 +933,53 @@ export function InferenceSteps({ steps, isInferencing }: InferenceStepsProps) {
           </div>
         </AccordionTrigger>
         <AccordionContent>
+          {/* Goal display for completed workflows with plan */}
+          {plan?.goal && (
+            <div className="mb-3 pb-2 border-b border-border/30">
+              <div className="flex items-center gap-2 mb-1">
+                <Brain className="h-3.5 w-3.5 text-amber-500" />
+                <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Goal</span>
+                <span className={`text-[9px] px-1.5 py-0.5 rounded-full ml-auto ${
+                  plan.goal_status === "completed" 
+                    ? "bg-emerald-500/10 text-emerald-600" 
+                    : "bg-blue-500/10 text-blue-600"
+                }`}>
+                  {plan.goal_status === "completed" ? "Completed" : "In Progress"}
+                </span>
+              </div>
+              <p className="text-xs text-foreground/80 leading-relaxed">{plan.goal}</p>
+            </div>
+          )}
+          
+          {/* Agent status chips */}
+          {plan && plan.tasks && plan.tasks.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 mb-3">
+              {Array.from(new Set(plan.tasks.map((t: any) => t.recommended_agent).filter(Boolean))).map(agentName => {
+                const displayName = getDisplayName(agentName as string)
+                const color = getAgentColor(agentName as string)
+                const task = plan.tasks.find((t: any) => t.recommended_agent === agentName)
+                const statusStyle = getStatusStyle(task?.state || "completed")
+                
+                return (
+                  <div key={agentName as string} className="flex items-center gap-1">
+                    <span
+                      className="text-[10px] font-medium px-2 py-0.5 rounded-l-full"
+                      style={{ backgroundColor: `${color}12`, color, border: `1px solid ${color}30`, borderRight: 'none' }}
+                    >
+                      {displayName}
+                    </span>
+                    <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded-r-full ${statusStyle.bg} ${statusStyle.text}`}
+                      style={{ borderTop: `1px solid ${color}30`, borderRight: `1px solid ${color}30`, borderBottom: `1px solid ${color}30` }}
+                    >
+                      {task?.state === "completed" && <CheckCircle2 className="h-2 w-2 inline mr-0.5" />}
+                      {statusStyle.label}
+                    </span>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+          
           <div className="space-y-0.5 pt-1 pb-2 max-h-[400px] overflow-y-auto">
             {phases.map((phase, i) => (
               <PhaseBlock key={i} phase={phase} isLive={false} isLast={false} />

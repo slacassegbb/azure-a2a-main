@@ -4508,12 +4508,21 @@ Answer with just JSON:
                         
                         # Persist the HITL waiting message to chat history
                         try:
+                            # Include plan in HITL message so workflow state is preserved
+                            message_metadata = {"type": "hitl_waiting", "pending_agent": session_context.pending_input_agent}
+                            if session_context and session_context.current_plan:
+                                try:
+                                    plan_data = session_context.current_plan.model_dump(mode='json', exclude_none=True)
+                                    message_metadata["workflow_plan"] = plan_data
+                                except Exception as plan_err:
+                                    print(f"[ChatHistory] Warning - could not serialize plan: {plan_err}")
+                            
                             persist_message(context_id, {
                                 "messageId": str(uuid.uuid4()),
                                 "role": "agent",
                                 "parts": [{"root": {"kind": "text", "text": final_responses[0]}}],
                                 "contextId": context_id,
-                                "metadata": {"type": "hitl_waiting", "pending_agent": session_context.pending_input_agent}
+                                "metadata": message_metadata
                             })
                         except Exception as e:
                             print(f"[ChatHistory] Error persisting HITL response: {e}")
@@ -4641,12 +4650,21 @@ WORKFLOW STEPS AND OUTPUTS:
                         text_responses = [r for r in final_responses if isinstance(r, str)]
                         response_text = "\n\n".join(text_responses) if text_responses else ""
                         if response_text:
+                            # Build metadata with workflow plan if available
+                            message_metadata = {"type": "agent_response"}
+                            if session_context and session_context.current_plan:
+                                try:
+                                    plan_data = session_context.current_plan.model_dump(mode='json', exclude_none=True)
+                                    message_metadata["workflow_plan"] = plan_data
+                                except Exception as plan_err:
+                                    print(f"[ChatHistory] Warning - could not serialize plan: {plan_err}")
+                            
                             persist_message(context_id, {
                                 "messageId": str(uuid.uuid4()),
                                 "role": "agent",
                                 "parts": [{"root": {"kind": "text", "text": response_text}}],
                                 "contextId": context_id,
-                                "metadata": {"type": "agent_response"}
+                                "metadata": message_metadata
                             })
                     except Exception as e:
                         print(f"[ChatHistory] Error persisting agent response: {e}")
@@ -4725,12 +4743,21 @@ Workflow completed with result:
                         # Persist agent response to chat history database
                         try:
                             response_text = "\n\n".join([r for r in final_responses if isinstance(r, str)])
+                            # Build metadata with workflow plan if available
+                            message_metadata = {"type": "agent_response"}
+                            if session_context and session_context.current_plan:
+                                try:
+                                    plan_data = session_context.current_plan.model_dump(mode='json', exclude_none=True)
+                                    message_metadata["workflow_plan"] = plan_data
+                                except Exception as plan_err:
+                                    print(f"[ChatHistory] Warning - could not serialize plan: {plan_err}")
+                            
                             persist_message(context_id, {
                                 "messageId": str(uuid.uuid4()),
                                 "role": "agent",
                                 "parts": [{"root": {"kind": "text", "text": response_text}}],
                                 "contextId": context_id,
-                                "metadata": {"type": "agent_response"}
+                                "metadata": message_metadata
                             })
                         except Exception as e:
                             print(f"[ChatHistory] Error persisting agent response: {e}")
@@ -4739,14 +4766,22 @@ Workflow completed with result:
                     else:
                         # No outputs to return, show error
                         final_responses = [f"Agent Mode orchestration encountered an error: {error_msg}"]
-                        # Persist error response
+                        # Persist error response - include plan for error context
                         try:
+                            message_metadata = {"type": "agent_response", "error": True}
+                            if session_context and session_context.current_plan:
+                                try:
+                                    plan_data = session_context.current_plan.model_dump(mode='json', exclude_none=True)
+                                    message_metadata["workflow_plan"] = plan_data
+                                except Exception as plan_err:
+                                    print(f"[ChatHistory] Warning - could not serialize plan: {plan_err}")
+                            
                             persist_message(context_id, {
                                 "messageId": str(uuid.uuid4()),
                                 "role": "agent",
                                 "parts": [{"root": {"kind": "text", "text": final_responses[0]}}],
                                 "contextId": context_id,
-                                "metadata": {"type": "agent_response", "error": True}
+                                "metadata": message_metadata
                             })
                         except Exception as e:
                             print(f"[ChatHistory] Error persisting error response: {e}")
@@ -5011,12 +5046,22 @@ Workflow completed with result:
                     text_responses = [r for r in final_responses if isinstance(r, str)]
                     response_text = "\n\n".join(text_responses) if text_responses else ""
                     if response_text:
+                        # Build metadata with workflow plan if available
+                        message_metadata = {"type": "agent_response"}
+                        if session_context and session_context.current_plan:
+                            try:
+                                # Serialize the plan to JSON-compatible dict
+                                plan_data = session_context.current_plan.model_dump(mode='json', exclude_none=True)
+                                message_metadata["workflow_plan"] = plan_data
+                            except Exception as plan_err:
+                                print(f"[ChatHistory] Warning - could not serialize plan: {plan_err}")
+                        
                         persist_message(context_id, {
                             "messageId": str(uuid.uuid4()),
                             "role": "agent",
                             "parts": [{"root": {"kind": "text", "text": response_text}}],
                             "contextId": context_id,
-                            "metadata": {"type": "agent_response"}
+                            "metadata": message_metadata
                         })
                 except Exception as e:
                     print(f"[ChatHistory] Error persisting agent response: {e}")

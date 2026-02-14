@@ -365,6 +365,57 @@ class EventEmitters:
         except Exception as e:
             log_debug(f"Error emitting granular agent event: {e}")
 
+    async def _emit_plan_update(self, plan, context_id: str, reasoning: str = None):
+        """Emit the full workflow plan to WebSocket for frontend rendering.
+        
+        This is the source of truth for workflow state. The frontend should render
+        the plan directly instead of piecing together individual events.
+        
+        Args:
+            plan: AgentModePlan Pydantic model with goal, tasks, and state
+            context_id: Routing context ID
+            reasoning: Optional orchestrator reasoning for current step
+        """
+        try:
+            from service.websocket_streamer import get_websocket_streamer
+            from utils.tenant import get_conversation_from_context
+            
+            streamer = await get_websocket_streamer()
+            if streamer:
+                stored_host_context = _current_context_id.get() or getattr(self, '_current_host_context_id', None)
+                routing_context_id = context_id or stored_host_context
+                
+                if not routing_context_id:
+                    log_debug(f"⚠️ [_emit_plan_update] No context_id, skipping")
+                    return
+                
+                conversation_id = get_conversation_from_context(routing_context_id)
+                
+                # Serialize the plan - handle both Pydantic models and dicts
+                if hasattr(plan, 'model_dump'):
+                    plan_data = plan.model_dump(mode='json')
+                else:
+                    plan_data = plan
+                
+                event_data = {
+                    "plan": plan_data,
+                    "reasoning": reasoning,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "contextId": routing_context_id,
+                    "conversationId": conversation_id,
+                }
+                
+                success = await streamer._send_event("plan_update", event_data, routing_context_id)
+                if success:
+                    log_debug(f"📋 Plan update emitted: {len(plan_data.get('tasks', []))} tasks")
+                else:
+                    log_debug(f"Failed to stream plan update")
+            else:
+                log_debug(f"WebSocket streamer not available for plan update")
+                
+        except Exception as e:
+            log_debug(f"Error emitting plan update: {e}")
+
     async def _emit_status_event(self, status_text: str, context_id: str):
         """Emit status event to WebSocket for real-time frontend updates."""
         await self._emit_granular_agent_event("foundry-host-agent", status_text, context_id)
