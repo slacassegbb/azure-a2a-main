@@ -114,16 +114,35 @@ function buildPhases(steps: StepData[]): Phase[] {
   const phases: Phase[] = []
   let currentPhase: Phase | null = null
   let currentAgent: AgentBlock | null = null
-  let stepNumber = 0
+  let lastStepNumber = 0
+  
+  // Map step numbers to phases to avoid duplicates
+  const stepPhaseMap = new Map<number, Phase>()
 
-  // Helper to ensure we have a planning phase
-  const ensurePlanningPhase = (): Phase => {
-    if (!currentPhase || currentPhase.type !== "planning") {
-      stepNumber++
-      currentPhase = mkPhase("planning", { stepNumber })
-      phases.push(currentPhase)
+  // Helper to get or create a planning phase for a specific step number
+  const getOrCreatePlanningPhase = (stepNum: number): Phase => {
+    // Check if we already have this step number
+    const existing = stepPhaseMap.get(stepNum)
+    if (existing) {
+      currentPhase = existing
+      return existing
     }
-    return currentPhase
+    
+    // Create new planning phase
+    lastStepNumber = Math.max(lastStepNumber, stepNum)
+    const phase = mkPhase("planning", { stepNumber: stepNum })
+    phases.push(phase)
+    stepPhaseMap.set(stepNum, phase)
+    currentPhase = phase
+    return phase
+  }
+  
+  // Helper to ensure we have ANY planning phase (auto-increment step number)
+  const ensureAnyPlanningPhase = (): Phase => {
+    if (currentPhase && currentPhase.type === "planning") {
+      return currentPhase
+    }
+    return getOrCreatePlanningPhase(lastStepNumber + 1)
   }
   
   // Helper to find or create agent block
@@ -169,9 +188,8 @@ function buildPhases(steps: StepData[]): Phase[] {
         continue
       }
       if (phaseName === "planning" || phaseName === "planning_ai") {
-        stepNumber = meta.step_number || stepNumber + 1
-        currentPhase = mkPhase("planning", { stepNumber })
-        phases.push(currentPhase)
+        const stepNum = meta.step_number || lastStepNumber + 1
+        getOrCreatePlanningPhase(stepNum)
         currentAgent = null
         continue
       }
@@ -194,14 +212,15 @@ function buildPhases(steps: StepData[]): Phase[] {
 
     // ── Reasoning ──
     if (et === "reasoning") {
-      const phase = currentPhase?.type === "planning" ? currentPhase : ensurePlanningPhase()
+      // Reasoning always goes to a planning phase
+      const phase = currentPhase?.type === "planning" ? currentPhase : ensureAnyPlanningPhase()
       phase.reasoning = step.status
       continue
     }
 
     // ── Agent start ──
     if (et === "agent_start" && !isOrchestrator) {
-      const phase = ensurePlanningPhase()
+      const phase = ensureAnyPlanningPhase()
       const block = getAgentBlock(step.agent, phase)
       block.taskDescription = meta.task_description || step.status
       continue
@@ -238,12 +257,18 @@ function buildPhases(steps: StepData[]): Phase[] {
     // ── Info events ──
     if (et === "info") {
       if (isOrchestrator) {
-        const phase = currentPhase || ensurePlanningPhase()
+        // Orchestrator info messages: use current phase, or create init if no phase exists
+        let phase: Phase = currentPhase as Phase
+        if (!currentPhase) {
+          phase = mkPhase("init")
+          phases.push(phase)
+          currentPhase = phase
+        }
         if (step.status.length > 10 && !isNoiseMessage(step.status)) {
           phase.orchestratorMessages.push({ text: step.status, type: "info" })
         }
       } else {
-        const phase = ensurePlanningPhase()
+        const phase = ensureAnyPlanningPhase()
         const block = getAgentBlock(step.agent, phase)
         if (!isNoiseMessage(step.status)) {
           block.steps.push(step)
@@ -255,12 +280,18 @@ function buildPhases(steps: StepData[]): Phase[] {
     // ── Tool calls and progress ──
     if (et === "tool_call" || et === "agent_progress") {
       if (isOrchestrator) {
-        const phase = currentPhase || ensurePlanningPhase()
+        // Orchestrator progress: use current phase, or create init if no phase exists
+        let phase: Phase = currentPhase as Phase
+        if (!currentPhase) {
+          phase = mkPhase("init")
+          phases.push(phase)
+          currentPhase = phase
+        }
         if (step.status.length > 10 && !isNoiseMessage(step.status)) {
           phase.orchestratorMessages.push({ text: step.status, type: "progress" })
         }
       } else {
-        const phase = ensurePlanningPhase()
+        const phase = ensureAnyPlanningPhase()
         const block = getAgentBlock(step.agent, phase)
         if (!isNoiseMessage(step.status)) {
           block.steps.push(step)
@@ -278,14 +309,14 @@ function buildPhases(steps: StepData[]): Phase[] {
         // Check for phase markers in content
         if (statusLower.includes("planning step")) {
           const match = step.status.match(/step\s*(\d+)/i)
-          stepNumber = match ? parseInt(match[1]) : stepNumber + 1
-          currentPhase = mkPhase("planning", { stepNumber })
+          lastStepNumber = match ? parseInt(match[1]) : lastStepNumber + 1
+          currentPhase = mkPhase("planning", { stepNumber: lastStepNumber })
           phases.push(currentPhase)
           currentAgent = null
           continue
         }
         if (statusLower.startsWith("reasoning:")) {
-          const phase = currentPhase?.type === "planning" ? currentPhase : ensurePlanningPhase()
+          const phase = currentPhase?.type === "planning" ? currentPhase : ensureAnyPlanningPhase()
           phase.reasoning = step.status.replace(/^Reasoning:\s*/i, "")
           continue
         }
@@ -296,7 +327,7 @@ function buildPhases(steps: StepData[]): Phase[] {
         }
         // General orchestrator message
         if (step.status.length > 10) {
-          const phase = currentPhase || ensurePlanningPhase()
+          const phase = currentPhase || ensureAnyPlanningPhase()
           phase.orchestratorMessages.push({ text: step.status, type: "info" })
         }
         continue
@@ -312,7 +343,7 @@ function buildPhases(steps: StepData[]): Phase[] {
       }
 
       // Regular agent activity
-      const phase = ensurePlanningPhase()
+      const phase = ensureAnyPlanningPhase()
       const block = getAgentBlock(step.agent, phase)
       const isToolLike = statusLower.includes("🛠️") || statusLower.includes("creating ") || 
                          statusLower.includes("searching ") || statusLower.includes("retrieving ")
@@ -320,8 +351,13 @@ function buildPhases(steps: StepData[]): Phase[] {
     }
   }
 
-  // Don't filter phases - show everything
-  return phases
+  // Post-process: Remove empty planning phases (no agents, no messages, no reasoning)
+  return phases.filter(phase => {
+    if (phase.type === "planning") {
+      return phase.agents.length > 0 || phase.orchestratorMessages.length > 0 || phase.reasoning
+    }
+    return true
+  })
 }
 
 // ──────────────────────────────────────────────────────────
