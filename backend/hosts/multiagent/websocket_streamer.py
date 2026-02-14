@@ -202,11 +202,22 @@ class WebSocketStreamer:
         
         try:
             # Prepare event payload (same format as Event Hub)
+            # Handle nested eventType collision: if data contains eventType (for agent activity),
+            # preserve it as 'activityType' before setting the WebSocket routing eventType
+            activity_type = data.get("eventType")
+            
+            # Build payload without the nested eventType to avoid collision
+            filtered_data = {k: v for k, v in data.items() if k != "eventType"}
+            
             event_payload = {
-                "eventType": event_type,
+                "eventType": event_type,  # WebSocket routing type
                 "timestamp": datetime.now().isoformat(),
-                **data
+                **filtered_data,
             }
+            
+            # Restore the nested activity type under a non-colliding key
+            if activity_type:
+                event_payload["activityType"] = activity_type
             
             # Send via HTTP POST to WebSocket server
             response = await self.http_client.post(

@@ -2017,7 +2017,9 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       
       if (data.agentName && data.content) {
         const content = data.content
-        const hasEventType = !!data.eventType
+        // Backend now sends activityType (renamed from eventType to avoid WebSocket routing collision)
+        const activityType = data.activityType || data.eventType
+        const hasActivityType = !!activityType
         
         // Check if this is a completion message
         const isCompletionMessage = content.includes("completed the task") ||
@@ -2029,9 +2031,9 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
           setIsInferencing(true)
         }
         
-        // TYPED EVENTS: If the backend sent eventType, trust it — skip noise filtering.
+        // TYPED EVENTS: If the backend sent activityType, trust it — skip noise filtering.
         // Only apply noise filters to legacy untyped events.
-        if (!hasEventType) {
+        if (!hasActivityType) {
           const isNoisyUpdate = content === "task started" ||
                                content === "processing" ||
                                content === "processing request" ||
@@ -2061,7 +2063,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
           }
         }
         
-        const displayContent = hasEventType ? content : transformStatusMessage(content, data.agentName)
+        const displayContent = hasActivityType ? content : transformStatusMessage(content, data.agentName)
         
         // Skip if content is empty or trivial
         if (!displayContent || displayContent.length < 3) {
@@ -2079,12 +2081,12 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
           
           // If a typed version arrives and an untyped duplicate exists, REPLACE the old one
           // This prevents _emit_status_event (untyped) from blocking _emit_granular_agent_event (typed)
-          if (duplicateIdx >= 0 && data.eventType && !prev[duplicateIdx].eventType) {
+          if (duplicateIdx >= 0 && activityType && !prev[duplicateIdx].eventType) {
             const updated = [...prev]
             updated[duplicateIdx] = {
               agent: data.agentName,
               status: displayContent,
-              eventType: data.eventType,
+              eventType: activityType,
               metadata: data.metadata,
             }
             return updated
@@ -2100,7 +2102,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
               return [...prev.slice(0, -1), { 
                 agent: data.agentName, 
                 status: displayContent,
-                eventType: data.eventType,
+                eventType: activityType,
                 metadata: data.metadata,
               }]
             }
@@ -2114,7 +2116,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
           return [...prev, { 
             agent: data.agentName, 
             status: displayContent,
-            eventType: data.eventType,
+            eventType: activityType,
             metadata: data.metadata,
           }]
         })
@@ -2148,9 +2150,10 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
         
         // Add to inference steps (with thumbnail for images, text for other files)
         // This shows the image/video in the workflow panel during execution
+        const fileVerb = isMedia ? "Generated" : "Extracted"
         setInferenceSteps(prev => [...prev, { 
           agent: data.fileInfo.source_agent, 
-          status: `📎 Generated ${data.fileInfo.filename}`,
+          status: `📎 ${fileVerb} ${data.fileInfo.filename}`,
           imageUrl: isMedia && data.fileInfo.uri ? data.fileInfo.uri : undefined,
           imageName: data.fileInfo.filename,
           mediaType: data.fileInfo.content_type || (isVideo ? "video/mp4" : "image/png")
