@@ -64,6 +64,13 @@ const transformStatusMessage = (message: string, agentName?: string): string => 
   // Remove any remaining 🛠️ icons
   transformed = transformed.replace(/🛠️\s*/g, "")
   
+  // Clean up raw tool names that slipped through (snake_case with no context)
+  // e.g., "mcp_tool" → skip, "create_full_invoice" → "Create full invoice"
+  if (/^[a-z_]+$/.test(transformed.trim()) && !transformed.includes(" ")) {
+    const readable = transformed.trim().replace(/_/g, " ")
+    transformed = readable.charAt(0).toUpperCase() + readable.slice(1)
+  }
+  
   // Clean up any double spaces or trailing colons
   transformed = transformed.replace(/\s+/g, " ").replace(/:\s*$/, "").trim()
   
@@ -2031,8 +2038,13 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                              content === "processing" ||
                              content === "processing request" ||
                              content === "generating artifact" ||
+                             content === "mcp_tool" ||
+                             content === "mcp_call" ||
+                             content.trim().length < 3 ||
                              (content.includes("🤖 Generating response...") && content.includes("chars")) ||
-                             (content.includes("🧠 Processing request..."))
+                             (content.includes("🧠 Processing request...")) ||
+                             /^throttled;?\s*waiting/i.test(content) ||
+                             /^rate limited;?\s*retrying/i.test(content)
         
         const isHostToolNoise = data.agentName === "foundry-host-agent" && (
           content.includes("executing tools") ||
@@ -2052,11 +2064,32 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
         
         const displayContent = transformStatusMessage(content, data.agentName)
         
+        // Skip if transform produced an empty or trivial result
+        if (!displayContent || displayContent.length < 3) {
+          console.log("[ChatPanel] Skipping empty transformed status")
+          return
+        }
+        
         setInferenceSteps(prev => {
-          const recentEntries = prev.slice(-5)
+          // Check last 8 entries for duplicates (wider window for busy workflows)
+          const recentEntries = prev.slice(-8)
           const isDuplicate = recentEntries.some(
             entry => entry.agent === data.agentName && entry.status === displayContent
           )
+          
+          // Also collapse consecutive "is working on" from same agent
+          if (prev.length > 0) {
+            const lastEntry = prev[prev.length - 1]
+            if (lastEntry.agent === data.agentName && 
+                lastEntry.status.includes("is working on") &&
+                displayContent.includes("is working on")) {
+              // Replace the last "working on" with the new one instead of adding
+              return [...prev.slice(0, -1), { 
+                agent: data.agentName, 
+                status: displayContent 
+              }]
+            }
+          }
           
           if (isDuplicate) {
             console.log("[ChatPanel] Skipping duplicate remote activity:", displayContent.substring(0, 50))

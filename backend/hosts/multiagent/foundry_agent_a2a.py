@@ -2804,8 +2804,23 @@ Answer with just JSON:
                                         else:
                                             status_text = f"{agent_name}: {state_value}{elapsed_str}"
                                 
-                                # Stream detailed status to UI - USE HOST'S contextId for routing!
-                                asyncio.create_task(self._emit_granular_agent_event(agent_name, status_text, host_context_id))
+                                # Filter out noisy/internal status messages before sending to UI
+                                status_lower = status_text.lower().strip()
+                                skip_patterns = [
+                                    "processing",          # generic fallback, adds no value
+                                    "mcp_tool",            # raw internal tool name
+                                    "mcp_call",            # raw internal event type
+                                ]
+                                should_skip = (
+                                    status_lower in skip_patterns
+                                    or len(status_text.strip()) < 3
+                                    or status_lower.startswith("rate limited")  # internal retry noise
+                                    or status_lower.startswith("throttled")     # internal retry noise
+                                )
+                                
+                                if not should_skip:
+                                    # Stream detailed status to UI - USE HOST'S contextId for routing!
+                                    asyncio.create_task(self._emit_granular_agent_event(agent_name, status_text, host_context_id))
                             
                         elif event_kind == 'artifact-update':
                             # Agent is generating artifacts - USE HOST'S contextId for routing!
@@ -4425,15 +4440,66 @@ Answer with just JSON:
                         log_debug(f"⏸️ [HITL PAUSE] Returning early, workflow will resume on next message")
                         return final_responses
                     
-                    # WORKFLOW MODE: Combine outputs into single response without calling agents
+                    # WORKFLOW MODE: Synthesize outputs into a clean executive summary
                     # The orchestration loop has executed all workflow steps in order
                     print(f"✅ [Workflow Mode] Workflow completed - {len(orchestration_outputs)} task outputs")
-                    log_debug(f"✅ [Workflow Mode] All workflow steps completed, combining outputs")
+                    log_debug(f"✅ [Workflow Mode] All workflow steps completed, synthesizing summary")
                     
-                    # Combine all task outputs into a single coherent response
+                    # Use LLM to synthesize a clean, professional summary from raw agent outputs
                     if orchestration_outputs:
-                        combined_response = "\n\n".join(orchestration_outputs)
-                        log_debug(f"✅ [Workflow Mode] Combined {len(orchestration_outputs)} outputs into single response")
+                        try:
+                            await self._emit_status_event("Generating workflow summary...", context_id)
+                            await self._ensure_project_client()
+                            
+                            # Build numbered step outputs for the synthesis prompt
+                            step_outputs = []
+                            for i, output in enumerate(orchestration_outputs, 1):
+                                # Truncate very long outputs to avoid token limits
+                                truncated = output[:3000] if len(output) > 3000 else output
+                                step_outputs.append(f"--- Step {i} Output ---\n{truncated}")
+                            
+                            raw_outputs = "\n\n".join(step_outputs)
+                            
+                            synthesis_prompt = f"""Synthesize the following workflow step outputs into a clear, professional summary for the user.
+
+RULES:
+- Write a cohesive narrative, NOT a raw dump of step outputs
+- Lead with the most important outcome/result
+- Include key details: amounts, IDs, names, dates, links
+- Use markdown formatting (headers, bold, bullet points)
+- Keep it concise — aim for 10-15 lines max
+- Do NOT include internal processing details, rate limit messages, or raw API responses
+- Do NOT include phrases like "Step 1 output:" or "The email agent said..."
+- Write as if YOU completed the work, using "I" or passive voice
+
+WORKFLOW STEPS AND OUTPUTS:
+{raw_outputs}"""
+                            
+                            synthesis_response = await self.openai_client.responses.create(
+                                input=synthesis_prompt,
+                                instructions="You are a professional executive assistant summarizing completed workflow results. Be clear, concise, and action-oriented.",
+                                model=self.model_name,
+                            )
+                            
+                            # Extract text from the synthesis response
+                            combined_response = ""
+                            if hasattr(synthesis_response, 'output'):
+                                for item in synthesis_response.output:
+                                    if hasattr(item, 'content'):
+                                        for content in item.content:
+                                            if hasattr(content, 'text'):
+                                                combined_response += content.text
+                            
+                            if not combined_response.strip():
+                                # Fallback if synthesis returned empty
+                                combined_response = "\n\n".join(orchestration_outputs)
+                                log_debug(f"⚠️ [Workflow Mode] Synthesis returned empty, using raw outputs")
+                            else:
+                                log_debug(f"✅ [Workflow Mode] LLM synthesis: {len(combined_response)} chars from {len(orchestration_outputs)} outputs")
+                        
+                        except Exception as synth_err:
+                            log_error(f"⚠️ [Workflow Mode] Synthesis failed ({synth_err}), using raw outputs")
+                            combined_response = "\n\n".join(orchestration_outputs)
                     else:
                         combined_response = "Workflow completed successfully."
                     
