@@ -146,17 +146,24 @@ class FoundryStripeAgent:
             mcp_tool.update_headers("User-Agent", "Azure-AI-Foundry-Agent")
             mcp_tool.update_headers("Accept", "application/json, text/event-stream")
             logger.info("✅ Set MCP headers")
-            
-            # Get tool definitions from MCP
-            tools = list(mcp_tool.definitions)
-            
+
+            # Use ToolSet as recommended by Microsoft for MCP (reduces token usage significantly!)
+            toolset = ToolSet()
+            toolset.add(mcp_tool)
+            self._toolset = toolset  # Store for use with create_agent
+            self._mcp_tool = mcp_tool  # Store MCP tool reference
+
+            # Also keep definitions for compatibility
+            tools = mcp_tool.definitions
+
             # Store MCP tool resources - needed for runs.create()
             self._mcp_tool_resources = mcp_tool.resources
-            
+
             logger.info(f"🔍 MCP TOOL DETAILS:")
-            logger.info(f"   Tools count: {len(tools)}")
+            logger.info(f"   Tools count: {len(tools) if tools else 0}")
+            logger.info(f"   Tool definitions: {[str(t) for t in list(tools)[:3]] if tools else 'None'}")
             logger.info(f"   MCP Tool resources for run creation: {type(self._mcp_tool_resources)}")
-            logger.info("✅ Added Stripe MCP server integration using McpTool")
+            logger.info("✅ Added Stripe MCP server integration using McpTool with ToolSet")
             
         except Exception as e:
             logger.error(f"❌ FAILED TO CREATE MCP TOOL: {e}")
@@ -174,16 +181,27 @@ class FoundryStripeAgent:
         
         # Use AgentsClient to create agent with McpTool
         agents_client = self._get_agents_client()
-        
-        self.agent = agents_client.create_agent(
-            model=model,
-            name="AI Foundry Stripe Agent",
-            instructions=instructions,
-            tools=tools,
-        )
-        
+
+        # Use ToolSet approach (Microsoft recommended for MCP - reduces token usage!)
+        if hasattr(self, '_toolset') and self._toolset:
+            logger.info("🔧 Creating agent with ToolSet (Microsoft recommended for MCP)")
+            self.agent = agents_client.create_agent(
+                model=model,
+                name="AI Foundry Stripe Agent",
+                instructions=instructions,
+                toolset=self._toolset
+            )
+        else:
+            logger.warning("⚠️ Falling back to tools approach (higher token usage)")
+            self.agent = agents_client.create_agent(
+                model=model,
+                name="AI Foundry Stripe Agent",
+                instructions=instructions,
+                tools=tools,
+            )
+
         logger.info(f"✅ Created Stripe agent: {self.agent.id}")
-        logger.info(f"   Tools: {len(tools)} definitions")
+        logger.info(f"   Tools: {len(tools) if tools else 0} definitions")
         return self.agent
     
     def _get_agent_instructions(self) -> str:
@@ -273,7 +291,44 @@ NEEDS_INPUT: Your specific question here
             await self.create_agent()
 
         await self.add_message(thread_id, user_message)
-        
+
+        # DEBUG: Show ALL thread messages to identify what's causing high token usage
+        try:
+            agents_client = self._get_agents_client()
+            messages_list = list(agents_client.messages.list(thread_id=thread_id, order=ListSortOrder.DESCENDING))
+
+            logger.warning(f"🔍 THREAD CONTENT ANALYSIS:")
+            logger.warning(f"   Thread ID: {thread_id}")
+            logger.warning(f"   Message count: {len(messages_list)}")
+            logger.warning(f"=" * 80)
+
+            for i, msg in enumerate(messages_list):
+                msg_role = msg.role.upper()
+                msg_content = ""
+                if hasattr(msg, 'content'):
+                    for content in msg.content:
+                        if hasattr(content, 'text') and hasattr(content.text, 'value'):
+                            msg_content += content.text.value
+
+                msg_preview = msg_content[:500].replace('\n', ' ') if msg_content else "[no text content]"
+                logger.warning(f"\n📨 Message {i+1}/{len(messages_list)}: {msg_role} ({len(msg_content):,} chars)")
+                logger.warning(f"   Preview: {msg_preview}")
+                if len(msg_content) > 500:
+                    logger.warning(f"   ... (truncated, full length: {len(msg_content):,} chars)")
+
+            logger.warning(f"\n{'=' * 80}")
+
+            if len(messages_list) > 5:
+                logger.warning(f"⚠️  WARNING: Thread has {len(messages_list)} messages!")
+                logger.warning(f"   This thread is accumulating messages from previous runs.")
+                logger.warning(f"   Consider using force_new=True to create fresh threads.")
+
+        except Exception as e:
+            logger.error(f"❌ Error analyzing thread content: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+
+
         client = self._get_agents_client()
         
         # Create run with MCP tool resources
