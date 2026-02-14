@@ -1846,11 +1846,13 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
           console.log("[ChatPanel] Already have workflow for this conversation, skipping shared workflow")
         } else {
           // Add the workflow summary message so it appears in the chat
+          const sharedPlan = data.workflowPlan || data.data?.workflowPlan
           const summaryMessage: Message = {
             id: summaryId,
             role: "system",
             type: "inference_summary",
             steps: workflowSteps,
+            ...(sharedPlan ? { metadata: { workflow_plan: sharedPlan } } : {}),
           }
           
           // Add to messages if not already present (avoid duplicates)
@@ -2691,11 +2693,13 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
         // Mark this inference as having a workflow created
         // Include workflowReceivedKey so handleSharedInferenceEnded will skip duplicate workflow
         setProcessedMessageIds(prev => new Set([...prev, summaryId, workflowKey, workflowReceivedKey]))
+        const planCopy = workflowPlan ? { ...workflowPlan } : undefined
         const summaryMessage: Message = {
           id: summaryId,
           role: "system",
           type: "inference_summary",
           steps: stepsCopy,
+          ...(planCopy ? { metadata: { workflow_plan: planCopy } } : {}),
         }
         messagesToAdd.push(summaryMessage)
         
@@ -2795,6 +2799,8 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
             timestamp: new Date().toISOString(),
             // Include workflow steps so other clients can display them
             workflowSteps: stepsToShare,
+            // Include the workflow plan so other clients can render properly
+            workflowPlan: workflowPlan || undefined,
             summaryId: `summary_${data.inferenceId}_${Date.now()}`,
             // Include the response message so other clients can display it
             responseMessage: assistantMessage || null
