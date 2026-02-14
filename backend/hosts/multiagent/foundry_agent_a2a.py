@@ -4452,11 +4452,21 @@ Answer with just JSON:
                             await self._ensure_project_client()
                             
                             # Build numbered step outputs for the synthesis prompt
+                            # Try to extract agent names from workflow definition for attribution
+                            workflow_agents = []
+                            if workflow:
+                                import re
+                                # Parse workflow steps like "1. Email Agent: ..." or "2a. QuickBooks Agent: ..."
+                                step_pattern = re.findall(r'\d+[a-z]?\.\s*(?:\*\*)?([^:*\n]+?)(?:\*\*)?:', workflow)
+                                workflow_agents = [a.strip() for a in step_pattern]
+                            
                             step_outputs = []
                             for i, output in enumerate(orchestration_outputs, 1):
                                 # Truncate very long outputs to avoid token limits
                                 truncated = output[:3000] if len(output) > 3000 else output
-                                step_outputs.append(f"--- Step {i} Output ---\n{truncated}")
+                                # Tag with agent name if available from workflow definition
+                                agent_label = workflow_agents[i-1] if i-1 < len(workflow_agents) else f"Step {i}"
+                                step_outputs.append(f"--- {agent_label} (Step {i}) ---\n{truncated}")
                             
                             raw_outputs = "\n\n".join(step_outputs)
                             
@@ -4466,18 +4476,20 @@ RULES:
 - Write a cohesive narrative, NOT a raw dump of step outputs
 - Lead with the most important outcome/result
 - Include key details: amounts, IDs, names, dates, links
-- Use markdown formatting (headers, bold, bullet points)
+- Use markdown formatting: **bold** for labels, bullet points for details
+- NEVER use triple-backtick code blocks (```) for IDs, invoice numbers, or amounts — use **bold** or inline `code` instead
 - Keep it concise — aim for 10-15 lines max
 - Do NOT include internal processing details, rate limit messages, or raw API responses
 - Do NOT include phrases like "Step 1 output:" or "The email agent said..."
-- Write as if YOU completed the work, using "I" or passive voice
+- In the "Actions Completed" section, mention WHICH AGENT performed each action (e.g., "**Email Agent** retrieved the invoice PDF", "**QuickBooks Agent** recorded the bill", "**Stripe Agent** created and finalized the invoice")
+- Write as if YOU coordinated the work across the agents
 
 WORKFLOW STEPS AND OUTPUTS:
 {raw_outputs}"""
                             
                             synthesis_response = await self.openai_client.responses.create(
                                 input=synthesis_prompt,
-                                instructions="You are a professional executive assistant summarizing completed workflow results. Be clear, concise, and action-oriented.",
+                                instructions="You are a professional executive assistant summarizing completed multi-agent workflow results. Be clear, concise, and action-oriented. Always credit which agent performed each action. Never use triple-backtick code blocks — use **bold** or inline `code` for IDs and numbers.",
                                 model=self.model_name,
                             )
                             
