@@ -1150,24 +1150,30 @@ async function runServer() {
                 }
               ];
               
-              // ESSENTIAL TOOL SET: Core tools for invoice/bill workflow
+              // ESSENTIAL TOOL SET: Matches QUICKBOOKS_ALLOWED_TOOLS in agent (16 tools)
               const essentialToolNames = [
-                // Customer tools
-                'qbo_search_customers', 'qbo_get_customer', 'qbo_create_customer',
-                // Invoice tools  
+                // Reports & Company
+                'qbo_report', 'qbo_company_info',
+                // Invoices (AR)
                 'qbo_search_invoices', 'qbo_get_invoice', 'qbo_create_invoice',
-                // Vendor tools (for bills)
-                'qbo_search_vendors', 'qbo_get_vendor', 'qbo_create_vendor', 'qbo_update_vendor',
-                // Bill tools
+                // Customers
+                'qbo_search_customers', 'qbo_get_customer', 'qbo_create_customer',
+                // Bills (AP)
                 'qbo_search_bills', 'qbo_get_bill', 'qbo_create_bill',
-                // Account tools (for bill line items)
-                'qbo_search_accounts',
-                // Item tools
-                'qbo_search_items', 'qbo_get_item',
+                // Vendors
+                'qbo_get_vendor', 'qbo_create_vendor',
+                // Bill Payments
+                'qbo_search_bill_payments', 'qbo_get_bill_payment',
                 // Utility
-                'qbo_query', 'qbo_company_info'
+                'qbo_query',
               ];
-              const filteredTools = tools.filter(t => essentialToolNames.includes(t.name));
+              // Deduplicate: take first occurrence of each tool name
+              const seen = new Set<string>();
+              const filteredTools = tools.filter(t => {
+                if (!essentialToolNames.includes(t.name) || seen.has(t.name)) return false;
+                seen.add(t.name);
+                return true;
+              });
               
               const response = {
                 jsonrpc: "2.0",
@@ -1353,7 +1359,8 @@ async function runServer() {
                   const { getQuickbooksVendor } = await import("./handlers/vendor.handler.js");
                   result = await getQuickbooksVendor(toolArgs.vendorId);
                 } else if (toolName === "qbo_create_vendor") {
-                  const { createQuickbooksVendor, getQuickbooksVendor, updateQuickbooksVendor } = await import("./handlers/vendor.handler.js");
+                  const { createQuickbooksVendor, getQuickbooksVendor } = await import("./handlers/vendor.handler.js");
+                  const { executeQuickbooksQuery } = await import("./handlers/query.handler.js");
                   const originalDisplayName = toolArgs.displayName;
                   const vendorData: any = { DisplayName: originalDisplayName };
                   if (toolArgs.email) vendorData.PrimaryEmailAddr = { Address: toolArgs.email };
@@ -1361,14 +1368,14 @@ async function runServer() {
                   if (toolArgs.companyName) vendorData.CompanyName = toolArgs.companyName;
                   result = await createQuickbooksVendor(vendorData);
                   
-                  // Handle duplicate vendor error - try to fetch existing vendor or create with new name
+                  // Handle duplicate vendor error - try to fetch existing vendor or search by name
                   if (result.isError && result.error && result.error.includes("Duplicate Name Exists Error")) {
                     const idMatch = result.error.match(/Id=(\d+)/);
                     if (idMatch) {
                       const existingId = idMatch[1];
                       console.log(`[MCP] Vendor already exists with Id=${existingId}, attempting to fetch...`);
                       
-                      // Try to get vendor directly
+                      // Try to get vendor directly by ID from the error
                       let existingVendor = await getQuickbooksVendor(existingId);
                       
                       if (!existingVendor.isError) {
@@ -1381,24 +1388,48 @@ async function runServer() {
                         };
                         console.log(`[MCP] Returning existing active vendor ${existingId}`);
                       } else {
-                        // Vendor exists but can't be fetched (likely deleted - name is reserved but unrecoverable)
-                        // Auto-create with a unique suffix
-                        console.log(`[MCP] Vendor ${existingId} is deleted/inaccessible, creating with new name...`);
-                        const timestamp = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
-                        const newDisplayName = `${originalDisplayName} (${timestamp})`;
-                        vendorData.DisplayName = newDisplayName;
+                        // Vendor ID from error is deleted/inaccessible — the name is reserved by a deleted vendor.
+                        // Use raw SQL query to find active vendors with matching DisplayName prefix (most reliable).
+                        console.log(`[MCP] Vendor ${existingId} is deleted/inaccessible. Querying for active vendor with similar name...`);
                         
-                        const retryResult = await createQuickbooksVendor(vendorData);
-                        if (!retryResult.isError) {
+                        const escapedName = originalDisplayName.replace(/'/g, "\\'");
+                        const queryResult = await executeQuickbooksQuery(
+                          `SELECT * FROM Vendor WHERE DisplayName LIKE '${escapedName}%'`
+                        );
+                        
+                        console.log(`[MCP] Query result: isError=${queryResult.isError}, count=${queryResult.result?.length || 0}`);
+                        
+                        if (!queryResult.isError && queryResult.result && queryResult.result.length > 0) {
+                          // Found active vendor(s) with similar name — return the most recent one (highest Id)
+                          const vendors = queryResult.result;
+                          const bestMatch = vendors.reduce((a: any, b: any) => 
+                            parseInt(a.Id) > parseInt(b.Id) ? a : b
+                          );
                           result = {
-                            result: retryResult.result,
+                            result: bestMatch,
                             isError: false,
                             error: null,
-                            message: `Original vendor name was deleted. Created new vendor as "${newDisplayName}"`
+                            message: `Original name "${originalDisplayName}" is reserved by deleted vendor. Returning most recent active vendor "${bestMatch.DisplayName}" (Id=${bestMatch.Id})`
                           };
-                          console.log(`[MCP] Created vendor with alternate name: ${newDisplayName}`);
+                          console.log(`[MCP] Found active vendor match: ${bestMatch.DisplayName} (Id=${bestMatch.Id})`);
                         } else {
-                          result = retryResult;
+                          // No active vendor found — create with unique timestamp suffix
+                          const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19); // YYYY-MM-DDTHH-MM-SS
+                          const newDisplayName = `${originalDisplayName} (${timestamp})`;
+                          vendorData.DisplayName = newDisplayName;
+                          
+                          const retryResult = await createQuickbooksVendor(vendorData);
+                          if (!retryResult.isError) {
+                            result = {
+                              result: retryResult.result,
+                              isError: false,
+                              error: null,
+                              message: `Original vendor name was deleted. Created new vendor as "${newDisplayName}"`
+                            };
+                            console.log(`[MCP] Created vendor with alternate name: ${newDisplayName}`);
+                          } else {
+                            result = retryResult;
+                          }
                         }
                       }
                     }
@@ -1875,7 +1906,15 @@ async function runServer() {
                 if (result?.isError) {
                   responseText = `Error: ${result.error}`;
                 } else if (Array.isArray(summarizedResult)) {
-                  responseText = `Found ${summarizedResult.length} results: ${JSON.stringify(summarizedResult)}`;
+                  // CAP search results to prevent token bloat (25KB+ for broad queries)
+                  const MAX_SEARCH_RESULTS = 25;
+                  const totalCount = summarizedResult.length;
+                  if (totalCount > MAX_SEARCH_RESULTS) {
+                    summarizedResult = summarizedResult.slice(0, MAX_SEARCH_RESULTS);
+                    responseText = `Found ${totalCount} results (showing first ${MAX_SEARCH_RESULTS}): ${JSON.stringify(summarizedResult)}`;
+                  } else {
+                    responseText = `Found ${totalCount} results: ${JSON.stringify(summarizedResult)}`;
+                  }
                 } else {
                   responseText = JSON.stringify(summarizedResult);
                 }

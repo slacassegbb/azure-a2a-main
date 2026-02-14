@@ -107,8 +107,110 @@ async function callStripeAPI(endpoint, method = 'POST', data = {}) {
 // Handle tools that don't work in @stripe/mcp directly
 async function handleDirectStripeTool(toolName, args) {
   console.error(`Direct Stripe API call for: ${toolName}`, JSON.stringify(args));
-  
+
   switch (toolName) {
+    case 'create_full_invoice': {
+      // BATCHED invoice creation: customer lookup/create + invoice + N line items + finalize
+      // Reduces 10+ MCP tool calls to 1 for multi-line invoices
+      const results = { steps: [] };
+
+      try {
+        // Step 1: Find or create customer
+        let customerId;
+        if (args.customer_id) {
+          customerId = args.customer_id;
+          results.steps.push({ step: 'customer', action: 'provided', id: customerId });
+        } else {
+          // Search by email first
+          const email = args.customer_email;
+          const name = args.customer_name || '';
+
+          if (email) {
+            const searchResult = await callStripeAPI(`customers?email=${encodeURIComponent(email)}&limit=1`, 'GET', {});
+            if (searchResult.data && searchResult.data.length > 0) {
+              customerId = searchResult.data[0].id;
+              results.steps.push({ step: 'customer', action: 'found', id: customerId, email });
+            }
+          }
+
+          if (!customerId) {
+            const customerData = {};
+            if (email) customerData.email = email;
+            if (name) customerData.name = name;
+            const customer = await callStripeAPI('customers', 'POST', customerData);
+            customerId = customer.id;
+            results.steps.push({ step: 'customer', action: 'created', id: customerId, email, name });
+          }
+        }
+
+        // Step 2: Create draft invoice
+        const invoiceData = {
+          customer: customerId,
+          auto_advance: false,
+          currency: args.currency || 'usd'
+        };
+        if (args.description) invoiceData.description = args.description;
+        if (args.days_until_due) {
+          invoiceData.collection_method = 'send_invoice';
+          invoiceData.days_until_due = args.days_until_due;
+        }
+
+        const invoice = await callStripeAPI('invoices', 'POST', invoiceData);
+        results.invoice_id = invoice.id;
+        results.steps.push({ step: 'invoice', action: 'created', id: invoice.id });
+
+        // Step 3: Add all line items
+        const lineItems = args.line_items || [];
+        let totalAmount = 0;
+        for (let i = 0; i < lineItems.length; i++) {
+          const item = lineItems[i];
+          const itemData = {
+            invoice: invoice.id,
+            customer: customerId,
+            amount: item.amount,
+            description: item.description || `Line item ${i + 1}`
+          };
+          const invoiceItem = await callStripeAPI('invoiceitems', 'POST', itemData);
+          totalAmount += item.amount;
+          results.steps.push({ step: 'line_item', index: i + 1, id: invoiceItem.id, amount: item.amount, description: item.description });
+        }
+
+        // Step 4: Finalize if requested (default: true)
+        const shouldFinalize = args.finalize !== false;
+        if (shouldFinalize) {
+          const finalized = await callStripeAPI(`invoices/${invoice.id}/finalize`, 'POST', {});
+          results.status = finalized.status;
+          results.hosted_invoice_url = finalized.hosted_invoice_url;
+          results.steps.push({ step: 'finalize', status: finalized.status, url: finalized.hosted_invoice_url });
+        } else {
+          results.status = 'draft';
+        }
+
+        results.total_amount_cents = totalAmount;
+        results.total_amount_dollars = (totalAmount / 100).toFixed(2);
+        results.line_item_count = lineItems.length;
+        results.customer_id = customerId;
+
+        console.error(`create_full_invoice completed: ${invoice.id}, ${lineItems.length} items, $${results.total_amount_dollars}`);
+
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify(results)
+          }]
+        };
+      } catch (err) {
+        console.error(`create_full_invoice error at step: ${results.steps.length}`, err.message);
+        results.error = err.message;
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify(results)
+          }]
+        };
+      }
+    }
+
     case 'list_customers': {
       // List customers directly via Stripe API - returns compact response
       let endpoint = 'customers?limit=' + (args.limit || 10);
@@ -226,6 +328,150 @@ async function handleDirectStripeTool(toolName, args) {
 }
 
 // ========================================
+// Response Summarizer — reduce @stripe/mcp token bloat
+// ========================================
+
+/**
+ * Summarize a Stripe API object to essential fields only.
+ * Full Stripe objects can be 3-8KB each. This reduces to ~200-400 bytes.
+ */
+function summarizeStripeObject(obj) {
+  if (!obj || !obj.object) return obj;
+  
+  switch (obj.object) {
+    case 'invoice':
+      return {
+        id: obj.id,
+        object: 'invoice',
+        status: obj.status,
+        number: obj.number,
+        customer: obj.customer,
+        customer_name: obj.customer_name,
+        customer_email: obj.customer_email,
+        currency: obj.currency,
+        amount_due: obj.amount_due,
+        amount_paid: obj.amount_paid,
+        amount_remaining: obj.amount_remaining,
+        total: obj.total,
+        subtotal: obj.subtotal,
+        description: obj.description,
+        due_date: obj.due_date,
+        created: obj.created,
+        hosted_invoice_url: obj.hosted_invoice_url,
+        line_item_count: obj.lines?.data?.length || obj.lines?.total_count || 0,
+        line_items: obj.lines?.data?.map(li => ({
+          id: li.id,
+          amount: li.amount,
+          description: li.description,
+          quantity: li.quantity,
+        })) || [],
+      };
+    
+    case 'customer':
+      return {
+        id: obj.id,
+        object: 'customer',
+        name: obj.name,
+        email: obj.email,
+        phone: obj.phone,
+        created: obj.created,
+        balance: obj.balance,
+        currency: obj.currency,
+        default_source: obj.default_source,
+      };
+    
+    case 'payment_intent':
+      return {
+        id: obj.id,
+        object: 'payment_intent',
+        status: obj.status,
+        amount: obj.amount,
+        amount_received: obj.amount_received,
+        currency: obj.currency,
+        customer: obj.customer,
+        description: obj.description,
+        created: obj.created,
+        payment_method: obj.payment_method,
+      };
+    
+    case 'subscription':
+      return {
+        id: obj.id,
+        object: 'subscription',
+        status: obj.status,
+        customer: obj.customer,
+        current_period_start: obj.current_period_start,
+        current_period_end: obj.current_period_end,
+        cancel_at_period_end: obj.cancel_at_period_end,
+        created: obj.created,
+        items: obj.items?.data?.map(si => ({
+          id: si.id,
+          price_id: si.price?.id,
+          quantity: si.quantity,
+          amount: si.price?.unit_amount,
+        })) || [],
+      };
+    
+    case 'dispute':
+      return {
+        id: obj.id,
+        object: 'dispute',
+        status: obj.status,
+        amount: obj.amount,
+        currency: obj.currency,
+        reason: obj.reason,
+        charge: obj.charge,
+        payment_intent: obj.payment_intent,
+        created: obj.created,
+      };
+    
+    case 'charge':
+      return {
+        id: obj.id,
+        object: 'charge',
+        status: obj.status,
+        amount: obj.amount,
+        currency: obj.currency,
+        customer: obj.customer,
+        description: obj.description,
+        created: obj.created,
+        refunded: obj.refunded,
+        paid: obj.paid,
+      };
+    
+    case 'refund':
+      return {
+        id: obj.id,
+        object: 'refund',
+        status: obj.status,
+        amount: obj.amount,
+        currency: obj.currency,
+        charge: obj.charge,
+        payment_intent: obj.payment_intent,
+        created: obj.created,
+        reason: obj.reason,
+      };
+    
+    case 'balance':
+      return {
+        object: 'balance',
+        available: obj.available?.map(b => ({ amount: b.amount, currency: b.currency })) || [],
+        pending: obj.pending?.map(b => ({ amount: b.amount, currency: b.currency })) || [],
+      };
+    
+    default:
+      // Unknown object type — return id + top-level scalar fields only
+      const slim = { id: obj.id, object: obj.object };
+      for (const [key, value] of Object.entries(obj)) {
+        if (typeof value !== 'object' && typeof value !== 'function') {
+          slim[key] = value;
+        }
+      }
+      return slim;
+  }
+}
+
+// ========================================
 // End Direct Stripe API Helpers
 // ========================================
 
@@ -279,9 +525,13 @@ function mcpTool(name, description, properties, required = []) {
   };
 }
 
-// MINIMAL tool definitions to reduce token usage
-// The full @stripe/mcp tools/list is 21KB+ (~15K tokens)
-// These compact schemas are ~4KB (~3K tokens) - 80% reduction!
+// MINIMAL tool definitions — trimmed to ~12 high-value tools
+// Removed: create_product, list_products, create_price, list_prices (not needed for invoices)
+// Removed: create_invoice, create_invoice_item, finalize_invoice (superseded by create_full_invoice)
+// Removed: create_payment_link (needs products/prices which we removed)
+// Removed: create_coupon, list_coupons (niche)
+// Removed: search_stripe_documentation (wastes a tool call)
+// The full @stripe/mcp tools are still available via passthrough for other clients.
 const MINIMAL_TOOLS = [
   // Customer management
   mcpTool("create_customer", "Create a customer", 
@@ -289,29 +539,23 @@ const MINIMAL_TOOLS = [
   mcpTool("list_customers", "List customers", 
     { email: { type: "string" }, limit: { type: "integer" } }),
   
-  // Products & Prices
-  mcpTool("create_product", "Create a product", 
-    { name: { type: "string" }, description: { type: "string" } }, ["name"]),
-  mcpTool("list_products", "List products", 
-    { limit: { type: "integer" } }),
-  mcpTool("create_price", "Create a price for a product", 
-    { product: { type: "string" }, unit_amount: { type: "integer", description: "cents" }, currency: { type: "string" } }, ["product", "unit_amount", "currency"]),
-  mcpTool("list_prices", "List prices", 
-    { product: { type: "string" }, limit: { type: "integer" } }),
-  
-  // Invoices - MOST IMPORTANT for workflows
-  mcpTool("create_invoice", "Create a draft invoice for a customer", 
-    { customer: { type: "string", description: "Customer ID (cus_xxx)" }, description: { type: "string" }, currency: { type: "string" } }, ["customer"]),
-  mcpTool("list_invoices", "List invoices", 
+  // Invoices — BATCHED (primary tool for all invoice creation)
+  mcpTool("create_full_invoice", "Create a complete invoice in one call: finds/creates customer, creates invoice, adds ALL line items, and finalizes. Use this instead of individual invoice tools.",
+    {
+      customer_email: { type: "string", description: "Customer email to find or create" },
+      customer_name: { type: "string", description: "Customer name (for creation)" },
+      customer_id: { type: "string", description: "Customer ID if already known (skips lookup)" },
+      line_items: { type: "array", description: "Array of line items", items: { type: "object", properties: { amount: { type: "integer", description: "Amount in cents (e.g. 32000 = $320.00)" }, description: { type: "string" } }, required: ["amount", "description"] } },
+      description: { type: "string", description: "Invoice description" },
+      currency: { type: "string", description: "Currency code (default: usd)" },
+      days_until_due: { type: "integer", description: "Days until due (enables send_invoice)" },
+      finalize: { type: "boolean", description: "Finalize invoice (default: true)" }
+    }, ["line_items"]),
+  // Invoice queries
+  mcpTool("list_invoices", "List invoices",
     { customer: { type: "string" }, status: { type: "string" }, limit: { type: "integer" } }),
-  mcpTool("create_invoice_item", "Add a line item to an invoice", 
-    { invoice: { type: "string", description: "Invoice ID (in_xxx)" }, amount: { type: "integer", description: "Amount in cents" }, description: { type: "string" } }, ["invoice", "amount"]),
-  mcpTool("finalize_invoice", "Finalize a draft invoice to send it", 
-    { invoice: { type: "string", description: "Invoice ID (in_xxx)" } }, ["invoice"]),
   
   // Payments
-  mcpTool("create_payment_link", "Create a payment link", 
-    { price: { type: "string" }, quantity: { type: "integer" } }, ["price"]),
   mcpTool("list_payment_intents", "List payment intents", 
     { customer: { type: "string" }, limit: { type: "integer" } }),
   mcpTool("create_refund", "Create a refund", 
@@ -328,21 +572,11 @@ const MINIMAL_TOOLS = [
   mcpTool("cancel_subscription", "Cancel a subscription", 
     { subscription: { type: "string" } }, ["subscription"]),
   
-  // Coupons
-  mcpTool("create_coupon", "Create a discount coupon", 
-    { percent_off: { type: "number" }, duration: { type: "string" }, name: { type: "string" } }),
-  mcpTool("list_coupons", "List coupons", 
-    { limit: { type: "integer" } }),
-  
   // Disputes
   mcpTool("list_disputes", "List disputes", 
     { limit: { type: "integer" } }),
   mcpTool("update_dispute", "Update a dispute with evidence", 
     { dispute: { type: "string" }, evidence: { type: "object" }, submit: { type: "boolean" } }, ["dispute"]),
-  
-  // Documentation
-  mcpTool("search_stripe_documentation", "Search Stripe docs", 
-    { query: { type: "string" } }, ["query"])
 ];
 
 // Read responses from Stripe MCP stdout
@@ -503,10 +737,27 @@ const server = http.createServer(async (req, res) => {
           const toolName = jsonRpcRequest.params?.name;
           const toolArgs = jsonRpcRequest.params?.arguments || {};
           
-          // List of tools we handle directly (bypassing @stripe/mcp)
-          const directTools = ['list_customers', 'create_invoice', 'create_invoice_item', 'finalize_invoice'];
+          // SECURITY: Block tools not in MINIMAL_TOOLS list
+          const allowedToolNames = MINIMAL_TOOLS.map(t => t.name);
+          if (!allowedToolNames.includes(toolName)) {
+            console.error(`🚫 BLOCKED tool call: ${toolName} (not in MINIMAL_TOOLS)`);
+            response = {
+              jsonrpc: '2.0',
+              id: jsonRpcRequest.id,
+              result: {
+                content: [{
+                  type: 'text',
+                  text: JSON.stringify({ error: `Tool '${toolName}' is not available. Available tools: ${allowedToolNames.join(', ')}` })
+                }],
+                isError: true
+              }
+            };
+          }
           
-          if (directTools.includes(toolName)) {
+          // List of tools we handle directly (bypassing @stripe/mcp)
+          const directTools = ['create_full_invoice', 'list_customers', 'create_invoice', 'create_invoice_item', 'finalize_invoice'];
+          
+          if (!response && directTools.includes(toolName)) {
             console.error(`Handling ${toolName} directly via Stripe API`);
             try {
               const result = await handleDirectStripeTool(toolName, toolArgs);
@@ -534,6 +785,51 @@ const server = http.createServer(async (req, res) => {
         // If not handled directly, forward to Stripe MCP
         if (!response) {
           response = await callStripeMcp(jsonRpcRequest);
+          
+          // SUMMARIZE @stripe/mcp responses to reduce token usage
+          // The SDK returns full Stripe objects (25KB+ for list_invoices with 3 items!)
+          // We strip them to essential fields only.
+          if (jsonRpcRequest.method === 'tools/call' && response?.result?.content) {
+            const toolName = jsonRpcRequest.params?.name;
+            try {
+              const content = response.result.content;
+              if (content.length > 0 && content[0].type === 'text') {
+                const rawText = content[0].text;
+                const rawSize = rawText.length;
+                
+                // Only summarize if response is large (>2KB)
+                if (rawSize > 2000) {
+                  const parsed = JSON.parse(rawText);
+                  let summarized = null;
+                  
+                  // Handle different response shapes from @stripe/mcp:
+                  // 1. {object: "list", data: [{...}, ...]} — standard Stripe list
+                  // 2. [{...}, {...}] — raw array (some @stripe/mcp tools)
+                  // 3. {object: "invoice", ...} — single object
+                  if (Array.isArray(parsed)) {
+                    summarized = parsed.map(item => summarizeStripeObject(item));
+                  } else if (Array.isArray(parsed.data)) {
+                    summarized = parsed.data.map(item => summarizeStripeObject(item));
+                  } else if (parsed.object) {
+                    summarized = summarizeStripeObject(parsed);
+                  }
+                  
+                  if (summarized) {
+                    const wrappedResult = Array.isArray(summarized)
+                      ? { results: summarized, count: summarized.length, has_more: parsed.has_more ?? parsed?.data?.has_more ?? false }
+                      : summarized;
+                    const summarizedText = JSON.stringify(wrappedResult);
+                    content[0].text = summarizedText;
+                    const reduction = Math.round((1 - summarizedText.length / rawSize) * 100);
+                    console.error(`📉 SUMMARIZED ${toolName}: ${rawSize} → ${summarizedText.length} bytes (${reduction}% reduction)`);
+                  }
+                }
+              }
+            } catch (e) {
+              // If summarization fails, send original response — never break the flow
+              console.error(`Summarization failed for ${toolName}, sending raw response:`, e.message);
+            }
+          }
         }
         
         console.error('JSON-RPC response:', JSON.stringify(response).substring(0, 200));
