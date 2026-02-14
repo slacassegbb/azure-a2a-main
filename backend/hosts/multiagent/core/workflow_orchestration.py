@@ -294,7 +294,8 @@ class WorkflowOrchestration:
                             context_id=context_id,
                             user_message=user_message,
                             extract_text_fn=extract_text_from_response,
-                            previous_task_outputs=prior_outputs  # Pass accumulated outputs from prior steps
+                            previous_task_outputs=prior_outputs,  # Pass accumulated outputs from prior steps
+                            plan=plan
                         )
                         return result
                     except Exception as e:
@@ -375,9 +376,7 @@ class WorkflowOrchestration:
                     event_type="phase", metadata={"phase": "step_execution", "step_label": step.step_label}
                 )
                 
-                # Emit plan update so frontend can show step structure
-                await self._emit_plan_update(plan, context_id, reasoning=f"Executing step {step.step_label}")
-                
+                # Execute the step (plan update happens inside after agent resolution)
                 try:
                     result = await self._execute_workflow_step_with_state(
                         step=step,
@@ -386,7 +385,8 @@ class WorkflowOrchestration:
                         context_id=context_id,
                         user_message=user_message,
                         extract_text_fn=extract_text_from_response,
-                        previous_task_outputs=list(all_task_outputs)  # Pass accumulated outputs from prior steps
+                        previous_task_outputs=list(all_task_outputs),  # Pass accumulated outputs from prior steps
+                        plan=plan
                     )
                     
                     # Emit plan update after step execution to reflect new task state
@@ -544,7 +544,8 @@ class WorkflowOrchestration:
         context_id: str,
         user_message: str,
         extract_text_fn: Callable,
-        previous_task_outputs: Optional[List[str]] = None
+        previous_task_outputs: Optional[List[str]] = None,
+        plan: Optional[Any] = None
     ) -> Dict[str, Any]:
         """
         Execute a single workflow step with full state tracking.
@@ -582,11 +583,18 @@ class WorkflowOrchestration:
         print(f"   📝 Description: {step.description[:80]}...")
         print(f"   🔗 Context ID: {context_id}")
         
+        # Emit agent_start so the frontend shows this agent as actively working
         await self._emit_granular_agent_event(
             agent_name=agent_name,
             status_text=f"Starting: {step.description[:50]}...",
-            context_id=context_id
+            context_id=context_id,
+            event_type="agent_start",
+            metadata={"task_description": step.description, "step_label": step.step_label}
         )
+        
+        # Emit plan update now that recommended_agent is set — frontend can show the agent name
+        if plan:
+            await self._emit_plan_update(plan, context_id, reasoning=f"Executing {agent_name}")
         
         # Deduplicate files for multi-step workflows
         self._deduplicate_workflow_files(session_context)

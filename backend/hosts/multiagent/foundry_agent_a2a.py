@@ -3519,10 +3519,10 @@ Answer with just JSON:
             print(f"📭 No indexable documents from {agent_name}")
             return
         
-        # Emit status to UI
+        # Emit status to UI — attribute to the source agent so it shows in their step
         asyncio.create_task(self._emit_granular_agent_event(
-            "foundry-host-agent", 
-            f"📄 Indexing {len(files_to_index)} document(s) from {agent_name}...", 
+            agent_name, 
+            f"📄 Indexing {len(files_to_index)} document(s)...", 
             context_id,
             event_type="info",
             metadata={"phase": "document_indexing", "file_count": len(files_to_index), "source_agent": agent_name}
@@ -3572,10 +3572,10 @@ Answer with just JSON:
                         if len(extracted_content) > 1500:
                             content_preview += "... [truncated]"
                         
-                        # Emit detailed extraction result with proper event_type
+                        # Emit detailed extraction result attributed to source agent
                         extraction_message = f"📄 **Extracted from {file_name}:**\n\n{content_preview}\n\n---\n📊 Stored {chunks_stored} searchable chunks in memory"
                         asyncio.create_task(self._emit_granular_agent_event(
-                            "foundry-host-agent",
+                            agent_name,
                             extraction_message,
                             context_id,
                             event_type="info",
@@ -3615,10 +3615,10 @@ Answer with just JSON:
                     status='error'
                 ))
         
-        # Final status
+        # Final status — attribute to source agent
         if indexed_count > 0:
             asyncio.create_task(self._emit_granular_agent_event(
-                "foundry-host-agent", 
+                agent_name, 
                 f"✅ Indexed {indexed_count} document(s) — now searchable via memory", 
                 context_id,
                 event_type="info",
