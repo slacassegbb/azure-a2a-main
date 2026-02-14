@@ -1,32 +1,10 @@
 "use client"
 
-/**
- * inference-steps.tsx - Workflow visualization component (v4 - clean rewrite)
- *
- * Single source of truth: the plan from backend.
- * 
- * The plan contains tasks, each with:
- * - task_description: what the agent is doing
- * - recommended_agent: which agent is handling it
- * - state: pending/running/completed/failed/input_required
- * - output.result: the agent response text
- * - error_message: if failed
- *
- * The steps (WebSocket events) are ONLY used for live progress during execution.
- * They do NOT affect the final rendered output - that comes from the plan.
- *
- * NO emoji parsing. NO fuzzy matching. NO hacks.
- */
-
-import React, { useEffect, useRef, useMemo } from "react"
+import React, { useMemo } from "react"
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
-import {
-  CheckCircle2, Loader, Workflow, Wrench,
-  ChevronRight, Bot, AlertCircle, MessageSquare, Clock,
-} from "lucide-react"
+import { CheckCircle2, Loader, AlertCircle, MessageSquare, Bot, Workflow, Wrench, FileSearch, Send, Zap } from "lucide-react"
 
-// Types
-type StepData = {
+interface StepEvent {
   agent: string
   status: string
   eventType?: string
@@ -34,39 +12,42 @@ type StepData = {
   taskId?: string
 }
 
-type WorkflowTask = {
-  task_id: string
-  task_description: string
-  recommended_agent: string | null
-  output: { result?: string } | null
-  state: string
-  error_message: string | null
-}
-
-type WorkflowPlan = {
-  goal: string
-  goal_status: string
-  tasks: WorkflowTask[]
-  reasoning?: string
-}
-
-type InferenceStepsProps = {
-  steps: StepData[]
+interface InferenceStepsProps {
+  steps: StepEvent[]
   isInferencing: boolean
-  plan?: WorkflowPlan | null
+  plan?: any
 }
 
-// Helpers
+interface AgentInfo {
+  name: string
+  displayName: string
+  color: string
+  taskDescription: string
+  status: "running" | "complete" | "error" | "waiting"
+  output: string | null
+  progressMessages: string[]
+}
+
+interface OrchestratorActivity {
+  type: "tool_call" | "agent_dispatch" | "planning" | "document" | "info"
+  label: string
+  detail?: string
+  timestamp: number
+}
+
 const COLORS = ["#8b5cf6", "#06b6d4", "#10b981", "#f59e0b", "#ec4899", "#3b82f6", "#f97316", "#14b8a6"]
 
-function hashColor(name: string): string {
-  let h = 0
-  for (let i = 0; i < name.length; i++) h = ((h << 5) - h + name.charCodeAt(i)) | 0
-  return COLORS[Math.abs(h) % COLORS.length]
+function getAgentColor(name: string): string {
+  let hash = 0
+  for (let i = 0; i < name.length; i++) {
+    hash = ((hash << 5) - hash + name.charCodeAt(i)) | 0
+  }
+  return COLORS[Math.abs(hash) % COLORS.length]
 }
 
 function formatAgentName(name: string): string {
-  if (!name || name === "Unknown Agent") return "Agent"
+  if (!name) return "Agent"
+  if (name === "foundry-host-agent") return "Orchestrator"
   return name
     .replace(/^azurefoundry[_-]/i, "")
     .replace(/^AI Foundry\s+/i, "")
@@ -76,138 +57,180 @@ function formatAgentName(name: string): string {
     .join(" ")
 }
 
-function parseStepNumber(desc: string, index: number): number {
-  const match = desc.match(/\[Step\s+(\d+)/)
-  return match ? parseInt(match[1], 10) : index + 1
+interface ParsedData {
+  agents: AgentInfo[]
+  orchestratorActivities: OrchestratorActivity[]
+  orchestratorStatus: "idle" | "planning" | "dispatching" | "complete"
 }
 
-function cleanDescription(desc: string): string {
-  return desc.replace(/^\[Step\s+\d+[a-z]?\]\s*/i, "").trim()
-}
-
-function truncate(text: string, max: number): string {
-  return text.length <= max ? text : text.slice(0, max) + "..."
-}
-
-function getStatus(state: string): "pending" | "running" | "complete" | "error" | "input_required" {
-  switch (state) {
-    case "completed": return "complete"
-    case "failed": return "error"
-    case "input_required": return "input_required"
-    case "running": return "running"
-    default: return "pending"
-  }
-}
-
-function renderLinks(text: string): React.ReactNode {
-  const urlRegex = /\[([^\]]+)\]\(([^)]+)\)|https?:\/\/[^\s<>\[\]"']+/g
-  const parts: React.ReactNode[] = []
-  let last = 0
-  let match: RegExpExecArray | null
-  let key = 0
-
-  while ((match = urlRegex.exec(text)) !== null) {
-    if (match.index > last) {
-      parts.push(text.slice(last, match.index))
-    }
-    const href = match[2] || match[0]
-    const label = match[1] || (match[0].length > 50 ? match[0].slice(0, 50) + "..." : match[0])
-    parts.push(
-      <a key={key++} href={href} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
-        {label}
-      </a>
-    )
-    last = match.index + match[0].length
-  }
-
-  if (last < text.length) parts.push(text.slice(last))
-  return parts.length > 0 ? parts : text
-}
-
-// Live progress: extract tool calls from events for currently running task
-function getLiveProgress(steps: StepData[], taskId: string | null): { tools: string[]; messages: string[] } {
-  if (!taskId) return { tools: [], messages: [] }
-  
-  const tools: string[] = []
-  const messages: string[] = []
-  const seenTools = new Set<string>()
-  const seenMessages = new Set<string>()
+function parseEventsToAgents(steps: StepEvent[]): ParsedData {
+  const agentMap = new Map<string, AgentInfo>()
+  const orchestratorActivities: OrchestratorActivity[] = []
+  let orchestratorStatus: "idle" | "planning" | "dispatching" | "complete" = "idle"
+  let activityIndex = 0
   
   for (const step of steps) {
-    // Match by taskId - no fuzzy matching needed
-    if (step.taskId !== taskId) continue
+    const agentName = step.agent
+    if (!agentName) continue
     
     const eventType = step.eventType || ""
-    const status = step.status || ""
+    const content = step.status || ""
     
-    if (eventType === "tool_call" && status && !seenTools.has(status)) {
-      seenTools.add(status)
-      const toolName = status
-        .replace(/^🛠️\s*/g, "")
-        .replace(/^.*is using\s+/i, "")
-        .replace(/\.\.\.$/g, "")
-      tools.push(toolName)
-    } else if ((eventType === "agent_progress" || eventType === "info") && status.length > 10) {
-      const key = status.slice(0, 80)
-      if (!seenMessages.has(key)) {
-        seenMessages.add(key)
-        messages.push(status)
+    // Handle orchestrator events separately
+    if (agentName === "foundry-host-agent") {
+      activityIndex++
+      
+      if (eventType === "tool_call") {
+        const toolName = step.metadata?.tool_name || "tool"
+        const isDocTool = toolName.includes("file_search") || toolName.includes("document") || toolName.includes("search")
+        const isAgentCall = toolName.includes("send_task") || toolName.includes("agent")
+        orchestratorActivities.push({
+          type: isDocTool ? "document" : isAgentCall ? "agent_dispatch" : "tool_call",
+          label: isDocTool ? "Searching documents" : isAgentCall ? "Dispatching to agent" : `Using ${toolName}`,
+          detail: step.metadata?.arguments ? JSON.stringify(step.metadata.arguments).slice(0, 100) : undefined,
+          timestamp: activityIndex,
+        })
+        orchestratorStatus = "dispatching"
+      } else if (eventType === "phase" || content.includes("Planning") || content.includes("planning") || content.includes("Analyzing")) {
+        const phaseLabel = step.metadata?.phase === "planning" ? `Planning step ${step.metadata?.step_number || ""}` : "Planning workflow"
+        orchestratorActivities.push({
+          type: "planning",
+          label: phaseLabel,
+          detail: content,
+          timestamp: activityIndex,
+        })
+        orchestratorStatus = "planning"
+      } else if (content.includes("Delegating") || content.includes("Calling") || content.includes("Dispatching") || content.includes("agents available")) {
+        // Extract agent name if mentioned
+        const agentMatch = content.match(/(?:to|calling|dispatching)\s+([A-Za-z\s]+(?:Agent)?)/i)
+        orchestratorActivities.push({
+          type: "agent_dispatch",
+          label: agentMatch ? `Calling ${agentMatch[1].trim()}` : content.includes("agents available") ? content : "Dispatching to agent",
+          detail: content,
+          timestamp: activityIndex,
+        })
+        orchestratorStatus = "dispatching"
+      } else if (eventType === "agent_complete" || content.includes("complete") || content.includes("finished")) {
+        orchestratorStatus = "complete"
+      } else if (content.length > 5) {
+        // Other info messages
+        orchestratorActivities.push({
+          type: "info",
+          label: content.slice(0, 60),
+          timestamp: activityIndex,
+        })
       }
+      continue
+    }
+    
+    // Handle regular agents
+    if (!agentMap.has(agentName)) {
+      agentMap.set(agentName, {
+        name: agentName,
+        displayName: formatAgentName(agentName),
+        color: getAgentColor(agentName),
+        taskDescription: "",
+        status: "running",
+        output: null,
+        progressMessages: [],
+      })
+    }
+    
+    const agent = agentMap.get(agentName)!
+    
+    if (eventType === "agent_start") {
+      agent.taskDescription = step.metadata?.task_description || content
+      agent.status = "running"
+    } else if (eventType === "agent_output") {
+      agent.output = content
+    } else if (eventType === "agent_complete") {
+      agent.status = "complete"
+    } else if (eventType === "agent_error") {
+      agent.status = "error"
+      if (!agent.output) agent.output = content
+    } else if (eventType === "info" || eventType === "agent_progress") {
+      if (content && content.length > 5 && !agent.progressMessages.includes(content)) {
+        agent.progressMessages.push(content)
+      }
+    } else if (content.includes("input_required") || content.includes("Waiting for")) {
+      agent.status = "waiting"
     }
   }
   
-  return { tools: tools.slice(-5), messages: messages.slice(-3) }
+  return {
+    agents: Array.from(agentMap.values()),
+    orchestratorActivities,
+    orchestratorStatus,
+  }
 }
 
-// Task Card Component
-function TaskCard({ 
-  task, 
-  stepNumber, 
-  isLive, 
-  liveProgress 
-}: { 
-  task: WorkflowTask
-  stepNumber: number
-  isLive: boolean
-  liveProgress: { tools: string[]; messages: string[] }
-}) {
-  const status = getStatus(task.state)
-  const agentName = task.recommended_agent || "Agent"
-  const displayName = formatAgentName(agentName)
-  const color = hashColor(agentName)
-  const description = cleanDescription(task.task_description)
-  const output = task.output?.result?.trim()
-  const error = task.error_message
+function OrchestratorSection({ activities, status, isLive }: { activities: OrchestratorActivity[]; status: string; isLive: boolean }) {
+  if (activities.length === 0 && !isLive) return null
+  
+  const getIcon = (type: OrchestratorActivity["type"]) => {
+    switch (type) {
+      case "tool_call": return <Wrench className="h-3 w-3" />
+      case "document": return <FileSearch className="h-3 w-3" />
+      case "agent_dispatch": return <Send className="h-3 w-3" />
+      case "planning": return <Zap className="h-3 w-3" />
+      default: return <Bot className="h-3 w-3" />
+    }
+  }
+  
+  const isWorking = isLive && status !== "complete"
+  
+  return (
+    <div className="mb-3 pb-3 border-b border-border/30">
+      <div className="flex items-center gap-2 mb-2">
+        {isWorking ? (
+          <div className="relative flex items-center justify-center h-5 w-5">
+            <div className="h-2.5 w-2.5 rounded-full bg-violet-500 animate-pulse" />
+          </div>
+        ) : (
+          <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+        )}
+        <span className="text-xs font-semibold text-violet-600">Orchestrator</span>
+        {isWorking && <span className="text-[10px] text-muted-foreground">coordinating...</span>}
+      </div>
+      
+      {activities.length > 0 && (
+        <div className="ml-5 space-y-1">
+          {activities.slice(-5).map((activity, i) => (
+            <div key={i} className="flex items-center gap-2 text-xs text-muted-foreground">
+              <span className="text-violet-500/70">{getIcon(activity.type)}</span>
+              <span>{activity.label}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
 
+function AgentCard({ agent, stepNumber, isLive }: { agent: AgentInfo; stepNumber: number; isLive: boolean }) {
+  const { displayName, color, taskDescription, status, output, progressMessages } = agent
+  
   const isRunning = status === "running"
   const isComplete = status === "complete"
   const isError = status === "error"
-  const isWaiting = status === "input_required"
-  const isPending = status === "pending"
-
-  const badgeClass = isError
-    ? "bg-red-500/15 text-red-600 dark:text-red-400"
-    : isComplete
-      ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
-      : isWaiting
-        ? "bg-amber-500/15 text-amber-600 dark:text-amber-400"
-        : isRunning
-          ? "bg-primary/15 text-primary"
-          : "bg-muted text-muted-foreground"
+  const isWaiting = status === "waiting"
 
   return (
     <div className="py-2">
       <div className="flex items-center gap-2 mb-1.5">
-        <div className={`flex items-center justify-center h-5 w-5 rounded-full text-[10px] font-bold ${badgeClass}`}>
+        <div className={`flex items-center justify-center h-5 w-5 rounded-full text-[10px] font-bold ${
+          isComplete ? "bg-emerald-500/15 text-emerald-600" :
+          isError ? "bg-red-500/15 text-red-600" :
+          isWaiting ? "bg-amber-500/15 text-amber-600" :
+          "bg-primary/15 text-primary"
+        }`}>
           {stepNumber}
         </div>
         <span className="text-xs font-semibold text-foreground">Step {stepNumber}</span>
-        
         {isComplete && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />}
         {isError && <AlertCircle className="h-3.5 w-3.5 text-red-500" />}
         {isWaiting && <MessageSquare className="h-3.5 w-3.5 text-amber-500" />}
         {isRunning && isLive && <Loader className="h-3.5 w-3.5 animate-spin text-primary" />}
-        {isPending && <Clock className="h-3.5 w-3.5 text-muted-foreground" />}
       </div>
 
       <div className="ml-5 border-l-2 pl-4 py-1.5" style={{ borderColor: `${color}40` }}>
@@ -215,73 +238,40 @@ function TaskCard({
           {isRunning && isLive ? (
             <div className="relative flex items-center justify-center h-4 w-4">
               <div className="h-2 w-2 rounded-full animate-pulse" style={{ backgroundColor: color }} />
-              <div className="h-2 w-2 rounded-full absolute animate-ping opacity-50" style={{ backgroundColor: color }} />
             </div>
           ) : isComplete ? (
-            <CheckCircle2 className="h-4 w-4 text-emerald-500 flex-shrink-0" />
+            <CheckCircle2 className="h-4 w-4 text-emerald-500" />
           ) : isError ? (
-            <AlertCircle className="h-4 w-4 text-red-500 flex-shrink-0" />
+            <AlertCircle className="h-4 w-4 text-red-500" />
           ) : isWaiting ? (
-            <MessageSquare className="h-4 w-4 text-amber-500 flex-shrink-0" />
+            <MessageSquare className="h-4 w-4 text-amber-500" />
           ) : (
-            <Bot className="h-4 w-4 flex-shrink-0" style={{ color }} />
+            <Bot className="h-4 w-4" style={{ color }} />
           )}
-
-          <span
-            className="text-xs font-semibold px-2 py-0.5 rounded-full"
-            style={{ backgroundColor: `${color}15`, color }}
-          >
+          <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={{ backgroundColor: `${color}15`, color }}>
             {displayName}
           </span>
-
-          {isComplete && <span className="text-[10px] text-emerald-600 dark:text-emerald-400">Done</span>}
-          {isError && <span className="text-[10px] text-red-600 dark:text-red-400">Failed</span>}
-          {isWaiting && <span className="text-[10px] text-amber-600 dark:text-amber-400">Waiting for input</span>}
+          {isComplete && <span className="text-[10px] text-emerald-600">Done</span>}
+          {isError && <span className="text-[10px] text-red-600">Failed</span>}
+          {isWaiting && <span className="text-[10px] text-amber-600">Waiting for input</span>}
           {isRunning && isLive && <span className="text-[10px] text-primary">Working...</span>}
         </div>
 
-        {description && (
-          <p className="text-xs text-muted-foreground ml-6 mb-1.5 leading-relaxed">
-            {description}
-          </p>
+        {taskDescription && (
+          <p className="text-xs text-muted-foreground ml-6 mb-1.5">{taskDescription.replace(/^Starting:\s*/i, "").replace(/\.\.\.$/g, "")}</p>
         )}
 
-        {isRunning && isLive && liveProgress.tools.length > 0 && (
+        {isLive && isRunning && progressMessages.length > 0 && (
           <div className="ml-6 space-y-0.5 mb-1.5">
-            {liveProgress.tools.map((tool, i) => (
-              <div key={i} className="flex items-center gap-1.5 text-xs">
-                <Wrench className="h-3 w-3 text-muted-foreground/70 flex-shrink-0" />
-                <span className="text-muted-foreground">{truncate(tool, 60)}</span>
-              </div>
+            {progressMessages.slice(-3).map((msg, i) => (
+              <div key={i} className="text-xs text-muted-foreground/70 truncate">› {msg.slice(0, 80)}</div>
             ))}
-          </div>
-        )}
-
-        {isRunning && isLive && liveProgress.messages.length > 0 && (
-          <div className="ml-6 space-y-0.5 mb-1.5">
-            {liveProgress.messages.map((msg, i) => (
-              <div key={i} className="flex items-start gap-1.5 text-xs">
-                <ChevronRight className="h-3 w-3 text-muted-foreground/50 flex-shrink-0 mt-0.5" />
-                <span className="text-muted-foreground">{truncate(msg, 100)}</span>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {isError && error && (
-          <div className="ml-6 mt-1.5 rounded-md px-3 py-2 text-xs bg-red-500/5 border-l-2 border-red-400">
-            <span className="text-red-600 dark:text-red-400">{error}</span>
           </div>
         )}
 
         {output && (
-          <div
-            className="ml-6 mt-1.5 rounded-md px-3 py-2 text-xs leading-relaxed border-l-2 max-h-[250px] overflow-y-auto"
-            style={{ borderColor: color, backgroundColor: `${color}08` }}
-          >
-            <span className="text-foreground/80 whitespace-pre-wrap">
-              {renderLinks(output)}
-            </span>
+          <div className="ml-6 mt-1.5 rounded-md px-3 py-2 text-xs border-l-2 max-h-[300px] overflow-y-auto" style={{ borderColor: color, backgroundColor: `${color}08` }}>
+            <div className="text-foreground/80 whitespace-pre-wrap">{output}</div>
           </div>
         )}
       </div>
@@ -289,77 +279,26 @@ function TaskCard({
   )
 }
 
-// Goal Header
-function GoalHeader({ goal, goalStatus, hasErrors }: { goal: string; goalStatus: string; hasErrors: boolean }) {
-  // Remove HITL metadata from goal text
-  let cleanGoal = goal || ""
-  const hitlIdx = cleanGoal.indexOf("\n\n[User Provided")
-  if (hitlIdx >= 0) cleanGoal = cleanGoal.substring(0, hitlIdx)
-  cleanGoal = cleanGoal.trim()
-  if (!cleanGoal || cleanGoal.length < 10 || cleanGoal.toLowerCase().startsWith("complete the workflow")) {
-    return null
+export function InferenceSteps({ steps, isInferencing, plan }: InferenceStepsProps) {
+  const { agents, orchestratorActivities, orchestratorStatus } = useMemo(() => parseEventsToAgents(steps), [steps])
+  const summaryLabel = agents.length > 0 ? `${agents.length} agent${agents.length !== 1 ? "s" : ""}` : ""
+  const hasOrchestratorActivity = orchestratorActivities.length > 0
+
+  if (agents.length === 0 && !hasOrchestratorActivity && !isInferencing) return null
+
+  if (agents.length === 0 && !hasOrchestratorActivity && isInferencing) {
+    return (
+      <div className="flex items-start gap-3 w-full">
+        <div className="h-8 w-8 flex items-center justify-center flex-shrink-0">
+          <Loader className="h-5 w-5 animate-spin text-primary" />
+        </div>
+        <div className="rounded-xl p-4 bg-muted/50 border border-border/50 flex-1">
+          <p className="text-sm text-muted-foreground">Starting workflow...</p>
+        </div>
+      </div>
+    )
   }
 
-  const statusLabel = hasErrors
-    ? "Completed with errors"
-    : goalStatus === "completed"
-      ? "Completed"
-      : "In Progress"
-  
-  const statusClass = hasErrors
-    ? "bg-red-500/10 text-red-600"
-    : goalStatus === "completed"
-      ? "bg-emerald-500/10 text-emerald-600"
-      : "bg-blue-500/10 text-blue-600"
-
-  return (
-    <div className="mb-3 pb-2 border-b border-border/30">
-      <div className="flex items-center gap-2 mb-1">
-        <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Goal</span>
-        <span className={`text-[9px] px-1.5 py-0.5 rounded-full ml-auto ${statusClass}`}>
-          {statusLabel}
-        </span>
-      </div>
-      <p className="text-xs text-foreground/80 leading-relaxed">{cleanGoal}</p>
-    </div>
-  )
-}
-
-// Main Component
-export function InferenceSteps({ steps, isInferencing, plan }: InferenceStepsProps) {
-  const containerRef = useRef<HTMLDivElement>(null)
-
-  const tasks = plan?.tasks || []
-  
-  const runningTask = tasks.find(t => t.state === "running")
-  const liveProgress = useMemo(
-    () => getLiveProgress(steps, runningTask?.task_id || null),
-    [steps, runningTask?.task_id]
-  )
-
-  const hasErrors = tasks.some(t => t.state === "failed")
-
-  const agentNames = useMemo(() => {
-    const names = new Set<string>()
-    for (const t of tasks) {
-      if (t.recommended_agent) names.add(formatAgentName(t.recommended_agent))
-    }
-    return Array.from(names)
-  }, [tasks])
-
-  const summaryLabel = tasks.length > 0
-    ? `${agentNames.length} agent${agentNames.length !== 1 ? "s" : ""} - ${tasks.length} step${tasks.length !== 1 ? "s" : ""}`
-    : ""
-
-  useEffect(() => {
-    if (containerRef.current && isInferencing) {
-      containerRef.current.scrollTop = containerRef.current.scrollHeight
-    }
-  }, [tasks, steps, isInferencing])
-
-  if (tasks.length === 0 && !isInferencing) return null
-
-  // Live view
   if (isInferencing) {
     return (
       <div className="flex items-start gap-3 w-full">
@@ -367,71 +306,42 @@ export function InferenceSteps({ steps, isInferencing, plan }: InferenceStepsPro
           <Loader className="h-5 w-5 animate-spin text-primary" />
         </div>
         <div className="rounded-xl p-4 bg-muted/50 border border-border/50 flex-1 shadow-sm">
-          {plan && <GoalHeader goal={plan.goal} goalStatus={plan.goal_status} hasErrors={hasErrors} />}
-
           <div className="flex items-center justify-between mb-2">
             <p className="font-semibold text-sm flex items-center gap-2">
               <Workflow className="h-4 w-4 text-primary" />
               Workflow in progress
             </p>
-            {summaryLabel && (
-              <span className="text-[10px] text-muted-foreground bg-muted px-2 py-0.5 rounded-full">
-                {summaryLabel}
-              </span>
-            )}
+            {summaryLabel && <span className="text-[10px] text-muted-foreground bg-muted px-2 py-0.5 rounded-full">{summaryLabel}</span>}
           </div>
-
-          <div ref={containerRef} className="space-y-1 max-h-[350px] overflow-y-auto pr-1">
-            {tasks.map((task, i) => (
-              <TaskCard
-                key={task.task_id}
-                task={task}
-                stepNumber={parseStepNumber(task.task_description, i)}
-                isLive={true}
-                liveProgress={task.state === "running" ? liveProgress : { tools: [], messages: [] }}
-              />
-            ))}
+          
+          <OrchestratorSection activities={orchestratorActivities} status={orchestratorStatus} isLive={true} />
+          
+          <div className="space-y-1 max-h-[400px] overflow-y-auto pr-1">
+            {agents.map((agent: AgentInfo, i: number) => <AgentCard key={agent.name} agent={agent} stepNumber={i + 1} isLive={true} />)}
           </div>
         </div>
       </div>
     )
   }
 
-  // Completed view
+  const hasErrors = agents.some((a: AgentInfo) => a.status === "error")
+  
   return (
     <Accordion type="single" collapsible className="w-full">
       <AccordionItem value="workflow" className="border border-border/50 bg-muted/30 rounded-xl px-4 shadow-sm">
         <AccordionTrigger className="hover:no-underline py-3">
           <div className="flex items-center gap-2.5">
-            <div className={`h-7 w-7 rounded-lg flex items-center justify-center ${
-              hasErrors ? "bg-amber-500/10" : "bg-emerald-500/10"
-            }`}>
-              {hasErrors
-                ? <AlertCircle className="h-4 w-4 text-amber-500" />
-                : <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-              }
+            <div className={`h-7 w-7 rounded-lg flex items-center justify-center ${hasErrors ? "bg-amber-500/10" : "bg-emerald-500/10"}`}>
+              {hasErrors ? <AlertCircle className="h-4 w-4 text-amber-500" /> : <CheckCircle2 className="h-4 w-4 text-emerald-500" />}
             </div>
-            <span className="font-medium text-sm">
-              {hasErrors ? "Workflow completed with errors" : "Workflow completed"}
-            </span>
-            {summaryLabel && (
-              <span className="text-xs text-muted-foreground ml-1">{summaryLabel}</span>
-            )}
+            <span className="font-medium text-sm">{hasErrors ? "Workflow completed with errors" : "Workflow completed"}</span>
+            {summaryLabel && <span className="text-xs text-muted-foreground ml-1">{summaryLabel}</span>}
           </div>
         </AccordionTrigger>
         <AccordionContent>
-          {plan && <GoalHeader goal={plan.goal} goalStatus={plan.goal_status} hasErrors={hasErrors} />}
-
+          <OrchestratorSection activities={orchestratorActivities} status={orchestratorStatus} isLive={false} />
           <div className="space-y-1 pt-1 pb-2 max-h-[400px] overflow-y-auto">
-            {tasks.map((task, i) => (
-              <TaskCard
-                key={task.task_id}
-                task={task}
-                stepNumber={parseStepNumber(task.task_description, i)}
-                isLive={false}
-                liveProgress={{ tools: [], messages: [] }}
-              />
-            ))}
+            {agents.map((agent: AgentInfo, i: number) => <AgentCard key={agent.name} agent={agent} stepNumber={i + 1} isLive={false} />)}
           </div>
         </AccordionContent>
       </AccordionItem>
