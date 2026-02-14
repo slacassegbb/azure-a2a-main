@@ -66,6 +66,7 @@ interface AgentBlock {
   steps: StepData[]
   status: "running" | "complete" | "error"
   taskDescription?: string
+  output?: string  // Agent's final response text
 }
 
 interface Phase {
@@ -147,6 +148,14 @@ function buildPhases(steps: StepData[]): Phase[] {
     if (et === "agent_complete") {
       if (currentAgent && currentAgent.agent === step.agent) {
         currentAgent.status = "complete"
+      }
+      continue
+    }
+
+    // ── Agent output (final response text) ──
+    if (et === "agent_output") {
+      if (currentAgent && currentAgent.agent === step.agent) {
+        currentAgent.output = step.status
       }
       continue
     }
@@ -271,6 +280,20 @@ function truncateText(text: string, maxLen: number): string {
   return text.slice(0, maxLen) + "…"
 }
 
+// Strip common markdown formatting for clean display
+function stripMarkdown(text: string): string {
+  return text
+    .replace(/#{1,6}\s+/g, "")         // headers
+    .replace(/\*\*(.+?)\*\*/g, "$1")   // bold
+    .replace(/\*(.+?)\*/g, "$1")       // italic
+    .replace(/__(.+?)__/g, "$1")       // bold alt
+    .replace(/_(.+?)_/g, "$1")         // italic alt
+    .replace(/`(.+?)`/g, "$1")         // inline code
+    .replace(/^\s*[-*]\s+/gm, "• ")    // list items → bullet
+    .replace(/\n{3,}/g, "\n\n")        // collapse excess newlines
+    .trim()
+}
+
 // ──────────────────────────────────────────────────────────
 // Sub-components
 // ──────────────────────────────────────────────────────────
@@ -344,6 +367,18 @@ function AgentSection({ block, isLive }: { block: AgentBlock; isLive: boolean })
           <span className="text-muted-foreground">{truncateText(s.status, 150)}</span>
         </div>
       ))}
+
+      {/* Agent output / result */}
+      {block.output && block.status === "complete" && (
+        <div
+          className="ml-6 mt-1.5 rounded-md px-3 py-2 text-xs leading-relaxed border-l-2"
+          style={{ borderColor: block.color, backgroundColor: `${block.color}08` }}
+        >
+          <span className="text-foreground/80 whitespace-pre-wrap">
+            {stripMarkdown(block.output)}
+          </span>
+        </div>
+      )}
     </div>
   )
 }

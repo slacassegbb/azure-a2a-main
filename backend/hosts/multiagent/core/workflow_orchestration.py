@@ -902,6 +902,15 @@ Use the above output from the previous workflow step to complete your task."""
                 if artifact_texts:
                     output_text = f"{output_text}\n\nArtifacts:\n" + "\n".join(artifact_texts)
             
+            # Emit agent output to workflow panel so users can see what the agent returned
+            if output_text and recommended_agent:
+                # Truncate very long outputs for the UI (full output is in the final synthesis)
+                display_output = output_text[:500] + "…" if len(output_text) > 500 else output_text
+                await self._emit_granular_agent_event(
+                    recommended_agent, display_output, context_id,
+                    event_type="agent_output", metadata={"output_length": len(output_text)}
+                )
+            
             return {"output": output_text, "hitl_pause": False}
         else:
             # Simple string response (legacy format)
@@ -909,6 +918,15 @@ Use the above output from the previous workflow step to complete your task."""
             output_text = extract_text_fn(response_obj)
             task.output = {"result": output_text}
             task.updated_at = datetime.now(timezone.utc)
+            
+            # Emit agent output to workflow panel
+            if output_text and recommended_agent:
+                display_output = output_text[:500] + "…" if len(output_text) > 500 else output_text
+                await self._emit_granular_agent_event(
+                    recommended_agent, display_output, context_id,
+                    event_type="agent_output", metadata={"output_length": len(output_text)}
+                )
+            
             return {"output": output_text, "hitl_pause": False}
 
     async def _intelligent_route_selection(
@@ -1640,13 +1658,32 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                         if isinstance(result, Exception):
                             task.state = "failed"
                             task.error_message = str(result)
+                            # Emit agent_error so frontend shows failure state
+                            if task.recommended_agent:
+                                await self._emit_granular_agent_event(
+                                    task.recommended_agent, f"Error: {str(result)[:200]}", context_id,
+                                    event_type="agent_error", metadata={"error": str(result)[:500]}
+                                )
                         elif isinstance(result, dict):
                             if result.get("hitl_pause"):
                                 hitl_pause = True
                                 if result.get("output"):
                                     all_task_outputs.append(result["output"])
+                            elif result.get("error"):
+                                # Emit agent_error for failed tasks
+                                if task.recommended_agent:
+                                    await self._emit_granular_agent_event(
+                                        task.recommended_agent, f"Error: {result['error'][:200]}", context_id,
+                                        event_type="agent_error", metadata={"error": result["error"][:500]}
+                                    )
                             elif result.get("output"):
                                 all_task_outputs.append(result["output"])
+                            # Emit agent_complete for successfully finished tasks
+                            if task.state == "completed" and task.recommended_agent and not result.get("hitl_pause"):
+                                await self._emit_granular_agent_event(
+                                    task.recommended_agent, f"{task.recommended_agent} completed", context_id,
+                                    event_type="agent_complete"
+                                )
                         task.updated_at = datetime.now(timezone.utc)
                     
                     # If any task triggered HITL pause, save plan and return
@@ -1696,6 +1733,18 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                         if result.get("output"):
                             all_task_outputs.append(result["output"])
                         
+                        # Emit agent_complete/agent_error based on task state from the plan
+                        if task.state == "completed" and task.recommended_agent:
+                            await self._emit_granular_agent_event(
+                                task.recommended_agent, f"{task.recommended_agent} completed", context_id,
+                                event_type="agent_complete"
+                            )
+                        elif task.state == "failed" and task.recommended_agent:
+                            await self._emit_granular_agent_event(
+                                task.recommended_agent, f"Error: {task.error_message or 'Unknown error'}"[:200], context_id,
+                                event_type="agent_error", metadata={"error": (task.error_message or "Unknown error")[:500]}
+                            )
+                        
                     except Exception as e:
                         # IMPORTANT: Check if HITL was triggered before the error
                         # Sometimes the SSE stream errors out AFTER input_required was set
@@ -1712,6 +1761,12 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                         task.state = "failed"
                         task.error_message = str(e)
                         log_error(f"[Agent Mode] Task execution error: {e}")
+                        # Emit agent_error so frontend shows failure
+                        if task.recommended_agent:
+                            await self._emit_granular_agent_event(
+                                task.recommended_agent, f"Error: {str(e)[:200]}", context_id,
+                                event_type="agent_error", metadata={"error": str(e)[:500]}
+                            )
                     
                     finally:
                         task.updated_at = datetime.now(timezone.utc)
