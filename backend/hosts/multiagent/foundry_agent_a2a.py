@@ -3522,8 +3522,10 @@ Answer with just JSON:
         # Emit status to UI
         asyncio.create_task(self._emit_granular_agent_event(
             "foundry-host-agent", 
-            f"Indexing {len(files_to_index)} document(s) from {agent_name}...", 
-            context_id
+            f"📄 Indexing {len(files_to_index)} document(s) from {agent_name}...", 
+            context_id,
+            event_type="info",
+            metadata={"phase": "document_indexing", "file_count": len(files_to_index), "source_agent": agent_name}
         ))
         
         indexed_count = 0
@@ -3570,12 +3572,14 @@ Answer with just JSON:
                         if len(extracted_content) > 1500:
                             content_preview += "... [truncated]"
                         
-                        # Emit detailed extraction result - formatted like agent response
+                        # Emit detailed extraction result with proper event_type
                         extraction_message = f"📄 **Extracted from {file_name}:**\n\n{content_preview}\n\n---\n📊 Stored {chunks_stored} searchable chunks in memory"
                         asyncio.create_task(self._emit_granular_agent_event(
                             "foundry-host-agent",
                             extraction_message,
-                            context_id
+                            context_id,
+                            event_type="info",
+                            metadata={"phase": "document_extraction", "file_name": file_name, "chunks": chunks_stored, "source_agent": agent_name}
                         ))
                     
                     # Emit file_processing_completed event so frontend updates status to 'analyzed'
@@ -3615,8 +3619,10 @@ Answer with just JSON:
         if indexed_count > 0:
             asyncio.create_task(self._emit_granular_agent_event(
                 "foundry-host-agent", 
-                f"✓ Indexed {indexed_count} document(s) - now searchable via memory", 
-                context_id
+                f"✅ Indexed {indexed_count} document(s) — now searchable via memory", 
+                context_id,
+                event_type="info",
+                metadata={"phase": "document_indexing_complete", "indexed_count": indexed_count, "source_agent": agent_name}
             ))
             print(f"🎉 Successfully indexed {indexed_count}/{len(files_to_index)} documents from {agent_name}")
         else:

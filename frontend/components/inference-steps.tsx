@@ -305,14 +305,20 @@ function buildPhasesFromPlan(plan: WorkflowPlan, steps: StepData[]): Phase[] {
       // Skip redundant internal markers
       if (l.includes("goal achieved") || l.includes("generating final")) continue
       if (l.includes("planning step")) continue
+      if (l.includes("executing step")) continue   // Now covered by plan task phases
       if (l.includes("maximum iterations")) {
         orchMessages.push("⚠️ Maximum planning iterations reached")
         continue
       }
-      // Keep useful info (agent counts, etc.)
-      orchMessages.push(status)
+      // Keep useful info (agent counts, document extraction, etc.)
+      orchMessages.push(condenseDocExtraction(status))
+    } else if (!et) {
+      // Legacy untyped orchestrator event — filter
+      const cleaned = filterUntypedOrchMessage(status)
+      if (cleaned && cleaned.length > 5) {
+        orchMessages.push(condenseDocExtraction(cleaned))
+      }
     }
-    // Other typed orchestrator events (agent_start etc. on foundry-host-agent) — skip
   }
 
   // Use plan.reasoning if we did not get a better one from events
@@ -591,6 +597,8 @@ function AgentSection({ block, isLive }: { block: AgentBlock; isLive: boolean })
           <div className="h-4 w-4 flex items-center justify-center">
             <div className="h-2 w-2 rounded-full bg-amber-500 animate-pulse" />
           </div>
+        ) : isInputRequired && !isLive ? (
+          <MessageSquare className="h-4 w-4 text-amber-500 flex-shrink-0" />
         ) : isRunning && isLive ? (
           <div className="relative flex items-center justify-center h-4 w-4">
             <div className="h-2 w-2 rounded-full animate-pulse" style={{ backgroundColor: block.color }} />

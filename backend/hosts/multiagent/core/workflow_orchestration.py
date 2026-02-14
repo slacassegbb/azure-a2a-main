@@ -278,6 +278,9 @@ class WorkflowOrchestration:
                 # (each parallel step sees the same prior context)
                 prior_outputs = list(all_task_outputs)  # Snapshot of outputs before this parallel group
                 
+                # Emit plan update before parallel execution so frontend shows step structure
+                await self._emit_plan_update(plan, context_id, reasoning=f"Executing parallel group {group.group_number}")
+                
                 async def execute_parallel_step(step: ParsedWorkflowStep, task: AgentModeTask):
                     """Execute a single step and update its task state."""
                     task.state = "running"
@@ -306,6 +309,9 @@ class WorkflowOrchestration:
                     *[execute_parallel_step(step, task) for step, task in zip(group.steps, parallel_tasks)],
                     return_exceptions=True
                 )
+                
+                # Emit plan update after parallel group completes
+                await self._emit_plan_update(plan, context_id)
                 
                 # Collect results and check for HITL pause
                 for i, result in enumerate(results):
@@ -369,6 +375,9 @@ class WorkflowOrchestration:
                     event_type="phase", metadata={"phase": "step_execution", "step_label": step.step_label}
                 )
                 
+                # Emit plan update so frontend can show step structure
+                await self._emit_plan_update(plan, context_id, reasoning=f"Executing step {step.step_label}")
+                
                 try:
                     result = await self._execute_workflow_step_with_state(
                         step=step,
@@ -379,6 +388,9 @@ class WorkflowOrchestration:
                         extract_text_fn=extract_text_from_response,
                         previous_task_outputs=list(all_task_outputs)  # Pass accumulated outputs from prior steps
                     )
+                    
+                    # Emit plan update after step execution to reflect new task state
+                    await self._emit_plan_update(plan, context_id)
                     
                     # Check for HITL pause
                     if result.get("hitl_pause"):
@@ -405,6 +417,9 @@ class WorkflowOrchestration:
         # Mark plan as completed
         plan.goal_status = "completed"
         plan.updated_at = datetime.now(timezone.utc)
+        
+        # Emit final plan update so frontend shows completed state
+        await self._emit_plan_update(plan, context_id, reasoning="Workflow completed")
         
         # Log final plan summary
         print(f"\n{'='*80}")
@@ -657,6 +672,24 @@ Use the data from the previous steps to complete your task."""
                 task.state = "input_required"
                 task.updated_at = datetime.now(timezone.utc)
                 output_text = extract_text_fn(response_obj)
+                
+                # CRITICAL: Store output in task so it's available when rendering workflow
+                task.output = {"result": output_text}
+                
+                # Emit agent output so user can see what the agent sent (e.g., Teams message)
+                # The streaming callback skips input_required state, so we must emit here explicitly
+                if output_text and agent_name:
+                    display_output = output_text[:2000] + "…" if len(output_text) > 2000 else output_text
+                    await self._emit_granular_agent_event(
+                        agent_name, display_output, context_id,
+                        event_type="agent_output", metadata={"output_length": len(output_text), "hitl": True}
+                    )
+                
+                await self._emit_granular_agent_event(
+                    agent_name, f"Waiting for your response...", context_id,
+                    event_type="info", metadata={"hitl": True}
+                )
+                
                 return self._make_step_result(step.step_label, agent_name, "input_required", output=output_text, hitl_pause=True)
             
             # Clear any stale pending_input_agent that doesn't match this agent
@@ -670,6 +703,19 @@ Use the data from the previous steps to complete your task."""
             
             if task.state == "failed":
                 return self._make_step_result(step.step_label, agent_name, "failed", error=task.error_message)
+            
+            # Emit agent output for completed steps so frontend shows the result
+            # The streaming callback only emits intermediate progress, not the final output
+            if output_text and agent_name:
+                display_output = output_text[:2000] + "…" if len(output_text) > 2000 else output_text
+                await self._emit_granular_agent_event(
+                    agent_name, display_output, context_id,
+                    event_type="agent_output", metadata={"output_length": len(output_text)}
+                )
+                await self._emit_granular_agent_event(
+                    agent_name, "Task completed", context_id,
+                    event_type="agent_complete"
+                )
             
             return self._make_step_result(step.step_label, agent_name, "completed", output=output_text)
                 
