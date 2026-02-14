@@ -74,7 +74,7 @@ const getDisplayName = (name: string): string => {
 // Group flat steps into structured phases
 // ──────────────────────────────────────────────────────────
 
-type PhaseType = "init" | "planning" | "agent_execution" | "synthesis" | "complete"
+type PhaseType = "init" | "planning"
 
 interface AgentBlock {
   agent: string
@@ -101,9 +101,9 @@ interface Phase {
   isComplete: boolean
 }
 
-function mkPhase(type: PhaseType, opts?: Partial<Phase>): Phase {
-  return { type, agents: [], orchestratorMessages: [], isComplete: false, ...opts }
-}
+// ──────────────────────────────────────────────────────────
+// Helpers
+// ──────────────────────────────────────────────────────────
 
 // Clean up agent status messages for display
 function cleanAgentStatus(text: string): string {
@@ -127,263 +127,6 @@ function isNoiseMessage(text: string): boolean {
     lower.length < 5
   )
 }
-
-// FALLBACK: Build phases from individual events when no plan is available
-// This is used for backward compatibility with old messages or before plan arrives
-// The primary rendering path uses plan.tasks directly (see main component)
-function buildPhases(steps: StepData[]): Phase[] {
-  const phases: Phase[] = []
-  let currentPhase: Phase | null = null
-  let currentAgent: AgentBlock | null = null
-  let lastStepNumber = 0
-  
-  // Map step numbers to phases to avoid duplicates
-  const stepPhaseMap = new Map<number, Phase>()
-
-  // Helper to get or create a planning phase for a specific step number
-  const getOrCreatePlanningPhase = (stepNum: number): Phase => {
-    // Check if we already have this step number
-    const existing = stepPhaseMap.get(stepNum)
-    if (existing) {
-      currentPhase = existing
-      return existing
-    }
-    
-    // Create new planning phase
-    lastStepNumber = Math.max(lastStepNumber, stepNum)
-    const phase = mkPhase("planning", { stepNumber: stepNum })
-    phases.push(phase)
-    stepPhaseMap.set(stepNum, phase)
-    currentPhase = phase
-    return phase
-  }
-  
-  // Helper to ensure we have ANY planning phase (auto-increment step number)
-  const ensureAnyPlanningPhase = (): Phase => {
-    if (currentPhase && currentPhase.type === "planning") {
-      return currentPhase
-    }
-    return getOrCreatePlanningPhase(lastStepNumber + 1)
-  }
-  
-  // Helper to find or create agent block
-  const getAgentBlock = (agentName: string, phase: Phase): AgentBlock => {
-    let block = phase.agents.find(a => a.agent === agentName)
-    if (!block) {
-      block = {
-        agent: agentName,
-        displayName: getDisplayName(agentName),
-        color: getAgentColor(agentName),
-        steps: [],
-        status: "running",
-      } as AgentBlock
-      phase.agents.push(block)
-    }
-    currentAgent = block
-    return block
-  }
-  
-  // Helper to get current agent if it matches
-  const getCurrentAgentIfMatch = (agentName: string): AgentBlock | null => {
-    if (currentAgent && currentAgent.agent === agentName) {
-      return currentAgent
-    }
-    return null
-  }
-
-  for (const step of steps) {
-    const et = step.eventType || ""
-    const isOrchestrator = step.agent === "foundry-host-agent"
-    const meta = step.metadata || {}
-    const statusLower = step.status.toLowerCase()
-
-    // ── Phase markers ──
-    if (et === "phase") {
-      const phaseName = meta.phase as string || ""
-      
-      if (phaseName === "init" || phaseName === "routing" || phaseName === "orchestration_start") {
-        if (!currentPhase || currentPhase.type !== "init") {
-          currentPhase = mkPhase("init")
-          phases.push(currentPhase)
-        }
-        continue
-      }
-      if (phaseName === "planning" || phaseName === "planning_ai") {
-        const stepNum = meta.step_number || lastStepNumber + 1
-        getOrCreatePlanningPhase(stepNum)
-        currentAgent = null
-        continue
-      }
-      if (phaseName === "synthesis") {
-        currentPhase = mkPhase("synthesis")
-        phases.push(currentPhase)
-        continue
-      }
-      if (phaseName === "complete") {
-        currentPhase = mkPhase("complete", { isComplete: true })
-        phases.push(currentPhase)
-        continue
-      }
-      if (phaseName === "hitl_resume") {
-        // Continue with current planning phase
-        continue
-      }
-      continue
-    }
-
-    // ── Reasoning ──
-    if (et === "reasoning") {
-      // Reasoning always goes to a planning phase
-      const phase = currentPhase?.type === "planning" ? currentPhase : ensureAnyPlanningPhase()
-      phase.reasoning = step.status
-      continue
-    }
-
-    // ── Agent start ──
-    if (et === "agent_start" && !isOrchestrator) {
-      const phase = ensureAnyPlanningPhase()
-      const block = getAgentBlock(step.agent, phase)
-      block.taskDescription = meta.task_description || step.status
-      continue
-    }
-
-    // ── Agent complete ──
-    if (et === "agent_complete" && !isOrchestrator) {
-      const agent = getCurrentAgentIfMatch(step.agent)
-      if (agent) {
-        agent.status = "complete"
-      }
-      continue
-    }
-
-    // ── Agent output ──
-    if (et === "agent_output" && !isOrchestrator) {
-      const agent = getCurrentAgentIfMatch(step.agent)
-      if (agent) {
-        agent.output = step.status
-      }
-      continue
-    }
-
-    // ── Agent error ──
-    if (et === "agent_error") {
-      const agent = getCurrentAgentIfMatch(step.agent)
-      if (agent) {
-        agent.status = "error"
-        agent.steps.push(step)
-      }
-      continue
-    }
-
-    // ── Info events ──
-    if (et === "info") {
-      if (isOrchestrator) {
-        // Orchestrator info messages: use current phase, or create init if no phase exists
-        let phase: Phase = currentPhase as Phase
-        if (!currentPhase) {
-          phase = mkPhase("init")
-          phases.push(phase)
-          currentPhase = phase
-        }
-        if (step.status.length > 10 && !isNoiseMessage(step.status)) {
-          phase.orchestratorMessages.push({ text: step.status, type: "info" })
-        }
-      } else {
-        const phase = ensureAnyPlanningPhase()
-        const block = getAgentBlock(step.agent, phase)
-        if (!isNoiseMessage(step.status)) {
-          block.steps.push(step)
-        }
-      }
-      continue
-    }
-
-    // ── Tool calls and progress ──
-    if (et === "tool_call" || et === "agent_progress") {
-      if (isOrchestrator) {
-        // Orchestrator progress: use current phase, or create init if no phase exists
-        let phase: Phase = currentPhase as Phase
-        if (!currentPhase) {
-          phase = mkPhase("init")
-          phases.push(phase)
-          currentPhase = phase
-        }
-        if (step.status.length > 10 && !isNoiseMessage(step.status)) {
-          phase.orchestratorMessages.push({ text: step.status, type: "progress" })
-        }
-      } else {
-        const phase = ensureAnyPlanningPhase()
-        const block = getAgentBlock(step.agent, phase)
-        if (!isNoiseMessage(step.status)) {
-          block.steps.push(step)
-        }
-      }
-      continue
-    }
-
-    // ── Fallback: untyped events ──
-    if (!et) {
-      // Skip noise
-      if (isNoiseMessage(step.status)) continue
-
-      if (isOrchestrator) {
-        // Check for phase markers in content
-        if (statusLower.includes("planning step")) {
-          const match = step.status.match(/step\s*(\d+)/i)
-          lastStepNumber = match ? parseInt(match[1]) : lastStepNumber + 1
-          currentPhase = mkPhase("planning", { stepNumber: lastStepNumber })
-          phases.push(currentPhase)
-          currentAgent = null
-          continue
-        }
-        if (statusLower.startsWith("reasoning:")) {
-          const phase = currentPhase?.type === "planning" ? currentPhase : ensureAnyPlanningPhase()
-          phase.reasoning = step.status.replace(/^Reasoning:\s*/i, "")
-          continue
-        }
-        if (statusLower.includes("goal achieved") || statusLower.includes("generating workflow summary")) {
-          currentPhase = mkPhase("synthesis")
-          phases.push(currentPhase)
-          continue
-        }
-        // General orchestrator message
-        if (step.status.length > 10) {
-          const phase = currentPhase || ensureAnyPlanningPhase()
-          phase.orchestratorMessages.push({ text: step.status, type: "info" })
-        }
-        continue
-      }
-
-      // Non-orchestrator agent event
-      if (statusLower.includes("completed the task") || statusLower.includes("completed successfully")) {
-        const agent = getCurrentAgentIfMatch(step.agent)
-        if (agent) {
-          agent.status = "complete"
-        }
-        continue
-      }
-
-      // Regular agent activity
-      const phase = ensureAnyPlanningPhase()
-      const block = getAgentBlock(step.agent, phase)
-      const isToolLike = statusLower.includes("🛠️") || statusLower.includes("creating ") || 
-                         statusLower.includes("searching ") || statusLower.includes("retrieving ")
-      block.steps.push({ ...step, eventType: isToolLike ? "tool_call" : "agent_progress" })
-    }
-  }
-
-  // Post-process: Remove empty planning phases (no agents, no messages, no reasoning)
-  return phases.filter(phase => {
-    if (phase.type === "planning") {
-      return phase.agents.length > 0 || phase.orchestratorMessages.length > 0 || phase.reasoning
-    }
-    return true
-  })
-}
-
-// ──────────────────────────────────────────────────────────
-// Helpers
-// ──────────────────────────────────────────────────────────
 
 function formatToolAction(status: string): string {
   let s = status
@@ -485,10 +228,11 @@ function renumberPhases(phases: Phase[]): Phase[] {
 // ──────────────────────────────────────────────────────────
 
 function AgentSection({ block, isLive }: { block: AgentBlock; isLive: boolean }) {
-  const isRunning = block.status === "running" && isLive
+  const isRunning = block.status === "running"
   const isComplete = block.status === "complete"
   const isError = block.status === "error"
-  const isWaiting = block.status === "waiting" || block.status === "input_required"
+  const isInputRequired = block.status === "input_required"
+  const isPending = block.status === "waiting"  // submitted/pending task, not yet started
 
   // Filter out noise and duplicates from progress steps
   const toolSteps = block.steps.filter(s => (s.eventType || "") === "tool_call")
@@ -514,17 +258,17 @@ function AgentSection({ block, isLive }: { block: AgentBlock; isLive: boolean })
 
   // During live execution: show tool calls and progress
   // After completion: only show output/error (the user cares about results, not process)
-  const showActivityDetail = isLive || isRunning
+  const showActivityDetail = isLive && (isRunning || isInputRequired)
 
   return (
     <div className="ml-5 border-l-2 pl-4 py-2" style={{ borderColor: `${block.color}40` }}>
       {/* Agent header */}
       <div className="flex items-center gap-2 mb-1.5">
-        {isWaiting ? (
+        {isInputRequired && isLive ? (
           <div className="h-4 w-4 flex items-center justify-center">
             <div className="h-2 w-2 rounded-full bg-amber-500 animate-pulse" />
           </div>
-        ) : isRunning ? (
+        ) : isRunning && isLive ? (
           <div className="relative flex items-center justify-center h-4 w-4">
             <div className="h-2 w-2 rounded-full animate-pulse" style={{ backgroundColor: block.color }} />
             <div className="h-2 w-2 rounded-full absolute animate-ping opacity-50" style={{ backgroundColor: block.color }} />
@@ -544,8 +288,11 @@ function AgentSection({ block, isLive }: { block: AgentBlock; isLive: boolean })
           {block.displayName}
         </span>
 
-        {isWaiting && (
+        {isInputRequired && (
           <span className="text-[10px] text-amber-600 dark:text-amber-400 font-medium">Waiting for input</span>
+        )}
+        {isPending && isLive && (
+          <span className="text-[10px] text-muted-foreground font-medium">Pending</span>
         )}
         {isComplete && (
           <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium">Done</span>
@@ -604,7 +351,7 @@ function AgentSection({ block, isLive }: { block: AgentBlock; isLive: boolean })
   )
 }
 
-function PhaseBlock({ phase, isLive, isLast }: { phase: Phase; isLive: boolean; isLast: boolean }) {
+function PhaseBlock({ phase, isLive }: { phase: Phase; isLive: boolean }) {
   if (phase.type === "init") {
     if (phase.orchestratorMessages.length === 0) return null
     return (
@@ -619,62 +366,59 @@ function PhaseBlock({ phase, isLive, isLast }: { phase: Phase; isLive: boolean; 
     )
   }
 
-  if (phase.type === "complete") {
-    return (
-      <div className="flex items-center gap-2 py-1.5">
-        <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-        <span className="text-xs font-medium text-emerald-600 dark:text-emerald-400">
-          Workflow complete
-        </span>
-      </div>
-    )
-  }
-
-  if (phase.type === "synthesis") {
-    return (
-      <div className="flex items-center gap-2 py-1.5">
-        {isLive ? (
-          <Loader className="h-3.5 w-3.5 animate-spin text-primary" />
-        ) : (
-          <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-        )}
-        <span className="text-xs font-medium text-muted-foreground">Generating summary…</span>
-      </div>
-    )
-  }
-
   // Planning + agent execution phase
   const phaseComplete = phase.isComplete
-  const phaseRunning = isLive && !phaseComplete
+
+  // Check if the last agent in this phase failed (determines step icon)
+  // For retries: only check the last agent (latest attempt is what matters)
+  // For parallel: check ALL agents (any failure means the step had issues)
+  const isRetryPhase = phase.agents.length > 1 &&
+    phase.agents.every(a => a.agent === phase.agents[0].agent)
+  
+  const lastAgent = phase.agents[phase.agents.length - 1]
+  const phaseFailed = isRetryPhase
+    ? lastAgent?.status === "error"
+    : phase.agents.some(a => a.status === "error")
+  const phaseSucceeded = phaseComplete && !phaseFailed
+  const phaseWaiting = lastAgent?.status === "input_required"
+  const phasePending = !phaseComplete && !phaseFailed && !phaseWaiting &&
+    phase.agents.every(a => a.status === "waiting")  // all agents are submitted/pending
+  // Running = live view + has an agent that is actively running (not just submitted/pending)
+  const phaseRunning = isLive && !phaseComplete && !phaseFailed && !phaseWaiting && !phasePending &&
+    phase.agents.some(a => a.status === "running")
 
   // Detect retries vs parallel:
   // - Retries: multiple blocks with the SAME agent name (same agent called multiple times)
   // - Parallel: multiple blocks with DIFFERENT agent names (different agents in same step)
-  const isRetryPhase = phase.agents.length > 1 &&
-    phase.agents.every(a => a.agent === phase.agents[0].agent)
 
   return (
     <div className="py-1">
       {/* Step header */}
       <div className="flex items-center gap-2 mb-1">
         <div className={`flex items-center justify-center h-5 w-5 rounded-full text-[10px] font-bold ${
-          phaseComplete
-            ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
-            : phaseRunning
-              ? "bg-primary/15 text-primary"
-              : "bg-muted text-muted-foreground"
+          phaseFailed
+            ? "bg-red-500/15 text-red-600 dark:text-red-400"
+            : phaseSucceeded
+              ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
+              : phaseWaiting
+                ? "bg-amber-500/15 text-amber-600 dark:text-amber-400"
+                : phaseRunning
+                  ? "bg-primary/15 text-primary"
+                  : "bg-muted text-muted-foreground"
         }`}>
           {phase.stepNumber || "•"}
         </div>
         <span className="text-xs font-semibold text-foreground">
-          Step {phase.stepNumber}
+          {phase.stepNumber ? `Step ${phase.stepNumber}` : "Step"}
         </span>
         {isRetryPhase && (
           <span className="text-[9px] text-amber-600 dark:text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded-full">
             {phase.agents.length} attempts
           </span>
         )}
-        {phaseComplete && <CheckCircle2 className="h-3 w-3 text-emerald-500" />}
+        {phaseFailed && <AlertCircle className="h-3 w-3 text-red-500" />}
+        {phaseSucceeded && <CheckCircle2 className="h-3 w-3 text-emerald-500" />}
+        {phaseWaiting && <MessageSquare className="h-3 w-3 text-amber-500" />}
         {phaseRunning && <Loader className="h-3 w-3 animate-spin text-primary" />}
       </div>
 
@@ -721,7 +465,7 @@ function PhaseBlock({ phase, isLive, isLast }: { phase: Phase; isLive: boolean; 
         }
 
         // Full rendering for: the last retry attempt, parallel agents, or single agents
-        return <AgentSection key={`${block.agent}-${i}`} block={block} isLive={isLive && isLast} />
+        return <AgentSection key={`${block.agent}-${i}`} block={block} isLive={isLive} />
       })}
     </div>
   )
@@ -789,7 +533,10 @@ export function InferenceSteps({ steps, isInferencing, plan }: InferenceStepsPro
         if (displayOutput) {
           displayOutput = displayOutput.replace(/^HITL Response:\s*/i, "")
           const trimmed = displayOutput.trim()
-          if (trimmed.length < 20 && /^(approve|approved|yes|no|reject|ok|confirm)$/i.test(trimmed)) {
+          // Empty or whitespace-only → don't show
+          if (!trimmed) {
+            displayOutput = undefined
+          } else if (trimmed.length < 20 && /^(approve|approved|yes|no|reject|ok|confirm)$/i.test(trimmed)) {
             displayOutput = `✅ User responded: "${trimmed}"`
           }
         }
@@ -822,10 +569,12 @@ export function InferenceSteps({ steps, isInferencing, plan }: InferenceStepsPro
         }
 
         // Map task state to UI status
+        // "submitted" tasks haven't started — they're rendered but shown as pending
         const uiStatus: AgentBlock["status"] =
           task.state === "completed" ? "complete" :
           task.state === "failed" ? "error" :
-          task.state === "input_required" ? "input_required" : "running"
+          task.state === "input_required" ? "input_required" :
+          task.state === "submitted" || task.state === "pending" ? "waiting" : "running"
 
         const agentBlock: AgentBlock = {
           agent: agentName,
@@ -839,19 +588,20 @@ export function InferenceSteps({ steps, isInferencing, plan }: InferenceStepsPro
         }
 
         // Group into phases by step number
+        const isTerminal = task.state === "completed" || task.state === "failed"
         const existingPhase = stepPhaseMap.get(stepNum)
         if (existingPhase) {
           // Same step number = retry or parallel sibling → add to existing phase
           existingPhase.agents.push(agentBlock)
-          // Phase completion: complete only if the LATEST task succeeded
-          existingPhase.isComplete = task.state === "completed"
+          // Phase is "complete" (done) when the LATEST task reached a terminal state
+          existingPhase.isComplete = isTerminal
         } else {
           const phase: Phase = {
             type: "planning",
             stepNumber: stepNum,
             agents: [agentBlock],
             orchestratorMessages: [],
-            isComplete: task.state === "completed",
+            isComplete: isTerminal,
             reasoning: idx === 0 ? plan.reasoning : undefined,
           }
           planPhases.push(phase)
@@ -882,24 +632,38 @@ export function InferenceSteps({ steps, isInferencing, plan }: InferenceStepsPro
       for (const event of orchestratorEvents) {
         const et = event.eventType || ""
         const status = event.status || ""
+        const statusLower = status.toLowerCase()
         if (isNoiseMessage(status)) continue
         if (et === "reasoning" || et === "phase") continue
-        // Document extraction and file processing events
+        // Skip planning/routing/agent management noise
+        if (statusLower.includes("planning step")) continue
+        if (statusLower.includes("agents available")) continue
+        if (statusLower.includes("route decision")) continue
+        if (statusLower.includes("executing step")) continue
+        if (statusLower.includes("executing parallel")) continue
+        if (statusLower.includes("initializing orchestration")) continue
+        if (statusLower.includes("resuming workflow")) continue
+        if (statusLower.includes("workflow paused")) continue
+        if (statusLower.includes("goal achieved")) continue
+        if (statusLower.includes("generating workflow summary")) continue
+        // Only keep genuinely useful init events: document extraction, file processing
         if (status.includes("📄") || status.includes("Extracted") ||
-            status.includes("chunks") || status.includes("memory") ||
-            et === "info" || et === "routing") {
+            status.includes("chunks") || status.includes("memory")) {
           initPhase.orchestratorMessages.push({ text: status, type: "info" })
         }
       }
 
+      // Renumber plan phases sequentially (close gaps like 1, 2, 5 → 1, 2, 3)
+      const renumbered = renumberPhases(planPhases)
+
       if (initPhase.orchestratorMessages.length > 0) {
-        return [initPhase, ...planPhases]
+        return [initPhase, ...renumbered]
       }
-      return planPhases
+      return renumbered
     }
 
-    // Fall back to event-based rendering (no plan available)
-    return renumberPhases(buildPhases(steps))
+    // No plan available — nothing to render
+    return []
   }, [steps, plan])
 
   const uniqueAgents = useMemo(() => {
@@ -928,6 +692,16 @@ export function InferenceSteps({ steps, isInferencing, plan }: InferenceStepsPro
   }, [steps, isInferencing])
 
   const planningPhases = phases.filter(p => p.type === "planning")
+  const hasFailures = planningPhases.some(p => {
+    // For retries (same agent): only the last attempt matters
+    const isRetry = p.agents.length > 1 && p.agents.every(a => a.agent === p.agents[0].agent)
+    if (isRetry) {
+      const last = p.agents[p.agents.length - 1]
+      return last?.status === "error"
+    }
+    // For parallel or single agents: any failure counts
+    return p.agents.some(a => a.status === "error")
+  })
   const summaryLabel = uniqueAgents.length > 0
     ? `${uniqueAgents.length} agent${uniqueAgents.length !== 1 ? "s" : ""} · ${planningPhases.length} step${planningPhases.length !== 1 ? "s" : ""}`
     : `${steps.length} events`
@@ -959,11 +733,13 @@ export function InferenceSteps({ steps, isInferencing, plan }: InferenceStepsPro
                 <Brain className="h-3.5 w-3.5 text-amber-500" />
                 <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Goal</span>
                 <span className={`text-[9px] px-1.5 py-0.5 rounded-full ml-auto ${
-                  plan?.goal_status === "completed" 
-                    ? "bg-emerald-500/10 text-emerald-600" 
-                    : "bg-blue-500/10 text-blue-600"
+                  hasFailures
+                    ? "bg-red-500/10 text-red-600"
+                    : plan?.goal_status === "completed" 
+                      ? "bg-emerald-500/10 text-emerald-600" 
+                      : "bg-blue-500/10 text-blue-600"
                 }`}>
-                  {plan?.goal_status === "completed" ? "Completed" : "In Progress"}
+                  {hasFailures ? "Completed with errors" : plan?.goal_status === "completed" ? "Completed" : "In Progress"}
                 </span>
               </div>
               <p className="text-xs text-foreground/80 leading-relaxed">{cleanGoal}</p>
@@ -984,7 +760,7 @@ export function InferenceSteps({ steps, isInferencing, plan }: InferenceStepsPro
 
           <div ref={containerRef} className="space-y-0.5 max-h-[350px] overflow-y-auto pr-1">
             {phases.map((phase, i) => (
-              <PhaseBlock key={i} phase={phase} isLive={true} isLast={i === phases.length - 1} />
+              <PhaseBlock key={i} phase={phase} isLive={true} />
             ))}
           </div>
         </div>
@@ -998,10 +774,17 @@ export function InferenceSteps({ steps, isInferencing, plan }: InferenceStepsPro
       <AccordionItem value="item-1" className="border border-border/50 bg-muted/30 rounded-xl px-4 shadow-sm">
         <AccordionTrigger className="hover:no-underline py-3">
           <div className="flex items-center gap-2.5">
-            <div className="h-7 w-7 rounded-lg bg-emerald-500/10 flex items-center justify-center">
-              <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+            <div className={`h-7 w-7 rounded-lg flex items-center justify-center ${
+              hasFailures ? "bg-amber-500/10" : "bg-emerald-500/10"
+            }`}>
+              {hasFailures
+                ? <AlertCircle className="h-4 w-4 text-amber-500" />
+                : <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+              }
             </div>
-            <span className="font-medium text-sm">Workflow completed</span>
+            <span className="font-medium text-sm">
+              {hasFailures ? "Workflow completed with errors" : "Workflow completed"}
+            </span>
             <span className="text-xs text-muted-foreground ml-1">{summaryLabel}</span>
           </div>
         </AccordionTrigger>
@@ -1013,11 +796,13 @@ export function InferenceSteps({ steps, isInferencing, plan }: InferenceStepsPro
                 <Brain className="h-3.5 w-3.5 text-amber-500" />
                 <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Goal</span>
                 <span className={`text-[9px] px-1.5 py-0.5 rounded-full ml-auto ${
-                  plan?.goal_status === "completed" 
-                    ? "bg-emerald-500/10 text-emerald-600" 
-                    : "bg-blue-500/10 text-blue-600"
+                  hasFailures
+                    ? "bg-red-500/10 text-red-600"
+                    : plan?.goal_status === "completed" 
+                      ? "bg-emerald-500/10 text-emerald-600" 
+                      : "bg-blue-500/10 text-blue-600"
                 }`}>
-                  {plan?.goal_status === "completed" ? "Completed" : "In Progress"}
+                  {hasFailures ? "Completed with errors" : plan?.goal_status === "completed" ? "Completed" : "In Progress"}
                 </span>
               </div>
               <p className="text-xs text-foreground/80 leading-relaxed">{cleanGoal}</p>
@@ -1028,7 +813,7 @@ export function InferenceSteps({ steps, isInferencing, plan }: InferenceStepsPro
           
           <div className="space-y-0.5 pt-1 pb-2 max-h-[400px] overflow-y-auto">
             {phases.map((phase, i) => (
-              <PhaseBlock key={i} phase={phase} isLive={false} isLast={false} />
+              <PhaseBlock key={i} phase={phase} isLive={false} />
             ))}
           </div>
         </AccordionContent>

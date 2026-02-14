@@ -3399,6 +3399,17 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                 if ((!message.steps || message.steps.length === 0) && !message.metadata?.workflow_plan) {
                   return null
                 }
+                // If this summary has no plan, check if a LATER summary has a plan
+                // (HITL workflows produce two summaries: pre-pause events + post-resume plan)
+                // The plan contains full task history, so the earlier one is redundant
+                if (!message.metadata?.workflow_plan) {
+                  const hasLaterPlan = messages.slice(index + 1).some(
+                    m => m.type === "inference_summary" && m.metadata?.workflow_plan
+                  )
+                  if (hasLaterPlan) {
+                    return null  // Skip — the later plan-based summary covers everything
+                  }
+                }
                 // Pass the plan from metadata for rich rendering
                 return <InferenceSteps 
                   key={`${message.id}-${index}`} 

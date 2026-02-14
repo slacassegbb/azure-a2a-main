@@ -260,6 +260,7 @@ NEEDS_INPUT: Your specific question here
                 # Accumulate text deltas, yield tool status immediately
                 text_chunks = []
                 tool_calls_seen = set()
+                mcp_failures = []  # Track MCP tool call failures
                 event_count = 0
                 tool_call_times = {}
 
@@ -290,6 +291,21 @@ NEEDS_INPUT: Your specific question here
                         start_t = tool_call_times.get(tool_name, stream_start)
                         duration = time.time() - start_t
                         logger.info(f"✅ MCP tool completed: {tool_name} ({duration:.1f}s)")
+
+                    elif event_type == "response.mcp_call.failed":
+                        tool_name = getattr(event, 'name', None) or getattr(event, 'item_id', 'mcp_tool')
+                        start_t = tool_call_times.get(tool_name, stream_start)
+                        duration = time.time() - start_t
+                        logger.error(f"❌ MCP tool FAILED: {tool_name} ({duration:.1f}s)")
+                        mcp_failures.append(tool_name)
+
+                    elif event_type == "response.failed":
+                        resp = getattr(event, 'response', None)
+                        error_obj = getattr(resp, 'error', None) if resp else None
+                        error_msg = getattr(error_obj, 'message', 'Unknown error') if error_obj else 'Unknown error'
+                        logger.error(f"❌ Response FAILED: {error_msg}")
+                        yield f"Error: {error_msg}"
+                        return
 
                     elif event_type == "response.output_item.added":
                         # Alternative event for tool calls - check if it's an MCP call
@@ -329,8 +345,13 @@ NEEDS_INPUT: Your specific question here
                 # Yield accumulated text as the final response
                 if text_chunks:
                     full_text = "".join(text_chunks)
-                    logger.info(f"✅ Response text ({len(full_text)} chars)")
-                    yield full_text
+                    if mcp_failures:
+                        failed_tools = ", ".join(mcp_failures)
+                        logger.error(f"❌ MCP tools failed ({failed_tools}), reporting as error")
+                        yield f"Error: MCP tool(s) failed ({failed_tools}). {full_text}"
+                    else:
+                        logger.info(f"✅ Response text ({len(full_text)} chars)")
+                        yield full_text
                 else:
                     logger.warning("⚠️ No text content in response")
                     yield "Error: Agent completed but no response text was generated"
