@@ -771,7 +771,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const messagesContainerRef = useRef<HTMLDivElement>(null)
   const [isInferencing, setIsInferencing] = useState(false)
-  const [inferenceSteps, setInferenceSteps] = useState<{ agent: string; status: string; imageUrl?: string; imageName?: string; mediaType?: string }[]>([])
+  const [inferenceSteps, setInferenceSteps] = useState<{ agent: string; status: string; imageUrl?: string; imageName?: string; mediaType?: string; eventType?: string; metadata?: Record<string, any> }[]>([])
   const [localActiveNode, setLocalActiveNode] = useState<string | null>(null)
   // Use external activeNode if provided, otherwise use local state
   const activeNode = externalActiveNode !== undefined ? externalActiveNode : localActiveNode
@@ -1978,7 +1978,9 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
         const status = `🛠️ ${data.agentName} is using ${data.toolName}...`
         setInferenceSteps(prev => [...prev, { 
           agent: data.agentName, 
-          status: status 
+          status: status,
+          eventType: "tool_call",
+          metadata: { tool_name: data.toolName },
         }])
       }
     }
@@ -2086,7 +2088,9 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
               // Replace the last "working on" with the new one instead of adding
               return [...prev.slice(0, -1), { 
                 agent: data.agentName, 
-                status: displayContent 
+                status: displayContent,
+                eventType: data.eventType,
+                metadata: data.metadata,
               }]
             }
           }
@@ -2098,7 +2102,9 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
           
           return [...prev, { 
             agent: data.agentName, 
-            status: displayContent 
+            status: displayContent,
+            eventType: data.eventType,
+            metadata: data.metadata,
           }]
         })
       }

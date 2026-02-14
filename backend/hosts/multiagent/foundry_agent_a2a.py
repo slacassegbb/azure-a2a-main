@@ -560,7 +560,8 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
                 for tool_call in tool_calls_to_execute:
                     # Emit tool call event for UI
                     asyncio.create_task(self._emit_granular_agent_event(
-                        "foundry-host-agent", f"🛠️ Calling: {tool_call.name}", context_id
+                        "foundry-host-agent", f"🛠️ Calling: {tool_call.name}", context_id,
+                        event_type="tool_call", metadata={"tool_name": tool_call.name}
                     ))
                     
                     # Execute the tool
@@ -1493,7 +1494,10 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
         """
         try:
             print(f"🤖 [Agent Mode] Calling Azure OpenAI for structured output...")
-            await self._emit_status_event("Planning next task with AI...", context_id)
+            await self._emit_granular_agent_event(
+                "foundry-host-agent", "Planning next task with AI...", context_id,
+                event_type="phase", metadata={"phase": "planning_ai"}
+            )
             
             # Extract base endpoint from AI Foundry project endpoint
             endpoint = os.environ["AZURE_AI_FOUNDRY_PROJECT_ENDPOINT"]
@@ -2666,7 +2670,10 @@ Answer with just JSON:
             # ========================================================================
             # EMIT WORKFLOW MESSAGE: Clear "Calling agent" message for workflow panel
             # ========================================================================
-            asyncio.create_task(self._emit_granular_agent_event(agent_name, f"Contacting {agent_name}...", contextId))
+            asyncio.create_task(self._emit_granular_agent_event(
+                agent_name, f"Contacting {agent_name}...", contextId,
+                event_type="agent_progress"
+            ))
             
             # ========================================================================
             # EMIT INITIAL STATUS: "submitted" - task has been sent to remote agent
@@ -2819,18 +2826,38 @@ Answer with just JSON:
                                 )
                                 
                                 if not should_skip:
+                                    # Classify the event type based on content
+                                    stream_event_type = "agent_progress"
+                                    stream_metadata = None
+                                    sl = status_text.lower()
+                                    if any(kw in sl for kw in ["creating ", "searching ", "looking up", "listing ", "retrieving ", "using "]):
+                                        stream_event_type = "tool_call"
+                                        # Extract tool action name
+                                        stream_metadata = {"tool_action": status_text.strip()}
+                                    elif "is working on" in sl or "request sent to" in sl:
+                                        stream_event_type = "agent_progress"
+                                    
                                     # Stream detailed status to UI - USE HOST'S contextId for routing!
-                                    asyncio.create_task(self._emit_granular_agent_event(agent_name, status_text, host_context_id))
+                                    asyncio.create_task(self._emit_granular_agent_event(
+                                        agent_name, status_text, host_context_id,
+                                        event_type=stream_event_type, metadata=stream_metadata
+                                    ))
                             
                         elif event_kind == 'artifact-update':
                             # Agent is generating artifacts - USE HOST'S contextId for routing!
                             elapsed_seconds = int(time.time() - start_time)
                             elapsed_str = f" ({elapsed_seconds}s)" if elapsed_seconds >= 5 else ""
-                            asyncio.create_task(self._emit_granular_agent_event(agent_name, f"{agent_name} is preparing results{elapsed_str}", host_context_id))
+                            asyncio.create_task(self._emit_granular_agent_event(
+                                agent_name, f"{agent_name} is preparing results{elapsed_str}", host_context_id,
+                                event_type="agent_progress"
+                            ))
                         
                         elif event_kind == 'task':
                             # Initial task creation - USE HOST'S contextId for routing!
-                            asyncio.create_task(self._emit_granular_agent_event(agent_name, f"{agent_name} has started working on: \"{query_preview}\"", host_context_id))
+                            asyncio.create_task(self._emit_granular_agent_event(
+                                agent_name, f"{agent_name} has started working on: \"{query_preview}\"", host_context_id,
+                                event_type="agent_progress"
+                            ))
                     
                     # Call the original callback for task management
                     return self._default_task_callback(event, agent_card)                # Emit outgoing message event for DAG display (use original message, not contextualized)
@@ -2891,7 +2918,10 @@ Answer with just JSON:
                     # Emit completed status for remote agent - the streaming callback doesn't always
                     # receive a final status-update event with state=completed from remote agents
                     asyncio.create_task(self._emit_simple_task_status(agent_name, "completed", contextId, taskId))
-                    asyncio.create_task(self._emit_granular_agent_event(agent_name, f"{agent_name} has completed the task successfully", contextId))
+                    asyncio.create_task(self._emit_granular_agent_event(
+                        agent_name, f"{agent_name} has completed the task successfully", contextId,
+                        event_type="agent_complete"
+                    ))
                     
                     response_parts = []
                     
@@ -4448,7 +4478,10 @@ Answer with just JSON:
                     # Use LLM to synthesize a clean, professional summary from raw agent outputs
                     if orchestration_outputs:
                         try:
-                            await self._emit_status_event("Generating workflow summary...", context_id)
+                            await self._emit_granular_agent_event(
+                                "foundry-host-agent", "Generating workflow summary...", context_id,
+                                event_type="phase", metadata={"phase": "synthesis"}
+                            )
                             await self._ensure_project_client()
                             
                             # Build numbered step outputs for the synthesis prompt

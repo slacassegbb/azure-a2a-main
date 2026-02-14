@@ -1,95 +1,51 @@
 "use client"
 
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
-import { CheckCircle2, Loader, Workflow, Wrench, MessageSquare, Zap } from "lucide-react"
+import { CheckCircle2, Loader, Workflow, Wrench, Brain, ChevronRight, Bot, AlertCircle } from "lucide-react"
 import { useEffect, useRef, useMemo } from "react"
 
+type StepData = {
+  agent: string
+  status: string
+  imageUrl?: string
+  imageName?: string
+  agentColor?: string
+  eventType?: string
+  metadata?: Record<string, any>
+}
+
 type InferenceStepsProps = {
-  steps: { agent: string; status: string; imageUrl?: string; imageName?: string; agentColor?: string }[]
+  steps: StepData[]
   isInferencing: boolean
 }
 
-// Agent color palette matching visual-workflow-designer AGENT_COLORS
+// Agent color palette
 const AGENT_COLORS = [
-  "#ec4899", // pink
   "#8b5cf6", // purple
   "#06b6d4", // cyan
   "#10b981", // emerald
   "#f59e0b", // amber
-  "#ef4444", // red
+  "#ec4899", // pink
   "#3b82f6", // blue
-  "#14b8a6", // teal
   "#f97316", // orange
-  "#a855f7", // violet
+  "#14b8a6", // teal
 ]
 
-// Simple hash function to get consistent color for agent name
-const getAgentColorFromName = (agentName: string): string => {
+const getAgentColor = (name: string): string => {
   let hash = 0
-  for (let i = 0; i < agentName.length; i++) {
-    hash = ((hash << 5) - hash) + agentName.charCodeAt(i)
-    hash = hash & hash // Convert to 32bit integer
+  for (let i = 0; i < name.length; i++) {
+    hash = ((hash << 5) - hash) + name.charCodeAt(i)
+    hash = hash & hash
   }
   return AGENT_COLORS[Math.abs(hash) % AGENT_COLORS.length]
 }
 
-// Categorize a step for icon and styling
-type StepCategory = "tool" | "status" | "complete" | "error" | "info"
-
-const getStepCategory = (status: string): StepCategory => {
-  const lower = status.toLowerCase()
-  if (lower.includes("completed") || lower.includes("complete") || lower.includes("successfully")) return "complete"
-  if (lower.includes("error") || lower.includes("failed") || lower.includes("❌")) return "error"
-  if (lower.includes("executing") || lower.includes("creating") || lower.includes("searching") ||
-      lower.includes("looking up") || lower.includes("listing") || lower.includes("retrieving") ||
-      lower.includes("processing") || lower.includes("generating") || lower.includes("using ") ||
-      lower.includes("🛠️")) return "tool"
-  if (lower.includes("contacting") || lower.includes("sent to") || lower.includes("started working")) return "status"
-  return "info"
-}
-
-const StepIcon = ({ category, color, isLatest }: { category: StepCategory; color: string; isLatest: boolean }) => {
-  const size = "h-3.5 w-3.5"
-  
-  if (isLatest) {
-    return (
-      <div className="h-4 w-4 flex-shrink-0 mt-0.5 relative flex items-center justify-center">
-        <div 
-          className="h-2 w-2 rounded-full animate-pulse"
-          style={{ backgroundColor: color }}
-        />
-        <div 
-          className="h-2 w-2 rounded-full absolute animate-ping opacity-75"
-          style={{ backgroundColor: color }}
-        />
-      </div>
-    )
-  }
-  
-  switch (category) {
-    case "complete":
-      return <CheckCircle2 className={`${size} flex-shrink-0 mt-0.5 text-emerald-500`} />
-    case "error":
-      return <Zap className={`${size} flex-shrink-0 mt-0.5 text-red-500`} />
-    case "tool":
-      return <Wrench className={`${size} flex-shrink-0 mt-0.5`} style={{ color }} />
-    case "status":
-      return <MessageSquare className={`${size} flex-shrink-0 mt-0.5`} style={{ color }} />
-    default:
-      return (
-        <div 
-          className="h-1.5 w-1.5 rounded-full flex-shrink-0 mt-1.5"
-          style={{ backgroundColor: color }}
-        />
-      )
-  }
-}
-
-// Friendly agent name display (strip prefixes like "azurefoundry_")
-const getDisplayAgentName = (agentName: string): string => {
-  return agentName
+// Friendly agent name display
+const getDisplayName = (name: string): string => {
+  if (/^foundry-host-agent$/i.test(name)) return "Orchestrator"
+  return name
     .replace(/^azurefoundry_/i, "")
-    .replace(/^foundry-host-agent$/i, "Orchestrator")
+    .replace(/^AI Foundry\s+/i, "")
     .replace(/-/g, " ")
     .replace(/_/g, " ")
     .split(" ")
@@ -97,90 +53,396 @@ const getDisplayAgentName = (agentName: string): string => {
     .join(" ")
 }
 
-// Simple markdown-like formatting for **bold** text
-const formatStatus = (status: string) => {
-  // Split by **text** pattern and render bold parts
-  const parts = status.split(/(\*\*[^*]+\*\*)/g)
-  return parts.map((part, i) => {
-    if (part.startsWith('**') && part.endsWith('**')) {
-      return <strong key={i} className="font-semibold text-foreground">{part.slice(2, -2)}</strong>
+// ──────────────────────────────────────────────────────────
+// Group flat steps into structured phases
+// ──────────────────────────────────────────────────────────
+
+type PhaseType = "init" | "planning" | "agent_execution" | "synthesis" | "complete"
+
+interface AgentBlock {
+  agent: string
+  displayName: string
+  color: string
+  steps: StepData[]
+  status: "running" | "complete" | "error"
+  taskDescription?: string
+}
+
+interface Phase {
+  type: PhaseType
+  stepNumber?: number
+  reasoning?: string
+  agents: AgentBlock[]
+  isComplete: boolean
+}
+
+function buildPhases(steps: StepData[]): Phase[] {
+  const phases: Phase[] = []
+  let currentPhase: Phase | null = null
+  let currentAgent: AgentBlock | null = null
+  let phaseStepNum = 0
+
+  for (const step of steps) {
+    const et = step.eventType || ""
+    const isOrchestrator = step.agent === "foundry-host-agent"
+    const meta = step.metadata || {}
+
+    // ── Phase markers ──
+    if (et === "phase") {
+      const phaseName = meta.phase as string || ""
+
+      if (phaseName === "init") {
+        currentPhase = { type: "init", agents: [], isComplete: false }
+        phases.push(currentPhase)
+        continue
+      }
+      if (phaseName === "planning" || phaseName === "planning_ai") {
+        phaseStepNum = meta.step_number || phaseStepNum + 1
+        currentPhase = { type: "planning", stepNumber: phaseStepNum, agents: [], isComplete: false }
+        currentAgent = null
+        phases.push(currentPhase)
+        continue
+      }
+      if (phaseName === "synthesis") {
+        currentPhase = { type: "synthesis", agents: [], isComplete: false }
+        phases.push(currentPhase)
+        continue
+      }
+      if (phaseName === "complete") {
+        if (currentPhase) currentPhase.isComplete = true
+        currentPhase = { type: "complete", agents: [], isComplete: true, stepNumber: meta.iterations }
+        phases.push(currentPhase)
+        continue
+      }
+      continue
     }
-    return <span key={i}>{part}</span>
+
+    // ── Reasoning ──
+    if (et === "reasoning" && currentPhase) {
+      currentPhase.reasoning = step.status
+      continue
+    }
+
+    // ── Agent start ──
+    if (et === "agent_start" && !isOrchestrator) {
+      if (!currentPhase || currentPhase.type === "complete" || currentPhase.type === "init") {
+        phaseStepNum++
+        currentPhase = { type: "planning", stepNumber: phaseStepNum, agents: [], isComplete: false }
+        phases.push(currentPhase)
+      }
+
+      currentAgent = {
+        agent: step.agent,
+        displayName: getDisplayName(step.agent),
+        color: getAgentColor(step.agent),
+        steps: [],
+        status: "running",
+        taskDescription: meta.task_description || step.status,
+      }
+      currentPhase.agents.push(currentAgent)
+      continue
+    }
+
+    // ── Agent complete ──
+    if (et === "agent_complete") {
+      if (currentAgent && currentAgent.agent === step.agent) {
+        currentAgent.status = "complete"
+      }
+      continue
+    }
+
+    // ── Agent error ──
+    if (et === "agent_error") {
+      if (currentAgent && currentAgent.agent === step.agent) {
+        currentAgent.status = "error"
+        currentAgent.steps.push(step)
+      }
+      continue
+    }
+
+    // ── Tool calls and progress from agents ──
+    if ((et === "tool_call" || et === "agent_progress") && !isOrchestrator) {
+      if (currentAgent && currentAgent.agent === step.agent) {
+        currentAgent.steps.push(step)
+      } else {
+        // Implicit agent block
+        if (!currentPhase || currentPhase.type === "complete" || currentPhase.type === "init") {
+          phaseStepNum++
+          currentPhase = { type: "planning", stepNumber: phaseStepNum, agents: [], isComplete: false }
+          phases.push(currentPhase)
+        }
+        currentAgent = {
+          agent: step.agent,
+          displayName: getDisplayName(step.agent),
+          color: getAgentColor(step.agent),
+          steps: [step],
+          status: "running",
+        }
+        currentPhase.agents.push(currentAgent)
+      }
+      continue
+    }
+
+    // ── Fallback: untyped events (backwards compat with old backend) ──
+    if (!et) {
+      const statusLower = step.status.toLowerCase()
+
+      if (isOrchestrator) {
+        if (statusLower.includes("planning step")) {
+          const match = step.status.match(/step\s*(\d+)/i)
+          phaseStepNum = match ? parseInt(match[1]) : phaseStepNum + 1
+          currentPhase = { type: "planning", stepNumber: phaseStepNum, agents: [], isComplete: false }
+          currentAgent = null
+          phases.push(currentPhase)
+          continue
+        }
+        if (statusLower.startsWith("reasoning:")) {
+          if (currentPhase) currentPhase.reasoning = step.status.replace(/^Reasoning:\s*/i, "")
+          continue
+        }
+        if (statusLower.includes("goal achieved") || statusLower.includes("generating workflow summary")) {
+          currentPhase = { type: "synthesis", agents: [], isComplete: false }
+          phases.push(currentPhase)
+          continue
+        }
+        // Skip generic orchestrator noise
+        if (statusLower.includes("initializing") || statusLower.includes("resuming") ||
+            statusLower.includes("agents available") || statusLower.includes("planning next task") ||
+            statusLower.includes("calling agent")) {
+          continue
+        }
+      }
+
+      // Agent completion
+      if (statusLower.includes("completed the task") || statusLower.includes("completed successfully")) {
+        if (currentAgent && currentAgent.agent === step.agent) {
+          currentAgent.status = "complete"
+        }
+        continue
+      }
+
+      // Agent activity
+      if (!isOrchestrator) {
+        const isToolLike = statusLower.includes("creating ") || statusLower.includes("searching ") ||
+          statusLower.includes("looking up") || statusLower.includes("retrieving ") ||
+          statusLower.includes("using ") || statusLower.includes("🛠️")
+
+        if (currentAgent && currentAgent.agent === step.agent) {
+          currentAgent.steps.push({ ...step, eventType: isToolLike ? "tool_call" : "agent_progress" })
+        } else {
+          if (!currentPhase || currentPhase.type === "complete") {
+            phaseStepNum++
+            currentPhase = { type: "planning", stepNumber: phaseStepNum, agents: [], isComplete: false }
+            phases.push(currentPhase)
+          }
+          currentAgent = {
+            agent: step.agent,
+            displayName: getDisplayName(step.agent),
+            color: getAgentColor(step.agent),
+            steps: [{ ...step, eventType: isToolLike ? "tool_call" : "agent_progress" }],
+            status: "running",
+          }
+          currentPhase.agents.push(currentAgent)
+        }
+        continue
+      }
+    }
+  }
+
+  return phases
+}
+
+// ──────────────────────────────────────────────────────────
+// Helpers
+// ──────────────────────────────────────────────────────────
+
+function formatToolAction(status: string): string {
+  let s = status
+    .replace(/^🛠️\s*/, "")
+    .replace(/^Calling:\s*/i, "")
+    .replace(/_/g, " ")
+  s = s.charAt(0).toUpperCase() + s.slice(1)
+  s = s.replace(/\.{3,}$/, "")
+  return s
+}
+
+function truncateText(text: string, maxLen: number): string {
+  if (text.length <= maxLen) return text
+  return text.slice(0, maxLen) + "…"
+}
+
+// ──────────────────────────────────────────────────────────
+// Sub-components
+// ──────────────────────────────────────────────────────────
+
+function AgentSection({ block, isLive }: { block: AgentBlock; isLive: boolean }) {
+  const isRunning = block.status === "running" && isLive
+  const isComplete = block.status === "complete"
+  const isError = block.status === "error"
+
+  const toolSteps = block.steps.filter(s => (s.eventType || "") === "tool_call")
+  const progressSteps = block.steps.filter(s => {
+    const et = s.eventType || ""
+    if (et === "tool_call") return false
+    const sl = s.status.toLowerCase()
+    // Filter out contacting/working-on/request-sent noise
+    return !sl.includes("contacting ") && !sl.includes("is working on") && !sl.includes("request sent to")
   })
+
+  return (
+    <div className="ml-5 border-l-2 pl-4 py-2" style={{ borderColor: `${block.color}40` }}>
+      {/* Agent header */}
+      <div className="flex items-center gap-2 mb-1.5">
+        {isRunning ? (
+          <div className="relative flex items-center justify-center h-4 w-4">
+            <div className="h-2 w-2 rounded-full animate-pulse" style={{ backgroundColor: block.color }} />
+            <div className="h-2 w-2 rounded-full absolute animate-ping opacity-50" style={{ backgroundColor: block.color }} />
+          </div>
+        ) : isComplete ? (
+          <CheckCircle2 className="h-4 w-4 text-emerald-500 flex-shrink-0" />
+        ) : isError ? (
+          <AlertCircle className="h-4 w-4 text-red-500 flex-shrink-0" />
+        ) : (
+          <Bot className="h-4 w-4 flex-shrink-0" style={{ color: block.color }} />
+        )}
+
+        <span
+          className="text-xs font-semibold px-2 py-0.5 rounded-full"
+          style={{ backgroundColor: `${block.color}15`, color: block.color }}
+        >
+          {block.displayName}
+        </span>
+
+        {isComplete && (
+          <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium">Done</span>
+        )}
+      </div>
+
+      {/* Task description */}
+      {block.taskDescription && (
+        <p className="text-xs text-muted-foreground ml-6 mb-1.5 leading-relaxed">
+          {truncateText(block.taskDescription, 120)}
+        </p>
+      )}
+
+      {/* Tool calls */}
+      {toolSteps.length > 0 && (
+        <div className="ml-6 space-y-0.5 mb-1">
+          {toolSteps.map((s, i) => (
+            <div key={i} className="flex items-center gap-1.5 text-xs">
+              <Wrench className="h-3 w-3 text-muted-foreground/70 flex-shrink-0" />
+              <span className="text-muted-foreground">{formatToolAction(s.status)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Progress messages */}
+      {progressSteps.map((s, i) => (
+        <div key={`p-${i}`} className="flex items-start gap-1.5 text-xs ml-6">
+          <ChevronRight className="h-3 w-3 text-muted-foreground/50 flex-shrink-0 mt-0.5" />
+          <span className="text-muted-foreground">{truncateText(s.status, 150)}</span>
+        </div>
+      ))}
+    </div>
+  )
 }
 
-// Check if status is a long response (agent output)
-const isLongResponse = (status: string): boolean => {
-  return status.length > 200 || status.includes('###') || (status.match(/\*\*/g) || []).length > 4
+function PhaseBlock({ phase, isLive, isLast }: { phase: Phase; isLive: boolean; isLast: boolean }) {
+  if (phase.type === "init") return null
+
+  if (phase.type === "complete") {
+    return (
+      <div className="flex items-center gap-2 py-1.5">
+        <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+        <span className="text-xs font-medium text-emerald-600 dark:text-emerald-400">
+          Workflow complete
+        </span>
+      </div>
+    )
+  }
+
+  if (phase.type === "synthesis") {
+    return (
+      <div className="flex items-center gap-2 py-1.5">
+        {isLive ? (
+          <Loader className="h-3.5 w-3.5 animate-spin text-primary" />
+        ) : (
+          <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+        )}
+        <span className="text-xs font-medium text-muted-foreground">Generating summary…</span>
+      </div>
+    )
+  }
+
+  // Planning + agent execution phase
+  const phaseComplete = phase.agents.length > 0 && phase.agents.every(a => a.status === "complete")
+  const phaseRunning = isLive && !phaseComplete
+
+  return (
+    <div className="py-1">
+      {/* Step header */}
+      <div className="flex items-center gap-2 mb-1">
+        <div className={`flex items-center justify-center h-5 w-5 rounded-full text-[10px] font-bold ${
+          phaseComplete
+            ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
+            : phaseRunning
+              ? "bg-primary/15 text-primary"
+              : "bg-muted text-muted-foreground"
+        }`}>
+          {phase.stepNumber || "•"}
+        </div>
+        <span className="text-xs font-semibold text-foreground">
+          Step {phase.stepNumber}
+        </span>
+        {phaseComplete && <CheckCircle2 className="h-3 w-3 text-emerald-500" />}
+        {phaseRunning && <Loader className="h-3 w-3 animate-spin text-primary" />}
+      </div>
+
+      {/* Reasoning */}
+      {phase.reasoning && (
+        <div className="ml-5 mb-1.5 flex items-start gap-1.5">
+          <Brain className="h-3 w-3 text-amber-500 flex-shrink-0 mt-0.5" />
+          <p className="text-[11px] text-muted-foreground leading-relaxed italic">
+            {truncateText(phase.reasoning, 200)}
+          </p>
+        </div>
+      )}
+
+      {/* Agent blocks */}
+      {phase.agents.map((block, i) => (
+        <AgentSection key={`${block.agent}-${i}`} block={block} isLive={isLive && isLast} />
+      ))}
+    </div>
+  )
 }
 
-// Get unique agent count for summary
-const getUniqueAgents = (steps: InferenceStepsProps["steps"]): string[] => {
-  const agents = new Set(steps.map(s => s.agent))
-  agents.delete("foundry-host-agent") // Don't count the orchestrator
-  return Array.from(agents)
-}
+// ──────────────────────────────────────────────────────────
+// Main component
+// ──────────────────────────────────────────────────────────
 
 export function InferenceSteps({ steps, isInferencing }: InferenceStepsProps) {
-  const stepsContainerRef = useRef<HTMLUListElement>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
 
+  const phases = useMemo(() => buildPhases(steps), [steps])
 
-  // Count unique agents for the summary label
-  const uniqueAgents = useMemo(() => getUniqueAgents(steps), [steps])
+  const uniqueAgents = useMemo(() => {
+    const s = new Set(steps.map(st => st.agent))
+    s.delete("foundry-host-agent")
+    return Array.from(s).map(getDisplayName)
+  }, [steps])
 
-  // Auto-scroll to bottom when new steps are added
+  // Auto-scroll
   useEffect(() => {
-    if (stepsContainerRef.current && isInferencing) {
-      stepsContainerRef.current.scrollTop = stepsContainerRef.current.scrollHeight
+    if (containerRef.current && isInferencing) {
+      containerRef.current.scrollTop = containerRef.current.scrollHeight
     }
   }, [steps, isInferencing])
 
-  // Render a single step item
-  const renderStep = (step: InferenceStepsProps["steps"][0], index: number, isLive: boolean) => {
-    const isLatestStep = isLive && index === steps.length - 1
-    const stepColor = step.agentColor || getAgentColorFromName(step.agent)
-    const isLong = isLongResponse(step.status)
-    const category = getStepCategory(step.status)
-    const agentDisplay = getDisplayAgentName(step.agent)
-    
-    // Show agent label when agent changes from previous step
-    const prevAgent = index > 0 ? steps[index - 1].agent : null
-    const showAgentLabel = step.agent !== prevAgent
-    
-    return (
-      <li key={index} className={`flex items-start gap-2.5 text-sm ${isLong ? 'bg-background/60 rounded-lg p-3 mt-2 border border-border/30' : 'py-0.5'}`}>
-        <StepIcon category={category} color={stepColor} isLatest={isLatestStep} />
-        <div className="flex-1 min-w-0">
-          {showAgentLabel && (
-            <span 
-              className="inline-block text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded mb-1 mr-1"
-              style={{ 
-                backgroundColor: `${stepColor}15`,
-                color: stepColor 
-              }}
-            >
-              {agentDisplay}
-            </span>
-          )}
-          <span className={`text-muted-foreground ${isLong ? 'text-xs leading-relaxed block mt-1' : ''} ${category === 'complete' ? 'text-emerald-600 dark:text-emerald-400' : ''} ${category === 'error' ? 'text-red-600 dark:text-red-400' : ''}`}>
-            {formatStatus(step.status)}
-          </span>
-          {step.imageUrl && (
-            <div className="mt-2">
-              <img 
-                src={step.imageUrl} 
-                alt={step.imageName || 'Generated image'}
-                className={`${isLive ? 'w-20 h-20' : 'w-24 h-24'} object-cover rounded-lg border border-border shadow-sm`}
-                onError={(e) => {
-                  e.currentTarget.style.display = 'none'
-                }}
-              />
-            </div>
-          )}
-        </div>
-      </li>
-    )
-  }
+  const planningPhases = phases.filter(p => p.type === "planning")
+  const summaryLabel = uniqueAgents.length > 0
+    ? `${uniqueAgents.length} agent${uniqueAgents.length !== 1 ? "s" : ""} · ${planningPhases.length} step${planningPhases.length !== 1 ? "s" : ""}`
+    : `${steps.length} events`
 
   if (isInferencing) {
     return (
@@ -189,46 +451,63 @@ export function InferenceSteps({ steps, isInferencing }: InferenceStepsProps) {
           <Loader className="h-5 w-5 animate-spin text-primary" />
         </div>
         <div className="rounded-xl p-4 bg-muted/50 border border-border/50 flex-1 shadow-sm">
-          <div className="flex items-center justify-between mb-3">
-            <p className="font-semibold text-sm">Processing your request...</p>
-            {uniqueAgents.length > 0 && (
-              <span className="text-[10px] text-muted-foreground">
-                {uniqueAgents.length} agent{uniqueAgents.length !== 1 ? 's' : ''} · {steps.length} step{steps.length !== 1 ? 's' : ''}
-              </span>
-            )}
+          <div className="flex items-center justify-between mb-2">
+            <p className="font-semibold text-sm flex items-center gap-2">
+              <Workflow className="h-4 w-4 text-primary" />
+              Workflow in progress
+            </p>
+            <span className="text-[10px] text-muted-foreground bg-muted px-2 py-0.5 rounded-full">
+              {summaryLabel}
+            </span>
           </div>
-          <ul 
-            ref={stepsContainerRef}
-            className="space-y-1 max-h-[300px] overflow-y-auto"
-          >
-            {steps.map((step, index) => renderStep(step, index, true))}
-          </ul>
+
+          {/* Agent chips */}
+          {uniqueAgents.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 mb-3">
+              {uniqueAgents.map(name => {
+                const color = getAgentColor(name)
+                return (
+                  <span
+                    key={name}
+                    className="text-[10px] font-medium px-2 py-0.5 rounded-full"
+                    style={{ backgroundColor: `${color}12`, color, border: `1px solid ${color}30` }}
+                  >
+                    {name}
+                  </span>
+                )
+              })}
+            </div>
+          )}
+
+          <div ref={containerRef} className="space-y-0.5 max-h-[350px] overflow-y-auto pr-1">
+            {phases.map((phase, i) => (
+              <PhaseBlock key={i} phase={phase} isLive={true} isLast={i === phases.length - 1} />
+            ))}
+          </div>
         </div>
       </div>
     )
   }
 
+  // ── Collapsed accordion (after completion) ──
   return (
     <Accordion type="single" collapsible className="w-full">
       <AccordionItem value="item-1" className="border border-border/50 bg-muted/30 rounded-xl px-4 shadow-sm">
         <AccordionTrigger className="hover:no-underline py-3">
           <div className="flex items-center gap-2.5">
-            <div className="h-7 w-7 rounded-lg bg-primary/10 flex items-center justify-center">
-              <Workflow className="h-4 w-4 text-primary" />
+            <div className="h-7 w-7 rounded-lg bg-emerald-500/10 flex items-center justify-center">
+              <CheckCircle2 className="h-4 w-4 text-emerald-500" />
             </div>
-            <span className="font-medium text-sm">Agent workflow</span>
-            <span className="text-xs text-muted-foreground ml-1">
-              {uniqueAgents.length > 0 
-                ? `${uniqueAgents.length} agent${uniqueAgents.length !== 1 ? 's' : ''} · ${steps.length} steps`
-                : `${steps.length} steps`
-              }
-            </span>
+            <span className="font-medium text-sm">Workflow completed</span>
+            <span className="text-xs text-muted-foreground ml-1">{summaryLabel}</span>
           </div>
         </AccordionTrigger>
         <AccordionContent>
-          <ul className="space-y-1 pt-1 pb-2 max-h-[400px] overflow-y-auto">
-            {steps.map((step, index) => renderStep(step, index, false))}
-          </ul>
+          <div className="space-y-0.5 pt-1 pb-2 max-h-[400px] overflow-y-auto">
+            {phases.map((phase, i) => (
+              <PhaseBlock key={i} phase={phase} isLive={false} isLast={false} />
+            ))}
+          </div>
         </AccordionContent>
       </AccordionItem>
     </Accordion>

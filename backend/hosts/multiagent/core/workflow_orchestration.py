@@ -718,12 +718,7 @@ Use the data from the previous steps to complete your task."""
         
         log_debug(f"🚀 [Agent Mode] Executing task: {task_desc[:50]}...")
         
-        # Stream task creation event
-        await self._emit_granular_agent_event(
-            agent_name=recommended_agent or "orchestrator",
-            status_text=f"Executing: {task_desc[:50]}...",
-            context_id=context_id
-        )
+        # Stream task creation event (agent_start already emitted from orchestration loop)
         
         # If agent not in session, try to load from global catalog
         # This enables workflows/scheduled workflows to use any cataloged agent
@@ -744,7 +739,10 @@ Use the data from the previous steps to complete your task."""
             return {"error": task.error_message, "output": None}
         
         log_debug(f"🎯 [Agent Mode] Calling agent: {recommended_agent}")
-        await self._emit_status_event(f"🤖 Calling Agent: {recommended_agent}", context_id)
+        await self._emit_granular_agent_event(
+            recommended_agent, f"Starting task: {task_desc[:80]}...", context_id,
+            event_type="agent_start", metadata={"task_description": task_desc}
+        )
         
         # Build enhanced task message with previous task output for sequential context
         # This enables agents to build upon previous work in the workflow
@@ -1117,6 +1115,11 @@ Analyze this request and decide the best approach."""
         self.host_token_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
         
         await self._emit_status_event("Initializing orchestration...", context_id)
+        # Also emit typed event for structured frontend
+        await self._emit_granular_agent_event(
+            "foundry-host-agent", "Initializing orchestration...", context_id,
+            event_type="phase", metadata={"phase": "init"}
+        )
         
         # =====================================================================
         # PLAN PERSISTENCE: Resume existing plan if user is providing follow-up info
@@ -1390,6 +1393,10 @@ Do NOT skip steps. Do NOT mark goal as completed until ALL workflow steps are do
             iteration += 1
             print(f"🔄 [Agent Mode] Iteration {iteration}/{max_iterations}")
             await self._emit_status_event(f"Planning step {iteration}...", context_id)
+            await self._emit_granular_agent_event(
+                "foundry-host-agent", f"Planning step {iteration}...", context_id,
+                event_type="phase", metadata={"phase": "planning", "step_number": iteration}
+            )
             
             # Build user prompt with current plan state
             available_agents = []
@@ -1441,7 +1448,10 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                 )
                 
                 log_debug(f"🤖 [Agent Mode] Orchestrator: {next_step.reasoning[:100]}... | status={next_step.goal_status}")
-                await self._emit_status_event(f"Reasoning: {next_step.reasoning}", context_id)
+                await self._emit_granular_agent_event(
+                    "foundry-host-agent", next_step.reasoning, context_id,
+                    event_type="reasoning", metadata={"step_number": iteration, "goal_status": next_step.goal_status}
+                )
                 
                 # Update plan status
                 plan.goal_status = next_step.goal_status
@@ -1451,7 +1461,10 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                     completed_tasks_count = len([t for t in plan.tasks if t.state == "completed"])
                     input_required_tasks = [t for t in plan.tasks if t.state == "input_required"]
                     log_info(f"✅ [Agent Mode] Goal completed after {iteration} iterations ({completed_tasks_count} completed, {len(input_required_tasks)} input_required)")
-                    await self._emit_status_event("Goal achieved! Generating final response...", context_id)
+                    await self._emit_granular_agent_event(
+                        "foundry-host-agent", "Goal achieved! Generating final response...", context_id,
+                        event_type="phase", metadata={"phase": "complete", "tasks_completed": completed_tasks_count, "iterations": iteration}
+                    )
                     
                     # =========================================================
                     # PLAN PERSISTENCE: Save plan if agent needs user input

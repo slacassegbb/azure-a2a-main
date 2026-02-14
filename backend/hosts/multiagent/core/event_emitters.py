@@ -305,16 +305,27 @@ class EventEmitters:
             log_debug(f"Error emitting file analyzed event: {e}")
             return False
 
-    async def _emit_granular_agent_event(self, agent_name: str, status_text: str, context_id: str = None):
-        """Emit granular agent activity event to WebSocket for thinking box visibility."""
+    async def _emit_granular_agent_event(self, agent_name: str, status_text: str, context_id: str = None, event_type: str = None, metadata: dict = None):
+        """Emit granular agent activity event to WebSocket for thinking box visibility.
+        
+        Args:
+            agent_name: Name of the agent emitting the event
+            status_text: Human-readable status text
+            context_id: Routing context ID
+            event_type: Structured event type for frontend rendering. One of:
+                - "phase": Workflow phase marker (e.g., "Planning step 1...")
+                - "reasoning": AI planner reasoning text
+                - "agent_start": Agent is starting work
+                - "agent_progress": Agent is working (tool calls, status updates)
+                - "agent_complete": Agent finished successfully
+                - "agent_error": Agent encountered an error
+                - "tool_call": MCP tool being called
+                - "info": General informational message
+            metadata: Optional dict with extra structured data (e.g., step_number, tool_name, agent_output)
+        """
         try:
             from service.websocket_streamer import get_websocket_streamer
             from utils.tenant import get_conversation_from_context
-            
-            # DEBUG: Log event emission attempt
-            print(f"📡 [EVENT DEBUG] Emitting remote_agent_activity for '{agent_name}'")
-            print(f"   📝 Status: {status_text[:60]}...")
-            print(f"   🔗 Context ID: {context_id}")
             
             streamer = await get_websocket_streamer()
             if streamer:
@@ -323,12 +334,10 @@ class EventEmitters:
                 routing_context_id = context_id or stored_host_context
                 
                 if not routing_context_id:
-                    print(f"   ⚠️ No context_id for {agent_name}, skipping event")
                     log_debug(f"⚠️ [_emit_granular_agent_event] No context_id for {agent_name}, skipping")
                     return
                 
                 # Extract conversationId from contextId (format: session_id::conversation_id)
-                # This is critical for frontend filtering - events should only show in their conversation
                 conversation_id = get_conversation_from_context(routing_context_id)
                 
                 event_data = {
@@ -336,22 +345,24 @@ class EventEmitters:
                     "content": status_text,
                     "timestamp": datetime.now(timezone.utc).isoformat(),
                     "contextId": routing_context_id,
-                    "conversationId": conversation_id  # Add conversationId for frontend filtering
+                    "conversationId": conversation_id,
                 }
                 
+                # Add structured type if provided
+                if event_type:
+                    event_data["eventType"] = event_type
+                
+                # Add metadata if provided
+                if metadata:
+                    event_data["metadata"] = metadata
+                
                 success = await streamer._send_event("remote_agent_activity", event_data, routing_context_id)
-                if success:
-                    print(f"   ✅ Event sent successfully for '{agent_name}'")
-                    log_debug(f"Streamed remote agent activity: {agent_name} - {status_text}")
-                else:
-                    print(f"   ❌ Failed to send event for '{agent_name}'")
+                if not success:
                     log_debug(f"Failed to stream remote agent activity: {agent_name}")
             else:
-                print(f"   ⚠️ WebSocket streamer not available")
                 log_debug(f"WebSocket streamer not available for remote agent activity")
                 
         except Exception as e:
-            print(f"   ❌ Error emitting event: {e}")
             log_debug(f"Error emitting granular agent event: {e}")
 
     async def _emit_status_event(self, status_text: str, context_id: str):
