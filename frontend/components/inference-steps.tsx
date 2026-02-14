@@ -1,42 +1,45 @@
 "use client"
 
 /**
- * inference-steps.tsx — Workflow visualization component
+ * inference-steps.tsx — Workflow visualization component (v3 — full rewrite)
  *
- * Renders the step-by-step progress of an agent workflow, both live (during
- * execution) and as a collapsed accordion (after completion).
- *
- * DATA SOURCES
+ * ARCHITECTURE
  * ────────────
- * 1. `plan` (WorkflowPlan | null)
- *    Authoritative backend model. Each task carries a "[Step N] description"
- *    prefix, a `state` enum, optional `output` and `error_message`.
- *    Arrives via `plan_update` WebSocket events during live execution, and is
- *    persisted in `inference_summary` message metadata for completed workflows.
+ * Two data sources flow into a unified Phase[] model:
  *
- * 2. `steps` (StepData[])
- *    Flat stream of WebSocket events (`remote_agent_activity`, `tool_call`,
- *    `file_uploaded`). Provides real-time tool calls, progress messages, and
- *    file attachments that enrich the plan-based view with live detail.
- *    For completed workflows loaded from the database, events are the steps
- *    saved alongside the inference_summary message.
+ * 1. `plan` (WorkflowPlan) — authoritative backend model (plan_update WS event)
+ *    Each task carries "[Step N] description", state, output, error_message.
+ *    This is the structural skeleton: it defines what steps exist and their states.
+ *
+ * 2. `steps` (StepData[]) — flat stream of WebSocket events
+ *    Each carries `agent`, `status`, `eventType`, `metadata`.
+ *    eventType values from backend:
+ *      "phase"          — orchestrator phase markers ("Planning step N...")
+ *      "reasoning"      — LLM orchestrator reasoning text
+ *      "info"           — informational ("N agents available", "Waiting for response")
+ *      "agent_start"    — agent starting a task
+ *      "agent_progress" — agent working (tool calls, status)
+ *      "agent_output"   — full agent result text (up to 2000 chars)
+ *      "agent_complete" — agent finished
+ *      "agent_error"    — agent failed
+ *      "tool_call"      — MCP tool invocation
+ *      (undefined)      — legacy untyped events
  *
  * RENDERING STRATEGY
  * ──────────────────
- * • When `plan` has tasks → build phases from plan tasks; enrich with events.
- * • When `plan` is null/empty → build phases from events (grouped by agent).
- * • Both paths produce the same `Phase[]` structure consumed by PhaseBlock.
+ * When plan exists → plan tasks define the steps; events enrich with live detail.
+ * When plan is null → events are grouped by agent into ad-hoc steps.
+ * Both paths produce Phase[] → PhaseBlock → AgentSection.
  *
- * SCENARIOS HANDLED
- * ─────────────────
- * • Live workflow in progress (isInferencing=true, plan arrives incrementally)
- * • Early workflow before first plan_update (isInferencing=true, plan=null)
- * • Completed workflow accordion (isInferencing=false, plan from metadata)
- * • Legacy completed workflow (isInferencing=false, plan=null, events only)
- * • HITL paused workflow (plan has input_required task)
- * • Retries (same agent appears multiple times in same step number)
- * • Parallel execution (different agents in same step, e.g. [Step 2a], [Step 2b])
- * • Failures (task.state=failed, with error_message)
+ * KEY PRINCIPLES (lessons from v1/v2 failures)
+ * ─────────────────────────────────────────────
+ * • NEVER suppress agent_output events — they are the user-visible result
+ * • NEVER suppress reasoning events — they explain what the planner is thinking
+ * • Structured eventType events are ALWAYS trusted (no content-based filtering)
+ * • Content-based filtering ONLY applies to legacy untyped events
+ * • The plan is the skeleton; events are the flesh. Both matter.
+ * • Orchestrator events (agent=foundry-host-agent) with eventType are categorized,
+ *   not suppressed. Only legacy untyped orchestrator noise is filtered.
  */
 
 import React, { useEffect, useRef, useMemo } from "react"
@@ -80,7 +83,7 @@ type InferenceStepsProps = {
   plan?: WorkflowPlan | null
 }
 
-// Internal structures
+// ── Internal structures ──
 
 type AgentStatus = "running" | "complete" | "error" | "waiting" | "input_required"
 
@@ -88,29 +91,26 @@ interface AgentBlock {
   agent: string
   displayName: string
   color: string
-  steps: StepData[]          // live tool calls / progress events
   status: AgentStatus
   taskDescription?: string
   output?: string
   errorMessage?: string
-}
-
-interface OrchestratorMessage {
-  text: string
-  type: "info" | "routing" | "progress"
+  toolCalls: StepData[]       // tool_call events
+  progressMessages: string[]  // agent_progress / info status text
+  agentOutputs: string[]      // agent_output events (the important results)
 }
 
 interface Phase {
   kind: "init" | "step"
   stepNumber?: number
-  reasoning?: string
+  reasoning?: string          // LLM planner reasoning for this step
   agents: AgentBlock[]
-  orchestratorMessages: OrchestratorMessage[]
+  orchestratorMessages: string[]  // phase/info messages from orchestrator
   isComplete: boolean
 }
 
 // ════════════════════════════════════════════════════════════
-// Constants & helpers
+// Constants & pure helpers
 // ════════════════════════════════════════════════════════════
 
 const AGENT_COLORS = [
@@ -120,10 +120,7 @@ const AGENT_COLORS = [
 
 function hashColor(name: string): string {
   let h = 0
-  for (let i = 0; i < name.length; i++) {
-    h = ((h << 5) - h) + name.charCodeAt(i)
-    h = h & h
-  }
+  for (let i = 0; i < name.length; i++) h = ((h << 5) - h + name.charCodeAt(i)) | 0
   return AGENT_COLORS[Math.abs(h) % AGENT_COLORS.length]
 }
 
@@ -136,37 +133,6 @@ function displayName(name: string): string {
     .split(" ")
     .map(w => w.charAt(0).toUpperCase() + w.slice(1))
     .join(" ")
-}
-
-function isNoise(text: string): boolean {
-  const l = text.toLowerCase()
-  return (
-    l.startsWith("contacting ") ||
-    l.startsWith("request sent to ") ||
-    (l.includes(" is working on:") && l.length < 100) ||
-    (l.includes("has started working on:") && l.length < 100) ||
-    l === "working on:" ||
-    l === "started:" ||
-    l.length < 5
-  )
-}
-
-function cleanStatus(text: string): string {
-  let s = text.replace(/📎\s*Generated\s+/g, "📎 Extracted ")
-  s = s.replace(/^[A-Za-z\s]+Agent\s+is working on:\s*"?/i, "")
-  s = s.replace(/^[A-Za-z\s]+Agent\s+has started working on:\s*"?/i, "")
-  s = s.replace(/"?\s*\(\d+s\)\s*$/, "")
-  return s.trim()
-}
-
-function formatTool(status: string): string {
-  let s = status
-    .replace(/^🛠️\s*/, "")
-    .replace(/^Remote agent executing:\s*/i, "")
-    .replace(/^Calling:\s*/i, "")
-    .replace(/_/g, " ")
-  s = s.charAt(0).toUpperCase() + s.slice(1)
-  return s.replace(/\.{3,}$/, "")
 }
 
 function truncate(text: string, max: number): string {
@@ -186,7 +152,7 @@ function stripMd(text: string): string {
     .trim()
 }
 
-/** Replace plain URLs and markdown links with <a> elements. */
+/** Replace plain URLs and markdown links with clickable <a> elements. */
 function renderLinks(text: string): React.ReactNode {
   const rx = /\[([^\]]+)\]\(([^)]+)\)|https?:\/\/[^\s<>\[\]"']+/g
   const parts: React.ReactNode[] = []
@@ -204,47 +170,91 @@ function renderLinks(text: string): React.ReactNode {
   return parts.length > 0 ? parts : text
 }
 
-/** Map backend task state to UI status */
 function taskStateToStatus(state: string): AgentStatus {
   switch (state) {
     case "completed": return "complete"
     case "failed": return "error"
     case "input_required": return "input_required"
-    case "pending":
-    case "submitted": return "waiting"
+    case "pending": case "submitted": return "waiting"
     default: return "running"
   }
 }
 
-/** Is this an orchestrator-level message worth showing in the init phase? */
-function isUsefulOrchMsg(status: string): boolean {
-  return !!(
-    status.includes("📄") ||
-    status.includes("Extracted") ||
-    status.includes("chunks") ||
-    status.includes("memory") ||
-    status.includes("📱") ||
-    status.includes("⏸️") ||
-    status.includes("Waiting for") ||
-    status.includes("paused")
-  )
+function formatToolName(status: string): string {
+  return status
+    .replace(/^🛠️\s*/, "")
+    .replace(/^Remote agent executing:\s*/i, "")
+    .replace(/^Calling:\s*/i, "")
+    .replace(/_/g, " ")
+    .replace(/\.{3,}$/, "")
+    .replace(/^./, c => c.toUpperCase())
 }
 
-/** Is this orchestrator noise we should suppress? */
-function isOrchNoise(status: string): boolean {
+/** Is the goal a generic placeholder from the visual workflow designer? */
+function isGenericGoal(goal: string): boolean {
+  const l = goal.toLowerCase().trim()
+  return !l || l.length < 5 || l.startsWith("complete the workflow tasks")
+}
+
+/**
+ * Clean HITL metadata that gets appended to goal text.
+ */
+function cleanGoal(raw: string): string {
+  let g = raw
+  const hitlIdx = g.indexOf("\n\n[User Provided Additional Info]:")
+  if (hitlIdx >= 0) g = g.substring(0, hitlIdx)
+  const addlIdx = g.indexOf("\n\n[Additional Information Provided]:")
+  if (addlIdx >= 0) g = g.substring(0, addlIdx)
+  return g.trim()
+}
+
+/**
+ * Clean plan output text for display.
+ */
+function cleanOutput(raw: string | undefined | null): string | undefined {
+  if (!raw) return undefined
+  let out = raw.replace(/^HITL Response:\s*/i, "")
+  const t = out.trim()
+  if (!t) return undefined
+  if (t.length < 20 && /^(approve|approved|yes|no|reject|ok|confirm)$/i.test(t)) {
+    return '✅ User responded: "' + t + '"'
+  }
+  return out
+}
+
+/**
+ * Filter for UNTYPED legacy orchestrator events only.
+ * Typed events (with eventType) bypass this entirely.
+ * Returns null to suppress, or cleaned string to show.
+ */
+function filterUntypedOrchMessage(status: string): string | null {
   const l = status.toLowerCase()
-  return (
-    l.includes("planning step") ||
-    l.includes("agents available") ||
-    l.includes("route decision") ||
-    l.includes("executing step") ||
-    l.includes("executing parallel") ||
-    l.includes("initializing orchestration") ||
-    l.includes("resuming workflow") ||
-    l.includes("workflow paused") ||
-    l.includes("goal achieved") ||
-    l.includes("generating workflow summary")
-  )
+  if (
+    l.startsWith("contacting ") ||
+    l.startsWith("request sent to ") ||
+    l.includes(" is working on:") ||
+    l.includes("has started working on:") ||
+    l === "working on:" ||
+    l === "started:" ||
+    l === "processing" ||
+    l === "processing request" ||
+    l === "task started" ||
+    l.length < 5
+  ) return null
+  return status
+}
+
+/**
+ * Condense long document extraction blobs into a short summary.
+ * "📄 **Extracted from invoice.pdf:**\n\n[1500 chars]..." → "📄 Extracted content from invoice.pdf"
+ */
+function condenseDocExtraction(text: string): string {
+  if (text.includes("📄") && text.includes("Extracted from") && text.length > 150) {
+    const nameMatch = text.match(/Extracted from\s+(.+?)(?:\*\*|:|$)/)
+    const name = nameMatch ? nameMatch[1].trim() : "document"
+    return `📄 Extracted content from ${name}`
+  }
+  return text
 }
 
 // ════════════════════════════════════════════════════════════
@@ -252,67 +262,148 @@ function isOrchNoise(status: string): boolean {
 // ════════════════════════════════════════════════════════════
 
 /**
- * Build phases from the authoritative plan.
+ * Classify events by agent name.
+ * Orchestrator events (foundry-host-agent) are separated.
+ */
+function indexEventsByAgent(steps: StepData[]) {
+  const byAgent = new Map<string, StepData[]>()
+  const orchestrator: StepData[] = []
+  for (const s of steps) {
+    if (s.agent === "foundry-host-agent") {
+      orchestrator.push(s)
+    } else {
+      const list = byAgent.get(s.agent)
+      if (list) list.push(s)
+      else byAgent.set(s.agent, [s])
+    }
+  }
+  return { byAgent, orchestrator }
+}
+
+/**
+ * Build phases from the authoritative plan + enrich with events.
  *
- * Plan tasks carry "[Step N]" prefixes set by the backend. Tasks with the same
- * step number are grouped (parallel agents or retries). Events from `steps`
- * are matched by agent name and attached as live detail.
+ * Plan tasks carry "[Step N]" prefixes. Tasks with the same step number are
+ * grouped (parallel agents or retries). Events are matched by agent name.
  */
 function buildPhasesFromPlan(plan: WorkflowPlan, steps: StepData[]): Phase[] {
-  // --- 1. Index events by agent name (for live detail enrichment) ---
-  const eventsByAgent = new Map<string, StepData[]>()
-  for (const s of steps) {
-    if (s.agent === "foundry-host-agent") continue
-    const list = eventsByAgent.get(s.agent)
-    if (list) list.push(s); else eventsByAgent.set(s.agent, [s])
+  const { byAgent, orchestrator } = indexEventsByAgent(steps)
+
+  // ── Extract orchestrator-level info ──
+  let plannerReasoning: string | undefined = undefined
+  const orchMessages: string[] = []
+
+  for (const ev of orchestrator) {
+    const et = ev.eventType || ""
+    const status = ev.status || ""
+
+    if (et === "reasoning") {
+      // Always keep the LAST reasoning — it is the most up-to-date
+      plannerReasoning = status
+    } else if (et === "phase" || et === "info") {
+      const l = status.toLowerCase()
+      // Skip redundant internal markers
+      if (l.includes("goal achieved") || l.includes("generating final")) continue
+      if (l.includes("planning step")) continue
+      if (l.includes("maximum iterations")) {
+        orchMessages.push("⚠️ Maximum planning iterations reached")
+        continue
+      }
+      // Keep useful info (agent counts, etc.)
+      orchMessages.push(status)
+    }
+    // Other typed orchestrator events (agent_start etc. on foundry-host-agent) — skip
   }
 
-  // --- 2. Build phases from plan tasks ---
+  // Use plan.reasoning if we did not get a better one from events
+  if (!plannerReasoning && plan.reasoning) {
+    const l = plan.reasoning.toLowerCase().trim()
+    if (!l.startsWith("planning step") && l !== "goal completed" && l !== "goal completed." && l.length > 15) {
+      plannerReasoning = plan.reasoning
+    }
+  }
+
+  // ── Build step phases from plan tasks ──
   const phases: Phase[] = []
-  const stepMap = new Map<number, Phase>()    // stepNumber → Phase
-  const claimedAgents = new Set<string>()     // first-come-first-served for events
+  const stepMap = new Map<number, Phase>()
+  const claimedAgents = new Set<string>()
 
   for (let i = 0; i < plan.tasks.length; i++) {
     const task = plan.tasks[i]
     const agentName = task.recommended_agent || "Unknown Agent"
 
-    // Parse step number from "[Step 3]" or "[Step 2a]"
+    // Parse step number
     let stepNum = i + 1
     const m = task.task_description.match(/\[Step\s+(\d+)[a-z]?\]/)
     if (m) stepNum = parseInt(m[1], 10) || i + 1
 
-    // Clean description
+    // Clean description (remove [Step N] prefix)
     const desc = task.task_description.replace(/^\[Step\s+\d+[a-z]?\]\s*/, "")
 
     // Clean output
-    let out = task.output?.result || undefined
-    if (out) {
-      out = out.replace(/^HITL Response:\s*/i, "")
-      const t = out.trim()
-      if (!t) { out = undefined }
-      else if (t.length < 20 && /^(approve|approved|yes|no|reject|ok|confirm)$/i.test(t)) {
-        out = '✅ User responded: "' + t + '"'
+    const out = cleanOutput(task.output?.result)
+
+    // ── Attach events for this agent ──
+    let toolCalls: StepData[] = []
+    let progressMessages: string[] = []
+    let agentOutputs: string[] = []
+
+    if (!claimedAgents.has(agentName)) {
+      claimedAgents.add(agentName)
+      // Find events by exact name or fuzzy match
+      let agentEvents = byAgent.get(agentName) || []
+      if (agentEvents.length === 0) {
+        const norm = agentName.toLowerCase().replace(/[\s\-_]/g, "")
+        for (const [key, evts] of byAgent.entries()) {
+          const kn = key.toLowerCase().replace(/[\s\-_]/g, "")
+          if (kn.includes(norm) || norm.includes(kn)) { agentEvents = evts; break }
+        }
+      }
+
+      for (const ev of agentEvents) {
+        const et = ev.eventType || ""
+        const status = ev.status || ""
+
+        switch (et) {
+          case "tool_call":
+            toolCalls.push(ev)
+            break
+          case "agent_output":
+            // Full agent result — ALWAYS keep
+            if (status.length > 5) {
+              agentOutputs.push(condenseDocExtraction(status))
+            }
+            break
+          case "agent_progress":
+          case "info":
+            if (status.length > 5) {
+              progressMessages.push(condenseDocExtraction(status))
+            }
+            break
+          case "agent_start":
+          case "agent_complete":
+          case "agent_error":
+            // State transitions — already reflected in plan task state
+            break
+          default:
+            // Legacy untyped event — filter
+            if (status.length > 5) {
+              const cleaned = filterUntypedOrchMessage(status)
+              if (cleaned) progressMessages.push(condenseDocExtraction(cleaned))
+            }
+            break
+        }
       }
     }
 
-    // Attach events — first task for each agent gets them
-    let taskEvents: StepData[] = []
-    if (!claimedAgents.has(agentName)) {
-      claimedAgents.add(agentName)
-      let found = eventsByAgent.get(agentName) || []
-      // Fuzzy match if exact name doesn't hit
-      if (found.length === 0) {
-        const norm = agentName.toLowerCase().replace(/[\s\-_]/g, "")
-        for (const [key, evts] of eventsByAgent.entries()) {
-          const kn = key.toLowerCase().replace(/[\s\-_]/g, "")
-          if (kn.includes(norm) || norm.includes(kn)) { found = evts; break }
-        }
-      }
-      taskEvents = found.filter(e => {
-        const et = e.eventType || ""
-        return et !== "agent_start" && et !== "agent_complete"
-      })
-    }
+    // Deduplicate progress messages
+    const seenProgress = new Set<string>()
+    progressMessages = progressMessages.filter(m => {
+      const key = m.slice(0, 100)
+      if (seenProgress.has(key)) return false
+      seenProgress.add(key)
+      return true
+    })
 
     const block: AgentBlock = {
       agent: agentName,
@@ -322,14 +413,16 @@ function buildPhasesFromPlan(plan: WorkflowPlan, steps: StepData[]): Phase[] {
       taskDescription: desc,
       output: out,
       errorMessage: task.error_message || undefined,
-      steps: taskEvents,
+      toolCalls,
+      progressMessages,
+      agentOutputs,
     }
 
     const isTerminal = task.state === "completed" || task.state === "failed"
     const existing = stepMap.get(stepNum)
     if (existing) {
       existing.agents.push(block)
-      existing.isComplete = isTerminal
+      if (isTerminal) existing.isComplete = true
     } else {
       const phase: Phase = {
         kind: "step",
@@ -337,135 +430,140 @@ function buildPhasesFromPlan(plan: WorkflowPlan, steps: StepData[]): Phase[] {
         agents: [block],
         orchestratorMessages: [],
         isComplete: isTerminal,
-        reasoning: i === 0 ? plan.reasoning : undefined,
+        // Attach planner reasoning to the first step only
+        reasoning: i === 0 ? plannerReasoning : undefined,
       }
       phases.push(phase)
       stepMap.set(stepNum, phase)
     }
   }
 
-  // --- 3. Build init phase from orchestrator events ---
-  const init = buildInitPhase(steps)
+  // ── Build init phase from orchestrator messages ──
+  const initPhase = orchMessages.length > 0
+    ? { kind: "init" as const, agents: [] as AgentBlock[], orchestratorMessages: orchMessages, isComplete: true }
+    : null
 
-  // --- 4. Renumber phases sequentially (close gaps) ---
+  // ── Renumber phases sequentially ──
   let counter = 0
   const renumbered = phases.map(p => { counter++; return { ...p, stepNumber: counter } })
 
-  return init ? [init, ...renumbered] : renumbered
+  return initPhase ? [initPhase, ...renumbered] : renumbered
 }
 
 /**
  * Build phases purely from WebSocket events when no plan is available.
- *
- * This covers:
- * - Early workflow before the first plan_update arrives
- * - Legacy sessions without plan persistence
- * - Edge cases where plan is empty
- *
- * Strategy: group events by agent name; each unique agent gets its own step.
+ * Groups events by agent name. Each unique agent gets its own step.
  */
 function buildPhasesFromEvents(steps: StepData[]): Phase[] {
+  const { byAgent, orchestrator } = indexEventsByAgent(steps)
   const phases: Phase[] = []
-  const agentMap = new Map<string, Phase>()
 
-  for (const step of steps) {
-    if (step.agent === "foundry-host-agent") continue
-    if (isNoise(step.status || "")) continue
-
-    // Create or reuse phase for this agent
-    if (!agentMap.has(step.agent)) {
-      const phase: Phase = {
-        kind: "step",
-        stepNumber: agentMap.size + 1,
-        agents: [{
-          agent: step.agent,
-          displayName: displayName(step.agent),
-          color: hashColor(step.agent),
-          steps: [],
-          status: "running",
-          taskDescription: undefined,
-          output: undefined,
-          errorMessage: undefined,
-        }],
-        orchestratorMessages: [],
-        isComplete: false,
-      }
-      agentMap.set(step.agent, phase)
-      phases.push(phase)
+  // ── Extract orchestrator info ──
+  const orchMessages: string[] = []
+  for (const ev of orchestrator) {
+    const et = ev.eventType || ""
+    const status = ev.status || ""
+    if (et === "reasoning" || et === "phase" || et === "info") {
+      if (status.length > 5) orchMessages.push(status)
+    } else if (!et) {
+      const cleaned = filterUntypedOrchMessage(status)
+      if (cleaned && cleaned.length > 5) orchMessages.push(condenseDocExtraction(cleaned))
     }
+  }
 
-    const phase = agentMap.get(step.agent)!
-    const block = phase.agents[0]
-    const et = step.eventType || ""
-    const status = step.status || ""
+  // ── Build a phase per agent ──
+  let stepNum = 0
+  for (const [agentName, events] of byAgent.entries()) {
+    stepNum++
+    const toolCalls: StepData[] = []
+    let progressMessages: string[] = []
+    const agentOutputs: string[] = []
+    let status: AgentStatus = "running"
+    let taskDescription: string | undefined
+    let output: string | undefined
+    let errorMessage: string | undefined
+    let isComplete = false
 
-    switch (et) {
-      case "agent_start":
-        block.taskDescription = step.metadata?.task_description || status
-        break
-      case "agent_complete":
-        block.status = "complete"
-        phase.isComplete = true
-        break
-      case "agent_output":
-        block.output = status
-        break
-      case "agent_error":
-        block.status = "error"
-        block.errorMessage = status
-        phase.isComplete = true
-        break
-      case "tool_call":
-      case "agent_progress":
-      case "info":
-        block.steps.push(step)
-        break
-      default:
-        // Untyped event — interpret from content
-        if (status.length > 10) {
-          const lower = status.toLowerCase()
-          if (lower.includes("input_required") || lower.includes("waiting for")) {
-            block.status = "input_required"
-          } else if (lower.includes("completed") || lower.includes("done")) {
-            block.status = "complete"
-            phase.isComplete = true
+    for (const ev of events) {
+      const et = ev.eventType || ""
+      const s = ev.status || ""
+
+      switch (et) {
+        case "agent_start":
+          taskDescription = ev.metadata?.task_description || s
+          break
+        case "agent_complete":
+          status = "complete"
+          isComplete = true
+          break
+        case "agent_error":
+          status = "error"
+          errorMessage = s
+          isComplete = true
+          break
+        case "agent_output":
+          if (s.length > 5) agentOutputs.push(condenseDocExtraction(s))
+          output = s
+          break
+        case "tool_call":
+          toolCalls.push(ev)
+          break
+        case "agent_progress":
+        case "info":
+          if (s.length > 5) progressMessages.push(condenseDocExtraction(s))
+          break
+        default:
+          // Untyped
+          if (s.length > 10) {
+            const l = s.toLowerCase()
+            if (l.includes("input_required") || l.includes("waiting for")) {
+              status = "input_required"
+            } else if (l.includes("completed") || l.includes("done")) {
+              status = "complete"
+              isComplete = true
+            }
+            const cleaned = filterUntypedOrchMessage(s)
+            if (cleaned) progressMessages.push(condenseDocExtraction(cleaned))
           }
-          block.steps.push({ ...step, eventType: "agent_progress" })
-        }
-        break
+          break
+      }
     }
+
+    // Deduplicate progress
+    const seen = new Set<string>()
+    progressMessages = progressMessages.filter(m => {
+      const key = m.slice(0, 100)
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+
+    phases.push({
+      kind: "step",
+      stepNumber: stepNum,
+      agents: [{
+        agent: agentName,
+        displayName: displayName(agentName),
+        color: hashColor(agentName),
+        status,
+        taskDescription,
+        output,
+        errorMessage,
+        toolCalls,
+        progressMessages,
+        agentOutputs,
+      }],
+      orchestratorMessages: [],
+      isComplete,
+    })
   }
 
-  const init = buildInitPhase(steps)
-  return init ? [init, ...phases] : phases
-}
+  // ── Init phase ──
+  const initPhase = orchMessages.length > 0
+    ? { kind: "init" as const, agents: [] as AgentBlock[], orchestratorMessages: orchMessages, isComplete: true }
+    : null
 
-/** Extract orchestrator messages into an init phase (shared by both builders). */
-function buildInitPhase(steps: StepData[]): Phase | null {
-  const seen = new Set<string>()
-  const msgs: OrchestratorMessage[] = []
-
-  for (const s of steps) {
-    if (s.agent !== "foundry-host-agent") continue
-    const status = s.status || ""
-    if (seen.has(status)) continue
-    seen.add(status)
-    if (isNoise(status)) continue
-    const et = s.eventType || ""
-    if (et === "reasoning" || et === "phase") continue
-    if (isOrchNoise(status)) continue
-    if (isUsefulOrchMsg(status)) {
-      msgs.push({ text: status, type: "info" })
-    }
-  }
-
-  if (msgs.length === 0) return null
-  return {
-    kind: "init",
-    agents: [],
-    orchestratorMessages: msgs,
-    isComplete: true,
-  }
+  return initPhase ? [initPhase, ...phases] : phases
 }
 
 // ════════════════════════════════════════════════════════════
@@ -479,28 +577,16 @@ function AgentSection({ block, isLive }: { block: AgentBlock; isLive: boolean })
   const isInputRequired = block.status === "input_required"
   const isPending = block.status === "waiting"
 
-  // Separate tool calls from progress messages
-  const toolSteps = block.steps.filter(s => (s.eventType || "") === "tool_call")
-  const progressSteps: StepData[] = []
-  const seenProgress = new Set<string>()
-  for (const s of block.steps) {
-    if ((s.eventType || "") === "tool_call") continue
-    const l = s.status.toLowerCase()
-    if (l.startsWith("contacting ") || l.startsWith("request sent to ") || l.includes(" is working on:")) continue
-    const key = s.status.slice(0, 100)
-    if (seenProgress.has(key)) continue
-    seenProgress.add(key)
-    progressSteps.push(s)
-  }
-
-  // Show tool calls / progress only while the agent is actively working in live mode
-  const showDetail = isLive && (isRunning || isInputRequired)
+  // Show live detail (tool calls, progress) when agent is actively working
+  const showLiveDetail = isLive && (isRunning || isInputRequired)
+  // Always show agent outputs and final output — they are the important results
+  const hasAgentOutputs = block.agentOutputs.length > 0
+  const hasFinalOutput = !!block.output
 
   return (
     <div className="ml-5 border-l-2 pl-4 py-2" style={{ borderColor: `${block.color}40` }}>
-      {/* Header */}
+      {/* ── Header: agent name + status ── */}
       <div className="flex items-center gap-2 mb-1.5">
-        {/* Status indicator */}
         {isInputRequired && isLive ? (
           <div className="h-4 w-4 flex items-center justify-center">
             <div className="h-2 w-2 rounded-full bg-amber-500 animate-pulse" />
@@ -531,48 +617,61 @@ function AgentSection({ block, isLive }: { block: AgentBlock; isLive: boolean })
         {isError && <span className="text-[10px] text-red-600 dark:text-red-400 font-medium">Failed</span>}
       </div>
 
-      {/* Task description */}
+      {/* ── Task description ── */}
       {block.taskDescription && (
         <p className="text-xs text-muted-foreground ml-6 mb-1.5 leading-relaxed">
           {block.taskDescription}
         </p>
       )}
 
-      {/* Tool calls (live only) */}
-      {showDetail && toolSteps.length > 0 && (
+      {/* ── Tool calls (live only while running) ── */}
+      {showLiveDetail && block.toolCalls.length > 0 && (
         <div className="ml-6 space-y-0.5 mb-1">
-          {toolSteps.map((s, i) => (
+          {block.toolCalls.map((tc, i) => (
             <div key={i} className="flex items-center gap-1.5 text-xs">
               <Wrench className="h-3 w-3 text-muted-foreground/70 flex-shrink-0" />
-              <span className="text-muted-foreground">{formatTool(cleanStatus(s.status))}</span>
+              <span className="text-muted-foreground">{formatToolName(tc.status)}</span>
             </div>
           ))}
         </div>
       )}
 
-      {/* Progress messages (live only) */}
-      {showDetail && progressSteps.map((s, i) => (
+      {/* ── Progress messages (live only while running) ── */}
+      {showLiveDetail && block.progressMessages.map((msg, i) => (
         <div key={`p-${i}`} className="flex items-start gap-1.5 text-xs ml-6 mb-1">
           <ChevronRight className="h-3 w-3 text-muted-foreground/50 flex-shrink-0 mt-0.5" />
-          <span className="text-muted-foreground whitespace-pre-wrap">{renderLinks(cleanStatus(s.status))}</span>
+          <span className="text-muted-foreground whitespace-pre-wrap">{renderLinks(msg)}</span>
         </div>
       ))}
 
-      {/* Error message (always visible when failed) */}
+      {/* ── Agent outputs (always visible — these are the important results) ── */}
+      {hasAgentOutputs && !hasFinalOutput && block.agentOutputs.map((ao, i) => (
+        <div
+          key={`ao-${i}`}
+          className="ml-6 mt-1.5 rounded-md px-3 py-2 text-xs leading-relaxed border-l-2 max-h-[300px] overflow-y-auto"
+          style={{ borderColor: block.color, backgroundColor: `${block.color}08` }}
+        >
+          <span className="text-foreground/80 whitespace-pre-wrap">
+            {renderLinks(stripMd(ao))}
+          </span>
+        </div>
+      ))}
+
+      {/* ── Error message ── */}
       {isError && block.errorMessage && (
         <div className="ml-6 mt-1 rounded-md px-3 py-2 text-xs leading-relaxed bg-red-500/5 border-l-2 border-red-400">
           <span className="text-red-600 dark:text-red-400">{block.errorMessage}</span>
         </div>
       )}
 
-      {/* Output / result */}
-      {block.output && (
+      {/* ── Final output from plan (always visible) ── */}
+      {hasFinalOutput && (
         <div
           className="ml-6 mt-1.5 rounded-md px-3 py-2 text-xs leading-relaxed border-l-2 max-h-[300px] overflow-y-auto"
           style={{ borderColor: block.color, backgroundColor: `${block.color}08` }}
         >
           <span className="text-foreground/80 whitespace-pre-wrap">
-            {renderLinks(stripMd(cleanStatus(block.output)))}
+            {renderLinks(stripMd(block.output!))}
           </span>
         </div>
       )}
@@ -589,7 +688,7 @@ function PhaseBlock({ phase, isLive }: { phase: Phase; isLive: boolean }) {
         {phase.orchestratorMessages.map((msg, i) => (
           <div key={i} className="flex items-start gap-1.5 text-xs ml-1 mb-0.5">
             <MessageSquare className="h-3 w-3 text-primary/60 flex-shrink-0 mt-0.5" />
-            <span className="text-muted-foreground whitespace-pre-wrap">{renderLinks(msg.text)}</span>
+            <span className="text-muted-foreground whitespace-pre-wrap">{renderLinks(msg)}</span>
           </div>
         ))}
       </div>
@@ -602,7 +701,7 @@ function PhaseBlock({ phase, isLive }: { phase: Phase; isLive: boolean }) {
   const isRetry = phase.agents.length > 1 && phase.agents.every(a => a.agent === phase.agents[0].agent)
   const lastAgent = phase.agents[phase.agents.length - 1]
 
-  // Determine phase-level status
+  // Phase-level status
   const phaseFailed = isRetry
     ? lastAgent?.status === "error"
     : phase.agents.some(a => a.status === "error")
@@ -614,7 +713,6 @@ function PhaseBlock({ phase, isLive }: { phase: Phase; isLive: boolean }) {
   const phaseRunning = isLive && !phaseComplete && !phaseFailed && !phaseWaiting && !phasePending &&
     phase.agents.some(a => a.status === "running")
 
-  // Step number badge color
   const badgeClass = phaseFailed
     ? "bg-red-500/15 text-red-600 dark:text-red-400"
     : phaseSucceeded
@@ -662,7 +760,7 @@ function PhaseBlock({ phase, isLive }: { phase: Phase; isLive: boolean }) {
           {phase.orchestratorMessages.map((msg, i) => (
             <div key={i} className="flex items-start gap-1.5 text-xs">
               <MessageSquare className="h-3 w-3 text-primary/50 flex-shrink-0 mt-0.5" />
-              <span className="text-muted-foreground whitespace-pre-wrap">{renderLinks(msg.text)}</span>
+              <span className="text-muted-foreground whitespace-pre-wrap">{renderLinks(msg)}</span>
             </div>
           ))}
         </div>
@@ -690,18 +788,12 @@ function PhaseBlock({ phase, isLive }: { phase: Phase; isLive: boolean }) {
 }
 
 // ════════════════════════════════════════════════════════════
-// Goal header (shared between live & accordion views)
+// Goal header
 // ════════════════════════════════════════════════════════════
 
 function GoalHeader({ plan, hasFailures }: { plan: WorkflowPlan; hasFailures: boolean }) {
-  // Strip internal metadata appended during HITL
-  let goal = plan.goal
-  const hitlIdx = goal.indexOf("\n\n[User Provided Additional Info]:")
-  if (hitlIdx >= 0) goal = goal.substring(0, hitlIdx)
-  const addlIdx = goal.indexOf("\n\n[Additional Information Provided]:")
-  if (addlIdx >= 0) goal = goal.substring(0, addlIdx)
-  goal = goal.trim()
-  if (!goal) return null
+  const goal = cleanGoal(plan.goal)
+  if (!goal || isGenericGoal(goal)) return null
 
   const statusLabel = hasFailures
     ? "Completed with errors"
@@ -770,7 +862,7 @@ export function InferenceSteps({ steps, isInferencing, plan }: InferenceStepsPro
     ? `${uniqueAgents.length} agent${uniqueAgents.length !== 1 ? "s" : ""} · ${stepPhases.length} step${stepPhases.length !== 1 ? "s" : ""}`
     : `${steps.length} events`
 
-  // ── Auto-scroll during live execution ──
+  // ── Auto-scroll ──
   useEffect(() => {
     if (containerRef.current && isInferencing) {
       containerRef.current.scrollTop = containerRef.current.scrollHeight
