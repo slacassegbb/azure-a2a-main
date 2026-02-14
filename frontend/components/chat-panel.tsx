@@ -2017,58 +2017,55 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       
       if (data.agentName && data.content) {
         const content = data.content
+        const hasEventType = !!data.eventType
         
-        // Check if this is a completion message - these should trigger isInferencing(false)
-        // and should be added as the final step but not keep the panel spinning
+        // Check if this is a completion message
         const isCompletionMessage = content.includes("completed the task") ||
                                     content.includes("completed successfully") ||
                                     content.includes("task complete") ||
                                     content === "completed"
         
-        // If we receive a completion message, DON'T set isInferencing to true
-        // In fact, we should add the step but then wait for final_response to clear the panel
-        // However, if final_response doesn't arrive (e.g., in certain edge cases), 
-        // we should still allow the panel to eventually close
         if (!isCompletionMessage) {
-          // Only set isInferencing(true) for non-completion activity
           setIsInferencing(true)
         }
-        // Note: We don't set isInferencing(false) here because final_response should handle that
-        // But we do need to add completion messages as steps (so they show in the panel)
         
-        const isNoisyUpdate = content === "task started" ||
-                             content === "processing" ||
-                             content === "processing request" ||
-                             content === "generating artifact" ||
-                             content === "mcp_tool" ||
-                             content === "mcp_call" ||
-                             content.trim().length < 3 ||
-                             (content.includes("🤖 Generating response...") && content.includes("chars")) ||
-                             (content.includes("🧠 Processing request...")) ||
-                             /^throttled;?\s*waiting/i.test(content) ||
-                             /^rate limited;?\s*retrying/i.test(content)
-        
-        const isHostToolNoise = data.agentName === "foundry-host-agent" && (
-          content.includes("executing tools") ||
-          content.includes("tool execution completed") ||
-          content.includes("AI processing completed") ||
-          content.includes("creating AI response") ||
-          content.includes("AI response created") ||
-          content.includes("finalizing response") ||
-          content.startsWith("🛠️ Calling tool:") ||
-          content.startsWith("✅ Tool ")
-        )
-        
-        if (isNoisyUpdate || isHostToolNoise) {
-          console.log("[ChatPanel] Skipping noisy remote activity:", content.substring(0, 50))
-          return
+        // TYPED EVENTS: If the backend sent eventType, trust it — skip noise filtering.
+        // Only apply noise filters to legacy untyped events.
+        if (!hasEventType) {
+          const isNoisyUpdate = content === "task started" ||
+                               content === "processing" ||
+                               content === "processing request" ||
+                               content === "generating artifact" ||
+                               content === "mcp_tool" ||
+                               content === "mcp_call" ||
+                               content.trim().length < 3 ||
+                               (content.includes("🤖 Generating response...") && content.includes("chars")) ||
+                               (content.includes("🧠 Processing request...")) ||
+                               /^throttled;?\s*waiting/i.test(content) ||
+                               /^rate limited;?\s*retrying/i.test(content)
+          
+          const isHostToolNoise = data.agentName === "foundry-host-agent" && (
+            content.includes("executing tools") ||
+            content.includes("tool execution completed") ||
+            content.includes("AI processing completed") ||
+            content.includes("creating AI response") ||
+            content.includes("AI response created") ||
+            content.includes("finalizing response") ||
+            content.startsWith("🛠️ Calling tool:") ||
+            content.startsWith("✅ Tool ")
+          )
+          
+          if (isNoisyUpdate || isHostToolNoise) {
+            console.log("[ChatPanel] Skipping noisy untyped activity:", content.substring(0, 50))
+            return
+          }
         }
         
-        const displayContent = transformStatusMessage(content, data.agentName)
+        const displayContent = hasEventType ? content : transformStatusMessage(content, data.agentName)
         
-        // Skip if transform produced an empty or trivial result
+        // Skip if content is empty or trivial
         if (!displayContent || displayContent.length < 3) {
-          console.log("[ChatPanel] Skipping empty transformed status")
+          console.log("[ChatPanel] Skipping empty status")
           return
         }
         

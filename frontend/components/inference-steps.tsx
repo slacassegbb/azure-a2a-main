@@ -394,13 +394,13 @@ function AgentSection({ block, isLive }: { block: AgentBlock; isLive: boolean })
       ))}
 
       {/* Agent output / result */}
-      {block.output && block.status === "complete" && (
+      {block.output && (
         <div
           className="ml-6 mt-1.5 rounded-md px-3 py-2 text-xs leading-relaxed border-l-2"
           style={{ borderColor: block.color, backgroundColor: `${block.color}08` }}
         >
           <span className="text-foreground/80 whitespace-pre-wrap">
-            {stripMarkdown(block.output)}
+            {stripMarkdown(truncateText(block.output, 300))}
           </span>
         </div>
       )}

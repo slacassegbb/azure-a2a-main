@@ -875,6 +875,14 @@ Use the above output from the previous workflow step to complete your task."""
             # Without this, the HITL task's output would be lost on resume
             task.output = {"result": output_text}
             
+            # Emit agent output so user can see what the agent sent (e.g., Teams message)
+            if output_text and recommended_agent:
+                display_output = output_text[:500] + "…" if len(output_text) > 500 else output_text
+                await self._emit_granular_agent_event(
+                    recommended_agent, display_output, context_id,
+                    event_type="agent_output", metadata={"output_length": len(output_text), "hitl": True}
+                )
+            
             log_info(f"⏸️ [Agent Mode] Waiting for user response to '{recommended_agent}'")
             await self._emit_granular_agent_event(
                 recommended_agent, f"Waiting for your response...", context_id,

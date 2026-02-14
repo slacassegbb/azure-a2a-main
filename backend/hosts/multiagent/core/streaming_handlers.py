@@ -82,8 +82,9 @@ class StreamingHandlers:
             # Stream to WebSocket using async background task (only for Task objects, not streaming events)
             async def stream_activity():
                 try:
-                    # Use the _emit_status_event method for consistency
-                    await self._emit_granular_agent_event(agent_name, status_text)
+                    await self._emit_granular_agent_event(
+                        agent_name, status_text, event_type="agent_progress"
+                    )
                 except Exception as e:
                     log_debug(f"Error streaming remote agent activity: {e}")
                     pass
