@@ -759,20 +759,40 @@ export function InferenceSteps({ steps, isInferencing, plan }: InferenceStepsPro
       })
 
       // Add orchestrator events to the appropriate phases
+      // Document extraction and other init events should appear BEFORE workflow steps
       const orchestratorEvents = eventsByAgent.get("foundry-host-agent") || []
-      if (orchestratorEvents.length > 0 && planPhases.length > 0) {
-        // Add reasoning/phase messages to first phase
-        for (const event of orchestratorEvents) {
-          const et = event.eventType || ""
-          if (et === "reasoning" || et === "phase") {
-            // Already have reasoning from plan, skip duplicates
-            continue
-          }
-          // Add as orchestrator message to first phase
-          if (!isNoiseMessage(event.status)) {
-            planPhases[0].orchestratorMessages.push({ text: event.status, type: "info" })
-          }
+      
+      // Create an init phase for pre-workflow events (document extraction, routing, etc.)
+      const initPhase: Phase = {
+        type: "init",
+        agents: [],
+        orchestratorMessages: [],
+        isComplete: true,
+      }
+      
+      // Separate events into init (before workflow) vs workflow-related
+      for (const event of orchestratorEvents) {
+        const et = event.eventType || ""
+        const status = event.status || ""
+        
+        // Skip noise and duplicate reasoning
+        if (isNoiseMessage(status)) continue
+        if (et === "reasoning" || et === "phase") continue
+        
+        // Document extraction, file processing, routing go to init phase
+        if (status.includes("📄") || status.includes("Extracted") || 
+            status.includes("chunks") || status.includes("memory") ||
+            et === "info" || et === "routing") {
+          initPhase.orchestratorMessages.push({ text: status, type: "info" })
+        } else if (planPhases.length > 0) {
+          // Other orchestrator messages go to first planning phase
+          planPhases[0].orchestratorMessages.push({ text: status, type: "info" })
         }
+      }
+      
+      // Prepend init phase if it has content
+      if (initPhase.orchestratorMessages.length > 0) {
+        return [initPhase, ...planPhases]
       }
 
       return planPhases
