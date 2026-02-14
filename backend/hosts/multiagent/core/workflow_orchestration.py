@@ -584,6 +584,7 @@ class WorkflowOrchestration:
         print(f"   🔗 Context ID: {context_id}")
         
         # Emit agent_start so the frontend shows this agent as actively working
+        print(f"📡 [EMIT DEBUG] About to emit agent_start for '{agent_name}' with context_id='{context_id}'")
         await self._emit_granular_agent_event(
             agent_name=agent_name,
             status_text=f"Starting: {step.description[:50]}...",
@@ -591,6 +592,7 @@ class WorkflowOrchestration:
             event_type="agent_start",
             metadata={"task_description": step.description, "step_label": step.step_label}
         )
+        print(f"✅ [EMIT DEBUG] Emitted agent_start for '{agent_name}'")
         
         # Emit plan update now that recommended_agent is set — frontend can show the agent name
         if plan:

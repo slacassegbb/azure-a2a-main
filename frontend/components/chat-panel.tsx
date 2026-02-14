@@ -21,62 +21,6 @@ import { useSearchParams, useRouter } from "next/navigation"
 import { getConversation, updateConversationTitle, createConversation, notifyConversationCreated, type Message as APIMessage } from "@/lib/conversation-api"
 import { createContextId, getOrCreateSessionId } from "@/lib/session"
 
-// Transform technical status messages into user-friendly display text
-const transformStatusMessage = (message: string, agentName?: string): string => {
-  // Remove "🛠️ Remote agent executing: " prefix
-  let transformed = message.replace(/^🛠️\s+Remote agent executing:\s*/i, "")
-  
-  // Transform common technical patterns
-  const transformations: Record<string, string> = {
-    // Tool execution patterns
-    "Executing file_search": "Searching through uploaded documents",
-    "Executing bing_grounding": "Searching the web",
-    "Executing web_search": "Searching the web",
-    
-    // Generic "Executing X" patterns
-    "Executing ": "Using ",
-    
-    // Status patterns - now with agent context (no icons)
-    "status: submitted": agentName ? `${agentName} is processing your request...` : "Processing request",
-    "status: working": agentName ? `${agentName} is analyzing...` : "Analyzing",
-    "status: completed": agentName ? `${agentName} completed the task` : "Task complete",
-    "status: failed": agentName ? `${agentName} encountered an error` : "Task failed",
-    
-    // Standalone status words (case insensitive)
-    "^processing request$": agentName ? `${agentName} is processing your request...` : "Processing request",
-    "^analyzing$": agentName ? `${agentName} is analyzing...` : "Analyzing",
-    
-    // Remote agent patterns
-    "Remote agent executing": "",
-  }
-  
-  // Apply transformations
-  for (const [pattern, replacement] of Object.entries(transformations)) {
-    if (pattern.startsWith("^") && pattern.endsWith("$")) {
-      // Regex pattern
-      transformed = transformed.replace(new RegExp(pattern, "gi"), replacement)
-    } else {
-      // Simple string replacement
-      transformed = transformed.replace(new RegExp(pattern, "gi"), replacement)
-    }
-  }
-  
-  // Remove any remaining 🛠️ icons
-  transformed = transformed.replace(/🛠️\s*/g, "")
-  
-  // Clean up raw tool names that slipped through (snake_case with no context)
-  // e.g., "mcp_tool" → skip, "create_full_invoice" → "Create full invoice"
-  if (/^[a-z_]+$/.test(transformed.trim()) && !transformed.includes(" ")) {
-    const readable = transformed.trim().replace(/_/g, " ")
-    transformed = readable.charAt(0).toUpperCase() + readable.slice(1)
-  }
-  
-  // Clean up any double spaces or trailing colons
-  transformed = transformed.replace(/\s+/g, " ").replace(/:\s*$/, "").trim()
-  
-  return transformed
-}
-
 // Helper function to generate conversation title from first message
 const generateTitleFromMessage = (message: string): string => {
   // Clean up the message and truncate to reasonable length
@@ -2108,9 +2052,8 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       
       if (data.agentName && data.content) {
         const content = data.content
-        // Backend now sends activityType (renamed from eventType to avoid WebSocket routing collision)
+        // Backend now sends eventType on ALL events (no more untyped events)
         const activityType = data.activityType || data.eventType
-        const hasActivityType = !!activityType
         
         // Check if this is a completion message
         const isCompletionMessage = content.includes("completed the task") ||
@@ -2122,61 +2065,26 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
           setIsInferencing(true)
         }
         
-        // TYPED EVENTS: If the backend sent activityType, trust it — skip noise filtering.
-        // Only apply noise filters to legacy untyped events.
-        if (!hasActivityType) {
-          const isNoisyUpdate = content === "task started" ||
-                               content === "processing" ||
-                               content === "processing request" ||
-                               content === "generating artifact" ||
-                               content === "mcp_tool" ||
-                               content === "mcp_call" ||
-                               content.trim().length < 3 ||
-                               (content.includes("🤖 Generating response...") && content.includes("chars")) ||
-                               (content.includes("🧠 Processing request...")) ||
-                               /^throttled;?\s*waiting/i.test(content) ||
-                               /^rate limited;?\s*retrying/i.test(content)
-          
-          const isHostToolNoise = data.agentName === "foundry-host-agent" && (
-            content.includes("executing tools") ||
-            content.includes("tool execution completed") ||
-            content.includes("AI processing completed") ||
-            content.includes("creating AI response") ||
-            content.includes("AI response created") ||
-            content.includes("finalizing response") ||
-            content.startsWith("🛠️ Calling tool:") ||
-            content.startsWith("✅ Tool ")
-          )
-          
-          if (isNoisyUpdate || isHostToolNoise) {
-            console.log("[ChatPanel] Skipping noisy untyped activity:", content.substring(0, 50))
-            return
-          }
-        }
-        
-        const displayContent = hasActivityType ? content : transformStatusMessage(content, data.agentName)
-        
-        // Skip if content is empty or trivial
-        if (!displayContent || displayContent.length < 3) {
+        // All backend events now have eventType - no legacy filtering needed
+        // Skip only truly empty content
+        if (!content || content.trim().length < 2) {
           console.log("[ChatPanel] Skipping empty status")
           return
         }
         
         setInferenceSteps(prev => {
           // Check last 8 entries for duplicates (wider window for busy workflows)
-          const recentEntries = prev.slice(-8)
           const recentStartIdx = Math.max(0, prev.length - 8)
           const duplicateIdx = prev.findIndex(
-            (entry, idx) => idx >= recentStartIdx && entry.agent === data.agentName && entry.status === displayContent
+            (entry, idx) => idx >= recentStartIdx && entry.agent === data.agentName && entry.status === content
           )
           
           // If a typed version arrives and an untyped duplicate exists, REPLACE the old one
-          // This prevents _emit_status_event (untyped) from blocking _emit_granular_agent_event (typed)
           if (duplicateIdx >= 0 && activityType && !prev[duplicateIdx].eventType) {
             const updated = [...prev]
             updated[duplicateIdx] = {
               agent: data.agentName,
-              status: displayContent,
+              status: content,
               eventType: activityType,
               metadata: data.metadata,
               taskId: data.taskId,
@@ -2189,11 +2097,11 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
             const lastEntry = prev[prev.length - 1]
             if (lastEntry.agent === data.agentName && 
                 lastEntry.status.includes("is working on") &&
-                displayContent.includes("is working on")) {
+                content.includes("is working on")) {
               // Replace the last "working on" with the new one instead of adding
               return [...prev.slice(0, -1), { 
                 agent: data.agentName, 
-                status: displayContent,
+                status: content,
                 eventType: activityType,
                 metadata: data.metadata,
                 taskId: data.taskId,
@@ -2202,13 +2110,13 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
           }
           
           if (duplicateIdx >= 0) {
-            console.log("[ChatPanel] Skipping duplicate remote activity:", displayContent.substring(0, 50))
+            console.log("[ChatPanel] Skipping duplicate remote activity:", content.substring(0, 50))
             return prev
           }
           
           return [...prev, { 
             agent: data.agentName, 
-            status: displayContent,
+            status: content,
             eventType: activityType,
             metadata: data.metadata,
             taskId: data.taskId,

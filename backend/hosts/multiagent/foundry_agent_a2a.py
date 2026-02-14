@@ -2571,7 +2571,7 @@ Answer with just JSON:
                     if wait_s > 0:
                         # Use contextvar for async-safe context isolation
                         throttle_context_id = _current_context_id.get() or session_context.contextId
-                        asyncio.create_task(self._emit_granular_agent_event(agent_name, f"throttled; waiting {wait_s}s", throttle_context_id))
+                        asyncio.create_task(self._emit_granular_agent_event(agent_name, f"throttled; waiting {wait_s}s", throttle_context_id, event_type="info"))
                         await asyncio.sleep(wait_s)
             except Exception:
                 pass
@@ -3063,7 +3063,7 @@ Answer with just JSON:
                         session_context.agent_task_states[agent_name] = 'failed'
                         session_context.agent_cooldowns[agent_name] = time.time() + retry_after
                         try:
-                            asyncio.create_task(self._emit_granular_agent_event(agent_name, f"rate limited; retrying in {retry_after}s (attempt {retry_attempt}/{max_rate_limit_retries})", retry_context_id))
+                            asyncio.create_task(self._emit_granular_agent_event(agent_name, f"rate limited; retrying in {retry_after}s (attempt {retry_attempt}/{max_rate_limit_retries})", retry_context_id, event_type="info"))
                         except Exception:
                             pass
 
@@ -5914,7 +5914,7 @@ Workflow completed with result:
     def _add_status_message_to_conversation(self, status_text: str, contextId: str):
         """Add a status message directly to the conversation for immediate UI display."""
         # Use WebSocket streaming for real-time status updates
-        asyncio.create_task(self._emit_granular_agent_event("foundry-host-agent", status_text, contextId))
+        asyncio.create_task(self._emit_granular_agent_event("foundry-host-agent", status_text, contextId, event_type="info"))
 
     # NOTE: _emit_status_event and _emit_text_chunk are now inherited from EventEmitters
 

@@ -2,7 +2,7 @@
 
 import React, { useMemo } from "react"
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
-import { CheckCircle2, Loader, AlertCircle, MessageSquare, Bot, Workflow, Wrench, FileSearch, Send, Zap } from "lucide-react"
+import { CheckCircle2, Loader, AlertCircle, MessageSquare, Bot, Workflow, Wrench, FileSearch, Send, Zap, FileText, Paperclip } from "lucide-react"
 
 interface StepEvent {
   agent: string
@@ -10,6 +10,9 @@ interface StepEvent {
   eventType?: string
   metadata?: Record<string, any>
   taskId?: string
+  imageUrl?: string
+  imageName?: string
+  mediaType?: string
 }
 
 interface InferenceStepsProps {
@@ -26,6 +29,8 @@ interface AgentInfo {
   status: "running" | "complete" | "error" | "waiting"
   output: string | null
   progressMessages: string[]
+  extractedFiles: { name: string; url?: string; type?: string }[]
+  stepNumber?: number  // Extracted from [Step X] in content
 }
 
 interface OrchestratorActivity {
@@ -66,8 +71,20 @@ interface ParsedData {
 function parseEventsToAgents(steps: StepEvent[]): ParsedData {
   const agentMap = new Map<string, AgentInfo>()
   const orchestratorActivities: OrchestratorActivity[] = []
+  const seenOrchestratorLabels = new Set<string>()
   let orchestratorStatus: "idle" | "planning" | "dispatching" | "complete" = "idle"
   let activityIndex = 0
+  
+  // Debug: log all incoming steps
+  console.log("[InferenceSteps] Parsing steps:", steps.map(s => ({ agent: s.agent, eventType: s.eventType, statusLen: s.status?.length, hasImage: !!s.imageUrl })))
+  
+  // Debug: specifically check for Teams Agent
+  const teamsEvents = steps.filter(s => s.agent?.toLowerCase().includes("teams"))
+  if (teamsEvents.length > 0) {
+    console.log("[InferenceSteps] 🎯 TEAMS AGENT EVENTS FOUND:", teamsEvents)
+  } else {
+    console.log("[InferenceSteps] ⚠️ No Teams Agent events in steps array")
+  }
   
   for (const step of steps) {
     const agentName = step.agent
@@ -80,51 +97,57 @@ function parseEventsToAgents(steps: StepEvent[]): ParsedData {
     if (agentName === "foundry-host-agent") {
       activityIndex++
       
+      let activity: OrchestratorActivity | null = null
+      
       if (eventType === "tool_call") {
         const toolName = step.metadata?.tool_name || "tool"
         const isDocTool = toolName.includes("file_search") || toolName.includes("document") || toolName.includes("search")
         const isAgentCall = toolName.includes("send_task") || toolName.includes("agent")
-        orchestratorActivities.push({
+        activity = {
           type: isDocTool ? "document" : isAgentCall ? "agent_dispatch" : "tool_call",
           label: isDocTool ? "Searching documents" : isAgentCall ? "Dispatching to agent" : `Using ${toolName}`,
           detail: step.metadata?.arguments ? JSON.stringify(step.metadata.arguments).slice(0, 100) : undefined,
           timestamp: activityIndex,
-        })
+        }
         orchestratorStatus = "dispatching"
-      } else if (eventType === "phase" || content.includes("Planning") || content.includes("planning") || content.includes("Analyzing")) {
-        const phaseLabel = step.metadata?.phase === "planning" ? `Planning step ${step.metadata?.step_number || ""}` : "Planning workflow"
-        orchestratorActivities.push({
+      } else if (eventType === "phase") {
+        // Only use phase events, skip content-based "Planning" detection to avoid dupes
+        const stepNum = step.metadata?.step_number || ""
+        activity = {
           type: "planning",
-          label: phaseLabel,
-          detail: content,
+          label: `Planning step ${stepNum}`.trim(),
+          detail: content.slice(0, 60),
           timestamp: activityIndex,
-        })
+        }
         orchestratorStatus = "planning"
-      } else if (content.includes("Delegating") || content.includes("Calling") || content.includes("Dispatching") || content.includes("agents available")) {
-        // Extract agent name if mentioned
+      } else if (content.includes("Delegating") || content.includes("Dispatching") || content.includes("agents available")) {
         const agentMatch = content.match(/(?:to|calling|dispatching)\s+([A-Za-z\s]+(?:Agent)?)/i)
-        orchestratorActivities.push({
+        activity = {
           type: "agent_dispatch",
-          label: agentMatch ? `Calling ${agentMatch[1].trim()}` : content.includes("agents available") ? content : "Dispatching to agent",
-          detail: content,
+          label: agentMatch ? `Calling ${agentMatch[1].trim()}` : content.includes("agents available") ? content.slice(0, 40) : "Dispatching to agent",
           timestamp: activityIndex,
-        })
+        }
         orchestratorStatus = "dispatching"
       } else if (eventType === "agent_complete" || content.includes("complete") || content.includes("finished")) {
         orchestratorStatus = "complete"
-      } else if (content.length > 5) {
-        // Other info messages
-        orchestratorActivities.push({
-          type: "info",
-          label: content.slice(0, 60),
-          timestamp: activityIndex,
-        })
+      }
+      // Skip other orchestrator noise - don't add "info" type activities
+      
+      // Dedupe orchestrator activities
+      if (activity && !seenOrchestratorLabels.has(activity.label)) {
+        seenOrchestratorLabels.add(activity.label)
+        orchestratorActivities.push(activity)
       }
       continue
     }
     
+    // Skip if this looks like orchestrator content leaked through
+    if (agentName.includes("foundry") || agentName.includes("host-agent")) continue
+    
     // Handle regular agents
     if (!agentMap.has(agentName)) {
+      // Extract step number from content if present
+      const stepMatch = content.match(/\[Step\s*(\d+)\]/i)
       agentMap.set(agentName, {
         name: agentName,
         displayName: formatAgentName(agentName),
@@ -133,32 +156,111 @@ function parseEventsToAgents(steps: StepEvent[]): ParsedData {
         status: "running",
         output: null,
         progressMessages: [],
+        extractedFiles: [],
+        stepNumber: stepMatch ? parseInt(stepMatch[1]) : undefined,
       })
     }
     
     const agent = agentMap.get(agentName)!
     
+    // Check for file extraction events (📎 prefix or imageUrl present)
+    if (step.imageName || content.startsWith("📎")) {
+      const fileName = step.imageName || content.replace(/^📎\s*(Extracted|Generated)\s*/i, "").trim()
+      if (fileName && !agent.extractedFiles.some(f => f.name === fileName)) {
+        agent.extractedFiles.push({
+          name: fileName,
+          url: step.imageUrl,
+          type: step.mediaType,
+        })
+      }
+      continue  // Don't process as regular event
+    }
+    
+    // Extract step number if we haven't yet
+    if (!agent.stepNumber) {
+      const stepMatch = content.match(/\[Step\s*(\d+)\]/i)
+      if (stepMatch) agent.stepNumber = parseInt(stepMatch[1])
+    }
+    
     if (eventType === "agent_start") {
       agent.taskDescription = step.metadata?.task_description || content
       agent.status = "running"
     } else if (eventType === "agent_output") {
-      agent.output = content
+      // Only set output if different from existing (avoid duplicates)
+      if (!agent.output || agent.output !== content) {
+        agent.output = content
+      }
     } else if (eventType === "agent_complete") {
       agent.status = "complete"
     } else if (eventType === "agent_error") {
       agent.status = "error"
       if (!agent.output) agent.output = content
     } else if (eventType === "info" || eventType === "agent_progress") {
-      if (content && content.length > 5 && !agent.progressMessages.includes(content)) {
+      // Check for HITL waiting state from metadata or content
+      if (step.metadata?.hitl || content.includes("Waiting for") || content.includes("input_required")) {
+        agent.status = "waiting"
+        if (content && content.length > 10 && !agent.progressMessages.includes(content)) {
+          agent.progressMessages.push(content)
+        }
+      } else if (content && content.length > 5 && !agent.progressMessages.includes(content)) {
         agent.progressMessages.push(content)
       }
-    } else if (content.includes("input_required") || content.includes("Waiting for")) {
-      agent.status = "waiting"
+    } else if (eventType === "tool_call") {
+      // Tool calls from agents (not orchestrator) - add as progress
+      const toolName = step.metadata?.tool_name || "tool"
+      if (!agent.progressMessages.includes(`Using ${toolName}`)) {
+        agent.progressMessages.push(`Using ${toolName}`)
+      }
+    } else if (!eventType && content) {
+      // UNTYPED EVENTS: These are likely agent outputs or progress updates
+      // Check for status indicators in content
+      if (content.includes("⏸️") || content.includes("Waiting for human") || content.includes("📱 Waiting") || content.includes("input_required")) {
+        agent.status = "waiting"
+        // Also store the content as output if it's substantial
+        if (content.length > 50 && (!agent.output || agent.output.length < content.length)) {
+          agent.output = content
+        }
+      } else if (content.includes("completed") || content.includes("Done") || content.includes("✅")) {
+        agent.status = "complete"
+        if (content.length > 20 && (!agent.output || agent.output.length < content.length)) {
+          agent.output = content
+        }
+      } else if (content.length > 100) {
+        // Long content is likely the actual output
+        if (!agent.output || agent.output.length < content.length) {
+          agent.output = content
+        }
+      } else if (content.length > 10) {
+        // Shorter content is progress
+        if (!agent.progressMessages.includes(content)) {
+          agent.progressMessages.push(content)
+        }
+      }
     }
   }
   
+  // Sort agents by step number if available
+  const sortedAgents = Array.from(agentMap.values()).sort((a, b) => {
+    if (a.stepNumber && b.stepNumber) return a.stepNumber - b.stepNumber
+    if (a.stepNumber) return -1
+    if (b.stepNumber) return 1
+    return 0
+  })
+  
+  // Debug: log parsed result
+  console.log("[InferenceSteps] Parsed agents:", sortedAgents.map(a => ({ 
+    name: a.name, 
+    status: a.status, 
+    stepNumber: a.stepNumber,
+    hasOutput: !!a.output,
+    outputLen: a.output?.length,
+    filesCount: a.extractedFiles.length,
+    progressCount: a.progressMessages.length
+  })))
+  console.log("[InferenceSteps] Orchestrator activities:", orchestratorActivities.length, orchestratorStatus)
+  
   return {
-    agents: Array.from(agentMap.values()),
+    agents: sortedAgents,
     orchestratorActivities,
     orchestratorStatus,
   }
@@ -208,12 +310,35 @@ function OrchestratorSection({ activities, status, isLive }: { activities: Orche
 }
 
 function AgentCard({ agent, stepNumber, isLive }: { agent: AgentInfo; stepNumber: number; isLive: boolean }) {
-  const { displayName, color, taskDescription, status, output, progressMessages } = agent
+  const { displayName, color, taskDescription, status, output, progressMessages, extractedFiles } = agent
   
   const isRunning = status === "running"
   const isComplete = status === "complete"
   const isError = status === "error"
   const isWaiting = status === "waiting"
+  
+  // Use agent's extracted step number, or fall back to position
+  const displayStepNumber = agent.stepNumber || stepNumber
+  
+  // Clean task description - remove [Step X] prefix
+  const cleanTaskDesc = taskDescription?.replace(/^\[Step\s*\d+\]\s*/i, "").trim()
+  
+  // Clean output - remove duplicated sections (same text appearing twice)
+  const cleanOutput = useMemo(() => {
+    if (!output) return null
+    // Remove [Step X] prefix from output
+    let cleaned = output.replace(/^\[Step\s*\d+\]\s*/i, "").trim()
+    // If output has same paragraph twice, dedupe it
+    const paragraphs = cleaned.split(/\n\n+/)
+    const seen = new Set<string>()
+    const uniqueParagraphs = paragraphs.filter(p => {
+      const normalized = p.trim().slice(0, 100) // Use first 100 chars as key
+      if (seen.has(normalized)) return false
+      seen.add(normalized)
+      return true
+    })
+    return uniqueParagraphs.join("\n\n")
+  }, [output])
 
   return (
     <div className="py-2">
@@ -224,9 +349,9 @@ function AgentCard({ agent, stepNumber, isLive }: { agent: AgentInfo; stepNumber
           isWaiting ? "bg-amber-500/15 text-amber-600" :
           "bg-primary/15 text-primary"
         }`}>
-          {stepNumber}
+          {displayStepNumber}
         </div>
-        <span className="text-xs font-semibold text-foreground">Step {stepNumber}</span>
+        <span className="text-xs font-semibold text-foreground">Step {displayStepNumber}</span>
         {isComplete && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />}
         {isError && <AlertCircle className="h-3.5 w-3.5 text-red-500" />}
         {isWaiting && <MessageSquare className="h-3.5 w-3.5 text-amber-500" />}
@@ -253,12 +378,12 @@ function AgentCard({ agent, stepNumber, isLive }: { agent: AgentInfo; stepNumber
           </span>
           {isComplete && <span className="text-[10px] text-emerald-600">Done</span>}
           {isError && <span className="text-[10px] text-red-600">Failed</span>}
-          {isWaiting && <span className="text-[10px] text-amber-600">Waiting for input</span>}
+          {isWaiting && <span className="text-[10px] text-amber-600">Awaiting response</span>}
           {isRunning && isLive && <span className="text-[10px] text-primary">Working...</span>}
         </div>
 
-        {taskDescription && (
-          <p className="text-xs text-muted-foreground ml-6 mb-1.5">{taskDescription.replace(/^Starting:\s*/i, "").replace(/\.\.\.$/g, "")}</p>
+        {cleanTaskDesc && (
+          <p className="text-xs text-muted-foreground ml-6 mb-1.5">{cleanTaskDesc.replace(/^Starting:\s*/i, "").replace(/\.\.\.$/g, "")}</p>
         )}
 
         {isLive && isRunning && progressMessages.length > 0 && (
@@ -269,9 +394,28 @@ function AgentCard({ agent, stepNumber, isLive }: { agent: AgentInfo; stepNumber
           </div>
         )}
 
-        {output && (
+        {/* Show extracted files */}
+        {extractedFiles.length > 0 && (
+          <div className="ml-6 mt-1.5 space-y-1">
+            {extractedFiles.map((file, i) => (
+              <div key={i} className="flex items-center gap-2 text-xs">
+                <Paperclip className="h-3 w-3 text-muted-foreground" />
+                <span className="text-muted-foreground">Extracted:</span>
+                {file.url ? (
+                  <a href={file.url} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline truncate max-w-[200px]">
+                    {file.name}
+                  </a>
+                ) : (
+                  <span className="text-foreground/80 truncate max-w-[200px]">{file.name}</span>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {cleanOutput && (
           <div className="ml-6 mt-1.5 rounded-md px-3 py-2 text-xs border-l-2 max-h-[300px] overflow-y-auto" style={{ borderColor: color, backgroundColor: `${color}08` }}>
-            <div className="text-foreground/80 whitespace-pre-wrap">{output}</div>
+            <div className="text-foreground/80 whitespace-pre-wrap">{cleanOutput}</div>
           </div>
         )}
       </div>

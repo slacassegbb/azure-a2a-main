@@ -356,14 +356,22 @@ class EventEmitters:
                 if metadata:
                     event_data["metadata"] = metadata
                 
+                # DEBUG: Log what we're sending
+                print(f"📡 [WS_EMIT] Sending remote_agent_activity: agent={agent_name}, type={event_type}, convId={conversation_id}")
+                
                 success = await streamer._send_event("remote_agent_activity", event_data, routing_context_id)
                 if not success:
                     log_debug(f"Failed to stream remote agent activity: {agent_name}")
+                    print(f"❌ [WS_EMIT] Failed to send event for {agent_name}")
+                else:
+                    print(f"✅ [WS_EMIT] Successfully sent event for {agent_name}")
             else:
                 log_debug(f"WebSocket streamer not available for remote agent activity")
+                print(f"⚠️ [WS_EMIT] No WebSocket streamer available for {agent_name}")
                 
         except Exception as e:
             log_debug(f"Error emitting granular agent event: {e}")
+            print(f"❌ [WS_EMIT] Error emitting event for {agent_name}: {e}")
 
     async def _emit_plan_update(self, plan, context_id: str, reasoning: str = None):
         """Emit the full workflow plan to WebSocket for frontend rendering.
@@ -416,9 +424,9 @@ class EventEmitters:
         except Exception as e:
             log_debug(f"Error emitting plan update: {e}")
 
-    async def _emit_status_event(self, status_text: str, context_id: str):
+    async def _emit_status_event(self, status_text: str, context_id: str, event_type: str = "info"):
         """Emit status event to WebSocket for real-time frontend updates."""
-        await self._emit_granular_agent_event("foundry-host-agent", status_text, context_id)
+        await self._emit_granular_agent_event("foundry-host-agent", status_text, context_id, event_type=event_type)
 
     async def _emit_text_chunk(self, chunk: str, context_id: str):
         """
