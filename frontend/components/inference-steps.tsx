@@ -226,8 +226,22 @@ function parseEventsToAgents(steps: StepEvent[]): ParsedData {
         agent.output = agent.output ? `${agent.output}\n\n❌ Error: ${content}` : `❌ Error: ${content}`
       }
     } else if (eventType === "info" || eventType === "agent_progress") {
-      // Check for HITL waiting state from metadata or content
-      if (step.metadata?.hitl || content.includes("Waiting for") || content.includes("input_required")) {
+      const phase = step.metadata?.phase
+      
+      // Document extraction - show the extracted content as output
+      if (phase === "document_extraction") {
+        // This is valuable extracted content - add to output
+        if (content && content.length > 20) {
+          agent.output = agent.output ? `${agent.output}\n\n${content}` : content
+        }
+      // Document indexing - show as progress
+      } else if (phase === "document_indexing") {
+        const fileCount = step.metadata?.file_count || 1
+        if (!agent.progressMessages.includes(`📄 Indexing ${fileCount} document(s)`)) {
+          agent.progressMessages.push(`📄 Indexing ${fileCount} document(s)`)
+        }
+      // Check for HITL waiting state
+      } else if (step.metadata?.hitl || content.includes("Waiting for") || content.includes("input_required")) {
         agent.status = "waiting"
         if (content && content.length > 10 && !agent.progressMessages.includes(content)) {
           agent.progressMessages.push(content)
@@ -436,22 +450,45 @@ function AgentCard({ agent, stepNumber, isLive }: { agent: AgentInfo; stepNumber
           </div>
         )}
 
-        {/* Show extracted files */}
+        {/* Show extracted/generated files */}
         {extractedFiles.length > 0 && (
-          <div className="ml-6 mt-1.5 space-y-1">
-            {extractedFiles.map((file, i) => (
-              <div key={i} className="flex items-center gap-2 text-xs">
-                <Paperclip className="h-3 w-3 text-muted-foreground" />
-                <span className="text-muted-foreground">Extracted:</span>
-                {file.url ? (
-                  <a href={file.url} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline truncate max-w-[200px]">
-                    {file.name}
-                  </a>
-                ) : (
-                  <span className="text-foreground/80 truncate max-w-[200px]">{file.name}</span>
-                )}
-              </div>
-            ))}
+          <div className="ml-6 mt-1.5 space-y-2">
+            {extractedFiles.map((file, i) => {
+              const isImage = file.type?.startsWith('image/') || 
+                ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp'].includes(
+                  file.name.toLowerCase().split('.').pop() || ''
+                )
+              const isGenerated = file.type?.startsWith('image/') || file.type?.startsWith('video/')
+              const label = isGenerated ? "Generated" : "Extracted"
+              
+              return (
+                <div key={i} className="space-y-1">
+                  <div className="flex items-center gap-2 text-xs">
+                    <Paperclip className="h-3 w-3 text-muted-foreground" />
+                    <span className="text-muted-foreground">{label}:</span>
+                    {file.url ? (
+                      <a href={file.url} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline truncate max-w-[200px]">
+                        {file.name}
+                      </a>
+                    ) : (
+                      <span className="text-foreground/80 truncate max-w-[200px]">{file.name}</span>
+                    )}
+                  </div>
+                  {/* Show image thumbnail */}
+                  {isImage && file.url && (
+                    <div className="ml-5">
+                      <a href={file.url} target="_blank" rel="noopener noreferrer">
+                        <img 
+                          src={file.url} 
+                          alt={file.name}
+                          className="max-w-[200px] max-h-[150px] rounded border border-border/50 hover:border-primary transition-colors"
+                        />
+                      </a>
+                    </div>
+                  )}
+                </div>
+              )
+            })}
           </div>
         )}
 
