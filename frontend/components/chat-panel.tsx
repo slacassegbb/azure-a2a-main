@@ -2150,6 +2150,21 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
           )
         const isMedia = isImage || isVideo
         
+        // Determine correct media type - don't default to image/png for non-images
+        let mediaType = data.fileInfo.content_type
+        if (!mediaType) {
+          const ext = (data.fileInfo.filename || '').toLowerCase().split('.').pop() || ''
+          if (isImage) {
+            mediaType = `image/${ext === 'jpg' ? 'jpeg' : ext}`
+          } else if (isVideo) {
+            mediaType = `video/${ext}`
+          } else if (ext === 'pdf') {
+            mediaType = 'application/pdf'
+          } else {
+            mediaType = 'application/octet-stream'
+          }
+        }
+        
         // Add to inference steps (with thumbnail for images, text for other files)
         // This shows the image/video in the workflow panel during execution
         const fileVerb = isMedia ? "Generated" : "Extracted"
@@ -2158,7 +2173,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
           status: `📎 ${fileVerb} ${data.fileInfo.filename}`,
           imageUrl: isMedia && data.fileInfo.uri ? data.fileInfo.uri : undefined,
           imageName: data.fileInfo.filename,
-          mediaType: data.fileInfo.content_type || (isVideo ? "video/mp4" : "image/png")
+          mediaType: mediaType
         }])
         
         // NOTE: We do NOT add images as separate messages here anymore

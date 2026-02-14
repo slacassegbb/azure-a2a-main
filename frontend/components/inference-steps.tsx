@@ -96,19 +96,20 @@ function parseEventsToAgents(steps: StepEvent[]): ParsedData {
     // Handle orchestrator events - show useful info about what the orchestrator is doing
     if (agentName === "foundry-host-agent") {
       let activity: OrchestratorActivity | null = null
+      const phase = step.metadata?.phase  // Check phase early for both "phase" and "info" events
       
       if (eventType === "reasoning" && content) {
         // The AI's reasoning about what to do - this is the most valuable!
         activityIndex++
         activity = {
           type: "planning",
-          label: content.length > 80 ? content.slice(0, 77) + "..." : content,
+          label: content,  // Show full reasoning, UI will handle overflow
           timestamp: activityIndex,
         }
         orchestratorStatus = "planning"
-      } else if (eventType === "phase") {
+      } else if (eventType === "phase" || (eventType === "info" && phase)) {
         // Phase events describe what step is being executed
-        const phase = step.metadata?.phase
+        // Also handle "info" events that have a phase in metadata
         if (phase === "step_execution") {
           activityIndex++
           const stepLabel = step.metadata?.step_label || ""
@@ -129,6 +130,30 @@ function parseEventsToAgents(steps: StepEvent[]): ParsedData {
             timestamp: activityIndex,
           }
           orchestratorStatus = "dispatching"
+        } else if (phase === "document_indexing") {
+          // Orchestrator received files from agent
+          activityIndex++
+          activity = {
+            type: "document",
+            label: content,  // "📥 Received X file(s) from AgentName..."
+            timestamp: activityIndex,
+          }
+        } else if (phase === "document_extraction") {
+          // Orchestrator is extracting content from a file
+          activityIndex++
+          activity = {
+            type: "document",
+            label: content,  // "📄 Extracting content from: filename.pdf"
+            timestamp: activityIndex,
+          }
+        } else if (phase === "document_extraction_complete") {
+          // Orchestrator finished extracting - show the content preview
+          activityIndex++
+          activity = {
+            type: "document",
+            label: content,  // Full extraction message with content preview
+            timestamp: activityIndex,
+          }
         }
       } else if (eventType === "tool_call") {
         const toolName = step.metadata?.tool_name || "tool"
@@ -213,7 +238,7 @@ function parseEventsToAgents(steps: StepEvent[]): ParsedData {
       agent.taskDescription = step.metadata?.task_description || content
       agent.status = "running"
     } else if (eventType === "agent_output") {
-      // Only set output if different from existing (avoid duplicates)
+      // Set agent output (extraction content is now shown in orchestrator section)
       if (!agent.output || agent.output !== content) {
         agent.output = content
       }
@@ -228,20 +253,13 @@ function parseEventsToAgents(steps: StepEvent[]): ParsedData {
     } else if (eventType === "info" || eventType === "agent_progress") {
       const phase = step.metadata?.phase
       
-      // Document extraction - show the extracted content as output
-      if (phase === "document_extraction") {
-        // This is valuable extracted content - add to output
-        if (content && content.length > 20) {
-          agent.output = agent.output ? `${agent.output}\n\n${content}` : content
-        }
-      // Document indexing - show as progress
-      } else if (phase === "document_indexing") {
-        const fileCount = step.metadata?.file_count || 1
-        if (!agent.progressMessages.includes(`📄 Indexing ${fileCount} document(s)`)) {
-          agent.progressMessages.push(`📄 Indexing ${fileCount} document(s)`)
-        }
+      // Document indexing phases are now handled by orchestrator, skip them here
+      if (phase === "document_extraction" || phase === "document_indexing" || phase === "document_extraction_complete") {
+        continue  // These events go to orchestrator section, not agent cards
+      }
+      
       // Check for HITL waiting state
-      } else if (step.metadata?.hitl || content.includes("Waiting for") || content.includes("input_required")) {
+      if (step.metadata?.hitl || content.includes("Waiting for") || content.includes("input_required")) {
         agent.status = "waiting"
         if (content && content.length > 10 && !agent.progressMessages.includes(content)) {
           agent.progressMessages.push(content)
@@ -335,6 +353,9 @@ function OrchestratorSection({ activities, status, isLive }: { activities: Orche
     }
   }
   
+  // Check if an activity is a detailed extraction (has multi-line content)
+  const isDetailedExtraction = (label: string) => label.includes("**Extracted from") && label.includes("\n")
+  
   const isWorking = isLive && status !== "complete"
   
   return (
@@ -352,13 +373,31 @@ function OrchestratorSection({ activities, status, isLive }: { activities: Orche
       </div>
       
       {activities.length > 0 && (
-        <div className="ml-5 space-y-1">
-          {activities.slice(-5).map((activity, i) => (
-            <div key={i} className="flex items-center gap-2 text-xs text-muted-foreground">
-              <span className="text-violet-500/70">{getIcon(activity.type)}</span>
-              <span>{activity.label}</span>
-            </div>
-          ))}
+        <div className="ml-5 space-y-2">
+          {activities.slice(-5).map((activity, i) => {
+            // For detailed extractions, show in a scrollable box
+            if (isDetailedExtraction(activity.label)) {
+              return (
+                <div key={i} className="space-y-1">
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <span className="text-violet-500/70">{getIcon(activity.type)}</span>
+                    <span>Document extracted</span>
+                  </div>
+                  <div className="ml-5 rounded-md px-3 py-2 text-xs border border-border/50 bg-muted/30 max-h-[200px] overflow-y-auto">
+                    <div className="text-foreground/80 whitespace-pre-wrap">{activity.label}</div>
+                  </div>
+                </div>
+              )
+            }
+            
+            // Regular activities - allow text to wrap
+            return (
+              <div key={i} className="flex items-start gap-2 text-xs text-muted-foreground">
+                <span className="text-violet-500/70 flex-shrink-0 mt-0.5">{getIcon(activity.type)}</span>
+                <span className="break-words">{activity.label}</span>
+              </div>
+            )
+          })}
         </div>
       )}
     </div>
@@ -445,7 +484,7 @@ function AgentCard({ agent, stepNumber, isLive }: { agent: AgentInfo; stepNumber
         {isLive && isRunning && progressMessages.length > 0 && (
           <div className="ml-6 space-y-0.5 mb-1.5">
             {progressMessages.slice(-3).map((msg, i) => (
-              <div key={i} className="text-xs text-muted-foreground/70 truncate">› {msg.slice(0, 80)}</div>
+              <div key={i} className="text-xs text-muted-foreground/70 break-words">› {msg}</div>
             ))}
           </div>
         )}
@@ -454,27 +493,34 @@ function AgentCard({ agent, stepNumber, isLive }: { agent: AgentInfo; stepNumber
         {extractedFiles.length > 0 && (
           <div className="ml-6 mt-1.5 space-y-2">
             {extractedFiles.map((file, i) => {
-              const isImage = file.type?.startsWith('image/') || 
-                ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp'].includes(
-                  file.name.toLowerCase().split('.').pop() || ''
-                )
-              const isGenerated = file.type?.startsWith('image/') || file.type?.startsWith('video/')
-              const label = isGenerated ? "Generated" : "Extracted"
+              const ext = file.name.toLowerCase().split('.').pop() || ''
+              const imageExtensions = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp']
+              const videoExtensions = ['mp4', 'webm', 'mov', 'avi', 'mkv']
+              const isImage = file.type?.startsWith('image/') || imageExtensions.includes(ext)
+              const isVideo = file.type?.startsWith('video/') || videoExtensions.includes(ext)
+              const isMedia = isImage || isVideo
+              const label = isMedia ? "Generated" : "Attachment"
               
               return (
                 <div key={i} className="space-y-1">
-                  <div className="flex items-center gap-2 text-xs">
-                    <Paperclip className="h-3 w-3 text-muted-foreground" />
-                    <span className="text-muted-foreground">{label}:</span>
+                  <div className="flex items-start gap-2 text-xs">
+                    <span className="flex-shrink-0 mt-0.5">
+                      {isMedia ? (
+                        <FileText className="h-3 w-3 text-muted-foreground" />
+                      ) : (
+                        <Paperclip className="h-3 w-3 text-muted-foreground" />
+                      )}
+                    </span>
+                    <span className="text-muted-foreground flex-shrink-0">{label}:</span>
                     {file.url ? (
-                      <a href={file.url} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline truncate max-w-[200px]">
+                      <a href={file.url} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline break-all">
                         {file.name}
                       </a>
                     ) : (
-                      <span className="text-foreground/80 truncate max-w-[200px]">{file.name}</span>
+                      <span className="text-foreground/80 break-all">{file.name}</span>
                     )}
                   </div>
-                  {/* Show image thumbnail */}
+                  {/* Show image thumbnail - only for actual images, not PDFs */}
                   {isImage && file.url && (
                     <div className="ml-5">
                       <a href={file.url} target="_blank" rel="noopener noreferrer">
@@ -482,6 +528,7 @@ function AgentCard({ agent, stepNumber, isLive }: { agent: AgentInfo; stepNumber
                           src={file.url} 
                           alt={file.name}
                           className="max-w-[200px] max-h-[150px] rounded border border-border/50 hover:border-primary transition-colors"
+                          onError={(e) => { e.currentTarget.style.display = 'none' }}
                         />
                       </a>
                     </div>

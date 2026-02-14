@@ -3519,10 +3519,10 @@ Answer with just JSON:
             print(f"📭 No indexable documents from {agent_name}")
             return
         
-        # Emit status to UI — attribute to the source agent so it shows in their step
+        # Emit orchestrator status - file received from agent
         asyncio.create_task(self._emit_granular_agent_event(
-            agent_name, 
-            f"📄 Indexing {len(files_to_index)} document(s)...", 
+            "foundry-host-agent", 
+            f"📥 Received {len(files_to_index)} file(s) from {agent_name} - processing for memory indexing", 
             context_id,
             event_type="info",
             metadata={"phase": "document_indexing", "file_count": len(files_to_index), "source_agent": agent_name}
@@ -3535,6 +3535,15 @@ Answer with just JSON:
                 file_name = artifact.get('name', 'unknown')
                 
                 print(f"📥 Downloading {file_name} from {file_uri[:50]}...")
+                
+                # Emit per-file extraction status
+                asyncio.create_task(self._emit_granular_agent_event(
+                    "foundry-host-agent",
+                    f"📄 Extracting content from: {file_name}",
+                    context_id,
+                    event_type="info",
+                    metadata={"phase": "document_extraction", "file_name": file_name, "source_agent": agent_name}
+                ))
                 
                 # Download file bytes from Azure Blob
                 import httpx
@@ -3565,22 +3574,25 @@ Answer with just JSON:
                     # Get the extracted content for display in inferencing steps
                     extracted_content = result.get('content', '')
                     
-                    # Format content preview like Email Agent response style
+                    # Format content preview for orchestrator display
                     if extracted_content:
                         # Truncate for display but keep meaningful context
                         content_preview = extracted_content[:1500] if len(extracted_content) > 1500 else extracted_content
                         if len(extracted_content) > 1500:
                             content_preview += "... [truncated]"
                         
-                        # Emit detailed extraction result attributed to source agent
-                        extraction_message = f"📄 **Extracted from {file_name}:**\n\n{content_preview}\n\n---\n📊 Stored {chunks_stored} searchable chunks in memory"
+                        # Emit detailed extraction result to orchestrator
+                        extraction_message = f"📄 **Extracted from {file_name} (from {agent_name}):**\n\n{content_preview}\n\n---\n📊 Stored {chunks_stored} searchable chunks in memory"
+                        print(f"📤 [DOC_EXTRACTION] Emitting orchestrator extraction event: {len(content_preview)} chars")
                         asyncio.create_task(self._emit_granular_agent_event(
-                            agent_name,
+                            "foundry-host-agent",
                             extraction_message,
                             context_id,
                             event_type="info",
-                            metadata={"phase": "document_extraction", "file_name": file_name, "chunks": chunks_stored, "source_agent": agent_name}
+                            metadata={"phase": "document_extraction_complete", "file_name": file_name, "chunks": chunks_stored, "source_agent": agent_name}
                         ))
+                    else:
+                        print(f"⚠️ [DOC_EXTRACTION] No extracted content from {file_name}")
                     
                     # Emit file_processing_completed event so frontend updates status to 'analyzed'
                     # This uses the same event type that the /api/files/process endpoint uses
