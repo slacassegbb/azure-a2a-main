@@ -84,6 +84,7 @@ interface AgentBlock {
   status: "running" | "complete" | "error" | "waiting" | "input_required"
   taskDescription?: string
   output?: string
+  errorMessage?: string
 }
 
 interface OrchestratorMessage {
@@ -494,7 +495,6 @@ function AgentSection({ block, isLive }: { block: AgentBlock; isLive: boolean })
   const progressSteps = block.steps.filter(s => {
     const et = s.eventType || ""
     if (et === "tool_call") return false
-    // Filter redundant progress messages
     const lower = s.status.toLowerCase()
     if (lower.startsWith("contacting ")) return false
     if (lower.startsWith("request sent to ")) return false
@@ -511,6 +511,10 @@ function AgentSection({ block, isLive }: { block: AgentBlock; isLive: boolean })
     seenProgress.add(key)
     return true
   })
+
+  // During live execution: show tool calls and progress
+  // After completion: only show output/error (the user cares about results, not process)
+  const showActivityDetail = isLive || isRunning
 
   return (
     <div className="ml-5 border-l-2 pl-4 py-2" style={{ borderColor: `${block.color}40` }}>
@@ -541,25 +545,25 @@ function AgentSection({ block, isLive }: { block: AgentBlock; isLive: boolean })
         </span>
 
         {isWaiting && (
-          <span className="text-[10px] text-amber-600 dark:text-amber-400 font-medium">Waiting</span>
+          <span className="text-[10px] text-amber-600 dark:text-amber-400 font-medium">Waiting for input</span>
         )}
         {isComplete && (
           <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium">Done</span>
         )}
         {isError && (
-          <span className="text-[10px] text-red-600 dark:text-red-400 font-medium">Error</span>
+          <span className="text-[10px] text-red-600 dark:text-red-400 font-medium">Failed</span>
         )}
       </div>
 
-      {/* Task description */}
+      {/* Task description - what the agent was asked to do */}
       {block.taskDescription && (
         <p className="text-xs text-muted-foreground ml-6 mb-1.5 leading-relaxed">
           {block.taskDescription}
         </p>
       )}
 
-      {/* Tool calls */}
-      {toolSteps.length > 0 && (
+      {/* Tool calls - only during live execution */}
+      {showActivityDetail && toolSteps.length > 0 && (
         <div className="ml-6 space-y-0.5 mb-1">
           {toolSteps.map((s, i) => (
             <div key={i} className="flex items-center gap-1.5 text-xs">
@@ -570,15 +574,22 @@ function AgentSection({ block, isLive }: { block: AgentBlock; isLive: boolean })
         </div>
       )}
 
-      {/* Progress messages - show full content with clickable links */}
-      {uniqueProgressSteps.map((s, i) => (
+      {/* Progress messages - only during live execution */}
+      {showActivityDetail && uniqueProgressSteps.map((s, i) => (
         <div key={`p-${i}`} className="flex items-start gap-1.5 text-xs ml-6 mb-1">
           <ChevronRight className="h-3 w-3 text-muted-foreground/50 flex-shrink-0 mt-0.5" />
           <span className="text-muted-foreground whitespace-pre-wrap">{renderWithLinks(cleanAgentStatus(s.status))}</span>
         </div>
       ))}
 
-      {/* Agent output / result - show full content with clickable links */}
+      {/* Error message - always visible when task failed */}
+      {isError && block.errorMessage && (
+        <div className="ml-6 mt-1 rounded-md px-3 py-2 text-xs leading-relaxed bg-red-500/5 border-l-2 border-red-400">
+          <span className="text-red-600 dark:text-red-400">{block.errorMessage}</span>
+        </div>
+      )}
+
+      {/* Agent output / result - the actual deliverable */}
       {block.output && (
         <div
           className="ml-6 mt-1.5 rounded-md px-3 py-2 text-xs leading-relaxed border-l-2 max-h-[300px] overflow-y-auto"
@@ -633,8 +644,14 @@ function PhaseBlock({ phase, isLive, isLast }: { phase: Phase; isLive: boolean; 
   }
 
   // Planning + agent execution phase
-  const phaseComplete = phase.agents.length > 0 && phase.agents.every(a => a.status === "complete")
+  const phaseComplete = phase.isComplete
   const phaseRunning = isLive && !phaseComplete
+
+  // Detect retries vs parallel:
+  // - Retries: multiple blocks with the SAME agent name (same agent called multiple times)
+  // - Parallel: multiple blocks with DIFFERENT agent names (different agents in same step)
+  const isRetryPhase = phase.agents.length > 1 &&
+    phase.agents.every(a => a.agent === phase.agents[0].agent)
 
   return (
     <div className="py-1">
@@ -652,6 +669,11 @@ function PhaseBlock({ phase, isLive, isLast }: { phase: Phase; isLive: boolean; 
         <span className="text-xs font-semibold text-foreground">
           Step {phase.stepNumber}
         </span>
+        {isRetryPhase && (
+          <span className="text-[9px] text-amber-600 dark:text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded-full">
+            {phase.agents.length} attempts
+          </span>
+        )}
         {phaseComplete && <CheckCircle2 className="h-3 w-3 text-emerald-500" />}
         {phaseRunning && <Loader className="h-3 w-3 animate-spin text-primary" />}
       </div>
@@ -679,9 +701,28 @@ function PhaseBlock({ phase, isLive, isLast }: { phase: Phase; isLive: boolean; 
       )}
 
       {/* Agent blocks */}
-      {phase.agents.map((block, i) => (
-        <AgentSection key={`${block.agent}-${i}`} block={block} isLive={isLive && isLast} />
-      ))}
+      {phase.agents.map((block, i) => {
+        const isLastAttempt = i === phase.agents.length - 1
+
+        // For retries: show earlier failed attempts as compact one-liners with error reason
+        // Only the latest attempt gets the full AgentSection treatment
+        if (isRetryPhase && !isLastAttempt) {
+          const reason = block.errorMessage
+            ? `: ${truncateText(block.errorMessage, 80)}`
+            : ""
+          return (
+            <div key={`${block.agent}-${i}`} className="ml-5 flex items-center gap-1.5 py-0.5 opacity-60">
+              <AlertCircle className="h-3 w-3 text-red-400 flex-shrink-0" />
+              <span className="text-[10px] text-muted-foreground">
+                Attempt {i + 1} failed{reason}
+              </span>
+            </div>
+          )
+        }
+
+        // Full rendering for: the last retry attempt, parallel agents, or single agents
+        return <AgentSection key={`${block.agent}-${i}`} block={block} isLive={isLive && isLast} />
+      })}
     </div>
   )
 }
@@ -696,123 +737,184 @@ export function InferenceSteps({ steps, isInferencing, plan }: InferenceStepsPro
   // Build phases: prefer plan tasks if available, fall back to event-based
   const phases = useMemo((): Phase[] => {
     if (plan && plan.tasks.length > 0) {
-      // Build phases from plan tasks (source of truth)
-      // Match events to tasks based on agent name for real-time progress
+      // ════════════════════════════════════════════════════════════════
+      // PLAN-BASED RENDERING (source of truth)
+      //
+      // Data flow:
+      //   Backend creates AgentModeTask objects with "[Step N] description"
+      //   Plan is persisted in message metadata as workflow_plan
+      //   Frontend groups tasks by step number into visual phases
+      //
+      // Design decisions:
+      //   1. Step number is extracted from "[Step N]" prefix in task_description
+      //   2. Tasks with same step number are grouped (retries, parallel steps)
+      //   3. Task description is cleaned: "[Step N] text" → "text"
+      //   4. Events (steps prop) add tool/progress detail to phases
+      //   5. Events are matched to agents, not to individual task invocations
+      //      (because we can't reliably know which retry an event belongs to)
+      //   6. For agents with multiple tasks, events go to the FIRST phase only
+      // ════════════════════════════════════════════════════════════════
+
+      // --- Step 1: Group events by agent name (for enriching phases) ---
       const eventsByAgent = new Map<string, StepData[]>()
       for (const step of steps) {
-        const agent = step.agent
-        if (!eventsByAgent.has(agent)) {
-          eventsByAgent.set(agent, [])
-        }
-        eventsByAgent.get(agent)!.push(step)
+        if (step.agent === "foundry-host-agent") continue  // orchestrator events handled separately
+        const key = step.agent
+        if (!eventsByAgent.has(key)) eventsByAgent.set(key, [])
+        eventsByAgent.get(key)!.push(step)
       }
 
-      const planPhases = plan.tasks.map((task, idx): Phase => {
+      // --- Step 2: Build phases from plan tasks ---
+      const planPhases: Phase[] = []
+      const stepPhaseMap = new Map<number, Phase>()
+      // Track which agents have already been assigned events (first occurrence wins)
+      const agentsWithEvents = new Set<string>()
+
+      for (let idx = 0; idx < plan.tasks.length; idx++) {
+        const task = plan.tasks[idx]
         const agentName = task.recommended_agent || "Unknown Agent"
-        // Try exact match first, then try case-insensitive partial match
-        let agentEvents = eventsByAgent.get(agentName) || []
-        if (agentEvents.length === 0) {
-          // Try to find events by partial match (e.g., "Email Agent" matches "azurefoundry_email-agent")
-          const lowerAgentName = agentName.toLowerCase().replace(/[\s-_]/g, "")
-          for (const [key, events] of eventsByAgent.entries()) {
-            const lowerKey = key.toLowerCase().replace(/[\s-_]/g, "")
-            if (lowerKey.includes(lowerAgentName) || lowerAgentName.includes(lowerKey)) {
-              agentEvents = events
-              break
-            }
+
+        // Extract step number from "[Step 3]" or "[Step 2a]" prefix
+        let stepNum = idx + 1  // fallback if no prefix
+        const stepMatch = task.task_description.match(/\[Step\s+(\d+)[a-z]?\]/)
+        if (stepMatch) {
+          stepNum = parseInt(stepMatch[1], 10) || idx + 1
+        }
+
+        // Clean the task description: remove "[Step N] " prefix for display
+        const cleanDescription = task.task_description.replace(/^\[Step\s+\d+[a-z]?\]\s*/, "")
+
+        // Clean output: strip HITL internal metadata
+        let displayOutput = task.output?.result || undefined
+        if (displayOutput) {
+          displayOutput = displayOutput.replace(/^HITL Response:\s*/i, "")
+          const trimmed = displayOutput.trim()
+          if (trimmed.length < 20 && /^(approve|approved|yes|no|reject|ok|confirm)$/i.test(trimmed)) {
+            displayOutput = `✅ User responded: "${trimmed}"`
           }
         }
-        
-        // Filter events relevant to this task (progress messages)
-        const progressSteps = agentEvents.filter(e => {
-          const et = e.eventType || ""
-          return et !== "agent_start" && et !== "agent_complete"
+
+        // Assign events to this agent block ONLY if this is the first task for this agent
+        // For retries (same agent, same step number), the plan output is sufficient
+        let taskEvents: StepData[] = []
+        if (!agentsWithEvents.has(agentName)) {
+          agentsWithEvents.add(agentName)
+          const agentEvents = eventsByAgent.get(agentName) || []
+          // Try partial match if exact name doesn't work
+          if (agentEvents.length === 0) {
+            const lowerName = agentName.toLowerCase().replace(/[\s\-_]/g, "")
+            for (const [key, events] of eventsByAgent.entries()) {
+              const lowerKey = key.toLowerCase().replace(/[\s\-_]/g, "")
+              if (lowerKey.includes(lowerName) || lowerName.includes(lowerKey)) {
+                taskEvents = events.filter(e => {
+                  const et = e.eventType || ""
+                  return et !== "agent_start" && et !== "agent_complete"
+                })
+                break
+              }
+            }
+          } else {
+            taskEvents = agentEvents.filter(e => {
+              const et = e.eventType || ""
+              return et !== "agent_start" && et !== "agent_complete"
+            })
+          }
+        }
+
+        // Map task state to UI status
+        const uiStatus: AgentBlock["status"] =
+          task.state === "completed" ? "complete" :
+          task.state === "failed" ? "error" :
+          task.state === "input_required" ? "input_required" : "running"
+
+        const agentBlock: AgentBlock = {
+          agent: agentName,
+          displayName: getDisplayName(agentName),
+          color: getAgentColor(agentName),
+          status: uiStatus,
+          taskDescription: cleanDescription,
+          output: displayOutput,
+          errorMessage: task.error_message || undefined,
+          steps: taskEvents,
+        }
+
+        // Group into phases by step number
+        const existingPhase = stepPhaseMap.get(stepNum)
+        if (existingPhase) {
+          // Same step number = retry or parallel sibling → add to existing phase
+          existingPhase.agents.push(agentBlock)
+          // Phase completion: complete only if the LATEST task succeeded
+          existingPhase.isComplete = task.state === "completed"
+        } else {
+          const phase: Phase = {
+            type: "planning",
+            stepNumber: stepNum,
+            agents: [agentBlock],
+            orchestratorMessages: [],
+            isComplete: task.state === "completed",
+            reasoning: idx === 0 ? plan.reasoning : undefined,
+          }
+          planPhases.push(phase)
+          stepPhaseMap.set(stepNum, phase)
+        }
+      }
+
+      // --- Step 3: Collect orchestrator events into an init phase ---
+      // Document extraction, routing, and other pre-workflow events
+      // (orchestrator events are excluded from eventsByAgent, so use original steps)
+      const seen = new Set<string>()
+      const orchestratorEvents = steps
+        .filter(s => s.agent === "foundry-host-agent")
+        .filter(s => {
+          // Deduplicate by status text
+          if (seen.has(s.status)) return false
+          seen.add(s.status)
+          return true
         })
-        
-        // Extract step number from task description (e.g., "[Step 3] ..." -> 3)
-        let stepNum = idx + 1  // Default fallback
-        const stepMatch = task.task_description.match(/\[Step\s+(\d+[a-z]?)\]/)
-        if (stepMatch) {
-          // Handle step labels like "2a", "2b" - extract the number part
-          const stepLabel = stepMatch[1]
-          stepNum = parseInt(stepLabel.replace(/[a-z]/g, ''), 10) || idx + 1
-        }
 
-        return {
-          type: "planning",
-          stepNumber: stepNum,
-          agents: [{
-            agent: agentName,
-            displayName: getDisplayName(agentName),
-            color: getAgentColor(agentName),
-            status: task.state === "completed" ? "complete" : 
-                    task.state === "failed" ? "error" : 
-                    task.state === "input_required" ? "input_required" : "running",
-            taskDescription: task.task_description,
-            output: task.output?.result || undefined,
-            steps: progressSteps,
-          }],
-          orchestratorMessages: [],
-          isComplete: task.state === "completed",
-          reasoning: idx === 0 ? plan.reasoning : undefined,
-        }
-      })
-
-      // Add orchestrator events to the appropriate phases
-      // Document extraction and other init events should appear BEFORE workflow steps
-      const orchestratorEvents = eventsByAgent.get("foundry-host-agent") || []
-      
-      // Create an init phase for pre-workflow events (document extraction, routing, etc.)
       const initPhase: Phase = {
         type: "init",
         agents: [],
         orchestratorMessages: [],
         isComplete: true,
       }
-      
-      // Separate events into init (before workflow) vs workflow-related
+
       for (const event of orchestratorEvents) {
         const et = event.eventType || ""
         const status = event.status || ""
-        
-        // Skip noise and duplicate reasoning
         if (isNoiseMessage(status)) continue
         if (et === "reasoning" || et === "phase") continue
-        
-        // Document extraction, file processing, routing go to init phase
-        if (status.includes("📄") || status.includes("Extracted") || 
+        // Document extraction and file processing events
+        if (status.includes("📄") || status.includes("Extracted") ||
             status.includes("chunks") || status.includes("memory") ||
             et === "info" || et === "routing") {
           initPhase.orchestratorMessages.push({ text: status, type: "info" })
-        } else if (planPhases.length > 0) {
-          // Other orchestrator messages go to first planning phase
-          planPhases[0].orchestratorMessages.push({ text: status, type: "info" })
         }
       }
-      
-      // Prepend init phase if it has content
+
       if (initPhase.orchestratorMessages.length > 0) {
         return [initPhase, ...planPhases]
       }
-
       return planPhases
     }
-    // Fall back to event-based rendering
+
+    // Fall back to event-based rendering (no plan available)
     return renumberPhases(buildPhases(steps))
   }, [steps, plan])
 
   const uniqueAgents = useMemo(() => {
-    // Prefer plan agents if available (includes agents that may not have emitted events yet)
     if (plan && plan.tasks.length > 0) {
-      const agents = new Set(plan.tasks.map(t => t.recommended_agent).filter(Boolean))
-      // Also add any agents from events not in plan
-      steps.forEach(st => {
-        if (st.agent !== "foundry-host-agent") {
-          agents.add(st.agent)
+      // Use plan tasks as source of truth for agent list
+      const agents = new Set<string>()
+      for (const t of plan.tasks) {
+        const a = t.recommended_agent
+        if (a && a !== "foundry-host-agent" && a !== "Unknown Agent") {
+          agents.add(a)
         }
-      })
-      return Array.from(agents).map(a => getDisplayName(a as string))
+      }
+      return Array.from(agents).map(getDisplayName)
     }
+    // Fallback: infer from events
     const s = new Set(steps.map(st => st.agent))
     s.delete("foundry-host-agent")
     return Array.from(s).map(getDisplayName)
@@ -830,56 +932,18 @@ export function InferenceSteps({ steps, isInferencing, plan }: InferenceStepsPro
     ? `${uniqueAgents.length} agent${uniqueAgents.length !== 1 ? "s" : ""} · ${planningPhases.length} step${planningPhases.length !== 1 ? "s" : ""}`
     : `${steps.length} events`
 
-  // Build agent status map from plan tasks OR infer from events
-  const agentStatusMap = useMemo(() => {
-    const map = new Map<string, { state: string; task: string }>()
-    
-    if (plan && plan.tasks.length > 0) {
-      // Use plan tasks as source of truth
-      for (const task of plan.tasks) {
-        if (task.recommended_agent) {
-          // Keep the most recent (or running) state per agent
-          const existing = map.get(task.recommended_agent)
-          if (!existing || task.state === "running" || (task.state === "completed" && existing.state !== "running")) {
-            map.set(task.recommended_agent, { state: task.state, task: task.task_description })
-          }
-        }
-      }
-    } else {
-      // No plan - infer status from events for single-agent calls
-      for (const step of steps) {
-        if (step.agent === "foundry-host-agent") continue
-        const existing = map.get(step.agent)
-        const eventType = step.eventType || ""
-        
-        if (eventType === "agent_complete") {
-          map.set(step.agent, { state: "completed", task: step.status })
-        } else if (eventType === "agent_error") {
-          map.set(step.agent, { state: "failed", task: step.status })
-        } else if (!existing || existing.state === "pending") {
-          // Any activity means running
-          map.set(step.agent, { state: "running", task: step.status })
-        }
-      }
-    }
-    return map
-  }, [plan, steps])
-
-  // Get status badge style
-  const getStatusStyle = (state: string) => {
-    switch (state) {
-      case "completed":
-        return { bg: "bg-emerald-500/10", text: "text-emerald-600", label: "Done" }
-      case "running":
-        return { bg: "bg-blue-500/10", text: "text-blue-600", label: "Working" }
-      case "failed":
-        return { bg: "bg-red-500/10", text: "text-red-600", label: "Error" }
-      case "input_required":
-        return { bg: "bg-amber-500/10", text: "text-amber-600", label: "Waiting" }
-      default:
-        return { bg: "bg-muted", text: "text-muted-foreground", label: "Pending" }
-    }
-  }
+  // Clean goal text - remove internal metadata like "[User Provided Additional Info]: ..."
+  const cleanGoal = useMemo(() => {
+    if (!plan?.goal) return null
+    let goal = plan.goal
+    // Remove "[User Provided Additional Info]: ..." suffix (everything after it)
+    const hitlIdx = goal.indexOf("\n\n[User Provided Additional Info]:")
+    if (hitlIdx >= 0) goal = goal.substring(0, hitlIdx)
+    // Remove "[Additional Information Provided]: ..." suffix
+    const addlIdx = goal.indexOf("\n\n[Additional Information Provided]:")
+    if (addlIdx >= 0) goal = goal.substring(0, addlIdx)
+    return goal.trim()
+  }, [plan?.goal])
 
   if (isInferencing) {
     return (
@@ -889,20 +953,20 @@ export function InferenceSteps({ steps, isInferencing, plan }: InferenceStepsPro
         </div>
         <div className="rounded-xl p-4 bg-muted/50 border border-border/50 flex-1 shadow-sm">
           {/* Goal display */}
-          {plan?.goal && (
+          {cleanGoal && (
             <div className="mb-3 pb-2 border-b border-border/30">
               <div className="flex items-center gap-2 mb-1">
                 <Brain className="h-3.5 w-3.5 text-amber-500" />
                 <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Goal</span>
                 <span className={`text-[9px] px-1.5 py-0.5 rounded-full ml-auto ${
-                  plan.goal_status === "completed" 
+                  plan?.goal_status === "completed" 
                     ? "bg-emerald-500/10 text-emerald-600" 
                     : "bg-blue-500/10 text-blue-600"
                 }`}>
-                  {plan.goal_status === "completed" ? "Completed" : "In Progress"}
+                  {plan?.goal_status === "completed" ? "Completed" : "In Progress"}
                 </span>
               </div>
-              <p className="text-xs text-foreground/80 leading-relaxed">{plan.goal}</p>
+              <p className="text-xs text-foreground/80 leading-relaxed">{cleanGoal}</p>
             </div>
           )}
 
@@ -943,20 +1007,20 @@ export function InferenceSteps({ steps, isInferencing, plan }: InferenceStepsPro
         </AccordionTrigger>
         <AccordionContent>
           {/* Goal display for completed workflows with plan */}
-          {plan?.goal && (
+          {cleanGoal && (
             <div className="mb-3 pb-2 border-b border-border/30">
               <div className="flex items-center gap-2 mb-1">
                 <Brain className="h-3.5 w-3.5 text-amber-500" />
                 <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Goal</span>
                 <span className={`text-[9px] px-1.5 py-0.5 rounded-full ml-auto ${
-                  plan.goal_status === "completed" 
+                  plan?.goal_status === "completed" 
                     ? "bg-emerald-500/10 text-emerald-600" 
                     : "bg-blue-500/10 text-blue-600"
                 }`}>
-                  {plan.goal_status === "completed" ? "Completed" : "In Progress"}
+                  {plan?.goal_status === "completed" ? "Completed" : "In Progress"}
                 </span>
               </div>
-              <p className="text-xs text-foreground/80 leading-relaxed">{plan.goal}</p>
+              <p className="text-xs text-foreground/80 leading-relaxed">{cleanGoal}</p>
             </div>
           )}
           
