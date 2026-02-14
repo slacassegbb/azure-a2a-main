@@ -4024,9 +4024,15 @@ Answer with just JSON:
                 log_foundry_debug(f"Emitting file processing status...")
                 try:
                     if file_count == 1:
-                        await self._emit_status_event("processing uploaded file", context_id)
+                        await self._emit_granular_agent_event(
+                            "foundry-host-agent", "processing uploaded file", context_id,
+                            event_type="info", metadata={"files": 1}
+                        )
                     else:
-                        await self._emit_status_event(f"processing {file_count} uploaded files", context_id)
+                        await self._emit_granular_agent_event(
+                            "foundry-host-agent", f"processing {file_count} uploaded files", context_id,
+                            event_type="info", metadata={"files": file_count}
+                        )
                     log_foundry_debug(f"File processing status emitted successfully")
                 except Exception as e:
                     log_foundry_debug(f"❌ Exception emitting file processing status: {e}")
@@ -4100,9 +4106,15 @@ Answer with just JSON:
             # Emit completion status if files were processed
             if file_count > 0 and (file_info or file_contents):
                 if file_count == 1:
-                    await self._emit_status_event("file processing completed", context_id)
+                    await self._emit_granular_agent_event(
+                        "foundry-host-agent", "file processing completed", context_id,
+                        event_type="info", metadata={"files": 1, "action": "complete"}
+                    )
                 else:
-                    await self._emit_status_event(f"all {file_count} files processed successfully", context_id)
+                    await self._emit_granular_agent_event(
+                        "foundry-host-agent", f"all {file_count} files processed successfully", context_id,
+                        event_type="info", metadata={"files": file_count, "action": "complete"}
+                    )
             
             # Enhance user message with file information and content
             # EXPLICIT FILE ROUTING: Include URIs so GPT-4 can pass them to agents via file_uris
@@ -4134,7 +4146,10 @@ Answer with just JSON:
                 pending_task_id = session_context.pending_input_task_id
                 print(f"🔄 [HITL RESUME] Detected pending_input_agent='{pending_agent}', skipping routing")
                 log_info(f"🔄 [HITL RESUME] Detected pending_input_agent='{pending_agent}', routing directly to agent")
-                await self._emit_status_event(f"Resuming with your input...", context_id)
+                await self._emit_granular_agent_event(
+                    "foundry-host-agent", f"Resuming with your input...", context_id,
+                    event_type="phase", metadata={"phase": "hitl_resume", "agent": pending_agent}
+                )
                 
                 # IMPORTANT: Emit a "completed" status for the pending agent to clear "Waiting" in sidebar
                 # This ensures the UI updates when the human provides their response
@@ -4188,7 +4203,10 @@ Answer with just JSON:
                     # The Teams agent has already processed the response in its webhook
                     # We don't need to call it again - just tell the user we got it
                     ack_message = f"✅ Response received: \"{enhanced_message}\"\n\nThe {pending_agent} has processed your input."
-                    await self._emit_status_event(ack_message, context_id)
+                    await self._emit_granular_agent_event(
+                        "foundry-host-agent", ack_message, context_id,
+                        event_type="info", metadata={"hitl_ack": True, "agent": pending_agent}
+                    )
                     
                     log_info(f"✅ [HITL RESUME] Non-workflow HITL completed, acknowledged response")
                     return [ack_message]
@@ -4213,7 +4231,10 @@ Answer with just JSON:
             if available_workflows and len(available_workflows) > 0 and not workflow:
                 print(f"🔀 [Multi-Workflow] {len(available_workflows)} workflows available, invoking intelligent routing")
                 log_debug(f"🔀 [Multi-Workflow] {len(available_workflows)} workflows available, invoking intelligent routing")
-                await self._emit_status_event(f"Analyzing request against {len(available_workflows)} available workflows...", context_id)
+                await self._emit_granular_agent_event(
+                    "foundry-host-agent", f"Analyzing request against {len(available_workflows)} available workflows...", context_id,
+                    event_type="phase", metadata={"phase": "routing", "workflow_count": len(available_workflows)}
+                )
                 
                 try:
                     route_selection = await self._intelligent_route_selection(
@@ -4247,7 +4268,10 @@ Answer with just JSON:
                                 'goal': selected_wf.get('goal', '')
                             }
                             log_debug(f"🔀 [Multi-Workflow] Selected workflow: {route_selection.selected_workflow}")
-                            await self._emit_status_event(f"🔄 Route Decision: Using WORKFLOW '{route_selection.selected_workflow}'", context_id)
+                            await self._emit_granular_agent_event(
+                                "foundry-host-agent", f"🔄 Route Decision: Using WORKFLOW '{route_selection.selected_workflow}'", context_id,
+                                event_type="info", metadata={"route": "workflow", "workflow_name": route_selection.selected_workflow}
+                            )
                         else:
                             log_error(f"[Multi-Workflow] Workflow '{route_selection.selected_workflow}' not found in available workflows")
                             agent_mode = True  # Fallback to agent orchestration
@@ -4258,7 +4282,10 @@ Answer with just JSON:
                         
                         parallel_workflow_names = route_selection.selected_workflows
                         log_debug(f"🔀 [Multi-Workflow] Parallel execution of {len(parallel_workflow_names)} workflows: {parallel_workflow_names}")
-                        await self._emit_status_event(f"Executing {len(parallel_workflow_names)} workflows in parallel...", context_id)
+                        await self._emit_granular_agent_event(
+                            "foundry-host-agent", f"Executing {len(parallel_workflow_names)} workflows in parallel...", context_id,
+                            event_type="phase", metadata={"phase": "parallel_workflows", "workflow_count": len(parallel_workflow_names)}
+                        )
                         
                         # Find matching workflows
                         parallel_workflows = []
@@ -4276,7 +4303,10 @@ Answer with just JSON:
                                 wf_goal_text = wf_data.get('goal', '')
                                 wf_name_str = wf_data.get('name', 'Workflow')
                                 
-                                await self._emit_status_event(f"Starting: {wf_name_str}", context_id)
+                                await self._emit_granular_agent_event(
+                                    "foundry-host-agent", f"Starting: {wf_name_str}", context_id,
+                                    event_type="info", metadata={"workflow": wf_name_str, "action": "start"}
+                                )
                                 
                                 try:
                                     outputs = await self._agent_mode_orchestration_loop(
@@ -4287,7 +4317,10 @@ Answer with just JSON:
                                         workflow=wf_steps,
                                         workflow_goal=wf_goal_text
                                     )
-                                    await self._emit_status_event(f"Completed: {wf_name_str}", context_id)
+                                    await self._emit_granular_agent_event(
+                                        "foundry-host-agent", f"Completed: {wf_name_str}", context_id,
+                                        event_type="info", metadata={"workflow": wf_name_str, "action": "complete"}
+                                    )
                                     return outputs if outputs else []
                                 except Exception as wf_err:
                                     log_error(f"[Parallel Workflow] Error in {wf_name_str}: {wf_err}")
@@ -4315,7 +4348,10 @@ Answer with just JSON:
                             # Return combined response directly
                             combined_response = "\n\n---\n\n".join(all_parallel_outputs)
                             print(f"✅ [Multi-Workflow] Parallel execution complete - {len(parallel_workflows)} workflows")
-                            await self._emit_status_event("All parallel workflows completed", context_id)
+                            await self._emit_granular_agent_event(
+                                "foundry-host-agent", "All parallel workflows completed", context_id,
+                                event_type="phase", metadata={"phase": "complete", "parallel_workflows": True}
+                            )
                             
                             # Store interaction and return combined response
                             await self._store_user_host_interaction_safe(
@@ -4337,7 +4373,10 @@ Answer with just JSON:
                         # Direct call to a single agent - use orchestration but targeted
                         single_agent_name = route_selection.selected_agent
                         log_debug(f"🔀 [Route Selection] Using single agent: {single_agent_name}")
-                        await self._emit_status_event(f"🔄 Route Decision: Direct call to AGENT '{single_agent_name}'", context_id)
+                        await self._emit_granular_agent_event(
+                            "foundry-host-agent", f"🔄 Route Decision: Direct call to AGENT '{single_agent_name}'", context_id,
+                            event_type="info", metadata={"route": "single_agent", "agent_name": single_agent_name}
+                        )
                         
                         # Verify the agent exists in session cards
                         agent_exists = False
@@ -4371,7 +4410,10 @@ Answer with just JSON:
                         else:
                             # Agent not found even in catalog - give clear error
                             log_error(f"[Single Agent] Agent '{single_agent_name}' not found in session or catalog")
-                            await self._emit_status_event(f"⚠️ Agent '{single_agent_name}' not available", context_id)
+                            await self._emit_granular_agent_event(
+                                "foundry-host-agent", f"⚠️ Agent '{single_agent_name}' not available", context_id,
+                                event_type="agent_error", metadata={"agent_name": single_agent_name}
+                            )
                             # Return error response instead of falling back to broken multi-agent
                             await self._store_user_host_interaction_safe(
                                 user_message_parts=message_parts,
@@ -4389,7 +4431,10 @@ Answer with just JSON:
                         workflow = None
                         workflow_goal = None  # Clear workflow_goal so orchestrator uses user's message
                         log_debug(f"🔀 [Route Selection] Using multi-agent orchestration")
-                        await self._emit_status_event("🔄 Route Decision: Using MULTI-AGENT orchestration", context_id)
+                        await self._emit_granular_agent_event(
+                            "foundry-host-agent", "🔄 Route Decision: Using MULTI-AGENT orchestration", context_id,
+                            event_type="info", metadata={"route": "multi_agent"}
+                        )
                         
                     elif route_selection.approach == "direct":
                         # Skip orchestration, use standard Foundry response
@@ -4397,7 +4442,10 @@ Answer with just JSON:
                         workflow = None
                         workflow_goal = None  # Clear workflow_goal
                         log_debug(f"🔀 [Multi-Workflow] Using direct response (no orchestration)")
-                        await self._emit_status_event("🔄 Route Decision: Direct response (no agents needed)", context_id)
+                        await self._emit_granular_agent_event(
+                            "foundry-host-agent", "🔄 Route Decision: Direct response (no agents needed)", context_id,
+                            event_type="info", metadata={"route": "direct"}
+                        )
                         
                 except Exception as e:
                     log_error(f"[Multi-Workflow] Routing error: {e}, falling back to agent mode")
@@ -4414,7 +4462,10 @@ Answer with just JSON:
             if use_orchestration:
                 mode_type = "Workflow" if (workflow and workflow.strip()) else "Agent"
                 log_debug(f"🎯 [{mode_type} Mode] Using orchestration loop (workflow={bool(workflow)}, agent_mode={agent_mode}, workflow_goal={workflow_goal[:50] if workflow_goal else None})")
-                await self._emit_status_event("Starting orchestration...", context_id)
+                await self._emit_granular_agent_event(
+                    "foundry-host-agent", "Starting orchestration...", context_id,
+                    event_type="phase", metadata={"phase": "orchestration_start"}
+                )
                 
                 # Debug: Log agent count before orchestration
                 cards_count = len(self.cards) if hasattr(self, 'cards') and self.cards else 0
@@ -4704,7 +4755,10 @@ Workflow completed with result:
             # Continue with standard conversation flow using Responses API (streaming)
             log_foundry_debug(f"=================== STARTING RESPONSE CREATION ===================")
             log_foundry_debug(f"Creating response with Responses API (streaming)")
-            await self._emit_status_event("creating AI response with streaming", context_id)
+            await self._emit_granular_agent_event(
+                "foundry-host-agent", "creating AI response with streaming", context_id,
+                event_type="info", metadata={"action": "response_creation"}
+            )
             
             # Get tools for this agent
             tools = self._format_tools_for_responses_api()
@@ -4726,7 +4780,10 @@ Workflow completed with result:
             
             log_foundry_debug(f"Response created successfully with ID: {response['id']}, status: {response['status']}")
             log_foundry_debug(f"=================== RESPONSE CREATED SUCCESSFULLY ===================")
-            await self._emit_status_event(f"AI response created - status: {response['status']}", context_id)
+            await self._emit_granular_agent_event(
+                "foundry-host-agent", f"AI response created - status: {response['status']}", context_id,
+                event_type="info", metadata={"response_id": response['id'], "status": str(response['status'])}
+            )
             
             # Handle tool calls if needed (iterative loop for multi-turn tool execution)
             # NOTE: _create_response_with_streaming now handles tool calls internally, 
@@ -4746,7 +4803,10 @@ Workflow completed with result:
             while response_requires_action(response["status"]) and tool_iteration < max_tool_iterations:
                 tool_iteration += 1
                 log_foundry_debug(f"Tool iteration {tool_iteration}, response requires action")
-                await self._emit_status_event(f"executing tools (attempt {tool_iteration})", context_id)
+                await self._emit_granular_agent_event(
+                    "foundry-host-agent", f"executing tools (attempt {tool_iteration})", context_id,
+                    event_type="tool_call", metadata={"attempt": tool_iteration}
+                )
                 
                 # Execute all tool calls from this response
                 tool_outputs = await self._execute_tool_calls_from_response(
@@ -4758,7 +4818,10 @@ Workflow completed with result:
                 
                 if tool_outputs:
                     last_tool_output = tool_outputs
-                    await self._emit_status_event("tool execution completed, continuing conversation", context_id)
+                    await self._emit_granular_agent_event(
+                        "foundry-host-agent", "tool execution completed, continuing conversation", context_id,
+                        event_type="info", metadata={"action": "tool_complete"}
+                    )
                     
                     # Create a new response with tool outputs to continue the conversation
                     # The tool outputs become part of the conversation history via previous_response_id chaining
@@ -4776,7 +4839,10 @@ Workflow completed with result:
                     break
             
             log_foundry_debug(f"Tool handling loop completed. Final status: {response['status']}, iterations: {tool_iteration}")
-            await self._emit_status_event("AI processing completed, finalizing response", context_id)
+            await self._emit_granular_agent_event(
+                "foundry-host-agent", "AI processing completed, finalizing response", context_id,
+                event_type="phase", metadata={"phase": "complete"}
+            )
             
             # Get response text
             responses = []
@@ -5009,7 +5075,10 @@ Workflow completed with result:
             
             # Add status message for tool calls starting
             self._add_status_message_to_conversation(f"🛠️ Executing {len(tool_calls)} tool call(s)", context_id)
-            await self._emit_status_event(f"executing {len(tool_calls)} tool(s)", context_id)
+            await self._emit_granular_agent_event(
+                "foundry-host-agent", f"executing {len(tool_calls)} tool(s)", context_id,
+                event_type="tool_call", metadata={"tool_count": len(tool_calls)}
+            )
             
             tool_outputs = []
             successful_tool_outputs: List[Dict[str, Any]] = []
@@ -5045,7 +5114,10 @@ Workflow completed with result:
                 
                 # Add status message for parallel agent calls
                 self._add_status_message_to_conversation(f"🚀 Executing {len(send_message_tool_calls)} agent calls in parallel", context_id)
-                await self._emit_status_event(f"calling {len(send_message_tool_calls)} agent(s) in parallel", context_id)
+                await self._emit_granular_agent_event(
+                    "foundry-host-agent", f"calling {len(send_message_tool_calls)} agent(s) in parallel", context_id,
+                    event_type="phase", metadata={"phase": "parallel_agents", "agent_count": len(send_message_tool_calls)}
+                )
                 
                 # Create tasks for all send_message calls
                 for tool_call, function_name, arguments in send_message_tool_calls:
@@ -5057,7 +5129,10 @@ Workflow completed with result:
                     
                     # Add status message for each agent call
                     self._add_status_message_to_conversation(f"🛠️ Executing tool: send_message to {agent_name}", context_id)
-                    await self._emit_status_event(f"calling {agent_name} agent", context_id)
+                    await self._emit_granular_agent_event(
+                        agent_name, f"calling {agent_name} agent", context_id,
+                        event_type="agent_start", metadata={"agent_name": agent_name}
+                    )
                     
                     # Enhanced agent selection tracking
                     span.add_event("parallel_agent_selected", {
@@ -5146,7 +5221,10 @@ Workflow completed with result:
                             last_tool_output = {"agent": agent_name, "response": normalized_text}
                     
                     self._add_status_message_to_conversation("✅ All parallel agent calls completed", context_id)
-                    await self._emit_status_event("all agent calls completed", context_id)
+                    await self._emit_granular_agent_event(
+                        "foundry-host-agent", "all agent calls completed", context_id,
+                        event_type="info", metadata={"action": "all_agents_complete"}
+                    )
                     span.add_event("parallel_agent_calls_completed", {
                         "successful_calls": len([r for r in parallel_results if not isinstance(r, Exception)]),
                         "failed_calls": len([r for r in parallel_results if isinstance(r, Exception)])
@@ -5173,7 +5251,10 @@ Workflow completed with result:
             # Execute other tool calls sequentially
             for tool_call, function_name, arguments in other_tool_calls:
                 self._add_status_message_to_conversation(f"🛠️ Executing tool: {function_name}", context_id)
-                await self._emit_status_event(f"executing {function_name} tool", context_id)
+                await self._emit_granular_agent_event(
+                    "foundry-host-agent", f"executing {function_name} tool", context_id,
+                    event_type="tool_call", metadata={"tool_name": function_name}
+                )
                 
                 span.add_event(f"tool_call: {function_name}", {"function_name": function_name})
                 await self._emit_tool_call_event("foundry-host-agent", function_name, arguments, context_id)
@@ -5520,7 +5601,10 @@ Workflow completed with result:
             
             # Emit status for file processing
             if context_id:
-                await self._emit_status_event(f"processing file: {file_id}", context_id)
+                await self._emit_granular_agent_event(
+                    "foundry-host-agent", f"processing file: {file_id}", context_id,
+                    event_type="info", metadata={"file": file_id, "action": "processing"}
+                )
             
             file_role_attr = getattr(part.root.file, 'role', None)
             
@@ -5614,7 +5698,10 @@ Workflow completed with result:
 
                 # Emit completion status event for mask file
                 if context_id:
-                    await self._emit_status_event(f"file processed successfully: {file_id}", context_id)
+                    await self._emit_granular_agent_event(
+                        "foundry-host-agent", f"file processed successfully: {file_id}", context_id,
+                        event_type="info", metadata={"file": file_id, "action": "complete", "type": "mask"}
+                    )
                 
                 return [mask_metadata_part, mask_file_part]
 
@@ -5630,7 +5717,10 @@ Workflow completed with result:
                 if processing_result and isinstance(processing_result, dict) and processing_result.get("success"):
                     content = processing_result.get("content", "")
                     if context_id:
-                        await self._emit_status_event(f"file processed successfully: {file_id}", context_id)
+                        await self._emit_granular_agent_event(
+                            "foundry-host-agent", f"file processed successfully: {file_id}", context_id,
+                            event_type="info", metadata={"file": file_id, "action": "complete", "type": "document"}
+                        )
                     
                     if isinstance(artifact_response, DataPart) and hasattr(artifact_response, 'data'):
                         artifact_response.data['extracted_content'] = content

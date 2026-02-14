@@ -115,6 +115,31 @@ function buildPhases(steps: StepData[]): Phase[] {
         phases.push(currentPhase)
         continue
       }
+      // Other phase events (routing, orchestration_start, parallel_execution, step_execution, hitl_resume, etc.)
+      // Create an execution phase so these don't get dropped
+      if (phaseName === "routing" || phaseName === "orchestration_start" || phaseName === "hitl_resume") {
+        currentPhase = { type: "init", agents: [], isComplete: false }
+        phases.push(currentPhase)
+        continue
+      }
+      if (phaseName === "parallel_execution" || phaseName === "step_execution" || phaseName === "parallel_agents" || phaseName === "parallel_workflows") {
+        if (!currentPhase || currentPhase.type === "complete" || currentPhase.type === "init") {
+          phaseStepNum++
+          currentPhase = { type: "planning", stepNumber: phaseStepNum, agents: [], isComplete: false }
+          phases.push(currentPhase)
+        }
+        continue
+      }
+      continue
+    }
+
+    // ── Info events (routing decisions, status updates) ──
+    if (et === "info") {
+      // Info events are lightweight status updates — skip orchestrator noise, attach agent ones
+      if (isOrchestrator) continue
+      if (currentAgent && currentAgent.agent === step.agent) {
+        currentAgent.steps.push({ ...step, eventType: "agent_progress" })
+      }
       continue
     }
 

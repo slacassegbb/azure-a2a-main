@@ -200,9 +200,11 @@ class WorkflowOrchestration:
                 # ============================================================
                 # PARALLEL EXECUTION with proper state tracking
                 # ============================================================
-                await self._emit_status_event(
+                await self._emit_granular_agent_event(
+                    "foundry-host-agent",
                     f"Executing parallel group {group.group_number} ({len(group.steps)} agents simultaneously)...",
-                    context_id
+                    context_id,
+                    event_type="phase", metadata={"phase": "parallel_execution", "group": group.group_number, "steps": len(group.steps)}
                 )
                 
                 # Create AgentModeTask objects for each parallel step
@@ -290,7 +292,10 @@ class WorkflowOrchestration:
                 )
                 plan.tasks.append(task)
                 
-                await self._emit_status_event(f"Executing step {step.step_label}: {step.description[:50]}...", context_id)
+                await self._emit_granular_agent_event(
+                    "foundry-host-agent", f"Executing step {step.step_label}: {step.description[:50]}...", context_id,
+                    event_type="phase", metadata={"phase": "step_execution", "step_label": step.step_label}
+                )
                 
                 try:
                     result = await self._execute_workflow_step_with_state(
@@ -735,7 +740,10 @@ Use the data from the previous steps to complete your task."""
             task.updated_at = datetime.now(timezone.utc)
             log_error(f"[Agent Mode] Agent not found: {recommended_agent}. Available: {available_agent_names}")
             print(f"⚠️ [AGENT NOT FOUND] Requested: '{recommended_agent}', Available: {available_agent_names}")
-            await self._emit_status_event(f"⚠️ Agent '{recommended_agent}' not found", context_id)
+            await self._emit_granular_agent_event(
+                recommended_agent, f"⚠️ Agent '{recommended_agent}' not found", context_id,
+                event_type="agent_error", metadata={"error": task.error_message}
+            )
             return {"error": task.error_message, "output": None}
         
         log_debug(f"🎯 [Agent Mode] Calling agent: {recommended_agent}")
@@ -868,7 +876,10 @@ Use the above output from the previous workflow step to complete your task."""
             task.output = {"result": output_text}
             
             log_info(f"⏸️ [Agent Mode] Waiting for user response to '{recommended_agent}'")
-            await self._emit_status_event(f"Waiting for your response...", context_id)
+            await self._emit_granular_agent_event(
+                recommended_agent, f"Waiting for your response...", context_id,
+                event_type="info", metadata={"hitl": True}
+            )
             
             return {"output": output_text, "hitl_pause": True}
         
@@ -1132,8 +1143,7 @@ Analyze this request and decide the best approach."""
         # Reset host token usage for this workflow
         self.host_token_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
         
-        await self._emit_status_event("Initializing orchestration...", context_id)
-        # Also emit typed event for structured frontend
+        # Emit typed init event for structured frontend (replaces old untyped _emit_status_event)
         await self._emit_granular_agent_event(
             "foundry-host-agent", "Initializing orchestration...", context_id,
             event_type="phase", metadata={"phase": "init"}
@@ -1150,7 +1160,10 @@ Analyze this request and decide the best approach."""
         if existing_plan:
             log_info(f"📋 [Agent Mode] Resuming existing plan with {len(existing_plan.tasks)} tasks")
             log_info(f"📋 [Agent Mode] PLAN DETAILS: {existing_plan.model_dump_json(indent=2)}")
-            await self._emit_status_event("Resuming workflow with your input...", context_id)
+            await self._emit_granular_agent_event(
+                "foundry-host-agent", "Resuming workflow with your input...", context_id,
+                event_type="phase", metadata={"phase": "resume"}
+            )
             
             # Restore workflow and workflow_goal from the saved plan
             # This ensures the workflow instructions are re-injected into the planner prompt
@@ -1410,7 +1423,7 @@ Do NOT skip steps. Do NOT mark goal as completed until ALL workflow steps are do
         while plan.goal_status == "incomplete" and iteration < max_iterations:
             iteration += 1
             print(f"🔄 [Agent Mode] Iteration {iteration}/{max_iterations}")
-            await self._emit_status_event(f"Planning step {iteration}...", context_id)
+            # Single typed event replaces old untyped _emit_status_event + typed double-emit
             await self._emit_granular_agent_event(
                 "foundry-host-agent", f"Planning step {iteration}...", context_id,
                 event_type="phase", metadata={"phase": "planning", "step_number": iteration}
@@ -1443,7 +1456,10 @@ Do NOT skip steps. Do NOT mark goal as completed until ALL workflow steps are do
             log_debug(f"📋 [Planner] {len(available_agents)} agents available: {agent_names[:5]}{'...' if len(agent_names) > 5 else ''}")
             if iteration == 1:
                 # Only show on first iteration to avoid spam
-                await self._emit_status_event(f"📋 {len(available_agents)} agents available for planning", context_id)
+                await self._emit_granular_agent_event(
+                    "foundry-host-agent", f"📋 {len(available_agents)} agents available for planning", context_id,
+                    event_type="info", metadata={"agents_count": len(available_agents), "agent_names": agent_names[:5]}
+                )
             
             user_prompt = f"""Goal:
 {plan.goal}
@@ -1510,7 +1526,10 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                 
                 if is_parallel and next_step.next_tasks:
                     log_info(f"🔀 [Agent Mode] PARALLEL execution: {len(next_step.next_tasks)} tasks")
-                    await self._emit_status_event(f"Executing {len(next_step.next_tasks)} tasks in parallel...", context_id)
+                    await self._emit_granular_agent_event(
+                        "foundry-host-agent", f"Executing {len(next_step.next_tasks)} tasks in parallel...", context_id,
+                        event_type="phase", metadata={"phase": "parallel_execution", "task_count": len(next_step.next_tasks)}
+                    )
                     for task_dict in next_step.next_tasks:
                         tasks_to_execute.append({
                             "task_description": task_dict.get("task_description"),
@@ -1569,7 +1588,10 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                         if retry_count >= 2 or is_retry_task:
                             log_error(f"🔁 [LOOP DETECTION] Agent '{agent_name}' has been called {len(same_agent_tasks)} times with repeated retry tasks. Breaking loop.")
                             print(f"🔁 [LOOP DETECTION] Breaking loop - '{agent_name}' called too many times with retry tasks")
-                            await self._emit_status_event(f"⚠️ {agent_name} connection issue - cannot complete automatically. Please re-authenticate manually.", context_id)
+                            await self._emit_granular_agent_event(
+                                agent_name, f"⚠️ {agent_name} connection issue - cannot complete automatically. Please re-authenticate manually.", context_id,
+                                event_type="agent_error", metadata={"loop_detection": True}
+                            )
                             
                             # Remove this task from execution
                             tasks_to_execute.remove(task_dict)
@@ -1603,7 +1625,10 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                     # ============================================
                     import asyncio as async_lib  # Import locally to avoid any scoping issues
                     log_info(f"🔀 [Agent Mode] Executing {len(pydantic_tasks)} tasks IN PARALLEL")
-                    await self._emit_status_event(f"Executing {len(pydantic_tasks)} tasks simultaneously...", context_id)
+                    await self._emit_granular_agent_event(
+                        "foundry-host-agent", f"Executing {len(pydantic_tasks)} tasks simultaneously...", context_id,
+                        event_type="phase", metadata={"phase": "parallel_execution", "task_count": len(pydantic_tasks)}
+                    )
                     
                     async def execute_task_parallel(task: AgentModeTask) -> Dict[str, Any]:
                         """Execute a single task and return result dict."""
@@ -1773,12 +1798,18 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                 
             except Exception as e:
                 log_error(f"[Agent Mode] Orchestration error: {e}")
-                await self._emit_status_event(f"Error in orchestration: {str(e)}", context_id)
+                await self._emit_granular_agent_event(
+                    "foundry-host-agent", f"Error in orchestration: {str(e)}", context_id,
+                    event_type="agent_error", metadata={"error": str(e)}
+                )
                 break
         
         if iteration >= max_iterations:
             log_debug(f"⚠️ [Agent Mode] Reached max iterations ({max_iterations})")
-            await self._emit_status_event("Maximum iterations reached, completing...", context_id)
+            await self._emit_granular_agent_event(
+                "foundry-host-agent", "Maximum iterations reached, completing...", context_id,
+                event_type="phase", metadata={"phase": "complete", "reason": "max_iterations"}
+            )
         
         log_info(f"🎬 [Agent Mode] Complete: {len(all_task_outputs)} outputs, {iteration} iterations, {len(plan.tasks)} tasks")
         

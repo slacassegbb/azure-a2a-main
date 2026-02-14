@@ -2075,9 +2075,23 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
         setInferenceSteps(prev => {
           // Check last 8 entries for duplicates (wider window for busy workflows)
           const recentEntries = prev.slice(-8)
-          const isDuplicate = recentEntries.some(
-            entry => entry.agent === data.agentName && entry.status === displayContent
+          const recentStartIdx = Math.max(0, prev.length - 8)
+          const duplicateIdx = prev.findIndex(
+            (entry, idx) => idx >= recentStartIdx && entry.agent === data.agentName && entry.status === displayContent
           )
+          
+          // If a typed version arrives and an untyped duplicate exists, REPLACE the old one
+          // This prevents _emit_status_event (untyped) from blocking _emit_granular_agent_event (typed)
+          if (duplicateIdx >= 0 && data.eventType && !prev[duplicateIdx].eventType) {
+            const updated = [...prev]
+            updated[duplicateIdx] = {
+              agent: data.agentName,
+              status: displayContent,
+              eventType: data.eventType,
+              metadata: data.metadata,
+            }
+            return updated
+          }
           
           // Also collapse consecutive "is working on" from same agent
           if (prev.length > 0) {
@@ -2095,7 +2109,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
             }
           }
           
-          if (isDuplicate) {
+          if (duplicateIdx >= 0) {
             console.log("[ChatPanel] Skipping duplicate remote activity:", displayContent.substring(0, 50))
             return prev
           }
