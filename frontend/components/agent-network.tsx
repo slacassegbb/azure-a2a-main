@@ -1018,7 +1018,7 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
                         }}
                       >
                         <ListOrdered className="h-3 w-3 mr-2" />
-                        {activeWorkflows.length > 0 ? "Add Another Workflow" : "Add Workflow"}
+                        Workflows
                       </Button>
                     </DialogTrigger>
                         <DialogContent className="max-w-[95vw] max-h-[95vh] flex flex-col">

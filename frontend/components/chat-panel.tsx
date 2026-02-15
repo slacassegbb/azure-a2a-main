@@ -1254,7 +1254,8 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                         id: workflow.id,
                         role: 'system',
                         type: 'inference_summary',
-                        steps: workflow.steps
+                        steps: workflow.steps,
+                        ...(workflow.metadata ? { metadata: workflow.metadata } : {})
                       })
                       workflowIndex++
                     }
@@ -2786,6 +2787,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
             workflows.push({
               id: summaryId,
               steps: stepsCopy,
+              ...(planCopy ? { metadata: { workflow_plan: planCopy } } : {}),
               timestamp: Date.now()
             })
             localStorage.setItem(storageKey, JSON.stringify(workflows))
@@ -3191,6 +3193,28 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       role: "assistant",
       content: "Workflow cancelled by user.",
     })
+
+    // Persist cancelled workflow to localStorage so it survives page refresh
+    if (stepsCopy.length > 0) {
+      try {
+        let workflowConversationId = conversationId
+        if (workflowConversationId && workflowConversationId.includes('::')) {
+          workflowConversationId = workflowConversationId.split('::')[1]
+        }
+        const storageKey = `workflow_${workflowConversationId}`
+        const existingData = localStorage.getItem(storageKey)
+        const workflows = existingData ? JSON.parse(existingData) : []
+        workflows.push({
+          id: messagesToAdd[0].id,
+          steps: stepsCopy,
+          metadata: { workflow_plan: planCopy, cancelled: true },
+          timestamp: Date.now()
+        })
+        localStorage.setItem(storageKey, JSON.stringify(workflows))
+      } catch (err) {
+        console.error('[ChatPanel] Failed to persist cancelled workflow to localStorage:', err)
+      }
+    }
 
     // Mark cancel synchronously via ref so the backend response handler will skip it
     workflowCancelledRef.current = true
