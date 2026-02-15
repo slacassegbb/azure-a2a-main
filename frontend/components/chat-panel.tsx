@@ -4139,7 +4139,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                 const getFileIcon = (filename: string, contentType: string = '') => {
                   const ext = filename.toLowerCase().split('.').pop() || ''
                   const type = contentType.toLowerCase()
-                  
+
                   if (type.startsWith('image/') || ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp'].includes(ext)) {
                     return '🖼️'
                   } else if (type.startsWith('audio/') || ['mp3', 'wav', 'm4a', 'flac', 'aac'].includes(ext)) {
@@ -4162,25 +4162,43 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                     return '📄'
                   }
                 }
-                
+
+                const isImage = (file.content_type || '').startsWith('image/') ||
+                  ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp'].includes((file.filename || '').toLowerCase().split('.').pop() || '')
+
                 return (
-                  <div key={index} className="flex items-center gap-2 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg px-3 py-2 text-sm max-w-xs">
-                    <div className="flex items-center gap-2 flex-1 min-w-0">
-                      <span className="text-lg">{getFileIcon(file.filename, file.content_type)}</span>
-                      <div className="flex flex-col min-w-0 flex-1">
-                        <span className="truncate font-medium text-blue-900 dark:text-blue-100">{file.filename}</span>
-                        <span className="text-xs text-blue-600 dark:text-blue-400">
-                          {file.size ? `${(file.size / 1024).toFixed(1)} KB` : ''}
-                        </span>
-                      </div>
-                    </div>
-                    <button
-                      onClick={() => setUploadedFiles(prev => prev.filter((_, i) => i !== index))}
-                      className="text-blue-500 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 flex-shrink-0 w-5 h-5 flex items-center justify-center rounded-full hover:bg-blue-100 dark:hover:bg-blue-900/50"
-                      title="Remove file"
-                    >
-                      ×
-                    </button>
+                  <div key={index} className={`relative group ${isImage ? 'w-20 h-20' : 'flex items-center gap-2 max-w-xs'} bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg ${isImage ? 'p-1' : 'px-3 py-2'} text-sm`}>
+                    {isImage ? (
+                      <>
+                        <img src={file.uri} alt={file.filename} className="w-full h-full object-cover rounded-md" />
+                        <button
+                          onClick={() => setUploadedFiles(prev => prev.filter((_, i) => i !== index))}
+                          className="absolute -top-1.5 -right-1.5 bg-red-500 hover:bg-red-600 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs opacity-0 group-hover:opacity-100 transition-opacity"
+                          title="Remove image"
+                        >
+                          ×
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <div className="flex items-center gap-2 flex-1 min-w-0">
+                          <span className="text-lg">{getFileIcon(file.filename, file.content_type)}</span>
+                          <div className="flex flex-col min-w-0 flex-1">
+                            <span className="truncate font-medium text-blue-900 dark:text-blue-100">{file.filename}</span>
+                            <span className="text-xs text-blue-600 dark:text-blue-400">
+                              {file.size ? `${(file.size / 1024).toFixed(1)} KB` : ''}
+                            </span>
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => setUploadedFiles(prev => prev.filter((_, i) => i !== index))}
+                          className="text-blue-500 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 flex-shrink-0 w-5 h-5 flex items-center justify-center rounded-full hover:bg-blue-100 dark:hover:bg-blue-900/50"
+                          title="Remove file"
+                        >
+                          ×
+                        </button>
+                      </>
+                    )}
                   </div>
                 )
               })}
@@ -4262,6 +4280,21 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
             <Textarea
               ref={textareaRef}
               value={input}
+              onPaste={(e) => {
+                const items = e.clipboardData?.items
+                if (!items) return
+                const imageFiles: File[] = []
+                for (let i = 0; i < items.length; i++) {
+                  if (items[i].type.startsWith('image/')) {
+                    const file = items[i].getAsFile()
+                    if (file) imageFiles.push(file)
+                  }
+                }
+                if (imageFiles.length > 0) {
+                  e.preventDefault()
+                  uploadFiles(imageFiles)
+                }
+              }}
               onFocus={() => setIsInputFocused(true)}
               onBlur={() => {
                 setIsInputFocused(false)

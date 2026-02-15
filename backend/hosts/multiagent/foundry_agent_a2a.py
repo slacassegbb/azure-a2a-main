@@ -363,7 +363,8 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
         session_context: SessionContext,
         tools: List[Dict[str, Any]],
         instructions: str,
-        event_logger=None
+        event_logger=None,
+        image_urls: Optional[List[str]] = None
     ) -> Dict[str, Any]:
         """
         Create a response using Azure AI Foundry Responses API with streaming.
@@ -406,13 +407,23 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
                     print(f"🔵 [AZURE] Instructions length: {len(instructions)} chars")
                     print(f"🔵 [AZURE] Checking if Email Agent is in instructions: {'Email Agent' in instructions}")
                     print(f"🔵 [AZURE] Tools count: {len(tools)}")
-                    
+
+                    # Build multimodal input when images are present
+                    if image_urls:
+                        content_items = [{"type": "input_text", "text": user_message}]
+                        for img_url in image_urls:
+                            content_items.append({"type": "input_image", "image_url": img_url})
+                        api_input = [{"role": "user", "content": content_items}]
+                        print(f"🖼️ [AZURE] Using multimodal input with {len(image_urls)} image(s)")
+                    else:
+                        api_input = user_message
+
                     stream = await self.openai_client.responses.create(
-                        input=user_message,
+                        input=api_input,
                         previous_response_id=previous_response_id,
-                        instructions=instructions,  # Pass instructions directly!
-                        model=self.model_name,  # Need to specify model when not using agent_reference
-                        tools=tools,  # Pass tools directly
+                        instructions=instructions,
+                        model=self.model_name,
+                        tools=tools,
                         stream=True,
                     )
                     print(f"✅ [AZURE] Stream created successfully")
@@ -4183,8 +4194,43 @@ Answer with just JSON:
             if image_guidance:
                 enhanced_message = f"{image_guidance}\n\n{enhanced_message}" if enhanced_message else image_guidance
             
+            # Collect image URIs for GPT-4o vision (multimodal input)
+            # Also process images through content understanding for memory storage
+            image_uris_for_vision = []
+            for part in message_parts:
+                if is_image_part(part):
+                    uri = extract_uri(part)
+                    if uri:
+                        image_uris_for_vision.append(uri)
+            if image_uris_for_vision:
+                log_debug(f"🖼️ Collected {len(image_uris_for_vision)} image(s) for GPT-4o vision input")
+                # Process images through content understanding and store in memory
+                # This makes image content available to remote agents via search_memory
+                session_id = get_tenant_from_context(context_id) if context_id else None
+                image_descriptions = []
+                for part in message_parts:
+                    if is_image_part(part):
+                        img_uri = extract_uri(part)
+                        img_name = extract_filename(part) or 'pasted_image.png'
+                        if img_uri:
+                            try:
+                                processing_result = await a2a_document_processor.process_file_part(
+                                    part.root.file if hasattr(part, 'root') else part,
+                                    {'file_name': img_name, 'artifact_uri': img_uri},
+                                    session_id=session_id
+                                )
+                                if processing_result and processing_result.get("success"):
+                                    content = processing_result.get("content", "")
+                                    if content:
+                                        image_descriptions.append(f"\n\n--- Image description: {img_name} ---\n{content}\n--- End of {img_name} ---\n")
+                                        log_debug(f"🖼️ Processed image for memory: {img_name} ({len(content)} chars)")
+                            except Exception as e:
+                                log_debug(f"⚠️ Image content understanding failed for {img_name}: {e}")
+                if image_descriptions:
+                    enhanced_message = f"{enhanced_message}\n\n{''.join(image_descriptions)}"
+
             log_debug(f"Enhanced message prepared")
-            
+
             # =====================================================================
             # HITL RESUME CHECK: Skip routing if an agent is waiting for user input
             # =====================================================================
@@ -4919,9 +4965,10 @@ Workflow completed with result:
                 session_context=session_context,
                 tools=tools,
                 instructions=self.agent_instructions or '',
-                event_logger=event_logger
+                event_logger=event_logger,
+                image_urls=image_uris_for_vision if image_uris_for_vision else None
             )
-            
+
             log_foundry_debug(f"Response created successfully with ID: {response['id']}, status: {response['status']}")
             log_foundry_debug(f"=================== RESPONSE CREATED SUCCESSFULLY ===================")
             await self._emit_granular_agent_event(
