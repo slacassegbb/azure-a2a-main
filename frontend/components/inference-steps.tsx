@@ -3,6 +3,7 @@
 import React, { useMemo } from "react"
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
 import { CheckCircle2, Loader, AlertCircle, MessageSquare, Bot, Workflow, Wrench, FileSearch, Send, Zap, FileText, Paperclip, Square } from "lucide-react"
+import { getAgentHexColor } from "@/lib/agent-colors"
 
 interface StepEvent {
   agent: string
@@ -38,16 +39,6 @@ interface OrchestratorActivity {
   label: string
   detail?: string
   timestamp: number
-}
-
-const COLORS = ["#8b5cf6", "#06b6d4", "#10b981", "#f59e0b", "#ec4899", "#3b82f6", "#f97316", "#14b8a6"]
-
-function getAgentColor(name: string): string {
-  let hash = 0
-  for (let i = 0; i < name.length; i++) {
-    hash = ((hash << 5) - hash + name.charCodeAt(i)) | 0
-  }
-  return COLORS[Math.abs(hash) % COLORS.length]
 }
 
 function formatAgentName(name: string): string {
@@ -203,7 +194,7 @@ function parseEventsToAgents(steps: StepEvent[]): ParsedData {
       agentMap.set(agentName, {
         name: agentName,
         displayName: formatAgentName(agentName),
-        color: getAgentColor(agentName),
+        color: getAgentHexColor(agentName),
         taskDescription: "",
         status: "running",
         output: null,

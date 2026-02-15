@@ -47,6 +47,8 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 
+import { getAgentTextClass, getAgentBgClass } from "@/lib/agent-colors"
+
 export function AgentCatalog() {
   const { toast } = useToast()
   const { emit } = useEventHub()
@@ -143,8 +145,8 @@ export function AgentCatalog() {
         endpoint: agent.url,
         organization: "Registry Agent", // Default organization
         icon: getIconForAgent(agent.name), // Helper function to get icon
-        color: getColorForAgent(agent.name), // Deterministic color based on agent name
-        bgColor: getBgColorForAgent(agent.name), // Deterministic bg color based on agent name
+        color: getAgentTextClass(agent.name, agent.color),
+        bgColor: getAgentBgClass(agent.name, agent.color),
         capabilities: agent.capabilities,
         skills: agent.skills,
         defaultInputModes: agent.defaultInputModes,
@@ -181,50 +183,6 @@ export function AgentCatalog() {
     if (name.toLowerCase().includes('search') || name.toLowerCase().includes('knowledge')) return Search
     if (name.toLowerCase().includes('servicenow') || name.toLowerCase().includes('web')) return Database
     return Bot // Default icon
-  }
-
-  // Simple hash function to get consistent color for agent name
-  const hashAgentName = (name: string): number => {
-    let hash = 0
-    for (let i = 0; i < name.length; i++) {
-      hash = ((hash << 5) - hash) + name.charCodeAt(i)
-      hash = hash & hash // Convert to 32bit integer
-    }
-    return Math.abs(hash)
-  }
-
-  // Helper function to get color based on agent name (deterministic, matches agent-network.tsx)
-  const getColorForAgent = (agentName: string) => {
-    const colors = [
-      "text-pink-700",     // matches AGENT_COLORS[0]
-      "text-purple-700",   // matches AGENT_COLORS[1]
-      "text-cyan-700",     // matches AGENT_COLORS[2]
-      "text-emerald-700",  // matches AGENT_COLORS[3]
-      "text-amber-700",    // matches AGENT_COLORS[4]
-      "text-red-700",      // matches AGENT_COLORS[5]
-      "text-blue-700",     // matches AGENT_COLORS[6]
-      "text-teal-700",     // matches AGENT_COLORS[7]
-      "text-orange-700",   // matches AGENT_COLORS[8]
-      "text-violet-700",   // matches AGENT_COLORS[9]
-    ]
-    return colors[hashAgentName(agentName) % colors.length]
-  }
-
-  // Helper function to get background color based on agent name (deterministic)
-  const getBgColorForAgent = (agentName: string) => {
-    const bgColors = [
-      "bg-pink-100",     // matches AGENT_COLORS[0]
-      "bg-purple-100",   // matches AGENT_COLORS[1]
-      "bg-cyan-100",     // matches AGENT_COLORS[2]
-      "bg-emerald-100",  // matches AGENT_COLORS[3]
-      "bg-amber-100",    // matches AGENT_COLORS[4]
-      "bg-red-100",      // matches AGENT_COLORS[5]
-      "bg-blue-100",     // matches AGENT_COLORS[6]
-      "bg-teal-100",     // matches AGENT_COLORS[7]
-      "bg-orange-100",   // matches AGENT_COLORS[8]
-      "bg-violet-100",   // matches AGENT_COLORS[9]
-    ]
-    return bgColors[hashAgentName(agentName) % bgColors.length]
   }
 
   // Load agents on component mount

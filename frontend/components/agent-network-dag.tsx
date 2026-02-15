@@ -3,6 +3,7 @@
 import type React from "react"
 import { useEffect, useRef, useState, memo } from "react"
 import { useEventHub } from "@/hooks/use-event-hub"
+import { getAgentHexColor } from "@/lib/agent-colors"
 
 type AgentType = "host" | "remote" | "user"
 
@@ -51,38 +52,8 @@ interface AgentNetworkDagProps {
   activeNodeId: string | null
 }
 
-const AGENT_COLORS = [
-  "#ec4899", // pink
-  "#8b5cf6", // purple
-  "#06b6d4", // cyan
-  "#10b981", // emerald
-  "#f59e0b", // amber
-  "#ef4444", // red
-  "#3b82f6", // blue
-  "#14b8a6", // teal
-  "#f97316", // orange
-  "#a855f7", // violet
-]
-
 const HOST_COLOR = "#6366f1" // indigo
 const USER_COLOR = "#22d3ee" // cyan
-
-const shuffleArray = <T,>(array: T[]): T[] => {
-  const shuffled = [...array]
-  for (let i = shuffled.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1))
-    ;[shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]]
-  }
-  return shuffled
-}
-
-const getColorForAgent = (nodeId: string, group: string, index: number): string => {
-  if (group === "host") return HOST_COLOR
-  if (group === "user") return USER_COLOR
-  // For agents, use consistent color based on their position
-  const shuffled = shuffleArray(AGENT_COLORS)
-  return shuffled[index % shuffled.length]
-}
 
 const AgentNetworkDagComponent = ({ nodes, links, activeNodeId }: AgentNetworkDagProps) => {
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -163,7 +134,9 @@ const AgentNetworkDagComponent = ({ nodes, links, activeNodeId }: AgentNetworkDa
 
         // Get or assign color consistently
         if (!colorMapRef.current.has(node.id)) {
-          const color = getColorForAgent(node.id, node.group, index)
+          const color = node.group === "host" ? HOST_COLOR
+                      : node.group === "user" ? USER_COLOR
+                      : getAgentHexColor(node.id)
           colorMapRef.current.set(node.id, color)
         }
 

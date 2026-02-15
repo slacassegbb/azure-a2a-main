@@ -13,6 +13,7 @@ from typing import List, Dict, Any, Optional
 from pathlib import Path
 import psycopg2
 from psycopg2.extras import RealDictCursor
+from service.agent_colors import assign_color_for_agent
 
 
 class AgentRegistry:
@@ -38,6 +39,7 @@ class AgentRegistry:
                 self.use_database = True
                 env_type = "PRODUCTION" if self.use_prod else "LOCAL"
                 print(f"[AgentRegistry] ✅ Using PostgreSQL database ({env_type} URLs)")
+                self._run_migrations()
             except Exception as e:
                 print(f"[AgentRegistry] ⚠️  Database connection failed: {e}")
                 print(f"[AgentRegistry] Falling back to JSON file storage")
@@ -57,6 +59,17 @@ class AgentRegistry:
             self.registry_file.parent.mkdir(parents=True, exist_ok=True)
             self._ensure_registry_file()
     
+    def _run_migrations(self):
+        """Ensure database schema is up to date. Safe to run repeatedly (idempotent)."""
+        try:
+            cur = self.db_conn.cursor()
+            cur.execute("ALTER TABLE agents ADD COLUMN IF NOT EXISTS color VARCHAR(7)")
+            self.db_conn.commit()
+            cur.close()
+        except Exception as e:
+            print(f"[AgentRegistry] Migration warning: {e}")
+            self.db_conn.rollback()
+
     def _ensure_registry_file(self):
         """Ensure the registry file exists, create with empty list if not."""
         if not hasattr(self, 'registry_file'):
@@ -73,24 +86,38 @@ class AgentRegistry:
         try:
             cur = self.db_conn.cursor(cursor_factory=RealDictCursor)
             cur.execute("""
-                SELECT 
+                SELECT
                     id, name, description, version,
                     local_url, production_url,
                     default_input_modes, default_output_modes,
-                    capabilities, skills,
+                    capabilities, skills, color,
                     created_at, updated_at
                 FROM agents
                 ORDER BY name
             """)
-            
+
             agents = []
             for row in cur.fetchall():
                 agent = dict(row)
                 # Normalize to match JSON format
                 agent['defaultInputModes'] = agent.pop('default_input_modes', [])
                 agent['defaultOutputModes'] = agent.pop('default_output_modes', [])
+                # Auto-assign color if missing in DB
+                if not agent.get('color'):
+                    color = assign_color_for_agent(agent.get('name', ''))
+                    try:
+                        update_cur = self.db_conn.cursor()
+                        update_cur.execute(
+                            "UPDATE agents SET color = %s WHERE name = %s AND color IS NULL",
+                            (color, agent['name'])
+                        )
+                        self.db_conn.commit()
+                        update_cur.close()
+                    except Exception:
+                        pass
+                    agent['color'] = color
                 agents.append(agent)
-            
+
             cur.close()
             
             # Normalize agents to have 'url' field based on environment
@@ -174,23 +201,29 @@ class AgentRegistry:
             if not production_url:
                 production_url = local_url
             
+            # Auto-assign color if not provided
+            color = agent.get('color')
+            if not color:
+                color = assign_color_for_agent(agent.get('name', ''))
+
             print(f"[AgentRegistry] _save_agent_to_database: {agent.get('name')}")
             print(f"[AgentRegistry]   local_url: {local_url}")
             print(f"[AgentRegistry]   production_url: {production_url}")
+            print(f"[AgentRegistry]   color: {color}")
             print(f"[AgentRegistry]   skills: {[s.get('id') for s in agent.get('skills', [])]}")
-            
+
             cur = self.db_conn.cursor()
             cur.execute("""
                 INSERT INTO agents (
                     name, description, version,
                     local_url, production_url,
                     default_input_modes, default_output_modes,
-                    capabilities, skills
+                    capabilities, skills, color
                 ) VALUES (
                     %s, %s, %s,
                     %s, %s,
                     %s::jsonb, %s::jsonb,
-                    %s::jsonb, %s::jsonb
+                    %s::jsonb, %s::jsonb, %s
                 )
                 ON CONFLICT (name) DO UPDATE SET
                     description = EXCLUDED.description,
@@ -201,6 +234,7 @@ class AgentRegistry:
                     default_output_modes = EXCLUDED.default_output_modes,
                     capabilities = EXCLUDED.capabilities,
                     skills = EXCLUDED.skills,
+                    color = COALESCE(EXCLUDED.color, agents.color),
                     updated_at = CURRENT_TIMESTAMP
             """, (
                 agent.get('name'),
@@ -211,7 +245,8 @@ class AgentRegistry:
                 json.dumps(agent.get('defaultInputModes', [])),
                 json.dumps(agent.get('defaultOutputModes', [])),
                 json.dumps(agent.get('capabilities', {})),
-                json.dumps(agent.get('skills', []))
+                json.dumps(agent.get('skills', [])),
+                color
             ))
             self.db_conn.commit()
             cur.close()
@@ -254,10 +289,12 @@ class AgentRegistry:
             if any(a.get('url') == agent.get('url') for a in agents):
                 return False
             
+            if 'color' not in agent:
+                agent['color'] = assign_color_for_agent(agent.get('name', ''))
             agents.append(agent)
             self._save_registry(agents)
             return True
-    
+
     def get_agent(self, name: str) -> Optional[Dict[str, Any]]:
         """Get an agent by name.
         
@@ -360,16 +397,19 @@ class AgentRegistry:
                         existing_index = i
                         break
             
+            if 'color' not in agent:
+                agent['color'] = assign_color_for_agent(agent.get('name', ''))
+
             if existing_index is not None:
                 # Update existing agent
                 agents[existing_index] = agent
             else:
                 # Add new agent
                 agents.append(agent)
-            
+
             self._save_registry(agents)
             return True
-    
+
     def remove_agent(self, name: str) -> bool:
         """Remove an agent from the registry.
         

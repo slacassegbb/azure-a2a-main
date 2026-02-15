@@ -17,6 +17,7 @@ import { SessionInvitationNotification } from "./session-invite"
 import { VisualWorkflowDesigner } from "./visual-workflow-designer"
 import { AgentNetworkDag } from "./agent-network-dag"
 import { cn } from "@/lib/utils"
+import { getAgentDisplayColors } from "@/lib/agent-colors"
 import { getRunHistory, listSchedules, deleteSchedule, RunHistoryItem, ScheduledWorkflow, formatNextRun } from "@/lib/scheduler-api"
 import { generateWorkflowId } from "@/lib/active-workflow-api"
 import { ScheduleWorkflowDialog } from "./schedule-workflow-dialog"
@@ -53,6 +54,7 @@ type Agent = {
   defaultOutputModes?: string[]
   status: string
   avatar: string
+  color?: string
   type?: string
 }
 
@@ -108,52 +110,6 @@ type Props = {
   dagNodes?: any[]
   dagLinks?: any[]
   activeNode?: string | null
-}
-
-// Store persistent color assignments for agents
-const agentColorMap = new Map<string, any>()
-
-// Simple hash function to get consistent color for agent name
-function hashAgentName(name: string): number {
-  let hash = 0
-  for (let i = 0; i < name.length; i++) {
-    hash = ((hash << 5) - hash) + name.charCodeAt(i)
-    hash = hash & hash // Convert to 32bit integer
-  }
-  return Math.abs(hash)
-}
-
-// Function to get consistent colors for each agent
-function getAgentDisplayInfo(agentName: string) {
-  // Check if we already have a color assigned for this agent
-  if (agentColorMap.has(agentName)) {
-    return agentColorMap.get(agentName)
-  }
-  
-  const colors = [
-    { color: "text-pink-700", bgColor: "bg-pink-100", hex: "#ec4899" },      // pink - matches AGENT_COLORS[0]
-    { color: "text-purple-700", bgColor: "bg-purple-100", hex: "#8b5cf6" },  // purple - matches AGENT_COLORS[1]
-    { color: "text-cyan-700", bgColor: "bg-cyan-100", hex: "#06b6d4" },      // cyan - matches AGENT_COLORS[2]
-    { color: "text-emerald-700", bgColor: "bg-emerald-100", hex: "#10b981" }, // emerald - matches AGENT_COLORS[3]
-    { color: "text-amber-700", bgColor: "bg-amber-100", hex: "#f59e0b" },    // amber - matches AGENT_COLORS[4]
-    { color: "text-red-700", bgColor: "bg-red-100", hex: "#ef4444" },        // red - matches AGENT_COLORS[5]
-    { color: "text-blue-700", bgColor: "bg-blue-100", hex: "#3b82f6" },      // blue - matches AGENT_COLORS[6]
-    { color: "text-teal-700", bgColor: "bg-teal-100", hex: "#14b8a6" },      // teal - matches AGENT_COLORS[7]
-    { color: "text-orange-700", bgColor: "bg-orange-100", hex: "#f97316" },  // orange - matches AGENT_COLORS[8]
-    { color: "text-violet-700", bgColor: "bg-violet-100", hex: "#a855f7" },  // violet - matches AGENT_COLORS[9]
-  ]
-  
-  // Use hash for deterministic color selection - same agent name always gets same color
-  const colorIndex = hashAgentName(agentName) % colors.length
-  const agentDisplayInfo = {
-    ...colors[colorIndex],
-    icon: Bot // Same icon for all agents
-  }
-  
-  // Store the assignment for future use
-  agentColorMap.set(agentName, agentDisplayInfo)
-  
-  return agentDisplayInfo
 }
 
 // Function to check if an agent has human interaction capabilities
@@ -1669,21 +1625,19 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
                     <TooltipTrigger asChild>
                       <Button variant="ghost" className="h-12 w-12 p-0 relative">
                         {(() => {
-                          const agentDisplayInfo = getAgentDisplayInfo(agentName)
-                          const AgentIcon = agentDisplayInfo.icon
-                          // Convert hex to rgba for background (10% opacity like user cards)
-                          const hex = agentDisplayInfo.hex.replace('#', '')
+                          const colors = getAgentDisplayColors(agentName, agent?.color)
+                          const hex = colors.hex.replace('#', '')
                           const r = parseInt(hex.substr(0, 2), 16)
                           const g = parseInt(hex.substr(2, 2), 16)
                           const b = parseInt(hex.substr(4, 2), 16)
                           const bgColor = `rgba(${r}, ${g}, ${b}, 0.1)`
-                          
+
                           return (
                             <div
                               className="p-2 rounded-lg flex items-center justify-center"
                               style={{ backgroundColor: bgColor }}
                             >
-                              <AgentIcon className={cn("h-4 w-4", agentDisplayInfo.color)} />
+                              <Bot className={cn("h-4 w-4", colors.color)} />
                             </div>
                           )
                         })()}
@@ -1725,21 +1679,19 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
                         <div className="flex items-center gap-3">
                           <div className="relative">
                             {(() => {
-                              const agentDisplayInfo = getAgentDisplayInfo(agentName)
-                              const AgentIcon = agentDisplayInfo.icon
-                              // Convert hex to rgba for background (10% opacity like user cards)
-                              const hex = agentDisplayInfo.hex.replace('#', '')
+                              const colors = getAgentDisplayColors(agentName, agent?.color)
+                              const hex = colors.hex.replace('#', '')
                               const r = parseInt(hex.substr(0, 2), 16)
                               const g = parseInt(hex.substr(2, 2), 16)
                               const b = parseInt(hex.substr(4, 2), 16)
                               const bgColor = `rgba(${r}, ${g}, ${b}, 0.1)`
-                              
+
                               return (
                                 <div
                                   className="p-2 rounded-lg flex items-center justify-center"
                                   style={{ backgroundColor: bgColor }}
                                 >
-                                  <AgentIcon className={cn("h-4 w-4", agentDisplayInfo.color)} />
+                                  <Bot className={cn("h-4 w-4", colors.color)} />
                                 </div>
                               )
                             })()}

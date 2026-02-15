@@ -13,6 +13,7 @@ import { useEventHub } from "@/hooks/use-event-hub"
 import { VoiceButton } from "@/components/voice-button"
 import { useSearchParams } from "next/navigation"
 import { createContextId, getOrCreateSessionId } from "@/lib/session"
+import { getAgentHexColor } from "@/lib/agent-colors"
 
 interface WorkflowStep {
   id: string
@@ -60,19 +61,6 @@ interface VisualWorkflowDesignerProps {
   initialWorkflowName?: string
   conversationId?: string // Optional: use existing conversation from chat panel
 }
-
-const AGENT_COLORS = [
-  "#8b5cf6", // purple
-  "#3b82f6", // blue
-  "#10b981", // emerald
-  "#f59e0b", // amber
-  "#ef4444", // red
-  "#6366f1", // indigo
-  "#14b8a6", // teal
-  "#f97316", // orange
-  "#a855f7", // violet
-  "#ec4899", // pink
-]
 
 const HOST_COLOR = "#6366f1"
 
@@ -596,11 +584,6 @@ export function VisualWorkflowDesigner({
       localStorage.setItem('workflow-visual-data', JSON.stringify(data))
     }
   }, [workflowSteps, connections])
-
-  // Assign colors to agents
-  const getAgentColor = (index: number): string => {
-    return AGENT_COLORS[index % AGENT_COLORS.length]
-  }
 
   // Load from localStorage ONCE on mount only - DISABLED to start with clean canvas
   useEffect(() => {
@@ -1339,7 +1322,7 @@ export function VisualWorkflowDesigner({
       id: `step-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
       agentId: agentId,
       agentName: draggedAgent.name,
-      agentColor: getAgentColor(agentIndex),
+      agentColor: getAgentHexColor(draggedAgent.name, (draggedAgent as any).color),
       agentIconUrl: (draggedAgent as any).iconUrl || (draggedAgent as any).avatar,
       description: `Use the ${draggedAgent.name}`,
       x,
@@ -1732,7 +1715,7 @@ export function VisualWorkflowDesigner({
           id: step.id,
           agentId: step.agentId,
           agentName: step.agentName,
-          agentColor: getAgentColor(agentIndex >= 0 ? agentIndex : step.order),
+          agentColor: getAgentHexColor(step.agentName, (matchedAgent as any)?.color),
           agentIconUrl: (matchedAgent as any)?.iconUrl || (matchedAgent as any)?.avatar,
           description: step.description,
           x: step.x,
@@ -3418,7 +3401,7 @@ export function VisualWorkflowDesigner({
                     onDragEnd={() => setDraggedAgent(null)}
                     className="p-3 bg-slate-800 rounded border border-slate-700 hover:border-slate-600 cursor-move transition-colors"
                     style={{
-                      borderLeftColor: getAgentColor(index),
+                      borderLeftColor: getAgentHexColor(agent.name, agent.color),
                       borderLeftWidth: '3px'
                     }}
                   >
