@@ -4590,11 +4590,44 @@ Answer with just JSON:
                         log_debug(f"⏸️ [HITL PAUSE] Returning early, workflow will resume on next message")
                         return final_responses
                     
+                    # =========================================================
+                    # CANCELLATION CHECK: If workflow was cancelled, skip synthesis
+                    # =========================================================
+                    if self.is_cancelled(context_id):
+                        log_info(f"🛑 [CANCEL] Workflow cancelled - skipping LLM synthesis, returning silent cancel")
+                        print(f"🛑 [CANCEL] Workflow cancelled - skipping synthesis")
+
+                        # Emit a cancelled event so frontend knows
+                        await self._emit_granular_agent_event(
+                            "foundry-host-agent", "Workflow cancelled", context_id,
+                            event_type="phase", metadata={"phase": "cancelled"}
+                        )
+
+                        # Return a minimal cancelled message (not a full LLM summary)
+                        final_responses = ["Workflow cancelled."]
+
+                        # Persist cancellation to chat history
+                        try:
+                            persist_message(context_id, {
+                                "messageId": str(uuid.uuid4()),
+                                "role": "agent",
+                                "parts": [{"root": {"kind": "text", "text": "Workflow cancelled."}}],
+                                "contextId": context_id,
+                                "metadata": {"type": "workflow_cancelled"}
+                            })
+                        except Exception as e:
+                            print(f"[ChatHistory] Error persisting cancel message: {e}")
+
+                        # Clear the cancellation token so next message works fresh
+                        self.clear_cancellation(context_id)
+
+                        return final_responses
+
                     # WORKFLOW MODE: Synthesize outputs into a clean executive summary
                     # The orchestration loop has executed all workflow steps in order
                     print(f"✅ [Workflow Mode] Workflow completed - {len(orchestration_outputs)} task outputs")
                     log_debug(f"✅ [Workflow Mode] All workflow steps completed, synthesizing summary")
-                    
+
                     # Use LLM to synthesize a clean, professional summary from raw agent outputs
                     if orchestration_outputs:
                         try:
