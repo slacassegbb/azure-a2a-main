@@ -4606,14 +4606,23 @@ Answer with just JSON:
                         # Return a minimal cancelled message (not a full LLM summary)
                         final_responses = ["Workflow cancelled."]
 
-                        # Persist cancellation to chat history
+                        # Persist cancellation to chat history (include plan so UI can reconstruct workflow steps)
                         try:
+                            cancel_metadata: dict = {"type": "workflow_cancelled"}
+                            if session_context and session_context.current_plan:
+                                try:
+                                    plan_data = session_context.current_plan.model_dump(mode='json', exclude_none=True)
+                                    plan_data["goal_status"] = "cancelled"
+                                    cancel_metadata["workflow_plan"] = plan_data
+                                except Exception as plan_err:
+                                    print(f"[ChatHistory] Warning - could not serialize plan for cancel: {plan_err}")
+
                             persist_message(context_id, {
                                 "messageId": str(uuid.uuid4()),
                                 "role": "agent",
                                 "parts": [{"root": {"kind": "text", "text": "Workflow cancelled."}}],
                                 "contextId": context_id,
-                                "metadata": {"type": "workflow_cancelled"}
+                                "metadata": cancel_metadata
                             })
                         except Exception as e:
                             print(f"[ChatHistory] Error persisting cancel message: {e}")
