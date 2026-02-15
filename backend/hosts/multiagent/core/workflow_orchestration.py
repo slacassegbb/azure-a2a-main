@@ -252,6 +252,17 @@ class WorkflowOrchestration:
                 continue
             
             # =========================================================
+            # CANCELLATION CHECK: Before each group, bail if cancelled
+            # =========================================================
+            if self.is_cancelled(context_id):
+                log_info(f"🛑 [CANCEL] Workflow cancelled before group {group.group_number}, stopping")
+                await self._emit_granular_agent_event(
+                    "foundry-host-agent", "Workflow cancelled by user", context_id,
+                    event_type="phase", metadata={"phase": "cancelled"}
+                )
+                return ["[Workflow cancelled by user]"]
+
+            # =========================================================
             # INTERRUPT CHECK: Before each group, check for user redirect
             # If interrupted, pivot to dynamic agent mode orchestration
             # =========================================================
@@ -1631,6 +1642,17 @@ Do NOT skip steps. Do NOT mark goal as completed until ALL workflow steps are do
             print(f"🔄 [Agent Mode] Iteration {iteration}/{max_iterations}")
             
             # =========================================================
+            # CANCELLATION CHECK: Between steps, bail if user cancelled
+            # =========================================================
+            if self.is_cancelled(context_id):
+                log_info(f"🛑 [CANCEL] Workflow cancelled at iteration {iteration}, stopping orchestration loop")
+                await self._emit_granular_agent_event(
+                    "foundry-host-agent", "Workflow cancelled by user", context_id,
+                    event_type="phase", metadata={"phase": "cancelled"}
+                )
+                return all_task_outputs + ["[Workflow cancelled by user]"]
+
+            # =========================================================
             # INTERRUPT CHECK: Between steps, check if user redirected
             # =========================================================
             interrupt_instruction = self.get_interrupt(context_id)
@@ -1650,7 +1672,7 @@ Do NOT skip steps. Do NOT mark goal as completed until ALL workflow steps are do
                 )
                 await self._emit_plan_update(plan, context_id, reasoning=f"Redirected: {interrupt_instruction[:100]}")
                 log_info(f"⚡ [INTERRUPT] Goal updated, re-planning with {len(completed_tasks)} completed tasks preserved")
-            
+
             # Single typed event replaces old untyped _emit_status_event + typed double-emit
             await self._emit_granular_agent_event(
                 "foundry-host-agent", f"Planning step {iteration}...", context_id,
