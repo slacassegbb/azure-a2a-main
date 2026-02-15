@@ -147,27 +147,28 @@ export function ConnectedUsers() {
   useEffect(() => {
     // Subscribe to real-time user list updates (source of truth)
     subscribe("user_list_update", handleUserListUpdate)
-    
+
     // Subscribe to session ended events (owner left/logged out/kicked)
     subscribe("session_ended", handleSessionEnded)
-    
+
     // Subscribe to kick result events (feedback for session owner)
     subscribe("kick_result", handleKickResult)
-    
-    // Request the user list after subscribing
-    // This solves the race condition where the backend sends user_list_update
-    // before the component has subscribed
-    if (isConnected) {
-      console.log("[ConnectedUsers] Requesting session users...")
-      sendMessage({ type: "get_session_users" })
-    }
-    
+
     return () => {
       unsubscribe("user_list_update", handleUserListUpdate)
       unsubscribe("session_ended", handleSessionEnded)
       unsubscribe("kick_result", handleKickResult)
     }
   }, []) // Only subscribe once on mount, unsubscribe on unmount - don't re-subscribe!
+
+  // Request session users when WebSocket connects (or is already connected)
+  // This is separate from subscriptions so it re-runs when isConnected changes
+  useEffect(() => {
+    if (isConnected) {
+      console.log("[ConnectedUsers] WebSocket connected, requesting session users...")
+      sendMessage({ type: "get_session_users" })
+    }
+  }, [isConnected])
 
   const toggleUser = (userId: string) => {
     const newExpanded = new Set(expandedUsers)

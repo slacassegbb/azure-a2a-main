@@ -145,6 +145,7 @@ export function AgentCatalog() {
         endpoint: agent.url,
         organization: "Registry Agent", // Default organization
         icon: getIconForAgent(agent.name), // Helper function to get icon
+        rawColor: agent.color,
         color: getAgentTextClass(agent.name, agent.color),
         bgColor: getAgentBgClass(agent.name, agent.color),
         capabilities: agent.capabilities,
@@ -220,6 +221,7 @@ export function AgentCatalog() {
         description: agent.description,
         version: agent.version,
         url: agent.endpoint,
+        color: agent.rawColor,
         capabilities: agent.capabilities,
         skills: agent.skills,
         defaultInputModes: agent.defaultInputModes,

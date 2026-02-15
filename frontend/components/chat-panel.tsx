@@ -508,6 +508,15 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
   const DEBUG = process.env.NEXT_PUBLIC_DEBUG_LOGS === 'true'
   // Use the shared Event Hub hook so we subscribe to the same client as the rest of the app
   const { subscribe, unsubscribe, emit, sendMessage, isConnected } = useEventHub()
+
+  // Build agent name -> hex color map from registered agents for InferenceSteps
+  const agentColors = useMemo(() => {
+    const map: Record<string, string> = {}
+    for (const agent of registeredAgents) {
+      if (agent.name && agent.color) map[agent.name] = agent.color
+    }
+    return map
+  }, [registeredAgents])
   
   // Helper function to check if workflow's required agents are available in the session
   const isWorkflowRunnable = (workflowText: string): boolean => {
@@ -3573,6 +3582,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                   isInferencing={false}
                   plan={message.metadata?.workflow_plan}
                   cancelled={!!message.metadata?.cancelled}
+                  agentColors={agentColors}
                 />
               }
               
@@ -4002,7 +4012,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
             })}
             
             {/* Workflow steps display - shows current agent activity - BEFORE streaming message */}
-            {isInferencing && <InferenceSteps steps={inferenceSteps} isInferencing={true} plan={workflowPlan} />}
+            {isInferencing && <InferenceSteps steps={inferenceSteps} isInferencing={true} plan={workflowPlan} agentColors={agentColors} />}
             
             {/* Render streaming message separately AFTER workflow but treat it as a message */}
             {streamingMessageId && messages.find(m => m.id === streamingMessageId) && (() => {

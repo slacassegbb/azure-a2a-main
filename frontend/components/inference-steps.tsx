@@ -21,6 +21,7 @@ interface InferenceStepsProps {
   isInferencing: boolean
   plan?: any
   cancelled?: boolean
+  agentColors?: Record<string, string>
 }
 
 interface AgentInfo {
@@ -60,7 +61,7 @@ interface ParsedData {
   orchestratorStatus: "idle" | "planning" | "dispatching" | "complete"
 }
 
-function parseEventsToAgents(steps: StepEvent[]): ParsedData {
+function parseEventsToAgents(steps: StepEvent[], agentColors?: Record<string, string>): ParsedData {
   const agentMap = new Map<string, AgentInfo>()
   const orchestratorActivities: OrchestratorActivity[] = []
   const seenOrchestratorLabels = new Set<string>()
@@ -195,7 +196,7 @@ function parseEventsToAgents(steps: StepEvent[]): ParsedData {
       agentMap.set(agentName, {
         name: agentName,
         displayName: formatAgentName(agentName),
-        color: getAgentHexColor(agentName),
+        color: getAgentHexColor(agentName, agentColors?.[agentName]),
         taskDescription: "",
         status: "running",
         output: null,
@@ -547,8 +548,8 @@ function AgentCard({ agent, stepNumber, isLive }: { agent: AgentInfo; stepNumber
   )
 }
 
-export function InferenceSteps({ steps, isInferencing, plan, cancelled }: InferenceStepsProps) {
-  const { agents, orchestratorActivities, orchestratorStatus } = useMemo(() => parseEventsToAgents(steps), [steps])
+export function InferenceSteps({ steps, isInferencing, plan, cancelled, agentColors }: InferenceStepsProps) {
+  const { agents, orchestratorActivities, orchestratorStatus } = useMemo(() => parseEventsToAgents(steps, agentColors), [steps, agentColors])
   const summaryLabel = agents.length > 0 ? `${agents.length} agent${agents.length !== 1 ? "s" : ""}` : ""
   const hasOrchestratorActivity = orchestratorActivities.length > 0
 
