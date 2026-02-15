@@ -754,14 +754,11 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
       
       if (data.success) {
         console.log('Memory cleared successfully!')
-        alert('Memory index cleared successfully!')
       } else {
         console.error('Failed to clear memory:', data.message)
-        alert('Failed to clear memory: ' + data.message)
       }
     } catch (error) {
       console.error('Error clearing memory:', error)
-      alert('Error clearing memory: ' + error)
     } finally {
       setIsClearingMemory(false)
     }

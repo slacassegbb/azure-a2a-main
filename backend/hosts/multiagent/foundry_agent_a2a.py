@@ -251,6 +251,8 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
         self._cancellation_tokens: Dict[str, bool] = {}
         # Track active A2A tasks for cancellation (context_id -> {agent_name: task_id})
         self._active_agent_tasks: Dict[str, Dict[str, str]] = {}
+        # Snapshot of plan at cancel time (before current_plan is cleared)
+        self._cancelled_plan_snapshots: Dict[str, dict] = {}
         # Interrupt support: queued user instructions to redirect a running workflow
         # Key: context_id, Value: new user instruction string
         self._interrupt_instructions: Dict[str, str] = {}
@@ -4609,13 +4611,18 @@ Answer with just JSON:
                         # Persist cancellation to chat history (include plan so UI can reconstruct workflow steps)
                         try:
                             cancel_metadata: dict = {"type": "workflow_cancelled"}
+                            # Try current_plan first, fall back to snapshot saved by cancel_workflow()
+                            plan_data = None
                             if session_context and session_context.current_plan:
                                 try:
                                     plan_data = session_context.current_plan.model_dump(mode='json', exclude_none=True)
-                                    plan_data["goal_status"] = "cancelled"
-                                    cancel_metadata["workflow_plan"] = plan_data
                                 except Exception as plan_err:
                                     print(f"[ChatHistory] Warning - could not serialize plan for cancel: {plan_err}")
+                            if plan_data is None:
+                                plan_data = self._cancelled_plan_snapshots.pop(context_id, None)
+                            if plan_data:
+                                plan_data["goal_status"] = "cancelled"
+                                cancel_metadata["workflow_plan"] = plan_data
 
                             persist_message(context_id, {
                                 "messageId": str(uuid.uuid4()),
@@ -6043,6 +6050,13 @@ Workflow completed with result:
         
         # State cleanup
         if session_ctx:
+            # Save plan snapshot before clearing so the cancellation handler
+            # can persist it to chat history for reload reconstruction
+            if session_ctx.current_plan:
+                try:
+                    self._cancelled_plan_snapshots[context_id] = session_ctx.current_plan.model_dump(mode='json', exclude_none=True)
+                except Exception:
+                    pass
             # Clear current plan (stops the workflow)
             session_ctx.current_plan = None
             # Clear HITL pending state

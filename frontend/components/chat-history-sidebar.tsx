@@ -354,12 +354,7 @@ export function ChatHistorySidebar({ isCollapsed, onToggle }: Props) {
 
   const handleClearAllChats = useCallback(async () => {
     if (conversations.length === 0) return
-    
-    // Confirm before deleting all
-    if (!window.confirm(`Are you sure you want to delete all ${conversations.length} chat(s)? This cannot be undone.`)) {
-      return
-    }
-    
+
     try {
       console.log('[ChatHistorySidebar] Clearing all chats...')
       const success = await deleteAllConversations()
