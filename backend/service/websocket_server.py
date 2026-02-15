@@ -1107,6 +1107,10 @@ def create_websocket_app() -> FastAPI:
             # Handle workflow cancellation request
             await handle_cancel_workflow(websocket, message)
         
+        elif message_type == "interrupt_workflow":
+            # Handle workflow interrupt (redirect) request
+            await handle_interrupt_workflow(websocket, message)
+        
         else:
             logger.warning(f"Unknown message type: {message_type}")
     
@@ -1197,6 +1201,86 @@ def create_websocket_app() -> FastAPI:
             logger.error(f"[WebSocket] Error cancelling workflow: {e}")
             await websocket.send_text(json.dumps({
                 "eventType": "workflow_cancelled",
+                "conversationId": conversation_id,
+                "data": {
+                    "status": "error",
+                    "message": f"Error: {str(e)}"
+                }
+            }))
+    
+    # Workflow Interrupt Handler
+    async def handle_interrupt_workflow(websocket: WebSocket, message: Dict[str, Any]):
+        """Handle workflow interrupt (redirect) request from the frontend.
+        
+        Unlike cancel, this queues a new instruction that will be picked up
+        between workflow steps, causing the orchestrator to re-plan.
+        """
+        logger.info("[WebSocket] Received interrupt_workflow request")
+        
+        conversation_id = message.get("conversationId", "")
+        session_id = message.get("sessionId", "")
+        context_id = message.get("contextId", "")
+        instruction = message.get("instruction", "")
+        
+        # Build the full context_id
+        if session_id and conversation_id and not context_id:
+            context_id = f"{session_id}::{conversation_id}"
+        elif conversation_id and "::" in conversation_id:
+            context_id = conversation_id
+        elif conversation_id:
+            context_id = conversation_id
+        
+        if not context_id or not instruction:
+            logger.warning("[WebSocket] interrupt_workflow: Missing context_id or instruction")
+            await websocket.send_text(json.dumps({
+                "eventType": "workflow_interrupted",
+                "data": {
+                    "status": "error",
+                    "message": "Missing context_id or instruction"
+                }
+            }))
+            return
+        
+        logger.info(f"[WebSocket] Interrupting workflow for context: {context_id}")
+        
+        try:
+            from service.server.foundry_host_manager import get_host_manager
+            host_manager = get_host_manager()
+            
+            if host_manager and host_manager._host_agent:
+                result = await host_manager._host_agent.interrupt_workflow(
+                    context_id=context_id,
+                    instruction=instruction
+                )
+                
+                interrupt_event = {
+                    "eventType": "workflow_interrupted",
+                    "conversationId": conversation_id,
+                    "contextId": context_id,
+                    "data": {
+                        "status": result.get("status", "interrupt_queued"),
+                        "message": result.get("message", "Interrupt queued"),
+                        "instruction": instruction
+                    }
+                }
+                
+                await websocket.send_text(json.dumps(interrupt_event))
+                logger.info(f"[WebSocket] Workflow interrupt queued: {result}")
+            else:
+                logger.warning("[WebSocket] Host manager or agent not available for interrupt")
+                await websocket.send_text(json.dumps({
+                    "eventType": "workflow_interrupted",
+                    "conversationId": conversation_id,
+                    "data": {
+                        "status": "error",
+                        "message": "Orchestrator not available"
+                    }
+                }))
+                
+        except Exception as e:
+            logger.error(f"[WebSocket] Error interrupting workflow: {e}")
+            await websocket.send_text(json.dumps({
+                "eventType": "workflow_interrupted",
                 "conversationId": conversation_id,
                 "data": {
                     "status": "error",

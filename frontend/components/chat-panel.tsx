@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
-import { Paperclip, Mic, MicOff, Send, Bot, User, Paintbrush, Copy, ThumbsUp, ThumbsDown, Loader2, Plus, Pencil, X, Sparkles, Square } from "lucide-react"
+import { Paperclip, Mic, MicOff, Send, Bot, User, Paintbrush, Copy, ThumbsUp, ThumbsDown, Loader2, Plus, Pencil, X, Sparkles, Square, Zap } from "lucide-react"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { useEventHub } from "@/hooks/use-event-hub"
@@ -2252,6 +2252,29 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       }
     }
 
+    // Handle workflow_interrupted events - when user redirects a running workflow
+    const handleWorkflowInterrupted = (data: any) => {
+      console.log("[ChatPanel] ⚡ Workflow interrupted event received:", data)
+      
+      // Filter by conversationId
+      let intConvId = data.conversationId || data.contextId || ""
+      if (intConvId.includes("::")) {
+        intConvId = intConvId.split("::")[1]
+      }
+      if (shouldFilterByConversationIdRef.current(intConvId)) {
+        return
+      }
+      
+      // Add an inference step to show the redirect in the workflow visualization
+      const instruction = data.data?.instruction || "Redirected"
+      setInferenceSteps(prev => [...prev, {
+        agent: "foundry-host-agent",
+        content: `⚡ Redirecting: ${instruction}`,
+        status: "running" as const,
+        timestamp: new Date()
+      }])
+    }
+
     // Handle typing indicator from other users
     const handleTypingIndicator = (eventData: any) => {
       const userId = eventData.data?.user_id
@@ -2483,6 +2506,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
     subscribe("remote_agent_activity", handleRemoteAgentActivity)
     subscribe("plan_update", handlePlanUpdate)
     subscribe("workflow_cancelled", handleWorkflowCancelled)
+    subscribe("workflow_interrupted", handleWorkflowInterrupted)
     subscribe("file_uploaded", handleFileUploaded)
     subscribe("shared_file_uploaded", handleSharedFileUploaded)
     subscribe("typing_indicator", handleTypingIndicator)
@@ -2508,6 +2532,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       unsubscribe("remote_agent_activity", handleRemoteAgentActivity)
       unsubscribe("plan_update", handlePlanUpdate)
       unsubscribe("workflow_cancelled", handleWorkflowCancelled)
+      unsubscribe("workflow_interrupted", handleWorkflowInterrupted)
       unsubscribe("file_uploaded", handleFileUploaded)
       unsubscribe("shared_file_uploaded", handleSharedFileUploaded)
       unsubscribe("typing_indicator", handleTypingIndicator)
@@ -3075,8 +3100,41 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
     
   }, [isInferencing, sendMessage, conversationId, currentSessionId, contextId])
 
+  // Handle interrupt/redirect during inference
+  const handleInterrupt = useCallback(() => {
+    if (!isInferencing || !input.trim()) return
+    
+    const instruction = input.trim()
+    console.log("[ChatPanel] ⚡ Interrupt - redirecting workflow:", instruction)
+    
+    // Send interrupt_workflow message to backend via WebSocket
+    sendMessage({
+      type: "interrupt_workflow",
+      conversationId: conversationId,
+      sessionId: currentSessionId,
+      contextId: contextId,
+      instruction: instruction
+    })
+    
+    // Show the redirect instruction as a user message
+    const redirectMessage: Message = {
+      id: `interrupt_${Date.now()}`,
+      role: "user",
+      content: `⚡ ${instruction}`,
+    }
+    setMessages(prev => [...prev, redirectMessage])
+    
+    // Clear input
+    setInput("")
+    
+  }, [isInferencing, input, sendMessage, conversationId, currentSessionId, contextId])
+
   const handleSend = async () => {
-    if (isInferencing) return
+    // During inference, redirect to interrupt handler
+    if (isInferencing) {
+      handleInterrupt()
+      return
+    }
     if (!input.trim() && !refineTarget) return
 
     // Check if message only mentions users (no agents) - if so, just broadcast to UI
@@ -4176,9 +4234,8 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                   handleSend()
                 }
               }}
-              placeholder="Type your message... (Use @ to mention users or agents)"
+              placeholder={isInferencing ? "Type to redirect workflow... (Enter to redirect)" : "Type your message... (Use @ to mention users or agents)"}
               className="pl-14 pr-32 min-h-12 max-h-32 resize-none overflow-y-auto border-none focus-visible:ring-0 focus-visible:ring-offset-0 bg-transparent rounded-3xl py-3"
-              disabled={isInferencing}
               rows={1}
               style={{ height: '48px' }} // min-h-12 = 48px
             />
@@ -4295,8 +4352,17 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                 }}
                 disabled={isInferencing} 
               />
-              {/* Show Stop button when inferencing, Send button otherwise */}
-              {isInferencing ? (
+              {/* Three-state button: Redirect (⚡) / Stop (■) / Send (→) */}
+              {isInferencing && input.trim() ? (
+                <Button 
+                  onClick={handleInterrupt}
+                  className="h-9 w-9 rounded-full bg-amber-500 hover:bg-amber-600"
+                  size="icon"
+                  title="Redirect workflow"
+                >
+                  <Zap size={16} className="text-white fill-white" />
+                </Button>
+              ) : isInferencing ? (
                 <Button 
                   onClick={handleStop}
                   className="h-9 w-9 rounded-full bg-red-500 hover:bg-red-600"

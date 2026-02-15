@@ -251,6 +251,9 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
         self._cancellation_tokens: Dict[str, bool] = {}
         # Track active A2A tasks for cancellation (context_id -> {agent_name: task_id})
         self._active_agent_tasks: Dict[str, Dict[str, str]] = {}
+        # Interrupt support: queued user instructions to redirect a running workflow
+        # Key: context_id, Value: new user instruction string
+        self._interrupt_instructions: Dict[str, str] = {}
         
         # Configure context-sharing between agents for improved continuity
         # When enabled, agents receive information about previous agent responses
@@ -6019,8 +6022,40 @@ Workflow completed with result:
         return self._cancellation_tokens.get(context_id, False)
     
     def clear_cancellation(self, context_id: str):
-        """Clear cancellation flag (called when new message starts)."""
+        """Clear cancellation and interrupt flags (called when new message starts)."""
         self._cancellation_tokens.pop(context_id, None)
+        self._interrupt_instructions.pop(context_id, None)
+
+    async def interrupt_workflow(self, context_id: str, instruction: str) -> Dict[str, Any]:
+        """
+        Queue an interrupt instruction for a running workflow.
+        
+        Unlike cancel, this does NOT stop execution. It queues a new instruction
+        that will be picked up between workflow steps, causing the orchestrator
+        to re-plan around the new user direction while preserving completed work.
+        
+        Args:
+            context_id: The conversation/session context to interrupt
+            instruction: The new user instruction to redirect the workflow
+            
+        Returns:
+            Dict with interrupt acknowledgment
+        """
+        log_info(f"⚡ [INTERRUPT] Queuing interrupt for context: {context_id}")
+        log_info(f"⚡ [INTERRUPT] New instruction: {instruction[:100]}...")
+        
+        self._interrupt_instructions[context_id] = instruction
+        
+        return {
+            "status": "interrupt_queued",
+            "context_id": context_id,
+            "instruction": instruction,
+            "message": "Interrupt queued. Will redirect after current agent completes."
+        }
+    
+    def get_interrupt(self, context_id: str) -> Optional[str]:
+        """Pop and return a queued interrupt instruction, or None if no interrupt is pending."""
+        return self._interrupt_instructions.pop(context_id, None)
 
     def _add_status_message_to_conversation(self, status_text: str, contextId: str):
         """Add a status message directly to the conversation for immediate UI display."""

@@ -73,6 +73,22 @@ class WorkflowOrchestration:
     - self._call_azure_openai_structured()
     """
 
+    def _build_interrupted_goal(self, original_goal: str, interrupt_instruction: str,
+                                 completed_tasks: list) -> str:
+        """Build an updated goal string that incorporates the interrupt instruction
+        while preserving context about completed work."""
+        completed_summary = "\n".join([
+            f"- ✅ {t.task_description[:100]} (by {t.recommended_agent})"
+            for t in completed_tasks if t.state == "completed"
+        ]) or "- (none yet)"
+        return (
+            f"UPDATED GOAL: {interrupt_instruction}\n\n"
+            f"CONTEXT: The user originally asked: {original_goal}\n"
+            f"The following steps were already completed:\n{completed_summary}\n\n"
+            f"INSTRUCTION: Use the completed work above as context. "
+            f"Focus on the user's updated instruction. Do NOT repeat completed tasks."
+        )
+
     async def _load_agent_from_catalog(self, agent_name: str) -> bool:
         """
         Load an agent from the global catalog and register it for this session.
@@ -234,6 +250,44 @@ class WorkflowOrchestration:
                     event_type="info", metadata={"skipped_group": group.group_number}
                 )
                 continue
+            
+            # =========================================================
+            # INTERRUPT CHECK: Before each group, check for user redirect
+            # If interrupted, pivot to dynamic agent mode orchestration
+            # =========================================================
+            interrupt_instruction = self.get_interrupt(context_id)
+            if interrupt_instruction:
+                log_info(f"⚡ [INTERRUPT] Parsed workflow interrupted at group {group.group_number}: {interrupt_instruction[:80]}...")
+                completed_tasks = [t for t in plan.tasks if t.state == "completed"]
+                
+                # Emit interrupt notification
+                await self._emit_granular_agent_event(
+                    "foundry-host-agent",
+                    f"⚡ Workflow redirected: {interrupt_instruction[:100]}",
+                    context_id,
+                    event_type="phase",
+                    metadata={"phase": "interrupted", "new_instruction": interrupt_instruction}
+                )
+                
+                # Build interrupted goal and pivot to dynamic agent mode
+                new_goal = self._build_interrupted_goal(plan.goal, interrupt_instruction, completed_tasks)
+                log_info(f"⚡ [INTERRUPT] Pivoting parsed workflow → agent mode with {len(completed_tasks)} completed tasks")
+                
+                # Pivot: call _agent_mode_orchestration_loop with the new goal
+                # The user_message param becomes the new goal for the LLM planner
+                pivot_results = await self._agent_mode_orchestration_loop(
+                    user_message=new_goal,
+                    context_id=context_id,
+                    session_context=session_context,
+                    workflow=None,  # No longer following fixed workflow
+                    workflow_goal=None,
+                )
+                
+                # Merge pivot results into our output
+                if pivot_results:
+                    all_task_outputs.extend(pivot_results)
+                
+                return all_task_outputs
             
             if group.group_type == WorkflowStepType.PARALLEL:
                 # ============================================================
@@ -1575,6 +1629,28 @@ Do NOT skip steps. Do NOT mark goal as completed until ALL workflow steps are do
         while plan.goal_status == "incomplete" and iteration < max_iterations:
             iteration += 1
             print(f"🔄 [Agent Mode] Iteration {iteration}/{max_iterations}")
+            
+            # =========================================================
+            # INTERRUPT CHECK: Between steps, check if user redirected
+            # =========================================================
+            interrupt_instruction = self.get_interrupt(context_id)
+            if interrupt_instruction:
+                log_info(f"⚡ [INTERRUPT] Detected interrupt between steps: {interrupt_instruction[:80]}...")
+                completed_tasks = [t for t in plan.tasks if t.state == "completed"]
+                original_goal = plan.goal
+                plan.goal = self._build_interrupted_goal(original_goal, interrupt_instruction, completed_tasks)
+                plan.goal_status = "incomplete"
+                plan.updated_at = datetime.now(timezone.utc)
+                await self._emit_granular_agent_event(
+                    "foundry-host-agent",
+                    f"⚡ Workflow redirected: {interrupt_instruction[:100]}",
+                    context_id,
+                    event_type="phase",
+                    metadata={"phase": "interrupted", "new_instruction": interrupt_instruction}
+                )
+                await self._emit_plan_update(plan, context_id, reasoning=f"Redirected: {interrupt_instruction[:100]}")
+                log_info(f"⚡ [INTERRUPT] Goal updated, re-planning with {len(completed_tasks)} completed tasks preserved")
+            
             # Single typed event replaces old untyped _emit_status_event + typed double-emit
             await self._emit_granular_agent_event(
                 "foundry-host-agent", f"Planning step {iteration}...", context_id,
