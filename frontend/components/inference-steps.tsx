@@ -20,6 +20,7 @@ interface InferenceStepsProps {
   steps: StepEvent[]
   isInferencing: boolean
   plan?: any
+  cancelled?: boolean
 }
 
 interface AgentInfo {
@@ -546,7 +547,7 @@ function AgentCard({ agent, stepNumber, isLive }: { agent: AgentInfo; stepNumber
   )
 }
 
-export function InferenceSteps({ steps, isInferencing, plan }: InferenceStepsProps) {
+export function InferenceSteps({ steps, isInferencing, plan, cancelled }: InferenceStepsProps) {
   const { agents, orchestratorActivities, orchestratorStatus } = useMemo(() => parseEventsToAgents(steps), [steps])
   const summaryLabel = agents.length > 0 ? `${agents.length} agent${agents.length !== 1 ? "s" : ""}` : ""
   const hasOrchestratorActivity = orchestratorActivities.length > 0
@@ -591,17 +592,36 @@ export function InferenceSteps({ steps, isInferencing, plan }: InferenceStepsPro
     )
   }
 
+  const isCancelled = cancelled || plan?.goal_status === "cancelled"
   const hasErrors = agents.some((a: AgentInfo) => a.status === "error")
-  
+
+  const headerLabel = isCancelled
+    ? "Workflow cancelled"
+    : hasErrors
+      ? "Workflow completed with errors"
+      : "Workflow completed"
+
+  const headerIconBg = isCancelled
+    ? "bg-red-500/10"
+    : hasErrors ? "bg-amber-500/10" : "bg-emerald-500/10"
+
+  const HeaderIcon = isCancelled
+    ? Square
+    : hasErrors ? AlertCircle : CheckCircle2
+
+  const headerIconColor = isCancelled
+    ? "text-red-500"
+    : hasErrors ? "text-amber-500" : "text-emerald-500"
+
   return (
     <Accordion type="single" collapsible className="w-full">
       <AccordionItem value="workflow" className="border border-border/50 bg-muted/30 rounded-xl px-4 shadow-sm">
         <AccordionTrigger className="hover:no-underline py-3">
           <div className="flex items-center gap-2.5">
-            <div className={`h-7 w-7 rounded-lg flex items-center justify-center ${hasErrors ? "bg-amber-500/10" : "bg-emerald-500/10"}`}>
-              {hasErrors ? <AlertCircle className="h-4 w-4 text-amber-500" /> : <CheckCircle2 className="h-4 w-4 text-emerald-500" />}
+            <div className={`h-7 w-7 rounded-lg flex items-center justify-center ${headerIconBg}`}>
+              <HeaderIcon className={`h-4 w-4 ${headerIconColor}`} />
             </div>
-            <span className="font-medium text-sm">{hasErrors ? "Workflow completed with errors" : "Workflow completed"}</span>
+            <span className="font-medium text-sm">{headerLabel}</span>
             {summaryLabel && <span className="text-xs text-muted-foreground ml-1">{summaryLabel}</span>}
           </div>
         </AccordionTrigger>

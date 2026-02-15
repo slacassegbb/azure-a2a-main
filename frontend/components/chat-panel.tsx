@@ -2648,6 +2648,17 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
         setActiveNode(null)
         return
       }
+
+      // If this is a cancel response from the backend and we already handled it in handleStop, skip it
+      const cancelKey = `cancel_handled_${data.conversationId || conversationId}`
+      const content = data.message.content || ""
+      if (processedMessageIds.has(cancelKey) && content.match(/cancelled|canceled/i)) {
+        console.log("[ChatPanel] Skipping backend cancel response - already handled by handleStop")
+        setIsInferencing(false)
+        setInferenceSteps([])
+        setActiveNode(null)
+        return
+      }
       
       const messagesToAdd: Message[] = []
       
@@ -3076,9 +3087,9 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
   // Handle stop/cancel workflow
   const handleStop = useCallback(() => {
     if (!isInferencing) return
-    
+
     console.log("[ChatPanel] 🛑 Stop button clicked - cancelling workflow")
-    
+
     // Send cancel_workflow message to backend via WebSocket
     sendMessage({
       type: "cancel_workflow",
@@ -3086,19 +3097,43 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       sessionId: currentSessionId,
       contextId: contextId
     })
-    
-    // Immediately update UI state
+
+    // Save current inference steps as a cancelled workflow summary BEFORE clearing
+    const stepsCopy = [...inferenceSteps]
+    const planCopy = workflowPlan ? { ...workflowPlan, goal_status: "cancelled" } : undefined
+
+    // Immediately clear live inference state
     setIsInferencing(false)
-    
-    // Add a system message to show cancellation
-    const cancelMessage: Message = {
+    setInferenceSteps([])
+    setActiveNode(null)
+
+    // Build messages to add: cancel message + cancelled workflow summary
+    const messagesToAdd: Message[] = []
+
+    // 1. Add cancelled workflow summary with inference steps (shows "Workflow cancelled" header)
+    if (stepsCopy.length > 0) {
+      messagesToAdd.push({
+        id: `cancel_summary_${Date.now()}`,
+        role: "system",
+        type: "inference_summary",
+        steps: stepsCopy,
+        metadata: { workflow_plan: planCopy, cancelled: true },
+      })
+    }
+
+    // 2. Add the cancel text message
+    messagesToAdd.push({
       id: `cancel_${Date.now()}`,
       role: "assistant",
-      content: "⛔ Workflow cancelled by user.",
-    }
-    setMessages(prev => [...prev, cancelMessage])
-    
-  }, [isInferencing, sendMessage, conversationId, currentSessionId, contextId])
+      content: "Workflow cancelled by user.",
+    })
+
+    // Mark that we already created a cancel workflow so the backend response won't duplicate
+    setProcessedMessageIds(prev => new Set([...prev, `cancel_handled_${conversationId}`]))
+
+    setMessages(prev => [...prev, ...messagesToAdd])
+
+  }, [isInferencing, sendMessage, conversationId, currentSessionId, contextId, inferenceSteps, workflowPlan])
 
   // Handle interrupt/redirect during inference
   const handleInterrupt = useCallback(() => {
@@ -3474,11 +3509,12 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                   }
                 }
                 // Pass the plan from metadata for rich rendering
-                return <InferenceSteps 
-                  key={`${message.id}-${index}`} 
-                  steps={message.steps || []} 
-                  isInferencing={false} 
+                return <InferenceSteps
+                  key={`${message.id}-${index}`}
+                  steps={message.steps || []}
+                  isInferencing={false}
                   plan={message.metadata?.workflow_plan}
+                  cancelled={!!message.metadata?.cancelled}
                 />
               }
               
