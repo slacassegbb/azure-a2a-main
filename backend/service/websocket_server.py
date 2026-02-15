@@ -1128,13 +1128,15 @@ def create_websocket_app() -> FastAPI:
         session_id = message.get("sessionId", "")
         context_id = message.get("contextId", "")
 
-        # Build the full context_id if we have session and conversation
-        if session_id and conversation_id and not context_id:
-            context_id = f"{session_id}::{conversation_id}"
-        elif conversation_id and "::" in conversation_id:
-            context_id = conversation_id
-        elif conversation_id:
-            context_id = conversation_id
+        # Build the full context_id (format: sessionId::conversationId)
+        # If contextId was already provided in the correct format, use it as-is
+        if not context_id:
+            if session_id and conversation_id:
+                context_id = f"{session_id}::{conversation_id}"
+            elif conversation_id and "::" in conversation_id:
+                context_id = conversation_id
+            elif conversation_id:
+                context_id = conversation_id
 
         if not context_id:
             logger.warning("[WebSocket] cancel_workflow: No context_id provided")
@@ -1200,13 +1202,15 @@ def create_websocket_app() -> FastAPI:
         context_id = message.get("contextId", "")
         instruction = message.get("instruction", "")
 
-        # Build the full context_id
-        if session_id and conversation_id and not context_id:
-            context_id = f"{session_id}::{conversation_id}"
-        elif conversation_id and "::" in conversation_id:
-            context_id = conversation_id
-        elif conversation_id:
-            context_id = conversation_id
+        # Build the full context_id (format: sessionId::conversationId)
+        # If contextId was already provided in the correct format, use it as-is
+        if not context_id:
+            if session_id and conversation_id:
+                context_id = f"{session_id}::{conversation_id}"
+            elif conversation_id and "::" in conversation_id:
+                context_id = conversation_id
+            elif conversation_id:
+                context_id = conversation_id
 
         if not context_id or not instruction:
             logger.warning("[WebSocket] interrupt_workflow: Missing context_id or instruction")
