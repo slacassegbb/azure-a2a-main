@@ -70,6 +70,52 @@ class AgentRegistry:
             print(f"[AgentRegistry] Migration warning: {e}")
             self.db_conn.rollback()
 
+        # One-time migration: assign curated distinct colors to known agents.
+        # Uses a flag row check so it only runs once.
+        try:
+            cur = self.db_conn.cursor()
+            # Check if we already ran this migration (Email Agent should be blue, not emerald)
+            cur.execute("SELECT color FROM agents WHERE name = 'Email Agent'")
+            row = cur.fetchone()
+            if row and row[0] == '#3b82f6':
+                cur.close()
+                return  # Already migrated
+
+            curated_colors = {
+                'Email Agent': '#3b82f6',
+                'Teams Agent': '#f97316',
+                'AI Foundry Stripe Agent': '#8b5cf6',
+                'AI Foundry QuickBooks Agent': '#10b981',
+                'AI Foundry Deep Search Knowledge Agent': '#06b6d4',
+                'AI Foundry HubSpot Agent': '#f59e0b',
+                'AI Foundry Image Generator Agent': '#ec4899',
+                'AI Foundry Image Analysis Agent': '#a855f7',
+                'Salesforce CRM Agent': '#ef4444',
+                'AI Foundry Reporter Agent': '#14b8a6',
+                'AI Foundry Branding & Content Agent': '#ec4899',
+                'AI Foundry Claims Specialist Agent': '#06b6d4',
+                'AI Foundry Classification Triage Agent': '#f59e0b',
+                'AI Foundry Assessment & Estimation Agent': '#8b5cf6',
+                'AI Foundry Fraud Intelligence Agent': '#ef4444',
+                'Legal Compliance & Regulatory Agent': '#14b8a6',
+                'Sentiment Analysis Agent': '#a855f7',
+                'Twilio SMS Agent': '#3b82f6',
+                'Sora 2 Video Generator': '#f97316',
+                'SportsResultAgent': '#06b6d4',
+                'Benjamin School AP-Calculus Study Buddy': '#ef4444',
+                'Benjamin School AP Environmental Science Study Buddy': '#10b981',
+                'Benjamin School Biology Teacher': '#14b8a6',
+                'Benjamin School English Teacher': '#3b82f6',
+            }
+            for name, color in curated_colors.items():
+                cur.execute("UPDATE agents SET color = %s WHERE name = %s", (color, name))
+            self.db_conn.commit()
+            cur.close()
+            print(f"[AgentRegistry] ✅ Migrated {len(curated_colors)} agents to curated colors")
+        except Exception as e:
+            print(f"[AgentRegistry] Color migration warning: {e}")
+            self.db_conn.rollback()
+
     def _ensure_registry_file(self):
         """Ensure the registry file exists, create with empty list if not."""
         if not hasattr(self, 'registry_file'):

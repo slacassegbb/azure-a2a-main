@@ -34,7 +34,7 @@ function hashAgentName(name: string): number {
   let hash = 0
   for (let i = 0; i < name.length; i++) {
     hash = ((hash << 5) - hash) + name.charCodeAt(i)
-    hash = hash & hash
+    hash = hash | 0  // Convert to 32-bit signed integer (matches Python's & 0xFFFFFFFF)
   }
   return Math.abs(hash)
 }
