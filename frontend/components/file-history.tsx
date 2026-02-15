@@ -818,7 +818,7 @@ export function FileHistory({ className, onFileSelect, onFilesLoaded, conversati
                                 }}
                                 className="px-2 py-1 text-xs font-medium bg-primary/10 hover:bg-primary/20 text-primary rounded border border-primary/30 hover:border-primary/50 transition-colors"
                               >
-                                Analyze
+                                Add to Memory
                               </button>
                             </TooltipTrigger>
                             <TooltipContent side="top">
