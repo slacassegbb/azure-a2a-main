@@ -1679,11 +1679,11 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
                           const bgColor = `rgba(${r}, ${g}, ${b}, 0.1)`
                           
                           return (
-                            <div 
+                            <div
                               className="p-2 rounded-lg flex items-center justify-center"
                               style={{ backgroundColor: bgColor }}
                             >
-                              <AgentIcon className="h-4 w-4" style={{ color: agentDisplayInfo.hex }} />
+                              <AgentIcon className={cn("h-4 w-4", agentDisplayInfo.color)} />
                             </div>
                           )
                         })()}
@@ -1735,11 +1735,11 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
                               const bgColor = `rgba(${r}, ${g}, ${b}, 0.1)`
                               
                               return (
-                                <div 
+                                <div
                                   className="p-2 rounded-lg flex items-center justify-center"
                                   style={{ backgroundColor: bgColor }}
                                 >
-                                  <AgentIcon className="h-4 w-4" style={{ color: agentDisplayInfo.hex }} />
+                                  <AgentIcon className={cn("h-4 w-4", agentDisplayInfo.color)} />
                                 </div>
                               )
                             })()}

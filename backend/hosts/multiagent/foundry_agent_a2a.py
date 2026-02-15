@@ -245,6 +245,13 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
         self.enable_task_evaluation = enable_task_evaluation
         self._active_conversations: Dict[str, str] = {}
         self.max_retries = 2
+        
+        # Cancellation support: tracks which contexts have been cancelled
+        # Key: context_id, Value: True if cancelled
+        self._cancellation_tokens: Dict[str, bool] = {}
+        # Track active A2A tasks for cancellation (context_id -> {agent_name: task_id})
+        self._active_agent_tasks: Dict[str, Dict[str, str]] = {}
+        
         # Configure context-sharing between agents for improved continuity
         # When enabled, agents receive information about previous agent responses
         include_flag = os.environ.get("A2A_INCLUDE_LAST_HOST_TURN", "true").strip().lower()
@@ -2505,6 +2512,11 @@ Answer with just JSON:
                     "tool_context.state must be a SessionContext instance for A2A-compliant send_message"
                 )
 
+            # CHECK FOR CANCELLATION - bail early if workflow was cancelled
+            if self.is_cancelled(session_context.contextId):
+                log_info(f"🛑 [SEND_MESSAGE] Workflow cancelled, skipping call to {agent_name}")
+                return ["[Workflow cancelled by user]"]
+
             # CRITICAL: DO NOT generate new contextId - it comes from the session_context
             # The session_context already has the correct contextId from the HTTP request
             import uuid
@@ -2894,6 +2906,12 @@ Answer with just JSON:
                     session_context.contextId = context_id
                 t_id = get_task_id(task)
                 session_context.agent_task_ids[agent_name] = t_id
+                
+                # Track active task for cancellation support
+                if contextId not in self._active_agent_tasks:
+                    self._active_agent_tasks[contextId] = {}
+                self._active_agent_tasks[contextId][agent_name] = t_id
+                
                 try:
                     state_val = task.status.state.value if hasattr(task.status.state, 'value') else str(task.status.state)
                 except Exception:
@@ -2911,6 +2929,9 @@ Answer with just JSON:
                         del session_context.agent_task_ids[agent_name]
                     if agent_name in session_context.agent_task_states:
                         del session_context.agent_task_states[agent_name]
+                    # Clear from active tasks (cancellation tracking)
+                    if contextId in self._active_agent_tasks:
+                        self._active_agent_tasks[contextId].pop(agent_name, None)
                     print(f"   After: agent_task_ids={dict(session_context.agent_task_ids)}")
                     print(f"   After: agent_task_states={dict(session_context.agent_task_states)}")
                     log_debug(f"🧹 Cleared completed task state for {agent_name} to allow new tasks")
@@ -3142,6 +3163,9 @@ Answer with just JSON:
                     if agent_name in session_context.agent_task_ids:
                         del session_context.agent_task_ids[agent_name]
                         log_debug(f"🧹 Cleared task_id for {agent_name} after failed task")
+                    # Clear from active tasks (cancellation tracking)
+                    if contextId in self._active_agent_tasks:
+                        self._active_agent_tasks[contextId].pop(agent_name, None)
                     return [f"Agent {agent_name} failed to complete the task"]
 
                 elif task.status.state == TaskState.input_required:
@@ -3950,6 +3974,9 @@ Answer with just JSON:
                 raise ValueError(f"context_id is required but was None or empty. This is a bug - foundry_host_manager should always provide context_id")
             
             log_debug(f"🔍 [run_conversation_with_parts] Using context_id: {context_id}")
+            
+            # Clear any previous cancellation flag - new message starts fresh
+            self.clear_cancellation(context_id)
             
             # CRITICAL: Store the context_id using contextvars for async-safe isolation
             # This ensures each async task sees its own context_id, preventing race conditions
@@ -5922,6 +5949,78 @@ Workflow completed with result:
     def set_host_manager(self, host_manager):
         """Set reference to the host manager for UI integration."""
         self._host_manager = host_manager
+
+    async def cancel_workflow(self, context_id: str, reason: str = "Cancelled by user") -> Dict[str, Any]:
+        """
+        Cancel a running workflow for the given context.
+        
+        This implements a two-level cancellation strategy:
+        1. Level 1 (Graceful): Set cancellation flag, checked between agent steps
+        2. Level 2 (A2A Cancel): Send cancel request to any active remote agents
+        
+        State cleanup:
+        - Clears current_plan (stops workflow execution)
+        - Clears pending_input_agent (resets HITL state)
+        - Preserves host_turn_history (maintains context for next message)
+        
+        Args:
+            context_id: The conversation/session context to cancel
+            reason: Human-readable cancellation reason
+            
+        Returns:
+            Dict with cancellation status and details
+        """
+        log_info(f"🛑 [CANCEL] Cancelling workflow for context: {context_id}")
+        
+        # Set cancellation flag (Level 1 - graceful stop)
+        self._cancellation_tokens[context_id] = True
+        
+        # Get session context to access active tasks and state
+        session_ctx = self.session_contexts.get(context_id)
+        cancelled_agents = []
+        
+        # Level 2: Cancel any active A2A tasks
+        active_tasks = self._active_agent_tasks.get(context_id, {})
+        for agent_name, task_id in active_tasks.items():
+            try:
+                log_info(f"🛑 [CANCEL] Sending cancel to agent: {agent_name}, task: {task_id}")
+                conn = self.remote_agent_connections.get(agent_name)
+                if conn:
+                    # Call A2A cancel endpoint
+                    await conn.cancel_task(task_id)
+                    cancelled_agents.append(agent_name)
+                    log_info(f"✅ [CANCEL] Successfully cancelled {agent_name}")
+            except Exception as e:
+                log_error(f"⚠️ [CANCEL] Failed to cancel {agent_name}: {e}")
+        
+        # Clear active tasks for this context
+        self._active_agent_tasks.pop(context_id, None)
+        
+        # State cleanup
+        if session_ctx:
+            # Clear current plan (stops the workflow)
+            session_ctx.current_plan = None
+            # Clear HITL pending state
+            session_ctx.pending_input_agent = None
+            session_ctx.pending_input_task_id = None
+            # Note: host_turn_history is preserved for context continuity
+            log_info(f"🧹 [CANCEL] Cleared plan and HITL state for context: {context_id}")
+        
+        return {
+            "status": "cancelled",
+            "context_id": context_id,
+            "reason": reason,
+            "cancelled_agents": cancelled_agents,
+            "message": f"Workflow cancelled. {len(cancelled_agents)} agent(s) notified."
+        }
+    
+    def is_cancelled(self, context_id: str) -> bool:
+        """Check if a workflow has been cancelled."""
+        return self._cancellation_tokens.get(context_id, False)
+    
+    def clear_cancellation(self, context_id: str):
+        """Clear cancellation flag (called when new message starts)."""
+        self._cancellation_tokens.pop(context_id, None)
 
     def _add_status_message_to_conversation(self, status_text: str, contextId: str):
         """Add a status message directly to the conversation for immediate UI display."""

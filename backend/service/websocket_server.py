@@ -1103,8 +1103,106 @@ def create_websocket_app() -> FastAPI:
             else:
                 logger.debug(f"Skipping conversation_title_update broadcast - no tenant found")
         
+        elif message_type == "cancel_workflow":
+            # Handle workflow cancellation request
+            await handle_cancel_workflow(websocket, message)
+        
         else:
             logger.warning(f"Unknown message type: {message_type}")
+    
+    # Workflow Cancellation Handler
+    async def handle_cancel_workflow(websocket: WebSocket, message: Dict[str, Any]):
+        """Handle workflow cancellation request from the frontend.
+        
+        This implements a graceful cancellation that:
+        1. Sets a cancellation flag in the orchestrator
+        2. Attempts to cancel any active A2A tasks
+        3. Clears the current workflow plan
+        4. Notifies the frontend of the cancellation
+        """
+        logger.info("[WebSocket] Received cancel_workflow request")
+        
+        conversation_id = message.get("conversationId", "")
+        session_id = message.get("sessionId", "")
+        context_id = message.get("contextId", "")
+        
+        # Build the full context_id if we have session and conversation
+        if session_id and conversation_id and not context_id:
+            context_id = f"{session_id}::{conversation_id}"
+        elif conversation_id and "::" in conversation_id:
+            context_id = conversation_id  # Already full context_id
+        elif conversation_id:
+            context_id = conversation_id
+        
+        if not context_id:
+            logger.warning("[WebSocket] cancel_workflow: No context_id provided")
+            await websocket.send_text(json.dumps({
+                "eventType": "workflow_cancelled",
+                "data": {
+                    "status": "error",
+                    "message": "No context_id provided"
+                }
+            }))
+            return
+        
+        logger.info(f"[WebSocket] Cancelling workflow for context: {context_id}")
+        
+        try:
+            # Get the host manager to access the orchestrator
+            from service.server.foundry_host_manager import get_host_manager
+            host_manager = get_host_manager()
+            
+            if host_manager and host_manager._host_agent:
+                # Call the orchestrator's cancel method
+                result = await host_manager._host_agent.cancel_workflow(
+                    context_id=context_id,
+                    reason="Cancelled by user"
+                )
+                
+                # Broadcast cancellation to the frontend
+                cancel_event = {
+                    "eventType": "workflow_cancelled",
+                    "conversationId": conversation_id,
+                    "contextId": context_id,
+                    "data": {
+                        "status": result.get("status", "cancelled"),
+                        "message": result.get("message", "Workflow cancelled"),
+                        "cancelled_agents": result.get("cancelled_agents", [])
+                    }
+                }
+                
+                # Send to the requesting client
+                await websocket.send_text(json.dumps(cancel_event))
+                
+                # Also broadcast to other clients in the same tenant/session
+                # (they will see the same cancel event)
+                sender_tenant = websocket_manager.connection_tenants.get(websocket)
+                if sender_tenant:
+                    cancel_event["contextId"] = sender_tenant
+                    await websocket_manager.smart_broadcast(cancel_event)
+                
+                logger.info(f"[WebSocket] Workflow cancelled successfully: {result}")
+            else:
+                logger.warning("[WebSocket] Host manager or agent not available for cancel")
+                await websocket.send_text(json.dumps({
+                    "eventType": "workflow_cancelled",
+                    "conversationId": conversation_id,
+                    "data": {
+                        "status": "error",
+                        "message": "Orchestrator not available"
+                    }
+                }))
+                
+        except Exception as e:
+            logger.error(f"[WebSocket] Error cancelling workflow: {e}")
+            await websocket.send_text(json.dumps({
+                "eventType": "workflow_cancelled",
+                "conversationId": conversation_id,
+                "data": {
+                    "status": "error",
+                    "message": f"Error: {str(e)}"
+                }
+            }))
     
     # Collaborative Session Handlers
     async def handle_get_session_users(websocket: WebSocket):

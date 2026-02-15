@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
-import { Paperclip, Mic, MicOff, Send, Bot, User, Paintbrush, Copy, ThumbsUp, ThumbsDown, Loader2, Plus, Pencil, X, Sparkles } from "lucide-react"
+import { Paperclip, Mic, MicOff, Send, Bot, User, Paintbrush, Copy, ThumbsUp, ThumbsDown, Loader2, Plus, Pencil, X, Sparkles, Square } from "lucide-react"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { useEventHub } from "@/hooks/use-event-hub"
@@ -2209,6 +2209,49 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       }
     }
 
+    // Handle workflow_cancelled events - when user cancels a running workflow
+    const handleWorkflowCancelled = (data: any) => {
+      console.log("[ChatPanel] Workflow cancelled event received:", data)
+      
+      // Filter by conversationId
+      let cancelConvId = data.conversationId || data.contextId || ""
+      if (cancelConvId.includes("::")) {
+        cancelConvId = cancelConvId.split("::")[1]
+      }
+      if (shouldFilterByConversationIdRef.current(cancelConvId)) {
+        console.log("[ChatPanel] Ignoring workflow_cancelled for different conversation:", cancelConvId)
+        return
+      }
+      
+      // Stop inferencing immediately
+      setIsInferencing(false)
+      
+      // Update workflow plan to show cancelled state
+      if (data.plan) {
+        setWorkflowPlan({
+          ...data.plan,
+          reasoning: data.reason || "Workflow cancelled by user"
+        })
+      } else {
+        // Clear the workflow plan or mark it as cancelled
+        setWorkflowPlan(prev => prev ? {
+          ...prev,
+          goal_status: "cancelled",
+          reasoning: data.reason || "Workflow cancelled by user"
+        } : null)
+      }
+      
+      // Add a system message indicating cancellation
+      if (data.message) {
+        const cancelMessage: Message = {
+          id: `cancel-${Date.now()}`,
+          role: "system",
+          content: data.message,
+        }
+        setMessages(prev => [...prev, cancelMessage])
+      }
+    }
+
     // Handle typing indicator from other users
     const handleTypingIndicator = (eventData: any) => {
       const userId = eventData.data?.user_id
@@ -2439,6 +2482,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
     subscribe("tool_response", handleToolResponse)
     subscribe("remote_agent_activity", handleRemoteAgentActivity)
     subscribe("plan_update", handlePlanUpdate)
+    subscribe("workflow_cancelled", handleWorkflowCancelled)
     subscribe("file_uploaded", handleFileUploaded)
     subscribe("shared_file_uploaded", handleSharedFileUploaded)
     subscribe("typing_indicator", handleTypingIndicator)
@@ -2463,6 +2507,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       unsubscribe("tool_response", handleToolResponse)
       unsubscribe("remote_agent_activity", handleRemoteAgentActivity)
       unsubscribe("plan_update", handlePlanUpdate)
+      unsubscribe("workflow_cancelled", handleWorkflowCancelled)
       unsubscribe("file_uploaded", handleFileUploaded)
       unsubscribe("shared_file_uploaded", handleSharedFileUploaded)
       unsubscribe("typing_indicator", handleTypingIndicator)
@@ -3002,6 +3047,33 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       }
     })
   }, [currentUser, isInCollaborativeSession, messages, sendMessage, currentSessionId])
+
+  // Handle stop/cancel workflow
+  const handleStop = useCallback(() => {
+    if (!isInferencing) return
+    
+    console.log("[ChatPanel] 🛑 Stop button clicked - cancelling workflow")
+    
+    // Send cancel_workflow message to backend via WebSocket
+    sendMessage({
+      type: "cancel_workflow",
+      conversationId: conversationId,
+      sessionId: currentSessionId,
+      contextId: contextId
+    })
+    
+    // Immediately update UI state
+    setIsInferencing(false)
+    
+    // Add a system message to show cancellation
+    const cancelMessage: Message = {
+      id: `cancel_${Date.now()}`,
+      role: "assistant",
+      content: "⛔ Workflow cancelled by user.",
+    }
+    setMessages(prev => [...prev, cancelMessage])
+    
+  }, [isInferencing, sendMessage, conversationId, currentSessionId, contextId])
 
   const handleSend = async () => {
     if (isInferencing) return
@@ -4223,14 +4295,26 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                 }}
                 disabled={isInferencing} 
               />
-              <Button 
-                onClick={handleSend} 
-                disabled={isInferencing || (!input.trim() && !refineTarget)}
-                className="h-9 w-9 rounded-full bg-primary hover:bg-primary/90 disabled:bg-muted disabled:text-muted-foreground"
-                size="icon"
-              >
-                <Send size={18} className="text-primary-foreground" />
-              </Button>
+              {/* Show Stop button when inferencing, Send button otherwise */}
+              {isInferencing ? (
+                <Button 
+                  onClick={handleStop}
+                  className="h-9 w-9 rounded-full bg-red-500 hover:bg-red-600"
+                  size="icon"
+                  title="Stop workflow"
+                >
+                  <Square size={16} className="text-white fill-white" />
+                </Button>
+              ) : (
+                <Button 
+                  onClick={handleSend} 
+                  disabled={!input.trim() && !refineTarget}
+                  className="h-9 w-9 rounded-full bg-primary hover:bg-primary/90 disabled:bg-muted disabled:text-muted-foreground"
+                  size="icon"
+                >
+                  <Send size={18} className="text-primary-foreground" />
+                </Button>
+              )}
             </div>
             </div>
             {/* Blue highlight bar at bottom - visible on hover, focus, or inferencing */}

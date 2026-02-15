@@ -69,6 +69,19 @@ def get_message_id(obj: Any, default: str = None) -> str:
         return default or str(uuid.uuid4())
 
 
+# Module-level singleton for accessing the host manager from other modules
+_host_manager_instance: Optional["FoundryHostManager"] = None
+
+def get_host_manager() -> Optional["FoundryHostManager"]:
+    """Get the singleton FoundryHostManager instance."""
+    return _host_manager_instance
+
+def set_host_manager(manager: "FoundryHostManager"):
+    """Set the singleton FoundryHostManager instance."""
+    global _host_manager_instance
+    _host_manager_instance = manager
+
+
 class FoundryHostManager(ApplicationManager):
     def __init__(self, http_client: httpx.AsyncClient, *args, **kwargs):
         log_debug("FoundryHostManager __init__ called")
@@ -110,6 +123,9 @@ class FoundryHostManager(ApplicationManager):
             log_debug(f"Failed to initialize Foundry agent at startup: {e}")
             # Don't raise to prevent backend from crashing
             self._host_agent_initialized = False
+        
+        # Register this instance as the global singleton for access from websocket handlers
+        set_host_manager(self)
     
     def _load_conversations_from_database(self):
         """Load existing conversations from database into memory."""

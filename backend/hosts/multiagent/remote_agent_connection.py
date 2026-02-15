@@ -130,3 +130,47 @@ class RemoteAgentConnections:
         if callback:
             callback(response.root.result, self.card)
         return response.root.result
+
+    async def cancel_task(self, task_id: str) -> bool:
+        """
+        Cancel a running task on this remote agent.
+        
+        Note: A2A protocol cancel support varies by agent implementation.
+        This attempts to cancel but gracefully handles agents that don't support it.
+        
+        Args:
+            task_id: The A2A task ID to cancel
+            
+        Returns:
+            True if cancel was acknowledged, False otherwise
+        """
+        try:
+            log_debug(f"🛑 [CANCEL] Attempting to cancel task {task_id} on {self.card.name}")
+            
+            # Check if the A2A client has a cancel method
+            if hasattr(self.agent_client, 'cancel_task'):
+                await self.agent_client.cancel_task(task_id)
+                log_debug(f"✅ [CANCEL] Task {task_id} cancelled on {self.card.name}")
+                return True
+            else:
+                # Fallback: Try HTTP POST to cancel endpoint
+                # A2A protocol defines /tasks/cancel as the cancel endpoint
+                base_url = getattr(self.agent_client, 'base_url', None)
+                if base_url and hasattr(self.agent_client, '_client'):
+                    try:
+                        response = await self.agent_client._client.post(
+                            f"{base_url}/tasks/cancel",
+                            json={"task_id": task_id}
+                        )
+                        if response.status_code == 200:
+                            log_debug(f"✅ [CANCEL] Task {task_id} cancelled via HTTP on {self.card.name}")
+                            return True
+                    except Exception as http_err:
+                        log_debug(f"⚠️ [CANCEL] HTTP cancel failed for {self.card.name}: {http_err}")
+                
+                log_debug(f"⚠️ [CANCEL] Agent {self.card.name} doesn't support cancel, ignoring")
+                return False
+                
+        except Exception as e:
+            log_debug(f"⚠️ [CANCEL] Error cancelling task on {self.card.name}: {e}")
+            return False
