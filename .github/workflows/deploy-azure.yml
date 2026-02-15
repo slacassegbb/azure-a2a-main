@@ -182,7 +182,8 @@ jobs:
             --resource-group ${{ env.RESOURCE_GROUP }} \
             --image ${{ env.REGISTRY }}/websocket:${{ github.sha }} \
             --set-env-vars \
-              "SECRET_KEY=${{ secrets.SECRET_KEY }}"
+              "SECRET_KEY=${{ secrets.SECRET_KEY }}" \
+              "BACKEND_API_URL=https://backend-uami.ambitioussky-6c709152.westus2.azurecontainerapps.io"
       
       - name: Verify Deployment
         run: |

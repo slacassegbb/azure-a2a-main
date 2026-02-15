@@ -240,6 +240,10 @@ class ConversationServer:
             '/agent/root-instruction/reset', self._reset_root_instruction, methods=['POST']
         )
         
+        # Workflow control endpoints
+        app.add_api_route('/workflow/cancel', self._cancel_workflow, methods=['POST'])
+        app.add_api_route('/workflow/interrupt', self._interrupt_workflow, methods=['POST'])
+
         # Session-scoped agent endpoints
         app.add_api_route('/agents/catalog', self._get_catalog, methods=['GET'])
         app.add_api_route('/agents/session/enable', self._enable_session_agent, methods=['POST'])
@@ -1186,6 +1190,43 @@ class ConversationServer:
                 'status': 'error',
                 'message': str(e)
             }
+
+    # ==================== WORKFLOW CONTROL ENDPOINTS ====================
+
+    async def _cancel_workflow(self, request: Request):
+        """Cancel a running workflow. Called by the WebSocket server via HTTP."""
+        data = await request.json()
+        context_id = data.get("context_id", "")
+
+        if not context_id:
+            return {"status": "error", "message": "No context_id provided"}
+
+        if hasattr(self.manager, '_host_agent') and self.manager._host_agent:
+            result = await self.manager._host_agent.cancel_workflow(
+                context_id=context_id,
+                reason=data.get("reason", "Cancelled by user")
+            )
+            return result
+
+        return {"status": "error", "message": "Orchestrator not available"}
+
+    async def _interrupt_workflow(self, request: Request):
+        """Interrupt/redirect a running workflow. Called by the WebSocket server via HTTP."""
+        data = await request.json()
+        context_id = data.get("context_id", "")
+        instruction = data.get("instruction", "")
+
+        if not context_id or not instruction:
+            return {"status": "error", "message": "Missing context_id or instruction"}
+
+        if hasattr(self.manager, '_host_agent') and self.manager._host_agent:
+            result = await self.manager._host_agent.interrupt_workflow(
+                context_id=context_id,
+                instruction=instruction
+            )
+            return result
+
+        return {"status": "error", "message": "Orchestrator not available"}
 
     # ==================== SESSION AGENT ENDPOINTS ====================
 
