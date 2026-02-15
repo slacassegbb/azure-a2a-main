@@ -18,16 +18,16 @@ export const DEFAULT_AGENT_COLORS = [
 ]
 
 const HEX_TO_TAILWIND: Record<string, { text: string; bg: string }> = {
-  "#ec4899": { text: "text-pink-700", bg: "bg-pink-100" },
-  "#8b5cf6": { text: "text-purple-700", bg: "bg-purple-100" },
-  "#06b6d4": { text: "text-cyan-700", bg: "bg-cyan-100" },
-  "#10b981": { text: "text-emerald-700", bg: "bg-emerald-100" },
-  "#f59e0b": { text: "text-amber-700", bg: "bg-amber-100" },
-  "#ef4444": { text: "text-red-700", bg: "bg-red-100" },
-  "#3b82f6": { text: "text-blue-700", bg: "bg-blue-100" },
-  "#14b8a6": { text: "text-teal-700", bg: "bg-teal-100" },
-  "#f97316": { text: "text-orange-700", bg: "bg-orange-100" },
-  "#a855f7": { text: "text-violet-700", bg: "bg-violet-100" },
+  "#ec4899": { text: "text-pink-400", bg: "bg-pink-950" },
+  "#8b5cf6": { text: "text-purple-400", bg: "bg-purple-950" },
+  "#06b6d4": { text: "text-cyan-400", bg: "bg-cyan-950" },
+  "#10b981": { text: "text-emerald-400", bg: "bg-emerald-950" },
+  "#f59e0b": { text: "text-amber-400", bg: "bg-amber-950" },
+  "#ef4444": { text: "text-red-400", bg: "bg-red-950" },
+  "#3b82f6": { text: "text-blue-400", bg: "bg-blue-950" },
+  "#14b8a6": { text: "text-teal-400", bg: "bg-teal-950" },
+  "#f97316": { text: "text-orange-400", bg: "bg-orange-950" },
+  "#a855f7": { text: "text-violet-400", bg: "bg-violet-950" },
 }
 
 function hashAgentName(name: string): number {
@@ -53,7 +53,7 @@ export function getAgentHexColor(agentName: string, dbColor?: string | null): st
  */
 export function getAgentTextClass(agentName: string, dbColor?: string | null): string {
   const hex = getAgentHexColor(agentName, dbColor)
-  return HEX_TO_TAILWIND[hex]?.text ?? "text-purple-700"
+  return HEX_TO_TAILWIND[hex]?.text ?? "text-purple-400"
 }
 
 /**
@@ -61,7 +61,7 @@ export function getAgentTextClass(agentName: string, dbColor?: string | null): s
  */
 export function getAgentBgClass(agentName: string, dbColor?: string | null): string {
   const hex = getAgentHexColor(agentName, dbColor)
-  return HEX_TO_TAILWIND[hex]?.bg ?? "bg-purple-100"
+  return HEX_TO_TAILWIND[hex]?.bg ?? "bg-purple-950"
 }
 
 /**
@@ -72,7 +72,7 @@ export function getAgentDisplayColors(agentName: string, dbColor?: string | null
   const tw = HEX_TO_TAILWIND[hex]
   return {
     hex,
-    color: tw?.text ?? "text-purple-700",
-    bgColor: tw?.bg ?? "bg-purple-100",
+    color: tw?.text ?? "text-purple-400",
+    bgColor: tw?.bg ?? "bg-purple-950",
   }
 }
