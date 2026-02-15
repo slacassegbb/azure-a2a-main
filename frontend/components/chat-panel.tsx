@@ -1739,7 +1739,13 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
         console.log("[ChatPanel] Ignoring inference started for different conversation:", eventConvId, "current:", conversationId)
         return
       }
-      
+
+      // Skip if workflow was cancelled by user
+      if (workflowCancelledRef.current) {
+        console.log("[ChatPanel] Ignoring inference started - workflow was cancelled")
+        return
+      }
+
       setIsInferencing(true)
       setInferenceSteps([])
       setActiveNode("User Input")
@@ -1771,7 +1777,13 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
         console.log("[ChatPanel] Ignoring inference ended for different conversation:", eventConvId, "current:", conversationId)
         return
       }
-      
+
+      // Skip if workflow was cancelled by user - handleStop already saved the summary
+      if (workflowCancelledRef.current) {
+        console.log("[ChatPanel] Ignoring shared inference ended - workflow was cancelled")
+        return
+      }
+
       // If workflow steps are included, create an inference_summary message
       const workflowSteps = data.workflowSteps || data.data?.workflowSteps
       const summaryId = data.summaryId || data.data?.summaryId || `summary_shared_${Date.now()}`
@@ -1976,7 +1988,13 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
         console.log("[ChatPanel] Ignoring inference step for different conversation:", stepConvId, "current:", conversationId)
         return
       }
-      
+
+      // Skip events after workflow was cancelled by user
+      if (workflowCancelledRef.current) {
+        console.log("[ChatPanel] Ignoring inference step - workflow was cancelled")
+        return
+      }
+
       if (data.agent && data.status) {
         // If we receive inference steps, inference is happening - show the workflow panel
         // This helps collaborators who join mid-workflow see the progress
@@ -2008,7 +2026,13 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
         console.log("[ChatPanel] Ignoring tool call for different conversation:", toolConvId, "current:", conversationId)
         return
       }
-      
+
+      // Skip events after workflow was cancelled by user
+      if (workflowCancelledRef.current) {
+        console.log("[ChatPanel] Ignoring tool call - workflow was cancelled")
+        return
+      }
+
       if (data.toolName && data.agentName) {
         const status = `🛠️ ${data.agentName} is using ${data.toolName}...`
         setInferenceSteps(prev => [...prev, { 
@@ -2050,7 +2074,13 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       }
       
       console.log("[ChatPanel] ✅ Accepting remote activity for conversation:", activityConvId)
-      
+
+      // Skip events after workflow was cancelled by user
+      if (workflowCancelledRef.current) {
+        console.log("[ChatPanel] Ignoring remote activity - workflow was cancelled")
+        return
+      }
+
       if (data.agentName && data.content) {
         const content = data.content
         // Backend now sends eventType on ALL events (no more untyped events)
@@ -2139,7 +2169,13 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
         console.log("[ChatPanel] Ignoring file upload for different conversation:", fileConvId, "current:", conversationId)
         return
       }
-      
+
+      // Skip events after workflow was cancelled by user
+      if (workflowCancelledRef.current) {
+        console.log("[ChatPanel] Ignoring file upload - workflow was cancelled")
+        return
+      }
+
       if (data?.fileInfo && data.fileInfo.source_agent) {
         const isImage = data.fileInfo.content_type?.startsWith('image/') || 
           ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp'].includes(
@@ -2200,7 +2236,13 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
         console.log("[ChatPanel] Ignoring plan update for different conversation:", planConvId)
         return
       }
-      
+
+      // Skip events after workflow was cancelled by user
+      if (workflowCancelledRef.current) {
+        console.log("[ChatPanel] Ignoring plan update - workflow was cancelled")
+        return
+      }
+
       if (data.plan) {
         setWorkflowPlan({
           ...data.plan,
@@ -2223,7 +2265,13 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
         console.log("[ChatPanel] Ignoring workflow_cancelled for different conversation:", cancelConvId)
         return
       }
-      
+
+      // Skip if already handled locally by handleStop
+      if (workflowCancelledRef.current) {
+        console.log("[ChatPanel] Ignoring workflow_cancelled event - already handled locally")
+        return
+      }
+
       // Stop inferencing immediately
       setIsInferencing(false)
       
@@ -2265,7 +2313,13 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       if (shouldFilterByConversationIdRef.current(intConvId)) {
         return
       }
-      
+
+      // Skip events after workflow was cancelled by user
+      if (workflowCancelledRef.current) {
+        console.log("[ChatPanel] Ignoring workflow interrupted - workflow was cancelled")
+        return
+      }
+
       // Add an inference step to show the redirect in the workflow visualization
       const instruction = data.data?.instruction || "Redirected"
       setInferenceSteps(prev => [...prev, {
@@ -3166,6 +3220,9 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
   }, [isInferencing, input, sendMessage, conversationId, currentSessionId, contextId])
 
   const handleSend = async () => {
+    // Reset cancel flag for new workflow
+    workflowCancelledRef.current = false
+
     // During inference, redirect to interrupt handler
     if (isInferencing) {
       handleInterrupt()
