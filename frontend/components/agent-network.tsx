@@ -9,6 +9,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Textarea } from "@/components/ui/textarea"
 import { Switch } from "@/components/ui/switch"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Label } from "@/components/ui/label"
 import { PanelRightClose, PanelRightOpen, ShieldCheck, ChevronDown, ChevronRight, Globe, Hash, Zap, FileText, ExternalLink, Settings, Clock, CheckCircle, XCircle, AlertCircle, AlertTriangle, Pause, Brain, Search, MessageSquare, Database, Shield, BarChart3, Gavel, Users, Bot, Trash2, User, ListOrdered, Network, RotateCcw, Play, Calendar, Square, Workflow, History, X } from "lucide-react"
 import { SimulateAgentRegistration } from "./simulate-agent-registration"
@@ -196,6 +197,9 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
   const [scheduledWorkflows, setScheduledWorkflows] = useState<ScheduledWorkflow[]>([])
   const [isScheduleDialogOpen, setIsScheduleDialogOpen] = useState(false)
   
+  // Host agent model selection
+  const [hostModel, setHostModel] = useState("gpt-4o")
+
   // Agent status tracking state
   const [agentStatuses, setAgentStatuses] = useState<Map<string, AgentStatus>>(new Map())
   
@@ -440,6 +444,28 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
   // REMOVED: handleStatusUpdate was updating agent sidebar status from status_update events
   // This caused conflicts - agent sidebar should ONLY use task_updated events (single source of truth)
   // status_update events are for the chat panel's inference steps UI, not the agent sidebar
+
+  // Fetch current host agent model on mount
+  useEffect(() => {
+    const baseUrl = process.env.NEXT_PUBLIC_A2A_API_URL || "http://localhost:12000"
+    fetch(`${baseUrl}/api/host-agent/model`)
+      .then(r => r.json())
+      .then(data => { if (data.success) setHostModel(data.model) })
+      .catch(() => {})
+  }, [])
+
+  const handleModelChange = useCallback((model: string) => {
+    const baseUrl = process.env.NEXT_PUBLIC_A2A_API_URL || "http://localhost:12000"
+    setHostModel(model)
+    fetch(`${baseUrl}/api/host-agent/model`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model })
+    })
+      .then(r => r.json())
+      .then(data => { if (!data.success) setHostModel(prev => prev) })
+      .catch(() => {})
+  }, [])
 
   // REMOVED: handleToolCall, handleAgentActivity, handleInferenceStep
   // These were causing conflicts with task_updated (the single source of truth)
@@ -850,13 +876,22 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
                         {(() => {
                           const hostStatus = getHostAgentStatus()
                           return (
-                            <div 
-                              className={`w-2 h-2 rounded-full ${hostStatus.bgColor} ${hostStatus.animate ? 'animate-pulse' : ''}`} 
+                            <div
+                              className={`w-2 h-2 rounded-full ${hostStatus.bgColor} ${hostStatus.animate ? 'animate-pulse' : ''}`}
                               title={hostStatus.label}
                             />
                           )
                         })()}
                       </div>
+                      <Select value={hostModel} onValueChange={handleModelChange}>
+                        <SelectTrigger className="h-5 w-auto min-w-0 border-0 bg-transparent px-0 text-[10px] text-muted-foreground hover:text-foreground focus:ring-0 gap-1">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="gpt-4o">gpt-4o</SelectItem>
+                          <SelectItem value="gpt-5.2">gpt-5.2</SelectItem>
+                        </SelectContent>
+                      </Select>
                     </div>
                   </div>
                   <div className="flex items-center gap-1">

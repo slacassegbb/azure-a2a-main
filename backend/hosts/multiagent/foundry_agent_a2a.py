@@ -1012,7 +1012,10 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
             
             # Store model name for responses API calls
             self.model_name = model_name
-            
+
+            # Allowlist of valid model deployment names for live switching
+            self.allowed_models = ["gpt-4o", "gpt-5.2"]
+
             print(f"✅ Azure Agent created successfully!")
             log_foundry_debug(f"✅ Agent created successfully! ID: {self.agent.id}")
             log_foundry_debug(f"🔧 Agent object attributes: {dir(self.agent)}")
@@ -1027,8 +1030,20 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
             traceback.print_exc()
             raise
     
+    def get_model_name(self) -> str:
+        """Return the current model deployment name."""
+        return getattr(self, 'model_name', os.environ.get("AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME", "gpt-4o"))
+
+    def set_model_name(self, model: str) -> None:
+        """Switch the model deployment used for all subsequent requests."""
+        if hasattr(self, 'allowed_models') and model not in self.allowed_models:
+            raise ValueError(f"Model '{model}' not in allowed list: {self.allowed_models}")
+        old = self.model_name
+        self.model_name = model
+        print(f"🔄 Host agent model switched: {old} → {model}")
+
     # Note: list_remote_agents_sync has been extracted to agent_registry.py
-    
+
     async def send_message_sync(
         self,
         agent_name: str,

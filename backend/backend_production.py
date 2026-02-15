@@ -530,6 +530,35 @@ def main():
             "client_id": os.environ.get("AZURE_CLIENT_ID", "not_set")
         }
 
+    # Host Agent Model Selection
+    @app.get("/api/host-agent/model")
+    async def get_host_model():
+        """Return the current host agent model deployment name."""
+        try:
+            if agent_server and hasattr(agent_server, 'manager'):
+                model = agent_server.manager.get_host_model()
+                return {"success": True, "model": model}
+            return {"success": False, "error": "Host agent not available"}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    @app.put("/api/host-agent/model")
+    async def set_host_model(request: Request):
+        """Switch the host agent model deployment (takes effect immediately)."""
+        try:
+            body = await request.json()
+            model = body.get("model", "").strip()
+            if not model:
+                return {"success": False, "error": "Missing 'model' field"}
+            if agent_server and hasattr(agent_server, 'manager'):
+                agent_server.manager.set_host_model(model)
+                return {"success": True, "model": model}
+            return {"success": False, "error": "Host agent not available"}
+        except ValueError as ve:
+            return {"success": False, "error": str(ve)}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
     # Agent Registry Endpoints
     @app.get("/api/agents")
     async def get_all_agents():

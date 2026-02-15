@@ -126,7 +126,19 @@ class FoundryHostManager(ApplicationManager):
         
         # Register this instance as the global singleton for access from websocket handlers
         set_host_manager(self)
-    
+
+    def get_host_model(self) -> str:
+        """Return the current host agent model deployment name."""
+        if self._host_agent:
+            return self._host_agent.get_model_name()
+        return "unknown"
+
+    def set_host_model(self, model: str) -> None:
+        """Switch the host agent model deployment (takes effect on next request)."""
+        if not self._host_agent:
+            raise RuntimeError("Host agent not initialized")
+        self._host_agent.set_model_name(model)
+
     def _load_conversations_from_database(self):
         """Load existing conversations from database into memory."""
         try:
