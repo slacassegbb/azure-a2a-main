@@ -768,6 +768,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
   const [typingUsers, setTypingUsers] = useState<Map<string, string>>(new Map()) // user_id -> username
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const lastTypingSentRef = useRef<number>(0)
+  const workflowCancelledRef = useRef(false) // Synchronous flag for cancel detection
 
   // Build mention suggestions (agents + users)
   const mentionSuggestions = [
@@ -2649,11 +2650,11 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
         return
       }
 
-      // If this is a cancel response from the backend and we already handled it in handleStop, skip it
-      const cancelKey = `cancel_handled_${data.conversationId || conversationId}`
-      const content = data.message.content || ""
-      if (processedMessageIds.has(cancelKey) && content.match(/cancelled|canceled/i)) {
-        console.log("[ChatPanel] Skipping backend cancel response - already handled by handleStop")
+      // If the workflow was cancelled by handleStop, skip the backend response entirely
+      // (handleStop already saved the steps and added the cancel message)
+      if (workflowCancelledRef.current) {
+        console.log("[ChatPanel] Skipping backend response - workflow was cancelled by user")
+        workflowCancelledRef.current = false // Reset for next workflow
         setIsInferencing(false)
         setInferenceSteps([])
         setActiveNode(null)
@@ -3128,8 +3129,8 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       content: "Workflow cancelled by user.",
     })
 
-    // Mark that we already created a cancel workflow so the backend response won't duplicate
-    setProcessedMessageIds(prev => new Set([...prev, `cancel_handled_${conversationId}`]))
+    // Mark cancel synchronously via ref so the backend response handler will skip it
+    workflowCancelledRef.current = true
 
     setMessages(prev => [...prev, ...messagesToAdd])
 
