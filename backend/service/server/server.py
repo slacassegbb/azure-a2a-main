@@ -924,7 +924,32 @@ class ConversationServer:
                 
                 if success:
                     print(f"[DEBUG] ✅ Agent registration successful: {agent_address}")
-                    
+
+                    # Persist to database registry so agent survives restarts
+                    try:
+                        card = self.manager._host_agent.cards.get(
+                            next((name for name in self.manager._host_agent.cards
+                                  if agent_address.rstrip('/') in getattr(self.manager._host_agent.cards[name], 'url', '')),
+                                 None)
+                        )
+                        if card:
+                            registry = get_registry()
+                            agent_dict = {
+                                "name": card.name,
+                                "description": getattr(card, 'description', ''),
+                                "version": getattr(card, 'version', '1.0.0'),
+                                "local_url": agent_address.rstrip('/') + '/',
+                                "production_url": agent_address.rstrip('/') + '/',
+                                "defaultInputModes": getattr(card, 'defaultInputModes', ['text']),
+                                "defaultOutputModes": getattr(card, 'defaultOutputModes', ['text']),
+                                "capabilities": {"streaming": getattr(card.capabilities, 'streaming', False)} if hasattr(card, 'capabilities') and card.capabilities else {},
+                                "skills": [{"id": getattr(s, 'id', ''), "name": getattr(s, 'name', ''), "description": getattr(s, 'description', ''), "examples": getattr(s, 'examples', []), "tags": getattr(s, 'tags', [])} for s in card.skills] if hasattr(card, 'skills') and card.skills else [],
+                            }
+                            registry.update_or_add_agent(agent_dict)
+                            print(f"[DEBUG] ✅ Agent persisted to database registry: {card.name}")
+                    except Exception as db_error:
+                        print(f"[DEBUG] ⚠️ Failed to persist agent to database: {db_error}")
+
                     # Trigger immediate WebSocket sync to update UI in real-time
                     try:
                         import os
@@ -932,7 +957,7 @@ class ConversationServer:
                         websocket_url = os.environ.get("WEBSOCKET_SERVER_URL", "http://localhost:8080")
                         sync_url = f"{websocket_url}/agents/sync"
                         print(f"[DEBUG] 🔔 Triggering immediate sync via HTTP POST to: {sync_url}")
-                        
+
                         async with httpx.AsyncClient(timeout=5.0, verify=False) as client:
                             response = await client.post(sync_url)
                             if response.status_code == 200:
@@ -941,7 +966,7 @@ class ConversationServer:
                                 print(f"[DEBUG] ⚠️ Sync trigger returned status {response.status_code}")
                     except Exception as sync_error:
                         print(f"[DEBUG] ⚠️ Failed to trigger immediate sync: {sync_error}")
-                    
+
                     return {"success": True, "message": f"Agent at {agent_address} registered successfully"}
                 else:
                     print(f"[DEBUG] ❌ Agent registration failed: {agent_address}")
