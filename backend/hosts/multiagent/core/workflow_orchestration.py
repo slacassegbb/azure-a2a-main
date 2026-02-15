@@ -75,18 +75,18 @@ class WorkflowOrchestration:
 
     def _build_interrupted_goal(self, original_goal: str, interrupt_instruction: str,
                                  completed_tasks: list) -> str:
-        """Build an updated goal string that incorporates the interrupt instruction
-        while preserving context about completed work."""
+        """Build an updated goal string that appends the interrupt instruction
+        to the original goal, preserving context about completed work."""
         completed_summary = "\n".join([
             f"- ✅ {t.task_description[:100]} (by {t.recommended_agent})"
             for t in completed_tasks if t.state == "completed"
         ]) or "- (none yet)"
         return (
-            f"UPDATED GOAL: {interrupt_instruction}\n\n"
-            f"CONTEXT: The user originally asked: {original_goal}\n"
+            f"{original_goal}\n\n"
+            f"ADDITIONALLY: {interrupt_instruction}\n\n"
             f"The following steps were already completed:\n{completed_summary}\n\n"
-            f"INSTRUCTION: Use the completed work above as context. "
-            f"Focus on the user's updated instruction. Do NOT repeat completed tasks."
+            f"INSTRUCTION: Continue working on the original goal AND the additional instruction above. "
+            f"Do NOT repeat completed tasks."
         )
 
     async def _load_agent_from_catalog(self, agent_name: str) -> bool:
