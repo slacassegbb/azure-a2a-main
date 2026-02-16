@@ -1073,19 +1073,23 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
             print(f"🔄 Switched OpenAI client to alt endpoint for {model}: {endpoint_key}")
 
     def _create_alt_responses_client(self, endpoint: str):
-        """Create an AsyncAzureOpenAI client for an alternate Azure endpoint (Responses API)."""
-        from openai import AsyncAzureOpenAI
+        """Create an AsyncOpenAI client for an alternate Azure endpoint (Responses API).
+
+        Uses AsyncOpenAI (NOT AsyncAzureOpenAI) to match what project_client.get_openai_client()
+        returns. AsyncAzureOpenAI adds deployment-based URL rewriting that breaks the
+        /openai/v1/responses endpoint. The plain AsyncOpenAI client sends requests directly
+        to {base_url}/responses without any URL manipulation.
+        """
+        from openai import AsyncOpenAI
         from azure.identity import DefaultAzureCredential, get_bearer_token_provider
         credential = DefaultAzureCredential()
         token_provider = get_bearer_token_provider(credential, "https://cognitiveservices.azure.com/.default")
-        # Use .openai.azure.com domain (same pattern as project_client's OpenAI client)
         resource_name = endpoint.split("//")[1].split(".")[0]
         base_url = f"https://{resource_name}.openai.azure.com/openai/v1/"
-        print(f"🔧 Creating alt Responses API client: {base_url}")
-        return AsyncAzureOpenAI(
+        print(f"🔧 Creating alt Responses API client (AsyncOpenAI): {base_url}")
+        return AsyncOpenAI(
             base_url=base_url,
-            azure_ad_token_provider=token_provider,
-            api_version="preview"
+            api_key=token_provider,
         )
 
     def _get_base_endpoint(self) -> str:
