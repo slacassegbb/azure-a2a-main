@@ -1617,7 +1617,7 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
                 ],
                 response_format=response_model,
                 temperature=0.0,  # Use 0.0 for deterministic workflow execution
-                max_tokens=2000
+                **{"max_completion_tokens" if model_name.startswith("gpt-5") else "max_tokens": 2000}
             )
             
             parsed = completion.choices[0].message.parsed
@@ -1671,7 +1671,7 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
                     {"role": "user", "content": user_prompt}
                 ],
                 temperature=0.3,
-                max_tokens=100
+                **{"max_completion_tokens" if model_name.startswith("gpt-5") else "max_tokens": 100}
             )
             
             return completion.choices[0].message.content or ""
