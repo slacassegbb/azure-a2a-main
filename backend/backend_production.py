@@ -452,8 +452,7 @@ async def lifespan(app: FastAPI):
         print(f"[ERROR] Error details: {str(e)}")
         # Continue startup even if this fails
 
-    # Schedule heavy initialization (DB load + agent creation) as a background task.
-    # This runs AFTER the server port is open, preventing Azure startup probe timeouts.
+    # Define deferred init (scheduled right before yield, so it runs AFTER the port opens)
     async def _deferred_init():
         try:
             if agent_server and hasattr(agent_server, 'manager') and hasattr(agent_server.manager, 'initialize_async'):
@@ -462,8 +461,6 @@ async def lifespan(app: FastAPI):
                 print("[INFO] Deferred initialization complete — host agent ready")
         except Exception as e:
             print(f"[ERROR] Deferred initialization failed: {type(e).__name__}: {e}")
-
-    asyncio.create_task(_deferred_init())
 
     # Initialize the workflow scheduler
     try:
@@ -488,7 +485,11 @@ async def lifespan(app: FastAPI):
         # Continue startup even if wake-up fails
     
     print("[INFO] A2A Backend API startup complete")
-    
+
+    # Schedule heavy init RIGHT BEFORE yield — no await points between here and
+    # yield, so the task cannot run until after the server port is open.
+    asyncio.create_task(_deferred_init())
+
     yield
     
     # Cleanup
