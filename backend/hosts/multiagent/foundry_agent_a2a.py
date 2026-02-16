@@ -427,6 +427,8 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
                     else:
                         api_input = user_message
 
+                    client_base = getattr(self.openai_client, '_base_url', getattr(self.openai_client, 'base_url', 'unknown'))
+                    print(f"🔵 [AZURE] responses.create() → model={self.model_name}, client_base_url={client_base}")
                     stream = await self.openai_client.responses.create(
                         input=api_input,
                         previous_response_id=previous_response_id,
@@ -1076,7 +1078,9 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
         from azure.identity import DefaultAzureCredential, get_bearer_token_provider
         credential = DefaultAzureCredential()
         token_provider = get_bearer_token_provider(credential, "https://cognitiveservices.azure.com/.default")
-        base_url = f"{endpoint.rstrip('/')}/openai/v1/"
+        # Use .openai.azure.com domain (same pattern as project_client's OpenAI client)
+        resource_name = endpoint.split("//")[1].split(".")[0]
+        base_url = f"https://{resource_name}.openai.azure.com/openai/v1/"
         print(f"🔧 Creating alt Responses API client: {base_url}")
         return AsyncAzureOpenAI(
             base_url=base_url,
