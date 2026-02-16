@@ -427,10 +427,6 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
                     else:
                         api_input = user_message
 
-                    # Refresh token for alt endpoint clients before each call
-                    if hasattr(self.openai_client, '_a2a_token_provider'):
-                        self.openai_client.api_key = self.openai_client._a2a_token_provider()
-
                     client_base = getattr(self.openai_client, '_base_url', getattr(self.openai_client, 'base_url', 'unknown'))
                     print(f"🔵 [AZURE] responses.create() → model={self.model_name}, client_base_url={client_base}")
                     stream = await self.openai_client.responses.create(
@@ -1077,28 +1073,25 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
             print(f"🔄 Switched OpenAI client to alt endpoint for {model}: {endpoint_key}")
 
     def _create_alt_responses_client(self, endpoint: str):
-        """Create an AsyncOpenAI client for an alternate Azure endpoint (Responses API).
+        """Create an AsyncAzureOpenAI client for an alternate Azure endpoint (Responses API).
 
-        Uses AsyncOpenAI (NOT AsyncAzureOpenAI) to match what project_client.get_openai_client()
-        returns. AsyncAzureOpenAI adds deployment-based URL rewriting that breaks the
-        /openai/v1/responses endpoint. The plain AsyncOpenAI client sends requests directly
-        to {base_url}/responses without any URL manipulation.
-
-        Stores the token_provider on the client so we can refresh the token before each call.
+        Uses AsyncAzureOpenAI with azure_ad_token_provider for automatic token management.
+        The /responses endpoint is NOT in AsyncAzureOpenAI's _deployments_endpoints set,
+        so no deployment-based URL rewriting is applied — requests go directly to
+        {azure_endpoint}/openai/v1/responses as expected.
         """
-        from openai import AsyncOpenAI
+        from openai import AsyncAzureOpenAI
         from azure.identity import DefaultAzureCredential, get_bearer_token_provider
         credential = DefaultAzureCredential()
         token_provider = get_bearer_token_provider(credential, "https://cognitiveservices.azure.com/.default")
         resource_name = endpoint.split("//")[1].split(".")[0]
-        base_url = f"https://{resource_name}.openai.azure.com/openai/v1/"
-        print(f"🔧 Creating alt Responses API client (AsyncOpenAI): {base_url}")
-        client = AsyncOpenAI(
-            base_url=base_url,
-            api_key=token_provider(),  # Call to get initial token string
+        azure_endpoint = f"https://{resource_name}.openai.azure.com"
+        print(f"🔧 Creating alt Responses API client (AsyncAzureOpenAI): {azure_endpoint}")
+        client = AsyncAzureOpenAI(
+            azure_endpoint=azure_endpoint,
+            azure_ad_token_provider=token_provider,
+            api_version="2025-03-01-preview",
         )
-        # Store token provider for refresh before each request
-        client._a2a_token_provider = token_provider
         return client
 
     def _get_base_endpoint(self) -> str:
