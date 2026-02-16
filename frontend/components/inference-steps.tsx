@@ -585,7 +585,7 @@ export function InferenceSteps({ steps, isInferencing, plan, cancelled, agentCol
           
           <OrchestratorSection activities={orchestratorActivities} status={orchestratorStatus} isLive={true} />
           
-          <div className="space-y-1 max-h-[400px] overflow-y-auto pr-1">
+          <div className="space-y-1 pr-1">
             {agents.map((agent: AgentInfo, i: number) => <AgentCard key={agent.name} agent={agent} stepNumber={i + 1} isLive={true} />)}
           </div>
         </div>
@@ -628,7 +628,7 @@ export function InferenceSteps({ steps, isInferencing, plan, cancelled, agentCol
         </AccordionTrigger>
         <AccordionContent>
           <OrchestratorSection activities={orchestratorActivities} status={orchestratorStatus} isLive={false} />
-          <div className="space-y-1 pt-1 pb-2 max-h-[400px] overflow-y-auto">
+          <div className="space-y-1 pt-1 pb-2">
             {agents.map((agent: AgentInfo, i: number) => <AgentCard key={agent.name} agent={agent} stepNumber={i + 1} isLive={false} />)}
           </div>
         </AccordionContent>
