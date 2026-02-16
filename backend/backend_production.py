@@ -554,7 +554,7 @@ def main():
                 model = agent_server.manager.get_host_model()
                 # Include debug info about the client configuration
                 debug_info = {}
-                host_agent = getattr(agent_server.manager, 'host_agent', None)
+                host_agent = getattr(agent_server.manager, '_host_agent', None)
                 if host_agent:
                     client = getattr(host_agent, 'openai_client', None)
                     debug_info["client_type"] = type(client).__name__ if client else "None"
