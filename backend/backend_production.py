@@ -9,6 +9,7 @@ Usage:
 """
 
 import os
+import asyncio
 from pathlib import Path
 
 # Resolve important backend directories up front so path-dependent imports work
@@ -442,7 +443,7 @@ async def lifespan(app: FastAPI):
         print(f"[ERROR] Error details: {str(e)}")
         websocket_streamer = None
     
-    # Initialize the conversation server (this registers all the API routes)
+    # Initialize the conversation server (lightweight — routes only, no heavy init)
     try:
         agent_server = ConversationServer(app, httpx_client_wrapper())
         print("[INFO] Conversation server initialized successfully")
@@ -450,7 +451,20 @@ async def lifespan(app: FastAPI):
         print(f"[ERROR] Failed to initialize conversation server: {type(e).__name__}: {e}")
         print(f"[ERROR] Error details: {str(e)}")
         # Continue startup even if this fails
-    
+
+    # Schedule heavy initialization (DB load + agent creation) as a background task.
+    # This runs AFTER the server port is open, preventing Azure startup probe timeouts.
+    async def _deferred_init():
+        try:
+            if agent_server and hasattr(agent_server, 'manager') and hasattr(agent_server.manager, 'initialize_async'):
+                print("[INFO] Starting deferred heavy initialization (DB + agent)...")
+                await agent_server.manager.initialize_async()
+                print("[INFO] Deferred initialization complete — host agent ready")
+        except Exception as e:
+            print(f"[ERROR] Deferred initialization failed: {type(e).__name__}: {e}")
+
+    asyncio.create_task(_deferred_init())
+
     # Initialize the workflow scheduler
     try:
         from service.scheduler_service import get_workflow_scheduler, initialize_scheduler, APSCHEDULER_AVAILABLE

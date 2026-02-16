@@ -107,25 +107,31 @@ class FoundryHostManager(ApplicationManager):
         self._task_map: Dict[str, str] = {}
         self._next_id: Dict[str, str] = {}
         
-        # Load conversations from database on startup
+        # Register this instance as the global singleton FIRST (before heavy init)
+        # so other modules can access it immediately
+        set_host_manager(self)
+
+        # NOTE: Heavy initialization (DB loading + agent creation) is deferred
+        # to initialize_async() which runs as a background task after the server
+        # port is open. This prevents Azure startup probe timeouts.
+
+    async def initialize_async(self):
+        """Deferred heavy initialization — runs as a background task after the port is open."""
+        # Load conversations from database
+        log_debug("Loading conversations from database...")
         self._load_conversations_from_database()
-        
-        # Initialize the agent immediately at startup instead of lazy loading
-        log_debug("Initializing Foundry agent at startup...")
+        log_debug("Conversations loaded from database")
+
+        # Initialize the agent
+        log_debug("Initializing Foundry agent...")
         try:
-            # Create agent immediately at startup - no lazy loading
             self._host_agent = FoundryHostAgent2([], self._http_client, create_agent_at_startup=True)
-            # Set the host manager reference for UI integration
             self._host_agent.set_host_manager(self)
             self._host_agent_initialized = True
-            log_debug("Foundry agent initialized successfully at startup!")
+            log_debug("Foundry agent initialized successfully!")
         except Exception as e:
-            log_debug(f"Failed to initialize Foundry agent at startup: {e}")
-            # Don't raise to prevent backend from crashing
+            log_debug(f"Failed to initialize Foundry agent: {e}")
             self._host_agent_initialized = False
-        
-        # Register this instance as the global singleton for access from websocket handlers
-        set_host_manager(self)
 
     def get_host_model(self) -> str:
         """Return the current host agent model deployment name."""
