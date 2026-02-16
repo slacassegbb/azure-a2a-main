@@ -4,6 +4,7 @@ name: Deploy to Azure Container Apps
 # - AZURE_CREDENTIALS: Azure Service Principal credentials for authentication
 # - AZURE_AI_FOUNDRY_PROJECT_ENDPOINT: Azure AI Foundry project endpoint
 # - AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME: Model deployment name (e.g., gpt-4o)
+# - AZURE_AI_ALT_ENDPOINT: Alternate Azure AI endpoint for models on a different resource
 # - AZURE_OPENAI_GPT_API_BASE: Azure OpenAI API base URL
 # - AZURE_OPENAI_GPT_API_KEY: Azure OpenAI API key
 # - AZURE_OPENAI_GPT_DEPLOYMENT: OpenAI deployment name
@@ -127,6 +128,7 @@ jobs:
               "USE_PROD_REGISTRY=true" \
               "AZURE_AI_FOUNDRY_PROJECT_ENDPOINT=${{ secrets.AZURE_AI_FOUNDRY_PROJECT_ENDPOINT }}" \
               "AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME=${{ secrets.AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME }}" \
+              "AZURE_AI_ALT_ENDPOINT=${{ secrets.AZURE_AI_ALT_ENDPOINT }}" \
               "AZURE_OPENAI_GPT_API_BASE=${{ secrets.AZURE_OPENAI_GPT_API_BASE }}" \
               "AZURE_OPENAI_GPT_API_KEY=${{ secrets.AZURE_OPENAI_GPT_API_KEY }}" \
               "AZURE_OPENAI_GPT_DEPLOYMENT=${{ secrets.AZURE_OPENAI_GPT_DEPLOYMENT }}" \

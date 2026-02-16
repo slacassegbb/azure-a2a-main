@@ -234,6 +234,15 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
         self.model_name: Optional[str] = None
         self.agent_instructions: Optional[str] = None
         self.agent_tools: Optional[List[Dict[str, Any]]] = None
+
+        # Multi-endpoint model support: models can live on different Azure resources
+        self._alt_endpoint = os.environ.get("AZURE_AI_ALT_ENDPOINT", "")
+        self._model_endpoints = {
+            "gpt-4o": "default",       # Uses primary project endpoint (simonfoundry)
+            "gpt-5.2": self._alt_endpoint,  # Uses alternate endpoint
+        }
+        self._original_openai_client = None  # Saved ref to project client's OpenAI client
+        self._alt_openai_clients = {}  # endpoint -> AsyncAzureOpenAI client cache
         
         # REMOVED: self.default_contextId = str(uuid.uuid4())
         # We NEVER want to use a UUID fallback - context_id must come from the request
@@ -1041,6 +1050,47 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
         old = self.model_name
         self.model_name = model
         print(f"🔄 Host agent model switched: {old} → {model}")
+        self._swap_openai_client_for_model(model)
+
+    def _swap_openai_client_for_model(self, model: str) -> None:
+        """Swap the OpenAI client to match the model's Azure endpoint."""
+        endpoint_key = getattr(self, '_model_endpoints', {}).get(model, "default")
+        if endpoint_key == "default":
+            # Restore original project client's OpenAI client
+            if self._original_openai_client:
+                self.openai_client = self._original_openai_client
+                print(f"🔄 Restored original OpenAI client (primary endpoint) for {model}")
+        elif endpoint_key:
+            # Save original client on first swap
+            if not self._original_openai_client and hasattr(self, 'openai_client') and self.openai_client:
+                self._original_openai_client = self.openai_client
+            # Create or reuse cached alt client
+            if endpoint_key not in self._alt_openai_clients:
+                self._alt_openai_clients[endpoint_key] = self._create_alt_responses_client(endpoint_key)
+            self.openai_client = self._alt_openai_clients[endpoint_key]
+            print(f"🔄 Switched OpenAI client to alt endpoint for {model}: {endpoint_key}")
+
+    def _create_alt_responses_client(self, endpoint: str):
+        """Create an AsyncAzureOpenAI client for an alternate Azure endpoint (Responses API)."""
+        from openai import AsyncAzureOpenAI
+        from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+        credential = DefaultAzureCredential()
+        token_provider = get_bearer_token_provider(credential, "https://cognitiveservices.azure.com/.default")
+        base_url = f"{endpoint.rstrip('/')}/openai/v1/"
+        print(f"🔧 Creating alt Responses API client: {base_url}")
+        return AsyncAzureOpenAI(
+            base_url=base_url,
+            azure_ad_token_provider=token_provider,
+            api_version="preview"
+        )
+
+    def _get_base_endpoint(self) -> str:
+        """Return the correct Azure base endpoint for the current model."""
+        endpoint_key = getattr(self, '_model_endpoints', {}).get(self.model_name, "default")
+        if endpoint_key and endpoint_key != "default":
+            return endpoint_key
+        endpoint = os.environ.get("AZURE_AI_FOUNDRY_PROJECT_ENDPOINT", "")
+        return endpoint.split('/api/projects')[0] if '/api/projects' in endpoint else endpoint
 
     # Note: list_remote_agents_sync has been extracted to agent_registry.py
 
@@ -1537,30 +1587,27 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
                 event_type="phase", metadata={"phase": "planning_ai"}
             )
             
-            # Extract base endpoint from AI Foundry project endpoint
-            endpoint = os.environ["AZURE_AI_FOUNDRY_PROJECT_ENDPOINT"]
-            model_name = os.environ["AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME"]
-            
-            # Extract base endpoint from project endpoint
-            base_endpoint = endpoint.split('/api/projects')[0] if '/api/projects' in endpoint else endpoint
+            # Use live model name and endpoint (supports model switching)
+            model_name = self.model_name or os.environ.get("AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME", "gpt-4o")
+            base_endpoint = self._get_base_endpoint()
             print(f"🤖 [Agent Mode] Azure endpoint: {base_endpoint}")
             print(f"🤖 [Agent Mode] Model deployment: {model_name}")
-            
+
             # Get Azure credential token
             from azure.identity import DefaultAzureCredential, get_bearer_token_provider
             from openai import AsyncAzureOpenAI
             credential = DefaultAzureCredential()
             token_provider = get_bearer_token_provider(credential, "https://cognitiveservices.azure.com/.default")
-            
+
             # Create Azure OpenAI client with token auth
             client = AsyncAzureOpenAI(
                 azure_endpoint=base_endpoint,
                 azure_ad_token_provider=token_provider,
                 api_version="2024-08-01-preview"  # Version that supports structured outputs
             )
-            
+
             print(f"🤖 [Agent Mode] Making structured output request with OpenAI SDK...")
-            
+
             # Use OpenAI SDK's parse method for structured outputs
             completion = await client.beta.chat.completions.parse(
                 model=model_name,
@@ -1602,21 +1649,21 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
         Used for lightweight tasks like agent selection.
         """
         try:
-            endpoint = os.environ["AZURE_AI_FOUNDRY_PROJECT_ENDPOINT"]
-            model_name = os.environ["AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME"]
-            base_endpoint = endpoint.split('/api/projects')[0] if '/api/projects' in endpoint else endpoint
-            
+            # Use live model name and endpoint (supports model switching)
+            model_name = self.model_name or os.environ.get("AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME", "gpt-4o")
+            base_endpoint = self._get_base_endpoint()
+
             from azure.identity import DefaultAzureCredential, get_bearer_token_provider
             from openai import AsyncAzureOpenAI
             credential = DefaultAzureCredential()
             token_provider = get_bearer_token_provider(credential, "https://cognitiveservices.azure.com/.default")
-            
+
             client = AsyncAzureOpenAI(
                 azure_endpoint=base_endpoint,
                 azure_ad_token_provider=token_provider,
                 api_version="2024-08-01-preview"
             )
-            
+
             completion = await client.chat.completions.create(
                 model=model_name,
                 messages=[
