@@ -427,6 +427,10 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
                     else:
                         api_input = user_message
 
+                    # Refresh token for alt endpoint clients before each call
+                    if hasattr(self.openai_client, '_a2a_token_provider'):
+                        self.openai_client.api_key = self.openai_client._a2a_token_provider()
+
                     client_base = getattr(self.openai_client, '_base_url', getattr(self.openai_client, 'base_url', 'unknown'))
                     print(f"🔵 [AZURE] responses.create() → model={self.model_name}, client_base_url={client_base}")
                     stream = await self.openai_client.responses.create(
@@ -1079,6 +1083,8 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
         returns. AsyncAzureOpenAI adds deployment-based URL rewriting that breaks the
         /openai/v1/responses endpoint. The plain AsyncOpenAI client sends requests directly
         to {base_url}/responses without any URL manipulation.
+
+        Stores the token_provider on the client so we can refresh the token before each call.
         """
         from openai import AsyncOpenAI
         from azure.identity import DefaultAzureCredential, get_bearer_token_provider
@@ -1087,10 +1093,13 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
         resource_name = endpoint.split("//")[1].split(".")[0]
         base_url = f"https://{resource_name}.openai.azure.com/openai/v1/"
         print(f"🔧 Creating alt Responses API client (AsyncOpenAI): {base_url}")
-        return AsyncOpenAI(
+        client = AsyncOpenAI(
             base_url=base_url,
-            api_key=token_provider,
+            api_key=token_provider(),  # Call to get initial token string
         )
+        # Store token provider for refresh before each request
+        client._a2a_token_provider = token_provider
+        return client
 
     def _get_base_endpoint(self) -> str:
         """Return the correct Azure base endpoint for the current model."""
