@@ -948,8 +948,8 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
                 FunctionTool,
             )
             
-            # Configuration
-            model_name = os.environ["AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME"]
+            # Configuration — use live model if already set, else env var
+            model_name = self.model_name or os.environ["AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME"]
             instructions = self.root_instruction('foundry-host-agent')
             
             log_foundry_debug(f"Agent parameters:")
@@ -1838,31 +1838,23 @@ Answer with just JSON:
             from openai import AsyncAzureOpenAI
             from azure.identity import get_bearer_token_provider
             
-            # Use the same endpoint and credentials as the main agent
-            azure_endpoint = os.getenv("AZURE_CONTENT_UNDERSTANDING_ENDPOINT") or os.getenv("AZURE_AI_SERVICE_ENDPOINT")
-            model_name = os.environ.get("AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME")
-            
-            if not azure_endpoint:
-                print(f"❌ Missing Azure endpoint configuration")
-                return {"is_successful": True, "reason": "Missing endpoint config"}
-            
-            if not model_name:
-                print(f"❌ Missing model deployment name")
-                return {"is_successful": True, "reason": "Missing model config"}
-            
+            # Use live model name and endpoint (supports model switching)
+            model_name = self.model_name or os.environ.get("AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME", "gpt-4o")
+            base_endpoint = self._get_base_endpoint()
+
             # Use DefaultAzureCredential like the rest of the system
             token_provider = get_bearer_token_provider(
-                self.credential, 
+                self.credential,
                 "https://cognitiveservices.azure.com/.default"
             )
-            
+
             # Create Azure OpenAI client with same auth as main system
             client = AsyncAzureOpenAI(
-                azure_endpoint=azure_endpoint,
+                azure_endpoint=base_endpoint,
                 azure_ad_token_provider=token_provider,
                 api_version="2024-02-15-preview"
             )
-            
+
             # Make direct chat completion call
             response = await client.chat.completions.create(
                 model=model_name,
@@ -1870,7 +1862,7 @@ Answer with just JSON:
                     {"role": "system", "content": "You are a task completion evaluator. Analyze agent responses and return JSON evaluations."},
                     {"role": "user", "content": evaluation_prompt}
                 ],
-                max_tokens=200,
+                **{"max_completion_tokens" if model_name.startswith("gpt-5") else "max_tokens": 200},
                 temperature=0.1
             )
             
