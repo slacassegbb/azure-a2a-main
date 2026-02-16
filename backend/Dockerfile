@@ -39,6 +39,7 @@ RUN mkdir -p data uploads hosts voice_recordings
 
 # Set environment variables
 ENV PYTHONPATH=/app
+ENV PYTHONUNBUFFERED=1
 ENV A2A_UI_HOST=0.0.0.0
 ENV A2A_UI_PORT=12000
 
