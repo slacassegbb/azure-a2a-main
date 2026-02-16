@@ -61,19 +61,12 @@ class AgentRegistry:
             self._ensure_registry_file()
     
     def _run_migrations(self):
-        """Ensure database schema is up to date. Safe to run repeatedly (idempotent)."""
-        try:
-            cur = self.db_conn.cursor()
-            # Use a short lock timeout to avoid blocking on concurrent connections
-            # (old revisions may hold open transactions on the agents table)
-            cur.execute("SET lock_timeout = '3s'")
-            cur.execute("ALTER TABLE agents ADD COLUMN IF NOT EXISTS color VARCHAR(7)")
-            self.db_conn.commit()
-            cur.close()
-        except Exception as e:
-            print(f"[AgentRegistry] Migration warning (non-fatal): {e}")
-            self.db_conn.rollback()
+        """Ensure database schema is up to date. Safe to run repeatedly (idempotent).
 
+        Note: ALTER TABLE ADD COLUMN color was removed — the column already exists
+        in production and the ALTER TABLE takes an ACCESS EXCLUSIVE lock that blocks
+        when other container revisions hold open transactions.
+        """
         # One-time migration: assign curated distinct colors to known agents.
         # Uses a flag row check so it only runs once.
         try:
