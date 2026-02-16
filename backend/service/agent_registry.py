@@ -36,6 +36,7 @@ class AgentRegistry:
         if self.database_url:
             try:
                 self.db_conn = psycopg2.connect(self.database_url)
+                self.db_conn.autocommit = True
                 self.use_database = True
                 env_type = "PRODUCTION" if self.use_prod else "LOCAL"
                 print(f"[AgentRegistry] ✅ Using PostgreSQL database ({env_type} URLs)")
@@ -63,11 +64,14 @@ class AgentRegistry:
         """Ensure database schema is up to date. Safe to run repeatedly (idempotent)."""
         try:
             cur = self.db_conn.cursor()
+            # Use a short lock timeout to avoid blocking on concurrent connections
+            # (old revisions may hold open transactions on the agents table)
+            cur.execute("SET lock_timeout = '3s'")
             cur.execute("ALTER TABLE agents ADD COLUMN IF NOT EXISTS color VARCHAR(7)")
             self.db_conn.commit()
             cur.close()
         except Exception as e:
-            print(f"[AgentRegistry] Migration warning: {e}")
+            print(f"[AgentRegistry] Migration warning (non-fatal): {e}")
             self.db_conn.rollback()
 
         # One-time migration: assign curated distinct colors to known agents.
