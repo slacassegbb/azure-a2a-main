@@ -548,11 +548,22 @@ def main():
     # Host Agent Model Selection
     @app.get("/api/host-agent/model")
     async def get_host_model():
-        """Return the current host agent model deployment name."""
+        """Return the current host agent model deployment name and debug info."""
         try:
             if agent_server and hasattr(agent_server, 'manager'):
                 model = agent_server.manager.get_host_model()
-                return {"success": True, "model": model}
+                # Include debug info about the client configuration
+                debug_info = {}
+                host_agent = getattr(agent_server.manager, 'host_agent', None)
+                if host_agent:
+                    client = getattr(host_agent, 'openai_client', None)
+                    debug_info["client_type"] = type(client).__name__ if client else "None"
+                    debug_info["client_base_url"] = str(getattr(client, '_base_url', getattr(client, 'base_url', 'unknown'))) if client else "None"
+                    debug_info["alt_endpoint"] = getattr(host_agent, '_alt_endpoint', 'not_set')
+                    debug_info["model_endpoints"] = getattr(host_agent, '_model_endpoints', {})
+                    debug_info["alt_clients_cached"] = list(getattr(host_agent, '_alt_openai_clients', {}).keys())
+                    debug_info["has_original_client"] = getattr(host_agent, '_original_openai_client', None) is not None
+                return {"success": True, "model": model, "debug": debug_info}
             return {"success": False, "error": "Host agent not available"}
         except Exception as e:
             return {"success": False, "error": str(e)}
