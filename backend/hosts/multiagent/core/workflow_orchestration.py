@@ -272,12 +272,18 @@ class WorkflowOrchestration:
         Instead of calling a remote agent, this evaluates a condition against
         previous workflow outputs and returns a true/false result for branching.
         """
-        criteria = task.task_description
+        task_desc = task.task_description
+        # Strip [Step X] prefix for the evaluation prompt (don't confuse the LLM)
+        criteria = re.sub(r'^\[Step\s+\d+[a-z]?\]\s*', '', task_desc)
         log_info(f"🔍 [EVALUATE] Evaluating condition: {criteria[:100]}")
 
+        # Emit events under "Evaluate" agent name so the frontend renders
+        # an agent card (not hidden in the orchestrator section)
+        eval_agent_name = "Evaluate"
+
         await self._emit_granular_agent_event(
-            "foundry-host-agent", f"Evaluating: {criteria[:80]}...", context_id,
-            event_type="agent_start", metadata={"evaluation": True}
+            eval_agent_name, f"Starting task: {task_desc[:80]}...", context_id,
+            event_type="agent_start", metadata={"evaluation": True, "task_description": task_desc}
         )
 
         # Build context from previous step outputs
@@ -319,12 +325,18 @@ Evaluate the condition and return your result."""
             }
             task.updated_at = datetime.now(timezone.utc)
 
-            # Emit result to frontend
-            display_text = f"Evaluation: {result_str}\n{eval_result.reasoning}"
+            # Emit result to frontend as agent output (visible in agent card)
+            display_text = f"Result: {result_str}\n{eval_result.reasoning}"
             await self._emit_granular_agent_event(
-                "foundry-host-agent", display_text, context_id,
+                eval_agent_name, display_text, context_id,
                 event_type="agent_output",
                 metadata={"evaluation": True, "result": eval_result.result}
+            )
+
+            # Emit agent_complete so the card shows as done
+            await self._emit_granular_agent_event(
+                eval_agent_name, f"{eval_agent_name} completed", context_id,
+                event_type="agent_complete"
             )
 
             # Return output as text so the orchestrator can read it in plan history
@@ -339,6 +351,10 @@ Evaluate the condition and return your result."""
             task.state = "failed"
             task.error_message = f"Evaluation failed: {str(e)}"
             task.updated_at = datetime.now(timezone.utc)
+            await self._emit_granular_agent_event(
+                eval_agent_name, f"Error: {str(e)[:200]}", context_id,
+                event_type="agent_error", metadata={"error": str(e)[:500]}
+            )
             return {"error": task.error_message, "output": None}
 
     async def _execute_orchestrated_task(
@@ -1532,7 +1548,9 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                             elif result.get("output"):
                                 all_task_outputs.append(result["output"])
                             # Emit agent_complete for successfully finished tasks
-                            if task.state == "completed" and task.recommended_agent and not result.get("hitl_pause"):
+                            # Skip EVALUATE tasks — they emit their own events inside _execute_evaluation_step()
+                            is_eval = task.recommended_agent and task.recommended_agent.upper() == "EVALUATE"
+                            if task.state == "completed" and task.recommended_agent and not result.get("hitl_pause") and not is_eval:
                                 await self._emit_granular_agent_event(
                                     task.recommended_agent, f"{task.recommended_agent} completed", context_id,
                                     event_type="agent_complete"
@@ -1590,12 +1608,14 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                             all_task_outputs.append(result["output"])
                         
                         # Emit agent_complete/agent_error based on task state from the plan
-                        if task.state == "completed" and task.recommended_agent:
+                        # Skip EVALUATE tasks — they emit their own events inside _execute_evaluation_step()
+                        is_evaluate = task.recommended_agent and task.recommended_agent.upper() == "EVALUATE"
+                        if task.state == "completed" and task.recommended_agent and not is_evaluate:
                             await self._emit_granular_agent_event(
                                 task.recommended_agent, f"{task.recommended_agent} completed", context_id,
                                 event_type="agent_complete"
                             )
-                        elif task.state == "failed" and task.recommended_agent:
+                        elif task.state == "failed" and task.recommended_agent and not is_evaluate:
                             await self._emit_granular_agent_event(
                                 task.recommended_agent, f"Error: {task.error_message or 'Unknown error'}"[:200], context_id,
                                 event_type="agent_error", metadata={"error": (task.error_message or "Unknown error")[:500]}
