@@ -89,6 +89,76 @@ from service.auth_service import AuthService, User, SECRET_KEY, ALGORITHM
 from service import active_workflow_service
 
 
+def generate_workflow_text(steps: List[Dict[str, Any]], connections: List[Dict[str, Any]]) -> str:
+    """
+    Convert workflow steps + connections into text format for the orchestrator.
+
+    Handles evaluation steps with IF-TRUE/IF-FALSE branching.
+    """
+    if not steps:
+        return ""
+
+    sorted_steps = sorted(steps, key=lambda s: s.get('order', 0))
+
+    # Build lookup maps
+    step_by_id = {s.get('id'): s for s in sorted_steps}
+    # Outgoing connections from each step: step_id -> [(target_id, condition)]
+    outgoing = {}
+    for conn in (connections or []):
+        from_id = conn.get('fromStepId')
+        to_id = conn.get('toStepId')
+        condition = conn.get('condition')  # "true", "false", or None
+        if from_id:
+            outgoing.setdefault(from_id, []).append((to_id, condition))
+
+    # Track which steps are branch targets (IF-TRUE/IF-FALSE destinations)
+    branch_target_ids = set()
+    for step in sorted_steps:
+        agent_name = step.get('agentName') or step.get('agent') or ''
+        if agent_name.upper() == 'EVALUATE':
+            step_id = step.get('id')
+            for target_id, condition in outgoing.get(step_id, []):
+                if condition in ('true', 'false'):
+                    branch_target_ids.add(target_id)
+
+    # Generate text lines
+    lines = []
+    step_number = 0
+    # Map step_id -> assigned step number (for branch references)
+    step_numbers = {}
+
+    for step in sorted_steps:
+        step_id = step.get('id')
+        agent_name = step.get('agentName') or step.get('agent') or 'Unknown Agent'
+        default_desc = 'Use the ' + agent_name + ' agent'
+        description = step.get('description', default_desc)
+
+        # Skip branch targets in the main sequence — they'll be emitted as IF-TRUE/IF-FALSE
+        if step_id in branch_target_ids:
+            continue
+
+        step_number += 1
+        step_numbers[step_id] = step_number
+        lines.append(f"{step_number}. [{agent_name}] {description}")
+
+        # If this is an evaluation step, emit IF-TRUE/IF-FALSE branch lines
+        if agent_name.upper() == 'EVALUATE':
+            for target_id, condition in outgoing.get(step_id, []):
+                if condition in ('true', 'false') and target_id in step_by_id:
+                    target_step = step_by_id[target_id]
+                    target_agent = target_step.get('agentName') or target_step.get('agent') or 'Unknown Agent'
+                    target_desc = target_step.get('description', 'Use the ' + target_agent + ' agent')
+                    # Ensure the branch target has a number assigned
+                    if target_id not in step_numbers:
+                        step_number += 1
+                        step_numbers[target_id] = step_number
+                    branch_num = step_numbers[target_id]
+                    label = "IF-TRUE" if condition == "true" else "IF-FALSE"
+                    lines.append(f"   {label} → {branch_num}. [{target_agent}] {target_desc}")
+
+    return "\n".join(lines)
+
+
 class HTTPXClientWrapper:
     """Wrapper to return the singleton client where needed."""
 
@@ -251,17 +321,10 @@ async def execute_scheduled_workflow(workflow_name: str, session_id: str, timeou
     print(f"[SCHEDULER] Enabled {enabled_count} agents for session {scheduler_session_id}")
     # --- END ENABLE AGENTS ---
     
-    # Build workflow text
+    # Build workflow text (supports evaluation steps with branching)
     print(f"[SCHEDULER] 📝 Building workflow text from {len(workflow.steps or [])} steps...")
-    sorted_steps = sorted(workflow.steps or [], key=lambda s: s.get('order', 0))
-    workflow_lines = []
-    for i, step in enumerate(sorted_steps):
-        agent_name = step.get('agentName') or step.get('agent') or 'Unknown Agent'
-        default_desc = 'Use the ' + agent_name + ' agent'
-        description = step.get('description', default_desc)
-        workflow_lines.append(f"{i+1}. [{agent_name}] {description}")
-    workflow_text = "\n".join(workflow_lines)
-    
+    workflow_text = generate_workflow_text(workflow.steps or [], workflow.connections or [])
+
     initial_message = f'Run the "{workflow.name}" workflow.'
     conversation_id = str(uuid.uuid4())
     message_id = f"msg_{uuid.uuid4().hex[:8]}"
@@ -1195,22 +1258,12 @@ def main():
         if not workflow.steps:
             raise HTTPException(status_code=400, detail="Workflow has no steps defined")
         
-        # Sort steps by order
-        sorted_steps = sorted(workflow.steps, key=lambda s: s.get('order', 0))
-        
-        # Generate workflow text (same format as frontend - include agent name for routing)
-        workflow_lines = []
-        for i, step in enumerate(sorted_steps):
-            agent_name = step.get('agentName', 'unknown')
-            default_desc = 'Use the ' + agent_name + ' agent'
-            description = step.get('description', default_desc)
-            # Include agent name so orchestrator knows which agent to route to
-            workflow_lines.append(f"{i+1}. [{agent_name}] {description}")
-        workflow_text = "\n".join(workflow_lines)
-        
+        # Generate workflow text (supports evaluation steps with branching)
+        workflow_text = generate_workflow_text(workflow.steps, workflow.connections or [])
+
         # DEBUG: Log the workflow details
         print(f"[WorkflowRun] 📋 WORKFLOW STEPS:")
-        for line in workflow_lines:
+        for line in workflow_text.split('\n'):
             print(f"   {line}")
         print(f"[WorkflowRun] 🎯 Workflow Goal: {workflow.goal}")
         

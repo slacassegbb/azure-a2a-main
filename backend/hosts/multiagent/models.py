@@ -71,6 +71,12 @@ class AgentModePlan(BaseModel):
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
+class EvaluationResult(BaseModel):
+    """Result of a host-orchestrator evaluation step (true/false branching)."""
+    result: bool = Field(..., description="True or false evaluation outcome.")
+    reasoning: str = Field(..., description="Brief explanation of why the condition evaluated to this result.")
+
+
 class NextStep(BaseModel):
     """Orchestrator decision for the next action in a multi-agent workflow."""
     goal_status: GoalStatus = Field(..., description="Whether the goal is completed or not.")

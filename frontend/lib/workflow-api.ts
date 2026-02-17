@@ -22,6 +22,7 @@ export interface WorkflowConnection {
   id: string
   fromStepId: string
   toStepId: string
+  condition?: "true" | "false"  // For evaluation step branching
 }
 
 export interface Workflow {

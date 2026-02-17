@@ -31,6 +31,7 @@ interface Connection {
   id: string
   fromStepId: string
   toStepId: string
+  condition?: "true" | "false"  // For evaluation step branching
 }
 
 interface Agent {
@@ -63,6 +64,8 @@ interface VisualWorkflowDesignerProps {
 }
 
 const HOST_COLOR = "#6366f1"
+const EVALUATE_COLOR = "#f59e0b"  // Amber for evaluation steps
+const EVALUATE_AGENT_NAME = "EVALUATE"
 
 // Helper function to adjust color brightness for gradients
 function adjustColorBrightness(color: string, amount: number): string {
@@ -246,11 +249,12 @@ export function VisualWorkflowDesigner({
           connections: connections.map(conn => ({
             id: conn.id,
             fromStepId: conn.fromStepId,
-            toStepId: conn.toStepId
+            toStepId: conn.toStepId,
+            condition: conn.condition
           })),
           isCustom: true
         }
-        
+
         const token = sessionStorage.getItem('auth_token') || localStorage.getItem('auth_token')
         
         if (token && selectedWorkflowId) {
@@ -455,12 +459,65 @@ export function VisualWorkflowDesigner({
         return (a.subLetter || '').localeCompare(b.subLetter || '')
       })
       
-      return entries.map(entry => {
-        const label = entry.subLetter ? `${entry.stepNumber}${entry.subLetter}` : `${entry.stepNumber}`
+      // Build output lines, handling evaluation branching
+      const outputLines: string[] = []
+      // Track which steps are branch targets of EVALUATE steps (they become IF-TRUE/IF-FALSE lines)
+      const branchTargetIds = new Set<string>()
+      // Map step id -> entry for branch target lookup
+      const entryById = new Map<string, typeof entries[0]>()
+      entries.forEach(e => entryById.set(e.step.id, e))
+
+      // First pass: identify branch targets
+      entries.forEach(entry => {
+        if (entry.step.agentName.toUpperCase() === EVALUATE_AGENT_NAME) {
+          const evalConns = conns.filter(c => c.fromStepId === entry.step.id && c.condition)
+          evalConns.forEach(c => branchTargetIds.add(c.toStepId))
+        }
+      })
+
+      // Assign sequential numbers, skipping branch targets
+      let seqNum = 0
+      const stepNumMap = new Map<string, number>()
+      entries.forEach(entry => {
+        if (branchTargetIds.has(entry.step.id)) return
+        seqNum++
+        stepNumMap.set(entry.step.id, seqNum)
+        // Also assign numbers to branch targets of this eval step
+        if (entry.step.agentName.toUpperCase() === EVALUATE_AGENT_NAME) {
+          const evalConns = conns.filter(c => c.fromStepId === entry.step.id && c.condition)
+          evalConns.forEach(c => {
+            if (!stepNumMap.has(c.toStepId)) {
+              seqNum++
+              stepNumMap.set(c.toStepId, seqNum)
+            }
+          })
+        }
+      })
+
+      // Second pass: generate lines
+      entries.forEach(entry => {
+        if (branchTargetIds.has(entry.step.id)) return  // Skip — emitted as IF-TRUE/IF-FALSE
+        const num = stepNumMap.get(entry.step.id) || entry.stepNumber
+        const label = entry.subLetter ? `${num}${entry.subLetter}` : `${num}`
         const desc = entry.step.description || `Use the ${entry.step.agentName} agent`
-        // Include agent name so orchestrator knows which agent to route to
-        return `${label}. [${entry.step.agentName}] ${desc}`
-      }).join('\n')
+        outputLines.push(`${label}. [${entry.step.agentName}] ${desc}`)
+
+        // Emit IF-TRUE/IF-FALSE for eval steps
+        if (entry.step.agentName.toUpperCase() === EVALUATE_AGENT_NAME) {
+          const evalConns = conns.filter(c => c.fromStepId === entry.step.id && c.condition)
+          evalConns.forEach(c => {
+            const targetEntry = entryById.get(c.toStepId)
+            if (targetEntry) {
+              const branchNum = stepNumMap.get(c.toStepId) || 0
+              const branchLabel = c.condition === "true" ? "IF-TRUE" : "IF-FALSE"
+              const branchDesc = targetEntry.step.description || `Use the ${targetEntry.step.agentName} agent`
+              outputLines.push(`   ${branchLabel} → ${branchNum}. [${targetEntry.step.agentName}] ${branchDesc}`)
+            }
+          })
+        }
+      })
+
+      return outputLines.join('\n')
     } else {
       // No connections - use visual order
       const sortedSteps = [...steps].sort((a, b) => a.order - b.order)
@@ -578,7 +635,8 @@ export function VisualWorkflowDesigner({
         connections: connections.map(conn => ({
           id: conn.id,
           fromStepId: conn.fromStepId,
-          toStepId: conn.toStepId
+          toStepId: conn.toStepId,
+          condition: conn.condition
         }))
       }
       localStorage.setItem('workflow-visual-data', JSON.stringify(data))
@@ -1324,7 +1382,7 @@ export function VisualWorkflowDesigner({
       agentName: draggedAgent.name,
       agentColor: getAgentHexColor(draggedAgent.name, (draggedAgent as any).color),
       agentIconUrl: (draggedAgent as any).iconUrl || (draggedAgent as any).avatar,
-      description: `Use the ${draggedAgent.name}`,
+      description: draggedAgent.name === EVALUATE_AGENT_NAME ? "Is the condition met?" : `Use the ${draggedAgent.name}`,
       x,
       y,
       order
@@ -1796,7 +1854,8 @@ export function VisualWorkflowDesigner({
         connections: (workflowData.connections || []).map((conn: any) => ({
           id: conn.id,
           fromStepId: conn.fromStepId,
-          toStepId: conn.toStepId
+          toStepId: conn.toStepId,
+          condition: conn.condition
         }))
       }
       localStorage.setItem('workflow-visual-data', JSON.stringify(data))
@@ -1855,10 +1914,11 @@ export function VisualWorkflowDesigner({
       connections: connections.map(conn => ({
         id: conn.id,
         fromStepId: conn.fromStepId,
-        toStepId: conn.toStepId
+        toStepId: conn.toStepId,
+        condition: conn.condition
       }))
     }
-    
+
     console.log('[VisualWorkflowDesigner] Quick save - workflow data:', {
       name: workflowData.name,
       goal: workflowData.goal,
@@ -1976,11 +2036,12 @@ export function VisualWorkflowDesigner({
       connections: connections.map(conn => ({
         id: conn.id,
         fromStepId: conn.fromStepId,
-        toStepId: conn.toStepId
+        toStepId: conn.toStepId,
+        condition: conn.condition
       })),
       isCustom: true
     }
-    
+
     // Save to backend if authenticated, otherwise localStorage
     let savedToBackend = false
     try {
@@ -2188,16 +2249,47 @@ export function VisualWorkflowDesigner({
           fromX, fromY, toX, toY, fromColor, toColor, isConnectionSelected: !!isConnectionSelected
         })
         
-        // Draw connection line - clean, subtle style
-        ctx.strokeStyle = isConnectionSelected ? "rgba(148, 163, 184, 0.6)" : "rgba(100, 116, 139, 0.4)" // slate colors
+        // Draw connection line - use amber color for eval branch connections
+        const isEvalBranch = !!connection.condition
+        if (isEvalBranch) {
+          const branchColor = connection.condition === "true" ? "rgba(34, 197, 94, 0.6)" : "rgba(239, 68, 68, 0.5)"
+          ctx.strokeStyle = branchColor
+        } else {
+          ctx.strokeStyle = isConnectionSelected ? "rgba(148, 163, 184, 0.6)" : "rgba(100, 116, 139, 0.4)"
+        }
         ctx.lineWidth = isConnectionSelected ? 2 : 1.5
         ctx.lineCap = "round"
-        
+
         ctx.beginPath()
         ctx.moveTo(fromX, fromY)
         ctx.lineTo(toX, toY)
         ctx.stroke()
-        
+
+        // Draw condition label on eval branch connections
+        if (connection.condition) {
+          const labelX = fromX + (toX - fromX) * 0.35
+          const labelY = fromY + (toY - fromY) * 0.35 - 8
+          const labelText = connection.condition === "true" ? "TRUE" : "FALSE"
+          const labelColor = connection.condition === "true" ? "#22c55e" : "#ef4444"
+
+          ctx.font = "bold 9px -apple-system, system-ui, sans-serif"
+          ctx.textAlign = "center"
+          ctx.textBaseline = "middle"
+
+          // Label background pill
+          const tw = ctx.measureText(labelText).width + 8
+          ctx.beginPath()
+          ctx.roundRect(labelX - tw/2, labelY - 7, tw, 14, 4)
+          ctx.fillStyle = "#1e293b"
+          ctx.fill()
+          ctx.strokeStyle = labelColor
+          ctx.lineWidth = 1
+          ctx.stroke()
+
+          ctx.fillStyle = labelColor
+          ctx.fillText(labelText, labelX, labelY)
+        }
+
         // Draw subtle delete button on connection (middle point) - only for selected agent connections
         if (isConnectionSelected) {
           const midX = (fromX + toX) / 2
@@ -2304,27 +2396,48 @@ export function VisualWorkflowDesigner({
         
         // No background - just the bot icon directly on the card
         
-        // === ICON (Simple Bot) ===
+        // === ICON ===
         const icx = iconX + iconSize/2
         const icy = iconY + iconSize/2
-        
-        ctx.fillStyle = step.agentColor
-        // Head
-        ctx.beginPath()
-        ctx.roundRect(icx - 8, icy - 6, 16, 12, 2)
-        ctx.fill()
-        // Eyes (dark background color)
-        ctx.fillStyle = "#111827" // Match card background
-        ctx.beginPath()
-        ctx.arc(icx - 4, icy - 1, 2, 0, Math.PI * 2)
-        ctx.arc(icx + 4, icy - 1, 2, 0, Math.PI * 2)
-        ctx.fill()
-        // Antenna
-        ctx.fillStyle = step.agentColor
-        ctx.beginPath()
-        ctx.arc(icx, icy - 10, 2, 0, Math.PI * 2)
-        ctx.fill()
-        ctx.fillRect(icx - 0.5, icy - 10, 1, 5)
+
+        const isEvalStep = step.agentName.toUpperCase() === EVALUATE_AGENT_NAME
+
+        if (isEvalStep) {
+          // Diamond icon for evaluation steps
+          ctx.fillStyle = EVALUATE_COLOR
+          ctx.beginPath()
+          ctx.moveTo(icx, icy - 12)
+          ctx.lineTo(icx + 10, icy)
+          ctx.lineTo(icx, icy + 12)
+          ctx.lineTo(icx - 10, icy)
+          ctx.closePath()
+          ctx.fill()
+          // Question mark inside diamond
+          ctx.fillStyle = "#111827"
+          ctx.font = "bold 12px -apple-system, system-ui, sans-serif"
+          ctx.textAlign = "center"
+          ctx.textBaseline = "middle"
+          ctx.fillText("?", icx, icy + 1)
+        } else {
+          // Bot icon for agent steps
+          ctx.fillStyle = step.agentColor
+          // Head
+          ctx.beginPath()
+          ctx.roundRect(icx - 8, icy - 6, 16, 12, 2)
+          ctx.fill()
+          // Eyes (dark background color)
+          ctx.fillStyle = "#111827"
+          ctx.beginPath()
+          ctx.arc(icx - 4, icy - 1, 2, 0, Math.PI * 2)
+          ctx.arc(icx + 4, icy - 1, 2, 0, Math.PI * 2)
+          ctx.fill()
+          // Antenna
+          ctx.fillStyle = step.agentColor
+          ctx.beginPath()
+          ctx.arc(icx, icy - 10, 2, 0, Math.PI * 2)
+          ctx.fill()
+          ctx.fillRect(icx - 0.5, icy - 10, 1, 5)
+        }
         
         // === TEXT CONTENT ===
         const textLeft = iconX + iconSize + 10
@@ -3211,18 +3324,43 @@ export function VisualWorkflowDesigner({
           // Allow multiple incoming connections to one step (fan-in to merge parallel branches)
           // Only prevent duplicate connections (same from->to)
           
+          // Auto-assign condition for connections from EVALUATE steps
+          const sourceStep = workflowStepsRef.current.find(s => s.id === connectionStartRef.current!.stepId)
+          const isFromEvalStep = sourceStep?.agentName.toUpperCase() === EVALUATE_AGENT_NAME
+          let condition: "true" | "false" | undefined = undefined
+          if (isFromEvalStep) {
+            // Check existing connections from this eval step to auto-assign
+            const existingFromEval = connectionsRef.current.filter(c => c.fromStepId === connectionStartRef.current!.stepId)
+            const hasTrueBranch = existingFromEval.some(c => c.condition === "true")
+            const hasFalseBranch = existingFromEval.some(c => c.condition === "false")
+            if (!hasTrueBranch) condition = "true"
+            else if (!hasFalseBranch) condition = "false"
+            // If both exist already, don't allow a third connection from eval
+            else {
+              isCreatingConnectionRef.current = false
+              connectionStartRef.current = null
+              connectionHoverTargetRef.current = null
+              setIsCreatingConnection(false)
+              setConnectionStart(null)
+              setConnectionPreview(null)
+              setConnectionHoverTarget(null)
+              return
+            }
+          }
+
           // Create connection
           const newConnection: Connection = {
             id: `conn-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
             fromStepId: connectionStartRef.current.stepId,
-            toStepId: targetStep.id
+            toStepId: targetStep.id,
+            ...(condition && { condition })
           }
-          
+
           // Check if this exact connection already exists
-          const exists = connectionsRef.current.some(c => 
+          const exists = connectionsRef.current.some(c =>
             c.fromStepId === newConnection.fromStepId && c.toStepId === newConnection.toStepId
           )
-          
+
           if (!exists) {
             setConnections(prev => [...prev, newConnection])
           }
@@ -3390,6 +3528,21 @@ export function VisualWorkflowDesigner({
           <h3 className="text-sm font-semibold text-slate-200 mb-2">Available Agents</h3>
           <ScrollArea className="flex-1">
             <div className="space-y-2">
+              {/* Evaluation step - always available */}
+              <div
+                draggable
+                onDragStart={() => setDraggedAgent({ name: EVALUATE_AGENT_NAME, description: "Evaluate a condition (true/false branching)", color: EVALUATE_COLOR })}
+                onDragEnd={() => setDraggedAgent(null)}
+                className="p-3 bg-slate-800 rounded border border-slate-700 hover:border-slate-600 cursor-move transition-colors"
+                style={{
+                  borderLeftColor: EVALUATE_COLOR,
+                  borderLeftWidth: '3px'
+                }}
+              >
+                <div className="text-sm font-medium text-amber-300">Evaluation</div>
+                <div className="text-xs text-slate-400 mt-1">True/false condition branching</div>
+              </div>
+
               {registeredAgents.length === 0 ? (
                 <p className="text-xs text-slate-500">No agents registered</p>
               ) : (

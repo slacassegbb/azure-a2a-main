@@ -40,6 +40,7 @@ from ..models import (
     AgentModePlan,
     NextStep,
     RouteSelection,
+    EvaluationResult,
 )
 from ..tool_context import DummyToolContext
 
@@ -258,6 +259,88 @@ class WorkflowOrchestration:
         
         return artifact_descriptions
 
+    async def _execute_evaluation_step(
+        self,
+        task: AgentModeTask,
+        session_context: SessionContext,
+        context_id: str,
+        previous_task_outputs: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
+        """
+        Execute an evaluation step using the host orchestrator LLM.
+
+        Instead of calling a remote agent, this evaluates a condition against
+        previous workflow outputs and returns a true/false result for branching.
+        """
+        criteria = task.task_description
+        log_info(f"🔍 [EVALUATE] Evaluating condition: {criteria[:100]}")
+
+        await self._emit_granular_agent_event(
+            "foundry-host-agent", f"Evaluating: {criteria[:80]}...", context_id,
+            event_type="agent_start", metadata={"evaluation": True}
+        )
+
+        # Build context from previous step outputs
+        context_text = ""
+        if previous_task_outputs:
+            context_text = "\n\n".join(previous_task_outputs[-3:])  # Last 3 outputs
+            if len(context_text) > 4000:
+                context_text = context_text[:4000] + "... [truncated]"
+
+        system_prompt = """You are evaluating a condition as part of a multi-agent workflow.
+Based on the context from previous workflow steps, determine whether the condition is TRUE or FALSE.
+Be precise and objective. Only evaluate what is asked — do not infer beyond the available data."""
+
+        user_prompt = f"""### CONDITION TO EVALUATE
+{criteria}
+
+### CONTEXT FROM PREVIOUS WORKFLOW STEPS
+{context_text if context_text else "(no previous output available)"}
+
+Evaluate the condition and return your result."""
+
+        try:
+            eval_result = await self._call_azure_openai_structured(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                response_model=EvaluationResult,
+                context_id=context_id
+            )
+
+            result_str = "TRUE" if eval_result.result else "FALSE"
+            log_info(f"🔍 [EVALUATE] Result: {result_str} — {eval_result.reasoning}")
+
+            # Update task state
+            task.state = "completed"
+            task.output = {
+                "result": eval_result.result,
+                "reasoning": eval_result.reasoning,
+                "evaluation": True
+            }
+            task.updated_at = datetime.now(timezone.utc)
+
+            # Emit result to frontend
+            display_text = f"Evaluation: {result_str}\n{eval_result.reasoning}"
+            await self._emit_granular_agent_event(
+                "foundry-host-agent", display_text, context_id,
+                event_type="agent_output",
+                metadata={"evaluation": True, "result": eval_result.result}
+            )
+
+            # Return output as text so the orchestrator can read it in plan history
+            output_text = json.dumps({
+                "result": eval_result.result,
+                "reasoning": eval_result.reasoning
+            })
+            return {"output": output_text, "hitl_pause": False}
+
+        except Exception as e:
+            log_error(f"[EVALUATE] Error during evaluation: {e}")
+            task.state = "failed"
+            task.error_message = f"Evaluation failed: {str(e)}"
+            task.updated_at = datetime.now(timezone.utc)
+            return {"error": task.error_message, "output": None}
+
     async def _execute_orchestrated_task(
         self,
         task: AgentModeTask,
@@ -292,11 +375,17 @@ class WorkflowOrchestration:
         """
         recommended_agent = task.recommended_agent
         task_desc = task.task_description
-        
+
         log_debug(f"🚀 [Agent Mode] Executing task: {task_desc[:50]}...")
-        
+
+        # Detect evaluation steps — handled by host LLM, not a remote agent
+        if recommended_agent and recommended_agent.upper() == "EVALUATE":
+            return await self._execute_evaluation_step(
+                task, session_context, context_id, previous_task_outputs
+            )
+
         # Stream task creation event (agent_start already emitted from orchestration loop)
-        
+
         # If agent not in session, try to load from global catalog
         # This enables workflows/scheduled workflows to use any cataloged agent
         if recommended_agent and recommended_agent not in self.cards:
@@ -967,17 +1056,28 @@ Do NOT skip steps. Do NOT mark goal as completed until ALL workflow steps are do
 
 {workflow.strip()}
 
-**AGENT ROUTING**: 
+**AGENT ROUTING**:
 - Each step specifies the agent to use in [brackets] - e.g., "[QuickBooks Online Agent]"
 - You MUST use the agent specified in brackets for that step - do NOT substitute a different agent
 - Set `recommended_agent` to the exact agent name from the brackets
+- Steps marked [EVALUATE] are handled by the host orchestrator — set recommended_agent to "EVALUATE"
 
-**EXECUTION RULES**: 
+**EVALUATION & BRANCHING**:
+- Steps with [EVALUATE] are conditional decision points that return true or false
+- After an [EVALUATE] step completes, its result (true/false) will appear in the task output
+- `IF-TRUE →` lines indicate the step to follow when the evaluation is true
+- `IF-FALSE →` lines indicate the step to follow when the evaluation is false
+- **CRITICAL**: Only follow the branch that matches the evaluation result. NEVER execute the other branch.
+- Steps in the skipped branch must NOT be proposed or executed
+- After the branch step completes, continue to the next sequential step (the merge point)
+
+**EXECUTION RULES**:
 - Execute sequential steps (1, 2, 3) one after another
 - **PARALLEL STEPS** (e.g., 2a, 2b, 2c): When you see steps with letter suffixes, these can run SIMULTANEOUSLY
   - Use `next_tasks` (list) with `parallel=true` to execute them concurrently
   - Wait for ALL parallel tasks to complete before moving to the next sequential step
-- Only mark goal_status="completed" after ALL workflow steps are finished
+- Only mark goal_status="completed" after ALL required workflow steps are finished
+- Skipped branch steps do NOT count toward the completion requirement
 - If a step fails, you may retry or adapt, but you must complete all steps
 """
             system_prompt += workflow_section
@@ -985,25 +1085,53 @@ Do NOT skip steps. Do NOT mark goal as completed until ALL workflow steps are do
         
         # Add workflow-specific completion logic if workflow is present
         if workflow and workflow.strip():
-            workflow_step_count = len([line for line in workflow.strip().split('\n') if line.strip() and (line.strip()[0].isdigit() or line.strip().startswith('-'))])
-            log_debug(f"📊 [Agent Mode] Workflow step count: {workflow_step_count}")
-            
+            # Count steps, accounting for branching (IF-TRUE/IF-FALSE)
+            # Top-level steps: lines starting with a digit (no leading whitespace)
+            # Branch lines: indented IF-TRUE/IF-FALSE lines — only ONE branch executes per eval
+            top_level_steps = 0
+            branch_pairs = 0
+            has_branching = False
+            for line in workflow.strip().split('\n'):
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                if stripped[0].isdigit() or stripped.startswith('-'):
+                    if not line[0].isspace() or line.startswith('-'):
+                        # Top-level step (not indented)
+                        top_level_steps += 1
+                if stripped.upper().startswith('IF-TRUE'):
+                    branch_pairs += 1
+                    has_branching = True
+
+            if has_branching:
+                # Each branch pair adds 1 execution (one of true/false runs)
+                workflow_step_count = top_level_steps + branch_pairs
+            else:
+                workflow_step_count = top_level_steps
+            log_debug(f"📊 [Agent Mode] Workflow step count: {workflow_step_count} (top_level={top_level_steps}, branches={branch_pairs})")
+
+            branching_note = ""
+            if has_branching:
+                branching_note = f"""
+- **BRANCHING**: This workflow has evaluation branches (IF-TRUE/IF-FALSE). Only ONE branch executes per evaluation.
+- Skipped branch steps do NOT count toward the completion requirement.
+- Expected completed tasks: {workflow_step_count} (= {top_level_steps} main steps + {branch_pairs} branch step(s), one per evaluation)"""
+
             system_prompt += f"""
 
 ### 🚨 CRITICAL: WHEN TO STOP (WORKFLOW MODE)
-- A WORKFLOW IS ACTIVE with **{workflow_step_count} MANDATORY STEPS** - You MUST complete ALL {workflow_step_count} workflow steps before marking goal as "completed"
-- **STEP COUNTING**: The workflow has EXACTLY {workflow_step_count} steps. Count your completed tasks carefully!
+- A WORKFLOW IS ACTIVE with approximately **{workflow_step_count} REQUIRED STEPS** to complete
+- **STEP COUNTING**: Count your completed tasks carefully!{branching_note}
 - **VERIFICATION CHECKLIST**:
-  1. Count the number of workflow steps above (should be {workflow_step_count})
+  1. Count the number of workflow steps above
   2. Count the number of successfully completed tasks in your plan
   3. Match each workflow step to a completed task
-  4. If completed tasks < {workflow_step_count}, goal_status MUST be "incomplete"
+  4. If required steps are not yet completed, goal_status MUST be "incomplete"
 - **COMPLETION CRITERIA** - Mark goal_status="completed" ONLY when:
-  1. You have AT LEAST {workflow_step_count} successfully completed tasks, AND
-  2. Each workflow step has been addressed by a completed task, AND
-  3. All completed tasks succeeded (or agents are waiting for user input)
-- **WARNING**: Do NOT mark as completed after only 1, 2, or 3 steps if the workflow has {workflow_step_count} steps!
-- If ANY workflow step is missing or incomplete, goal_status MUST be "incomplete" and you must create the next task"""
+  1. All required workflow steps have been addressed by completed tasks, AND
+  2. All completed tasks succeeded (or agents are waiting for user input)
+- **WARNING**: Do NOT mark as completed prematurely!
+- If ANY required workflow step is missing or incomplete, goal_status MUST be "incomplete" and you must create the next task"""
         else:
             system_prompt += """
 
