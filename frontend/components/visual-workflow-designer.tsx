@@ -2179,31 +2179,6 @@ export function VisualWorkflowDesigner({
         ctx.lineTo(toX, toY)
         ctx.stroke()
 
-        // Draw condition label on eval branch connections
-        if (connection.condition) {
-          const labelX = fromX + (toX - fromX) * 0.35
-          const labelY = fromY + (toY - fromY) * 0.35 - 8
-          const labelText = connection.condition === "true" ? "TRUE" : "FALSE"
-          const labelColor = connection.condition === "true" ? "#22c55e" : "#ef4444"
-
-          ctx.font = "bold 9px -apple-system, system-ui, sans-serif"
-          ctx.textAlign = "center"
-          ctx.textBaseline = "middle"
-
-          // Label background pill
-          const tw = ctx.measureText(labelText).width + 8
-          ctx.beginPath()
-          ctx.roundRect(labelX - tw/2, labelY - 7, tw, 14, 4)
-          ctx.fillStyle = "#1e293b"
-          ctx.fill()
-          ctx.strokeStyle = labelColor
-          ctx.lineWidth = 1
-          ctx.stroke()
-
-          ctx.fillStyle = labelColor
-          ctx.fillText(labelText, labelX, labelY)
-        }
-
         // Draw subtle delete button on connection (middle point) - only for selected agent connections
         if (isConnectionSelected) {
           const midX = (fromX + toX) / 2
