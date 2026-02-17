@@ -286,12 +286,45 @@ class WorkflowOrchestration:
             event_type="agent_start", metadata={"evaluation": True, "task_description": task_desc}
         )
 
-        # Build context from previous step outputs
-        context_text = ""
+        # Build context from previous step outputs AND extracted documents
+        context_parts = []
+
+        # Search Azure Search memory for extracted document content (e.g., PDF invoices)
+        # Documents are extracted by the orchestrator after agents return files,
+        # and stored in memory — but not in previous_task_outputs.
+        try:
+            memory_results = await self._search_relevant_memory(
+                query=criteria,
+                context_id=session_context.contextId,
+                agent_name=None,
+                top_k=5
+            )
+            if memory_results:
+                for result in memory_results:
+                    agent_name = result.get('agent_name', '')
+                    if agent_name == 'DocumentProcessor':
+                        inbound = result.get('inbound_payload', {})
+                        if isinstance(inbound, str):
+                            try:
+                                inbound = json.loads(inbound)
+                            except Exception:
+                                pass
+                        if isinstance(inbound, dict) and 'content' in inbound:
+                            doc_content = str(inbound['content'])
+                            log_info(f"🔍 [EVALUATE] Found document content: {len(doc_content)} chars")
+                            context_parts.append(f"[Extracted Document]\n{doc_content}")
+                            break
+        except Exception as e:
+            log_error(f"[EVALUATE] Error searching memory for document content: {e}")
+
+        # Add previous task outputs
         if previous_task_outputs:
-            context_text = "\n\n".join(previous_task_outputs[-3:])  # Last 3 outputs
-            if len(context_text) > 4000:
-                context_text = context_text[:4000] + "... [truncated]"
+            for output in previous_task_outputs[-3:]:
+                context_parts.append(output)
+
+        context_text = "\n\n".join(context_parts)
+        if len(context_text) > 6000:
+            context_text = context_text[:6000] + "... [truncated]"
 
         system_prompt = """You are evaluating a condition as part of a multi-agent workflow.
 Based on the context from previous workflow steps, determine whether the condition is TRUE or FALSE.
