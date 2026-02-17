@@ -755,7 +755,7 @@ export function FileHistory({ className, onFileSelect, onFilesLoaded, conversati
             Click to upload files
           </div>
         ) : (
-          <div className="max-h-[280px] overflow-y-auto pr-4">
+          <div className="max-h-[280px] overflow-y-auto pr-1">
             <div className="space-y-1">
               {files.map((file) => {
               // Check if file is an image
@@ -795,19 +795,26 @@ export function FileHistory({ className, onFileSelect, onFilesLoaded, conversati
                         )}
                       </div>
                       
-                      {/* File info - allow it to shrink more */}
-                      <div className="flex-1 min-w-0 max-w-[140px]">
+                      {/* File info - flex to fill available space */}
+                      <div className="flex-1 min-w-0 overflow-hidden">
                         <div className="text-sm font-medium truncate text-foreground group-hover:text-primary transition-colors" title={file.originalName}>
                           {file.originalName}
                         </div>
-                        <div className="text-xs text-muted-foreground">
-                          {formatFileSize(file.size)} • {formatDate(file.uploadedAt)}
+                        <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                          <span className="truncate">{formatFileSize(file.size)} • {formatDate(file.uploadedAt)}</span>
+                          {/* Inline status indicators */}
+                          {file.status === 'analyzed' && (
+                            <span className="flex-shrink-0 text-green-500 font-medium">• In Memory</span>
+                          )}
+                          {file.status === 'processing' && (
+                            <Loader2 size={12} className="flex-shrink-0 text-amber-500 animate-spin" />
+                          )}
                         </div>
                       </div>
                       
-                      {/* Action buttons - inline, always visible - MUST NOT SHRINK */}
-                      <div className="flex items-center gap-1 flex-shrink-0 ml-auto">
-                        {/* Analyze button for unprocessed files - prominent and clickable */}
+                      {/* Action buttons - compact, always visible */}
+                      <div className="flex items-center gap-0.5 flex-shrink-0">
+                        {/* Analyze button for unprocessed files */}
                         {(file.status === 'uploaded' || file.status === 'error' || !file.status) && (
                           <Tooltip>
                             <TooltipTrigger asChild>
@@ -816,34 +823,15 @@ export function FileHistory({ className, onFileSelect, onFilesLoaded, conversati
                                   e.stopPropagation()
                                   processFile(file)
                                 }}
-                                className="px-2 py-1 text-xs font-medium bg-primary/10 hover:bg-primary/20 text-primary rounded border border-primary/30 hover:border-primary/50 transition-colors"
+                                className="p-1.5 hover:bg-primary/10 rounded text-primary transition-colors"
                               >
-                                Add to Memory
+                                <FileSearch size={14} />
                               </button>
                             </TooltipTrigger>
                             <TooltipContent side="top">
-                              <p>Add to memory for AI context</p>
+                              <p>Analyze & add to memory</p>
                             </TooltipContent>
                           </Tooltip>
-                        )}
-                        {/* In Memory indicator */}
-                        {file.status === 'analyzed' && (
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <div className="px-2 py-1 text-xs font-medium text-green-500">
-                                In Memory
-                              </div>
-                            </TooltipTrigger>
-                            <TooltipContent side="top">
-                              <p>Document is loaded in AI context</p>
-                            </TooltipContent>
-                          </Tooltip>
-                        )}
-                        {/* Processing indicator */}
-                        {file.status === 'processing' && (
-                          <div className="p-1.5">
-                            <Loader2 size={14} className="text-amber-500 animate-spin" />
-                          </div>
                         )}
                         {/* Delete button */}
                         <Tooltip>
