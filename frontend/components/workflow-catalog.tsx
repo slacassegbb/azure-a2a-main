@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Sparkles, Download, Trash2, Save, Search, Clock, Plus, X, Pencil, Play, Pause, ChevronDown, ChevronRight, CheckCircle, XCircle } from "lucide-react"
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { ScheduleWorkflowDialog } from "./schedule-workflow-dialog"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
@@ -213,6 +213,7 @@ export function WorkflowCatalog({ onLoadWorkflow, onSaveWorkflow, onNewWorkflow,
   const [searchQuery, setSearchQuery] = useState("")
   const [isLoading, setIsLoading] = useState(true)
   const [isUserAuthenticated, setIsUserAuthenticated] = useState(false)
+  const hasAutoLoadedRef = useRef(false)
   const [showScheduleDialog, setShowScheduleDialog] = useState(false)
   const [workflowToSchedule, setWorkflowToSchedule] = useState<WorkflowTemplate | null>(null)
   const [showNewWorkflowDialog, setShowNewWorkflowDialog] = useState(false)
@@ -343,6 +344,15 @@ export function WorkflowCatalog({ onLoadWorkflow, onSaveWorkflow, onNewWorkflow,
     
     loadWorkflows()
   }, [refreshTrigger])
+
+  // Auto-load the first workflow onto the canvas when workflows are loaded
+  useEffect(() => {
+    if (!isLoading && customWorkflows.length > 0 && !selectedWorkflowId && !hasAutoLoadedRef.current) {
+      hasAutoLoadedRef.current = true
+      console.log('[WorkflowCatalog] Auto-loading first workflow:', customWorkflows[0].name)
+      onLoadWorkflow(customWorkflows[0])
+    }
+  }, [isLoading, customWorkflows, selectedWorkflowId, onLoadWorkflow])
 
   // Load scheduled workflows and run history
   useEffect(() => {

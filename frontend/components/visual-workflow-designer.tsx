@@ -1272,6 +1272,20 @@ export function VisualWorkflowDesigner({
     
     if (!draggedAgent || !canvasRef.current) return
     
+    // If this is the first step and no workflow has been created/loaded yet,
+    // auto-initialize a new workflow so the user's work is saved
+    if (workflowSteps.length === 0 && !selectedWorkflowId) {
+      const newId = `workflow_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`
+      setSelectedWorkflowId(newId)
+      setWorkflowName("Untitled Workflow")
+      setWorkflowDescription("Custom workflow")
+      setWorkflowCategory("Custom")
+      setWorkflowGoal("Complete the workflow tasks efficiently and accurately")
+      setIsWorkflowSavedToBackend(false)
+      isInitialLoadRef.current = false // Enable auto-save immediately
+      console.log('[VisualWorkflowDesigner] Auto-created workflow on first agent drop:', newId)
+    }
+    
     const canvas = canvasRef.current
     const rect = canvas.getBoundingClientRect()
     
