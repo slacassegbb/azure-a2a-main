@@ -389,23 +389,32 @@ export function WorkflowCatalog({ onLoadWorkflow, onSaveWorkflow, onNewWorkflow,
   }, [refreshTrigger])
 
   const handleDeleteCustomWorkflow = async (id: string) => {
-    const { deleteWorkflow, isAuthenticated } = await import('@/lib/workflow-api')
-    
-    if (isAuthenticated()) {
-      // Delete from backend
-      const success = await deleteWorkflow(id)
-      if (success) {
-        console.log('[WorkflowCatalog] Deleted workflow from backend:', id)
-        setCustomWorkflows(prev => prev.filter(w => w.id !== id))
+    const workflow = customWorkflows.find(w => w.id === id)
+    const name = workflow?.name || id
+    if (!confirm(`Delete workflow "${name}"?`)) return
+
+    try {
+      const { deleteWorkflow, isAuthenticated } = await import('@/lib/workflow-api')
+
+      if (isAuthenticated()) {
+        // Delete from backend
+        const success = await deleteWorkflow(id)
+        if (success) {
+          console.log('[WorkflowCatalog] Deleted workflow from backend:', id)
+          setCustomWorkflows(prev => prev.filter(w => w.id !== id))
+        } else {
+          alert("Failed to delete workflow. You may not have permission.")
+        }
       } else {
-        alert("Failed to delete workflow")
+        // Delete from localStorage
+        const updated = customWorkflows.filter(w => w.id !== id)
+        setCustomWorkflows(updated)
+        localStorage.setItem('custom-workflows', JSON.stringify(updated))
+        console.log('[WorkflowCatalog] Deleted workflow from localStorage:', id)
       }
-    } else {
-      // Delete from localStorage
-      const updated = customWorkflows.filter(w => w.id !== id)
-      setCustomWorkflows(updated)
-      localStorage.setItem('custom-workflows', JSON.stringify(updated))
-      console.log('[WorkflowCatalog] Deleted workflow from localStorage:', id)
+    } catch (err) {
+      console.error('[WorkflowCatalog] Delete failed:', err)
+      alert(`Failed to delete workflow: ${err}`)
     }
   }
 
