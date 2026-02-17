@@ -664,7 +664,7 @@ export function VisualWorkflowDesigner({
   }, [workflowSteps, connections, selectedWorkflowId, workflowName])
 
   // Update workflow text whenever steps or connections change
-  // NEW: Detects parallel branches (fan-out) and generates sub-lettered steps (2a, 2b, etc.)
+  // Uses generateWorkflowTextFromRefs() which handles parallel branches AND evaluation branching
   useEffect(() => {
     if (workflowSteps.length === 0) {
       setGeneratedWorkflowText("")
@@ -672,145 +672,59 @@ export function VisualWorkflowDesigner({
       onWorkflowGeneratedRef.current("")
       return
     }
-    
-    // If connections exist, use them to determine order and detect parallel branches
+
+    // Sync refs before generating text (useEffects run in declaration order,
+    // but we update here too for safety since this is the consumer)
+    workflowStepsRef.current = workflowSteps
+    connectionsRef.current = connections
+
+    const workflowText = generateWorkflowTextFromRefs()
+
+    // Build order map from connections if available
     if (connections.length > 0) {
-      // Build adjacency maps
-      const outgoing = new Map<string, string[]>()
-      const incoming = new Map<string, string[]>()
-      
-      connections.forEach(conn => {
-        if (!outgoing.has(conn.fromStepId)) outgoing.set(conn.fromStepId, [])
-        outgoing.get(conn.fromStepId)!.push(conn.toStepId)
-        
-        if (!incoming.has(conn.toStepId)) incoming.set(conn.toStepId, [])
-        incoming.get(conn.toStepId)!.push(conn.fromStepId)
-      })
-      
+      const hasIncoming = new Set(connections.map(c => c.toStepId))
       const connectedStepIds = new Set<string>()
       connections.forEach(conn => {
         connectedStepIds.add(conn.fromStepId)
         connectedStepIds.add(conn.toStepId)
       })
-      
-      // Find root nodes (no incoming connections)
-      const hasIncoming = new Set(connections.map(c => c.toStepId))
-      const rootNodes = workflowSteps.filter(step => 
+      const rootNodes = workflowSteps.filter(step =>
         connectedStepIds.has(step.id) && !hasIncoming.has(step.id)
       )
-      
-      // BFS to generate workflow with parallel detection
-      interface WorkflowEntry {
-        stepNumber: number
-        subLetter?: string  // 'a', 'b', 'c' for parallel steps
-        step: WorkflowStep
-      }
-      
-      const entries: WorkflowEntry[] = []
+
+      // BFS to determine display order
+      const orderMap = new Map<string, number>()
       const visited = new Set<string>()
-      let currentStepNumber = 0
-      
-      // Queue for BFS: [stepId, parentStepNumber, isPartOfParallelGroup, subLetterIndex]
-      type QueueItem = { stepId: string, parentNumber: number, parallelSiblings: string[], siblingIndex: number }
-      const queue: QueueItem[] = []
-      
-      // Start with root nodes
-      if (rootNodes.length > 1) {
-        // Multiple roots = parallel from the start
-        rootNodes.forEach((node, idx) => {
-          queue.push({ stepId: node.id, parentNumber: 0, parallelSiblings: rootNodes.map(n => n.id), siblingIndex: idx })
-        })
-      } else {
-        rootNodes.forEach(node => {
-          queue.push({ stepId: node.id, parentNumber: 0, parallelSiblings: [], siblingIndex: 0 })
-        })
-      }
-      
+      const outgoing = new Map<string, string[]>()
+      connections.forEach(conn => {
+        if (!outgoing.has(conn.fromStepId)) outgoing.set(conn.fromStepId, [])
+        outgoing.get(conn.fromStepId)!.push(conn.toStepId)
+      })
+
+      const queue = [...rootNodes.map(n => n.id)]
+      let order = 0
       while (queue.length > 0) {
-        const { stepId, parentNumber, parallelSiblings, siblingIndex } = queue.shift()!
-        
+        const stepId = queue.shift()!
         if (visited.has(stepId)) continue
         visited.add(stepId)
-        
-        const step = workflowSteps.find(s => s.id === stepId)
-        if (!step) continue
-        
-        // Determine step number and sub-letter
-        let stepNumber: number
-        let subLetter: string | undefined
-        
-        if (parallelSiblings.length > 1) {
-          // This step is part of a parallel group - use parent's next number with sub-letter
-          stepNumber = parentNumber + 1
-          subLetter = String.fromCharCode(97 + siblingIndex) // 'a', 'b', 'c', ...
-        } else {
-          // Sequential step
-          currentStepNumber++
-          stepNumber = currentStepNumber
-        }
-        
-        entries.push({ stepNumber, subLetter, step })
-        
-        // Add children to queue
+        order++
+        orderMap.set(stepId, order)
         const children = outgoing.get(stepId) || []
-        if (children.length > 1) {
-          // Fan-out: parallel children
-          children.forEach((childId, idx) => {
-            queue.push({ stepId: childId, parentNumber: stepNumber, parallelSiblings: children, siblingIndex: idx })
-          })
-        } else if (children.length === 1) {
-          // Sequential child
-          queue.push({ stepId: children[0], parentNumber: stepNumber, parallelSiblings: [], siblingIndex: 0 })
-        }
-        
-        // Update currentStepNumber for next sequential step
-        if (parallelSiblings.length <= 1) {
-          // Only increment if this wasn't a parallel step
-        } else if (siblingIndex === parallelSiblings.length - 1) {
-          // Last parallel sibling - increment for next sequential
-          currentStepNumber = stepNumber
-        }
+        children.forEach(childId => queue.push(childId))
       }
-      
-      // Sort entries and generate text
-      entries.sort((a, b) => {
-        if (a.stepNumber !== b.stepNumber) return a.stepNumber - b.stepNumber
-        // Same number = parallel, sort by sub-letter
-        return (a.subLetter || '').localeCompare(b.subLetter || '')
-      })
-      
-      const workflowText = entries.map(entry => {
-        const label = entry.subLetter ? `${entry.stepNumber}${entry.subLetter}` : `${entry.stepNumber}`
-        const desc = entry.step.description || `Use the ${entry.step.agentName} agent`
-        // Include agent name so orchestrator knows which agent to route to
-        return `${label}. [${entry.step.agentName}] ${desc}`
-      }).join('\n')
-      
-      const orderMap = new Map<string, number>()
-      entries.forEach((entry, index) => {
-        orderMap.set(entry.step.id, index + 1)
-      })
-      
+
       setWorkflowOrderMap(orderMap)
-      setGeneratedWorkflowText(workflowText)
-      onWorkflowGeneratedRef.current(workflowText)
     } else {
-      // No connections - use visual order (all sequential)
       const sortedSteps = [...workflowSteps].sort((a, b) => a.order - b.order)
-      const workflowText = sortedSteps.map((step, index) => 
-        // Include agent name so orchestrator knows which agent to route to
-        `${index + 1}. [${step.agentName}] ${step.description || `Use the ${step.agentName} agent`}`
-      ).join('\n')
-      
       const orderMap = new Map<string, number>()
       sortedSteps.forEach((step, index) => {
         orderMap.set(step.id, index + 1)
       })
-      
       setWorkflowOrderMap(orderMap)
-      setGeneratedWorkflowText(workflowText)
-      onWorkflowGeneratedRef.current(workflowText)
     }
+
+    setGeneratedWorkflowText(workflowText)
+    onWorkflowGeneratedRef.current(workflowText)
   }, [workflowSteps, connections])
   
   // Subscribe to event hub for live workflow testing
