@@ -15,10 +15,9 @@
 .DS_Store
 **/.DS_Store
 
-# Editor & assistant artifacts
+# Editor artifacts
 .vscode/
 .idea/
-.claude/
 
 # Logs
 *.log
