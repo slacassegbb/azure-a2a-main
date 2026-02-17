@@ -290,13 +290,13 @@ export function WorkflowCatalog({ onLoadWorkflow, onSaveWorkflow, onNewWorkflow,
       setIsLoading(true)
       
       try {
-        const { getAllWorkflows, isAuthenticated } = await import('@/lib/workflow-api')
+        const { getUserWorkflows, isAuthenticated } = await import('@/lib/workflow-api')
         const authenticated = isAuthenticated()
         setIsUserAuthenticated(authenticated)
-        
+
         if (authenticated) {
-          // User is authenticated - load from backend only
-          const backendWorkflows = await getAllWorkflows()
+          // User is authenticated - load user's own workflows (so delete/edit works)
+          const backendWorkflows = await getUserWorkflows()
           
           // Convert backend format to WorkflowTemplate format
           const converted: WorkflowTemplate[] = backendWorkflows.map(w => ({
