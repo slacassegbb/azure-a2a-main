@@ -146,19 +146,7 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig): VoiceRealtimeHook
       return;
     }
     
-    console.log("[VoiceRealtime] 🗣️ Speaking filler via Azure Voice Live:", text);
-    isResponseActiveRef.current = true;
-    
-    // Use response.create with conversation: "none" for out-of-band TTS
-    // This generates audio without affecting the conversation history or pending function calls
-    wsRef.current.send(JSON.stringify({
-      type: "response.create",
-      response: {
-        conversation: "none",  // Critical: creates out-of-band response that doesn't affect conversation
-        modalities: ["audio"],
-        instructions: `You are a status announcer. Your ONLY job is to speak exactly this message and nothing else: "${text}"`,
-      }
-    }));
+    console.log("[VoiceRealtime] 🗣️ Filler skipped (not supported on standard Realtime API):", text);
   }, []);
 
   // Connect to backend WebSocket for status events
@@ -452,12 +440,11 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig): VoiceRealtimeHook
             console.log("[VoiceRealtime] Session ready");
             setIsListening(true);
             
-            // Send a friendly greeting using out-of-band TTS (only on session.created)
+            // Send a friendly greeting (only on session.created)
             if (msg.type === "session.created" && wsRef.current?.readyState === WebSocket.OPEN) {
               wsRef.current.send(JSON.stringify({
                 type: "response.create",
                 response: {
-                  conversation: "none",  // Out-of-band: won't affect conversation history
                   modalities: ["audio", "text"],
                   instructions: "Say a brief, warm greeting like: 'Hey there! How can I help you today?' Keep it natural and friendly, just 1 sentence.",
                 }
@@ -775,7 +762,7 @@ IMPORTANT RULES:
       ws.onclose = (event) => {
         console.log("[VoiceRealtime] Disconnected:", event.code, event.reason);
         if (event.code === 1006) {
-          setError("Connection failed - check NEXT_PUBLIC_AZURE_AI_FOUNDRY_PROJECT_ENDPOINT");
+          setError("Connection failed - check NEXT_PUBLIC_VOICE_ENDPOINT");
         }
         setIsConnected(false);
         setIsListening(false);
