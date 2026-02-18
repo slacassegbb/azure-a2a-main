@@ -1,0 +1,2316 @@
+manifest:
+  version: "0.1.3"
+  schema: https://a2as.org/cert/schema
+  subject:
+    name: slacassegbb/azure-a2a-main
+    source: https://github.com/slacassegbb/azure-a2a-main
+    branch: main
+    commit: "275e1dfb"
+    scope: [backend/hosts/multiagent/core/agent_registry.py, backend/hosts/multiagent/core/memory_operations.py, backend/hosts/multiagent/core/workflow_orchestration.py,
+      backend/hosts/multiagent/foundry_agent_a2a.py, backend/hosts/multiagent/host_agent.py, backend/hosts/multiagent/remote_agent_connection.py,
+      backend/service/server/adk_host_manager.py, backend/service/server/foundry_host_manager.py, remote_agents/azurefoundry_APCalc/foundry_agent.py,
+      remote_agents/azurefoundry_APCalc/foundry_agent_executor.py, remote_agents/azurefoundry_APES/foundry_agent.py, remote_agents/azurefoundry_APES/foundry_agent_executor.py,
+      remote_agents/azurefoundry_Biology/foundry_agent.py, remote_agents/azurefoundry_Biology/foundry_agent_executor.py, remote_agents/azurefoundry_Deep_Search/foundry_agent.py,
+      remote_agents/azurefoundry_Deep_Search/foundry_agent_executor.py, remote_agents/azurefoundry_English/foundry_agent.py,
+      remote_agents/azurefoundry_English/foundry_agent_executor.py, remote_agents/azurefoundry_HubSpot/__main__.py, remote_agents/azurefoundry_HubSpot/foundry_agent.py,
+      remote_agents/azurefoundry_HubSpot/foundry_agent_executor.py, remote_agents/azurefoundry_QuickBooks/foundry_agent.py,
+      remote_agents/azurefoundry_QuickBooks/foundry_agent_executor.py, remote_agents/azurefoundry_SN/foundry_agent.py, remote_agents/azurefoundry_SN/foundry_agent_executor.py,
+      remote_agents/azurefoundry_SalesForce/foundry_agent.py, remote_agents/azurefoundry_SalesForce/foundry_agent_executor.py,
+      remote_agents/azurefoundry_Stripe/__main__.py, remote_agents/azurefoundry_Stripe/foundry_agent.py, remote_agents/azurefoundry_Stripe/foundry_agent_executor.py,
+      remote_agents/azurefoundry_assessment/foundry_agent.py, remote_agents/azurefoundry_assessment/foundry_agent_executor.py,
+      remote_agents/azurefoundry_branding/foundry_agent.py, remote_agents/azurefoundry_branding/foundry_agent_executor.py,
+      remote_agents/azurefoundry_claims/foundry_agent.py, remote_agents/azurefoundry_claims/foundry_agent_executor.py, remote_agents/azurefoundry_classification/foundry_agent.py,
+      remote_agents/azurefoundry_classification/foundry_agent_executor.py, remote_agents/azurefoundry_email/foundry_agent.py,
+      remote_agents/azurefoundry_email/foundry_agent_executor.py, remote_agents/azurefoundry_fraud/foundry_agent.py, remote_agents/azurefoundry_fraud/foundry_agent_executor.py,
+      remote_agents/azurefoundry_image_analysis/foundry_agent.py, remote_agents/azurefoundry_image_analysis/foundry_agent_executor.py,
+      remote_agents/azurefoundry_image_generator/foundry_agent.py, remote_agents/azurefoundry_image_generator/foundry_agent_executor.py,
+      remote_agents/azurefoundry_interview/foundry_agent.py, remote_agents/azurefoundry_interview/foundry_agent_executor.py,
+      remote_agents/azurefoundry_legal/foundry_agent.py, remote_agents/azurefoundry_legal/foundry_agent_executor.py, remote_agents/azurefoundry_reporter/foundry_agent.py,
+      remote_agents/azurefoundry_reporter/foundry_agent_executor.py, remote_agents/azurefoundry_template/foundry_agent.py,
+      remote_agents/azurefoundry_template/foundry_agent_executor.py, remote_agents/azurefoundry_twilio2/foundry_agent.py,
+      remote_agents/azurefoundry_twilio2/foundry_agent_executor.py, remote_agents/azurefoundry_video/foundry_agent.py, remote_agents/azurefoundry_video/foundry_agent_executor.py,
+      remote_agents/google_adk/agent.py]
+  issued:
+    by: A2AS.org
+    at: '2026-02-11T16:37:13Z'
+    url: https://a2as.org/certified/agents/slacassegbb/azure-a2a-main
+  signatures:
+    digest: sha256:8uE2zt8cTLjXUglIImcemWXUZ8-651toL-am71H2xxg
+    key: ed25519:vCOJbNFVGT7Df48sDlnrrTYphzpz_V_8mlvrFIdsMl4
+    sig: ed25519:3-b9a-LWziHhkt-7KcMgEvRBNo9SYi5eB2FfFQ9bDBSg4Z_YyiExhMP1nyJCMoEtZS7oNBh1mgEwxHE8bSq3Dg
+
+agents:
+  agent._build_agent:
+    type: factory
+    models: [gemini-2.0-flash-001]
+    tools: [detect_sentiment]
+    params:
+      name: sentiment_analysis_agent
+      description: This agent determines the sentiment of a customer given context, and personalizes the experience based
+        on sentiment and context.
+      instruction: ['You are a sentiment analysis agent. Your job is to:', '- Analyze the sentiment (positive, negative, or
+          neutral) of the user''s message and context.', '- Return a user-facing message that:', '- Clearly states the detected
+          sentiment in a natural way (e.g., ''The Sentiment Analysis Agent identified the sentiment as ... regarding ...'').',
+        '- Includes an empathetic, context-aware message.', '- Optionally, ends with a prompt for further assistance.', '-
+          Example output:', 'The Sentiment Analysis Agent identified the sentiment as neutral regarding the issue you raised
+          about credit card fraud. Here''s the personalized message:', '"Thank you for your feedback. If you have any specific
+          requests or feelings to share, we''re here to listen."', Let me know how I can assist further with this matter.,
+        'Always be concise, friendly, and context-aware.']
+      function: _build_agent
+  agent.create_agent:
+    type: factory
+    models: [gemini-2.0-flash-001]
+    tools: [list_remote_agents, send_message]
+    params:
+      name: host_agent
+      instruction: self.root_instruction
+      before_model_callback: self.before_model_callback
+      description: This agent orchestrates the decomposition of the user request into tasks that can be performed by the child
+        agents.
+      function: create_agent
+
+models:
+  gemini-2.0-flash-001:
+    type: literal
+    agents: [agent._build_agent, agent.create_agent]
+
+tools:
+  detect_sentiment:
+    type: function
+    agents: [agent._build_agent]
+  list_remote_agents:
+    type: function
+    agents: [agent.create_agent]
+    params:
+      module: self.list_remote_agents
+      description: List the available remote agents you can use to delegate the task.
+  send_message:
+    type: function
+    agents: [agent.create_agent]
+    params:
+      module: self.send_message
+      description: Send a message to the conversation thread.
+
+imports:
+  _json: json
+  _re: re
+  a2a_document_processor: a2a_document_processor.a2a_document_processor
+  a2a_memory_service: a2a_memory_service.a2a_memory_service
+  A2ACardResolver: a2a.client.A2ACardResolver
+  A2AClient: a2a.client.A2AClient
+  A2AClientHTTPError: a2a.client.errors.A2AClientHTTPError
+  A2ADataPart: a2a.types.DataPart
+  A2AFilePart: a2a.types.FilePart
+  A2APart: a2a.types.Part
+  A2AStarletteApplication: a2a.server.apps.A2AStarletteApplication
+  A2ATextPart: a2a.types.TextPart
+  ADKEvent: google.adk.events.event.Event
+  ADKEventActions: google.adk.events.event_actions.EventActions
+  ADKHostManager: adk_host_manager.ADKHostManager
+  Agent: azure.ai.agents.models.Agent
+  AGENT_CAPABILITIES: agent_config.AGENT_CAPABILITIES
+  AGENT_DESCRIPTION: agent_config.AGENT_DESCRIPTION
+  AGENT_FULL_TITLE: agent_config.AGENT_FULL_TITLE
+  AGENT_ID: agent_config.AGENT_ID
+  AGENT_INPUT_MODES: agent_config.AGENT_INPUT_MODES
+  AGENT_NAME: agent_config.AGENT_NAME
+  AGENT_OUTPUT_MODES: agent_config.AGENT_OUTPUT_MODES
+  AGENT_ROLE: interview_config.AGENT_ROLE
+  AGENT_SKILLS: agent_config.AGENT_SKILLS
+  AGENT_VERSION: agent_config.AGENT_VERSION
+  AgentCapabilities: a2a.types.AgentCapabilities
+  AgentCard: a2a.types.AgentCard
+  AgentExecutor: a2a.server.agent_execution.AgentExecutor
+  AgentModePlan: models.AgentModePlan
+  AgentModeTask: models.AgentModeTask
+  AgentRegistry: agent_registry.AgentRegistry
+  AgentsClient: azure.ai.agents.AgentsClient
+  AgentSkill: a2a.types.AgentSkill
+  AgentThread: azure.ai.agents.models.AgentThread
+  AIProjectClient: azure.ai.projects.AIProjectClient
+  Any: typing.Any
+  APIRouter: fastapi.APIRouter
+  ApplicationManager: service.server.application_manager.ApplicationManager
+  apply_custom_instruction: instructions.apply_custom_instruction
+  Artifact: a2a.types.Artifact
+  ast: ast
+  async_lib: asyncio
+  AsyncAzureOpenAI: openai.AsyncAzureOpenAI
+  asyncio: asyncio
+  AsyncIterable: typing.AsyncIterable
+  AsyncIterator: collections.abc.AsyncIterator
+  AzureCliCredential: azure.identity.aio.AzureCliCredential
+  AzureClients: azure_clients.AzureClients
+  AzureNamedKeyCredential: azure.core.credentials.AzureNamedKeyCredential
+  AzureSasCredential: azure.core.credentials.AzureSasCredential
+  base64: base64
+  BaseModel: pydantic.BaseModel
+  BingGroundingAgentTool: azure.ai.projects.models.BingGroundingAgentTool
+  BingGroundingSearchConfiguration: azure.ai.projects.models.BingGroundingSearchConfiguration
+  BingGroundingSearchToolParameters: azure.ai.projects.models.BingGroundingSearchToolParameters
+  BingGroundingTool: azure.ai.agents.models.BingGroundingTool
+  BlobSasPermissions: azure.storage.blob.BlobSasPermissions
+  BlobServiceClient: azure.storage.blob.BlobServiceClient
+  build_agent_mode_instruction: instructions.build_agent_mode_instruction
+  build_orchestrator_instruction: instructions.build_orchestrator_instruction
+  BytesIO: io.BytesIO
+  Callable: typing.Callable
+  CallbackContext: google.adk.agents.callback_context.CallbackContext
+  cast: typing.cast
+  ChainedTokenCredential: azure.identity.ChainedTokenCredential
+  click: click
+  ClientSecretCredential: azure.identity.ClientSecretCredential
+  COMPANY_DESCRIPTION: interview_config.COMPANY_DESCRIPTION
+  COMPANY_NAME: interview_config.COMPANY_NAME
+  configure_azure_monitor: azure.monitor.opentelemetry.configure_azure_monitor
+  Conversation: service.types.Conversation
+  CONVERSATION_STYLE: interview_config.CONVERSATION_STYLE
+  convert_artifact_dict_to_file_part: utils.file_parts.convert_artifact_dict_to_file_part
+  copy: copy
+  create_file_part: utils.file_parts.create_file_part
+  create_foundry_agent_executor: foundry_agent_executor.create_foundry_agent_executor
+  create_foundry_legal_agent_executor: foundry_agent_executor.create_foundry_legal_agent_executor
+  create_foundry_reporter_executor: foundry_agent_executor.create_foundry_reporter_executor
+  CreateConversationResponse: service.types.CreateConversationResponse
+  dataclass: dataclasses.dataclass
+  DataPart: a2a.types.DataPart
+  datetime: datetime
+  DEFAULT_A2A_PORT: agent_config.DEFAULT_A2A_PORT
+  DEFAULT_UI_PORT: agent_config.DEFAULT_UI_PORT
+  DefaultAzureCredential: azure.identity.DefaultAzureCredential
+  defaultdict: collections.defaultdict
+  DefaultRequestHandler: a2a.server.request_handlers.DefaultRequestHandler
+  Dict: typing.Dict
+  DOCUMENT_USAGE_INSTRUCTIONS: interview_config.DOCUMENT_USAGE_INSTRUCTIONS
+  dt_datetime: datetime.datetime
+  DummyToolContext: tool_context.DummyToolContext
+  Enum: enum.Enum
+  EnvironmentCredential: azure.identity.EnvironmentCredential
+  Event: service.types.Event
+  EventEmitters: event_emitters.EventEmitters
+  EventQueue: a2a.server.events.event_queue.EventQueue
+  extract_all_images: utils.file_parts.extract_all_images
+  extract_filename: utils.file_parts.extract_filename
+  extract_mime_type: utils.file_parts.extract_mime_type
+  extract_uri: utils.file_parts.extract_uri
+  FastAPI: fastapi.FastAPI
+  Field: pydantic.Field
+  FilePart: a2a.types.FilePart
+  FilePurpose: azure.ai.agents.models.FilePurpose
+  FileSearchTool: azure.ai.agents.models.FileSearchTool
+  FileWithBytes: a2a.types.FileWithBytes
+  FileWithUri: a2a.types.FileWithUri
+  FoundryAgentExecutor: foundry_agent_executor.FoundryAgentExecutor
+  FoundryAssessmentAgent: foundry_agent.FoundryAssessmentAgent
+  FoundryBrandingAgent: foundry_agent.FoundryBrandingAgent
+  FoundryClaimsAgent: foundry_agent.FoundryClaimsAgent
+  FoundryClassificationAgent: foundry_agent.FoundryClassificationAgent
+  FoundryDeepSearchAgent: foundry_agent.FoundryDeepSearchAgent
+  FoundryEmailAgent: foundry_agent.FoundryEmailAgent
+  FoundryFraudAgent: foundry_agent.FoundryFraudAgent
+  FoundryHostAgent2: hosts.multiagent.foundry_agent_a2a.FoundryHostAgent2
+  FoundryHostManager: foundry_host_manager.FoundryHostManager
+  FoundryHubSpotAgent: foundry_agent.FoundryHubSpotAgent
+  FoundryImageAnalysisAgent: foundry_agent.FoundryImageAnalysisAgent
+  FoundryImageGeneratorAgent: foundry_agent.FoundryImageGeneratorAgent
+  FoundryLegalAgent: foundry_agent.FoundryLegalAgent
+  FoundryLegalAgentExecutor: foundry_agent_executor.FoundryLegalAgentExecutor
+  FoundryQuickBooksAgent: foundry_agent.FoundryQuickBooksAgent
+  FoundryReporterAgent: foundry_agent.FoundryReporterAgent
+  FoundrySalesforceAgent: foundry_agent.FoundrySalesforceAgent
+  FoundrySNAgent: foundry_agent.FoundrySNAgent
+  FoundryStripeAgent: foundry_agent.FoundryStripeAgent
+  FoundryTemplateAgent: foundry_agent.FoundryTemplateAgent
+  FoundryTemplateAgentExecutor: foundry_agent_executor.FoundryTemplateAgentExecutor
+  FoundryTwilioAgent: foundry_agent.FoundryTwilioAgent
+  FunctionTool: azure.ai.agents.models.FunctionTool
+  generate_blob_sas: azure.storage.blob.generate_blob_sas
+  generate_report_pdf: pdf_generator.generate_report_pdf
+  get_agent_card: utils.agent_card.get_agent_card
+  get_bearer_token_provider: azure.identity.get_bearer_token_provider
+  get_context_id: utils.get_context_id
+  get_host_agent_url: utils.self_registration.get_host_agent_url
+  get_message_id: adk_host_manager.get_message_id
+  get_registry: service.agent_registry.get_registry
+  get_session_manager: service.collaborative_sessions.get_session_manager
+  get_session_registry: service.agent_registry.get_session_registry
+  get_task_id: utils.get_task_id
+  get_tenant_from_context: utils.tenant.get_tenant_from_context
+  get_websocket_server: service.websocket_server.get_websocket_server
+  get_websocket_streamer: service.websocket_streamer.get_websocket_streamer
+  get_workflow_scheduler: service.scheduler_service.get_workflow_scheduler
+  GetEventResponse: service.types.GetEventResponse
+  glob: glob
+  GoalStatus: models.GoalStatus
+  gr: gradio
+  HostAgent: hosts.multiagent.host_agent.HostAgent
+  html: html
+  httpx: httpx
+  Image: PIL.Image
+  initialize_foundry_agents_at_startup: foundry_agent_executor.initialize_foundry_agents_at_startup
+  initialize_foundry_assessment_agents_at_startup: foundry_agent_executor.initialize_foundry_assessment_agents_at_startup
+  initialize_foundry_branding_agents_at_startup: foundry_agent_executor.initialize_foundry_branding_agents_at_startup
+  initialize_foundry_claims_agents_at_startup: foundry_agent_executor.initialize_foundry_claims_agents_at_startup
+  initialize_foundry_classification_agents_at_startup: foundry_agent_executor.initialize_foundry_classification_agents_at_startup
+  initialize_foundry_deep_search_agents_at_startup: foundry_agent_executor.initialize_foundry_deep_search_agents_at_startup
+  initialize_foundry_fraud_agents_at_startup: foundry_agent_executor.initialize_foundry_fraud_agents_at_startup
+  initialize_foundry_image_analyzers_at_startup: foundry_agent_executor.initialize_foundry_image_analyzers_at_startup
+  initialize_foundry_image_generators_at_startup: foundry_agent_executor.initialize_foundry_image_generators_at_startup
+  initialize_foundry_legal_agents_at_startup: foundry_agent_executor.initialize_foundry_legal_agents_at_startup
+  initialize_foundry_reporter_agents_at_startup: foundry_agent_executor.initialize_foundry_reporter_agents_at_startup
+  initialize_foundry_template_agents_at_startup: foundry_agent_executor.initialize_foundry_template_agents_at_startup
+  initialize_foundry_twilio_agents_at_startup: foundry_agent_executor.initialize_foundry_twilio_agents_at_startup
+  InMemoryArtifactService: google.adk.artifacts.InMemoryArtifactService
+  InMemoryFakeAgentManager: in_memory_manager.InMemoryFakeAgentManager
+  InMemoryMemoryService: google.adk.memory.in_memory_memory_service.InMemoryMemoryService
+  InMemorySessionService: google.adk.sessions.in_memory_session_service.InMemorySessionService
+  InMemoryTaskStore: a2a.server.tasks.InMemoryTaskStore
+  INTERVIEW_QUESTIONS: interview_config.INTERVIEW_QUESTIONS
+  io: io
+  is_file_part: utils.file_parts.is_file_part
+  is_image_part: utils.file_parts.is_image_part
+  is_pdf_available: pdf_generator.is_pdf_available
+  Iterable: typing.Iterable
+  json: json
+  JSONRPCErrorResponse: a2a.types.JSONRPCErrorResponse
+  List: typing.List
+  ListAgentResponse: service.types.ListAgentResponse
+  ListConversationResponse: service.types.ListConversationResponse
+  ListMessageResponse: service.types.ListMessageResponse
+  ListSortOrder: azure.ai.agents.models.ListSortOrder
+  ListTaskResponse: service.types.ListTaskResponse
+  Literal: typing.Literal
+  LlmAgent: google.adk.agents.llm_agent.LlmAgent
+  load_dotenv: dotenv.load_dotenv
+  log_debug: log_config.log_debug
+  log_error: log_config.log_error
+  log_foundry_debug: log_config.log_foundry_debug
+  log_info: log_config.log_info
+  log_success: log_config.log_success
+  log_warning: log_config.log_warning
+  logging: logging
+  ManagedIdentityCredential: azure.identity.aio.ManagedIdentityCredential
+  McpTool: azure.ai.agents.models.McpTool
+  MemoryOperations: memory_operations.MemoryOperations
+  Message: a2a.types.Message
+  MessageInfo: service.types.MessageInfo
+  MessageSendConfiguration: a2a.types.MessageSendConfiguration
+  MessageSendParams: a2a.types.MessageSendParams
+  MODEL_DEPLOYMENT_NAME: agent_config.MODEL_DEPLOYMENT_NAME
+  new_agent_parts_message: a2a.utils.message.new_agent_parts_message
+  new_agent_text_message: a2a.utils.message.new_agent_text_message
+  new_task: a2a.utils.new_task
+  NextStep: models.NextStep
+  normalize_env_bool: utils.normalize_env_bool
+  normalize_env_int: utils.normalize_env_int
+  OpenAI: openai.OpenAI
+  Optional: typing.Optional
+  os: os
+  ParsedWorkflow: models.ParsedWorkflow
+  ParsedWorkflowGroup: models.ParsedWorkflowGroup
+  ParsedWorkflowStep: models.ParsedWorkflowStep
+  Part: a2a.types.Part
+  Path: pathlib.Path
+  pd: pandas
+  PendingMessageResponse: service.types.PendingMessageResponse
+  PlainTextResponse: starlette.responses.PlainTextResponse
+  PROBING_STRATEGIES: interview_config.PROBING_STRATEGIES
+  PromptAgentDefinition: azure.ai.projects.models.PromptAgentDefinition
+  QUALIFICATION_CHECKLIST: interview_config.QUALIFICATION_CHECKLIST
+  re: re
+  ReadonlyContext: google.adk.agents.readonly_context.ReadonlyContext
+  register_agent_file: service.agent_file_registry.register_agent_file
+  register_with_host_agent: utils.self_registration.register_with_host_agent
+  RegisterAgentResponse: service.types.RegisterAgentResponse
+  RemoteAgentConnections: remote_agent_connection.RemoteAgentConnections
+  Request: starlette.requests.Request
+  RequestContext: a2a.server.agent_execution.context.RequestContext
+  RequiredMcpToolCall: azure.ai.agents.models.RequiredMcpToolCall
+  Response: fastapi.Response
+  Role: a2a.types.Role
+  Route: starlette.routing.Route
+  RouteSelection: models.RouteSelection
+  Runner: google.adk.Runner
+  send_email: email_config.send_email
+  send_email_with_cc: email_config.send_email_with_cc
+  SendMessageRequest: a2a.types.SendMessageRequest
+  SendMessageResponse: service.types.SendMessageResponse
+  SendStreamingMessageRequest: a2a.types.SendStreamingMessageRequest
+  SentimentAnalysisAgent: agent.SentimentAnalysisAgent
+  SentimentAnalysisAgentExecutor: agent_executor.SentimentAnalysisAgentExecutor
+  server: uvicorn.server
+  ServerError: a2a.utils.errors.ServerError
+  SessionContext: models.SessionContext
+  Starlette: starlette.applications.Starlette
+  StreamingHandlers: streaming_handlers.StreamingHandlers
+  sys: sys
+  Task: a2a.types.Task
+  TaskArtifactUpdateEvent: a2a.types.TaskArtifactUpdateEvent
+  TaskCallbackArg: hosts.multiagent.remote_agent_connection.TaskCallbackArg
+  TaskState: a2a.types.TaskState
+  TaskStateEnum: models.TaskStateEnum
+  TaskStatus: a2a.types.TaskStatus
+  TaskStatusUpdateEvent: a2a.types.TaskStatusUpdateEvent
+  TaskUpdateCallback: remote_agent_connection.TaskUpdateCallback
+  TaskUpdater: a2a.server.tasks.TaskUpdater
+  tempfile: tempfile
+  TextPart: a2a.types.TextPart
+  threading: threading
+  ThreadMessage: azure.ai.agents.models.ThreadMessage
+  ThreadRun: azure.ai.agents.models.ThreadRun
+  time: time
+  timedelta: datetime.timedelta
+  timezone: datetime.timezone
+  ToolApproval: azure.ai.agents.models.ToolApproval
+  ToolContext: google.adk.tools.tool_context.ToolContext
+  ToolOutput: azure.ai.agents.models.ToolOutput
+  ToolSet: azure.ai.agents.models.ToolSet
+  trace: opentelemetry.trace
+  traceback: traceback
+  trigger_websocket_agent_refresh: service.server.server.trigger_websocket_agent_refresh
+  Tuple: typing.Tuple
+  TwilioClient: twilio.rest.Client
+  TwilioRestException: twilio.base.exceptions.TwilioRestException
+  types: google.genai.types
+  UI_CHAT_DESCRIPTION: agent_config.UI_CHAT_DESCRIPTION
+  UI_HEADING: agent_config.UI_HEADING
+  UI_LOGO_PATH: agent_config.UI_LOGO_PATH
+  UI_MARKDOWN_DESCRIPTION: agent_config.UI_MARKDOWN_DESCRIPTION
+  UI_TITLE: agent_config.UI_TITLE
+  UnidentifiedImageError: PIL.UnidentifiedImageError
+  UnsupportedOperationError: a2a.types.UnsupportedOperationError
+  urlparse: urllib.parse.urlparse
+  uuid: uuid
+  uuid4: uuid.uuid4
+  uvicorn: uvicorn
+  VECTOR_STORE_NAME: agent_config.VECTOR_STORE_NAME
+  WorkflowOrchestration: workflow_orchestration.WorkflowOrchestration
+  WorkflowParser: workflow_parser.WorkflowParser
+  WorkflowStepType: models.WorkflowStepType
+
+functions:
+  __init__:
+    type: sync
+    module: remote_agents.azurefoundry_interview.foundry_agent
+    args: [self]
+  _add_context_to_message:
+    type: async
+    module: backend.hosts.multiagent.foundry_agent_a2a
+    args: [self, message, session_context, thread_id, target_agent_name]
+    params:
+      returns: str
+  _add_status_message_to_conversation:
+    type: sync
+    module: backend.hosts.multiagent.foundry_agent_a2a
+    args: [self, status_text, contextId]
+  _agent_card_to_dict:
+    type: sync
+    module: backend.hosts.multiagent.core.agent_registry
+    args: [self, card]
+    params:
+      returns: Dict
+  _agent_mode_orchestration_loop:
+    type: async
+    module: backend.hosts.multiagent.core.workflow_orchestration
+    args: [self, user_message, context_id, session_context, event_logger, workflow, workflow_goal]
+    params:
+      returns: List[str]
+  _apply_role_to_part:
+    type: sync
+    module: backend.hosts.multiagent.foundry_agent_a2a
+    args: [part, role]
+    params:
+      returns: None
+  _attachment_to_bytes:
+    type: sync
+    module: remote_agents.azurefoundry_image_generator.foundry_agent
+    args: [part]
+    params:
+      returns: Optional[bytes]
+  _build_agent:
+    type: sync
+    module: remote_agents.google_adk.agent
+    args: [self]
+    params:
+      returns: LlmAgent
+  _build_agent_skills:
+    type: sync
+    module: remote_agents.azurefoundry_Biology.__main__
+    params:
+      returns: List[AgentSkill]
+  _build_branding_skills:
+    type: sync
+    module: remote_agents.azurefoundry_branding.__main__
+    params:
+      returns: List[AgentSkill]
+  _build_image_edit_guidance:
+    type: sync
+    module: backend.hosts.multiagent.foundry_agent_a2a
+    args: [self, processed_parts]
+    params:
+      returns: Optional[str]
+  _build_mask_parts:
+    type: sync
+    module: backend.hosts.multiagent.foundry_agent_a2a
+    args: [file_id, mime_type, artifact_uri, artifact_info, file_bytes, artifact_response]
+    params:
+      returns: tuple
+  _build_message:
+    type: sync
+    module: backend.service.server.foundry_host_manager
+    args: [role]
+    params:
+      returns: Message
+  _call_azure_openai_raw:
+    type: async
+    module: backend.hosts.multiagent.foundry_agent_a2a
+    args: [self, system_prompt, user_prompt, context_id]
+    params:
+      returns: str
+  _call_azure_openai_structured:
+    type: async
+    module: backend.hosts.multiagent.foundry_agent_a2a
+    args: [self, system_prompt, user_prompt, response_model, context_id]
+    params:
+      returns: BaseModel
+  _check_agent_health:
+    type: async
+    module: backend.service.server.server
+    args: [self, agent_url]
+    params:
+      returns: bool
+  _clean_file_bytes_from_parts:
+    type: sync
+    module: backend.hosts.multiagent.foundry_agent_a2a
+    args: [self, parts, artifact_info]
+    params:
+      returns: List[Part]
+  _clear_memory_on_startup:
+    type: sync
+    module: backend.hosts.multiagent.foundry_agent_a2a
+    args: [self]
+  _collect_active_runs:
+    type: sync
+    module: remote_agents.azurefoundry_image_generator.foundry_agent
+    args: [listing]
+    params:
+      returns: List[ThreadRun]
+  _collect_artifacts:
+    type: sync
+    module: backend.hosts.multiagent.core.workflow_orchestration
+    args: [self, artifacts, session_context]
+    params:
+      returns: List[str]
+  _convert_parts_to_payload:
+    type: sync
+    module: remote_agents.azurefoundry_image_analysis.foundry_agent_executor
+    args: [self, parts]
+    params:
+      returns: tuple
+  _convert_parts_to_text:
+    type: sync
+    module: remote_agents.azurefoundry_SN.foundry_agent_executor
+    args: [self, parts]
+    params:
+      returns: str
+  _create_agent_at_startup_task:
+    type: async
+    module: backend.hosts.multiagent.foundry_agent_a2a
+    args: [self]
+  _create_agent_card:
+    type: sync
+    module: remote_agents.azurefoundry_Biology.__main__
+    args: [host, port]
+    params:
+      returns: AgentCard
+  _create_conversation:
+    type: async
+    module: backend.service.server.server
+    args: [self]
+  _create_meaningful_citation_text:
+    type: sync
+    module: remote_agents.azurefoundry_interview.foundry_agent
+    args: [self, quote, context, file_id]
+    params:
+      returns: str
+  _create_memory_artifact:
+    type: async
+    module: backend.hosts.multiagent.core.memory_operations
+    args: [self, memory_results, query]
+    params:
+      returns: Optional[Artifact]
+  _create_response_with_streaming:
+    type: async
+    module: backend.hosts.multiagent.foundry_agent_a2a
+    args: [self, user_message, context_id, session_context, tools, instructions, event_logger]
+    params:
+      returns: Dict
+  _deduplicate_workflow_files:
+    type: sync
+    module: backend.hosts.multiagent.core.workflow_orchestration
+    args: [self, session_context]
+    params:
+      returns: None
+  _delete_conversation:
+    type: async
+    module: backend.service.server.server
+    args: [self, request]
+  _disable_session_agent:
+    type: async
+    module: backend.service.server.server
+    args: [self, request]
+  _do_flatten:
+    type: sync
+    module: backend.hosts.multiagent.foundry_agent_a2a
+    args: [items]
+  _download_from_url:
+    type: async
+    module: remote_agents.azurefoundry_video.foundry_agent
+    args: [self, url]
+    params:
+      returns: bytes
+  _download_video_content:
+    type: async
+    module: remote_agents.azurefoundry_video.foundry_agent
+    args: [self, generation_id]
+    params:
+      returns: bytes
+  _enable_session_agent:
+    type: async
+    module: backend.service.server.server
+    args: [self, request]
+  _ensure_agent_initialized:
+    type: sync
+    module: backend.service.server.adk_host_manager
+    args: [self]
+  _ensure_host_agent_initialized:
+    type: sync
+    module: backend.service.server.foundry_host_manager
+    args: [self]
+  _ensure_png:
+    type: sync
+    module: remote_agents.azurefoundry_image_generator.foundry_agent
+    args: [self, raw_bytes]
+    params:
+      returns: bytes
+  _evaluate_task_completion:
+    type: async
+    module: backend.hosts.multiagent.foundry_agent_a2a
+    args: [self, original_request, task_response, agent_name]
+    params:
+      returns: Dict
+  _execute_orchestrated_task:
+    type: async
+    module: backend.hosts.multiagent.core.workflow_orchestration
+    args: [self, task, session_context, context_id, workflow, user_message, extract_text_fn, previous_task_outputs]
+    params:
+      returns: Dict
+  _execute_parsed_workflow:
+    type: async
+    module: backend.hosts.multiagent.core.workflow_orchestration
+    args: [self, parsed_workflow, user_message, context_id, session_context]
+    params:
+      returns: List[str]
+  _execute_single_tool_call:
+    type: async
+    module: backend.hosts.multiagent.foundry_agent_a2a
+    args: [self, function_name, arguments_json, context_id, session_context]
+    params:
+      returns: str
+  _execute_tool_calls_from_response:
+    type: async
+    module: backend.hosts.multiagent.foundry_agent_a2a
+    args: [self, tool_calls, context_id, session_context, event_logger]
+    params:
+      returns: List[Dict]
+  _execute_workflow_step_with_state:
+    type: async
+    module: backend.hosts.multiagent.core.workflow_orchestration
+    args: [self, step, task, session_context, context_id, user_message, extract_text_fn]
+    params:
+      returns: Dict
+  _extract_agent_name_from_address:
+    type: sync
+    module: backend.service.server.server
+    args: [self, agent_address]
+    params:
+      returns: str
+  _extract_attachment_uri_by_role:
+    type: sync
+    module: remote_agents.azurefoundry_image_generator.foundry_agent
+    args: [attachments, role]
+    params:
+      returns: Optional[str]
+  _extract_citation_context:
+    type: sync
+    module: remote_agents.azurefoundry_interview.foundry_agent
+    args: [self, main_text, annotation, quote]
+    params:
+      returns: str
+  _extract_failure_reason:
+    type: sync
+    module: backend.hosts.multiagent.foundry_agent_a2a
+    args: [self, failed_task]
+    params:
+      returns: str
+  _extract_file_infos:
+    type: sync
+    module: remote_agents.azurefoundry_image_generator.foundry_agent
+    args: [parts]
+    params:
+      returns: List[Dict]
+  _extract_file_uris_from_parts:
+    type: sync
+    module: backend.hosts.multiagent.core.workflow_orchestration
+    args: [self, parts]
+    params:
+      returns: List[str]
+  _extract_first_attachment_uri:
+    type: sync
+    module: remote_agents.azurefoundry_image_generator.foundry_agent
+    args: [self, attachments]
+    params:
+      returns: Optional[str]
+  _files:
+    type: sync
+    module: backend.service.server.server
+    args: [self, file_id]
+  _find_agent_registry_path:
+    type: sync
+    module: backend.hosts.multiagent.core.agent_registry
+    args: [self]
+    params:
+      returns: Path
+  _flatten_nested:
+    type: sync
+    module: backend.hosts.multiagent.foundry_agent_a2a
+    args: [items]
+    params:
+      returns: Iterable[Any]
+  _format_agent_response_for_model:
+    type: sync
+    module: backend.hosts.multiagent.foundry_agent_a2a
+    args: [self, response_parts, agent_name]
+    params:
+      returns: str
+  _format_response_with_citations:
+    type: sync
+    module: remote_agents.azurefoundry_interview.foundry_agent
+    args: [self, text_content, citations]
+    params:
+      returns: str
+  _format_tools_for_responses_api:
+    type: sync
+    module: backend.hosts.multiagent.foundry_agent_a2a
+    args: [self]
+    params:
+      returns: List[Dict]
+  _generate_failure_recovery_options:
+    type: sync
+    module: backend.hosts.multiagent.foundry_agent_a2a
+    args: [self, failed_task, agent_name, original_request]
+    params:
+      returns: List[str]
+  _generate_image_edit:
+    type: sync
+    module: remote_agents.azurefoundry_image_generator.foundry_agent
+    args: [self, client, model, prompt, image_url, mask_url, attachments, size, n_images, output_dir]
+    params:
+      returns: Dict
+  _generate_image_via_openai:
+    type: sync
+    module: remote_agents.azurefoundry_image_generator.foundry_agent
+    args: [self, payload]
+    params:
+      returns: Dict
+  _get_agent_instructions:
+    type: sync
+    module: remote_agents.azurefoundry_interview.foundry_agent
+    args: [self]
+    params:
+      returns: str
+  _get_agents:
+    type: async
+    module: backend.service.server.server
+    args: [self]
+  _get_agents_client:
+    type: sync
+    module: remote_agents.azurefoundry_Stripe.foundry_agent
+    args: [self]
+    params:
+      returns: AgentsClient
+  _get_blob_service_client:
+    type: sync
+    module: remote_agents.azurefoundry_video.foundry_agent
+    args: [self]
+    params:
+      returns: Optional[BlobServiceClient]
+  _get_catalog:
+    type: async
+    module: backend.service.server.server
+    args: [self]
+  _get_client:
+    type: sync
+    module: remote_agents.azurefoundry_interview.foundry_agent
+    args: [self]
+    params:
+      returns: AgentsClient
+  _get_events:
+    type: sync
+    module: backend.service.server.server
+    args: [self]
+  _get_legal_tools:
+    type: sync
+    module: remote_agents.azurefoundry_legal.foundry_agent
+    args: [self]
+    params:
+      returns: List[Dict]
+  _get_openai_client:
+    type: sync
+    module: remote_agents.azurefoundry_image_generator.foundry_agent
+    args: [self]
+    params:
+      returns: OpenAI
+  _get_or_create_agent:
+    type: async
+    module: remote_agents.azurefoundry_SN.foundry_agent_executor
+    args: [self]
+    params:
+      returns: FoundrySNAgent
+  _get_or_create_thread:
+    type: async
+    module: remote_agents.azurefoundry_SN.foundry_agent_executor
+    args: [self, context_id, agent, force_new]
+    params:
+      returns: str
+  _get_project_client:
+    type: sync
+    module: remote_agents.azurefoundry_interview.foundry_agent
+    args: [self]
+    params:
+      returns: AIProjectClient
+  _get_readable_file_name:
+    type: sync
+    module: remote_agents.azurefoundry_interview.foundry_agent
+    args: [self, citation]
+    params:
+      returns: str
+  _get_retry_count:
+    type: sync
+    module: backend.hosts.multiagent.foundry_agent_a2a
+    args: [self, session_context]
+    params:
+      returns: int
+  _get_root_instruction:
+    type: async
+    module: backend.service.server.server
+    args: [self]
+  _get_send_sms_tool_definition:
+    type: sync
+    module: remote_agents.azurefoundry_twilio2.foundry_agent
+    args: [self]
+    params:
+      returns: Dict
+  _get_session_agents:
+    type: async
+    module: backend.service.server.server
+    args: [self, request]
+  _get_sora_auth:
+    type: sync
+    module: remote_agents.azurefoundry_video.foundry_agent
+    args: [self]
+    params:
+      returns: Tuple
+  _get_tool_description:
+    type: sync
+    module: remote_agents.azurefoundry_interview.foundry_agent
+    args: [self, tool_type, tool_call]
+    params:
+      returns: str
+  _get_tools:
+    type: sync
+    module: backend.hosts.multiagent.foundry_agent_a2a
+    args: [self]
+    params:
+      returns: List[Dict]
+  _get_twilio_client:
+    type: sync
+    module: remote_agents.azurefoundry_twilio2.foundry_agent
+    args: [self]
+    params:
+      returns: TwilioClient
+  _handle_function_response:
+    type: async
+    module: backend.service.server.adk_host_manager
+    args: [self, part, context_id, task_id]
+    params:
+      returns: list[Part]
+  _handle_pending_input_agent:
+    type: async
+    module: backend.hosts.multiagent.foundry_agent_a2a
+    args: [self, session_context, message_parts, context_id, event_logger]
+    params:
+      returns: Optional[list]
+  _handle_tool_calls:
+    type: async
+    module: remote_agents.azurefoundry_interview.foundry_agent
+    args: [self, run, thread_id]
+  _increment_retry_count:
+    type: sync
+    module: backend.hosts.multiagent.foundry_agent_a2a
+    args: [self, session_context]
+  _infer_file_role:
+    type: sync
+    module: backend.hosts.multiagent.foundry_agent_a2a
+    args: [explicit_role, name_hint]
+    params:
+      returns: Optional[str]
+  _initialize_host:
+    type: sync
+    module: backend.service.server.adk_host_manager
+    args: [self]
+  _intelligent_route_selection:
+    type: async
+    module: backend.hosts.multiagent.core.workflow_orchestration
+    args: [self, user_message, available_workflows, context_id]
+    params:
+      returns: RouteSelection
+  _is_image_mime:
+    type: sync
+    module: remote_agents.azurefoundry_image_generator.foundry_agent
+    args: [mime, file_info]
+    params:
+      returns: bool
+  _list_agents:
+    type: async
+    module: backend.service.server.server
+    args: [self]
+  _list_conversation:
+    type: async
+    module: backend.service.server.server
+    args: [self, request]
+  _list_messages:
+    type: async
+    module: backend.service.server.server
+    args: [self, request]
+  _list_tasks:
+    type: sync
+    module: backend.service.server.server
+    args: [self]
+  _load_agent_registry:
+    type: sync
+    module: backend.hosts.multiagent.core.agent_registry
+    args: [self]
+    params:
+      returns: List[Dict]
+  _load_file_bytes:
+    type: sync
+    module: backend.hosts.multiagent.foundry_agent_a2a
+    args: [file_part, context_id]
+    params:
+      returns: tuple
+  _log_evaluation_result:
+    type: async
+    module: backend.hosts.multiagent.foundry_agent_a2a
+    args: [self, original_request, task_response, agent_name]
+  _looks_like_image:
+    type: sync
+    module: remote_agents.azurefoundry_image_generator.foundry_agent
+    args: [file_info]
+    params:
+      returns: bool
+  _make_step_result:
+    type: sync
+    module: backend.hosts.multiagent.core.workflow_orchestration
+    args: [self, step_label, agent, state, output, error, hitl_pause]
+    params:
+      returns: Dict
+  _normalize_env_value:
+    type: sync
+    module: remote_agents.azurefoundry_assessment.__main__
+    args: [raw_value]
+    params:
+      returns: str
+  _normalize_function_response_text:
+    type: sync
+    module: backend.hosts.multiagent.foundry_agent_a2a
+    args: [raw_response]
+    params:
+      returns: Any
+  _normalize_uri:
+    type: sync
+    module: backend.hosts.multiagent.foundry_agent_a2a
+    args: [value]
+    params:
+      returns: Optional[str]
+  _notify_ui_of_pending_request:
+    type: sync
+    module: remote_agents.azurefoundry_SN.foundry_agent_executor
+    args: [self, context_id, request_text]
+  _parse_retry_after_from_task:
+    type: sync
+    module: backend.hosts.multiagent.foundry_agent_a2a
+    args: [task]
+    params:
+      returns: int
+  _part_to_wrapper:
+    type: sync
+    module: backend.service.server.foundry_host_manager
+    args: [p]
+    params:
+      returns: Part
+  _payload_has_mask:
+    type: sync
+    module: remote_agents.azurefoundry_image_generator.foundry_agent
+    args: [payload]
+    params:
+      returns: bool
+  _payload_has_overlay:
+    type: sync
+    module: remote_agents.azurefoundry_image_generator.foundry_agent
+    args: [payload]
+    params:
+      returns: bool
+  _pending_messages:
+    type: async
+    module: backend.service.server.server
+    args: [self]
+  _process_request:
+    type: async
+    module: remote_agents.azurefoundry_SN.foundry_agent_executor
+    args: [self, message_parts, context_id, task_updater, request_context]
+    params:
+      returns: None
+  _process_workflow_response:
+    type: sync
+    module: backend.hosts.multiagent.core.workflow_orchestration
+    args: [self, response_obj, task, session_context, extract_text_fn]
+    params:
+      returns: str
+  _register_agent:
+    type: async
+    module: backend.service.server.server
+    args: [self, request]
+  _register_agent_by_address:
+    type: async
+    module: backend.service.server.server
+    args: [self, request]
+  _register_part_uri:
+    type: sync
+    module: backend.hosts.multiagent.foundry_agent_a2a
+    args: [part, uri]
+    params:
+      returns: None
+  _register_role:
+    type: sync
+    module: backend.hosts.multiagent.foundry_agent_a2a
+    args: [uri, role]
+    params:
+      returns: None
+  _reset_retry_count:
+    type: sync
+    module: backend.hosts.multiagent.foundry_agent_a2a
+    args: [self, session_context]
+  _reset_root_instruction:
+    type: async
+    module: backend.service.server.server
+    args: [self]
+  _resize_image_for_video:
+    type: sync
+    module: remote_agents.azurefoundry_video.foundry_agent
+    args: [self, image_path, target_size]
+    params:
+      returns: bytes
+  _resolve_agent_for_step:
+    type: sync
+    module: backend.hosts.multiagent.core.workflow_orchestration
+    args: [self, step]
+  _resolve_default_host:
+    type: sync
+    module: remote_agents.azurefoundry_assessment.__main__
+    params:
+      returns: str
+  _resolve_default_port:
+    type: sync
+    module: remote_agents.azurefoundry_assessment.__main__
+    params:
+      returns: int
+  _resolve_default_ui_port:
+    type: sync
+    module: remote_agents.azurefoundry_APCalc.__main__
+    params:
+      returns: int
+  _resolve_role:
+    type: sync
+    module: remote_agents.azurefoundry_image_generator.foundry_agent
+    args: [info]
+    params:
+      returns: Optional[str]
+  _save_agent_registry:
+    type: sync
+    module: backend.hosts.multiagent.core.agent_registry
+    args: [self, agents]
+  _search_relevant_memory:
+    type: async
+    module: backend.hosts.multiagent.core.memory_operations
+    args: [self, query, context_id, agent_name, top_k]
+    params:
+      returns: List[Dict]
+  _select_agent_for_task:
+    type: async
+    module: backend.hosts.multiagent.foundry_agent_a2a
+    args: [self, task_description, available_agents, context_id]
+    params:
+      returns: Optional[str]
+  _self_register_agent:
+    type: async
+    module: backend.service.server.server
+    args: [self, request]
+  _send_message:
+    type: async
+    module: backend.service.server.server
+    args: [self, request]
+  _setup_file_search:
+    type: async
+    module: remote_agents.azurefoundry_interview.foundry_agent
+    args: [self, files_directory]
+    params:
+      returns: Optional[FileSearchTool]
+  _should_request_input:
+    type: sync
+    module: remote_agents.azurefoundry_interview.foundry_agent_executor
+    args: [self, response]
+    params:
+      returns: bool
+  _sora_api_request:
+    type: async
+    module: remote_agents.azurefoundry_video.foundry_agent
+    args: [self, method, path, json_data, files, timeout]
+    params:
+      returns: Dict
+  _store_a2a_interaction:
+    type: async
+    module: backend.hosts.multiagent.foundry_agent_a2a
+    args: [self, outbound_request, inbound_response, agent_name, processing_time, span, context_id]
+  _store_a2a_interaction_background:
+    type: async
+    module: backend.hosts.multiagent.foundry_agent_a2a
+    args: [self, outbound_request, inbound_response, agent_name, processing_time, span, context_id]
+  _store_parts_in_session:
+    type: sync
+    module: backend.hosts.multiagent.foundry_agent_a2a
+    args: [tool_context]
+    params:
+      returns: None
+  _store_user_host_interaction:
+    type: async
+    module: backend.hosts.multiagent.foundry_agent_a2a
+    args: [self, user_message_parts, user_message_text, host_response, context_id, span, artifact_info]
+  _store_user_host_interaction_safe:
+    type: async
+    module: backend.hosts.multiagent.foundry_agent_a2a
+    args: [self, user_message_parts, user_message_text, host_response, context_id, span, artifact_info]
+  _supports_vision:
+    type: sync
+    module: remote_agents.azurefoundry_image_analysis.foundry_agent
+    args: [self]
+    params:
+      returns: bool
+  _transform_message_data:
+    type: sync
+    module: backend.service.server.server
+    args: [self, message_data]
+    params:
+      returns: dict
+  _try_send_email:
+    type: sync
+    module: remote_agents.azurefoundry_email.foundry_agent
+    args: [self, response_text]
+    params:
+      returns: tuple
+  _ui_process:
+    type: async
+    module: remote_agents.azurefoundry_assessment.__main__
+    args: [message, history]
+  _unregister_agent:
+    type: async
+    module: backend.service.server.server
+    args: [self, request]
+  _update_agent_instructions:
+    type: async
+    module: backend.hosts.multiagent.foundry_agent_a2a
+    args: [self]
+  _update_agent_registry:
+    type: sync
+    module: backend.hosts.multiagent.core.agent_registry
+    args: [self, card]
+  _update_api_key:
+    type: async
+    module: backend.service.server.server
+    args: [self, request]
+  _update_last_host_turn:
+    type: sync
+    module: backend.hosts.multiagent.foundry_agent_a2a
+    args: [self, session_context, agent_name, responses]
+    params:
+      returns: None
+  _update_root_instruction:
+    type: async
+    module: backend.service.server.server
+    args: [self, request]
+  _upload_to_blob:
+    type: sync
+    module: remote_agents.azurefoundry_video.foundry_agent
+    args: [self, file_path]
+    params:
+      returns: Optional[str]
+  _validate_twilio_config:
+    type: sync
+    module: remote_agents.azurefoundry_twilio2.foundry_agent
+    args: [self]
+    params:
+      returns: bool
+  _wrap_item_for_agent:
+    type: sync
+    module: backend.hosts.multiagent.foundry_agent_a2a
+    args: [item]
+    params:
+      returns: List[Part]
+  _write_temp_png:
+    type: sync
+    module: remote_agents.azurefoundry_image_generator.foundry_agent
+    args: [self, png_bytes]
+    params:
+      returns: str
+  add_event:
+    type: sync
+    module: backend.service.server.adk_host_manager
+    args: [self, event]
+  add_message:
+    type: async
+    module: remote_agents.azurefoundry_Stripe.foundry_agent
+    args: [self, thread_id, content, role]
+  add_or_get_task:
+    type: sync
+    module: backend.service.server.adk_host_manager
+    args: [self, event]
+  add_task:
+    type: sync
+    module: backend.service.server.adk_host_manager
+    args: [self, task]
+  adk_content_from_message:
+    type: sync
+    module: backend.service.server.adk_host_manager
+    args: [self, message]
+    params:
+      returns: types.Content
+  adk_content_to_message:
+    type: async
+    module: backend.service.server.adk_host_manager
+    args: [self, content, context_id, task_id]
+    params:
+      returns: Message
+  agents:
+    type: sync
+    module: backend.service.server.adk_host_manager
+    args: [self]
+    params:
+      returns: list[AgentCard]
+  attach_message_to_task:
+    type: sync
+    module: backend.service.server.adk_host_manager
+    args: [self, message, task_id]
+  before_model_callback:
+    type: sync
+    module: backend.hosts.multiagent.host_agent
+    args: [self, callback_context, llm_request]
+  cache_content:
+    type: sync
+    module: backend.service.server.server
+    args: [self, messages]
+  cancel:
+    type: async
+    module: remote_agents.azurefoundry_SN.foundry_agent_executor
+    args: [self, context, event_queue]
+  chat:
+    type: async
+    module: remote_agents.azurefoundry_Stripe.foundry_agent
+    args: [self, thread_id, user_message]
+    params:
+      returns: str
+  chat_response:
+    type: async
+    module: remote_agents.azurefoundry_SalesForce.__main__
+    args: [message, history]
+    params:
+      returns: List[dict]
+  chat_with_agent:
+    type: async
+    module: remote_agents.azurefoundry_HubSpot.__main__
+    args: [message, history]
+  check_pending_requests:
+    type: sync
+    module: remote_agents.azurefoundry_legal.__main__
+  check_state:
+    type: sync
+    module: backend.hosts.multiagent.host_agent
+    args: [self, context]
+  check_system_status:
+    type: sync
+    module: remote_agents.azurefoundry_assessment.__main__
+  clean_response:
+    type: sync
+    module: backend.hosts.multiagent.foundry_agent_a2a
+    args: [resp]
+  cleanup:
+    type: async
+    module: remote_agents.azurefoundry_SN.foundry_agent_executor
+    args: [self]
+  clear_chat:
+    type: sync
+    module: remote_agents.azurefoundry_HubSpot.__main__
+  clear_memory_index:
+    type: sync
+    module: backend.hosts.multiagent.core.memory_operations
+    args: [self, context_id]
+    params:
+      returns: bool
+  cli:
+    type: sync
+    module: remote_agents.azurefoundry_assessment.__main__
+    args: [host, port, ui, ui_port]
+  combined_refresh:
+    type: sync
+    module: remote_agents.azurefoundry_legal.__main__
+  conversations:
+    type: sync
+    module: backend.service.server.adk_host_manager
+    args: [self]
+    params:
+      returns: list[Conversation]
+  convert_part:
+    type: async
+    module: backend.hosts.multiagent.host_agent
+    args: [part, tool_context]
+  convert_parts:
+    type: async
+    module: backend.hosts.multiagent.host_agent
+    args: [parts, tool_context]
+  create_a2a_server:
+    type: sync
+    module: remote_agents.azurefoundry_assessment.__main__
+    args: [host, port]
+  create_agent:
+    type: async
+    module: remote_agents.azurefoundry_interview.foundry_agent
+    args: [self]
+    params:
+      returns: Agent
+  create_conversation:
+    type: async
+    module: backend.service.server.adk_host_manager
+    args: [self]
+    params:
+      returns: Conversation
+  create_foundry_agent_executor:
+    type: sync
+    module: remote_agents.azurefoundry_SN.foundry_agent_executor
+    args: [card]
+    params:
+      returns: FoundryAgentExecutor
+  create_foundry_assessment_agent:
+    type: async
+    module: remote_agents.azurefoundry_assessment.foundry_agent
+    params:
+      returns: FoundryAssessmentAgent
+  create_foundry_branding_agent:
+    type: async
+    module: remote_agents.azurefoundry_branding.foundry_agent
+    params:
+      returns: FoundryBrandingAgent
+  create_foundry_email_agent:
+    type: async
+    module: remote_agents.azurefoundry_email.foundry_agent
+    params:
+      returns: FoundryEmailAgent
+  create_foundry_image_analysis_agent:
+    type: async
+    module: remote_agents.azurefoundry_image_analysis.foundry_agent
+    params:
+      returns: FoundryImageAnalysisAgent
+  create_foundry_image_generator_agent:
+    type: async
+    module: remote_agents.azurefoundry_image_generator.foundry_agent
+    params:
+      returns: FoundryImageGeneratorAgent
+  create_foundry_legal_agent:
+    type: async
+    module: remote_agents.azurefoundry_legal.foundry_agent
+    params:
+      returns: FoundryLegalAgent
+  create_foundry_legal_agent_executor:
+    type: sync
+    module: remote_agents.azurefoundry_legal.foundry_agent_executor
+    args: [card]
+    params:
+      returns: FoundryLegalAgentExecutor
+  create_foundry_quickbooks_agent:
+    type: async
+    module: remote_agents.azurefoundry_QuickBooks.foundry_agent
+    params:
+      returns: FoundryQuickBooksAgent
+  create_foundry_reporter_agent:
+    type: async
+    module: remote_agents.azurefoundry_reporter.foundry_agent
+    params:
+      returns: FoundryReporterAgent
+  create_foundry_reporter_executor:
+    type: sync
+    module: remote_agents.azurefoundry_reporter.foundry_agent_executor
+    args: [card]
+    params:
+      returns: FoundryReporterAgentExecutor
+  create_foundry_salesforce_agent:
+    type: async
+    module: remote_agents.azurefoundry_SalesForce.foundry_agent
+    params:
+      returns: FoundrySalesforceAgent
+  create_foundry_SN_agent:
+    type: async
+    module: remote_agents.azurefoundry_SN.foundry_agent
+    params:
+      returns: FoundrySNAgent
+  create_foundry_template_agent:
+    type: async
+    module: remote_agents.azurefoundry_interview.foundry_agent
+    params:
+      returns: FoundryTemplateAgent
+  create_thread:
+    type: async
+    module: remote_agents.azurefoundry_interview.foundry_agent
+    args: [self, thread_id]
+    params:
+      returns: AgentThread
+  create_with_shared_client:
+    type: sync
+    module: backend.hosts.multiagent.foundry_agent_a2a
+    args: [remote_agent_addresses, task_callback, enable_task_evaluation, create_agent_at_startup]
+  demo_agent_interaction:
+    type: async
+    module: remote_agents.azurefoundry_interview.foundry_agent
+  detect_sentiment:
+    type: sync
+    module: remote_agents.google_adk.agent
+    args: [text]
+    params:
+      returns: dict
+  emit_event:
+    type: sync
+    module: backend.service.server.adk_host_manager
+    args: [self, task, agent_card]
+  emit_host_tokens:
+    type: async
+    module: backend.hosts.multiagent.core.workflow_orchestration
+  ensure_host_agent_initialized:
+    type: async
+    module: backend.service.server.foundry_host_manager
+    args: [self]
+  ensure_thread_ready:
+    type: async
+    module: remote_agents.azurefoundry_image_generator.foundry_agent
+    args: [self, thread_id]
+    params:
+      returns: None
+  event_logger:
+    type: sync
+    module: backend.service.server.foundry_host_manager
+    args: [event_dict]
+  events:
+    type: sync
+    module: backend.service.server.adk_host_manager
+    args: [self]
+    params:
+      returns: list[Event]
+  execute:
+    type: async
+    module: remote_agents.azurefoundry_SN.foundry_agent_executor
+    args: [self, context, event_queue]
+  execute_parallel_step:
+    type: async
+    module: backend.hosts.multiagent.core.workflow_orchestration
+    args: [step, task]
+  execute_single_workflow:
+    type: async
+    module: backend.hosts.multiagent.foundry_agent_a2a
+    args: [wf_data]
+    params:
+      returns: List[str]
+  execute_task_parallel:
+    type: async
+    module: backend.hosts.multiagent.core.workflow_orchestration
+    args: [task]
+    params:
+      returns: Dict
+  format_accounts_table:
+    type: sync
+    module: remote_agents.azurefoundry_legal.__main__
+    args: [accounts]
+  format_case_info:
+    type: sync
+    module: remote_agents.azurefoundry_legal.__main__
+    args: [case]
+  format_sentiment_response:
+    type: sync
+    module: remote_agents.google_adk.agent
+    args: [sentiment, context, personalized_message]
+    params:
+      returns: str
+  format_tickets_table:
+    type: sync
+    module: remote_agents.azurefoundry_legal.__main__
+    args: [tickets]
+  format_transactions_table:
+    type: sync
+    module: remote_agents.azurefoundry_legal.__main__
+    args: [transactions]
+  foundry_content_to_message:
+    type: sync
+    module: backend.service.server.foundry_host_manager
+    args: [self, resp, context_id, task_id]
+  generate_video:
+    type: async
+    module: remote_agents.azurefoundry_video.foundry_agent
+    args: [self, prompt, size, seconds, output_dir, input_reference_path]
+    params:
+      returns: Tuple
+  generate_video_stream:
+    type: async
+    module: remote_agents.azurefoundry_video.foundry_agent
+    args: [self, prompt, size, seconds, output_dir, input_reference_path]
+  get_account_summary:
+    type: sync
+    module: remote_agents.azurefoundry_legal.__main__
+    args: [self]
+    params:
+      returns: str
+  get_agent:
+    type: sync
+    module: backend.hosts.multiagent.remote_agent_connection
+    args: [self]
+    params:
+      returns: AgentCard
+  get_case_analytics:
+    type: sync
+    module: remote_agents.azurefoundry_legal.__main__
+    args: [self]
+  get_context_id:
+    type: sync
+    module: backend.service.server.adk_host_manager
+    args: [obj, default]
+    params:
+      returns: str
+  get_conversation:
+    type: sync
+    module: backend.service.server.adk_host_manager
+    args: [self, conversation_id]
+    params:
+      returns: Optional[Conversation]
+  get_current_root_instruction:
+    type: async
+    module: backend.hosts.multiagent.foundry_agent_a2a
+    args: [self]
+    params:
+      returns: str
+  get_dashboard_data:
+    type: sync
+    module: remote_agents.azurefoundry_legal.__main__
+    args: [self]
+  get_escalation_options:
+    type: sync
+    module: remote_agents.azurefoundry_legal.__main__
+    args: [self]
+    params:
+      returns: str
+  get_foundry_response:
+    type: async
+    module: remote_agents.azurefoundry_assessment.__main__
+    args: [message, _history]
+    params:
+      returns: AsyncIterator[gr.ChatMessage]
+  get_general_agent_response:
+    type: sync
+    module: remote_agents.azurefoundry_legal.__main__
+    args: [self]
+    params:
+      returns: str
+  get_host_agent_url:
+    type: sync
+    module: remote_agents.azurefoundry_assessment.__main__
+    params:
+      returns: str
+  get_hubspot_agent:
+    type: async
+    module: remote_agents.azurefoundry_HubSpot.foundry_agent
+    params:
+      returns: FoundryHubSpotAgent
+  get_message_id:
+    type: sync
+    module: backend.service.server.adk_host_manager
+    args: [m]
+  get_pending_messages:
+    type: sync
+    module: backend.service.server.adk_host_manager
+    args: [self]
+    params:
+      returns: list[tuple]
+  get_pending_status:
+    type: sync
+    module: remote_agents.azurefoundry_SalesForce.__main__
+    params:
+      returns: str
+  get_processing_message:
+    type: sync
+    module: remote_agents.google_adk.agent
+    args: [self]
+    params:
+      returns: str
+  get_response:
+    type: async
+    module: remote_agents.azurefoundry_Stripe.foundry_agent
+    args: [self, thread_id]
+    params:
+      returns: str
+  get_session_context:
+    type: sync
+    module: backend.hosts.multiagent.foundry_agent_a2a
+    args: [self, context_id]
+    params:
+      returns: SessionContext
+  get_shared_agent:
+    type: async
+    module: remote_agents.azurefoundry_SN.foundry_agent_executor
+    args: [cls]
+    params:
+      returns: Optional[FoundrySNAgent]
+  get_stripe_agent:
+    type: async
+    module: remote_agents.azurefoundry_Stripe.foundry_agent
+    params:
+      returns: FoundryStripeAgent
+  get_task_id:
+    type: sync
+    module: backend.service.server.adk_host_manager
+    args: [obj, default]
+    params:
+      returns: str
+  get_ticket_details:
+    type: sync
+    module: remote_agents.azurefoundry_legal.__main__
+    args: [self, ticket_id]
+    params:
+      returns: str
+  handle_self_registration:
+    type: async
+    module: backend.service.server.foundry_host_manager
+    args: [self, agent_address, agent_card]
+    params:
+      returns: bool
+  handle_single_tool_call:
+    type: async
+    module: remote_agents.azurefoundry_interview.foundry_agent
+    args: [tool_call]
+  health_check:
+    type: async
+    module: remote_agents.azurefoundry_assessment.__main__
+    args: [_]
+    params:
+      returns: PlainTextResponse
+  init_and_run:
+    type: async
+    module: remote_agents.azurefoundry_HubSpot.__main__
+  init_remote_agent_addresses:
+    type: async
+    module: backend.hosts.multiagent.host_agent
+    args: [self, remote_agent_addresses]
+  initialize_at_startup:
+    type: async
+    module: remote_agents.azurefoundry_SN.foundry_agent_executor
+    args: [cls]
+    params:
+      returns: None
+  initialize_foundry_agents_at_startup:
+    type: async
+    module: remote_agents.azurefoundry_SN.foundry_agent_executor
+  initialize_foundry_assessment_agents_at_startup:
+    type: async
+    module: remote_agents.azurefoundry_assessment.foundry_agent_executor
+  initialize_foundry_branding_agents_at_startup:
+    type: async
+    module: remote_agents.azurefoundry_branding.foundry_agent_executor
+  initialize_foundry_claims_agents_at_startup:
+    type: async
+    module: remote_agents.azurefoundry_claims.foundry_agent_executor
+  initialize_foundry_classification_agents_at_startup:
+    type: async
+    module: remote_agents.azurefoundry_classification.foundry_agent_executor
+  initialize_foundry_deep_search_agents_at_startup:
+    type: async
+    module: remote_agents.azurefoundry_Deep_Search.foundry_agent_executor
+  initialize_foundry_fraud_agents_at_startup:
+    type: async
+    module: remote_agents.azurefoundry_fraud.foundry_agent_executor
+    params:
+      returns: None
+  initialize_foundry_image_analyzers_at_startup:
+    type: async
+    module: remote_agents.azurefoundry_image_analysis.foundry_agent_executor
+  initialize_foundry_image_generators_at_startup:
+    type: async
+    module: remote_agents.azurefoundry_image_generator.foundry_agent_executor
+  initialize_foundry_legal_agents_at_startup:
+    type: async
+    module: remote_agents.azurefoundry_legal.foundry_agent_executor
+  initialize_foundry_reporter_agents_at_startup:
+    type: async
+    module: remote_agents.azurefoundry_reporter.foundry_agent_executor
+  initialize_foundry_template_agents_at_startup:
+    type: async
+    module: remote_agents.azurefoundry_English.foundry_agent_executor
+  initialize_foundry_twilio_agents_at_startup:
+    type: async
+    module: remote_agents.azurefoundry_twilio2.foundry_agent_executor
+  insert_message_history:
+    type: sync
+    module: backend.service.server.adk_host_manager
+    args: [self, task, message]
+  launch_ui:
+    type: async
+    module: remote_agents.azurefoundry_assessment.__main__
+    args: [host, ui_port, a2a_port]
+  list_remote_agents:
+    type: sync
+    module: backend.hosts.multiagent.host_agent
+    args: [self]
+  list_remote_agents_sync:
+    type: sync
+    module: backend.hosts.multiagent.core.agent_registry
+    args: [self]
+    params:
+      returns: List[Dict]
+  main:
+    type: sync
+    module: remote_agents.azurefoundry_assessment.__main__
+    args: [host, port]
+  main_async:
+    type: async
+    module: remote_agents.azurefoundry_SalesForce.__main__
+    args: [host, port]
+  parse_session_from_context:
+    type: sync
+    module: backend.service.server.foundry_host_manager
+    args: [context_id]
+    params:
+      returns: str
+  personalize_experience:
+    type: sync
+    module: remote_agents.google_adk.agent
+    args: [sentiment, context]
+    params:
+      returns: str
+  pop_latest_artifacts:
+    type: sync
+    module: remote_agents.azurefoundry_video.foundry_agent
+    args: [self]
+    params:
+      returns: List[Dict]
+  process_agent_query:
+    type: sync
+    module: remote_agents.azurefoundry_legal.__main__
+    args: [self, query]
+    params:
+      returns: str
+  process_artifact_event:
+    type: sync
+    module: backend.service.server.adk_host_manager
+    args: [self, current_task, task_update_event]
+  process_message:
+    type: async
+    module: backend.service.server.adk_host_manager
+    args: [self, message]
+  process_message_threadsafe:
+    type: sync
+    module: backend.service.server.adk_host_manager
+    args: [self, message, loop]
+  process_video_request:
+    type: async
+    module: remote_agents.azurefoundry_video.__main__
+    args: [message, image, history, mode, size, duration, remix_id]
+  refresh_case_data:
+    type: sync
+    module: remote_agents.azurefoundry_legal.__main__
+  refresh_status:
+    type: sync
+    module: remote_agents.azurefoundry_SalesForce.__main__
+  register_after_startup:
+    type: async
+    module: remote_agents.google_adk.__main__
+  register_agent:
+    type: sync
+    module: backend.service.server.adk_host_manager
+    args: [self, url]
+  register_agent_card:
+    type: sync
+    module: backend.hosts.multiagent.host_agent
+    args: [self, card]
+  register_agent_with_host:
+    type: async
+    module: remote_agents.azurefoundry_assessment.__main__
+    args: [agent_card]
+  register_remote_agent:
+    type: async
+    module: backend.hosts.multiagent.foundry_agent_a2a
+    args: [self, agent_address, agent_card]
+    params:
+      returns: bool
+  register_with_host_agent:
+    type: async
+    module: remote_agents.azurefoundry_assessment.__main__
+    args: [agent_card, host_url]
+  remix_video:
+    type: async
+    module: remote_agents.azurefoundry_video.foundry_agent
+    args: [self, video_id, prompt, output_dir]
+    params:
+      returns: Tuple
+  reset_conversation:
+    type: sync
+    module: remote_agents.azurefoundry_SalesForce.__main__
+  reset_root_instruction:
+    type: async
+    module: backend.hosts.multiagent.foundry_agent_a2a
+    args: [self]
+    params:
+      returns: bool
+  resolve_agent_url:
+    type: sync
+    module: remote_agents.azurefoundry_assessment.__main__
+    args: [bind_host, bind_port]
+    params:
+      returns: str
+  response_requires_action:
+    type: sync
+    module: backend.hosts.multiagent.foundry_agent_a2a
+    args: [response_status]
+  retrieve_card:
+    type: async
+    module: backend.hosts.multiagent.host_agent
+    args: [self, address]
+  root_instruction:
+    type: sync
+    module: backend.hosts.multiagent.host_agent
+    args: [self, context]
+    params:
+      returns: str
+  run_a2a_server_in_thread:
+    type: sync
+    module: remote_agents.azurefoundry_assessment.__main__
+    args: [host, port]
+  run_and_wait:
+    type: async
+    module: remote_agents.azurefoundry_Stripe.foundry_agent
+    args: [self, thread_id, timeout]
+  run_conversation:
+    type: async
+    module: remote_agents.azurefoundry_QuickBooks.foundry_agent
+    args: [self, thread_id, user_message]
+  run_conversation_stream:
+    type: async
+    module: remote_agents.azurefoundry_interview.foundry_agent
+    args: [self, thread_id, user_message]
+  run_conversation_with_parts:
+    type: async
+    module: backend.hosts.multiagent.foundry_agent_a2a
+    args: [self, message_parts, context_id, event_logger, agent_mode, enable_inter_agent_memory, workflow, workflow_goal,
+      available_workflows]
+    params:
+      returns: Any
+  run_registration:
+    type: sync
+    module: remote_agents.azurefoundry_assessment.__main__
+  run_with_streaming:
+    type: async
+    module: remote_agents.azurefoundry_Stripe.foundry_agent
+    args: [self, thread_id, user_message]
+  sanitize_message:
+    type: sync
+    module: backend.service.server.adk_host_manager
+    args: [self, message]
+    params:
+      returns: Message
+  search_memory_sync:
+    type: async
+    module: backend.hosts.multiagent.foundry_agent_a2a
+    args: [self, query, top_k]
+  send_human_response:
+    type: async
+    module: remote_agents.azurefoundry_SN.foundry_agent_executor
+    args: [self, context_id, human_response]
+    params:
+      returns: bool
+  send_message:
+    type: async
+    module: remote_agents.azurefoundry_interview.foundry_agent
+    args: [self, thread_id, content, role]
+    params:
+      returns: ThreadMessage
+  send_message_sync:
+    type: async
+    module: backend.hosts.multiagent.foundry_agent_a2a
+    args: [self, agent_name, message, file_uris, video_metadata]
+  send_sms:
+    type: sync
+    module: remote_agents.azurefoundry_twilio2.foundry_agent
+    args: [self, message, to_number]
+    params:
+      returns: Dict
+  serialize_capabilities:
+    type: sync
+    module: backend.service.server.server
+    args: [capabilities]
+    params:
+      returns: dict
+  set_account_summary:
+    type: sync
+    module: remote_agents.azurefoundry_legal.__main__
+  set_escalation:
+    type: sync
+    module: remote_agents.azurefoundry_legal.__main__
+  set_host_manager:
+    type: sync
+    module: backend.hosts.multiagent.foundry_agent_a2a
+    args: [self, host_manager]
+  set_knowledge_base:
+    type: sync
+    module: remote_agents.azurefoundry_legal.__main__
+  set_session_agents:
+    type: async
+    module: backend.hosts.multiagent.core.agent_registry
+    args: [self, session_agents]
+  set_tickets_query:
+    type: sync
+    module: remote_agents.azurefoundry_legal.__main__
+  start_background_registration:
+    type: sync
+    module: remote_agents.azurefoundry_assessment.__main__
+    args: [agent_card]
+  stream:
+    type: async
+    module: remote_agents.google_adk.agent
+    args: [self, query, session_id]
+    params:
+      returns: AsyncIterable[dict]
+  stream_conversation_created:
+    type: async
+    module: backend.service.server.adk_host_manager
+  stream_task_status_update:
+    type: async
+    module: backend.service.server.foundry_host_manager
+    args: [target_agent, target_state]
+  stream_tool_call:
+    type: async
+    module: backend.service.server.foundry_host_manager
+  stream_tool_response:
+    type: async
+    module: backend.service.server.foundry_host_manager
+  streaming_task_callback:
+    type: sync
+    module: backend.hosts.multiagent.foundry_agent_a2a
+    args: [event, agent_card]
+  switch_to_gdpr_compliance:
+    type: sync
+    module: remote_agents.azurefoundry_legal.__main__
+    args: [self]
+  switch_to_sox_audit:
+    type: sync
+    module: remote_agents.azurefoundry_legal.__main__
+    args: [self]
+  sync_chat_response:
+    type: sync
+    module: remote_agents.azurefoundry_legal.__main__
+    args: [message, history]
+    params:
+      returns: Tuple
+  task_callback:
+    type: sync
+    module: backend.service.server.adk_host_manager
+    args: [self, task, agent_card]
+  task_still_open:
+    type: sync
+    module: backend.service.server.adk_host_manager
+    args: [task]
+    params:
+      returns: bool
+  tasks:
+    type: sync
+    module: backend.service.server.adk_host_manager
+    args: [self]
+    params:
+      returns: list[Task]
+  test_mcp_basic:
+    type: async
+    module: remote_agents.azurefoundry_QuickBooks.foundry_agent
+  trigger_websocket_agent_refresh:
+    type: async
+    module: backend.service.server.server
+  unregister_agent:
+    type: async
+    module: backend.service.server.foundry_host_manager
+    args: [self, agent_name]
+    params:
+      returns: bool
+  unregister_remote_agent:
+    type: async
+    module: backend.hosts.multiagent.foundry_agent_a2a
+    args: [self, agent_name]
+    params:
+      returns: bool
+  update_api_key:
+    type: sync
+    module: backend.service.server.adk_host_manager
+    args: [self, api_key]
+  update_root_instruction:
+    type: async
+    module: backend.hosts.multiagent.foundry_agent_a2a
+    args: [self, new_instruction]
+    params:
+      returns: bool
+  update_task:
+    type: sync
+    module: backend.service.server.adk_host_manager
+    args: [self, task]
+  use_last_video:
+    type: sync
+    module: remote_agents.azurefoundry_video.__main__
+    args: [current_id]
+  video_to_video:
+    type: async
+    module: remote_agents.azurefoundry_video.foundry_agent
+    args: [self, prompt, input_video_path, size, seconds, output_dir]
+    params:
+      returns: Tuple
+
+variables:
+  A2A_ENDPOINT:
+    type: env
+    params:
+      caller: [os.getenv]
+      path: [ROOT_ENV_PATH]
+  A2A_HOST:
+    type: env
+    params:
+      caller: [os.environ.get]
+      path: [ROOT_ENV_PATH]
+  A2A_INCLUDE_LAST_HOST_TURN:
+    type: env
+    params:
+      caller: [os.environ.get]
+      path: [ROOT_ENV_PATH]
+  A2A_LAST_HOST_TURN_MAX_CHARS:
+    type: env
+    params:
+      caller: [os.environ.get]
+      path: [ROOT_ENV_PATH]
+  A2A_LAST_HOST_TURNS:
+    type: env
+    params:
+      caller: [os.environ.get]
+      path: [ROOT_ENV_PATH]
+  A2A_MEMORY_SUMMARY_MAX_CHARS:
+    type: env
+    params:
+      caller: [os.environ.get]
+      path: [ROOT_ENV_PATH]
+  A2A_PORT:
+    type: env
+    params:
+      caller: [os.getenv]
+      path: [ROOT_ENV_PATH]
+  APPLICATIONINSIGHTS_CONNECTION_STRING:
+    type: env
+    params:
+      caller: [os.environ.get]
+      path: [ROOT_ENV_PATH]
+  AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME:
+    type: env
+    params:
+      caller: [os.getenv, os.environ.get]
+      path: [remote_agents.azurefoundry_branding.foundry_agent, ROOT_ENV_PATH]
+  AZURE_AI_FOUNDRY_PROJECT_ENDPOINT:
+    type: env
+    params:
+      caller: [os.environ.get]
+      path: [ROOT_ENV_PATH]
+  AZURE_AI_SERVICE_ENDPOINT:
+    type: env
+    params:
+      caller: [os.getenv]
+      path: [ROOT_ENV_PATH]
+  AZURE_BLOB_CONTAINER:
+    type: env
+    params:
+      caller: [os.getenv]
+      path: [ROOT_ENV_PATH]
+  AZURE_BLOB_SAS_DURATION_MINUTES:
+    type: env
+    params:
+      caller: [os.getenv]
+      path: [ROOT_ENV_PATH]
+  AZURE_BLOB_SIZE_THRESHOLD:
+    type: env
+    params:
+      caller: [os.getenv]
+      path: [ROOT_ENV_PATH]
+  AZURE_CONTENT_UNDERSTANDING_ENDPOINT:
+    type: env
+    params:
+      caller: [os.getenv]
+      path: [ROOT_ENV_PATH]
+  AZURE_OPENAI_ENDPOINT:
+    type: env
+    params:
+      caller: [os.environ.get]
+      path: [ROOT_ENV_PATH]
+  AZURE_STORAGE_CONNECTION_STRING:
+    type: env
+    params:
+      caller: [os.getenv]
+      path: [ROOT_ENV_PATH]
+  BING_CONNECTION_ID:
+    type: env
+    params:
+      caller: [os.environ.get]
+      path: [ROOT_ENV_PATH]
+  CONTAINER_APP_NAME:
+    type: env
+    params:
+      caller: [os.environ.get]
+      path: [ROOT_ENV_PATH]
+  FORCE_AZURE_BLOB:
+    type: env
+    params:
+      caller: [os.getenv]
+      path: [ROOT_ENV_PATH]
+  GOOGLE_API_KEY:
+    type: env
+    params:
+      caller: [os.getenv, os.environ.get, os.environ]
+      path: [ROOT_ENV_PATH]
+  GOOGLE_GENAI_USE_VERTEXAI:
+    type: env
+    params:
+      caller: [os.getenv, os.environ.get, os.environ]
+      path: [ROOT_ENV_PATH]
+  GRADIO_SERVER_PORT:
+    type: env
+    params:
+      caller: [os.getenv]
+      path: [ROOT_ENV_PATH]
+  HUBSPOT_MCP_URL:
+    type: env
+    params:
+      caller: [os.getenv]
+      path: [ROOT_ENV_PATH]
+  OPENAI_API_KEY:
+    type: env
+    params:
+      caller: [os.getenv]
+      path: [ROOT_ENV_PATH]
+  STRIPE_MCP_URL:
+    type: env
+    params:
+      caller: [os.getenv]
+      path: [ROOT_ENV_PATH]
+  TWILIO_ACCOUNT_SID:
+    type: env
+    params:
+      caller: [os.environ.get]
+      path: [ROOT_ENV_PATH]
+  TWILIO_AUTH_TOKEN:
+    type: env
+    params:
+      caller: [os.environ.get]
+      path: [ROOT_ENV_PATH]
+  TWILIO_DEFAULT_TO_NUMBER:
+    type: env
+    params:
+      caller: [os.environ.get]
+      path: [ROOT_ENV_PATH]
+  TWILIO_FROM_NUMBER:
+    type: env
+    params:
+      caller: [os.environ.get]
+      path: [ROOT_ENV_PATH]
+  var:
+    type: env
+    params:
+      caller: [os.getenv]
+      path: [ROOT_ENV_PATH]
+  WEBSITE_INSTANCE_ID:
+    type: env
+    params:
+      caller: [os.environ.get]
+      path: [ROOT_ENV_PATH]
+  WEBSOCKET_SERVER_URL:
+    type: env
+    params:
+      caller: [os.environ.get]
+      path: [ROOT_ENV_PATH]
+
+files:
+  ./:
+    type: pattern
+    actions: [read]
+    params:
+      patterns: ['os.path.join(files_directory, ''**'', ext)']
+      links: [os.path.join]
+      caller: [_setup_file_search]
+  .env:
+    type: literal
+    actions: [read]
+  .png:
+    type: literal
+    actions: [write]
+    params:
+      caller: [tempfile.NamedTemporaryFile]
+      delete: "False"
+  a2a.png:
+    type: pattern
+    actions: [read]
+    params:
+      caller: [os.path.join]
+      pattern: [script_dir, static, a2a.png]
+  agent_registry.json:
+    type: literal
+    actions: [read]
+    params:
+      caller: [_find_agent_registry_path]
+      path: [backend_root]
+  file_path:
+    type: variable
+    actions: [read, write]
+    params:
+      caller: [os.path.basename, open, f.write]
+  image_path:
+    type: variable
+    actions: [read]
+    params:
+      caller: [Image.open]
+  input_reference_path:
+    type: variable
+    actions: [read]
+    params:
+      caller: [os.path.exists]
+  input_video_path:
+    type: variable
+    actions: [read]
+    params:
+      caller: [os.path.exists, open, os.path.basename]
+  logo_path:
+    type: variable
+    actions: [read]
+    params:
+      caller: [os.path.exists]
+  output_dir:
+    type: variable
+    actions: [read, write]
+    params:
+      caller: [Path(), output_dir.mkdir, os.makedirs]
+  output_dir_path:
+    type: variable
+    actions: [read, write]
+    params:
+      caller: [Path(), output_dir_path.mkdir]
+  output_path:
+    type: variable
+    actions: [write]
+    params:
+      caller: [output_path.write_bytes]
+  path:
+    type: variable
+    actions: [write, read, delete]
+    params:
+      caller: [open, os.path.basename, json.load, os.unlink]
+      alias: [f]
+  prompty_path:
+    type: variable
+    actions: [read]
+    params:
+      caller: [open, os.path.basename]
+      alias: [f]
+  registry_path:
+    type: variable
+    actions: [write]
+    params:
+      caller: [registry_path.parent.mkdir]
+  saved_path:
+    type: literal
+    actions: [read, write]
+    params:
+      caller: ['Path(''temp_speech_{...}.mp3'')', open, os.path.basename]
+  session_upload_dir:
+    type: variable
+    actions: [read]
+    params:
+      caller: [os.path.exists, os.listdir]
+  source_file_path:
+    type: variable
+    actions: [read]
+    params:
+      caller: [open]
+
+networks:
+  blob_url:
+    type: api
+    actions: [GET]
+    protocols: [https]
+    ports: ["443"]
+    params:
+      caller: [_upload_to_blob]
+      dynamic: "True"
+      variable: blob_url
+  mcp-hubspot-flat.ambitioussky-6c709152.westus2.azurecontainerapps.io:
+    type: api
+    actions: [GET]
+    urls: [/sse]
+    protocols: [https]
+    ports: ["443"]
+    params:
+      caller: [create_agent]
+  mcp-stripe.ambitioussky-6c709152.westus2.azurecontainerapps.io:
+    type: api
+    actions: [GET]
+    urls: [/sse]
+    protocols: [https]
+    ports: ["443"]
+    params:
+      caller: [create_agent]
+  ui_display_url:
+    type: api
+    actions: [GET]
+    protocols: [http]
+    ports: ["80"]
+    params:
+      pattern: http://{display_host}:{ui_port}
+      caller: [launch_ui]
+      dynamic: "True"
+      variable: ui_display_url
+  ui_display_url.1:
+    type: api
+    actions: [GET]
+    protocols: [http]
+    ports: ["80"]
+    params:
+      pattern: http://{resolved_host_for_url}:{ui_port}
+      caller: [launch_ui]
+      dynamic: "True"
+      variable: ui_display_url
