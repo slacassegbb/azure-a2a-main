@@ -645,11 +645,15 @@ async def process_file_part(file_part, artifact_info=None, session_id: str = Non
                 chunks_stored = max(1, len(processed_content) // (CHUNK_SIZE - 500))
             else:
                 chunks_stored = 1
-            
-            await a2a_memory_service.store_interaction(interaction_data, session_id=session_id)
-            print(f"[A2ADocumentProcessor] Successfully processed and stored: {filename} (session: {session_id})")
+
+            store_success = await a2a_memory_service.store_interaction(interaction_data, session_id=session_id)
+            if store_success:
+                print(f"[A2ADocumentProcessor] ✅ Successfully stored in memory: {filename} (session: {session_id}, chunks: {chunks_stored})")
+            else:
+                print(f"[A2ADocumentProcessor] ❌ FAILED to store in memory: {filename} (session: {session_id}) — store_interaction returned False")
+                chunks_stored = 0  # Correct the estimate since storage actually failed
         else:
-            print(f"[A2ADocumentProcessor] Warning: No session_id, skipping memory storage for {filename}")
+            print(f"[A2ADocumentProcessor] ⚠️ No session_id, skipping memory storage for {filename}")
         
         print(f"[A2ADocumentProcessor] Content length: {len(processed_content)} characters")
         

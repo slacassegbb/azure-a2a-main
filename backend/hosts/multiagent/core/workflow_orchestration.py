@@ -288,34 +288,47 @@ class WorkflowOrchestration:
 
         # Build context from previous step outputs AND extracted documents
         context_parts = []
+        found_document = False
 
-        # Search Azure Search memory for extracted document content (e.g., PDF invoices)
-        # Documents are extracted by the orchestrator after agents return files,
-        # and stored in memory — but not in previous_task_outputs.
-        try:
-            memory_results = await self._search_relevant_memory(
-                query=criteria,
-                context_id=session_context.contextId,
-                agent_name=None,
-                top_k=5
-            )
-            if memory_results:
-                for result in memory_results:
-                    agent_name = result.get('agent_name', '')
-                    if agent_name == 'DocumentProcessor':
-                        inbound = result.get('inbound_payload', {})
-                        if isinstance(inbound, str):
-                            try:
-                                inbound = json.loads(inbound)
-                            except Exception:
-                                pass
-                        if isinstance(inbound, dict) and 'content' in inbound:
-                            doc_content = str(inbound['content'])
-                            log_info(f"🔍 [EVALUATE] Found document content: {len(doc_content)} chars")
-                            context_parts.append(f"[Extracted Document]\n{doc_content}")
-                            break
-        except Exception as e:
-            log_error(f"[EVALUATE] Error searching memory for document content: {e}")
+        # Primary source: check session_context for recently extracted documents.
+        # These are stored immediately after document processing completes,
+        # bypassing Azure Search indexing latency.
+        extracted_docs = getattr(session_context, '_extracted_documents', [])
+        if extracted_docs:
+            for doc_content in extracted_docs:
+                log_info(f"🔍 [EVALUATE] Using session-cached document content: {len(doc_content)} chars")
+                context_parts.append(f"[Extracted Document]\n{doc_content}")
+                found_document = True
+
+        # Fallback: search Azure Search memory for extracted document content.
+        # This covers cases where documents were extracted in a previous session
+        # or the session_context cache was cleared.
+        if not found_document:
+            try:
+                memory_results = await self._search_relevant_memory(
+                    query=criteria,
+                    context_id=session_context.contextId,
+                    agent_name=None,
+                    top_k=5
+                )
+                if memory_results:
+                    for result in memory_results:
+                        agent_name = result.get('agent_name', '')
+                        if agent_name == 'DocumentProcessor':
+                            inbound = result.get('inbound_payload', {})
+                            if isinstance(inbound, str):
+                                try:
+                                    inbound = json.loads(inbound)
+                                except Exception:
+                                    pass
+                            if isinstance(inbound, dict) and 'content' in inbound:
+                                doc_content = str(inbound['content'])
+                                log_info(f"🔍 [EVALUATE] Found document content from memory: {len(doc_content)} chars")
+                                context_parts.append(f"[Extracted Document]\n{doc_content}")
+                                found_document = True
+                                break
+            except Exception as e:
+                log_error(f"[EVALUATE] Error searching memory for document content: {e}")
 
         # Add previous task outputs
         if previous_task_outputs:

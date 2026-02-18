@@ -3115,12 +3115,19 @@ Answer with just JSON:
                     # Index documents if we have any file artifacts
                     if file_artifacts_to_index:
                         session_id = contextId.split('::')[0] if '::' in contextId else contextId
-                        await self._index_agent_file_artifacts(
+                        extracted_contents = await self._index_agent_file_artifacts(
                             file_artifacts=file_artifacts_to_index,
                             session_id=session_id,
                             context_id=contextId,
                             agent_name=agent_name
                         )
+                        # Store extracted content on session_context for immediate use
+                        # by subsequent steps (e.g., EVALUATE). Azure Search has indexing
+                        # latency, so newly stored documents may not be queryable yet.
+                        if extracted_contents:
+                            if not hasattr(session_context, '_extracted_documents'):
+                                session_context._extracted_documents = []
+                            session_context._extracted_documents.extend(extracted_contents)
 
                     self._update_last_host_turn(session_context, agent_name, response_parts)
                     
@@ -3579,21 +3586,25 @@ Answer with just JSON:
         session_id: str,
         context_id: str,
         agent_name: str
-    ):
+    ) -> List[str]:
         """
         Process and index file artifacts returned by remote agents for memory search.
-        
+
         This enables powerful cross-agent workflows:
         - Email Agent downloads invoice PDF → indexed → search_memory can find it
         - Document Agent analyzes contract → indexed → future queries can reference it
         - Image Agent generates image → indexed via Content Understanding → searchable
         - Any agent that produces files → automatically processed and searchable
-        
+
         Args:
             file_artifacts: List of dicts with uri, name, mime_type, source_agent
             session_id: Session ID for tenant isolation
             context_id: Context ID for status updates
             agent_name: Agent that produced these files
+
+        Returns:
+            List of extracted content strings (for immediate use by subsequent steps,
+            since Azure Search indexing may have latency before documents are queryable).
         """
         from .a2a_document_processor import process_file_part, determine_file_type, AUDIO_EXTENSIONS, VIDEO_EXTENSIONS, IMAGE_EXTENSIONS, DOCUMENT_EXTENSIONS, TEXT_EXTENSIONS, CU_TEXT_FORMATS
         
@@ -3613,7 +3624,7 @@ Answer with just JSON:
         
         if not files_to_index:
             print(f"📭 No indexable documents from {agent_name}")
-            return
+            return []
         
         # Emit orchestrator status - file received from agent
         asyncio.create_task(self._emit_granular_agent_event(
@@ -3625,6 +3636,7 @@ Answer with just JSON:
         ))
         
         indexed_count = 0
+        extracted_contents = []  # Collect extracted content for immediate use by subsequent steps
         for artifact in files_to_index:
             try:
                 file_uri = artifact.get('uri', '')
@@ -3666,9 +3678,11 @@ Answer with just JSON:
                     chunks_stored = result.get('chunks_stored', 0)
                     indexed_count += 1
                     print(f"✅ Indexed {file_name}: {chunks_stored} chunks stored in memory")
-                    
-                    # Get the extracted content for display in inferencing steps
+
+                    # Get the extracted content for display and for subsequent steps
                     extracted_content = result.get('content', '')
+                    if extracted_content:
+                        extracted_contents.append(extracted_content)
                     
                     # Format content preview for orchestrator display
                     if extracted_content:
@@ -3735,6 +3749,8 @@ Answer with just JSON:
             print(f"🎉 Successfully indexed {indexed_count}/{len(files_to_index)} documents from {agent_name}")
         else:
             print(f"⚠️ No documents were successfully indexed from {agent_name}")
+
+        return extracted_contents
 
     async def _store_a2a_interaction(
         self, 
