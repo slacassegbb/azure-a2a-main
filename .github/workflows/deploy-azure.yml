@@ -74,18 +74,21 @@ jobs:
             --build-arg NEXT_PUBLIC_A2A_API_URL="https://backend-uami.ambitioussky-6c709152.westus2.azurecontainerapps.io" \
             --build-arg NEXT_PUBLIC_WEBSOCKET_URL="wss://websocket-uami.ambitioussky-6c709152.westus2.azurecontainerapps.io/events" \
             --build-arg NEXT_PUBLIC_DEV_MODE="false" \
+            --build-arg NEXT_PUBLIC_AZURE_AI_FOUNDRY_PROJECT_ENDPOINT="${{ secrets.AZURE_AI_FOUNDRY_PROJECT_ENDPOINT }}" \
             -t ${{ env.REGISTRY }}/frontend:${{ github.sha }} \
             -t ${{ env.REGISTRY }}/frontend:latest \
             ./frontend
           docker push ${{ env.REGISTRY }}/frontend:${{ github.sha }}
           docker push ${{ env.REGISTRY }}/frontend:latest
-      
+
       - name: Deploy to Container App
         run: |
           az containerapp update \
             --name frontend-uami \
             --resource-group ${{ env.RESOURCE_GROUP }} \
-            --image ${{ env.REGISTRY }}/frontend:${{ github.sha }}
+            --image ${{ env.REGISTRY }}/frontend:${{ github.sha }} \
+            --set-env-vars \
+              "AZURE_OPENAI_GPT_API_KEY=${{ secrets.AZURE_OPENAI_GPT_API_KEY }}"
       
       - name: Verify Deployment
         run: |
