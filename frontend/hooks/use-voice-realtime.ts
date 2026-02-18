@@ -669,17 +669,15 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig): VoiceRealtimeHook
       // Get Azure token
       const token = await getAzureToken();
 
-      // Build WebSocket URL from configurable endpoint
-      const voiceEndpoint = process.env.NEXT_PUBLIC_VOICE_ENDPOINT || "";
+      // Build WebSocket URL from resource host and deployment name
+      const voiceHost = process.env.NEXT_PUBLIC_VOICE_HOST || "";
+      const voiceDeployment = process.env.NEXT_PUBLIC_VOICE_DEPLOYMENT || "gpt-realtime";
 
-      if (!voiceEndpoint) {
-        throw new Error("NEXT_PUBLIC_VOICE_ENDPOINT is not configured");
+      if (!voiceHost) {
+        throw new Error("NEXT_PUBLIC_VOICE_HOST is not configured");
       }
 
-      // Convert https:// to wss:// if needed
-      const wsBase = voiceEndpoint.replace(/^https:\/\//, "wss://");
-      const separator = wsBase.includes("?") ? "&" : "?";
-      const wsUrl = `${wsBase}${separator}api-key=${token}`;
+      const wsUrl = `wss://${voiceHost}/openai/realtime?api-version=2024-10-01-preview&deployment=${voiceDeployment}&api-key=${token}`;
 
       console.log("[VoiceRealtime] Connecting to:", wsUrl.replace(token, "***"));
 
@@ -762,7 +760,7 @@ IMPORTANT RULES:
       ws.onclose = (event) => {
         console.log("[VoiceRealtime] Disconnected:", event.code, event.reason);
         if (event.code === 1006) {
-          setError("Connection failed - check NEXT_PUBLIC_VOICE_ENDPOINT");
+          setError("Connection failed - check NEXT_PUBLIC_VOICE_HOST configuration");
         }
         setIsConnected(false);
         setIsListening(false);
