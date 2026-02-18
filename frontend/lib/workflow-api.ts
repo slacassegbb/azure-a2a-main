@@ -107,57 +107,6 @@ export async function getUserWorkflows(): Promise<Workflow[]> {
 }
 
 /**
- * Get all workflows (shared catalog, no auth required)
- */
-export async function getAllWorkflows(): Promise<Workflow[]> {
-  try {
-    const response = await fetch(`${API_BASE_URL}/api/workflows/all`, {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-    })
-
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`)
-    }
-
-    const data = await response.json()
-    return data.workflows || []
-  } catch (error) {
-    console.error('[WorkflowAPI] Failed to get all workflows:', error)
-    return []
-  }
-}
-
-/**
- * Get a specific workflow by ID
- */
-export async function getWorkflow(workflowId: string): Promise<Workflow | null> {
-  try {
-    const response = await fetch(`${API_BASE_URL}/api/workflows/${workflowId}`, {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-    })
-
-    if (!response.ok) {
-      if (response.status === 404) {
-        return null
-      }
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`)
-    }
-
-    const data = await response.json()
-    return data.workflow || null
-  } catch (error) {
-    console.error('[WorkflowAPI] Failed to get workflow:', error)
-    return null
-  }
-}
-
-/**
  * Create a new workflow (requires authentication)
  */
 export async function createWorkflow(workflow: WorkflowCreateRequest): Promise<Workflow | null> {

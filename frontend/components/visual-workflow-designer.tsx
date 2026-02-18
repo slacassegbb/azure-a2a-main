@@ -3,7 +3,7 @@
 import type React from "react"
 import { useEffect, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
-import { X, Plus, Trash2, Download, Upload, Library, X as CloseIcon, Send, Loader2, PlayCircle, StopCircle, ChevronLeft, ChevronRight, Save, FileText } from "lucide-react"
+import { X, Plus, Trash2, Download, Upload, Library, Send, Loader2, PlayCircle, StopCircle, ChevronLeft, ChevronRight, Save, FileText } from "lucide-react"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { WorkflowCatalog } from "./workflow-catalog"
 import { Input } from "@/components/ui/input"

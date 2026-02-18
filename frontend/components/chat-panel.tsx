@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useRef, useCallback, useMemo } from "react"
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
+import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
@@ -1537,25 +1537,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
           }))
           console.log("[ChatPanel] Image parts count:", imageContents.length)
           console.log("[ChatPanel] Video parts count:", videoContents.length)
-          // Disable markdown URL extraction - images should come from file_uploaded events with proper SAS tokens
-          // Extracting URLs from text can result in URLs without access tokens
           const derivedImageAttachments = [] as any[]
-          // const markdownUrlRegex = /\[[^\]]*\]\((https?:\/\/[^)]+)\)|(https?:\/\/[^\s]+\.(?:png|jpe?g|gif|webp)(?:\?[^\s)]+)?)/gi
-          // let match: RegExpExecArray | null
-          // while ((match = markdownUrlRegex.exec(textContent)) !== null) {
-          //   const url = (match[1] || match[2] || "").trim()
-          //   if (!url) continue
-          //   const extension = url.split('?')[0].toLowerCase().split('.').pop()
-          //   if (!extension || !["png", "jpg", "jpeg", "gif", "webp"].includes(extension)) {
-          //     continue
-          //   }
-          //   const uriWithToken = url
-          //   derivedImageAttachments.push({
-          //     uri: uriWithToken,
-          //     mediaType: `image/${extension === "jpg" ? "jpeg" : extension}`,
-          //     fileName: url.split("/").pop() || `image.${extension}`,
-          //   })
-          // }
           let agentName = data.agentName || "System"
           
           // If this is a new agent we haven't seen before, register it
