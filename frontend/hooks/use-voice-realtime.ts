@@ -682,23 +682,17 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig): VoiceRealtimeHook
       // Get Azure token
       const token = await getAzureToken();
 
-      // Get resource name from environment - use AZURE_AI_FOUNDRY_PROJECT_ENDPOINT like main frontend
-      const foundryUrl = process.env.NEXT_PUBLIC_AZURE_AI_FOUNDRY_PROJECT_ENDPOINT || "";
-      
-      if (!foundryUrl) {
-        throw new Error("NEXT_PUBLIC_AZURE_AI_FOUNDRY_PROJECT_ENDPOINT is not configured");
-      }
-      
-      const resourceMatch = foundryUrl.match(/https:\/\/([^.]+)/);
-      const resourceName = resourceMatch?.[1];
-      
-      if (!resourceName) {
-        throw new Error(`Invalid Foundry URL: ${foundryUrl}. Expected: https://[resource].services.ai.azure.com/...`);
+      // Build WebSocket URL from configurable endpoint
+      const voiceEndpoint = process.env.NEXT_PUBLIC_VOICE_ENDPOINT || "";
+
+      if (!voiceEndpoint) {
+        throw new Error("NEXT_PUBLIC_VOICE_ENDPOINT is not configured");
       }
 
-      // Build WebSocket URL - using Voice Live API (same as main frontend)
-      const model = process.env.NEXT_PUBLIC_VOICE_MODEL || "gpt-4o-realtime-preview";
-      const wsUrl = `wss://${resourceName}.services.ai.azure.com/voice-live/realtime?api-version=2025-10-01&api-key=${token}&model=${model}`;
+      // Convert https:// to wss:// if needed
+      const wsBase = voiceEndpoint.replace(/^https:\/\//, "wss://");
+      const separator = wsBase.includes("?") ? "&" : "?";
+      const wsUrl = `${wsBase}${separator}api-key=${token}`;
 
       console.log("[VoiceRealtime] Connecting to:", wsUrl.replace(token, "***"));
 
@@ -727,31 +721,18 @@ IMPORTANT RULES:
 3. Do not read long technical details - summarize them
 4. Be conversational and friendly`,
               modalities: ["text", "audio"],
-              // Voice Live API enhanced turn detection
               turn_detection: {
-                type: "azure_semantic_vad",
+                type: "server_vad",
                 threshold: 0.5,
                 prefix_padding_ms: 300,
                 silence_duration_ms: 500,
-                remove_filler_words: false,
               },
               input_audio_format: "pcm16",
               output_audio_format: "pcm16",
-              input_audio_sampling_rate: 24000,
-              input_audio_noise_reduction: {
-                type: "azure_deep_noise_suppression",
-              },
-              input_audio_echo_cancellation: {
-                type: "server_echo_cancellation",
-              },
               input_audio_transcription: {
                 model: "whisper-1",
               },
-              voice: {
-                name: "en-US-Ava:DragonHDLatestNeural",
-                type: "azure-standard",
-                temperature: 0.6,
-              },
+              voice: "alloy",
               temperature: 0.6,
               tools: [
                 {

@@ -16,6 +16,8 @@ name: Deploy to Azure Container Apps
 # - AZURE_SEARCH_INDEX_NAME: Azure Search index name (e.g., microsoft-results)
 # - BING_CONNECTION_ID: (Optional) Bing Grounding connection ID for web search
 # - DATABASE_URL: PostgreSQL database connection string
+# - VOICE_ENDPOINT: Full Azure OpenAI Realtime endpoint URL for voice feature
+# - AZURE_VOICE_API_KEY: API key for the voice realtime endpoint
 
 on:
   push:
@@ -75,6 +77,7 @@ jobs:
             --build-arg NEXT_PUBLIC_WEBSOCKET_URL="wss://websocket-uami.ambitioussky-6c709152.westus2.azurecontainerapps.io/events" \
             --build-arg NEXT_PUBLIC_DEV_MODE="false" \
             --build-arg NEXT_PUBLIC_AZURE_AI_FOUNDRY_PROJECT_ENDPOINT="${{ secrets.AZURE_AI_FOUNDRY_PROJECT_ENDPOINT }}" \
+            --build-arg NEXT_PUBLIC_VOICE_ENDPOINT="${{ secrets.VOICE_ENDPOINT }}" \
             -t ${{ env.REGISTRY }}/frontend:${{ github.sha }} \
             -t ${{ env.REGISTRY }}/frontend:latest \
             ./frontend
@@ -88,7 +91,8 @@ jobs:
             --resource-group ${{ env.RESOURCE_GROUP }} \
             --image ${{ env.REGISTRY }}/frontend:${{ github.sha }} \
             --set-env-vars \
-              "AZURE_OPENAI_GPT_API_KEY=${{ secrets.AZURE_OPENAI_GPT_API_KEY }}"
+              "AZURE_OPENAI_GPT_API_KEY=${{ secrets.AZURE_OPENAI_GPT_API_KEY }}" \
+              "AZURE_VOICE_API_KEY=${{ secrets.AZURE_VOICE_API_KEY }}"
       
       - name: Verify Deployment
         run: |
