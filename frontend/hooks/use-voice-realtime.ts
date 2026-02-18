@@ -677,7 +677,7 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig): VoiceRealtimeHook
         throw new Error("NEXT_PUBLIC_VOICE_HOST is not configured");
       }
 
-      const wsUrl = `wss://${voiceHost}/openai/v1/realtime?model=${voiceDeployment}&api-key=${token}`;
+      const wsUrl = `wss://${voiceHost}/openai/realtime?api-version=2025-04-01-preview&deployment=${voiceDeployment}&api-key=${token}`;
 
       console.log("[VoiceRealtime] Connecting to:", wsUrl.replace(token, "***"));
 
