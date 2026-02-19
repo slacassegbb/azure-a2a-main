@@ -476,11 +476,17 @@ export function VisualWorkflowDesigner({
       })
 
       // Assign sequential numbers, skipping branch targets
+      // Parallel steps (same stepNumber from BFS) share the same seqNum
       let seqNum = 0
+      let lastOrigStepNum = -1
       const stepNumMap = new Map<string, number>()
       entries.forEach(entry => {
         if (branchTargetIds.has(entry.step.id)) return
-        seqNum++
+        // Only increment for a new step group (not for parallel siblings)
+        if (entry.stepNumber !== lastOrigStepNum) {
+          seqNum++
+          lastOrigStepNum = entry.stepNumber
+        }
         stepNumMap.set(entry.step.id, seqNum)
         // Also assign numbers to branch targets of this eval step
         if (entry.step.agentName.toUpperCase() === EVALUATE_AGENT_NAME) {
