@@ -1089,9 +1089,10 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
                                     setWorkflowGoal(wf.goal)
                                   }}
                                   onActivateWorkflow={async (workflow) => {
-                                    // Convert workflow to text format
-                                    const workflowText = workflow.steps?.map((step: any, index: number) => {
-                                      return `${index + 1}. Use the ${step.agentName} agent${step.description ? `: ${step.description}` : ''}`
+                                    // Use the visual designer's generated text (with parallel labels like 1a, 1b)
+                                    // Fall back to simple sequential format only if not available
+                                    const workflowText = editedWorkflow || workflow.steps?.map((step: any, index: number) => {
+                                      return `${index + 1}. [${step.agentName}] ${step.description || `Use the ${step.agentName} agent`}`
                                     }).join('\n') || ''
                                     
                                     // Create workflow object
