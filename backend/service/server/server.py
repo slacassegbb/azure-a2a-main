@@ -340,29 +340,15 @@ class ConversationServer:
         workflow_goal = message_data.get('params', {}).get('workflowGoal')  # Goal from workflow designer
         available_workflows = message_data.get('params', {}).get('availableWorkflows')  # List of workflow metadata for multi-workflow routing
 
-        # If raw steps+connections are provided, regenerate workflow text server-side.
-        workflow_steps = message_data.get('params', {}).get('workflowSteps')
-        workflow_connections = message_data.get('params', {}).get('workflowConnections')
-        if workflow_steps and len(workflow_steps) > 0:
-            try:
-                from backend_production import generate_workflow_text
-                regenerated = generate_workflow_text(workflow_steps, workflow_connections or [])
-                if regenerated:
-                    print(f"📋 [_send_message] Regenerated workflow text from steps+connections ({len(regenerated)} chars):")
-                    for line in regenerated.split('\n'):
-                        print(f"    {line}")
-                    workflow = regenerated
-            except Exception as e:
-                print(f"⚠️ [_send_message] Failed to regenerate workflow text: {e}, using frontend text")
-
-        # FALLBACK: If steps+connections weren't sent (old cached frontend JS),
-        # try to look up the workflow in the database by name and regenerate text
-        # from the DB steps+connections. This ensures correct parallel labels
-        # regardless of what the browser's cached JS generates.
-        if workflow and not workflow_steps:
+        # Always generate workflow text server-side from the database.
+        # The DB steps+connections are the source of truth — not the frontend text.
+        if workflow:
             try:
                 import re as _re
-                # Parse workflow name from the initial message text
+                from service.workflow_service import get_workflow_service
+                from backend_production import generate_workflow_text
+
+                # Parse workflow name from the message (e.g. Execute the "My Workflow" workflow.)
                 parts_data = message_data.get('params', {}).get('parts', [])
                 msg_text = ''
                 for p in parts_data:
@@ -370,24 +356,18 @@ class ConversationServer:
                     if root.get('kind') == 'text':
                         msg_text = root.get('text', '')
                         break
+
                 name_match = _re.search(r'["\u201c](.+?)["\u201d]', msg_text)
                 if name_match:
                     wf_name = name_match.group(1)
-                    from service.workflow_service import get_workflow_service
-                    wf_service = get_workflow_service()
-                    db_workflow = wf_service.get_workflow_by_name(wf_name)
+                    db_workflow = get_workflow_service().get_workflow_by_name(wf_name)
                     if db_workflow and db_workflow.steps and db_workflow.connections:
-                        from backend_production import generate_workflow_text
-                        regenerated = generate_workflow_text(db_workflow.steps, db_workflow.connections)
-                        if regenerated:
-                            print(f"📋 [_send_message] Regenerated workflow from DB lookup '{wf_name}' ({len(regenerated)} chars):")
-                            for line in regenerated.split('\n'):
-                                print(f"    {line}")
-                            workflow = regenerated
-                    elif db_workflow:
-                        print(f"⚠️ [_send_message] Found workflow '{wf_name}' in DB but no connections — using frontend text")
+                        workflow = generate_workflow_text(db_workflow.steps, db_workflow.connections)
+                        print(f"📋 [_send_message] Generated workflow text from DB '{wf_name}' ({len(workflow)} chars):")
+                        for line in workflow.split('\n'):
+                            print(f"    {line}")
                     else:
-                        print(f"⚠️ [_send_message] Workflow '{wf_name}' not found in DB — using frontend text")
+                        print(f"⚠️ [_send_message] Workflow '{wf_name}' not in DB or has no connections, using frontend text")
             except Exception as e:
                 print(f"⚠️ [_send_message] DB workflow lookup failed: {e}, using frontend text")
         user_id = message_data.get('params', {}).get('userId')  # Extract userId for color lookup
