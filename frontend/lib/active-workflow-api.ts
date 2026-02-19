@@ -14,6 +14,8 @@ export interface ActiveWorkflow {
   name: string;
   description?: string;
   goal: string;
+  steps?: any[];  // Raw workflow steps from DB (for server-side text regeneration)
+  connections?: any[];  // Raw workflow connections from DB (for parallel detection)
 }
 
 export interface ActiveWorkflowsState {

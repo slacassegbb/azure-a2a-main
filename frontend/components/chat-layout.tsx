@@ -275,11 +275,14 @@ export function ChatLayout() {
     console.log('[ChatLayout] Workflow goal:', firstWorkflow.goal || '(none - will use trigger message)')
     
     // Emit event for ChatPanel to handle - include workflowGoal for orchestrator
+    // Also pass raw steps+connections so backend can regenerate text server-side
     emit('run_workflow', {
       workflowName: workflowDisplayName,
       workflow: firstWorkflow.workflow,
       initialMessage: initialMessage,
-      workflowGoal: firstWorkflow.goal  // Pass the goal from workflow designer
+      workflowGoal: firstWorkflow.goal,  // Pass the goal from workflow designer
+      workflowSteps: firstWorkflow.steps,
+      workflowConnections: firstWorkflow.connections,
     })
     
     toast({

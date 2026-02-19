@@ -339,6 +339,24 @@ class ConversationServer:
         workflow = message_data.get('params', {}).get('workflow')
         workflow_goal = message_data.get('params', {}).get('workflowGoal')  # Goal from workflow designer
         available_workflows = message_data.get('params', {}).get('availableWorkflows')  # List of workflow metadata for multi-workflow routing
+
+        # If raw steps+connections are provided, regenerate workflow text server-side.
+        # This is the canonical path: the database steps+connections are the source of
+        # truth, and we generate text here to ensure correct parallel labels (1a, 1b)
+        # regardless of what text the frontend sent (which may be stale/cached).
+        workflow_steps = message_data.get('params', {}).get('workflowSteps')
+        workflow_connections = message_data.get('params', {}).get('workflowConnections')
+        if workflow_steps and len(workflow_steps) > 0:
+            try:
+                from backend_production import generate_workflow_text
+                regenerated = generate_workflow_text(workflow_steps, workflow_connections or [])
+                if regenerated:
+                    print(f"📋 [_send_message] Regenerated workflow text from steps+connections ({len(regenerated)} chars):")
+                    for line in regenerated.split('\n'):
+                        print(f"    {line}")
+                    workflow = regenerated
+            except Exception as e:
+                print(f"⚠️ [_send_message] Failed to regenerate workflow text: {e}, using frontend text")
         user_id = message_data.get('params', {}).get('userId')  # Extract userId for color lookup
         log_debug(f"_send_message: Agent Mode = {agent_mode}, Inter-Agent Memory = {enable_inter_agent_memory}, Workflow = {workflow[:50] if workflow else None}, WorkflowGoal = {workflow_goal[:50] if workflow_goal else None}, AvailableWorkflows = {len(available_workflows) if available_workflows else 0}")
         

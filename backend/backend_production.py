@@ -93,25 +93,48 @@ def generate_workflow_text(steps: List[Dict[str, Any]], connections: List[Dict[s
     """
     Convert workflow steps + connections into text format for the orchestrator.
 
-    Handles evaluation steps with IF-TRUE/IF-FALSE branching.
+    Uses BFS over the connection graph to detect:
+    - Parallel branches (1a, 1b) when a node has multiple outgoing edges
+    - Evaluation branching (IF-TRUE / IF-FALSE)
     """
     if not steps:
         return ""
 
-    sorted_steps = sorted(steps, key=lambda s: s.get('order', 0))
+    from collections import deque
 
-    # Build lookup maps
+    sorted_steps = sorted(steps, key=lambda s: s.get('order', 0))
     step_by_id = {s.get('id'): s for s in sorted_steps}
-    # Outgoing connections from each step: step_id -> [(target_id, condition)]
-    outgoing = {}
+
+    # Build adjacency maps (only non-conditional edges for parallel detection)
+    outgoing = {}       # step_id -> [(target_id, condition)]
+    outgoing_free = {}  # step_id -> [target_id] (non-conditional only)
+    incoming_ids = set()
+    connected_ids = set()
+
     for conn in (connections or []):
         from_id = conn.get('fromStepId')
         to_id = conn.get('toStepId')
-        condition = conn.get('condition')  # "true", "false", or None
+        condition = conn.get('condition')
         if from_id:
             outgoing.setdefault(from_id, []).append((to_id, condition))
+            if condition is None:
+                outgoing_free.setdefault(from_id, []).append(to_id)
+        if from_id:
+            connected_ids.add(from_id)
+        if to_id:
+            connected_ids.add(to_id)
+            incoming_ids.add(to_id)
 
-    # Track which steps are branch targets (IF-TRUE/IF-FALSE destinations)
+    # If no connections, fall back to simple sequential ordering
+    if not connections:
+        lines = []
+        for i, step in enumerate(sorted_steps):
+            agent_name = step.get('agentName') or step.get('agent') or 'Unknown Agent'
+            desc = step.get('description') or f'Use the {agent_name} agent'
+            lines.append(f"{i + 1}. [{agent_name}] {desc}")
+        return "\n".join(lines)
+
+    # Identify branch targets of EVALUATE steps
     branch_target_ids = set()
     for step in sorted_steps:
         agent_name = step.get('agentName') or step.get('agent') or ''
@@ -121,40 +144,102 @@ def generate_workflow_text(steps: List[Dict[str, Any]], connections: List[Dict[s
                 if condition in ('true', 'false'):
                     branch_target_ids.add(target_id)
 
-    # Generate text lines
-    lines = []
-    step_number = 0
-    # Map step_id -> assigned step number (for branch references)
-    step_numbers = {}
+    # BFS with parallel detection
+    root_ids = [s.get('id') for s in sorted_steps
+                if s.get('id') in connected_ids and s.get('id') not in incoming_ids]
 
-    for step in sorted_steps:
-        step_id = step.get('id')
-        agent_name = step.get('agentName') or step.get('agent') or 'Unknown Agent'
-        default_desc = 'Use the ' + agent_name + ' agent'
-        description = step.get('description', default_desc)
+    entries = []  # [{"step_number": int, "sub_letter": str|None, "step": dict}]
+    visited = set()
+    current_step_num = 0
 
-        # Skip branch targets in the main sequence — they'll be emitted as IF-TRUE/IF-FALSE
-        if step_id in branch_target_ids:
+    queue = deque()  # (step_id, parent_num, parallel_siblings, sibling_index)
+    if len(root_ids) > 1:
+        for idx, rid in enumerate(root_ids):
+            queue.append((rid, 0, root_ids, idx))
+    else:
+        for rid in root_ids:
+            queue.append((rid, 0, [], 0))
+
+    while queue:
+        step_id, parent_num, siblings, sib_idx = queue.popleft()
+        if step_id in visited:
+            continue
+        visited.add(step_id)
+
+        step = step_by_id.get(step_id)
+        if not step:
             continue
 
-        step_number += 1
-        step_numbers[step_id] = step_number
-        lines.append(f"{step_number}. [{agent_name}] {description}")
+        if len(siblings) > 1:
+            step_number = parent_num + 1
+            sub_letter = chr(97 + sib_idx)  # 'a', 'b', 'c'...
+        else:
+            current_step_num += 1
+            step_number = current_step_num
+            sub_letter = None
 
-        # If this is an evaluation step, emit IF-TRUE/IF-FALSE branch lines
+        entries.append({"step_number": step_number, "sub_letter": sub_letter, "step": step})
+
+        # Enqueue children (non-conditional edges only)
+        children = outgoing_free.get(step_id, [])
+        if len(children) > 1:
+            for cidx, child_id in enumerate(children):
+                queue.append((child_id, step_number, children, cidx))
+        elif len(children) == 1:
+            queue.append((children[0], step_number, [], 0))
+
+        # Update current_step_num after last parallel sibling
+        if len(siblings) > 1 and sib_idx == len(siblings) - 1:
+            current_step_num = step_number
+
+    # Sort entries by step number, then sub-letter
+    entries.sort(key=lambda e: (e["step_number"], e["sub_letter"] or ''))
+
+    # Sequential numbering pass — parallel siblings share the same number
+    seq_num = 0
+    last_orig = -1
+    step_num_map = {}  # step_id -> seq_num
+
+    for entry in entries:
+        sid = entry["step"].get("id")
+        if sid in branch_target_ids:
+            continue
+        if entry["step_number"] != last_orig:
+            seq_num += 1
+            last_orig = entry["step_number"]
+        step_num_map[sid] = seq_num
+
+        # Also assign numbers to branch targets of eval steps
+        agent_name = entry["step"].get('agentName') or entry["step"].get('agent') or ''
         if agent_name.upper() == 'EVALUATE':
-            for target_id, condition in outgoing.get(step_id, []):
+            for target_id, condition in outgoing.get(sid, []):
+                if condition in ('true', 'false') and target_id not in step_num_map:
+                    seq_num += 1
+                    step_num_map[target_id] = seq_num
+
+    # Generate output lines
+    lines = []
+    for entry in entries:
+        sid = entry["step"].get("id")
+        if sid in branch_target_ids:
+            continue
+
+        num = step_num_map.get(sid, entry["step_number"])
+        label = f"{num}{entry['sub_letter']}" if entry["sub_letter"] else f"{num}"
+        agent_name = entry["step"].get('agentName') or entry["step"].get('agent') or 'Unknown Agent'
+        desc = entry["step"].get('description') or f'Use the {agent_name} agent'
+        lines.append(f"{label}. [{agent_name}] {desc}")
+
+        # Emit IF-TRUE/IF-FALSE for eval steps
+        if agent_name.upper() == 'EVALUATE':
+            for target_id, condition in outgoing.get(sid, []):
                 if condition in ('true', 'false') and target_id in step_by_id:
                     target_step = step_by_id[target_id]
                     target_agent = target_step.get('agentName') or target_step.get('agent') or 'Unknown Agent'
-                    target_desc = target_step.get('description', 'Use the ' + target_agent + ' agent')
-                    # Ensure the branch target has a number assigned
-                    if target_id not in step_numbers:
-                        step_number += 1
-                        step_numbers[target_id] = step_number
-                    branch_num = step_numbers[target_id]
-                    label = "IF-TRUE" if condition == "true" else "IF-FALSE"
-                    lines.append(f"   {label} → {branch_num}. [{target_agent}] {target_desc}")
+                    target_desc = target_step.get('description') or f'Use the {target_agent} agent'
+                    branch_num = step_num_map.get(target_id, 0)
+                    branch_label = "IF-TRUE" if condition == "true" else "IF-FALSE"
+                    lines.append(f"   {branch_label} → {branch_num}. [{target_agent}] {target_desc}")
 
     return "\n".join(lines)
 

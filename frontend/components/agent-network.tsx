@@ -1095,13 +1095,16 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
                                       return `${index + 1}. [${step.agentName}] ${step.description || `Use the ${step.agentName} agent`}`
                                     }).join('\n') || ''
                                     
-                                    // Create workflow object
+                                    // Create workflow object — include raw steps+connections so backend
+                                    // can regenerate text server-side (avoids browser JS caching issues)
                                     const newWorkflow = {
                                       id: workflow.id,
                                       workflow: workflowText,
                                       name: workflow.name,
                                       description: workflow.description,
-                                      goal: workflow.goal
+                                      goal: workflow.goal,
+                                      steps: workflow.steps,
+                                      connections: workflow.connections,
                                     }
                                     
                                     // Add to session
