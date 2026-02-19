@@ -996,8 +996,12 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                   else if (part.kind === 'file' && part.file?.uri) {
                     const uri = part.file.uri
                     const mimeType = part.file.mimeType || ''
+                    const fileRole = (part as any).metadata?.role || part.file?.role || ''
+                    const fileName = part.file.name || ''
+                    // Skip mask images — they're editing artifacts, not displayable content
+                    const isMask = fileRole === 'mask' || /[-_]mask\b/i.test(fileName)
                     // Only include media files with valid blob storage URIs (not local cache refs)
-                    if (uri.startsWith('http://') || uri.startsWith('https://')) {
+                    if (!isMask && (uri.startsWith('http://') || uri.startsWith('https://'))) {
                       // Accept images and videos
                       const isImage = mimeType.startsWith('image/') || /\.(png|jpe?g|gif|webp)$/i.test(uri)
                       const isVideo = mimeType.startsWith('video/') || /\.(mp4|mov|avi|mkv|webm)$/i.test(uri)
@@ -1009,9 +1013,9 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                         if (videoId) {
                           console.log(`[ChatPanel] Assigned videoId to video: ${videoId}`)
                         }
-                        images.push({ 
-                          uri: uri, 
-                          fileName: part.file.name || `Generated ${mediaType}`, 
+                        images.push({
+                          uri: uri,
+                          fileName: fileName || `Generated ${mediaType}`,
                           mimeType: mimeType,
                           videoId: videoId
                         })
@@ -1022,7 +1026,10 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                   else if (part.root?.kind === 'file' && part.root?.file?.uri) {
                     const uri = part.root.file.uri
                     const mimeType = part.root.file.mimeType || ''
-                    if (uri.startsWith('http://') || uri.startsWith('https://')) {
+                    const fileRole = part.root?.metadata?.role || part.root?.file?.role || ''
+                    const fileName = part.root.file.name || ''
+                    const isMask = fileRole === 'mask' || /[-_]mask\b/i.test(fileName)
+                    if (!isMask && (uri.startsWith('http://') || uri.startsWith('https://'))) {
                       // Accept images and videos
                       const isImage = mimeType.startsWith('image/') || /\.(png|jpe?g|gif|webp)$/i.test(uri)
                       const isVideo = mimeType.startsWith('video/') || /\.(mp4|mov|avi|mkv|webm)$/i.test(uri)
@@ -1034,9 +1041,9 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                         if (videoId) {
                           console.log(`[ChatPanel] Assigned videoId to nested video: ${videoId}`)
                         }
-                        images.push({ 
-                          uri: uri, 
-                          fileName: part.root.file.name || `Generated ${mediaType}`, 
+                        images.push({
+                          uri: uri,
+                          fileName: fileName || `Generated ${mediaType}`,
                           mimeType: mimeType,
                           videoId: videoId
                         })

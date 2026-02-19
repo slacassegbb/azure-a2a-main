@@ -186,23 +186,30 @@ class FoundryHostManager(ApplicationManager):
                                     parts.append(Part(root=TextPart(text=part_data.get("text", ""))))
                                 elif kind == "file" or "file" in part_data:
                                     file_data = part_data.get("file", {})
-                                    parts.append(Part(root=FilePart(file=FileWithUri(
+                                    fp_kwargs = {"file": FileWithUri(
                                         uri=file_data.get("uri", ""),
                                         name=file_data.get("name", ""),
                                         mimeType=file_data.get("mimeType", "")
-                                    ))))
+                                    )}
+                                    if part_data.get("metadata"):
+                                        fp_kwargs["metadata"] = part_data["metadata"]
+                                    parts.append(Part(root=FilePart(**fp_kwargs)))
                                 elif kind == "data" or "data" in part_data:
                                     parts.append(Part(root=DataPart(data=part_data.get("data", {}))))
                                 # Legacy format with root wrapper (shouldn't happen but just in case)
                                 elif part_data.get("root", {}).get("kind") == "text":
                                     parts.append(Part(root=TextPart(text=part_data["root"].get("text", ""))))
                                 elif part_data.get("root", {}).get("kind") == "file":
-                                    file_data = part_data["root"].get("file", {})
-                                    parts.append(Part(root=FilePart(file=FileWithUri(
+                                    root_data = part_data["root"]
+                                    file_data = root_data.get("file", {})
+                                    fp_kwargs = {"file": FileWithUri(
                                         uri=file_data.get("uri", ""),
                                         name=file_data.get("name", ""),
                                         mimeType=file_data.get("mimeType", "")
-                                    ))))
+                                    )}
+                                    if root_data.get("metadata"):
+                                        fp_kwargs["metadata"] = root_data["metadata"]
+                                    parts.append(Part(root=FilePart(**fp_kwargs)))
                         
                         if parts:
                             msg = Message(
@@ -1119,11 +1126,14 @@ class FoundryHostManager(ApplicationManager):
                                             parts.append(Part(root=TextPart(text=root.get('text', ''))))
                                         elif root.get('kind') == 'file':
                                             file_data = root.get('file', {})
-                                            parts.append(Part(root=FilePart(file=FileWithUri(
+                                            fp_kwargs = {'file': FileWithUri(
                                                 uri=file_data.get('uri', ''),
                                                 name=file_data.get('name', ''),
                                                 mimeType=file_data.get('mimeType', '')
-                                            ))))
+                                            )}
+                                            if root.get('metadata'):
+                                                fp_kwargs['metadata'] = root['metadata']
+                                            parts.append(Part(root=FilePart(**fp_kwargs)))
                                     elif isinstance(part_data, dict):
                                         # Flat format (no root wrapper) — matches startup loader
                                         kind = part_data.get('kind')
@@ -1131,11 +1141,14 @@ class FoundryHostManager(ApplicationManager):
                                             parts.append(Part(root=TextPart(text=part_data.get('text', ''))))
                                         elif kind == 'file' or 'file' in part_data:
                                             file_data = part_data.get('file', {})
-                                            parts.append(Part(root=FilePart(file=FileWithUri(
+                                            fp_kwargs = {'file': FileWithUri(
                                                 uri=file_data.get('uri', ''),
                                                 name=file_data.get('name', ''),
                                                 mimeType=file_data.get('mimeType', '')
-                                            ))))
+                                            )}
+                                            if part_data.get('metadata'):
+                                                fp_kwargs['metadata'] = part_data['metadata']
+                                            parts.append(Part(root=FilePart(**fp_kwargs)))
                                     elif isinstance(part_data, str):
                                         parts.append(Part(root=TextPart(text=part_data)))
                                 if parts:
