@@ -624,16 +624,59 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
                 tool_iteration += 1
                 log_debug(f"🔧 Tool iteration {tool_iteration}: {len(tool_calls_to_execute)} calls")
                 
-                # Execute each tool call
+                # Execute tool calls — send_message calls run in parallel, others sequential
                 tool_outputs = []
-                for tool_call in tool_calls_to_execute:
-                    # Emit tool call event for UI
+                send_message_calls = []
+                other_calls = []
+                for tc in tool_calls_to_execute:
+                    if tc.name in ("send_message", "send_message_sync"):
+                        send_message_calls.append(tc)
+                    else:
+                        other_calls.append(tc)
+
+                # Parallel execution for send_message calls
+                if len(send_message_calls) > 1:
+                    log_debug(f"🚀 Executing {len(send_message_calls)} send_message calls in parallel")
+                    for tc in send_message_calls:
+                        asyncio.create_task(self._emit_granular_agent_event(
+                            "foundry-host-agent", f"🛠️ Calling: {tc.name}", context_id,
+                            event_type="tool_call", metadata={"tool_name": tc.name}
+                        ))
+
+                    parallel_tasks = []
+                    for tc in send_message_calls:
+                        parallel_tasks.append((tc, self._execute_single_tool_call(
+                            tc.name, tc.arguments, context_id, session_context
+                        )))
+
+                    results = await asyncio.gather(
+                        *[task for _, task in parallel_tasks],
+                        return_exceptions=True
+                    )
+
+                    for (tc, _), result in zip(parallel_tasks, results):
+                        if isinstance(result, Exception):
+                            log_error(f"Parallel tool execution error: {result}")
+                            tool_outputs.append({
+                                "tool_call_id": tc.call_id,
+                                "output": f"Error: {str(result)}"
+                            })
+                        else:
+                            tool_outputs.append({
+                                "tool_call_id": tc.call_id,
+                                "output": str(result)
+                            })
+                else:
+                    # Single send_message or none — add to other_calls for sequential execution
+                    other_calls = send_message_calls + other_calls
+
+                # Sequential execution for non-send_message calls (and single send_message)
+                for tool_call in other_calls:
                     asyncio.create_task(self._emit_granular_agent_event(
                         "foundry-host-agent", f"🛠️ Calling: {tool_call.name}", context_id,
                         event_type="tool_call", metadata={"tool_name": tool_call.name}
                     ))
-                    
-                    # Execute the tool
+
                     try:
                         result = await self._execute_single_tool_call(
                             tool_call.name,
