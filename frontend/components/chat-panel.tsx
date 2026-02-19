@@ -2449,7 +2449,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
 
     // Handle run_workflow event from Play button
     const handleRunWorkflow = async (eventData: any) => {
-      const { workflowName, workflow: workflowText, initialMessage, workflowGoal, workflowSteps, workflowConnections } = eventData
+      const { workflowName, workflow: workflowText, initialMessage, workflowGoal } = eventData
       
       console.log('[ChatPanel] Running workflow:', workflowName)
       console.log('[ChatPanel] Initial message:', initialMessage)
@@ -2534,9 +2534,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
               parts: [{ root: { kind: 'text', text: initialMessage } }],
               enableInterAgentMemory: enableInterAgentMemory,
               workflow: workflowText.trim(),
-              workflowGoal: workflowGoal || '',  // Pass the workflow goal for orchestrator
-              workflowSteps: workflowSteps || null,  // Raw steps for server-side text regeneration
-              workflowConnections: workflowConnections || null,  // Raw connections for parallel detection
+              workflowGoal: workflowGoal || '',
               userId: currentUser?.user_id,
             }
           })

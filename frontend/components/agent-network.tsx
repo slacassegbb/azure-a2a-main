@@ -1089,31 +1089,26 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
                                     setWorkflowGoal(wf.goal)
                                   }}
                                   onActivateWorkflow={async (workflow) => {
-                                    // Use the text generated from catalog steps/connections (with parallel labels like 1a, 1b)
-                                    // Fall back to canvas editedWorkflow, then simple sequential format
-                                    const workflowText = workflow.workflowText || editedWorkflow || workflow.steps?.map((step: any, index: number) => {
+                                    // Backend regenerates workflow text from DB — just pass a simple sequential text for display
+                                    const workflowText = editedWorkflow || workflow.steps?.map((step: any, index: number) => {
                                       return `${index + 1}. [${step.agentName}] ${step.description || `Use the ${step.agentName} agent`}`
                                     }).join('\n') || ''
-                                    
-                                    // Create workflow object — include raw steps+connections so backend
-                                    // can regenerate text server-side (avoids browser JS caching issues)
+
                                     const newWorkflow = {
                                       id: workflow.id,
                                       workflow: workflowText,
                                       name: workflow.name,
                                       description: workflow.description,
                                       goal: workflow.goal,
-                                      steps: workflow.steps,
-                                      connections: workflow.connections,
                                     }
-                                    
+
                                     // Add to session
                                     if (onAddWorkflow) {
                                       await onAddWorkflow(newWorkflow)
                                     } else {
                                       setWorkflow(workflowText)
                                     }
-                                    
+
                                     // DON'T close the dialog - keep it open to add more workflows
                                   }}
                                   onDeactivateWorkflow={async (workflowId) => {
