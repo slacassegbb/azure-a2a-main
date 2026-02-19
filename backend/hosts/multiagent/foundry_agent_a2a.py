@@ -4221,7 +4221,11 @@ Answer with just JSON:
                         file_uri = result.data.get('artifact-uri', '')
                         file_info.append(f"File uploaded: {file_name}")
                         if file_uri:
-                            file_uris_for_gpt4.append({"name": file_name, "uri": file_uri})
+                            entry = {"name": file_name, "uri": file_uri}
+                            role_val = result.data.get('role') or (result.data.get('metadata') or {}).get('role')
+                            if role_val:
+                                entry["role"] = str(role_val).lower()
+                            file_uris_for_gpt4.append(entry)
 
                         # CRITICAL FIX: Include extracted content in enhanced_message
                         # This was missing - file content was never being added to the message!
@@ -4230,6 +4234,21 @@ Answer with just JSON:
                             formatted_content = f"\n\n--- Extracted from {file_name} ---\n{extracted}\n--- End of {file_name} ---\n"
                             file_contents.append(formatted_content)
                             print(f"📄 Added extracted content to message: {len(extracted)} characters from {file_name}")
+
+                elif isinstance(result, FilePart) or (isinstance(result, Part) and isinstance(getattr(result, 'root', None), FilePart)):
+                    # FileParts that passed through convert_part (already had HTTP URIs)
+                    # Must also be captured so GPT-4 can route them via file_uris
+                    fp = result if isinstance(result, FilePart) else result.root
+                    fp_uri = str(getattr(fp.file, 'uri', '') or '')
+                    fp_name = getattr(fp.file, 'name', 'unknown')
+                    fp_role = getattr(fp.file, 'role', None)
+                    if fp_uri.startswith(('http://', 'https://')):
+                        entry = {"name": fp_name, "uri": fp_uri}
+                        if fp_role:
+                            entry["role"] = str(fp_role).lower()
+                        file_uris_for_gpt4.append(entry)
+                        file_info.append(f"File uploaded: {fp_name}")
+                        log_debug(f"📎 Captured passthrough FilePart URI for GPT-4: {fp_name} (role={fp_role})")
 
                 elif isinstance(result, str) and result.startswith("File:") and "Content:" in result:
                     # Legacy format - this is processed file content from uploaded files
