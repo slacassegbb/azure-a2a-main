@@ -531,19 +531,28 @@ class ConversationServer:
                                         parts.append(Part(root=DataPart(data=data)))
                                     elif kind == "file":
                                         file_data = part_data.get("file") or part_data.get("root", {}).get("file", {})
-                                        parts.append(Part(root=FilePart(file=FileWithUri(
+                                        fp_kwargs = {"file": FileWithUri(
                                             name=file_data.get("name", ""),
                                             uri=file_data.get("uri", ""),
                                             mimeType=file_data.get("mimeType", "application/octet-stream")
-                                        ))))
-                            
+                                        )}
+                                        # Preserve metadata (e.g. role='mask') for proper rendering
+                                        part_meta = part_data.get("metadata") or part_data.get("root", {}).get("metadata")
+                                        if part_meta:
+                                            fp_kwargs["metadata"] = part_meta
+                                        parts.append(Part(root=FilePart(**fp_kwargs)))
+
                             if parts:
-                                message_objects.append(Message(
-                                    messageId=msg_data.get("message_id", str(uuid.uuid4())),
-                                    role=Role.user if msg_data.get("role") == "user" else Role.agent,
-                                    parts=parts,
-                                    contextId=msg_data.get("context_id", full_conv_id)
-                                ))
+                                msg_kwargs = {
+                                    "messageId": msg_data.get("messageId") or msg_data.get("message_id", str(uuid.uuid4())),
+                                    "role": Role.user if msg_data.get("role") == "user" else Role.agent,
+                                    "parts": parts,
+                                    "contextId": msg_data.get("context_id", full_conv_id),
+                                }
+                                # Preserve message-level metadata (agentName, workflow_plan, etc.)
+                                if msg_data.get("metadata"):
+                                    msg_kwargs["metadata"] = msg_data["metadata"]
+                                message_objects.append(Message(**msg_kwargs))
                         except Exception as e:
                             log_debug(f"Error converting message: {e}")
                             continue

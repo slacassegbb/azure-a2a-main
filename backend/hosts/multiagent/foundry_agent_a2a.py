@@ -172,7 +172,7 @@ def _build_persist_parts(final_responses) -> list:
                             "file": {
                                 "uri": uri,
                                 "name": getattr(file_obj, 'name', 'artifact'),
-                                "mimeType": getattr(file_obj, 'mimeType', 'application/octet-stream')
+                                "mimeType": getattr(file_obj, 'mime_type', None) or getattr(file_obj, 'mimeType', 'application/octet-stream')
                             }
                         }
                         # Preserve metadata (e.g. role='mask') for proper rendering after refresh

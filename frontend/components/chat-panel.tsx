@@ -1002,9 +1002,10 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                     const isMask = fileRole === 'mask' || /[-_]mask\b/i.test(fileName)
                     // Only include media files with valid blob storage URIs (not local cache refs)
                     if (!isMask && (uri.startsWith('http://') || uri.startsWith('https://'))) {
-                      // Accept images and videos
-                      const isImage = mimeType.startsWith('image/') || /\.(png|jpe?g|gif|webp)$/i.test(uri)
-                      const isVideo = mimeType.startsWith('video/') || /\.(mp4|mov|avi|mkv|webm)$/i.test(uri)
+                      // Accept images and videos (strip query params for extension check)
+                      const uriPath = uri.split('?')[0]
+                      const isImage = mimeType.startsWith('image/') || /\.(png|jpe?g|gif|webp)$/i.test(uriPath)
+                      const isVideo = mimeType.startsWith('video/') || /\.(mp4|mov|avi|mkv|webm)$/i.test(uriPath)
                       if (isImage || isVideo) {
                         const mediaType = isVideo ? 'video' : 'image'
                         console.log(`[ChatPanel] Found FilePart ${mediaType}: ${uri.substring(0, 80)}...`)
@@ -1030,9 +1031,10 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                     const fileName = part.root.file.name || ''
                     const isMask = fileRole === 'mask' || /[-_]mask\b/i.test(fileName)
                     if (!isMask && (uri.startsWith('http://') || uri.startsWith('https://'))) {
-                      // Accept images and videos
-                      const isImage = mimeType.startsWith('image/') || /\.(png|jpe?g|gif|webp)$/i.test(uri)
-                      const isVideo = mimeType.startsWith('video/') || /\.(mp4|mov|avi|mkv|webm)$/i.test(uri)
+                      // Accept images and videos (strip query params for extension check)
+                      const uriPath = uri.split('?')[0]
+                      const isImage = mimeType.startsWith('image/') || /\.(png|jpe?g|gif|webp)$/i.test(uriPath)
+                      const isVideo = mimeType.startsWith('video/') || /\.(mp4|mov|avi|mkv|webm)$/i.test(uriPath)
                       if (isImage || isVideo) {
                         const mediaType = isVideo ? 'video' : 'image'
                         console.log(`[ChatPanel] Found nested FilePart ${mediaType}: ${uri.substring(0, 80)}...`)
