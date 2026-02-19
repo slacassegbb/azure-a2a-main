@@ -844,6 +844,92 @@ Analyze this request and decide the best approach."""
                 reasoning=f"Fallback to multi_agent due to selection error: {str(e)}"
             )
 
+    def _expand_parallel_from_workflow(
+        self,
+        workflow: str,
+        next_task: Dict[str, Any],
+        completed_tasks: List[Any],
+    ) -> Optional[List[Dict[str, str]]]:
+        """Detect if the LLM's single next_task belongs to a parallel group in the
+        workflow text and expand it to all sibling tasks.
+
+        Parallel groups are steps with the same number but different letter suffixes,
+        e.g. ``1a. [Agent] desc`` and ``1b. [Agent] desc``.
+
+        Returns a list of task dicts (for ``next_tasks``) if expansion applies,
+        or ``None`` if no expansion is needed.
+        """
+        # Parse parallel groups from workflow text
+        # Map: step_number -> [{"label": "1a", "agent": "...", "description": "..."}]
+        parallel_groups: Dict[int, List[Dict[str, str]]] = {}
+        for line in workflow.strip().split('\n'):
+            line = line.strip()
+            if not line:
+                continue
+            match = re.match(r'^(\d+)([a-z])\.\s*\[(.+?)\]\s*(.+)', line)
+            if match:
+                step_num = int(match.group(1))
+                sub_letter = match.group(2)
+                agent = match.group(3)
+                description = match.group(4)
+                if step_num not in parallel_groups:
+                    parallel_groups[step_num] = []
+                parallel_groups[step_num].append({
+                    "label": f"{step_num}{sub_letter}",
+                    "agent": agent,
+                    "description": description,
+                })
+
+        if not parallel_groups:
+            return None
+
+        # Filter to only groups with 2+ entries (actual parallelism)
+        parallel_groups = {k: v for k, v in parallel_groups.items() if len(v) >= 2}
+        if not parallel_groups:
+            return None
+
+        # Determine which parallel groups have already been executed
+        # by checking completed tasks for step labels
+        executed_group_nums = set()
+        for task in completed_tasks:
+            desc = getattr(task, 'task_description', '') or ''
+            step_match = re.search(r'\[Step\s+(\d+)[a-z]\]', desc)
+            if step_match:
+                executed_group_nums.add(int(step_match.group(1)))
+
+        # Try to match the LLM's next_task to an unexecuted parallel group
+        task_agent = (next_task.get("recommended_agent") or "").strip()
+        task_desc = (next_task.get("task_description") or "").strip()
+
+        for step_num in sorted(parallel_groups.keys()):
+            if step_num in executed_group_nums:
+                continue  # Already executed this group
+
+            group = parallel_groups[step_num]
+            # Check if the proposed task matches ANY entry in this parallel group
+            for entry in group:
+                entry_agent = entry["agent"]
+                # Fuzzy agent name matching (one contains the other)
+                agent_match = (
+                    entry_agent.lower() in task_agent.lower()
+                    or task_agent.lower() in entry_agent.lower()
+                )
+                if agent_match:
+                    log_info(
+                        f"🔀 [Parallel Expansion] Task agent '{task_agent}' matches "
+                        f"group {step_num} ({len(group)} tasks: "
+                        f"{', '.join(e['label'] for e in group)})"
+                    )
+                    return [
+                        {
+                            "task_description": e["description"],
+                            "recommended_agent": e["agent"],
+                        }
+                        for e in group
+                    ]
+
+        return None
+
     async def _agent_mode_orchestration_loop(
         self,
         user_message: str,
@@ -1351,7 +1437,24 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                 # =========================================================
                 # TASK EXECUTION: Handle both sequential and parallel tasks
                 # =========================================================
-                
+
+                # =========================================================
+                # PARALLEL EXPANSION: If LLM proposed a single next_task that
+                # matches a parallel group in the workflow text (e.g., 1a/1b),
+                # expand it to all sibling tasks for parallel execution.
+                # The LLM almost never uses next_tasks — it always picks one
+                # task at a time. This deterministic expansion fixes that.
+                # =========================================================
+                if (workflow and workflow.strip() and next_step.next_task
+                        and not (next_step.next_tasks and len(next_step.next_tasks) > 1)):
+                    expanded = self._expand_parallel_from_workflow(
+                        workflow, next_step.next_task, plan.tasks
+                    )
+                    if expanded:
+                        log_info(f"🔀 [Parallel Expansion] Expanded single next_task into {len(expanded)} parallel tasks")
+                        next_step.next_tasks = expanded
+                        next_step.next_task = None
+
                 # Determine which tasks to execute
                 tasks_to_execute = []
                 # Auto-detect parallel: if next_tasks has multiple entries, run them in parallel

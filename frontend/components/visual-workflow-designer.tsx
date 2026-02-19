@@ -55,7 +55,7 @@ interface VisualWorkflowDesignerProps {
   onWorkflowNameChange?: (name: string) => void
   onWorkflowGoalChange?: (goal: string) => void
   onWorkflowLoaded?: (workflow: { id: string; name: string; description: string; category: string; goal: string }) => void
-  onActivateWorkflow?: (workflow: { id: string; name: string; description: string; category: string; goal: string; steps: any[]; connections: any[] }) => void
+  onActivateWorkflow?: (workflow: { id: string; name: string; description: string; category: string; goal: string; steps: any[]; connections: any[]; workflowText?: string }) => void
   onDeactivateWorkflow?: (workflowId: string) => void
   activatedWorkflowIds?: string[]
   initialWorkflow?: string
@@ -358,11 +358,11 @@ export function VisualWorkflowDesigner({
   // Event Hub for live updates
   const { subscribe, unsubscribe, emit } = useEventHub()
   
-  // Helper function to generate workflow text from current refs
-  // NEW: Supports parallel branches with sub-lettered steps (2a, 2b, etc.)
-  const generateWorkflowTextFromRefs = (): string => {
-    const steps = workflowStepsRef.current
-    const conns = connectionsRef.current
+  // Helper function to generate workflow text from current refs (or from explicit steps/connections)
+  // Supports parallel branches with sub-lettered steps (2a, 2b, etc.)
+  const generateWorkflowTextFromRefs = (overrideSteps?: WorkflowStep[], overrideConnections?: Connection[]): string => {
+    const steps = overrideSteps || workflowStepsRef.current
+    const conns = overrideConnections || connectionsRef.current
     
     if (steps.length === 0) return ""
     
@@ -4037,6 +4037,25 @@ export function VisualWorkflowDesigner({
                   onLoadWorkflow={loadWorkflow}
                   onSaveWorkflow={handleQuickSave}
                   onActivateWorkflow={onActivateWorkflow ? (workflow) => {
+                    // Generate workflow text from catalog steps/connections
+                    // This ensures parallel labels (1a, 1b) are computed correctly
+                    const catalogSteps: WorkflowStep[] = (workflow.steps || []).map((s: any, i: number) => ({
+                      id: s.id || `catalog-step-${i}`,
+                      agentId: s.agentId || s.agentName?.toLowerCase().replace(/\s+/g, '-') || '',
+                      agentName: s.agentName || '',
+                      agentColor: s.agentColor || s.color || '#6366f1',
+                      description: s.description || '',
+                      x: s.x ?? 0,
+                      y: s.y ?? 0,
+                      order: s.order ?? i,
+                    }))
+                    const catalogConnections: Connection[] = (workflow.connections || []).map((c: any) => ({
+                      id: c.id || `catalog-conn-${c.fromStepId}-${c.toStepId}`,
+                      fromStepId: c.fromStepId,
+                      toStepId: c.toStepId,
+                      condition: c.condition,
+                    }))
+                    const workflowText = generateWorkflowTextFromRefs(catalogSteps, catalogConnections)
                     onActivateWorkflow({
                       id: workflow.id,
                       name: workflow.name,
@@ -4044,7 +4063,8 @@ export function VisualWorkflowDesigner({
                       category: workflow.category,
                       goal: workflow.goal || "",
                       steps: workflow.steps || [],
-                      connections: workflow.connections || []
+                      connections: workflow.connections || [],
+                      workflowText,
                     })
                   } : undefined}
                   onDeactivateWorkflow={onDeactivateWorkflow}

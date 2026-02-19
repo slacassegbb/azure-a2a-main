@@ -1089,9 +1089,9 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
                                     setWorkflowGoal(wf.goal)
                                   }}
                                   onActivateWorkflow={async (workflow) => {
-                                    // Use the visual designer's generated text (with parallel labels like 1a, 1b)
-                                    // Fall back to simple sequential format only if not available
-                                    const workflowText = editedWorkflow || workflow.steps?.map((step: any, index: number) => {
+                                    // Use the text generated from catalog steps/connections (with parallel labels like 1a, 1b)
+                                    // Fall back to canvas editedWorkflow, then simple sequential format
+                                    const workflowText = workflow.workflowText || editedWorkflow || workflow.steps?.map((step: any, index: number) => {
                                       return `${index + 1}. [${step.agentName}] ${step.description || `Use the ${step.agentName} agent`}`
                                     }).join('\n') || ''
                                     
