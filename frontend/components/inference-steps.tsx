@@ -33,7 +33,7 @@ interface AgentInfo {
   output: string | null
   progressMessages: string[]
   extractedFiles: { name: string; url?: string; type?: string }[]
-  stepNumber?: number  // Extracted from [Step X] in content
+  stepNumber?: string  // Extracted from [Step X] in content, e.g. "2", "2a", "2b"
 }
 
 interface OrchestratorActivity {
@@ -225,8 +225,8 @@ function parseEventsToAgents(steps: StepEvent[], agentColors?: Record<string, st
     }
 
     if (!agentMap.has(mapKey)) {
-      // Extract step number from content if present
-      const stepMatch = content.match(/\[Step\s*(\d+)\]/i)
+      // Extract step number from content if present (supports letter suffixes like 2a, 2b for parallel)
+      const stepMatch = content.match(/\[Step\s*(\d+[a-z]?)\]/i)
       agentMap.set(mapKey, {
         name: agentName,
         displayName: formatAgentName(agentName),
@@ -236,7 +236,7 @@ function parseEventsToAgents(steps: StepEvent[], agentColors?: Record<string, st
         output: null,
         progressMessages: [],
         extractedFiles: [],
-        stepNumber: stepMatch ? parseInt(stepMatch[1]) : undefined,
+        stepNumber: stepMatch ? stepMatch[1] : undefined,
       })
     }
 
@@ -257,8 +257,8 @@ function parseEventsToAgents(steps: StepEvent[], agentColors?: Record<string, st
     
     // Extract step number if we haven't yet
     if (!agent.stepNumber) {
-      const stepMatch = content.match(/\[Step\s*(\d+)\]/i)
-      if (stepMatch) agent.stepNumber = parseInt(stepMatch[1])
+      const stepMatch = content.match(/\[Step\s*(\d+[a-z]?)\]/i)
+      if (stepMatch) agent.stepNumber = stepMatch[1]
     }
     
     if (eventType === "agent_start") {
@@ -340,9 +340,15 @@ function parseEventsToAgents(steps: StepEvent[], agentColors?: Record<string, st
     }
   }
   
-  // Sort agents by step number if available
+  // Sort agents by step number if available (supports "2a" < "2b" < "3")
   const sortedAgents = Array.from(agentMap.values()).sort((a, b) => {
-    if (a.stepNumber && b.stepNumber) return a.stepNumber - b.stepNumber
+    if (a.stepNumber && b.stepNumber) {
+      const aNum = parseInt(a.stepNumber)
+      const bNum = parseInt(b.stepNumber)
+      if (aNum !== bNum) return aNum - bNum
+      // Same numeric prefix — compare suffix (e.g. "a" vs "b")
+      return a.stepNumber.localeCompare(b.stepNumber)
+    }
     if (a.stepNumber) return -1
     if (b.stepNumber) return 1
     return 0
@@ -441,16 +447,17 @@ function AgentCard({ agent, stepNumber, isLive }: { agent: AgentInfo; stepNumber
   const isCancelled = status === "cancelled"
   
   // Use agent's extracted step number, or fall back to position
-  const displayStepNumber = agent.stepNumber || stepNumber
-  
-  // Clean task description - remove [Step X] prefix
-  const cleanTaskDesc = taskDescription?.replace(/^\[Step\s*\d+\]\s*/i, "").trim()
-  
+  // For display, show only the numeric part (e.g. "2a" → "2")
+  const displayStepNumber = agent.stepNumber ? parseInt(agent.stepNumber) : stepNumber
+
+  // Clean task description - remove [Step X] prefix (with optional letter suffix)
+  const cleanTaskDesc = taskDescription?.replace(/^\[Step\s*\d+[a-z]?\]\s*/i, "").trim()
+
   // Clean output - remove duplicated sections (same text appearing twice)
   const cleanOutput = useMemo(() => {
     if (!output) return null
     // Remove [Step X] prefix from output
-    let cleaned = output.replace(/^\[Step\s*\d+\]\s*/i, "").trim()
+    let cleaned = output.replace(/^\[Step\s*\d+[a-z]?\]\s*/i, "").trim()
     // If output has same paragraph twice, dedupe it
     const paragraphs = cleaned.split(/\n\n+/)
     const seen = new Set<string>()

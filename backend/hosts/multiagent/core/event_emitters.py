@@ -239,6 +239,10 @@ class EventEmitters:
                     "contextId": context_id,
                     "status": status  # 'uploaded', 'processing', or 'analyzed'
                 }
+                # Include parallel_call_id if set (for grouping files with correct parallel agent card)
+                parallel_call_id = _current_parallel_call_id.get()
+                if parallel_call_id:
+                    file_info["parallel_call_id"] = parallel_call_id
                 await streamer.stream_file_uploaded(file_info, context_id)
                 log_debug(f"File uploaded event sent: {filename} from {agent_name} (id={file_id}, status={status})")
                 return True

@@ -2215,12 +2215,13 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
         // Add to inference steps (with thumbnail for images, text for other files)
         // This shows the image/video in the workflow panel during execution
         const fileVerb = isMedia ? "Generated" : "Extracted"
-        setInferenceSteps(prev => [...prev, { 
-          agent: data.fileInfo.source_agent, 
+        setInferenceSteps(prev => [...prev, {
+          agent: data.fileInfo.source_agent,
           status: `📎 ${fileVerb} ${data.fileInfo.filename}`,
           imageUrl: isMedia && data.fileInfo.uri ? data.fileInfo.uri : undefined,
           imageName: data.fileInfo.filename,
-          mediaType: mediaType
+          mediaType: mediaType,
+          metadata: data.fileInfo.parallel_call_id ? { parallel_call_id: data.fileInfo.parallel_call_id } : undefined,
         }])
         
         // NOTE: We do NOT add images as separate messages here anymore
