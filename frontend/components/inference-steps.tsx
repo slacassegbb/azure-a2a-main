@@ -67,6 +67,9 @@ function parseEventsToAgents(steps: StepEvent[], agentColors?: Record<string, st
   const seenOrchestratorLabels = new Set<string>()
   let orchestratorStatus: "idle" | "planning" | "dispatching" | "complete" = "idle"
   let activityIndex = 0
+  // Track the current map key for each agent name to support multiple invocations
+  // When an agent completes and new events arrive, a new key (e.g., "AgentName::2") is created
+  const currentAgentKey = new Map<string, string>()
   
   // Debug: log all incoming steps
   console.log("[InferenceSteps] Parsing steps:", steps.map(s => ({ agent: s.agent, eventType: s.eventType, statusLen: s.status?.length, hasImage: !!s.imageUrl })))
@@ -189,11 +192,30 @@ function parseEventsToAgents(steps: StepEvent[], agentColors?: Record<string, st
     // Skip if this looks like orchestrator content leaked through
     if (agentName.includes("foundry") || agentName.includes("host-agent")) continue
     
-    // Handle regular agents
-    if (!agentMap.has(agentName)) {
+    // Handle regular agents - support multiple invocations of the same agent
+    // Determine the map key: if the agent already completed and this is a new event, create a new invocation
+    let mapKey = currentAgentKey.get(agentName) || agentName
+    if (agentMap.has(mapKey)) {
+      const existing = agentMap.get(mapKey)!
+      // If the agent already completed and we see a new activity event, it's a new invocation
+      if (existing.status === "complete" && eventType !== "agent_complete" && eventType !== "agent_output") {
+        let invocation = 2
+        while (agentMap.has(`${agentName}::${invocation}`)) {
+          const prev = agentMap.get(`${agentName}::${invocation}`)!
+          if (prev.status !== "complete") break // reuse this entry if still running
+          invocation++
+        }
+        mapKey = `${agentName}::${invocation}`
+        currentAgentKey.set(agentName, mapKey)
+      }
+    } else {
+      currentAgentKey.set(agentName, mapKey)
+    }
+
+    if (!agentMap.has(mapKey)) {
       // Extract step number from content if present
       const stepMatch = content.match(/\[Step\s*(\d+)\]/i)
-      agentMap.set(agentName, {
+      agentMap.set(mapKey, {
         name: agentName,
         displayName: formatAgentName(agentName),
         color: getAgentHexColor(agentName, agentColors?.[agentName]),
@@ -205,8 +227,8 @@ function parseEventsToAgents(steps: StepEvent[], agentColors?: Record<string, st
         stepNumber: stepMatch ? parseInt(stepMatch[1]) : undefined,
       })
     }
-    
-    const agent = agentMap.get(agentName)!
+
+    const agent = agentMap.get(mapKey)!
     
     // Check for file extraction events (📎 prefix or imageUrl present)
     if (step.imageName || content.startsWith("📎")) {
