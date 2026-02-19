@@ -28,10 +28,11 @@ from ..remote_agent_connection import TaskCallbackArg
 # Import the shared context variable from the main module
 # This is used for async-safe context_id tracking
 try:
-    from ..foundry_agent_a2a import _current_context_id
+    from ..foundry_agent_a2a import _current_context_id, _current_parallel_call_id
 except ImportError:
-    # Fallback: create a local context variable if import fails
+    # Fallback: create local context variables if import fails
     _current_context_id: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar('current_context_id', default=None)
+    _current_parallel_call_id: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar('parallel_call_id', default=None)
 
 # Import logging utilities
 import sys
@@ -362,7 +363,14 @@ class EventEmitters:
                 # Add metadata if provided
                 if metadata:
                     event_data["metadata"] = metadata
-                
+
+                # Include parallel_call_id if set (for differentiating parallel calls to same agent)
+                parallel_call_id = _current_parallel_call_id.get()
+                if parallel_call_id:
+                    if "metadata" not in event_data:
+                        event_data["metadata"] = {}
+                    event_data["metadata"]["parallel_call_id"] = parallel_call_id
+
                 # DEBUG: Log what we're sending
                 print(f"📡 [WS_EMIT] Sending remote_agent_activity: agent={agent_name}, type={event_type}, convId={conversation_id}")
                 

@@ -193,26 +193,35 @@ function parseEventsToAgents(steps: StepEvent[], agentColors?: Record<string, st
     if (agentName.includes("foundry") || agentName.includes("host-agent")) continue
     
     // Handle regular agents - support multiple invocations of the same agent
-    // Determine the map key: if the agent already completed and this is a new event, create a new invocation
-    let mapKey = currentAgentKey.get(agentName) || agentName
-    if (agentMap.has(mapKey)) {
-      const existing = agentMap.get(mapKey)!
-      // If the agent already completed and we see a new dispatch event, it's a new invocation
-      // Use a whitelist: only agent_start/agent_progress indicate a new dispatch.
-      // File events, info/document-phase events, agent_complete, and agent_output belong to the current invocation.
-      const isNewDispatchEvent = eventType === "agent_start" || eventType === "agent_progress"
-      if (existing.status === "complete" && isNewDispatchEvent) {
-        let invocation = 2
-        while (agentMap.has(`${agentName}::${invocation}`)) {
-          const prev = agentMap.get(`${agentName}::${invocation}`)!
-          if (prev.status !== "complete") break // reuse this entry if still running
-          invocation++
+    // Two strategies:
+    // 1. Parallel calls: backend sends parallel_call_id in metadata → use as grouping key
+    // 2. Sequential calls: detect when a completed agent gets new dispatch events
+    const parallelCallId = step.metadata?.parallel_call_id
+    let mapKey: string
+
+    if (parallelCallId) {
+      // Parallel execution: each call has a unique ID from the backend
+      mapKey = `${agentName}::${parallelCallId}`
+    } else {
+      // Sequential execution: track by completion state
+      mapKey = currentAgentKey.get(agentName) || agentName
+      if (agentMap.has(mapKey)) {
+        const existing = agentMap.get(mapKey)!
+        // If the agent already completed and we see a new dispatch event, it's a new invocation
+        const isNewDispatchEvent = eventType === "agent_start" || eventType === "agent_progress"
+        if (existing.status === "complete" && isNewDispatchEvent) {
+          let invocation = 2
+          while (agentMap.has(`${agentName}::${invocation}`)) {
+            const prev = agentMap.get(`${agentName}::${invocation}`)!
+            if (prev.status !== "complete") break
+            invocation++
+          }
+          mapKey = `${agentName}::${invocation}`
+          currentAgentKey.set(agentName, mapKey)
         }
-        mapKey = `${agentName}::${invocation}`
+      } else {
         currentAgentKey.set(agentName, mapKey)
       }
-    } else {
-      currentAgentKey.set(agentName, mapKey)
     }
 
     if (!agentMap.has(mapKey)) {

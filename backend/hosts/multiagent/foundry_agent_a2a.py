@@ -38,6 +38,8 @@ from typing import List, Dict, Any, Optional, Iterable, Literal
 # Context variable for async-safe context_id tracking
 # This replaces the race-condition-prone self._current_host_context_id
 _current_context_id: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar('current_context_id', default=None)
+# Tracks a unique ID for each parallel send_message call so the frontend can show separate step cards
+_current_parallel_call_id: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar('parallel_call_id', default=None)
 import httpx
 from dotenv import load_dotenv
 
@@ -643,11 +645,16 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
                             event_type="tool_call", metadata={"tool_name": tc.name}
                         ))
 
+                    async def _run_parallel_call(call_id, tool_call):
+                        """Wrapper that sets parallel_call_id contextvar for this coroutine's context."""
+                        _current_parallel_call_id.set(call_id)
+                        return await self._execute_single_tool_call(
+                            tool_call.name, tool_call.arguments, context_id, session_context
+                        )
+
                     parallel_tasks = []
                     for tc in send_message_calls:
-                        parallel_tasks.append((tc, self._execute_single_tool_call(
-                            tc.name, tc.arguments, context_id, session_context
-                        )))
+                        parallel_tasks.append((tc, _run_parallel_call(tc.call_id, tc)))
 
                     results = await asyncio.gather(
                         *[task for _, task in parallel_tasks],
