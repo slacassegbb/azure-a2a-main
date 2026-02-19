@@ -2861,8 +2861,7 @@ Answer with just JSON:
                                                     artifact_uri = part.root.data.get('artifact-uri')
                                                     if artifact_uri:
                                                         log_debug(f"Found image artifact in streaming event: {artifact_uri}")
-                                                        # UNIFIED STORAGE: No need to register - files are already in uploads/{session_id}/
-                                                        # The /api/files endpoint queries blob storage directly
+                                                        # Files are already in blob storage at uploads/{session_id}/
                                                         
                                                         # Determine if file will be auto-indexed via Content Understanding
                                                         stream_file_name = part.root.data.get("file-name", "agent-artifact.png")
@@ -3099,8 +3098,7 @@ Answer with just JSON:
                                         mime_type = getattr(file_obj, 'mimeType', 'application/octet-stream')
                                         if file_uri.startswith(('http://', 'https://')):
                                             log_debug(f"🎬 Emitting file artifact event for completed task: {file_name}")
-                                            # UNIFIED STORAGE: No need to register - files are already in uploads/{session_id}/
-                                            # The /api/files endpoint queries blob storage directly
+                                            # Files are already in blob storage at uploads/{session_id}/
                                             
                                             # Determine if file will be auto-indexed via Content Understanding
                                             # Includes: documents, images, audio, video - all processed by Azure CU

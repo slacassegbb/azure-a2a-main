@@ -974,10 +974,7 @@ class FoundryHostManager(ApplicationManager):
                             await streamer.stream_file_uploaded(file_info, context_id)
                             log_debug(f"File uploaded event sent for agent artifact: {file_info['filename']}")
                             
-                            # UNIFIED STORAGE: No need to register - files are already in uploads/{session_id}/
-                            # The /api/files endpoint queries blob storage directly
-                            
-                            # Note: File availability is already communicated via file_uploaded event
+                            # File availability is already communicated via file_uploaded event
                             # No need to send additional remote_agent_activity events
                     if success:
                         log_debug(f"Message streamed to WebSocket: {event_data}")

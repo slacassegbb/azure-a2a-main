@@ -2240,10 +2240,6 @@ def main():
                 
                 print(f"[INFO] Listed {len(files)} files from local filesystem for session: {session_id}")
             
-            # UNIFIED STORAGE: No need to query agent file registry anymore
-            # All files (user uploads + agent-generated) are in uploads/{session_id}/
-            # The agent file registry is deprecated with unified storage
-            
             # NO DEDUPLICATION - show all files from blob storage as-is
             # Each file has a unique ID (file_id from path), even if filenames are identical
             # The file history should be the source of truth for what's in blob storage
@@ -2309,8 +2305,7 @@ def main():
                 container_name = os.getenv('AZURE_BLOB_CONTAINER', 'a2a-files')
                 container_client = blob_service_client.get_container_client(container_name)
                 
-                # UNIFIED STORAGE: Delete from uploads/{session_id}/{file_id}/*
-                # This is much faster than scanning all blobs
+                # Delete from uploads/{session_id}/{file_id}/*
                 deleted_count = 0
                 prefix = f"uploads/{session_id}/{file_id}/"
                 

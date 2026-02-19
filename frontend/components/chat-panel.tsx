@@ -1919,12 +1919,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
         return
       }
       
-      // Add file to file history
-      const fileInfo = data.fileInfo || data.data?.fileInfo
-      if (fileInfo && (window as any).addFileToHistory) {
-        console.log("[ChatPanel] Adding shared file to history:", fileInfo.filename)
-        ;(window as any).addFileToHistory(fileInfo)
-      }
+      // FileHistory component handles adding the file via its own 'shared_file_uploaded' subscription
     }
 
     // Handle conversation events
@@ -2918,13 +2913,9 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
         const result = await response.json()
         if (result.success) {
           setUploadedFiles(prev => [...prev, result])
-          
-          // Add to file history locally
-          if ((window as any).addFileToHistory) {
-            (window as any).addFileToHistory(result)
-          }
-          
+
           // Broadcast file upload to collaborative session members
+          // FileHistory component picks this up via 'shared_file_uploaded' subscription
           sendMessage({
             type: "shared_file_uploaded",
             conversationId: conversationId,
@@ -4598,9 +4589,6 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                   content_type: 'image/png',
                 }
                 setMaskAttachment(uploadedMask)
-                if ((window as any).addFileToHistory) {
-                  (window as any).addFileToHistory(uploadedMask)
-                }
               } else {
                 console.error('Mask upload failed:', result.error)
               }

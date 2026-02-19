@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useCallback, useRef } from "react"
+import { useState, useEffect, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Trash2, Plus, Loader2, Database, AlertCircle, FileSearch } from "lucide-react"
 import { useEventHub } from "@/hooks/use-event-hub"
@@ -229,67 +229,6 @@ export function FileHistory({ className, onFileSelect, onFilesLoaded, conversati
     
     loadFilesFromBackend()
   }, [onFilesLoaded, currentSessionId])  // Reload when session changes (joining collaborative session)
-
-  // Function to add a new file to history (will be called from parent)
-  // Use useCallback to prevent recreating the function on every render
-  const addFileToHistory = useCallback((fileData: any) => {
-    const fileRecord: FileRecord = {
-      id: fileData.id || fileData.file_id || Date.now().toString(),
-      filename: fileData.filename,
-      originalName: fileData.filename,
-      size: fileData.size || 0,
-      contentType: fileData.content_type || fileData.contentType || '',
-      uploadedAt: fileData.uploadedAt ? new Date(fileData.uploadedAt) : new Date(),
-      uri: fileData.uri || '',
-      status: (fileData.status as FileStatus) || 'uploaded'  // Use provided status or default to 'uploaded'
-    }
-
-    // Deduplicate by file ID only - each file in blob storage is unique by ID
-    // This allows multiple files with the same filename to appear in the list
-    setFiles(prev => {
-      // Check if file with same ID already exists
-      const existingIndex = prev.findIndex(f => f.id === fileRecord.id)
-      
-      if (existingIndex !== -1) {
-        const existingFile = prev[existingIndex]
-        
-        // IMPORTANT: Preserve advanced status (processing, analyzed) - don't let late events overwrite
-        // Status priority: analyzed > processing > error > uploading > uploaded
-        const statusPriority: Record<string, number> = {
-          'analyzed': 5,
-          'processing': 4,
-          'error': 3,
-          'uploading': 2,
-          'uploaded': 1
-        }
-        const existingPriority = statusPriority[existingFile.status || 'uploaded'] || 0
-        const newPriority = statusPriority[fileRecord.status || 'uploaded'] || 0
-        
-        // Only update status if new status has higher priority
-        const preservedStatus = newPriority >= existingPriority ? fileRecord.status : existingFile.status
-        
-        console.log('[FileHistory] Updating existing file by ID:', fileRecord.id, 
-          'existingStatus:', existingFile.status, 
-          'newStatus:', fileRecord.status, 'preserved:', preservedStatus)
-        
-        // Merge new data but preserve status
-        const mergedRecord = { ...existingFile, ...fileRecord, status: preservedStatus }
-        
-        const updated = [...prev]
-        updated[existingIndex] = mergedRecord
-        return updated
-      }
-      
-      // Add new file and keep last 100 (increased from 50 to accommodate more files)
-      console.log('[FileHistory] Adding new file:', fileRecord.filename, 'id:', fileRecord.id)
-      return [fileRecord, ...prev].slice(0, 100)
-    })
-  }, []) // Empty deps - setFiles is stable
-
-  // Expose the function globally so chat-panel can call it
-  useEffect(() => {
-    (window as any).addFileToHistory = addFileToHistory
-  }, [addFileToHistory])
 
   const removeFile = async (fileId: string, filename?: string) => {
     // Optimistically remove from UI
