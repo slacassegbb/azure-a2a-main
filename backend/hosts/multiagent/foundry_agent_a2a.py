@@ -2290,7 +2290,7 @@ Answer with just JSON:
                         mask_filenames.append(str(name_hint))
 
             if candidate_part:
-                role_attr = getattr(candidate_part.file, "role", None)
+                role_attr = (candidate_part.metadata or {}).get("role") if getattr(candidate_part, "metadata", None) else None
                 part_name = getattr(candidate_part.file, "name", "")
                 name_attr = part_name.lower()
                 role_lower = str(role_attr).lower() if role_attr else ""
@@ -2729,13 +2729,20 @@ Answer with just JSON:
             log_debug(f"  • agent_mode: {getattr(session_context, 'agent_mode', False)}")
 
             # Add FileParts from explicit file_uris (passed by GPT-4 from previous agent responses)
+            # Look up stored metadata (name, role) to preserve info lost in URI-only routing
+            uri_metadata = getattr(session_context, '_file_uri_metadata', {})
             if file_uris:
                 log_debug(f"📦 Adding {len(file_uris)} explicit file URIs for remote agent {agent_name}")
                 for uri in file_uris:
                     if uri and isinstance(uri, str) and uri.startswith(('http://', 'https://')):
-                        # Construct FilePart from URI
-                        # Extract filename from URI
-                        file_name = uri.split('/')[-1].split('?')[0] if '/' in uri else 'file'
+                        # Look up stored metadata by stripping SAS params
+                        lookup_key = uri.split('?')[0]
+                        stored_meta = uri_metadata.get(lookup_key, {})
+
+                        # Use stored name if available, otherwise extract from URI path
+                        file_name = stored_meta.get('name') or (uri.split('/')[-1].split('?')[0] if '/' in uri else 'file')
+                        stored_role = stored_meta.get('role')
+
                         # Guess mime type from extension
                         ext = file_name.split('.')[-1].lower() if '.' in file_name else ''
                         mime_map = {
@@ -2744,14 +2751,18 @@ Answer with just JSON:
                             'pdf': 'application/pdf', 'mp3': 'audio/mpeg', 'wav': 'audio/wav'
                         }
                         mime_type = mime_map.get(ext, 'application/octet-stream')
-                        
-                        file_part = FilePart(file=FileWithUri(
+
+                        file_part_kwargs = {'file': FileWithUri(
                             uri=uri,
                             name=file_name,
                             mimeType=mime_type
-                        ))
+                        )}
+                        if stored_role:
+                            file_part_kwargs['metadata'] = {'role': stored_role}
+
+                        file_part = FilePart(**file_part_kwargs)
                         prepared_parts.append(Part(root=file_part))
-                        log_debug(f"  • Added FilePart: {file_name} ({mime_type})")
+                        log_debug(f"  • Added FilePart: {file_name} ({mime_type}, role={stored_role})")
             
             # Add video metadata for remix operations (passed by GPT-4)
             if video_metadata and video_metadata.get('video_id'):
@@ -4274,7 +4285,7 @@ Answer with just JSON:
                     fp = result if isinstance(result, FilePart) else result.root
                     fp_uri = str(getattr(fp.file, 'uri', '') or '')
                     fp_name = getattr(fp.file, 'name', 'unknown')
-                    fp_role = getattr(fp.file, 'role', None)
+                    fp_role = (fp.metadata or {}).get('role') if getattr(fp, 'metadata', None) else None
                     if fp_uri.startswith(('http://', 'https://')):
                         entry = {"name": fp_name, "uri": fp_uri}
                         if fp_role:
@@ -4288,6 +4299,22 @@ Answer with just JSON:
                     print(f"📄 Found processed file content (legacy format): {len(result)} characters")
                     file_contents.append(result)
             
+            # Store URI→metadata mapping so send_message can restore roles and filenames
+            # when constructing FileParts from bare URI strings
+            if not hasattr(session_context, '_file_uri_metadata'):
+                session_context._file_uri_metadata = {}
+            for entry in file_uris_for_gpt4:
+                uri = entry.get("uri", "")
+                if uri:
+                    # Strip SAS query params for stable lookup key
+                    lookup_key = uri.split('?')[0]
+                    session_context._file_uri_metadata[lookup_key] = {
+                        "name": entry.get("name"),
+                        "role": entry.get("role"),
+                    }
+            if session_context._file_uri_metadata:
+                log_debug(f"📎 Stored URI metadata for {len(session_context._file_uri_metadata)} files: {list(session_context._file_uri_metadata.values())}")
+
             # Emit completion status if files were processed
             if file_count > 0 and (file_info or file_contents):
                 if file_count == 1:
@@ -5949,8 +5976,8 @@ Workflow completed with result:
                     event_type="info", metadata={"file": file_id, "action": "processing"}
                 )
             
-            file_role_attr = getattr(part.root.file, 'role', None)
-            
+            file_role_attr = (part.root.metadata or {}).get('role') if getattr(part.root, 'metadata', None) else None
+
             # Load file bytes from URI, inline bytes, or HTTP download
             file_bytes, load_error = self._load_file_bytes(part.root.file, context_id)
             if load_error:
