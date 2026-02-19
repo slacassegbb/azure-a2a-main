@@ -1354,8 +1354,10 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                 
                 # Determine which tasks to execute
                 tasks_to_execute = []
-                is_parallel = next_step.parallel and next_step.next_tasks
-                
+                # Auto-detect parallel: if next_tasks has multiple entries, run them in parallel
+                # regardless of the parallel flag (LLM doesn't reliably set it)
+                is_parallel = next_step.next_tasks and len(next_step.next_tasks) > 1
+
                 if is_parallel and next_step.next_tasks:
                     log_info(f"🔀 [Agent Mode] PARALLEL execution: {len(next_step.next_tasks)} tasks")
                     await self._emit_granular_agent_event(
