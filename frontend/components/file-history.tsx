@@ -136,11 +136,38 @@ export function FileHistory({ className, onFileSelect, onFilesLoaded, conversati
       }))
     }
 
+    // Handle agent-generated file events (emitted by WebSocket client as 'file_uploaded')
+    const handleAgentFileUploaded = (data: any) => {
+      console.log('[FileHistory] Agent file uploaded:', data)
+      const fileInfo = data?.fileInfo
+      if (!fileInfo) return
+
+      setFiles(prev => {
+        const id = fileInfo.id || fileInfo.file_id
+        if (!id) return prev
+        const exists = prev.some(f => f.id === id)
+        if (exists) return prev
+        const newFile: FileRecord = {
+          id,
+          filename: fileInfo.filename,
+          originalName: fileInfo.originalName || fileInfo.filename,
+          size: fileInfo.size || 0,
+          contentType: fileInfo.content_type || fileInfo.contentType || 'application/octet-stream',
+          uploadedAt: fileInfo.uploadedAt ? new Date(fileInfo.uploadedAt) : new Date(),
+          uri: fileInfo.uri || '',
+          status: (fileInfo.status as FileStatus) || 'uploaded'
+        }
+        return [newFile, ...prev]
+      })
+    }
+
     subscribe('shared_file_uploaded', handleSharedFileUploaded)
+    subscribe('file_uploaded', handleAgentFileUploaded)
     subscribe('file_processing_completed', handleFileProcessingCompleted)
 
     return () => {
       unsubscribe('shared_file_uploaded', handleSharedFileUploaded)
+      unsubscribe('file_uploaded', handleAgentFileUploaded)
       unsubscribe('file_processing_completed', handleFileProcessingCompleted)
     }
   }, [subscribe, unsubscribe])

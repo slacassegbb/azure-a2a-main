@@ -1120,6 +1120,25 @@ class FoundryHostManager(ApplicationManager):
                                         root = part_data['root']
                                         if root.get('kind') == 'text':
                                             parts.append(Part(root=TextPart(text=root.get('text', ''))))
+                                        elif root.get('kind') == 'file':
+                                            file_data = root.get('file', {})
+                                            parts.append(Part(root=FilePart(file=FileWithUri(
+                                                uri=file_data.get('uri', ''),
+                                                name=file_data.get('name', ''),
+                                                mimeType=file_data.get('mimeType', '')
+                                            ))))
+                                    elif isinstance(part_data, dict):
+                                        # Flat format (no root wrapper) — matches startup loader
+                                        kind = part_data.get('kind')
+                                        if kind == 'text' or 'text' in part_data:
+                                            parts.append(Part(root=TextPart(text=part_data.get('text', ''))))
+                                        elif kind == 'file' or 'file' in part_data:
+                                            file_data = part_data.get('file', {})
+                                            parts.append(Part(root=FilePart(file=FileWithUri(
+                                                uri=file_data.get('uri', ''),
+                                                name=file_data.get('name', ''),
+                                                mimeType=file_data.get('mimeType', '')
+                                            ))))
                                     elif isinstance(part_data, str):
                                         parts.append(Part(root=TextPart(text=part_data)))
                                 if parts:

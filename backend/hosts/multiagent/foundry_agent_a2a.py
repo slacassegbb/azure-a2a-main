@@ -144,6 +144,41 @@ if application_insights_connection_string:
 tracer = trace.get_tracer(__name__)
 
 
+def _build_persist_parts(final_responses) -> list:
+    """Build parts array for chat history persistence, including both text and file parts.
+
+    Extracts text from string responses and FilePart metadata from Message objects
+    so that images/videos are preserved in chat history across page refreshes.
+    """
+    parts = []
+
+    # Collect text from string responses
+    text_responses = [r for r in final_responses if isinstance(r, str)]
+    response_text = "\n\n".join(text_responses) if text_responses else ""
+    if response_text:
+        parts.append({"kind": "text", "text": response_text})
+
+    # Collect FileParts from Message objects in final_responses
+    for resp in final_responses:
+        if hasattr(resp, 'parts') and hasattr(resp, 'role'):  # It's a Message object
+            for part in resp.parts:
+                fp = getattr(part, 'root', part) if hasattr(part, 'root') else part
+                file_obj = getattr(fp, 'file', None)
+                if file_obj:
+                    uri = str(getattr(file_obj, 'uri', ''))
+                    if uri.startswith(('http://', 'https://')):
+                        parts.append({
+                            "kind": "file",
+                            "file": {
+                                "uri": uri,
+                                "name": getattr(file_obj, 'name', 'artifact'),
+                                "mimeType": getattr(file_obj, 'mimeType', 'application/octet-stream')
+                            }
+                        })
+
+    return parts
+
+
 # Note: SessionContext, AgentModeTask, AgentModePlan, NextStep
 # have been extracted to models.py
 # 
@@ -4900,9 +4935,8 @@ WORKFLOW STEPS AND OUTPUTS:
                     
                     # Persist agent response to chat history database
                     try:
-                        text_responses = [r for r in final_responses if isinstance(r, str)]
-                        response_text = "\n\n".join(text_responses) if text_responses else ""
-                        if response_text:
+                        persist_parts = _build_persist_parts(final_responses)
+                        if persist_parts:
                             # Build metadata with workflow plan if available
                             message_metadata = {"type": "agent_response"}
                             if session_context and session_context.current_plan:
@@ -4911,17 +4945,17 @@ WORKFLOW STEPS AND OUTPUTS:
                                     message_metadata["workflow_plan"] = plan_data
                                 except Exception as plan_err:
                                     print(f"[ChatHistory] Warning - could not serialize plan: {plan_err}")
-                            
+
                             persist_message(context_id, {
                                 "messageId": str(uuid.uuid4()),
                                 "role": "agent",
-                                "parts": [{"root": {"kind": "text", "text": response_text}}],
+                                "parts": persist_parts,
                                 "contextId": context_id,
                                 "metadata": message_metadata
                             })
                     except Exception as e:
                         print(f"[ChatHistory] Error persisting agent response: {e}")
-                    
+
                     # =========================================================
                     # CONVERSATION HISTORY: Record workflow in Responses API
                     # =========================================================
@@ -5000,26 +5034,26 @@ Workflow completed with result:
                         
                         # Persist agent response to chat history database
                         try:
-                            response_text = "\n\n".join([r for r in final_responses if isinstance(r, str)])
-                            # Build metadata with workflow plan if available
-                            message_metadata = {"type": "agent_response"}
-                            if session_context and session_context.current_plan:
-                                try:
-                                    plan_data = session_context.current_plan.model_dump(mode='json', exclude_none=True)
-                                    message_metadata["workflow_plan"] = plan_data
-                                except Exception as plan_err:
-                                    print(f"[ChatHistory] Warning - could not serialize plan: {plan_err}")
-                            
-                            persist_message(context_id, {
-                                "messageId": str(uuid.uuid4()),
-                                "role": "agent",
-                                "parts": [{"root": {"kind": "text", "text": response_text}}],
-                                "contextId": context_id,
-                                "metadata": message_metadata
-                            })
+                            persist_parts = _build_persist_parts(final_responses)
+                            if persist_parts:
+                                message_metadata = {"type": "agent_response"}
+                                if session_context and session_context.current_plan:
+                                    try:
+                                        plan_data = session_context.current_plan.model_dump(mode='json', exclude_none=True)
+                                        message_metadata["workflow_plan"] = plan_data
+                                    except Exception as plan_err:
+                                        print(f"[ChatHistory] Warning - could not serialize plan: {plan_err}")
+
+                                persist_message(context_id, {
+                                    "messageId": str(uuid.uuid4()),
+                                    "role": "agent",
+                                    "parts": persist_parts,
+                                    "contextId": context_id,
+                                    "metadata": message_metadata
+                                })
                         except Exception as e:
                             print(f"[ChatHistory] Error persisting agent response: {e}")
-                        
+
                         return final_responses
                     else:
                         # No outputs to return, show error
@@ -5311,24 +5345,21 @@ Workflow completed with result:
                 
                 # Persist agent response to chat history database
                 try:
-                    # Filter to only string responses for text content
-                    text_responses = [r for r in final_responses if isinstance(r, str)]
-                    response_text = "\n\n".join(text_responses) if text_responses else ""
-                    if response_text:
+                    persist_parts = _build_persist_parts(final_responses)
+                    if persist_parts:
                         # Build metadata with workflow plan if available
                         message_metadata = {"type": "agent_response"}
                         if session_context and session_context.current_plan:
                             try:
-                                # Serialize the plan to JSON-compatible dict
                                 plan_data = session_context.current_plan.model_dump(mode='json', exclude_none=True)
                                 message_metadata["workflow_plan"] = plan_data
                             except Exception as plan_err:
                                 print(f"[ChatHistory] Warning - could not serialize plan: {plan_err}")
-                        
+
                         persist_message(context_id, {
                             "messageId": str(uuid.uuid4()),
                             "role": "agent",
-                            "parts": [{"root": {"kind": "text", "text": response_text}}],
+                            "parts": persist_parts,
                             "contextId": context_id,
                             "metadata": message_metadata
                         })
