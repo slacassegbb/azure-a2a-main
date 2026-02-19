@@ -485,8 +485,8 @@ Analyze the context from previous workflow steps and answer the query.
 Return structured results as a JSON object with confidence scoring.
 Set "ok" to false if you cannot answer the query from the available context.
 The "task" field should be a short snake_case label for what was queried.
-The "result" field must be a JSON object containing the answer.
-The "refs" field should reference any specific inputs or candidates you used."""
+The "result" field must be a valid JSON string containing the answer (e.g., '{"best_image_id": "img2.png"}').
+The "refs" field must be a valid JSON string with references to inputs used (e.g., '{"candidates": ["a","b"]}'), or empty string if none."""
 
         user_prompt = f"""### QUERY
 {user_query}
@@ -506,9 +506,28 @@ Analyze the context and return your structured result."""
 
             log_info(f"🔎 [QUERY] Result: ok={query_result.ok}, task={query_result.task}, confidence={query_result.confidence}")
 
+            # Parse JSON strings back into dicts for the output envelope
+            try:
+                parsed_result = json.loads(query_result.result) if query_result.result else {}
+            except (json.JSONDecodeError, TypeError):
+                parsed_result = {"raw": query_result.result}
+            try:
+                parsed_refs = json.loads(query_result.refs) if query_result.refs else {}
+            except (json.JSONDecodeError, TypeError):
+                parsed_refs = {}
+
+            # Build clean output dict with parsed JSON
+            result_dict = {
+                "ok": query_result.ok,
+                "task": query_result.task,
+                "result": parsed_result,
+                "confidence": query_result.confidence,
+                "notes": query_result.notes,
+                "refs": parsed_refs,
+            }
+
             # Update task state
             task.state = "completed"
-            result_dict = query_result.model_dump()
             task.output = {**result_dict, "query": True}
             task.updated_at = datetime.now(timezone.utc)
 

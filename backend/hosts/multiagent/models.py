@@ -81,10 +81,10 @@ class QueryResult(BaseModel):
     """Result of a host-orchestrator query step (structured JSON analysis)."""
     ok: bool = Field(..., description="Whether the query succeeded based on available context.")
     task: str = Field(..., description="Short label for what was queried (e.g., 'pick_best_image', 'filter_invoices').")
-    result: Dict[str, Any] = Field(..., description="The query result as a JSON object.")
+    result: str = Field(..., description='The query result as a JSON string (e.g., \'{"best_image_id": "img2.png"}\').')
     confidence: float = Field(..., description="Confidence score 0.0-1.0.", ge=0.0, le=1.0)
     notes: str = Field("", description="Optional explanation or caveats.")
-    refs: Dict[str, Any] = Field(default_factory=dict, description="Optional references to inputs/candidates used.")
+    refs: str = Field("", description='Optional JSON string with references to inputs/candidates used (e.g., \'{"candidates": ["a","b"]}\').')
 
 
 class NextStep(BaseModel):
