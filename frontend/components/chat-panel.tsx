@@ -1122,7 +1122,9 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                     videoId: img.videoId, // Preserve videoId for remix functionality
                   }
                 }) : undefined,
-                agent: (msg.role === 'assistant' || msg.role === 'agent') ? 'Assistant' : undefined,
+                agent: (msg.role === 'assistant' || msg.role === 'agent')
+                  ? (msg.metadata?.agentName || 'foundry-host-agent')
+                  : undefined,
                 // Preserve metadata including workflow_plan for rendering workflow history
                 metadata: msg.metadata || undefined
               }

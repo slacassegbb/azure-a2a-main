@@ -167,14 +167,22 @@ def _build_persist_parts(final_responses) -> list:
                 if file_obj:
                     uri = str(getattr(file_obj, 'uri', ''))
                     if uri.startswith(('http://', 'https://')):
-                        parts.append({
+                        file_entry = {
                             "kind": "file",
                             "file": {
                                 "uri": uri,
                                 "name": getattr(file_obj, 'name', 'artifact'),
                                 "mimeType": getattr(file_obj, 'mimeType', 'application/octet-stream')
                             }
-                        })
+                        }
+                        # Preserve metadata (e.g. role='mask') for proper rendering after refresh
+                        fp_meta = getattr(fp, 'metadata', None)
+                        if fp_meta:
+                            file_entry["metadata"] = fp_meta if isinstance(fp_meta, dict) else dict(fp_meta)
+                        parts.append(file_entry)
+                # Also persist DataParts (e.g. video_metadata for remix functionality)
+                elif hasattr(fp, 'data') and isinstance(getattr(fp, 'data', None), dict):
+                    parts.append({"kind": "data", "data": fp.data})
 
     return parts
 
@@ -4923,6 +4931,47 @@ WORKFLOW STEPS AND OUTPUTS:
                     
                     # Return as single response (not a list)
                     final_responses = [combined_response]
+
+                    # Include agent-generated artifacts (images, videos) so they persist in chat history
+                    if hasattr(session_context, '_agent_generated_artifacts') and session_context._agent_generated_artifacts:
+                        artifact_file_parts = []
+                        video_metadata_parts = []
+                        for part in session_context._agent_generated_artifacts:
+                            target = getattr(part, 'root', part)
+                            if isinstance(target, DataPart) and isinstance(target.data, dict):
+                                if target.data.get('type') == 'video_metadata':
+                                    video_metadata_parts.append(part)
+                                    continue
+                            uri = extract_uri(part)
+                            if uri and uri.startswith('http'):
+                                if is_file_part(part):
+                                    actual_part = part.root if hasattr(part, 'root') and is_file_part(part.root) else part
+                                    artifact_file_parts.append(actual_part)
+                                else:
+                                    file_part = convert_artifact_dict_to_file_part(part)
+                                    if file_part:
+                                        artifact_file_parts.append(file_part)
+
+                        if artifact_file_parts:
+                            combined_parts = []
+                            for fp in artifact_file_parts:
+                                if hasattr(fp, 'root'):
+                                    combined_parts.append(fp)
+                                else:
+                                    combined_parts.append(Part(root=fp))
+                            for vmp in video_metadata_parts:
+                                if hasattr(vmp, 'root'):
+                                    combined_parts.append(vmp)
+                                else:
+                                    combined_parts.append(Part(root=vmp))
+                            if combined_parts:
+                                combined_message = Message(
+                                    role='agent',
+                                    parts=combined_parts,
+                                    messageId=str(uuid.uuid4()),
+                                )
+                                final_responses.append(combined_message)
+                                log_debug(f"📦 [Workflow Mode] Including {len(artifact_file_parts)} artifact(s) in persisted response")
                     
                     # Record workflow run in history (for on-demand runs via routing)
                     if selected_workflow_metadata:
@@ -4963,7 +5012,7 @@ WORKFLOW STEPS AND OUTPUTS:
                         persist_parts = _build_persist_parts(final_responses)
                         if persist_parts:
                             # Build metadata with workflow plan if available
-                            message_metadata = {"type": "agent_response"}
+                            message_metadata = {"type": "agent_response", "agentName": "foundry-host-agent"}
                             if session_context and session_context.current_plan:
                                 try:
                                     plan_data = session_context.current_plan.model_dump(mode='json', exclude_none=True)
@@ -5061,7 +5110,7 @@ Workflow completed with result:
                         try:
                             persist_parts = _build_persist_parts(final_responses)
                             if persist_parts:
-                                message_metadata = {"type": "agent_response"}
+                                message_metadata = {"type": "agent_response", "agentName": "foundry-host-agent"}
                                 if session_context and session_context.current_plan:
                                     try:
                                         plan_data = session_context.current_plan.model_dump(mode='json', exclude_none=True)
@@ -5085,7 +5134,7 @@ Workflow completed with result:
                         final_responses = [f"Agent Mode orchestration encountered an error: {error_msg}"]
                         # Persist error response - include plan for error context
                         try:
-                            message_metadata = {"type": "agent_response", "error": True}
+                            message_metadata = {"type": "agent_response", "error": True, "agentName": "foundry-host-agent"}
                             if session_context and session_context.current_plan:
                                 try:
                                     plan_data = session_context.current_plan.model_dump(mode='json', exclude_none=True)
@@ -5373,7 +5422,7 @@ Workflow completed with result:
                     persist_parts = _build_persist_parts(final_responses)
                     if persist_parts:
                         # Build metadata with workflow plan if available
-                        message_metadata = {"type": "agent_response"}
+                        message_metadata = {"type": "agent_response", "agentName": "foundry-host-agent"}
                         if session_context and session_context.current_plan:
                             try:
                                 plan_data = session_context.current_plan.model_dump(mode='json', exclude_none=True)
