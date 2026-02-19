@@ -4798,9 +4798,15 @@ Answer with just JSON:
                                 # Parse workflow steps like "1. Email Agent: ..." or "2a. QuickBooks Agent: ..."
                                 step_pattern = re.findall(r'\d+[a-z]?\.\s*(?:\*\*)?([^:*\n]+?)(?:\*\*)?:', workflow)
                                 workflow_agents = [a.strip() for a in step_pattern]
-                            
+
+                            import re as _re
                             step_outputs = []
                             for i, output in enumerate(orchestration_outputs, 1):
+                                # Strip markdown image references — images are already displayed
+                                # separately as FilePart artifacts, so including them in the
+                                # synthesis text causes duplicate rendering in the frontend.
+                                output = _re.sub(r'!\[[^\]]*\]\([^)]+\)', '', output)
+                                output = _re.sub(r'\n{3,}', '\n\n', output).strip()
                                 # Truncate very long outputs to avoid token limits
                                 truncated = output[:3000] if len(output) > 3000 else output
                                 # Tag with agent name if available from workflow definition
@@ -4822,6 +4828,7 @@ RULES:
 - Do NOT include phrases like "Step 1 output:" or "The email agent said..."
 - In the "Actions Completed" section, mention WHICH AGENT performed each action (e.g., "**Email Agent** retrieved the invoice PDF", "**QuickBooks Agent** recorded the bill", "**Stripe Agent** created and finalized the invoice")
 - Write as if YOU coordinated the work across the agents
+- Do NOT include image URLs, markdown image references (![...](url)), or raw blob storage links — images are displayed separately in the UI
 
 WORKFLOW STEPS AND OUTPUTS:
 {raw_outputs}"""
@@ -4968,7 +4975,12 @@ Workflow completed with result:
                     # If synthesis failed but we have agent outputs, return them directly
                     if orchestration_outputs:
                         print(f"⚠️ [Agent Mode] Synthesis failed ({error_msg}), but returning {len(orchestration_outputs)} agent outputs directly")
-                        final_responses = orchestration_outputs
+                        # Strip markdown image references — images displayed separately as FileParts
+                        import re as _re
+                        final_responses = [
+                            _re.sub(r'\n{3,}', '\n\n', _re.sub(r'!\[[^\]]*\]\([^)]+\)', '', o)).strip()
+                            for o in orchestration_outputs
+                        ]
                         
                         # Add ONLY agent-generated artifacts if available
                         if hasattr(session_context, '_agent_generated_artifacts'):
@@ -5174,6 +5186,16 @@ Workflow completed with result:
                 # Include ONLY agent-generated artifacts (not user uploads) in Standard Mode
                 # This ensures NEW images show up with "Refine" buttons, but user uploads don't echo
                 # Use centralized utility for clean artifact handling
+                if hasattr(session_context, '_agent_generated_artifacts') and session_context._agent_generated_artifacts:
+                    # Strip markdown image references from text responses — images are
+                    # displayed separately as FilePart artifacts with Refine buttons
+                    import re as _re
+                    final_responses = [
+                        _re.sub(r'\n{3,}', '\n\n', _re.sub(r'!\[[^\]]*\]\([^)]+\)', '', r)).strip()
+                        if isinstance(r, str) else r
+                        for r in final_responses
+                    ]
+
                 if hasattr(session_context, '_agent_generated_artifacts'):
                     artifact_file_parts = []  # FilePart objects (standard format)
                     video_metadata_parts = []  # DataParts with video_metadata (for video_id tracking)

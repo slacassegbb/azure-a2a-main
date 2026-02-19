@@ -638,12 +638,19 @@ Use the above output from the previous workflow step to complete your task."""
                 return {"error": task.error_message, "output": None}
             
             output_text = str(response_obj.result) if response_obj.result else ""
-            
+
             # Collect artifacts using helper
             if response_obj.artifacts:
                 artifact_texts = self._collect_artifacts(response_obj.artifacts, session_context)
                 if artifact_texts:
                     output_text = f"{output_text}\n\nArtifacts:\n" + "\n".join(artifact_texts)
+
+            # Strip markdown image references from output text — images are displayed
+            # separately as FilePart artifacts in the frontend, so including them in text
+            # causes duplicate rendering.
+            import re
+            output_text = re.sub(r'!\[[^\]]*\]\([^)]+\)', '', output_text)
+            output_text = re.sub(r'\n{3,}', '\n\n', output_text).strip()
             
             # Emit agent output to workflow panel so users can see what the agent returned
             # Use a higher limit (2000 chars) to avoid cutting off important info
