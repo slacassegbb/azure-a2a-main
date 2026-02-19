@@ -197,8 +197,11 @@ function parseEventsToAgents(steps: StepEvent[], agentColors?: Record<string, st
     let mapKey = currentAgentKey.get(agentName) || agentName
     if (agentMap.has(mapKey)) {
       const existing = agentMap.get(mapKey)!
-      // If the agent already completed and we see a new activity event, it's a new invocation
-      if (existing.status === "complete" && eventType !== "agent_complete" && eventType !== "agent_output") {
+      // If the agent already completed and we see a new dispatch event, it's a new invocation
+      // Use a whitelist: only agent_start/agent_progress indicate a new dispatch.
+      // File events, info/document-phase events, agent_complete, and agent_output belong to the current invocation.
+      const isNewDispatchEvent = eventType === "agent_start" || eventType === "agent_progress"
+      if (existing.status === "complete" && isNewDispatchEvent) {
         let invocation = 2
         while (agentMap.has(`${agentName}::${invocation}`)) {
           const prev = agentMap.get(`${agentName}::${invocation}`)!
