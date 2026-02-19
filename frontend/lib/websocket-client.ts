@@ -370,6 +370,10 @@ export class WebSocketClient {
         case 'file':
           this.handleFileEvent(eventData);
           break;
+        case 'file_processing_completed':
+          logDebug(`[WebSocket] file_processing_completed for ${eventData.filename}: ${eventData.status}`);
+          this.emit('file_processing_completed', eventData);
+          break;
         case 'form':
           this.handleFormEvent(eventData);
           break;

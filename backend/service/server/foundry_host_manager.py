@@ -954,8 +954,15 @@ class FoundryHostManager(ApplicationManager):
                             file_uri = content_item.get("uri")
                             # Emit file_uploaded event so it appears in File History
                             # Deduplication is handled by websocket streamer's per-conversation tracking
+                            # Use deterministic hash from blob path (sans SAS query params)
+                            # so it matches the file_processing_completed event
+                            import hashlib
+                            from urllib.parse import urlparse
+                            _parsed = urlparse(file_uri)
+                            _base_uri = f"{_parsed.scheme}://{_parsed.netloc}{_parsed.path}"
+                            file_id = hashlib.md5(_base_uri.encode()).hexdigest()[:16]
                             file_info = {
-                                "file_id": str(uuid.uuid4()),
+                                "file_id": file_id,
                                 "filename": content_item.get("fileName", "agent-artifact.png"),
                                 "uri": file_uri,
                                 "size": content_item.get("fileSize", 0),

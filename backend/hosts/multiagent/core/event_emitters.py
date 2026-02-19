@@ -218,10 +218,15 @@ class EventEmitters:
                 except Exception as e:
                     log_debug(f"Could not extract file_id from URI {uri}: {e}")
                 
-                # Fallback to generating UUID if extraction failed
+                # Fallback: hash the blob path (sans SAS query params) for deterministic ID
+                # that matches file_processing_completed events
                 if not file_id:
-                    file_id = str(uuid.uuid4())
-                    log_debug(f"Using generated file_id for {filename}: {file_id}")
+                    import hashlib
+                    from urllib.parse import urlparse
+                    _parsed = urlparse(uri)
+                    _base_uri = f"{_parsed.scheme}://{_parsed.netloc}{_parsed.path}"
+                    file_id = hashlib.md5(_base_uri.encode()).hexdigest()[:16]
+                    log_debug(f"Using hash-based file_id for {filename}: {file_id}")
                 
                 file_info = {
                     "file_id": file_id,
@@ -280,10 +285,12 @@ class EventEmitters:
                 except Exception as e:
                     print(f"⚠️ Could not parse file_id from URI {uri}: {e}")
                 
-                # Fallback: generate deterministic ID from URI if path parsing failed
+                # Fallback: hash the blob path (sans SAS query params) for deterministic ID
                 if not file_id:
                     import hashlib
-                    file_id = hashlib.md5(uri.encode()).hexdigest()[:16]
+                    _parsed = urlparse(uri)
+                    _base_uri = f"{_parsed.scheme}://{_parsed.netloc}{_parsed.path}"
+                    file_id = hashlib.md5(_base_uri.encode()).hexdigest()[:16]
                     print(f"⚠️ Using fallback hash ID for {filename}: {file_id}")
                 
                 event_data = {

@@ -123,12 +123,17 @@ export function FileHistory({ className, onFileSelect, onFilesLoaded, conversati
 
     const handleFileProcessingCompleted = (data: any) => {
       console.log('[FileHistory] File processing completed:', data)
-      const { fileId, status } = data
-      if (!fileId) return
+      const { fileId, filename, status } = data
+      if (!fileId && !filename) return
 
-      setFiles(prev => prev.map(f => 
-        f.id === fileId ? { ...f, status: status as FileStatus } : f
-      ))
+      setFiles(prev => prev.map(f => {
+        // Match by fileId first, fall back to filename for agent-generated files
+        // where the IDs may differ between file_uploaded and file_processing_completed
+        if (f.id === fileId || (filename && f.filename === filename)) {
+          return { ...f, status: status as FileStatus }
+        }
+        return f
+      }))
     }
 
     subscribe('shared_file_uploaded', handleSharedFileUploaded)

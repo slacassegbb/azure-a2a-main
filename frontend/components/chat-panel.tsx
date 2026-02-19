@@ -1520,9 +1520,21 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       if (data.messageId && data.content && data.content.length > 0) {
         // Only process assistant messages to avoid duplicating user messages
         if (data.role === "assistant" || data.role === "system") {
-          const textContent = data.content.find((c: any) => c.type === "text")?.content || ""
+          let textContent = data.content.find((c: any) => c.type === "text")?.content || ""
           // Get image parts
           const imageContents = data.content.filter((c: any) => c.type === "image")
+
+          // Strip markdown image references from text when the same images exist as attachments
+          // This prevents duplicate rendering: once via ReactMarkdown, once via attachment with Refine button
+          if (imageContents.length > 0) {
+            const imageUris = new Set(imageContents.map((c: any) => c.uri))
+            // Remove ![alt](url) where url matches an attachment URI
+            textContent = textContent.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (_match: string, _alt: string, url: string) => {
+              return imageUris.has(url) ? '' : _match
+            })
+            // Clean up leftover blank lines
+            textContent = textContent.replace(/\n{3,}/g, '\n\n').trim()
+          }
           // Get video parts - either type="video" OR type="file" with video/* mimeType
           const videoContents = data.content.filter((c: any) => 
             c.type === "video" || (c.type === "file" && c.mimeType?.startsWith("video/"))
