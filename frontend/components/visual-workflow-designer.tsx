@@ -66,6 +66,8 @@ interface VisualWorkflowDesignerProps {
 const HOST_COLOR = "#6366f1"
 const EVALUATE_COLOR = "#f59e0b"  // Amber for evaluation steps
 const EVALUATE_AGENT_NAME = "EVALUATE"
+const QUERY_COLOR = "#8b5cf6"  // Purple for query steps
+const QUERY_AGENT_NAME = "QUERY"
 
 // Helper function to adjust color brightness for gradients
 function adjustColorBrightness(color: string, amount: number): string {
@@ -1316,7 +1318,7 @@ export function VisualWorkflowDesigner({
       agentName: draggedAgent.name,
       agentColor: getAgentHexColor(draggedAgent.name, (draggedAgent as any).color),
       agentIconUrl: (draggedAgent as any).iconUrl || (draggedAgent as any).avatar,
-      description: draggedAgent.name === EVALUATE_AGENT_NAME ? "Is the condition met?" : `Use the ${draggedAgent.name}`,
+      description: draggedAgent.name === EVALUATE_AGENT_NAME ? "Is the condition met?" : draggedAgent.name === QUERY_AGENT_NAME ? "Analyze the results" : `Use the ${draggedAgent.name}`,
       x,
       y,
       order
@@ -2310,6 +2312,7 @@ export function VisualWorkflowDesigner({
         const icy = iconY + iconSize/2
 
         const isEvalStep = step.agentName.toUpperCase() === EVALUATE_AGENT_NAME
+        const isQueryStep = step.agentName.toUpperCase() === QUERY_AGENT_NAME
 
         if (isEvalStep) {
           // Diamond icon for evaluation steps
@@ -2327,6 +2330,18 @@ export function VisualWorkflowDesigner({
           ctx.textAlign = "center"
           ctx.textBaseline = "middle"
           ctx.fillText("?", icx, icy + 1)
+        } else if (isQueryStep) {
+          // Circle icon for query steps
+          ctx.fillStyle = QUERY_COLOR
+          ctx.beginPath()
+          ctx.arc(icx, icy, 12, 0, Math.PI * 2)
+          ctx.fill()
+          // "Q" inside circle
+          ctx.fillStyle = "#ffffff"
+          ctx.font = "bold 12px -apple-system, system-ui, sans-serif"
+          ctx.textAlign = "center"
+          ctx.textBaseline = "middle"
+          ctx.fillText("Q", icx, icy + 1)
         } else {
           // Bot icon for agent steps
           ctx.fillStyle = step.agentColor
@@ -3450,6 +3465,21 @@ export function VisualWorkflowDesigner({
               >
                 <div className="text-sm font-medium text-amber-300">Evaluation</div>
                 <div className="text-xs text-slate-400 mt-1">True/false condition branching</div>
+              </div>
+
+              {/* Query step - always available */}
+              <div
+                draggable
+                onDragStart={() => setDraggedAgent({ name: QUERY_AGENT_NAME, description: "Query/analyze data with structured JSON output", color: QUERY_COLOR })}
+                onDragEnd={() => setDraggedAgent(null)}
+                className="p-3 bg-slate-800 rounded border border-slate-700 hover:border-slate-600 cursor-move transition-colors"
+                style={{
+                  borderLeftColor: QUERY_COLOR,
+                  borderLeftWidth: '3px'
+                }}
+              >
+                <div className="text-sm font-medium text-purple-300">Query</div>
+                <div className="text-xs text-slate-400 mt-1">Structured JSON analysis</div>
               </div>
 
               {registeredAgents.length === 0 ? (

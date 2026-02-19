@@ -41,6 +41,7 @@ from ..models import (
     NextStep,
     RouteSelection,
     EvaluationResult,
+    QueryResult,
 )
 from ..tool_context import DummyToolContext
 
@@ -403,6 +404,143 @@ Evaluate the condition and return your result."""
             )
             return {"error": task.error_message, "output": None}
 
+    async def _execute_query_step(
+        self,
+        task: AgentModeTask,
+        session_context: SessionContext,
+        context_id: str,
+        previous_task_outputs: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
+        """
+        Execute a query step using the host orchestrator LLM.
+
+        Instead of calling a remote agent, this analyzes previous workflow outputs
+        and returns a structured JSON envelope with the query result.
+        """
+        task_desc = task.task_description
+        # Strip [Step X] prefix for the query prompt
+        user_query = re.sub(r'^\[Step\s+\d+[a-z]?\]\s*', '', task_desc)
+        log_info(f"🔎 [QUERY] Executing query: {user_query[:100]}")
+
+        # Emit events under "Query" agent name so the frontend renders an agent card
+        query_agent_name = "Query"
+
+        await self._emit_granular_agent_event(
+            query_agent_name, f"Starting task: {task_desc[:80]}...", context_id,
+            event_type="agent_start", metadata={"query": True, "task_description": task_desc}
+        )
+
+        # Build context from previous step outputs AND extracted documents
+        # (same context-gathering logic as _execute_evaluation_step)
+        context_parts = []
+        found_document = False
+
+        # Primary source: session-cached extracted documents
+        extracted_docs = getattr(session_context, '_extracted_documents', [])
+        if extracted_docs:
+            for doc_content in extracted_docs:
+                log_info(f"🔎 [QUERY] Using session-cached document content: {len(doc_content)} chars")
+                context_parts.append(f"[Extracted Document]\n{doc_content}")
+                found_document = True
+
+        # Fallback: search Azure Search memory for extracted document content
+        if not found_document:
+            try:
+                memory_results = await self._search_relevant_memory(
+                    query=user_query,
+                    context_id=session_context.contextId,
+                    agent_name=None,
+                    top_k=5
+                )
+                if memory_results:
+                    for result in memory_results:
+                        agent_name = result.get('agent_name', '')
+                        if agent_name == 'DocumentProcessor':
+                            inbound = result.get('inbound_payload', {})
+                            if isinstance(inbound, str):
+                                try:
+                                    inbound = json.loads(inbound)
+                                except Exception:
+                                    pass
+                            if isinstance(inbound, dict) and 'content' in inbound:
+                                doc_content = str(inbound['content'])
+                                log_info(f"🔎 [QUERY] Found document content from memory: {len(doc_content)} chars")
+                                context_parts.append(f"[Extracted Document]\n{doc_content}")
+                                found_document = True
+                                break
+            except Exception as e:
+                log_error(f"[QUERY] Error searching memory for document content: {e}")
+
+        # Add previous task outputs (more generous than EVALUATE since queries need more context)
+        if previous_task_outputs:
+            for output in previous_task_outputs[-5:]:
+                context_parts.append(output)
+
+        context_text = "\n\n".join(context_parts)
+        if len(context_text) > 8000:
+            context_text = context_text[:8000] + "... [truncated]"
+
+        system_prompt = """You are executing a query step in a multi-agent workflow.
+Analyze the context from previous workflow steps and answer the query.
+Return structured results as a JSON object with confidence scoring.
+Set "ok" to false if you cannot answer the query from the available context.
+The "task" field should be a short snake_case label for what was queried.
+The "result" field must be a JSON object containing the answer.
+The "refs" field should reference any specific inputs or candidates you used."""
+
+        user_prompt = f"""### QUERY
+{user_query}
+
+### CONTEXT FROM PREVIOUS WORKFLOW STEPS
+{context_text if context_text else "(no previous output available)"}
+
+Analyze the context and return your structured result."""
+
+        try:
+            query_result = await self._call_azure_openai_structured(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                response_model=QueryResult,
+                context_id=context_id
+            )
+
+            log_info(f"🔎 [QUERY] Result: ok={query_result.ok}, task={query_result.task}, confidence={query_result.confidence}")
+
+            # Update task state
+            task.state = "completed"
+            result_dict = query_result.model_dump()
+            task.output = {**result_dict, "query": True}
+            task.updated_at = datetime.now(timezone.utc)
+
+            # Emit result to frontend as agent output
+            display_text = json.dumps(result_dict, indent=2)
+            await self._emit_granular_agent_event(
+                query_agent_name, display_text, context_id,
+                event_type="agent_output",
+                metadata={"query": True, "ok": query_result.ok, "confidence": query_result.confidence}
+            )
+
+            # Emit agent_complete
+            await self._emit_granular_agent_event(
+                query_agent_name, f"{query_agent_name} completed", context_id,
+                event_type="agent_complete"
+            )
+
+            # Return output as JSON text so downstream steps can read it
+            output_text = json.dumps(result_dict)
+            return {"output": output_text, "hitl_pause": False}
+
+        except Exception as e:
+            log_error(f"[QUERY] Error during query: {e}")
+            task.state = "failed"
+            task.error_message = f"Query failed: {str(e)}"
+            task.updated_at = datetime.now(timezone.utc)
+            await self._emit_granular_agent_event(
+                query_agent_name, f"Error: {str(e)[:200]}", context_id,
+                event_type="agent_error", metadata={"error": str(e)[:500]}
+            )
+            return {"error": task.error_message, "output": None}
+
     async def _execute_orchestrated_task(
         self,
         task: AgentModeTask,
@@ -443,6 +581,12 @@ Evaluate the condition and return your result."""
         # Detect evaluation steps — handled by host LLM, not a remote agent
         if recommended_agent and recommended_agent.upper() == "EVALUATE":
             return await self._execute_evaluation_step(
+                task, session_context, context_id, previous_task_outputs
+            )
+
+        # Detect query steps — handled by host LLM, not a remote agent
+        if recommended_agent and recommended_agent.upper() == "QUERY":
+            return await self._execute_query_step(
                 task, session_context, context_id, previous_task_outputs
             )
 
@@ -1216,6 +1360,12 @@ Do NOT skip steps. Do NOT mark goal as completed until ALL workflow steps are do
 - You MUST use the agent specified in brackets for that step - do NOT substitute a different agent
 - Set `recommended_agent` to the exact agent name from the brackets
 - Steps marked [EVALUATE] are handled by the host orchestrator — set recommended_agent to "EVALUATE"
+- Steps marked [QUERY] are handled by the host orchestrator — set recommended_agent to "QUERY"
+
+**QUERY STEPS**:
+- [QUERY] steps analyze previous outputs and return structured JSON results (they do NOT branch)
+- Use them to filter, compare, rank, or extract information from previous step outputs
+- Their JSON output is available to subsequent steps in the workflow
 
 **EVALUATION & BRANCHING**:
 - Steps with [EVALUATE] are conditional decision points that return true or false
@@ -1706,8 +1856,8 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                             elif result.get("output"):
                                 all_task_outputs.append(result["output"])
                             # Emit agent_complete for successfully finished tasks
-                            # Skip EVALUATE tasks — they emit their own events inside _execute_evaluation_step()
-                            is_eval = task.recommended_agent and task.recommended_agent.upper() == "EVALUATE"
+                            # Skip EVALUATE/QUERY tasks — they emit their own events
+                            is_eval = task.recommended_agent and task.recommended_agent.upper() in ("EVALUATE", "QUERY")
                             if task.state == "completed" and task.recommended_agent and not result.get("hitl_pause") and not is_eval:
                                 await self._emit_granular_agent_event(
                                     task.recommended_agent, f"{task.recommended_agent} completed", context_id,
@@ -1766,8 +1916,8 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                             all_task_outputs.append(result["output"])
                         
                         # Emit agent_complete/agent_error based on task state from the plan
-                        # Skip EVALUATE tasks — they emit their own events inside _execute_evaluation_step()
-                        is_evaluate = task.recommended_agent and task.recommended_agent.upper() == "EVALUATE"
+                        # Skip EVALUATE/QUERY tasks — they emit their own events
+                        is_evaluate = task.recommended_agent and task.recommended_agent.upper() in ("EVALUATE", "QUERY")
                         if task.state == "completed" and task.recommended_agent and not is_evaluate:
                             await self._emit_granular_agent_event(
                                 task.recommended_agent, f"{task.recommended_agent} completed", context_id,
