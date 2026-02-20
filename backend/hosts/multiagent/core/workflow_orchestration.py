@@ -608,7 +608,7 @@ Analyze the context and return your structured result."""
                 "bing_grounding": {
                     "search_configurations": [
                         {
-                            "connection_id": bing_conn_id,
+                            "project_connection_id": bing_conn_id,
                             "count": 5
                         }
                     ]
