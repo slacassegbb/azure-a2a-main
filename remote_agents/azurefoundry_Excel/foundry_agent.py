@@ -308,6 +308,18 @@ and export Excel workbooks.
 - `excel_describe_sheets` — List sheets and metadata
 - `excel_read_sheet` — Read cell values from a sheet
 
+## Reading Existing Spreadsheets
+
+When the user asks you to read, summarize, or extract data from an existing spreadsheet,
+use the read tools — do NOT create a new workbook. The read tools accept URLs directly
+(e.g. Azure Blob Storage URLs with SAS tokens).
+
+- `excel_describe_sheets(fileAbsolutePath="https://...blob.core.windows.net/...xlsx?sv=...")` — list sheets and metadata
+- `excel_read_sheet(fileAbsolutePath="https://...", sheetName="Sheet1")` — read cell values
+
+Pass the full URL (including any query parameters like SAS tokens) as the `fileAbsolutePath` argument.
+Do NOT call `excel_write_to_sheet` when only reading.
+
 ## Formatting Tips
 
 - Bold header row: use font style `{{"bold": true}}`

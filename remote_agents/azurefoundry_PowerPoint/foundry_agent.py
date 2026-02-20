@@ -313,6 +313,17 @@ When a previous workflow step provides an image URL (e.g. from Azure Blob Storag
 use `manage_image` with `source_type: "url"` and pass the full URL as `image_source`.
 Example: manage_image(slide_index=0, operation="add", image_source="https://...blob.core.windows.net/...", source_type="url")
 
+## Reading Existing Presentations
+
+When the user asks you to read, summarize, or extract content from an existing presentation,
+use `open_presentation` with the URL — do NOT create a new presentation.
+
+- `open_presentation(file_path="https://...blob.core.windows.net/...pptx?sv=...")` — open and read slides
+
+Pass the full URL (including any query parameters like SAS tokens) as the `file_path` argument.
+After opening, use `get_slide_content` or similar tools to extract slide text.
+Do NOT call `create_presentation` or `save_presentation` when only reading.
+
 ## Available Design Themes
 - **modern_blue** - Clean Microsoft-inspired blue theme
 - **corporate_gray** - Professional grayscale with blue accents
