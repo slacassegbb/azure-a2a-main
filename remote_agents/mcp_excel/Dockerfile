@@ -16,6 +16,8 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /excel-mcp-server ./cmd/ex
 # --- Stage 2: Runtime ---
 FROM node:20-slim
 
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 # Copy the Go binary built from source
