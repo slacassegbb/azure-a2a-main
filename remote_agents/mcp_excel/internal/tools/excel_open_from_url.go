@@ -16,7 +16,7 @@ import (
 )
 
 type ExcelOpenFromURLArguments struct {
-	URL      string `zog:"url"`
+	Url      string `zog:"url"`
 	Filename string `zog:"filename"`
 }
 
@@ -45,12 +45,12 @@ func handleOpenFromURL(ctx context.Context, request mcp.CallToolRequest) (*mcp.C
 		return imcp.NewToolResultZogIssueMap(issues), nil
 	}
 
-	if !strings.HasPrefix(args.URL, "http://") && !strings.HasPrefix(args.URL, "https://") {
+	if !strings.HasPrefix(args.Url, "http://") && !strings.HasPrefix(args.Url, "https://") {
 		return imcp.NewToolResultInvalidArgumentError("url must be an HTTP/HTTPS URL"), nil
 	}
 
 	// Determine filename
-	urlPath := strings.SplitN(args.URL, "?", 2)[0]
+	urlPath := strings.SplitN(args.Url, "?", 2)[0]
 	var safeName string
 	if args.Filename != "" {
 		safeName = filepath.Base(args.Filename)
@@ -74,7 +74,7 @@ func handleOpenFromURL(ctx context.Context, request mcp.CallToolRequest) (*mcp.C
 	localPath := filepath.Join(downloadDir, safeName)
 
 	// Download file
-	resp, err := http.Get(args.URL)
+	resp, err := http.Get(args.Url)
 	if err != nil {
 		return imcp.NewToolResultInvalidArgumentError(fmt.Sprintf("failed to download file: %v", err)), nil
 	}
