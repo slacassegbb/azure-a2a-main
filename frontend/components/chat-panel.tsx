@@ -3655,9 +3655,10 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                             const isVideoByExt = /\.(mp4|webm|mov|avi|mkv)$/.test(urlWithoutParams)
                             const isImageByExt = /\.(png|jpe?g|gif|webp|svg|bmp)$/.test(urlWithoutParams)
                             const isPdfByExt = /\.pdf$/.test(urlWithoutParams)
-                            
-                            // PDFs should NEVER be treated as images, even if mediaType is wrong
-                            const isImage = !isPdfByExt && ((attachment.mediaType || "").startsWith("image/") || (!attachment.mediaType && isImageByExt))
+                            const isDocumentByExt = /\.(docx|pptx|xlsx|doc|ppt|xls|csv|tsv)$/.test(urlWithoutParams)
+
+                            // Documents and PDFs should NEVER be treated as images, even if mediaType is wrong
+                            const isImage = !isPdfByExt && !isDocumentByExt && ((attachment.mediaType || "").startsWith("image/") || (!attachment.mediaType && isImageByExt))
                             const isVideo = (attachment.mediaType || "").startsWith("video/") || (!attachment.mediaType && isVideoByExt) || isVideoByExt
                             
                             // Debug: Log full type detection for each attachment
@@ -3835,7 +3836,15 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                       {/* Render images/videos loaded from conversation history (DataPart artifacts) */}
                       {message.images && message.images.length > 0 && (
                         <div className="flex flex-col gap-3 mb-3">
-                          {message.images.map((image, imageIndex) => {
+                          {message.images.filter((image) => {
+                            // Skip document files — they should only appear as download links in text
+                            const uriPath = (image.uri || "").split('?')[0].toLowerCase()
+                            const isDocument = /\.(docx|pptx|xlsx|doc|ppt|xls|csv|tsv|pdf)$/.test(uriPath)
+                            if (isDocument) {
+                              console.log('[VideoRemix] Skipping document in message.images:', image.fileName)
+                            }
+                            return !isDocument
+                          }).map((image, imageIndex) => {
                             const isVideo = image.mimeType?.startsWith('video/') || image.uri.match(/\.(mp4|webm|mov)(\?|$)/i)
                             console.log('[VideoRemix] Rendering message.images item:', {
                               index: imageIndex,
