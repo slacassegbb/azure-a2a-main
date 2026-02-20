@@ -25,10 +25,11 @@ Existing agent port assignments. New agents must not conflict.
 | 9035 | GitHub |
 | 9036 | PowerPoint |
 | 9037 | Excel |
+| 9038 | Word |
 
 ## Available Ranges
 - 8022-8099 (legacy range)
-- 9038-9099 (modern range)
+- 9039-9099 (modern range)
 
 ## Gradio UI Ports
 Convention: A2A_PORT + 65 or use 8085 default.

@@ -158,7 +158,7 @@
     "name": "AI Foundry Image Generator Agent",
     "description": "An Azure AI Foundry agent that can generate and edit images.",
     "version": "1.0.0",
-    "url": "https://azurefoundry-image-generator.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
+    "url": "http://localhost:9010/",
     "defaultInputModes": [
       "text"
     ],
@@ -933,6 +933,47 @@
           "spreadsheet",
           "xlsx",
           "data"
+        ]
+      },
+      {
+        "id": "human_interaction",
+        "name": "Human Expert Escalation",
+        "description": "Escalate complex issues to human experts when needed.",
+        "examples": null,
+        "tags": [
+          "human-interaction",
+          "escalation",
+          "expert",
+          "human-capable"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "AI Foundry Word Agent",
+    "description": "An Azure AI Foundry agent that creates professional Word documents and returns downloadable .docx files.",
+    "version": "1.0.0",
+    "url": "http://localhost:9038/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "create_document",
+        "name": "Create Document",
+        "description": "Create professional Word documents from text descriptions. Supports headings, paragraphs, tables, images, footnotes, formatting, and styles.",
+        "examples": null,
+        "tags": [
+          "word",
+          "document",
+          "docx",
+          "report"
         ]
       },
       {

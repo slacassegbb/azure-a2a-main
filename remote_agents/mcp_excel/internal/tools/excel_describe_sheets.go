@@ -35,7 +35,12 @@ func handleDescribeSheets(ctx context.Context, request mcp.CallToolRequest) (*mc
 	if len(issues) != 0 {
 		return imcp.NewToolResultZogIssueMap(issues), nil
 	}
-	return describeSheets(args.FileAbsolutePath)
+	localPath, cleanup, err := ResolveFilePath(args.FileAbsolutePath)
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
+	return describeSheets(localPath)
 }
 
 type Response struct {

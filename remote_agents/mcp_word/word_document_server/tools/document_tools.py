@@ -3,10 +3,25 @@ Document creation and manipulation tools for Word Document Server.
 """
 import os
 import json
-from typing import Dict, List, Optional, Any
+import tempfile
+import urllib.request
+from typing import Dict, List, Optional, Any, Tuple
 from docx import Document
 
 from word_document_server.utils.file_utils import check_file_writeable, ensure_docx_extension, create_document_copy
+
+
+def _resolve_file_path(filename: str) -> Tuple[str, Optional[str]]:
+    """Resolve a filename that may be a URL. Downloads to temp file if needed.
+    Returns (local_path, temp_path_or_None). Caller must clean up temp_path if not None."""
+    if filename.startswith(("http://", "https://")):
+        url_path = filename.split('?')[0]
+        ext = os.path.splitext(url_path)[1] or '.docx'
+        with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
+            temp_path = tmp.name
+        urllib.request.urlretrieve(filename, temp_path)
+        return temp_path, temp_path
+    return ensure_docx_extension(filename), None
 from word_document_server.utils.document_utils import get_document_properties, extract_document_text, get_document_structure, get_document_xml, insert_header_near_text, insert_line_or_paragraph_near_text
 from word_document_server.core.styles import ensure_heading_style, ensure_table_style
 
@@ -48,44 +63,64 @@ async def create_document(filename: str, title: Optional[str] = None, author: Op
 
 
 async def get_document_info(filename: str) -> str:
-    """Get information about a Word document.
-    
+    """Get information about a Word document. Accepts a local path or URL (e.g. Azure Blob Storage).
+
     Args:
-        filename: Path to the Word document
+        filename: Path to the Word document or URL
     """
-    filename = ensure_docx_extension(filename)
-    
-    if not os.path.exists(filename):
-        return f"Document {filename} does not exist"
-    
     try:
-        properties = get_document_properties(filename)
+        local_path, temp_path = _resolve_file_path(filename)
+    except Exception as e:
+        return f"Failed to download document from URL: {str(e)}"
+
+    if not os.path.exists(local_path):
+        return f"Document {filename} does not exist"
+
+    try:
+        properties = get_document_properties(local_path)
         return json.dumps(properties, indent=2)
     except Exception as e:
         return f"Failed to get document info: {str(e)}"
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            os.unlink(temp_path)
 
 
 async def get_document_text(filename: str) -> str:
-    """Extract all text from a Word document.
-    
+    """Extract all text from a Word document. Accepts a local path or URL (e.g. Azure Blob Storage).
+
     Args:
-        filename: Path to the Word document
+        filename: Path to the Word document or URL
     """
-    filename = ensure_docx_extension(filename)
-    
-    return extract_document_text(filename)
+    try:
+        local_path, temp_path = _resolve_file_path(filename)
+    except Exception as e:
+        return f"Failed to download document from URL: {str(e)}"
+
+    try:
+        return extract_document_text(local_path)
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            os.unlink(temp_path)
 
 
 async def get_document_outline(filename: str) -> str:
-    """Get the structure of a Word document.
-    
+    """Get the structure of a Word document. Accepts a local path or URL (e.g. Azure Blob Storage).
+
     Args:
-        filename: Path to the Word document
+        filename: Path to the Word document or URL
     """
-    filename = ensure_docx_extension(filename)
-    
-    structure = get_document_structure(filename)
-    return json.dumps(structure, indent=2)
+    try:
+        local_path, temp_path = _resolve_file_path(filename)
+    except Exception as e:
+        return f"Failed to download document from URL: {str(e)}"
+
+    try:
+        structure = get_document_structure(local_path)
+        return json.dumps(structure, indent=2)
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            os.unlink(temp_path)
 
 
 async def list_available_documents(directory: str = ".") -> str:
@@ -210,5 +245,14 @@ async def merge_documents(target_filename: str, source_filenames: List[str], add
 
 
 async def get_document_xml_tool(filename: str) -> str:
-    """Get the raw XML structure of a Word document."""
-    return get_document_xml(filename)
+    """Get the raw XML structure of a Word document. Accepts a local path or URL."""
+    try:
+        local_path, temp_path = _resolve_file_path(filename)
+    except Exception as e:
+        return f"Failed to download document from URL: {str(e)}"
+
+    try:
+        return get_document_xml(local_path)
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            os.unlink(temp_path)

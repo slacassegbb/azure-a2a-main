@@ -1,8 +1,8 @@
 """
-AI Foundry PowerPoint Agent with presentation creation capabilities.
+AI Foundry Word Agent with document creation capabilities.
 Uses the Responses API with native MCP tool support to interact with a
-remote PowerPoint MCP server.  After the LLM finishes building slides it
-calls download_presentation, and this agent fetches the resulting .pptx,
+remote Word MCP server.  After the LLM finishes building the document it
+calls download_document, and this agent fetches the resulting .docx,
 uploads it to Azure Blob Storage, and exposes it as an A2A artifact.
 """
 import os
@@ -25,17 +25,17 @@ from azure.core.credentials import AzureNamedKeyCredential, AzureSasCredential
 
 logger = logging.getLogger(__name__)
 
-POWERPOINT_MCP_URL = os.getenv(
-    "POWERPOINT_MCP_URL",
-    "https://mcp-powerpoint.ambitioussky-6c709152.westus2.azurecontainerapps.io/mcp",
+WORD_MCP_URL = os.getenv(
+    "WORD_MCP_URL",
+    "https://mcp-word.ambitioussky-6c709152.westus2.azurecontainerapps.io/mcp",
 )
 
 # Base URL of the MCP server (for downloading generated files)
-_MCP_BASE_URL = POWERPOINT_MCP_URL.rsplit("/mcp", 1)[0]
+_MCP_BASE_URL = WORD_MCP_URL.rsplit("/mcp", 1)[0]
 
 
-class FoundryPowerPointAgent:
-    """AI Foundry Agent with PowerPoint capabilities via Responses API."""
+class FoundryWordAgent:
+    """AI Foundry Agent with Word document capabilities via Responses API."""
 
     def __init__(self):
         self.endpoint = os.environ["AZURE_AI_FOUNDRY_PROJECT_ENDPOINT"]
@@ -49,48 +49,65 @@ class FoundryPowerPointAgent:
         self._current_context_id: Optional[str] = None
         self._mcp_tool_config = {
             "type": "mcp",
-            "server_label": "PowerPoint",
-            "server_url": POWERPOINT_MCP_URL,
+            "server_label": "Word",
+            "server_url": WORD_MCP_URL,
             "require_approval": "never",
             "allowed_tools": [
-                "create_presentation",
-                "create_presentation_from_template",
-                "open_presentation",
-                "save_presentation",
-                "download_presentation",
-                "get_presentation_info",
-                "get_template_file_info",
-                "set_core_properties",
-                "add_slide",
-                "get_slide_info",
-                "extract_slide_text",
-                "extract_presentation_text",
-                "populate_placeholder",
-                "add_bullet_points",
-                "manage_text",
-                "manage_image",
-                "list_slide_templates",
-                "apply_slide_template",
-                "create_slide_from_template",
-                "create_presentation_from_templates",
-                "get_template_info",
-                "auto_generate_presentation",
-                "optimize_slide_text",
+                "create_document",
+                "copy_document",
+                "get_document_info",
+                "get_document_text",
+                "get_document_outline",
+                "list_available_documents",
+                "get_document_xml",
+                "insert_header_near_text",
+                "insert_line_or_paragraph_near_text",
+                "insert_numbered_list_near_text",
+                "add_paragraph",
+                "add_heading",
+                "add_picture",
                 "add_table",
-                "format_table_cell",
-                "add_shape",
-                "add_chart",
-                "apply_professional_design",
-                "apply_picture_effects",
-                "manage_fonts",
-                "manage_hyperlinks",
-                "manage_slide_masters",
-                "add_connector",
-                "update_chart_data",
-                "manage_slide_transitions",
-                "list_presentations",
-                "switch_presentation",
-                "get_server_info",
+                "add_page_break",
+                "delete_paragraph",
+                "search_and_replace",
+                "create_custom_style",
+                "format_text",
+                "format_table",
+                "set_table_cell_shading",
+                "apply_table_alternating_rows",
+                "highlight_table_header",
+                "merge_table_cells",
+                "merge_table_cells_horizontal",
+                "merge_table_cells_vertical",
+                "set_table_cell_alignment",
+                "set_table_alignment_all",
+                "protect_document",
+                "unprotect_document",
+                "add_footnote_to_document",
+                "add_footnote_after_text",
+                "add_footnote_before_text",
+                "add_footnote_enhanced",
+                "add_endnote_to_document",
+                "customize_footnote_style",
+                "delete_footnote_from_document",
+                "add_footnote_robust",
+                "validate_document_footnotes",
+                "delete_footnote_robust",
+                "get_paragraph_text_from_document",
+                "find_text_in_document",
+                "convert_to_pdf",
+                "replace_paragraph_block_below_header",
+                "replace_block_between_manual_anchors",
+                "download_document",
+                "get_all_comments",
+                "get_comments_by_author",
+                "get_comments_for_paragraph",
+                "set_table_column_width",
+                "set_table_column_widths",
+                "set_table_width",
+                "auto_fit_table_columns",
+                "format_table_cell_text",
+                "set_table_cell_padding",
             ],
             "headers": {
                 "Content-Type": "application/json",
@@ -100,7 +117,7 @@ class FoundryPowerPointAgent:
         }
 
     # ------------------------------------------------------------------
-    # Azure Blob Storage helpers (adapted from image generator agent)
+    # Azure Blob Storage helpers (adapted from PowerPoint agent)
     # ------------------------------------------------------------------
 
     def _get_blob_service_client(self) -> Optional[BlobServiceClient]:
@@ -220,25 +237,25 @@ class FoundryPowerPointAgent:
         return artifacts
 
     # ------------------------------------------------------------------
-    # Presentation download helper
+    # Document download helper
     # ------------------------------------------------------------------
 
-    async def _download_presentation_file(self, download_path: str, filename: str) -> Optional[Path]:
-        """Download a .pptx from the MCP server and return the local Path."""
+    async def _download_document_file(self, download_path: str, filename: str) -> Optional[Path]:
+        """Download a .docx from the MCP server and return the local Path."""
         url = f"{_MCP_BASE_URL}{download_path}"
-        logger.info(f"Downloading presentation from {url}")
+        logger.info(f"Downloading document from {url}")
         try:
             async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
                 resp = await client.get(url)
                 resp.raise_for_status()
-                tmp_dir = Path(tempfile.gettempdir()) / "pptx_agent"
+                tmp_dir = Path(tempfile.gettempdir()) / "docx_agent"
                 tmp_dir.mkdir(parents=True, exist_ok=True)
                 local_path = tmp_dir / filename
                 local_path.write_bytes(resp.content)
-                logger.info(f"Saved presentation to {local_path} ({len(resp.content)} bytes)")
+                logger.info(f"Saved document to {local_path} ({len(resp.content)} bytes)")
                 return local_path
         except Exception as e:
-            logger.error(f"Failed to download presentation: {e}")
+            logger.error(f"Failed to download document: {e}")
             return None
 
     # ------------------------------------------------------------------
@@ -269,7 +286,7 @@ class FoundryPowerPointAgent:
     async def create_agent(self) -> None:
         if self._initialized:
             return
-        logger.info("Initializing PowerPoint agent (Responses API)...")
+        logger.info("Initializing Word agent (Responses API)...")
         try:
             base_url = _MCP_BASE_URL
             async with httpx.AsyncClient(timeout=10.0) as client:
@@ -281,43 +298,38 @@ class FoundryPowerPointAgent:
         self._initialized = True
 
     def _get_agent_instructions(self) -> str:
-        return f"""You are a professional PowerPoint presentation creator.
-You have access to a comprehensive set of PowerPoint MCP tools that let you create,
-design, and export professional presentations.
+        return f"""You are a professional Word document creator.
+You have access to a comprehensive set of Word MCP tools that let you create,
+format, and export professional documents.
 
 ## Your Workflow
 
-1. **Understand the request** - Parse what kind of presentation the user needs
-   (topic, audience, number of slides, style preferences).
-2. **Create the presentation** - Use `create_presentation` to start.
-3. **Build slides** - Use `add_slide`, `manage_text`, `add_bullet_points`,
-   `add_table`, `add_chart`, `add_shape`, etc. to populate content.
-4. **Apply professional styling** - Use `apply_professional_design` with a color
-   scheme (modern_blue, corporate_gray, elegant_green, warm_red) to make it look polished.
-5. **ALWAYS finish by calling `download_presentation`** to make the file available
-   for download.  This is CRITICAL - every presentation you create MUST end with
-   a `download_presentation` call so the user can receive the file.
+1. **Understand the request** - Parse what kind of document the user needs
+   (report, letter, proposal, memo, etc.).
+2. **Create the document** - Use `create_document` to start.
+3. **Build content** - Use `add_heading`, `add_paragraph`, `add_table`,
+   `add_picture`, `format_text`, etc. to populate content.
+4. **Apply formatting** - Use `format_text`, `create_custom_style`,
+   `format_table`, `highlight_table_header`, etc. for professional styling.
+5. **ALWAYS finish by calling `download_document`** to make the file available
+   for download.  This is CRITICAL - every document you create MUST end with
+   a `download_document` call so the user can receive the file.
 
 ## Important Rules
 
-- Always call `download_presentation` as the LAST tool call.
-- Create visually appealing slides - use shapes, charts, and tables where appropriate.
-- Keep text concise and use bullet points for readability.
-- Apply a professional design theme to every presentation.
+- Always call `download_document` as the LAST tool call.
+- Create well-structured documents with proper headings and formatting.
+- Use tables for structured data and bullet points for lists.
+- Apply professional formatting - use styles, bold/italic for emphasis.
 - If the user provides specific content, use it verbatim; otherwise generate
   appropriate content for the topic.
+- Use `add_page_break` to separate major sections when appropriate.
 
 ## Adding Images from URLs
 
 When a previous workflow step provides an image URL (e.g. from Azure Blob Storage),
-use `manage_image` with `source_type: "url"` and pass the full URL as `image_source`.
-Example: manage_image(slide_index=0, operation="add", image_source="https://...blob.core.windows.net/...", source_type="url")
-
-## Available Design Themes
-- **modern_blue** - Clean Microsoft-inspired blue theme
-- **corporate_gray** - Professional grayscale with blue accents
-- **elegant_green** - Forest green with cream accents
-- **warm_red** - Deep red with orange/yellow accents
+use `add_picture` with `source_type: "url"` and pass the full URL as `image_path`.
+Example: add_picture(filename="doc.docx", image_path="https://...blob.core.windows.net/...", source_type="url")
 
 Current date: {datetime.datetime.now().isoformat()}
 
@@ -367,7 +379,6 @@ Your question here
                 logger.info("Stream started — iterating events...")
                 async for event in response:
                     event_type = getattr(event, "type", None)
-                    # Log every event type for debugging
                     if event_type != "response.output_text.delta":
                         logger.info(f"[STREAM] event_type={event_type}")
 
@@ -381,17 +392,16 @@ Your question here
                             yield f"\U0001f6e0\ufe0f Remote agent executing: {self._get_tool_description(tool_name)}"
 
                     elif event_type == "response.mcp_call.completed":
-                        # Try to capture download_presentation result
                         item = getattr(event, "item", None) or event
                         tool_name = getattr(item, "name", None) or getattr(event, "name", None)
-                        if tool_name == "download_presentation":
+                        if tool_name == "download_document":
                             output = getattr(item, "output", None) or getattr(event, "output", None)
                             if output:
                                 try:
                                     data = json.loads(output) if isinstance(output, str) else output
                                     if isinstance(data, dict) and data.get("download_url"):
                                         download_info = data
-                                        logger.info(f"Captured download_presentation result: {data}")
+                                        logger.info(f"Captured download_document result: {data}")
                                 except (json.JSONDecodeError, TypeError):
                                     pass
 
@@ -427,14 +437,14 @@ Your question here
                             if resp_id:
                                 self._response_ids[session_id] = resp_id
 
-                            # Fallback: scan response output items for download_presentation result
+                            # Fallback: scan response output items for download_document result
                             if download_info is None:
                                 output_items = getattr(resp, "output", None) or []
                                 for out_item in output_items:
                                     item_type = getattr(out_item, "type", None)
                                     if item_type in ("mcp_call", "mcp_tool_call"):
                                         name = getattr(out_item, "name", None)
-                                        if name == "download_presentation":
+                                        if name == "download_document":
                                             raw = getattr(out_item, "output", None)
                                             if raw:
                                                 try:
@@ -448,8 +458,8 @@ Your question here
                 # ---- Post-stream: handle file download + blob upload ----
                 logger.info(f"Stream finished. text_chunks={len(text_chunks)}, tools_seen={tool_calls_seen}, download_info={download_info}, mcp_failures={mcp_failures}")
                 if download_info and download_info.get("download_url"):
-                    filename = download_info.get("filename", "presentation.pptx")
-                    local_path = await self._download_presentation_file(
+                    filename = download_info.get("filename", "document.docx")
+                    local_path = await self._download_document_file(
                         download_info["download_url"], filename
                     )
                     if local_path and local_path.exists():
@@ -458,17 +468,17 @@ Your question here
                             artifact: Dict[str, Any] = {
                                 "artifact-uri": blob_url,
                                 "file-name": filename,
-                                "mime": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                                "mime": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                                 "storage-type": "azure_blob",
                                 "status": "stored",
                                 "file-size": local_path.stat().st_size,
                             }
                             self._latest_artifacts.append(artifact)
-                            logger.info(f"Created PowerPoint artifact: {filename} -> {blob_url[:80]}...")
+                            logger.info(f"Created Word artifact: {filename} -> {blob_url[:80]}...")
                         else:
                             logger.warning("Blob upload failed; artifact not created")
                     else:
-                        logger.warning("Presentation download failed; artifact not created")
+                        logger.warning("Document download failed; artifact not created")
 
                 if text_chunks:
                     full_text = "".join(text_chunks)
@@ -496,30 +506,28 @@ Your question here
 
     def _get_tool_description(self, tool_name: str) -> str:
         descriptions = {
-            "create_presentation": "Create Presentation",
-            "create_presentation_from_template": "Create From Template",
-            "add_slide": "Add Slide",
-            "manage_text": "Manage Text",
-            "add_bullet_points": "Add Bullet Points",
+            "create_document": "Create Document",
+            "copy_document": "Copy Document",
+            "add_heading": "Add Heading",
+            "add_paragraph": "Add Paragraph",
             "add_table": "Add Table",
-            "add_chart": "Add Chart",
-            "add_shape": "Add Shape",
-            "apply_professional_design": "Apply Professional Design",
-            "download_presentation": "Download Presentation",
-            "save_presentation": "Save Presentation",
-            "manage_image": "Manage Image",
-            "apply_picture_effects": "Apply Picture Effects",
-            "manage_fonts": "Manage Fonts",
-            "manage_hyperlinks": "Manage Hyperlinks",
-            "add_connector": "Add Connector",
-            "manage_slide_transitions": "Manage Transitions",
-            "optimize_slide_text": "Optimize Text",
-            "apply_slide_template": "Apply Slide Template",
-            "create_slide_from_template": "Create Slide From Template",
-            "create_presentation_from_templates": "Create From Templates",
-            "auto_generate_presentation": "Auto Generate Presentation",
-            "format_table_cell": "Format Table Cell",
-            "update_chart_data": "Update Chart Data",
+            "add_picture": "Add Picture",
+            "add_page_break": "Add Page Break",
+            "format_text": "Format Text",
+            "format_table": "Format Table",
+            "search_and_replace": "Search and Replace",
+            "create_custom_style": "Create Custom Style",
+            "download_document": "Download Document",
+            "convert_to_pdf": "Convert to PDF",
+            "insert_header_near_text": "Insert Header",
+            "insert_line_or_paragraph_near_text": "Insert Paragraph Near Text",
+            "insert_numbered_list_near_text": "Insert Numbered List",
+            "highlight_table_header": "Highlight Table Header",
+            "set_table_cell_shading": "Set Cell Shading",
+            "apply_table_alternating_rows": "Apply Alternating Rows",
+            "merge_table_cells": "Merge Table Cells",
+            "add_footnote_to_document": "Add Footnote",
+            "protect_document": "Protect Document",
         }
         return descriptions.get(tool_name, tool_name.replace("_", " ").title())
 

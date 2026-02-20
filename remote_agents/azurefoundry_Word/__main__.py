@@ -44,7 +44,7 @@ def _resolve_default_port() -> int:
             return int(raw)
         except ValueError:
             pass
-    return 9036
+    return 9038
 
 def resolve_agent_url(bind_host: str, bind_port: int) -> str:
     endpoint = _normalize_env_value(os.getenv('A2A_ENDPOINT'))
@@ -68,7 +68,7 @@ except ImportError:
 
 DEFAULT_HOST = _resolve_default_host()
 DEFAULT_PORT = _resolve_default_port()
-DEFAULT_UI_PORT = 9101
+DEFAULT_UI_PORT = 9103
 HOST_AGENT_URL = _normalize_env_value(get_host_agent_url())
 
 agent_executor_instance = None
@@ -79,15 +79,15 @@ def _build_skills():
     """Define agent skills in one place."""
     return [
         AgentSkill(
-            id='create_presentation',
-            name='Create Presentation',
-            description="Create and read PowerPoint presentations. Supports creating slides with text, bullet points, tables, charts, shapes, and professional design themes. Can also open and extract text from existing .pptx files via URL or file path.",
-            tags=['powerpoint', 'presentation', 'slides', 'pptx'],
+            id='create_document',
+            name='Create Document',
+            description="Create and read Word documents. Supports creating documents with headings, paragraphs, tables, images, footnotes, formatting, and styles. Can also read and extract text, outline, and comments from existing .docx files via URL or file path.",
+            tags=['word', 'document', 'docx', 'report'],
             examples=[
-                'Create a 5-slide presentation about AI trends in 2025',
-                'Build a sales pitch deck for our new product',
-                'Make a quarterly business review presentation with charts',
-                'Design a project status update with timeline and milestones',
+                'Create a professional business report about Q4 results',
+                'Write a project proposal document with executive summary',
+                'Generate a meeting minutes document with action items',
+                'Create a formal letter with company letterhead formatting',
             ],
         ),
         AgentSkill(
@@ -103,8 +103,8 @@ def _build_skills():
 def _build_agent_card(host: str, port: int):
     resolved = host if host != "0.0.0.0" else DEFAULT_HOST
     return AgentCard(
-        name='AI Foundry PowerPoint Agent',
-        description="An Azure AI Foundry agent that creates and reads PowerPoint presentations. Can create new .pptx files and extract text/content from existing presentations via URL.",
+        name='AI Foundry Word Agent',
+        description="An Azure AI Foundry agent that creates and reads Word documents. Can create new .docx files and extract text/content from existing documents via URL.",
         url=resolve_agent_url(resolved, port),
         version='1.0.0',
         defaultInputModes=['text'],
@@ -123,7 +123,7 @@ def create_a2a_server(host=DEFAULT_HOST, port=DEFAULT_PORT):
     routes = a2a_app.routes()
 
     async def health_check(_request: Request) -> PlainTextResponse:
-        return PlainTextResponse('AI Foundry PowerPoint Agent is running!')
+        return PlainTextResponse('AI Foundry Word Agent is running!')
 
     routes.append(Route(path='/health', methods=['GET'], endpoint=health_check))
     return Starlette(routes=routes)
@@ -213,13 +213,13 @@ async def launch_ui(host="0.0.0.0", ui_port=DEFAULT_UI_PORT, a2a_port=DEFAULT_PO
     async def process_message(message, history):
         return "", await chat_response(message, history), get_pending_status()
 
-    with gr.Blocks(theme=gr.themes.Ocean(), title="AI Foundry PowerPoint Agent") as demo:
+    with gr.Blocks(theme=gr.themes.Ocean(), title="AI Foundry Word Agent") as demo:
         gr.Markdown(f"**UI:** http://{ui_host}:{ui_port} | **A2A:** {resolve_agent_url(ui_host, a2a_port).rstrip('/')}")
         status = gr.Markdown(value=get_pending_status())
         gr.Button("Refresh", size="sm").click(get_pending_status, outputs=status, queue=False)
         gr.Timer(5).tick(get_pending_status, outputs=status)
         chatbot = gr.Chatbot(height=400, show_label=False, type="messages")
-        inp = gr.Textbox(placeholder="Describe the presentation you want...", show_label=False)
+        inp = gr.Textbox(placeholder="Describe the document you want...", show_label=False)
         gr.Button("Send", variant="primary").click(process_message, [inp, chatbot], [inp, chatbot, status])
         inp.submit(process_message, [inp, chatbot], [inp, chatbot, status])
         gr.Button("Reset", variant="secondary").click(lambda: (globals().update(ui_session_id=None), [])[1], outputs=chatbot, queue=False)
@@ -247,7 +247,7 @@ async def main_async(host=DEFAULT_HOST, port=DEFAULT_PORT):
 @click.option('--ui', is_flag=True, help='Launch Gradio UI')
 @click.option('--ui-port', default=DEFAULT_UI_PORT, type=int)
 def cli(host, port, ui, ui_port):
-    """AI Foundry PowerPoint Agent - A2A server or Gradio UI."""
+    """AI Foundry Word Agent - A2A server or Gradio UI."""
     if ui:
         asyncio.run(launch_ui(host, ui_port, port))
     else:

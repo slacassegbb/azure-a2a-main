@@ -5,6 +5,8 @@ These tools add various types of content to Word documents,
 including headings, paragraphs, tables, images, and page breaks.
 """
 import os
+import tempfile
+import urllib.request
 from typing import List, Optional, Dict, Any
 from docx import Document
 from docx.shared import Inches, Pt, RGBColor
@@ -219,59 +221,86 @@ async def add_table(filename: str, rows: int, cols: int, data: Optional[List[Lis
         return f"Failed to add table: {str(e)}"
 
 
-async def add_picture(filename: str, image_path: str, width: Optional[float] = None) -> str:
+async def add_picture(filename: str, image_path: str, width: Optional[float] = None, source_type: str = "file") -> str:
     """Add an image to a Word document.
-    
+
     Args:
         filename: Path to the Word document
-        image_path: Path to the image file
+        image_path: Path to the image file, or a URL if source_type is 'url'
         width: Optional width in inches (proportional scaling)
+        source_type: 'file' for local path, 'url' for HTTP/HTTPS URL (e.g. Azure Blob Storage)
     """
     filename = ensure_docx_extension(filename)
-    
+
     # Validate document existence
     if not os.path.exists(filename):
         return f"Document {filename} does not exist"
-    
-    # Get absolute paths for better diagnostics
+
     abs_filename = os.path.abspath(filename)
-    abs_image_path = os.path.abspath(image_path)
-    
-    # Validate image existence with improved error message
-    if not os.path.exists(abs_image_path):
-        return f"Image file not found: {abs_image_path}"
-    
+
+    # If source is a URL, download to a temp file first
+    temp_path = None
+    if source_type == "url" or image_path.startswith(("http://", "https://")):
+        try:
+            url_path = image_path.split('?')[0]
+            ext = os.path.splitext(url_path)[1] or '.png'
+            with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as temp_file:
+                temp_path = temp_file.name
+            urllib.request.urlretrieve(image_path, temp_path)
+            abs_image_path = temp_path
+        except Exception as e:
+            if temp_path and os.path.exists(temp_path):
+                os.unlink(temp_path)
+            return f"Failed to download image from URL: {str(e)}"
+    else:
+        abs_image_path = os.path.abspath(image_path)
+        # Validate image existence with improved error message
+        if not os.path.exists(abs_image_path):
+            return f"Image file not found: {abs_image_path}"
+
     # Check image file size
     try:
         image_size = os.path.getsize(abs_image_path) / 1024  # Size in KB
         if image_size <= 0:
+            if temp_path and os.path.exists(temp_path):
+                os.unlink(temp_path)
             return f"Image file appears to be empty: {abs_image_path} (0 KB)"
     except Exception as size_error:
+        if temp_path and os.path.exists(temp_path):
+            os.unlink(temp_path)
         return f"Error checking image file: {str(size_error)}"
-    
+
     # Check if file is writeable
     is_writeable, error_message = check_file_writeable(abs_filename)
     if not is_writeable:
+        if temp_path and os.path.exists(temp_path):
+            os.unlink(temp_path)
         return f"Cannot modify document: {error_message}. Consider creating a copy first or creating a new document."
-    
+
     try:
         doc = Document(abs_filename)
         # Additional diagnostic info
         diagnostic = f"Attempting to add image ({abs_image_path}, {image_size:.2f} KB) to document ({abs_filename})"
-        
+
         try:
             if width:
                 doc.add_picture(abs_image_path, width=Inches(width))
             else:
                 doc.add_picture(abs_image_path)
             doc.save(abs_filename)
-            return f"Picture {image_path} added to {filename}"
+            if temp_path and os.path.exists(temp_path):
+                os.unlink(temp_path)
+            return f"Picture added to {filename}" + (" (from URL)" if temp_path else "")
         except Exception as inner_error:
             # More detailed error for the specific operation
             error_type = type(inner_error).__name__
             error_msg = str(inner_error)
+            if temp_path and os.path.exists(temp_path):
+                os.unlink(temp_path)
             return f"Failed to add picture: {error_type} - {error_msg or 'No error details available'}\nDiagnostic info: {diagnostic}"
     except Exception as outer_error:
+        if temp_path and os.path.exists(temp_path):
+            os.unlink(temp_path)
         # Fallback error handling
         error_type = type(outer_error).__name__
         error_msg = str(outer_error)

@@ -46,7 +46,12 @@ func handleScreenCapture(ctx context.Context, request mcp.CallToolRequest) (*mcp
 	if len(issues) != 0 {
 		return imcp.NewToolResultZogIssueMap(issues), nil
 	}
-	return readSheetImage(args.FileAbsolutePath, args.SheetName, args.Range)
+	localPath, cleanup, err := ResolveFilePath(args.FileAbsolutePath)
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
+	return readSheetImage(localPath, args.SheetName, args.Range)
 }
 
 func readSheetImage(fileAbsolutePath string, sheetName string, rangeStr string) (*mcp.CallToolResult, error) {

@@ -4,6 +4,9 @@ import (
 	"crypto/md5"
 	"fmt"
 	"html"
+	"io"
+	"net/http"
+	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -432,9 +435,58 @@ func createHTMLTableWithStyle(startCol int, startRow int, endCol int, endRow int
 func AbsolutePathTest() z.Test[*string] {
 	return z.Test[*string]{
 		Func: func(path *string, ctx z.Ctx) {
+			if strings.HasPrefix(*path, "http://") || strings.HasPrefix(*path, "https://") {
+				return // URLs are allowed
+			}
 			if !filepath.IsAbs(*path) {
 				ctx.AddIssue(ctx.Issue().SetMessage(fmt.Sprintf("Path '%s' is not absolute", *path)))
 			}
 		},
 	}
+}
+
+// ResolveFilePath downloads a URL to a temp file if needed. Returns (localPath, cleanup func, error).
+// The caller MUST call the cleanup function when done.
+func ResolveFilePath(path string) (string, func(), error) {
+	noop := func() {}
+	if !strings.HasPrefix(path, "http://") && !strings.HasPrefix(path, "https://") {
+		return path, noop, nil
+	}
+
+	// Guess extension from URL path (strip query params)
+	urlPath := strings.SplitN(path, "?", 2)[0]
+	ext := filepath.Ext(urlPath)
+	if ext == "" {
+		ext = ".xlsx"
+	}
+
+	tmpFile, err := os.CreateTemp("", "excel-mcp-*"+ext)
+	if err != nil {
+		return "", noop, fmt.Errorf("failed to create temp file: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+	cleanup := func() { os.Remove(tmpPath) }
+
+	resp, err := http.Get(path)
+	if err != nil {
+		tmpFile.Close()
+		cleanup()
+		return "", noop, fmt.Errorf("failed to download file from URL: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		tmpFile.Close()
+		cleanup()
+		return "", noop, fmt.Errorf("failed to download file: HTTP %d", resp.StatusCode)
+	}
+
+	if _, err := io.Copy(tmpFile, resp.Body); err != nil {
+		tmpFile.Close()
+		cleanup()
+		return "", noop, fmt.Errorf("failed to write downloaded file: %w", err)
+	}
+	tmpFile.Close()
+
+	return tmpPath, cleanup, nil
 }

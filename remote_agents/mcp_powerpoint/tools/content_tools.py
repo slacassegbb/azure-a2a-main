@@ -9,6 +9,7 @@ import utils as ppt_utils
 import tempfile
 import base64
 import os
+import urllib.request
 
 
 def register_content_tools(app: FastMCP, presentations: Dict, get_current_presentation_id, validate_parameters, is_positive, is_non_negative, is_in_range, is_valid_rgb):
@@ -511,8 +512,8 @@ def register_content_tools(app: FastMCP, presentations: Dict, get_current_presen
     def manage_image(
         slide_index: int,
         operation: str,  # "add", "enhance"
-        image_source: str,  # file path or base64 string
-        source_type: str = "file",  # "file" or "base64"
+        image_source: str,  # file path, base64 string, or URL
+        source_type: str = "file",  # "file", "base64", or "url"
         left: float = 1.0,
         top: float = 1.0,
         width: Optional[float] = None,
@@ -528,7 +529,7 @@ def register_content_tools(app: FastMCP, presentations: Dict, get_current_presen
         output_path: Optional[str] = None,
         presentation_id: Optional[str] = None
     ) -> Dict:
-        """Unified image management tool for adding and enhancing images."""
+        """Unified image management tool for adding and enhancing images. Supports source_type 'file' (local path), 'base64' (base64-encoded data), or 'url' (HTTP/HTTPS URL to download from, e.g. Azure Blob Storage)."""
         pres_id = presentation_id if presentation_id is not None else get_current_presentation_id()
         
         if pres_id is None or pres_id not in presentations:
@@ -569,13 +570,36 @@ def register_content_tools(app: FastMCP, presentations: Dict, get_current_presen
                         return {
                             "error": f"Failed to process base64 image: {str(e)}"
                         }
+                elif source_type == "url":
+                    # Handle URL (e.g. Azure Blob Storage)
+                    try:
+                        # Guess extension from URL path
+                        url_path = image_source.split('?')[0]
+                        ext = os.path.splitext(url_path)[1] or '.png'
+                        with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as temp_file:
+                            temp_path = temp_file.name
+
+                        urllib.request.urlretrieve(image_source, temp_path)
+
+                        shape = ppt_utils.add_image(slide, temp_path, left, top, width, height)
+
+                        os.unlink(temp_path)
+
+                        return {
+                            "message": f"Added image from URL to slide {slide_index}",
+                            "shape_index": len(slide.shapes) - 1
+                        }
+                    except Exception as e:
+                        return {
+                            "error": f"Failed to download image from URL: {str(e)}"
+                        }
                 else:
                     # Handle file path
                     if not os.path.exists(image_source):
                         return {
                             "error": f"Image file not found: {image_source}"
                         }
-                    
+
                     shape = ppt_utils.add_image(slide, image_source, left, top, width, height)
                     return {
                         "message": f"Added image to slide {slide_index}",

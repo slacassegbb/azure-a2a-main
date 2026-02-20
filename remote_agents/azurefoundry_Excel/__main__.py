@@ -81,7 +81,7 @@ def _build_skills():
         AgentSkill(
             id='create_spreadsheet',
             name='Create Spreadsheet',
-            description="Create professional Excel spreadsheets with data, formulas, tables, and formatting. Supports multi-sheet workbooks, styled headers, number formats, and structured tables.",
+            description="Create and read Excel spreadsheets. Supports creating workbooks with data, formulas, tables, and formatting. Can also read and extract data from existing .xlsx files via URL or file path.",
             tags=['excel', 'spreadsheet', 'xlsx', 'data'],
             examples=[
                 'Create a monthly budget spreadsheet with income and expenses',
@@ -104,7 +104,7 @@ def _build_agent_card(host: str, port: int):
     resolved = host if host != "0.0.0.0" else DEFAULT_HOST
     return AgentCard(
         name='AI Foundry Excel Agent',
-        description="An Azure AI Foundry agent that creates professional Excel spreadsheets and returns downloadable .xlsx files.",
+        description="An Azure AI Foundry agent that creates and reads Excel spreadsheets. Can create new .xlsx files and read/extract data from existing spreadsheets via URL.",
         url=resolve_agent_url(resolved, port),
         version='1.0.0',
         defaultInputModes=['text'],

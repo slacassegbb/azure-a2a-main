@@ -4,6 +4,8 @@ Handles presentation creation, opening, saving, and core properties.
 """
 from typing import Dict, List, Optional, Any
 import os
+import tempfile
+import urllib.request
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 import utils as ppt_utils
@@ -90,7 +92,22 @@ def register_presentation_tools(app: FastMCP, presentations: Dict, get_current_p
         ),
     )
     def open_presentation(file_path: str, id: Optional[str] = None) -> Dict:
-        """Open an existing PowerPoint presentation from a file."""
+        """Open an existing PowerPoint presentation from a file path or URL (e.g. Azure Blob Storage)."""
+        temp_path = None
+        # Handle URLs — download to temp file first
+        if file_path.startswith(("http://", "https://")):
+            try:
+                url_path = file_path.split('?')[0]
+                ext = os.path.splitext(url_path)[1] or '.pptx'
+                with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
+                    temp_path = tmp.name
+                urllib.request.urlretrieve(file_path, temp_path)
+                file_path = temp_path
+            except Exception as e:
+                if temp_path and os.path.exists(temp_path):
+                    os.unlink(temp_path)
+                return {"error": f"Failed to download presentation from URL: {str(e)}"}
+
         # Check if file exists
         if not os.path.exists(file_path):
             return {

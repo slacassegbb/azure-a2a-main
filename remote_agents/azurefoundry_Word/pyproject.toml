@@ -1,0 +1,19 @@
+[project]
+name = "aifoundry-word-agent"
+version = "0.1.0"
+description = "An Azure AI Foundry agent that creates professional Word documents via MCP tools and returns downloadable .docx files."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "a2a-sdk[http-server]>=0.2.6",
+    "openai>=1.0.0",
+    "azure-identity>=1.23.0",
+    "azure-storage-blob>=12.19.0",
+    "uvicorn>=0.34.2",
+    "click>=8.0.0",
+    "python-dotenv>=1.0.0",
+    "starlette>=0.35.0",
+    "httpx>=0.25.0",
+    "gradio>=4.0.0",
+    "pandas>=2.0.0",
+]

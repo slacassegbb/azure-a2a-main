@@ -56,7 +56,12 @@ func handleReadSheet(ctx context.Context, request mcp.CallToolRequest) (*mcp.Cal
 	if issues := excelReadSheetArgumentsSchema.Parse(request.Params.Arguments, &args); len(issues) != 0 {
 		return imcp.NewToolResultZogIssueMap(issues), nil
 	}
-	return readSheet(args.FileAbsolutePath, args.SheetName, args.Range, args.ShowFormula, args.ShowStyle)
+	localPath, cleanup, err := ResolveFilePath(args.FileAbsolutePath)
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
+	return readSheet(localPath, args.SheetName, args.Range, args.ShowFormula, args.ShowStyle)
 }
 
 func readSheet(fileAbsolutePath string, sheetName string, valueRange string, showFormula bool, showStyle bool) (*mcp.CallToolResult, error) {
