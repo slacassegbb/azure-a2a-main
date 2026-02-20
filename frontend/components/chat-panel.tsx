@@ -534,6 +534,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
     return requiredAgents.every(agentName =>
       agentName.toUpperCase() === 'EVALUATE' ||
       agentName.toUpperCase() === 'QUERY' ||
+      agentName.toUpperCase() === 'WEB_SEARCH' ||
       registeredAgents.some(registered =>
         registered.name?.toLowerCase().includes(agentName.toLowerCase()) ||
         agentName.toLowerCase().includes(registered.name?.toLowerCase() || '')

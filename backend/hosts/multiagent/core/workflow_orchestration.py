@@ -14,6 +14,7 @@ The class is designed to be used as a mixin with FoundryHostAgent2.
 
 import asyncio
 import json
+import os
 import re
 import uuid
 from datetime import datetime, timezone
@@ -556,6 +557,138 @@ Analyze the context and return your structured result."""
             )
             return {"error": task.error_message, "output": None}
 
+    async def _execute_web_search_step(
+        self,
+        task: AgentModeTask,
+        session_context: SessionContext,
+        context_id: str,
+        previous_task_outputs: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
+        """
+        Execute a web search step using an isolated Responses API call with BingGroundingAgentTool.
+
+        This does NOT use _create_response_with_streaming — it makes a single non-streaming
+        responses.create() call with ONLY the Bing tool. No response_id tracking, no orchestrator
+        tools exposed, no streaming side effects.
+        """
+        task_desc = task.task_description
+        user_query = re.sub(r'^\[Step\s+\d+[a-z]?\]\s*', '', task_desc)
+        log_info(f"🌐 [WEB_SEARCH] Executing web search: {user_query[:100]}")
+
+        web_search_agent_name = "Web Search"
+
+        await self._emit_granular_agent_event(
+            web_search_agent_name, f"Starting task: {task_desc[:80]}...", context_id,
+            event_type="agent_start", metadata={"web_search": True, "task_description": task_desc}
+        )
+
+        # Build context from previous step outputs (last 3 for relevance)
+        context_parts = []
+        if previous_task_outputs:
+            for output in previous_task_outputs[-3:]:
+                context_parts.append(output)
+        context_text = "\n\n".join(context_parts)
+        if len(context_text) > 4000:
+            context_text = context_text[:4000] + "... [truncated]"
+
+        try:
+            # Ensure Azure client is ready
+            await self._ensure_project_client()
+
+            # Import Bing tool classes (same as foundry_agent_a2a.py)
+            from azure.ai.projects.models import (
+                BingGroundingAgentTool,
+                BingGroundingSearchToolParameters,
+                BingGroundingSearchConfiguration,
+            )
+
+            # Get Bing connection ID
+            bing_conn_id = getattr(self, 'bing_connection_id', None) or os.environ.get("BING_CONNECTION_ID")
+            if not bing_conn_id:
+                raise ValueError("BING_CONNECTION_ID not configured — web search is unavailable")
+
+            bing_tool = BingGroundingAgentTool(
+                bing_grounding=BingGroundingSearchToolParameters(
+                    search_configurations=[
+                        BingGroundingSearchConfiguration(
+                            project_connection_id=bing_conn_id,
+                            count=5
+                        )
+                    ]
+                )
+            )
+
+            # Build the search prompt
+            search_input = f"Search the web for: {user_query}"
+            if context_text:
+                search_input += f"\n\nContext from previous workflow steps:\n{context_text}"
+
+            search_instructions = (
+                "You are a web search assistant. Use the Bing search tool to find current, "
+                "accurate information. Return a clear, factual summary of what you found. "
+                "Include specific numbers, dates, and sources when available."
+            )
+
+            # Isolated, non-streaming responses.create() — no response_id, no orchestrator tools
+            log_info(f"🌐 [WEB_SEARCH] Calling responses.create() with BingGroundingAgentTool")
+            response = await self.openai_client.responses.create(
+                input=search_input,
+                instructions=search_instructions,
+                model=self.model_name,
+                tools=[bing_tool],
+            )
+
+            # Extract text from response (same pattern as synthesis)
+            result_text = ""
+            if hasattr(response, 'output'):
+                for item in response.output:
+                    if hasattr(item, 'content'):
+                        for content in item.content:
+                            if hasattr(content, 'text'):
+                                result_text += content.text
+
+            if not result_text.strip():
+                result_text = "Web search returned no results."
+                log_info(f"⚠️ [WEB_SEARCH] Empty response from Bing search")
+
+            log_info(f"🌐 [WEB_SEARCH] Got {len(result_text)} chars from web search")
+
+            # Track token usage (Responses API uses input_tokens/output_tokens)
+            if hasattr(response, 'usage') and response.usage:
+                input_tokens = getattr(response.usage, 'input_tokens', 0)
+                output_tokens = getattr(response.usage, 'output_tokens', 0)
+                log_info(f"🌐 [WEB_SEARCH] Tokens: input={input_tokens}, output={output_tokens}")
+
+            # Update task state
+            task.state = "completed"
+            task.output = {"web_search": True, "result": result_text}
+            task.updated_at = datetime.now(timezone.utc)
+
+            # Emit result to frontend
+            await self._emit_granular_agent_event(
+                web_search_agent_name, result_text, context_id,
+                event_type="agent_output",
+                metadata={"web_search": True}
+            )
+
+            await self._emit_granular_agent_event(
+                web_search_agent_name, f"{web_search_agent_name} completed", context_id,
+                event_type="agent_complete"
+            )
+
+            return {"output": result_text, "hitl_pause": False}
+
+        except Exception as e:
+            log_error(f"[WEB_SEARCH] Error during web search: {e}")
+            task.state = "failed"
+            task.error_message = f"Web search failed: {str(e)}"
+            task.updated_at = datetime.now(timezone.utc)
+            await self._emit_granular_agent_event(
+                web_search_agent_name, f"Error: {str(e)[:200]}", context_id,
+                event_type="agent_error", metadata={"error": str(e)[:500]}
+            )
+            return {"error": task.error_message, "output": None}
+
     async def _execute_orchestrated_task(
         self,
         task: AgentModeTask,
@@ -602,6 +735,12 @@ Analyze the context and return your structured result."""
         # Detect query steps — handled by host LLM, not a remote agent
         if recommended_agent and recommended_agent.upper() == "QUERY":
             return await self._execute_query_step(
+                task, session_context, context_id, previous_task_outputs
+            )
+
+        # Detect web search steps — handled by host with BingGroundingAgentTool
+        if recommended_agent and recommended_agent.upper() == "WEB_SEARCH":
+            return await self._execute_web_search_step(
                 task, session_context, context_id, previous_task_outputs
             )
 
@@ -1376,6 +1515,12 @@ Do NOT skip steps. Do NOT mark goal as completed until ALL workflow steps are do
 - Set `recommended_agent` to the exact agent name from the brackets
 - Steps marked [EVALUATE] are handled by the host orchestrator — set recommended_agent to "EVALUATE"
 - Steps marked [QUERY] are handled by the host orchestrator — set recommended_agent to "QUERY"
+- Steps marked [WEB_SEARCH] are handled by the host orchestrator — set recommended_agent to "WEB_SEARCH"
+
+**WEB SEARCH STEPS**:
+- [WEB_SEARCH] steps search the web using Bing for current, real-time information
+- Use them for live data: exchange rates, weather, news, current prices, etc.
+- Their text output is available to subsequent steps (e.g., a [QUERY] step can analyze web search results)
 
 **QUERY STEPS**:
 - [QUERY] steps analyze previous outputs and return structured JSON results (they do NOT branch)
@@ -1530,7 +1675,26 @@ Do NOT skip steps. Do NOT mark goal as completed until ALL workflow steps are do
                     agent_info['skills'] = skills_list
                 
                 available_agents.append(agent_info)
-            
+
+            # Add built-in pseudo-agents only when the workflow uses them,
+            # so they don't confuse the planner for normal agent-routed steps
+            workflow_upper = workflow.upper() if workflow else ""
+            if '[EVALUATE]' in workflow_upper:
+                available_agents.append({
+                    "name": "EVALUATE",
+                    "description": "Built-in host orchestrator capability. Evaluates a condition and returns TRUE/FALSE for workflow branching. Set recommended_agent to 'EVALUATE'."
+                })
+            if '[QUERY]' in workflow_upper:
+                available_agents.append({
+                    "name": "QUERY",
+                    "description": "Built-in host orchestrator capability. Analyzes previous workflow outputs and returns structured JSON results. Can also answer general knowledge questions. Set recommended_agent to 'QUERY'."
+                })
+            if '[WEB_SEARCH]' in workflow_upper:
+                available_agents.append({
+                    "name": "WEB_SEARCH",
+                    "description": "Built-in host orchestrator capability. Searches the web using Bing for current, real-time information (exchange rates, weather, news, prices). Set recommended_agent to 'WEB_SEARCH'."
+                })
+
             # Debug: Log available agents count for troubleshooting
             agent_names = [a.get('name', 'Unknown') for a in available_agents]
             log_debug(f"📋 [Planner] {len(available_agents)} agents available: {agent_names[:5]}{'...' if len(agent_names) > 5 else ''}")
@@ -1550,7 +1714,7 @@ Current Plan (JSON):
 Available Agents (JSON):
 {json.dumps(available_agents, indent=2)}
 
-Analyze the plan and determine the next step. Proceed autonomously - do NOT ask the user for permission or confirmation."""
+Analyze the plan and determine the next step."""
             
             # Get next step from orchestrator
             try:
@@ -1872,7 +2036,7 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                                 all_task_outputs.append(result["output"])
                             # Emit agent_complete for successfully finished tasks
                             # Skip EVALUATE/QUERY tasks — they emit their own events
-                            is_eval = task.recommended_agent and task.recommended_agent.upper() in ("EVALUATE", "QUERY")
+                            is_eval = task.recommended_agent and task.recommended_agent.upper() in ("EVALUATE", "QUERY", "WEB_SEARCH")
                             if task.state == "completed" and task.recommended_agent and not result.get("hitl_pause") and not is_eval:
                                 await self._emit_granular_agent_event(
                                     task.recommended_agent, f"{task.recommended_agent} completed", context_id,
@@ -1932,7 +2096,7 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                         
                         # Emit agent_complete/agent_error based on task state from the plan
                         # Skip EVALUATE/QUERY tasks — they emit their own events
-                        is_evaluate = task.recommended_agent and task.recommended_agent.upper() in ("EVALUATE", "QUERY")
+                        is_evaluate = task.recommended_agent and task.recommended_agent.upper() in ("EVALUATE", "QUERY", "WEB_SEARCH")
                         if task.state == "completed" and task.recommended_agent and not is_evaluate:
                             await self._emit_granular_agent_event(
                                 task.recommended_agent, f"{task.recommended_agent} completed", context_id,

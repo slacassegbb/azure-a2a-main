@@ -68,6 +68,8 @@ const EVALUATE_COLOR = "#f59e0b"  // Amber for evaluation steps
 const EVALUATE_AGENT_NAME = "EVALUATE"
 const QUERY_COLOR = "#8b5cf6"  // Purple for query steps
 const QUERY_AGENT_NAME = "QUERY"
+const WEB_SEARCH_COLOR = "#0ea5e9"  // Sky blue for web search steps
+const WEB_SEARCH_AGENT_NAME = "WEB_SEARCH"
 
 // Helper function to adjust color brightness for gradients
 function adjustColorBrightness(color: string, amount: number): string {
@@ -1318,7 +1320,7 @@ export function VisualWorkflowDesigner({
       agentName: draggedAgent.name,
       agentColor: getAgentHexColor(draggedAgent.name, (draggedAgent as any).color),
       agentIconUrl: (draggedAgent as any).iconUrl || (draggedAgent as any).avatar,
-      description: draggedAgent.name === EVALUATE_AGENT_NAME ? "Is the condition met?" : draggedAgent.name === QUERY_AGENT_NAME ? "Analyze the results" : `Use the ${draggedAgent.name}`,
+      description: draggedAgent.name === EVALUATE_AGENT_NAME ? "Is the condition met?" : draggedAgent.name === QUERY_AGENT_NAME ? "Analyze the results" : draggedAgent.name === WEB_SEARCH_AGENT_NAME ? "Search the web for..." : `Use the ${draggedAgent.name}`,
       x,
       y,
       order
@@ -2313,6 +2315,7 @@ export function VisualWorkflowDesigner({
 
         const isEvalStep = step.agentName.toUpperCase() === EVALUATE_AGENT_NAME
         const isQueryStep = step.agentName.toUpperCase() === QUERY_AGENT_NAME
+        const isWebSearchStep = step.agentName.toUpperCase() === WEB_SEARCH_AGENT_NAME
 
         if (isEvalStep) {
           // Diamond icon for evaluation steps
@@ -2342,6 +2345,18 @@ export function VisualWorkflowDesigner({
           ctx.textAlign = "center"
           ctx.textBaseline = "middle"
           ctx.fillText("Q", icx, icy + 1)
+        } else if (isWebSearchStep) {
+          // Circle icon for web search steps
+          ctx.fillStyle = WEB_SEARCH_COLOR
+          ctx.beginPath()
+          ctx.arc(icx, icy, 12, 0, Math.PI * 2)
+          ctx.fill()
+          // "W" inside circle
+          ctx.fillStyle = "#ffffff"
+          ctx.font = "bold 12px -apple-system, system-ui, sans-serif"
+          ctx.textAlign = "center"
+          ctx.textBaseline = "middle"
+          ctx.fillText("W", icx, icy + 1)
         } else {
           // Bot icon for agent steps
           ctx.fillStyle = step.agentColor
@@ -3480,6 +3495,21 @@ export function VisualWorkflowDesigner({
               >
                 <div className="text-sm font-medium text-purple-300">Query</div>
                 <div className="text-xs text-slate-400 mt-1">Structured JSON analysis</div>
+              </div>
+
+              {/* Web Search step - always available */}
+              <div
+                draggable
+                onDragStart={() => setDraggedAgent({ name: WEB_SEARCH_AGENT_NAME, description: "Search the web for real-time information", color: WEB_SEARCH_COLOR })}
+                onDragEnd={() => setDraggedAgent(null)}
+                className="p-3 bg-slate-800 rounded border border-slate-700 hover:border-slate-600 cursor-move transition-colors"
+                style={{
+                  borderLeftColor: WEB_SEARCH_COLOR,
+                  borderLeftWidth: '3px'
+                }}
+              >
+                <div className="text-sm font-medium text-sky-300">Web Search</div>
+                <div className="text-xs text-slate-400 mt-1">Live web data via Bing</div>
               </div>
 
               {registeredAgents.length === 0 ? (

@@ -137,6 +137,7 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
     const missingAgents = requiredAgents.filter(agentName =>
       agentName.toUpperCase() !== 'EVALUATE' &&
       agentName.toUpperCase() !== 'QUERY' &&
+      agentName.toUpperCase() !== 'WEB_SEARCH' &&
       !registeredAgents.some(registered =>
         registered.name.toLowerCase().includes(agentName.toLowerCase()) ||
         agentName.toLowerCase().includes(registered.name.toLowerCase())
