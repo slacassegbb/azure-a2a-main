@@ -173,7 +173,12 @@
         "id": "generate_image",
         "name": "Generate Image",
         "description": "Create new images from text prompts with various styles, subjects, and compositions.",
-        "examples": null,
+        "examples": [
+          "Generate a mountain landscape with a dog",
+          "Create a product visualization for marketing materials",
+          "Design concept art for a fantasy scene",
+          "Produce an image matching specific brand guidelines"
+        ],
         "tags": [
           "image-generation",
           "text-to-image",
@@ -184,7 +189,12 @@
         "id": "edit_image",
         "name": "Edit Image",
         "description": "Modify existing images through inpainting, outpainting, style transfer, or targeted edits.",
-        "examples": null,
+        "examples": [
+          "Remove background from an image",
+          "Change the color scheme of an existing image",
+          "Add or remove objects from a scene",
+          "Extend an image beyond its original boundaries"
+        ],
         "tags": [
           "image-editing",
           "modification",
@@ -869,7 +879,7 @@
   },
   {
     "name": "AI Foundry PowerPoint Agent",
-    "description": "An Azure AI Foundry agent that creates professional PowerPoint presentations and returns downloadable .pptx files.",
+    "description": "An Azure AI Foundry agent that creates, reads, and edits PowerPoint presentations. Can create new .pptx files and read, extract, or edit existing presentations via URL.",
     "version": "1.0.0",
     "url": "http://localhost:9036/",
     "defaultInputModes": [
@@ -885,8 +895,11 @@
       {
         "id": "create_presentation",
         "name": "Create Presentation",
-        "description": "Create professional PowerPoint presentations from text descriptions. Supports slides with text, bullet points, tables, charts, shapes, and professional design themes.",
-        "examples": null,
+        "description": "Create new PowerPoint presentations with slides, text, bullet points, tables, charts, shapes, and professional design themes.",
+        "examples": [
+          "Create a 5-slide presentation about AI trends in 2025",
+          "Build a sales pitch deck for our new product"
+        ],
         "tags": [
           "powerpoint",
           "presentation",
@@ -895,10 +908,43 @@
         ]
       },
       {
+        "id": "read_presentation",
+        "name": "Read Presentation",
+        "description": "Read and extract content from existing PowerPoint presentations via URL or file path.",
+        "examples": [
+          "Read this presentation and summarize each slide",
+          "Extract the key data from this slide deck"
+        ],
+        "tags": [
+          "powerpoint",
+          "read",
+          "extract",
+          "pptx"
+        ]
+      },
+      {
+        "id": "edit_presentation",
+        "name": "Edit Presentation",
+        "description": "Edit existing PowerPoint presentations — update slides, add content, insert images, and reformat.",
+        "examples": [
+          "Add a new slide to this presentation",
+          "Update the title slide in this deck"
+        ],
+        "tags": [
+          "powerpoint",
+          "edit",
+          "update",
+          "modify"
+        ]
+      },
+      {
         "id": "human_interaction",
         "name": "Human Expert Escalation",
         "description": "Escalate complex issues to human experts when needed.",
-        "examples": null,
+        "examples": [
+          "I need to speak with a person",
+          "Connect me with a human agent"
+        ],
         "tags": [
           "human-interaction",
           "escalation",
@@ -910,7 +956,7 @@
   },
   {
     "name": "AI Foundry Excel Agent",
-    "description": "An Azure AI Foundry agent that creates professional Excel spreadsheets and returns downloadable .xlsx files.",
+    "description": "An Azure AI Foundry agent that creates, reads, and edits Excel spreadsheets. Can create new .xlsx files and read, extract, or edit existing spreadsheets via URL.",
     "version": "1.0.0",
     "url": "http://localhost:9037/",
     "defaultInputModes": [
@@ -926,8 +972,11 @@
       {
         "id": "create_spreadsheet",
         "name": "Create Spreadsheet",
-        "description": "Create professional Excel spreadsheets with data, formulas, tables, and formatting. Supports multi-sheet workbooks, styled headers, number formats, and structured tables.",
-        "examples": null,
+        "description": "Create new Excel spreadsheets with data, formulas, tables, and formatting.",
+        "examples": [
+          "Create a monthly budget spreadsheet with income and expenses",
+          "Build a sales report with quarterly data and charts"
+        ],
         "tags": [
           "excel",
           "spreadsheet",
@@ -936,10 +985,43 @@
         ]
       },
       {
+        "id": "read_spreadsheet",
+        "name": "Read Spreadsheet",
+        "description": "Read and extract data from existing Excel spreadsheets via URL or file path.",
+        "examples": [
+          "Read this spreadsheet and summarize the data",
+          "Extract the totals from this Excel file"
+        ],
+        "tags": [
+          "excel",
+          "read",
+          "extract",
+          "xlsx"
+        ]
+      },
+      {
+        "id": "edit_spreadsheet",
+        "name": "Edit Spreadsheet",
+        "description": "Edit existing Excel spreadsheets — add rows, update values, insert formulas, and reformat.",
+        "examples": [
+          "Add a new row to this spreadsheet",
+          "Update the totals column in this Excel file"
+        ],
+        "tags": [
+          "excel",
+          "edit",
+          "update",
+          "modify"
+        ]
+      },
+      {
         "id": "human_interaction",
         "name": "Human Expert Escalation",
         "description": "Escalate complex issues to human experts when needed.",
-        "examples": null,
+        "examples": [
+          "I need to speak with a person",
+          "Connect me with a human agent"
+        ],
         "tags": [
           "human-interaction",
           "escalation",
@@ -951,7 +1033,7 @@
   },
   {
     "name": "AI Foundry Word Agent",
-    "description": "An Azure AI Foundry agent that creates professional Word documents and returns downloadable .docx files.",
+    "description": "An Azure AI Foundry agent that creates, reads, and edits Word documents. Can create new .docx files and read, extract, or edit existing documents via URL.",
     "version": "1.0.0",
     "url": "http://localhost:9038/",
     "defaultInputModes": [
@@ -967,8 +1049,11 @@
       {
         "id": "create_document",
         "name": "Create Document",
-        "description": "Create professional Word documents from text descriptions. Supports headings, paragraphs, tables, images, footnotes, formatting, and styles.",
-        "examples": null,
+        "description": "Create new Word documents with headings, paragraphs, tables, images, footnotes, formatting, and styles.",
+        "examples": [
+          "Create a professional business report about Q4 results",
+          "Write a project proposal document with executive summary"
+        ],
         "tags": [
           "word",
           "document",
@@ -977,10 +1062,43 @@
         ]
       },
       {
+        "id": "read_document",
+        "name": "Read Document",
+        "description": "Read and extract content from existing Word documents via URL or file path.",
+        "examples": [
+          "Read this Word document and summarize the content",
+          "Extract the key points from this report"
+        ],
+        "tags": [
+          "word",
+          "read",
+          "extract",
+          "docx"
+        ]
+      },
+      {
+        "id": "edit_document",
+        "name": "Edit Document",
+        "description": "Edit existing Word documents — update text, add sections, insert tables, and reformat.",
+        "examples": [
+          "Add a new section to this document",
+          "Update the executive summary in this report"
+        ],
+        "tags": [
+          "word",
+          "edit",
+          "update",
+          "modify"
+        ]
+      },
+      {
         "id": "human_interaction",
         "name": "Human Expert Escalation",
         "description": "Escalate complex issues to human experts when needed.",
-        "examples": null,
+        "examples": [
+          "I need to speak with a person",
+          "Connect me with a human agent"
+        ],
         "tags": [
           "human-interaction",
           "escalation",

@@ -81,13 +81,31 @@ def _build_skills():
         AgentSkill(
             id='create_presentation',
             name='Create Presentation',
-            description="Create, read, and edit PowerPoint presentations. Supports creating slides with text, bullet points, tables, charts, shapes, and professional design themes. Can also open, extract, and edit existing .pptx files via URL or file path.",
+            description="Create new PowerPoint presentations with slides, text, bullet points, tables, charts, shapes, and professional design themes.",
             tags=['powerpoint', 'presentation', 'slides', 'pptx'],
             examples=[
                 'Create a 5-slide presentation about AI trends in 2025',
                 'Build a sales pitch deck for our new product',
-                'Make a quarterly business review presentation with charts',
-                'Design a project status update with timeline and milestones',
+            ],
+        ),
+        AgentSkill(
+            id='read_presentation',
+            name='Read Presentation',
+            description="Read and extract content from existing PowerPoint presentations via URL or file path.",
+            tags=['powerpoint', 'read', 'extract', 'pptx'],
+            examples=[
+                'Read this presentation and summarize each slide',
+                'Extract the key data from this slide deck',
+            ],
+        ),
+        AgentSkill(
+            id='edit_presentation',
+            name='Edit Presentation',
+            description="Edit existing PowerPoint presentations — update slides, add content, insert images, and reformat.",
+            tags=['powerpoint', 'edit', 'update', 'modify'],
+            examples=[
+                'Add a new slide to this presentation',
+                'Update the title slide in this deck',
             ],
         ),
         AgentSkill(

@@ -81,13 +81,31 @@ def _build_skills():
         AgentSkill(
             id='create_spreadsheet',
             name='Create Spreadsheet',
-            description="Create, read, and edit Excel spreadsheets. Supports creating workbooks with data, formulas, tables, and formatting. Can also read, extract, and edit existing .xlsx files via URL or file path.",
+            description="Create new Excel spreadsheets with data, formulas, tables, and formatting.",
             tags=['excel', 'spreadsheet', 'xlsx', 'data'],
             examples=[
                 'Create a monthly budget spreadsheet with income and expenses',
                 'Build a sales report with quarterly data and charts',
-                'Make an inventory tracking sheet with formulas',
-                'Design a project timeline spreadsheet',
+            ],
+        ),
+        AgentSkill(
+            id='read_spreadsheet',
+            name='Read Spreadsheet',
+            description="Read and extract data from existing Excel spreadsheets via URL or file path.",
+            tags=['excel', 'read', 'extract', 'xlsx'],
+            examples=[
+                'Read this spreadsheet and summarize the data',
+                'Extract the totals from this Excel file',
+            ],
+        ),
+        AgentSkill(
+            id='edit_spreadsheet',
+            name='Edit Spreadsheet',
+            description="Edit existing Excel spreadsheets — add rows, update values, insert formulas, and reformat.",
+            tags=['excel', 'edit', 'update', 'modify'],
+            examples=[
+                'Add a new row to this spreadsheet',
+                'Update the totals column in this Excel file',
             ],
         ),
         AgentSkill(

@@ -81,13 +81,31 @@ def _build_skills():
         AgentSkill(
             id='create_document',
             name='Create Document',
-            description="Create, read, and edit Word documents. Supports creating documents with headings, paragraphs, tables, images, footnotes, formatting, and styles. Can also read, extract, and edit existing .docx files via URL or file path.",
+            description="Create new Word documents with headings, paragraphs, tables, images, footnotes, formatting, and styles.",
             tags=['word', 'document', 'docx', 'report'],
             examples=[
                 'Create a professional business report about Q4 results',
                 'Write a project proposal document with executive summary',
-                'Generate a meeting minutes document with action items',
-                'Create a formal letter with company letterhead formatting',
+            ],
+        ),
+        AgentSkill(
+            id='read_document',
+            name='Read Document',
+            description="Read and extract content from existing Word documents via URL or file path.",
+            tags=['word', 'read', 'extract', 'docx'],
+            examples=[
+                'Read this Word document and summarize the content',
+                'Extract the key points from this report',
+            ],
+        ),
+        AgentSkill(
+            id='edit_document',
+            name='Edit Document',
+            description="Edit existing Word documents — update text, add sections, insert tables, and reformat.",
+            tags=['word', 'edit', 'update', 'modify'],
+            examples=[
+                'Add a new section to this document',
+                'Update the executive summary in this report',
             ],
         ),
         AgentSkill(
