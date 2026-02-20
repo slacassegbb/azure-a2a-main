@@ -1,0 +1,6 @@
+/.github
+/cmd
+/internal
+/go.mod
+/go.sum
+/.goreleaser.yaml

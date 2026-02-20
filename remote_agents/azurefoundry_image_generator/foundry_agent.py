@@ -2017,20 +2017,18 @@ Always validate the prompt for safety before invoking the tool.
             logger.error(f"File not found for blob upload: {file_path}")
             return None
 
-        # NEW: Extract session_id from context_id for unified storage path
+        # Extract session_id from context_id for unified storage path
         file_id = uuid.uuid4().hex
         context_id = getattr(self, '_current_context_id', None)
-        session_id = None
         if context_id and '::' in context_id:
             session_id = context_id.split('::')[0]
-        
-        # Use unified path if session_id available, else fallback to agent-specific path
-        if session_id:
-            blob_name = f"uploads/{session_id}/{file_id}/{file_path.name}"
-            logger.info(f"Using unified storage path: {blob_name}")
+        elif context_id:
+            session_id = context_id
         else:
-            blob_name = f"image-generator/{file_id}/{file_path.name}"
-            logger.info(f"Using fallback agent path: {blob_name}")
+            session_id = "unknown"
+
+        blob_name = f"uploads/{session_id}/{file_id}/{file_path.name}"
+        logger.info(f"Using unified storage path: {blob_name}")
         
         try:
             container_client = blob_client.get_container_client(container_name)

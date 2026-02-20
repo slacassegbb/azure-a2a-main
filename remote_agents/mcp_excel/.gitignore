@@ -1,0 +1,14 @@
+/node_modules
+/dist
+/memory-bank
+# Added by goreleaser init:
+dist/
+# RooFlow
+.roo
+.roomodes
+.clinerules-default
+# repomix
+repomix-output.xml
+# Claude Code
+CLAUDE.local.md
+.claude/settings.local.json

@@ -24,10 +24,11 @@ Existing agent port assignments. New agents must not conflict.
 | 9030 | Stripe |
 | 9035 | GitHub |
 | 9036 | PowerPoint |
+| 9037 | Excel |
 
 ## Available Ranges
 - 8022-8099 (legacy range)
-- 9037-9099 (modern range)
+- 9038-9099 (modern range)
 
 ## Gradio UI Ports
 Convention: A2A_PORT + 65 or use 8085 default.

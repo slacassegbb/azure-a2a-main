@@ -866,5 +866,87 @@
         ]
       }
     ]
+  },
+  {
+    "name": "AI Foundry PowerPoint Agent",
+    "description": "An Azure AI Foundry agent that creates professional PowerPoint presentations and returns downloadable .pptx files.",
+    "version": "1.0.0",
+    "url": "http://localhost:9036/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "create_presentation",
+        "name": "Create Presentation",
+        "description": "Create professional PowerPoint presentations from text descriptions. Supports slides with text, bullet points, tables, charts, shapes, and professional design themes.",
+        "examples": null,
+        "tags": [
+          "powerpoint",
+          "presentation",
+          "slides",
+          "pptx"
+        ]
+      },
+      {
+        "id": "human_interaction",
+        "name": "Human Expert Escalation",
+        "description": "Escalate complex issues to human experts when needed.",
+        "examples": null,
+        "tags": [
+          "human-interaction",
+          "escalation",
+          "expert",
+          "human-capable"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "AI Foundry Excel Agent",
+    "description": "An Azure AI Foundry agent that creates professional Excel spreadsheets and returns downloadable .xlsx files.",
+    "version": "1.0.0",
+    "url": "http://localhost:9037/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "create_spreadsheet",
+        "name": "Create Spreadsheet",
+        "description": "Create professional Excel spreadsheets with data, formulas, tables, and formatting. Supports multi-sheet workbooks, styled headers, number formats, and structured tables.",
+        "examples": null,
+        "tags": [
+          "excel",
+          "spreadsheet",
+          "xlsx",
+          "data"
+        ]
+      },
+      {
+        "id": "human_interaction",
+        "name": "Human Expert Escalation",
+        "description": "Escalate complex issues to human experts when needed.",
+        "examples": null,
+        "tags": [
+          "human-interaction",
+          "escalation",
+          "expert",
+          "human-capable"
+        ]
+      }
+    ]
   }
 ]

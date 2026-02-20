@@ -132,14 +132,14 @@ class FoundryPowerPointAgent:
 
         file_id = uuid.uuid4().hex
         context_id = self._current_context_id
-        session_id = None
         if context_id and "::" in context_id:
             session_id = context_id.split("::")[0]
-
-        if session_id:
-            blob_name = f"uploads/{session_id}/{file_id}/{file_path.name}"
+        elif context_id:
+            session_id = context_id
         else:
-            blob_name = f"powerpoint-agent/{file_id}/{file_path.name}"
+            session_id = "unknown"
+
+        blob_name = f"uploads/{session_id}/{file_id}/{file_path.name}"
 
         try:
             container_client = blob_client.get_container_client(container_name)
