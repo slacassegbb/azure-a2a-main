@@ -530,9 +530,11 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       }
     }
     
-    // Check if all required agents are registered
-    return requiredAgents.every(agentName => 
-      registeredAgents.some(registered => 
+    // Check if all required agents are registered (EVALUATE and QUERY are handled locally, not remote agents)
+    return requiredAgents.every(agentName =>
+      agentName.toUpperCase() === 'EVALUATE' ||
+      agentName.toUpperCase() === 'QUERY' ||
+      registeredAgents.some(registered =>
         registered.name?.toLowerCase().includes(agentName.toLowerCase()) ||
         agentName.toLowerCase().includes(registered.name?.toLowerCase() || '')
       )

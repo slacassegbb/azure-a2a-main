@@ -480,13 +480,9 @@ Evaluate the condition and return your result."""
         if len(context_text) > 8000:
             context_text = context_text[:8000] + "... [truncated]"
 
-        system_prompt = """You are executing a query step in a multi-agent workflow.
-Analyze the context from previous workflow steps and answer the query.
-Return structured results as a JSON object with confidence scoring.
-Set "ok" to false if you cannot answer the query from the available context.
-The "task" field should be a short snake_case label for what was queried.
-The "result" field must be a valid JSON string containing the answer (e.g., '{"best_image_id": "img2.png"}').
-The "refs" field must be a valid JSON string with references to inputs used (e.g., '{"candidates": ["a","b"]}'), or empty string if none."""
+        system_prompt = """You are analyzing data as part of a multi-agent workflow.
+Based on the context from previous workflow steps, answer the query with structured results.
+Set "ok" to false if the available context is insufficient. Include a confidence score and brief reasoning."""
 
         user_prompt = f"""### QUERY
 {user_query}
