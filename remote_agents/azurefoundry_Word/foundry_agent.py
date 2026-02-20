@@ -331,6 +331,20 @@ When a previous workflow step provides an image URL (e.g. from Azure Blob Storag
 use `add_picture` with `source_type: "url"` and pass the full URL as `image_path`.
 Example: add_picture(filename="doc.docx", image_path="https://...blob.core.windows.net/...", source_type="url")
 
+## Reading Existing Documents
+
+When the user asks you to read, summarize, or extract content from an existing document,
+use the read tools — do NOT create a new document. The read tools accept URLs directly
+(e.g. Azure Blob Storage URLs with SAS tokens).
+
+- `get_document_text(filename="https://...blob.core.windows.net/...docx?sv=...")` — extract all text
+- `get_document_info(filename="https://...")` — get metadata (author, pages, word count)
+- `get_document_outline(filename="https://...")` — get heading structure
+- `get_document_xml(filename="https://...")` — get raw XML
+
+Pass the full URL (including any query parameters like SAS tokens) as the `filename` argument.
+Do NOT call `create_document` or `download_document` when only reading.
+
 Current date: {datetime.datetime.now().isoformat()}
 
 ## NEEDS_INPUT - Human-in-the-Loop
