@@ -81,7 +81,7 @@ def _build_skills():
         AgentSkill(
             id='create_presentation',
             name='Create Presentation',
-            description="Create and read PowerPoint presentations. Supports creating slides with text, bullet points, tables, charts, shapes, and professional design themes. Can also open and extract text from existing .pptx files via URL or file path.",
+            description="Create, read, and edit PowerPoint presentations. Supports creating slides with text, bullet points, tables, charts, shapes, and professional design themes. Can also open, extract, and edit existing .pptx files via URL or file path.",
             tags=['powerpoint', 'presentation', 'slides', 'pptx'],
             examples=[
                 'Create a 5-slide presentation about AI trends in 2025',
@@ -104,7 +104,7 @@ def _build_agent_card(host: str, port: int):
     resolved = host if host != "0.0.0.0" else DEFAULT_HOST
     return AgentCard(
         name='AI Foundry PowerPoint Agent',
-        description="An Azure AI Foundry agent that creates and reads PowerPoint presentations. Can create new .pptx files and extract text/content from existing presentations via URL.",
+        description="An Azure AI Foundry agent that creates, reads, and edits PowerPoint presentations. Can create new .pptx files and read, extract, or edit existing presentations via URL.",
         url=resolve_agent_url(resolved, port),
         version='1.0.0',
         defaultInputModes=['text'],

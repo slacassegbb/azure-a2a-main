@@ -81,7 +81,7 @@ def _build_skills():
         AgentSkill(
             id='create_document',
             name='Create Document',
-            description="Create and read Word documents. Supports creating documents with headings, paragraphs, tables, images, footnotes, formatting, and styles. Can also read and extract text, outline, and comments from existing .docx files via URL or file path.",
+            description="Create, read, and edit Word documents. Supports creating documents with headings, paragraphs, tables, images, footnotes, formatting, and styles. Can also read, extract, and edit existing .docx files via URL or file path.",
             tags=['word', 'document', 'docx', 'report'],
             examples=[
                 'Create a professional business report about Q4 results',
@@ -104,7 +104,7 @@ def _build_agent_card(host: str, port: int):
     resolved = host if host != "0.0.0.0" else DEFAULT_HOST
     return AgentCard(
         name='AI Foundry Word Agent',
-        description="An Azure AI Foundry agent that creates and reads Word documents. Can create new .docx files and extract text/content from existing documents via URL.",
+        description="An Azure AI Foundry agent that creates, reads, and edits Word documents. Can create new .docx files and read, extract, or edit existing documents via URL.",
         url=resolve_agent_url(resolved, port),
         version='1.0.0',
         defaultInputModes=['text'],
