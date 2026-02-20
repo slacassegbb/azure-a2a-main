@@ -26,6 +26,47 @@ from word_document_server.utils.document_utils import get_document_properties, e
 from word_document_server.core.styles import ensure_heading_style, ensure_table_style
 
 
+async def open_document(url: str, filename: Optional[str] = None) -> str:
+    """Download a Word document from a URL (e.g. Azure Blob Storage) to a local path for editing.
+
+    Use this tool FIRST when you need to edit an existing document from a URL.
+    After opening, use the returned local path with all edit tools (add_heading,
+    add_paragraph, search_and_replace, etc.), then call download_document when done.
+
+    Args:
+        url: HTTP/HTTPS URL to the .docx file (including SAS tokens if needed)
+        filename: Optional local filename to save as (default: derived from URL)
+    """
+    if not url.startswith(("http://", "https://")):
+        return f"Error: url must be an HTTP/HTTPS URL, got: {url}"
+
+    try:
+        url_path = url.split('?')[0]
+        if filename:
+            safe_name = os.path.basename(filename)
+            if not safe_name.endswith('.docx'):
+                safe_name += '.docx'
+        else:
+            safe_name = os.path.basename(url_path) or 'document.docx'
+            if not safe_name.endswith('.docx'):
+                safe_name += '.docx'
+
+        download_dir = "/tmp/docx_downloads"
+        os.makedirs(download_dir, exist_ok=True)
+        local_path = os.path.join(download_dir, safe_name)
+
+        urllib.request.urlretrieve(url, local_path)
+
+        file_size = os.path.getsize(local_path) / 1024
+        return (
+            f"Document downloaded to {local_path} ({file_size:.1f} KB). "
+            f"Use this path with edit tools (add_heading, add_paragraph, search_and_replace, etc.). "
+            f"When done editing, call download_document(filename=\"{local_path}\") to return the file."
+        )
+    except Exception as e:
+        return f"Failed to download document from URL: {str(e)}"
+
+
 async def create_document(filename: str, title: Optional[str] = None, author: Optional[str] = None) -> str:
     """Create a new Word document with optional metadata.
     

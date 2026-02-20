@@ -92,7 +92,16 @@ mcp = FastMCP("Word Document Server")
 def register_tools():
     """Register all tools with the MCP server using FastMCP decorators."""
     
-    # Document tools (create, copy, info, etc.)
+    # Document tools (create, open, copy, info, etc.)
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            title="Open Document from URL",
+        ),
+    )
+    async def open_document(url: str, filename: str = None):
+        """Download a Word document from a URL to a local path for editing. Use this FIRST when editing an existing document from a URL, then use edit tools on the returned path."""
+        return await document_tools.open_document(url, filename)
+
     @mcp.tool(
         annotations=ToolAnnotations(
             title="Create Word Document",

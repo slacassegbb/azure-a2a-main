@@ -53,6 +53,7 @@ class FoundryWordAgent:
             "server_url": WORD_MCP_URL,
             "require_approval": "never",
             "allowed_tools": [
+                "open_document",
                 "create_document",
                 "copy_document",
                 "get_document_info",
@@ -344,6 +345,16 @@ use the read tools — do NOT create a new document. The read tools accept URLs 
 
 Pass the full URL (including any query parameters like SAS tokens) as the `filename` argument.
 Do NOT call `create_document` or `download_document` when only reading.
+
+## Editing Existing Documents from URLs
+
+When the user asks you to edit/modify an existing document from a URL:
+
+1. Call `open_document(url="https://...blob.core.windows.net/...docx?sv=...")` — this downloads it to a local path
+2. Use the returned local path with edit tools: `add_heading`, `add_paragraph`, `search_and_replace`, `format_text`, `add_table`, etc.
+3. When done editing, call `download_document(filename="<local_path>")` to make the modified file available
+
+Do NOT pass URLs directly to edit tools — always use `open_document` first.
 
 Current date: {datetime.datetime.now().isoformat()}
 

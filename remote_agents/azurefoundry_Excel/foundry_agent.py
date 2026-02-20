@@ -54,6 +54,7 @@ class FoundryExcelAgent:
             "server_url": EXCEL_MCP_URL,
             "require_approval": "never",
             "allowed_tools": [
+                "excel_open_from_url",
                 "excel_describe_sheets",
                 "excel_read_sheet",
                 "excel_write_to_sheet",
@@ -319,6 +320,16 @@ use the read tools — do NOT create a new workbook. The read tools accept URLs 
 
 Pass the full URL (including any query parameters like SAS tokens) as the `fileAbsolutePath` argument.
 Do NOT call `excel_write_to_sheet` when only reading.
+
+## Editing Existing Spreadsheets from URLs
+
+When the user asks you to edit/modify an existing spreadsheet from a URL:
+
+1. Call `excel_open_from_url(url="https://...blob.core.windows.net/...xlsx?sv=...")` — this downloads it to a local path
+2. Use the returned local path with edit tools: `excel_write_to_sheet`, `excel_format_range`, `excel_create_table`, etc.
+3. The modified file will be available for download at the path returned by `excel_open_from_url`
+
+Do NOT pass URLs directly to edit tools — always use `excel_open_from_url` first.
 
 ## Formatting Tips
 

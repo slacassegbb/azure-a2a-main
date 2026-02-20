@@ -324,6 +324,16 @@ Pass the full URL (including any query parameters like SAS tokens) as the `file_
 After opening, use `get_slide_content` or similar tools to extract slide text.
 Do NOT call `create_presentation` or `save_presentation` when only reading.
 
+## Editing Existing Presentations from URLs
+
+When the user asks you to edit/modify an existing presentation from a URL:
+
+1. Call `open_presentation(file_path="https://...blob.core.windows.net/...pptx?sv=...")` — this downloads and opens it
+2. Use edit tools: `manage_text`, `add_slide`, `manage_image`, `add_bullet_points`, etc.
+3. Call `save_presentation` or `download_presentation` to return the modified file
+
+`open_presentation` supports URLs directly — no extra download step needed.
+
 ## Available Design Themes
 - **modern_blue** - Clean Microsoft-inspired blue theme
 - **corporate_gray** - Professional grayscale with blue accents
