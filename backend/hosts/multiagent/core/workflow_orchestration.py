@@ -595,28 +595,25 @@ Analyze the context and return your structured result."""
             # Ensure Azure client is ready
             await self._ensure_project_client()
 
-            # Import Bing tool classes (same as foundry_agent_a2a.py)
-            from azure.ai.projects.models import (
-                BingGroundingAgentTool,
-                BingGroundingSearchToolParameters,
-                BingGroundingSearchConfiguration,
-            )
-
             # Get Bing connection ID
             bing_conn_id = getattr(self, 'bing_connection_id', None) or os.environ.get("BING_CONNECTION_ID")
             if not bing_conn_id:
                 raise ValueError("BING_CONNECTION_ID not configured — web search is unavailable")
 
-            bing_tool = BingGroundingAgentTool(
-                bing_grounding=BingGroundingSearchToolParameters(
-                    search_configurations=[
-                        BingGroundingSearchConfiguration(
-                            project_connection_id=bing_conn_id,
-                            count=5
-                        )
+            # Pass Bing tool as a plain dict — Azure SDK model objects (BingGroundingAgentTool)
+            # are not JSON-serializable by the OpenAI client. The Azure AI Foundry Responses API
+            # accepts bing_grounding as a dict tool type.
+            bing_tool = {
+                "type": "bing_grounding",
+                "bing_grounding": {
+                    "search_configurations": [
+                        {
+                            "connection_id": bing_conn_id,
+                            "count": 5
+                        }
                     ]
-                )
-            )
+                }
+            }
 
             # Build the search prompt
             search_input = f"Search the web for: {user_query}"
@@ -630,7 +627,7 @@ Analyze the context and return your structured result."""
             )
 
             # Isolated, non-streaming responses.create() — no response_id, no orchestrator tools
-            log_info(f"🌐 [WEB_SEARCH] Calling responses.create() with BingGroundingAgentTool")
+            log_info(f"🌐 [WEB_SEARCH] Calling responses.create() with bing_grounding tool")
             response = await self.openai_client.responses.create(
                 input=search_input,
                 instructions=search_instructions,
