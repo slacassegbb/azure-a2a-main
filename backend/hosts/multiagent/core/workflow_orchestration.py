@@ -635,18 +635,28 @@ Analyze the context and return your structured result."""
                 tools=[bing_tool],
             )
 
-            # Extract text from response (same pattern as synthesis)
+            # Extract text from response — guard against None at every level
             result_text = ""
-            if hasattr(response, 'output'):
-                for item in response.output:
-                    if hasattr(item, 'content'):
-                        for content in item.content:
-                            if hasattr(content, 'text'):
-                                result_text += content.text
+            log_info(f"🌐 [WEB_SEARCH] Response type: {type(response).__name__}, has output: {hasattr(response, 'output')}")
+            output_items = getattr(response, 'output', None) or []
+            for item in output_items:
+                content_list = getattr(item, 'content', None) or []
+                for content in content_list:
+                    text = getattr(content, 'text', None)
+                    if text:
+                        result_text += text
+
+            # Fallback: some SDK versions expose output_text directly
+            if not result_text.strip():
+                output_text_attr = getattr(response, 'output_text', None)
+                if output_text_attr:
+                    result_text = output_text_attr
+                    log_info(f"🌐 [WEB_SEARCH] Used output_text fallback: {len(result_text)} chars")
 
             if not result_text.strip():
+                # Log response structure for debugging
+                log_info(f"⚠️ [WEB_SEARCH] Empty response. output_items={len(output_items)}, response attrs={[a for a in dir(response) if not a.startswith('_')]}")
                 result_text = "Web search returned no results."
-                log_info(f"⚠️ [WEB_SEARCH] Empty response from Bing search")
 
             log_info(f"🌐 [WEB_SEARCH] Got {len(result_text)} chars from web search")
 
