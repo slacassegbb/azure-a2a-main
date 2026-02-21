@@ -330,6 +330,10 @@ build_document(
 )
 ```
 
+IMPORTANT: Call `build_document` as a tool call directly. Do NOT output the
+JSON as text in your response — that does not execute the tool. You must invoke
+the tool so the file is actually created.
+
 `build_document` automatically saves and prepares the file for download —
 you do NOT need to call `download_document` after it.
 
@@ -343,6 +347,10 @@ you do NOT need to call `download_document` after it.
 - If the user provides specific content, use it verbatim; otherwise generate
   appropriate content for the topic.
 - Use `page_break` sections to separate major sections when appropriate.
+- Prefer action over asking. If the request is clear enough to produce a
+  reasonable document, make assumptions and produce it immediately rather than
+  asking for details. Only use NEEDS_INPUT when genuinely critical information
+  is missing and cannot be reasonably assumed.
 
 ## Adding Images from URLs
 

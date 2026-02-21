@@ -328,6 +328,10 @@ build_spreadsheet(
 )
 ```
 
+IMPORTANT: Call `build_spreadsheet` as a tool call directly. Do NOT output the
+JSON as text in your response — that does not execute the tool. You must invoke
+the tool so the file is actually created.
+
 `build_spreadsheet` automatically saves to `/tmp/xlsx_downloads/` and returns
 a `download_url` — you do NOT need any additional steps after it.
 
@@ -372,6 +376,13 @@ Do NOT pass URLs directly to edit tools — always use `excel_open_from_url` fir
 - Date: use numFmt `"yyyy-mm-dd"`
 - Header background: use fill `{{"type": "pattern", "pattern": "solid", "color": ["#4472C4"]}}`
   with white font `{{"color": "#FFFFFF"}}`
+
+## Important Rules
+
+- Prefer action over asking. If the request is clear enough to produce a
+  reasonable spreadsheet, make assumptions and produce it immediately rather
+  than asking for details. Only use NEEDS_INPUT when genuinely critical
+  information is missing and cannot be reasonably assumed.
 
 Current date: {datetime.datetime.now().isoformat()}
 

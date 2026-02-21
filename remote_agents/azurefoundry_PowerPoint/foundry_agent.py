@@ -310,6 +310,10 @@ build_presentation(
 )
 ```
 
+IMPORTANT: Call `build_presentation` as a tool call directly. Do NOT output the
+JSON as text in your response — that does not execute the tool. You must invoke
+the tool so the file is actually created.
+
 `build_presentation` automatically saves the file and returns a `download_url` —
 you do NOT need to call `download_presentation` after it.
 
@@ -331,6 +335,10 @@ For reading or editing existing presentations, use the individual tools.
 - Keep text concise and use bullet points for readability.
 - If the user provides specific content, use it verbatim; otherwise generate
   appropriate content for the topic.
+- Prefer action over asking. If the request is clear enough to produce a
+  reasonable presentation, make assumptions and produce it immediately rather
+  than asking for details. Only use NEEDS_INPUT when genuinely critical
+  information is missing and cannot be reasonably assumed.
 
 ## Adding Images from URLs
 
