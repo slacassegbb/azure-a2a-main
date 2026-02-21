@@ -34,6 +34,7 @@ interface AgentInfo {
   progressMessages: string[]
   extractedFiles: { name: string; url?: string; type?: string }[]
   stepNumber?: string  // Extracted from [Step X] in content, e.g. "2", "2a", "2b"
+  mapKey: string       // Unique key for React rendering (handles parallel same-agent cards)
 }
 
 interface OrchestratorActivity {
@@ -237,6 +238,7 @@ function parseEventsToAgents(steps: StepEvent[], agentColors?: Record<string, st
         progressMessages: [],
         extractedFiles: [],
         stepNumber: stepMatch ? stepMatch[1] : undefined,
+        mapKey,
       })
     }
 
@@ -446,9 +448,8 @@ function AgentCard({ agent, stepNumber, isLive }: { agent: AgentInfo; stepNumber
   const isWaiting = status === "waiting"
   const isCancelled = status === "cancelled"
   
-  // Use agent's extracted step number, or fall back to position
-  // For display, show only the numeric part (e.g. "2a" → "2")
-  const displayStepNumber = agent.stepNumber ? parseInt(agent.stepNumber) : stepNumber
+  // Use agent's extracted step number (preserving letter suffix for parallel steps like 1a, 1b)
+  const displayStepNumber = agent.stepNumber || String(stepNumber)
 
   // Clean task description - remove [Step X] prefix (with optional letter suffix)
   const cleanTaskDesc = taskDescription?.replace(/^\[Step\s*\d+[a-z]?\]\s*/i, "").trim()
@@ -627,7 +628,7 @@ export function InferenceSteps({ steps, isInferencing, plan, cancelled, agentCol
           <OrchestratorSection activities={orchestratorActivities} status={orchestratorStatus} isLive={true} />
           
           <div className="space-y-1 pr-1">
-            {agents.map((agent: AgentInfo, i: number) => <AgentCard key={agent.name} agent={agent} stepNumber={i + 1} isLive={true} />)}
+            {agents.map((agent: AgentInfo, i: number) => <AgentCard key={agent.mapKey} agent={agent} stepNumber={i + 1} isLive={true} />)}
           </div>
         </div>
       </div>
@@ -670,7 +671,7 @@ export function InferenceSteps({ steps, isInferencing, plan, cancelled, agentCol
         <AccordionContent>
           <OrchestratorSection activities={orchestratorActivities} status={orchestratorStatus} isLive={false} />
           <div className="space-y-1 pt-1 pb-2">
-            {agents.map((agent: AgentInfo, i: number) => <AgentCard key={agent.name} agent={agent} stepNumber={i + 1} isLive={false} />)}
+            {agents.map((agent: AgentInfo, i: number) => <AgentCard key={agent.mapKey} agent={agent} stepNumber={i + 1} isLive={false} />)}
           </div>
         </AccordionContent>
       </AccordionItem>

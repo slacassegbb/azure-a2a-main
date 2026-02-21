@@ -44,7 +44,7 @@ def _resolve_default_port() -> int:
             return int(raw)
         except ValueError:
             pass
-    return 9039
+    return 9041
 
 def resolve_agent_url(bind_host: str, bind_port: int) -> str:
     endpoint = _normalize_env_value(os.getenv('A2A_ENDPOINT'))

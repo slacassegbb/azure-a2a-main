@@ -45,6 +45,7 @@ from ..models import (
     QueryResult,
 )
 from ..tool_context import DummyToolContext
+from ..foundry_agent_a2a import _current_parallel_call_id
 
 
 class WorkflowOrchestration:
@@ -1970,9 +1971,11 @@ Analyze the plan and determine the next step."""
                     
                     async def execute_task_parallel(task: AgentModeTask) -> Dict[str, Any]:
                         """Execute a single task and return result dict."""
+                        # Set parallel_call_id so WebSocket events include it for frontend grouping
+                        _current_parallel_call_id.set(task.task_id)
                         task.state = "running"
                         task.updated_at = datetime.now(timezone.utc)
-                        
+
                         try:
                             # Pass ALL accumulated outputs - smart context selection will pick the best one
                             # This is critical for HITL workflows where step N-1 may return a short response

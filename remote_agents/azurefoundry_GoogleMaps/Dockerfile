@@ -12,8 +12,8 @@ COPY pyproject.toml uv.lock* ./
 RUN uv pip install --system -e .
 COPY . .
 
-# Google Maps Agent - port 9039
-ENV A2A_PORT=9039
+# Google Maps Agent - port 9041
+ENV A2A_PORT=9041
 ENV A2A_HOST=0.0.0.0
 EXPOSE ${A2A_PORT}
 

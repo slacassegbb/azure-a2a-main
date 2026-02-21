@@ -2136,15 +2136,19 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
             return updated
           }
           
-          // Also collapse consecutive "is working on" from same agent
+          // Collapse consecutive "is working on" from same agent — but only if same parallel call
           if (prev.length > 0) {
             const lastEntry = prev[prev.length - 1]
-            if (lastEntry.agent === data.agentName && 
+            const lastCallId = lastEntry.metadata?.parallel_call_id
+            const thisCallId = data.metadata?.parallel_call_id
+            const sameParallelCall = lastCallId === thisCallId  // both undefined = same (sequential)
+            if (lastEntry.agent === data.agentName &&
+                sameParallelCall &&
                 lastEntry.status.includes("is working on") &&
                 content.includes("is working on")) {
               // Replace the last "working on" with the new one instead of adding
-              return [...prev.slice(0, -1), { 
-                agent: data.agentName, 
+              return [...prev.slice(0, -1), {
+                agent: data.agentName,
                 status: content,
                 eventType: activityType,
                 metadata: data.metadata,

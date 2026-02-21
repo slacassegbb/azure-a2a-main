@@ -1071,5 +1071,182 @@
         ]
       }
     ]
+  },
+  {
+    "name": "AI Foundry Time Series Agent",
+    "description": "Time series intelligence agent powered by Nixtla TimeGEN-1. Forecasting, anomaly detection, backtesting, and cross-validation for any time series data.",
+    "version": "1.0.0",
+    "url": "http://localhost:9039/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "timeseries_forecast",
+        "name": "Time Series Forecasting",
+        "description": "Predict future values for any time series data using Nixtla TimeGEN-1. Supports single and multi-series with exogenous variables.",
+        "examples": null,
+        "tags": [
+          "timeseries",
+          "forecast",
+          "prediction",
+          "nixtla",
+          "timegen"
+        ]
+      },
+      {
+        "id": "timeseries_anomaly_detection",
+        "name": "Time Series Anomaly Detection",
+        "description": "Detect anomalies, outliers, and unusual patterns in time series data. Use for fraud detection, system monitoring, quality control.",
+        "examples": null,
+        "tags": [
+          "timeseries",
+          "anomaly",
+          "detection",
+          "fraud",
+          "outlier"
+        ]
+      },
+      {
+        "id": "timeseries_historic_forecast",
+        "name": "Historic Forecast (Backtest)",
+        "description": "Backtest predictions on historical data to evaluate model accuracy on known outcomes.",
+        "examples": null,
+        "tags": [
+          "timeseries",
+          "backtest",
+          "historic",
+          "validation"
+        ]
+      },
+      {
+        "id": "timeseries_cross_validation",
+        "name": "Cross-Validation",
+        "description": "Evaluate forecast reliability using rolling-window cross-validation across multiple time periods.",
+        "examples": null,
+        "tags": [
+          "timeseries",
+          "cross-validation",
+          "accuracy",
+          "evaluation"
+        ]
+      },
+      {
+        "id": "human_interaction",
+        "name": "Human Expert Escalation",
+        "description": "Escalate complex issues to human experts when needed.",
+        "examples": null,
+        "tags": [
+          "human-interaction",
+          "escalation",
+          "expert",
+          "human-capable"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "AI Foundry Stock Market Agent",
+    "description": "Stock market data agent powered by Alpha Vantage. Access stock prices, forex, crypto, commodities, economic indicators, technical analysis, news sentiment, and company fundamentals.",
+    "version": "1.0.0",
+    "url": "http://localhost:9040/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "stockmarket_price_lookup",
+        "name": "Stock Price Lookup",
+        "description": "Get current and historical stock prices, quotes, and OHLCV data for any publicly traded company.",
+        "examples": null,
+        "tags": [
+          "stockmarket",
+          "stocks",
+          "prices",
+          "quotes",
+          "ohlcv"
+        ]
+      },
+      {
+        "id": "stockmarket_historical_data",
+        "name": "Historical Market Data",
+        "description": "Retrieve historical price data for stocks, forex, crypto, and commodities with daily/weekly/monthly/intraday frequency.",
+        "examples": null,
+        "tags": [
+          "stockmarket",
+          "historical",
+          "timeseries",
+          "forex",
+          "crypto",
+          "commodities"
+        ]
+      },
+      {
+        "id": "stockmarket_technical_analysis",
+        "name": "Technical Analysis",
+        "description": "Calculate technical indicators including SMA, EMA, RSI, MACD, Bollinger Bands, Stochastic, ADX, and 40+ more.",
+        "examples": null,
+        "tags": [
+          "stockmarket",
+          "technical",
+          "indicators",
+          "sma",
+          "rsi",
+          "macd"
+        ]
+      },
+      {
+        "id": "stockmarket_intelligence",
+        "name": "Market Intelligence",
+        "description": "Access news sentiment analysis, earnings call transcripts, insider transactions, and top market movers.",
+        "examples": null,
+        "tags": [
+          "stockmarket",
+          "news",
+          "sentiment",
+          "earnings",
+          "insider"
+        ]
+      },
+      {
+        "id": "stockmarket_economic_data",
+        "name": "Economic & Commodity Data",
+        "description": "Retrieve economic indicators (GDP, CPI, inflation, unemployment, treasury yields) and commodity prices (oil, gold, wheat, etc.).",
+        "examples": null,
+        "tags": [
+          "stockmarket",
+          "economic",
+          "gdp",
+          "cpi",
+          "commodities",
+          "oil",
+          "gold"
+        ]
+      },
+      {
+        "id": "human_interaction",
+        "name": "Human Expert Escalation",
+        "description": "Escalate complex issues to human experts when needed.",
+        "examples": null,
+        "tags": [
+          "human-interaction",
+          "escalation",
+          "expert",
+          "human-capable"
+        ]
+      }
+    ]
   }
 ]
