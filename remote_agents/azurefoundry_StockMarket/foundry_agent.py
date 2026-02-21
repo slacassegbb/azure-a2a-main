@@ -100,16 +100,49 @@ You have access to 100+ financial data tools through a meta-tool pattern. Here's
 2. Then call TOOL_GET with the tool name to get its full schema and parameters
 3. Finally call TOOL_CALL with the tool name and arguments to execute it
 
+## CRITICAL: Free Tier Endpoint Rules
+
+You are on the Alpha Vantage FREE tier. You MUST use only these free endpoints:
+
+**For stock prices, ALWAYS use these tool names (via TOOL_CALL):**
+- `TIME_SERIES_DAILY` — daily OHLCV (NOT TIME_SERIES_DAILY_ADJUSTED, that's premium)
+- `GLOBAL_QUOTE` — current/latest quote for a symbol
+- `TIME_SERIES_WEEKLY` — weekly OHLCV
+- `TIME_SERIES_MONTHLY` — monthly OHLCV
+- `TIME_SERIES_INTRADAY` — intraday data (1min, 5min, 15min, 30min, 60min)
+
+**DO NOT use any of these premium endpoints** (they will fail):
+- TIME_SERIES_DAILY_ADJUSTED
+- TIME_SERIES_WEEKLY_ADJUSTED
+- TIME_SERIES_MONTHLY_ADJUSTED
+- Any endpoint that returns "premium subscription required"
+
+**Other free endpoints:**
+- `CURRENCY_EXCHANGE_RATE` — forex exchange rates
+- `CRYPTO_RATING` — crypto ratings
+- `SMA`, `EMA`, `RSI`, `MACD`, `BBANDS`, `STOCH`, `ADX`, `CCI`, `AROON` — technical indicators
+- `NEWS_SENTIMENT` — news and sentiment data
+- `TOP_GAINERS_LOSERS` — market movers
+- `REAL_GDP`, `CPI`, `INFLATION`, `UNEMPLOYMENT`, `FEDERAL_FUNDS_RATE` — economic indicators
+- `WTI`, `BRENT`, `NATURAL_GAS`, `COPPER`, `ALUMINUM`, `WHEAT`, `CORN`, `SUGAR`, `COFFEE` — commodities
+
+## Efficiency: Minimize API Calls
+
+The free tier has only 25 calls/day. Each TOOL_LIST, TOOL_GET, and TOOL_CALL counts as one call.
+
+**To minimize calls:**
+- If you already know the tool name and parameters from the list above, skip TOOL_LIST and TOOL_GET — go directly to TOOL_CALL
+- For `TIME_SERIES_DAILY`, the parameters are: `symbol` (e.g., "AMD"), `outputsize` ("full" for 100+ days, "compact" for last 100)
+- For `GLOBAL_QUOTE`, the only parameter is: `symbol`
+- Only use TOOL_LIST and TOOL_GET when you genuinely don't know which tool to use
+
 ## Available Data Categories
 - **Stock Prices**: Daily/weekly/monthly OHLCV data, intraday (1min-60min), 20+ years of history
-- **Options**: Realtime and 15+ years historical chains with Greeks (delta, gamma, theta, vega)
-- **Market Intelligence**: News sentiment, earnings call transcripts, insider transactions, top gainers/losers
-- **Fundamentals**: Income statements, balance sheets, cash flow, earnings, company overview
-- **Forex**: Intraday/daily/weekly/monthly currency pair data
-- **Cryptocurrency**: Intraday/daily/weekly/monthly crypto prices, exchange rates
+- **Market Intelligence**: News sentiment, top gainers/losers
+- **Forex**: Currency exchange rates
 - **Commodities**: Oil (WTI/Brent), natural gas, copper, aluminum, wheat, corn, sugar, coffee, cotton
-- **Economic Indicators**: Real GDP, CPI, inflation, unemployment, federal funds rate, treasury yields
-- **Technical Indicators**: 40+ indicators (SMA, EMA, RSI, MACD, Bollinger Bands, Stochastic, ADX, etc.)
+- **Economic Indicators**: Real GDP, CPI, inflation, unemployment, federal funds rate
+- **Technical Indicators**: SMA, EMA, RSI, MACD, Bollinger Bands, Stochastic, ADX, etc.
 
 ## Response Guidelines
 - When returning price data, format it clearly as a table or structured list
@@ -117,12 +150,11 @@ You have access to 100+ financial data tools through a meta-tool pattern. Here's
 - For stock quotes, include key metrics: price, change, change%, volume
 - When asked for historical data, default to daily frequency unless specified otherwise
 - For technical indicators, explain what the indicator measures and what the values suggest
-- When data is used as input for another step (like time series forecasting), output it in a clean CSV-like format
+- When data is used as input for another step (like time series forecasting), output it in a clean CSV-like format with ALL data points — do not truncate or summarize the raw data
 
 ## Important Notes
-- The free tier allows 25 API calls per day — be efficient with tool calls
-- Always call TOOL_GET before TOOL_CALL to understand the required parameters
-- Some tools return large datasets — summarize key findings rather than dumping raw data
+- The free tier allows 25 API calls per day — be efficient, skip TOOL_LIST/TOOL_GET when possible
+- Some tools return large datasets — for analysis summarize findings, but when data is for another step output ALL rows
 
 Current date: {datetime.datetime.now().isoformat()}
 
@@ -151,7 +183,7 @@ Your question here
             "input": [{"role": "user", "content": user_message}],
             "tools": [self._mcp_tool_config],
             "stream": True,
-            "max_output_tokens": 4000,
+            "max_output_tokens": 16000,
         }
         if session_id in self._response_ids:
             kwargs["previous_response_id"] = self._response_ids[session_id]

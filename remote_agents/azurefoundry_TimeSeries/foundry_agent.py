@@ -217,11 +217,24 @@ def _get_nixtla_client() -> NixtlaClient:
     )
 
 
-def _parse_data(data_json: str, time_col: str) -> pd.DataFrame:
-    """Parse JSON data string into a DataFrame with proper datetime column."""
+def _parse_data(data_json: str, time_col: str, freq: str = None) -> pd.DataFrame:
+    """Parse JSON data string into a DataFrame with proper datetime column.
+
+    Automatically resamples to the target frequency and forward-fills gaps
+    (e.g., holidays in business-day stock data).
+    """
     data = json.loads(data_json)
     df = pd.DataFrame(data)
     df[time_col] = pd.to_datetime(df[time_col])
+    # Sort by time ascending (Alpha Vantage returns newest first)
+    df = df.sort_values(time_col).reset_index(drop=True)
+    # Drop duplicate timestamps
+    df = df.drop_duplicates(subset=[time_col], keep="last")
+    # Resample to target frequency and forward-fill gaps (holidays, missing days)
+    if freq and freq in ("B", "D", "W", "MS", "ME", "H", "min"):
+        df = df.set_index(time_col)
+        df = df.asfreq(freq, method="ffill")
+        df = df.reset_index()
     return df
 
 
@@ -235,7 +248,7 @@ def execute_tool(tool_name: str, arguments: dict) -> str:
         freq = arguments["freq"]
         id_col = arguments.get("id_col")
 
-        df = _parse_data(data_json, time_col)
+        df = _parse_data(data_json, time_col, freq)
 
         kwargs = {
             "df": df,
