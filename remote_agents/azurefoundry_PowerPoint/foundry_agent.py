@@ -91,6 +91,7 @@ class FoundryPowerPointAgent:
                 "list_presentations",
                 "switch_presentation",
                 "get_server_info",
+                "build_presentation",
             ],
             "headers": {
                 "Content-Type": "application/json",
@@ -285,25 +286,49 @@ class FoundryPowerPointAgent:
 You have access to a comprehensive set of PowerPoint MCP tools that let you create,
 design, and export professional presentations.
 
-## Your Workflow
+## Creating New Presentations — ALWAYS use build_presentation
 
-1. **Understand the request** - Parse what kind of presentation the user needs
-   (topic, audience, number of slides, style preferences).
-2. **Create the presentation** - Use `create_presentation` to start.
-3. **Build slides** - Use `add_slide`, `manage_text`, `add_bullet_points`,
-   `add_table`, `add_chart`, `add_shape`, etc. to populate content.
-4. **Apply professional styling** - Use `apply_professional_design` with a color
-   scheme (modern_blue, corporate_gray, elegant_green, warm_red) to make it look polished.
-5. **ALWAYS finish by calling `download_presentation`** to make the file available
-   for download.  This is CRITICAL - every presentation you create MUST end with
-   a `download_presentation` call so the user can receive the file.
+When creating a new presentation, you MUST use `build_presentation` which creates
+the entire presentation in a single tool call.  Do NOT call `create_presentation` +
+`add_slide` + `manage_text` etc. individually — this will fail due to platform
+tool-call limits.
+
+Example — create a business presentation:
+```json
+build_presentation(
+  filename="Q4_Results.pptx",
+  title="Q4 Results",
+  author="Business Team",
+  color_scheme="modern_blue",
+  slides=[
+    {{"type": "title", "title": "Q4 Business Results", "subtitle": "Annual Review 2025"}},
+    {{"type": "content", "title": "Key Highlights", "bullets": ["Revenue up 15%", "New market expansion", "Customer satisfaction at 92%"]}},
+    {{"type": "table", "title": "Financial Summary", "headers": ["Metric", "Q3", "Q4", "Change"], "rows": [["Revenue", "$2.1M", "$2.4M", "+15%"], ["Profit", "$400K", "$520K", "+30%"]]}},
+    {{"type": "two_column", "title": "Strengths & Opportunities", "left": ["Strong brand", "Loyal customers", "Efficient ops"], "right": ["New markets", "Product expansion", "Partnerships"]}},
+    {{"type": "chart", "title": "Revenue Trend", "chart_type": "column", "categories": ["Q1", "Q2", "Q3", "Q4"], "series": [{{"name": "Revenue", "values": [1800000, 1950000, 2100000, 2400000]}}]}}
+  ]
+)
+```
+
+`build_presentation` automatically saves the file and returns a `download_url` —
+you do NOT need to call `download_presentation` after it.
+
+Supported slide types:
+- `title` — title slide with title and subtitle
+- `content` — title + bullet points
+- `two_column` — title + left/right bullet columns
+- `table` — title + data table (headers + rows)
+- `chart` — title + chart (column, bar, line, pie, doughnut, area)
+- `image` — title + image (from url or file path)
+- `blank` — empty slide
+
+## Editing / Reading Existing Presentations
+
+For reading or editing existing presentations, use the individual tools.
 
 ## Important Rules
 
-- Always call `download_presentation` as the LAST tool call.
-- Create visually appealing slides - use shapes, charts, and tables where appropriate.
 - Keep text concise and use bullet points for readability.
-- Apply a professional design theme to every presentation.
 - If the user provides specific content, use it verbatim; otherwise generate
   appropriate content for the topic.
 
@@ -402,17 +427,17 @@ Your question here
                             yield f"\U0001f6e0\ufe0f Remote agent executing: {self._get_tool_description(tool_name)}"
 
                     elif event_type == "response.mcp_call.completed":
-                        # Try to capture download_presentation result
+                        # Try to capture download_presentation or build_presentation result
                         item = getattr(event, "item", None) or event
                         tool_name = getattr(item, "name", None) or getattr(event, "name", None)
-                        if tool_name == "download_presentation":
+                        if tool_name in ("download_presentation", "build_presentation"):
                             output = getattr(item, "output", None) or getattr(event, "output", None)
                             if output:
                                 try:
                                     data = json.loads(output) if isinstance(output, str) else output
                                     if isinstance(data, dict) and data.get("download_url"):
                                         download_info = data
-                                        logger.info(f"Captured download_presentation result: {data}")
+                                        logger.info(f"Captured {tool_name} result: {data}")
                                 except (json.JSONDecodeError, TypeError):
                                     pass
 
@@ -448,14 +473,14 @@ Your question here
                             if resp_id:
                                 self._response_ids[session_id] = resp_id
 
-                            # Fallback: scan response output items for download_presentation result
+                            # Fallback: scan response output items for download_presentation/build_presentation result
                             if download_info is None:
                                 output_items = getattr(resp, "output", None) or []
                                 for out_item in output_items:
                                     item_type = getattr(out_item, "type", None)
                                     if item_type in ("mcp_call", "mcp_tool_call"):
                                         name = getattr(out_item, "name", None)
-                                        if name == "download_presentation":
+                                        if name in ("download_presentation", "build_presentation"):
                                             raw = getattr(out_item, "output", None)
                                             if raw:
                                                 try:
@@ -541,6 +566,7 @@ Your question here
             "auto_generate_presentation": "Auto Generate Presentation",
             "format_table_cell": "Format Table Cell",
             "update_chart_data": "Update Chart Data",
+            "build_presentation": "Build Complete Presentation",
         }
         return descriptions.get(tool_name, tool_name.replace("_", " ").title())
 

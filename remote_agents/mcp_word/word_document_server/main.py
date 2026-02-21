@@ -23,7 +23,8 @@ from word_document_server.tools import (
     protection_tools,
     footnote_tools,
     extended_document_tools,
-    comment_tools
+    comment_tools,
+    composite_tools
 )
 from word_document_server.tools.content_tools import replace_paragraph_block_below_header_tool
 from word_document_server.tools.content_tools import replace_block_between_manual_anchors_tool
@@ -635,6 +636,25 @@ def register_tools():
             }
         except Exception as e:
             return f"Failed to prepare document for download: {str(e)}"
+
+    # Composite tools (single-call document creation to avoid MCP chaining limits)
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            title="Build Document",
+            destructiveHint=True,
+        ),
+    )
+    async def build_document(filename: str, sections: list[dict], title: str = None, author: str = None):
+        """Create a complete Word document with all content in a single call.
+        Use this instead of calling create_document + add_heading + add_paragraph etc. individually.
+        Each section is a dict with a 'type' key: 'heading', 'paragraph', 'table', 'picture', or 'page_break'.
+        Heading: {"type": "heading", "text": "...", "level": 1, "font_name": null, "font_size": null, "bold": null, "italic": null, "border_bottom": false}
+        Paragraph: {"type": "paragraph", "text": "...", "style": null, "font_name": null, "font_size": null, "bold": null, "italic": null, "color": null}
+        Table: {"type": "table", "rows": 3, "cols": 4, "data": [["a","b","c","d"], ...], "header_color": null, "text_color": null}
+        Picture: {"type": "picture", "image_path": "...", "width": null, "source_type": "file"}
+        Page break: {"type": "page_break"}
+        Returns JSON with download_url for the created document."""
+        return await composite_tools.build_document(filename, sections, title, author)
 
     # Comment tools
     @mcp.tool(

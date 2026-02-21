@@ -896,10 +896,7 @@
         "id": "create_presentation",
         "name": "Create Presentation",
         "description": "Create new PowerPoint presentations with slides, text, bullet points, tables, charts, shapes, and professional design themes.",
-        "examples": [
-          "Create a 5-slide presentation about AI trends in 2025",
-          "Build a sales pitch deck for our new product"
-        ],
+        "examples": null,
         "tags": [
           "powerpoint",
           "presentation",
@@ -911,10 +908,7 @@
         "id": "read_presentation",
         "name": "Read Presentation",
         "description": "Read and extract content from existing PowerPoint presentations via URL or file path.",
-        "examples": [
-          "Read this presentation and summarize each slide",
-          "Extract the key data from this slide deck"
-        ],
+        "examples": null,
         "tags": [
           "powerpoint",
           "read",
@@ -926,10 +920,7 @@
         "id": "edit_presentation",
         "name": "Edit Presentation",
         "description": "Edit existing PowerPoint presentations — update slides, add content, insert images, and reformat.",
-        "examples": [
-          "Add a new slide to this presentation",
-          "Update the title slide in this deck"
-        ],
+        "examples": null,
         "tags": [
           "powerpoint",
           "edit",
@@ -941,10 +932,7 @@
         "id": "human_interaction",
         "name": "Human Expert Escalation",
         "description": "Escalate complex issues to human experts when needed.",
-        "examples": [
-          "I need to speak with a person",
-          "Connect me with a human agent"
-        ],
+        "examples": null,
         "tags": [
           "human-interaction",
           "escalation",
@@ -973,10 +961,7 @@
         "id": "create_spreadsheet",
         "name": "Create Spreadsheet",
         "description": "Create new Excel spreadsheets with data, formulas, tables, and formatting.",
-        "examples": [
-          "Create a monthly budget spreadsheet with income and expenses",
-          "Build a sales report with quarterly data and charts"
-        ],
+        "examples": null,
         "tags": [
           "excel",
           "spreadsheet",
@@ -988,10 +973,7 @@
         "id": "read_spreadsheet",
         "name": "Read Spreadsheet",
         "description": "Read and extract data from existing Excel spreadsheets via URL or file path.",
-        "examples": [
-          "Read this spreadsheet and summarize the data",
-          "Extract the totals from this Excel file"
-        ],
+        "examples": null,
         "tags": [
           "excel",
           "read",
@@ -1003,10 +985,7 @@
         "id": "edit_spreadsheet",
         "name": "Edit Spreadsheet",
         "description": "Edit existing Excel spreadsheets — add rows, update values, insert formulas, and reformat.",
-        "examples": [
-          "Add a new row to this spreadsheet",
-          "Update the totals column in this Excel file"
-        ],
+        "examples": null,
         "tags": [
           "excel",
           "edit",
@@ -1018,10 +997,7 @@
         "id": "human_interaction",
         "name": "Human Expert Escalation",
         "description": "Escalate complex issues to human experts when needed.",
-        "examples": [
-          "I need to speak with a person",
-          "Connect me with a human agent"
-        ],
+        "examples": null,
         "tags": [
           "human-interaction",
           "escalation",
@@ -1050,10 +1026,7 @@
         "id": "create_document",
         "name": "Create Document",
         "description": "Create new Word documents with headings, paragraphs, tables, images, footnotes, formatting, and styles.",
-        "examples": [
-          "Create a professional business report about Q4 results",
-          "Write a project proposal document with executive summary"
-        ],
+        "examples": null,
         "tags": [
           "word",
           "document",
@@ -1065,10 +1038,7 @@
         "id": "read_document",
         "name": "Read Document",
         "description": "Read and extract content from existing Word documents via URL or file path.",
-        "examples": [
-          "Read this Word document and summarize the content",
-          "Extract the key points from this report"
-        ],
+        "examples": null,
         "tags": [
           "word",
           "read",
@@ -1080,10 +1050,7 @@
         "id": "edit_document",
         "name": "Edit Document",
         "description": "Edit existing Word documents — update text, add sections, insert tables, and reformat.",
-        "examples": [
-          "Add a new section to this document",
-          "Update the executive summary in this report"
-        ],
+        "examples": null,
         "tags": [
           "word",
           "edit",
@@ -1095,10 +1062,7 @@
         "id": "human_interaction",
         "name": "Human Expert Escalation",
         "description": "Escalate complex issues to human experts when needed.",
-        "examples": [
-          "I need to speak with a person",
-          "Connect me with a human agent"
-        ],
+        "examples": null,
         "tags": [
           "human-interaction",
           "escalation",

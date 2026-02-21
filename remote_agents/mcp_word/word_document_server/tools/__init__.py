@@ -40,3 +40,8 @@ from word_document_server.tools.footnote_tools import (
 from word_document_server.tools.comment_tools import (
     get_all_comments, get_comments_by_author, get_comments_for_paragraph
 )
+
+# Composite tools
+from word_document_server.tools.composite_tools import (
+    build_document
+)

@@ -19,7 +19,8 @@ from tools import (
     register_chart_tools,
     register_connector_tools,
     register_master_tools,
-    register_transition_tools
+    register_transition_tools,
+    register_composite_tools
 )
 
 # Initialize the FastMCP server
@@ -322,6 +323,12 @@ register_transition_tools(
     is_non_negative,
     is_in_range,
     is_valid_rgb
+)
+
+register_composite_tools(
+    app,
+    presentations,
+    get_current_presentation_id
 )
 
 

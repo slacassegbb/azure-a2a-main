@@ -109,6 +109,7 @@ class FoundryWordAgent:
                 "auto_fit_table_columns",
                 "format_table_cell_text",
                 "set_table_cell_padding",
+                "build_document",
             ],
             "headers": {
                 "Content-Type": "application/json",
@@ -303,28 +304,45 @@ class FoundryWordAgent:
 You have access to a comprehensive set of Word MCP tools that let you create,
 format, and export professional documents.
 
-## Your Workflow
+## Creating New Documents — ALWAYS use build_document
 
-1. **Understand the request** - Parse what kind of document the user needs
-   (report, letter, proposal, memo, etc.).
-2. **Create the document** - Use `create_document` to start.
-3. **Build content** - Use `add_heading`, `add_paragraph`, `add_table`,
-   `add_picture`, `format_text`, etc. to populate content.
-4. **Apply formatting** - Use `format_text`, `create_custom_style`,
-   `format_table`, `highlight_table_header`, etc. for professional styling.
-5. **ALWAYS finish by calling `download_document`** to make the file available
-   for download.  This is CRITICAL - every document you create MUST end with
-   a `download_document` call so the user can receive the file.
+When creating a new document, you MUST use `build_document` which creates the
+entire document in a single tool call.  Do NOT call `create_document` +
+`add_heading` + `add_paragraph` etc. individually — this will fail due to
+platform tool-call limits.
+
+`build_document` accepts a `sections` array.  Each element is a dict with a
+`type` key: `heading`, `paragraph`, `table`, `picture`, or `page_break`.
+
+Example:
+```json
+build_document(
+  filename="report.docx",
+  title="Q4 Report",
+  sections=[
+    {{"type": "heading", "text": "Executive Summary", "level": 1}},
+    {{"type": "paragraph", "text": "This report covers..."}},
+    {{"type": "table", "rows": 3, "cols": 2, "data": [["Metric","Value"],["Revenue","$1M"],["Growth","15%"]], "header_color": "4472C4"}},
+    {{"type": "page_break"}},
+    {{"type": "heading", "text": "Details", "level": 1}},
+    {{"type": "paragraph", "text": "...", "bold": true}}
+  ]
+)
+```
+
+`build_document` automatically saves and prepares the file for download —
+you do NOT need to call `download_document` after it.
 
 ## Important Rules
 
-- Always call `download_document` as the LAST tool call.
+- For new documents: ALWAYS use `build_document` (single call).
+- For edits to existing documents: use individual tools as described below.
 - Create well-structured documents with proper headings and formatting.
 - Use tables for structured data and bullet points for lists.
 - Apply professional formatting - use styles, bold/italic for emphasis.
 - If the user provides specific content, use it verbatim; otherwise generate
   appropriate content for the topic.
-- Use `add_page_break` to separate major sections when appropriate.
+- Use `page_break` sections to separate major sections when appropriate.
 
 ## Adding Images from URLs
 
@@ -419,25 +437,29 @@ Your question here
                     elif event_type == "response.mcp_call.completed":
                         item = getattr(event, "item", None) or event
                         tool_name = getattr(item, "name", None) or getattr(event, "name", None)
-                        if tool_name == "download_document":
+                        if tool_name in ("download_document", "build_document"):
                             output = getattr(item, "output", None) or getattr(event, "output", None)
                             if output:
                                 try:
                                     data = json.loads(output) if isinstance(output, str) else output
                                     if isinstance(data, dict) and data.get("download_url"):
                                         download_info = data
-                                        logger.info(f"Captured download_document result: {data}")
+                                        logger.info(f"Captured download info from {tool_name}: {data}")
                                 except (json.JSONDecodeError, TypeError):
                                     pass
 
                     elif event_type == "response.mcp_call.failed":
                         tool_name = getattr(event, "name", None) or getattr(event, "item_id", "mcp_tool")
                         mcp_failures.append(tool_name)
+                        logger.error(f"MCP call failed for tool: {tool_name}, event: {event}")
 
                     elif event_type == "response.failed":
                         resp = getattr(event, "response", None)
                         error_obj = getattr(resp, "error", None) if resp else None
-                        yield f"Error: {getattr(error_obj, 'message', 'Unknown error') if error_obj else 'Unknown error'}"
+                        error_code = getattr(error_obj, "code", None) if error_obj else None
+                        error_message = getattr(error_obj, "message", "Unknown error") if error_obj else "Unknown error"
+                        logger.error(f"Response failed - code: {error_code}, message: {error_message}, response: {resp}")
+                        yield f"Error: {error_message} (code: {error_code})"
                         return
 
                     elif event_type == "response.output_item.added":
@@ -462,14 +484,14 @@ Your question here
                             if resp_id:
                                 self._response_ids[session_id] = resp_id
 
-                            # Fallback: scan response output items for download_document result
+                            # Fallback: scan response output items for download_document/build_document result
                             if download_info is None:
                                 output_items = getattr(resp, "output", None) or []
                                 for out_item in output_items:
                                     item_type = getattr(out_item, "type", None)
                                     if item_type in ("mcp_call", "mcp_tool_call"):
                                         name = getattr(out_item, "name", None)
-                                        if name == "download_document":
+                                        if name in ("download_document", "build_document"):
                                             raw = getattr(out_item, "output", None)
                                             if raw:
                                                 try:
@@ -553,6 +575,7 @@ Your question here
             "merge_table_cells": "Merge Table Cells",
             "add_footnote_to_document": "Add Footnote",
             "protect_document": "Protect Document",
+            "build_document": "Build Complete Document",
         }
         return descriptions.get(tool_name, tool_name.replace("_", " ").title())
 

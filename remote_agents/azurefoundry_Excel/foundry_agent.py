@@ -61,6 +61,7 @@ class FoundryExcelAgent:
                 "excel_create_table",
                 "excel_copy_sheet",
                 "excel_format_range",
+                "build_spreadsheet",
             ],
             "headers": {
                 "Content-Type": "application/json",
@@ -213,12 +214,27 @@ class FoundryExcelAgent:
 
     @staticmethod
     def _extract_filename_from_outputs(output_items) -> Optional[str]:
-        """Scan response output items for fileAbsolutePath in MCP tool arguments."""
+        """Scan response output items for filenames in MCP tool arguments or build_spreadsheet output."""
         last_filename = None
         for item in output_items:
             item_type = getattr(item, "type", None)
             if item_type not in ("mcp_call", "mcp_tool_call"):
                 continue
+
+            tool_name = getattr(item, "name", None)
+
+            # Check build_spreadsheet output for download_url/filename
+            if tool_name == "build_spreadsheet":
+                raw = getattr(item, "output", None)
+                if raw:
+                    try:
+                        data = json.loads(raw) if isinstance(raw, str) else raw
+                        if isinstance(data, dict) and data.get("filename"):
+                            last_filename = data["filename"]
+                            continue
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+
             # Check arguments for fileAbsolutePath
             args_raw = getattr(item, "arguments", None) or getattr(item, "server_params", None)
             if args_raw:
@@ -275,39 +291,56 @@ class FoundryExcelAgent:
 You have access to Excel MCP tools that let you create, populate, format,
 and export Excel workbooks.
 
-## Your Workflow
+## Creating New Spreadsheets — ALWAYS use build_spreadsheet
 
-1. **Understand the request** — Parse what data, structure, or analysis the user needs.
-2. **Create the workbook** — Use `excel_write_to_sheet` with `newSheet: true`
-   to create and populate sheets.  **CRITICAL: always use the directory
-   `/tmp/xlsx_downloads/` for the file path** (e.g. `/tmp/xlsx_downloads/report.xlsx`).
-3. **Add structure** — Use `excel_create_table` to create structured Excel tables
-   with headers for sortable / filterable data.
-4. **Format** — Use `excel_format_range` to apply professional styling
-   (bold headers, borders, number formats, colors).
-5. **Multiple sheets** — Use `excel_write_to_sheet` with `newSheet: true` for
-   additional sheets, or `excel_copy_sheet` to duplicate existing sheets.
+When creating a new workbook, you MUST use `build_spreadsheet` which creates the
+entire workbook in a single tool call.  Do NOT call `excel_write_to_sheet` +
+`excel_create_table` + `excel_format_range` etc. individually — this will fail
+due to platform tool-call limits.
 
-## Important Rules
+Example — create a sales report with two sheets:
+```json
+build_spreadsheet(
+  filename="Sales_Report_Q1.xlsx",
+  sheets=[
+    {{
+      "name": "Revenue",
+      "data": [
+        ["Month", "Revenue", "Growth"],
+        ["January", "$120,000", "5%"],
+        ["February", "$135,000", "12%"],
+        ["March", "$150,000", "11%"]
+      ],
+      "table_name": "RevenueTable",
+      "header_style": {{"font": {{"bold": true, "color": "#FFFFFF"}}, "fill": {{"type": "pattern", "pattern": "solid", "color": ["#4472C4"]}}}},
+      "data_style": {{"font": {{"size": 11}}}}
+    }},
+    {{
+      "name": "Summary",
+      "data": [
+        ["Metric", "Value"],
+        ["Total Revenue", "$405,000"],
+        ["Avg Growth", "9.3%"]
+      ],
+      "table_name": "SummaryTable"
+    }}
+  ]
+)
+```
 
-- **ALWAYS save files to `/tmp/xlsx_downloads/`** — this is the only directory
-  the download endpoint can serve from.
-- Use descriptive filenames (e.g. `/tmp/xlsx_downloads/Sales_Report_Q1.xlsx`).
-- Make data look professional: bold headers, appropriate number formats,
-  borders around data ranges.
-- Use formulas where appropriate (values starting with `=` are treated as formulas).
-- For large datasets, organize data into named tables with `excel_create_table`.
-- When finished writing all data, **state the filename clearly** in your response
-  so the user knows which file was created.
+`build_spreadsheet` automatically saves to `/tmp/xlsx_downloads/` and returns
+a `download_url` — you do NOT need any additional steps after it.
 
-## Available Tools
+## Editing / Reading Existing Spreadsheets
 
-- `excel_write_to_sheet` — Write values/formulas to cells (creates file if needed)
+For reading or editing existing files, use the individual tools:
+
+- `excel_describe_sheets` — List sheets and metadata
+- `excel_read_sheet` — Read cell values from a sheet
+- `excel_write_to_sheet` — Write values/formulas to cells
 - `excel_create_table` — Create structured Excel table with headers
 - `excel_format_range` — Apply styling (fonts, borders, fills, number formats)
 - `excel_copy_sheet` — Duplicate a sheet
-- `excel_describe_sheets` — List sheets and metadata
-- `excel_read_sheet` — Read cell values from a sheet
 
 ## Reading Existing Spreadsheets
 
@@ -507,6 +540,7 @@ Your question here
             "excel_read_sheet": "Read Sheet",
             "excel_copy_sheet": "Copy Sheet",
             "excel_screen_capture": "Screen Capture",
+            "build_spreadsheet": "Build Complete Spreadsheet",
         }
         return descriptions.get(tool_name, tool_name.replace("_", " ").title())
 
