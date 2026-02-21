@@ -404,7 +404,7 @@ Your question here
             "input": [{"role": "user", "content": user_message}],
             "tools": TIMESERIES_TOOLS,
             "stream": True,
-            "max_output_tokens": 4000,
+            "max_output_tokens": 16000,
         }
         if session_id in self._response_ids:
             kwargs["previous_response_id"] = self._response_ids[session_id]
