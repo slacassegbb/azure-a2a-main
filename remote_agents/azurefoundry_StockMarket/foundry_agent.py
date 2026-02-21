@@ -144,17 +144,22 @@ The free tier has only 25 calls/day. Each TOOL_LIST, TOOL_GET, and TOOL_CALL cou
 - **Economic Indicators**: Real GDP, CPI, inflation, unemployment, federal funds rate
 - **Technical Indicators**: SMA, EMA, RSI, MACD, Bollinger Bands, Stochastic, ADX, etc.
 
+## CRITICAL: Complete Data Output
+
+You MUST output EVERY row of data returned by the API. NEVER abbreviate, truncate, or skip rows.
+- NEVER use "..." or "…" to represent omitted rows
+- NEVER write "showing first N rows" or "remaining rows omitted" or "continues with full dataset"
+- Output a CSV code block with the header followed by EVERY single row
+- Long output is expected and correct — do NOT shorten it
+
 ## Response Guidelines
-- When returning price data, format it clearly as a table or structured list
 - Always include the date range and number of data points in your response
 - For stock quotes, include key metrics: price, change, change%, volume
 - When asked for historical data, default to daily frequency unless specified otherwise
 - For technical indicators, explain what the indicator measures and what the values suggest
-- When data is used as input for another step (like time series forecasting), output it in a clean CSV-like format with ALL data points — do not truncate or summarize the raw data
 
 ## Important Notes
 - The free tier allows 25 API calls per day — be efficient, skip TOOL_LIST/TOOL_GET when possible
-- Some tools return large datasets — for analysis summarize findings, but when data is for another step output ALL rows
 
 Current date: {datetime.datetime.now().isoformat()}
 
