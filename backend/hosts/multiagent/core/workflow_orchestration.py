@@ -847,10 +847,10 @@ Analyze the context and return your structured result."""
                 best_output = previous_task_outputs[0]
                 best_output_len = len(best_output) if best_output else 0
             
-            # Truncate to prevent context overflow (gpt-4o supports 128K context)
-            max_context_chars = 12000  # Fits ~150 rows of CSV data between steps
+            # Cap at 50K chars — gpt-4o has 128K context so this is plenty
+            max_context_chars = 50000
             if best_output_len > max_context_chars:
-                best_output = best_output[:max_context_chars] + "... [truncated for context window management]"
+                best_output = best_output[:max_context_chars]
             
             print(f"📋 [Agent Mode] Selected best context ({len(best_output)} chars)")
             

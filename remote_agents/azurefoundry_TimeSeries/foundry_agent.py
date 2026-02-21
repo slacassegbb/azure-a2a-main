@@ -217,36 +217,21 @@ def _extract_csv_from_message(text: str) -> Optional[str]:
 
     Looks for CSV-like content (comma-separated lines with a header row).
     Returns a JSON string of [{col: val, ...}, ...] or None if no CSV found.
-    Handles orchestrator truncation artifacts (partial last rows, truncation markers).
     """
-    # Strip orchestrator truncation markers from the text
-    truncation_patterns = [
-        r"\.\.\.\s*\[truncated[^\]]*\]",   # ... [truncated for context window management]
-        r"…\s*\[truncated[^\]]*\]",          # … [truncated ...]
-        r"\.\.\.\s*\[continues[^\]]*\]",     # ... [continues with full dataset]
-    ]
-    cleaned_text = text
-    for pat in truncation_patterns:
-        cleaned_text = re.sub(pat, "", cleaned_text, flags=re.IGNORECASE)
-
     # Try to find CSV inside code blocks first
-    code_block = re.search(r"```(?:csv)?\s*\n(.*?)```", cleaned_text, re.DOTALL)
+    code_block = re.search(r"```(?:csv)?\s*\n(.*?)```", text, re.DOTALL)
     if code_block:
         csv_text = code_block.group(1).strip()
     else:
         # Look for lines that look like CSV (header + data rows)
-        lines = cleaned_text.split("\n")
+        lines = text.split("\n")
         csv_lines = []
         header_found = False
-        header_col_count = 0
         for line in lines:
             stripped = line.strip()
             if not stripped:
                 if header_found and csv_lines:
                     break  # End of CSV block
-                continue
-            # Skip lines that look like truncation artifacts
-            if "[truncated" in stripped.lower() or "[continues" in stripped.lower():
                 continue
             # CSV line: has commas and looks like data (not prose)
             if "," in stripped and not stripped.startswith("#"):
@@ -256,12 +241,8 @@ def _extract_csv_from_message(text: str) -> Optional[str]:
                         # Check if this looks like a header
                         if any(c.isalpha() for c in parts[0]):
                             header_found = True
-                            header_col_count = len(parts)
                             csv_lines.append(stripped)
                     else:
-                        # Skip rows with wrong column count (truncated rows)
-                        if len(parts) != header_col_count:
-                            continue
                         csv_lines.append(stripped)
             elif header_found and csv_lines:
                 break  # Non-CSV line after CSV data = end of block
@@ -275,17 +256,9 @@ def _extract_csv_from_message(text: str) -> Optional[str]:
         rows = []
         for row in reader:
             parsed = {}
-            skip_row = False
             for k, v in row.items():
-                if k is None:
-                    skip_row = True
-                    break
                 k = k.strip()
                 v = v.strip() if v else ""
-                # Skip rows with truncation artifacts in values
-                if "…" in v or "..." in v or "[" in v:
-                    skip_row = True
-                    break
                 # Try numeric conversion
                 try:
                     parsed[k] = int(v)
@@ -294,8 +267,7 @@ def _extract_csv_from_message(text: str) -> Optional[str]:
                         parsed[k] = float(v)
                     except ValueError:
                         parsed[k] = v
-            if not skip_row and parsed:
-                rows.append(parsed)
+            rows.append(parsed)
         if rows:
             logger.info(f"Extracted {len(rows)} rows of CSV data from message")
             return json.dumps(rows)
