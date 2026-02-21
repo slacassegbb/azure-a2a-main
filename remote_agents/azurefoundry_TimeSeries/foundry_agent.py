@@ -3,6 +3,9 @@ AI Foundry Agent with Time Series Intelligence capabilities.
 Uses the Responses API with function tools that call Nixtla TimeGEN-1 SDK.
 """
 import os
+import re
+import io
+import csv
 import time
 import json
 import datetime
@@ -36,9 +39,9 @@ TIMESERIES_TOOLS = [
                 "data_json": {
                     "type": "string",
                     "description": (
-                        "JSON array of objects containing the time series data. "
-                        "Each object must have at least a timestamp column and a target value column. "
-                        "Example: [{\"date\": \"2024-01-01\", \"sales\": 100}, ...]"
+                        "Set to 'USE_CONTEXT_DATA' if the user message contains CSV/table data "
+                        "(the system will extract it automatically). Only provide a JSON array "
+                        "manually for very small datasets (under 20 rows)."
                     ),
                 },
                 "time_col": {
@@ -93,7 +96,7 @@ TIMESERIES_TOOLS = [
             "properties": {
                 "data_json": {
                     "type": "string",
-                    "description": "JSON array of objects containing the time series data.",
+                    "description": "Set to 'USE_CONTEXT_DATA' to use data from the message, or provide a small JSON array.",
                 },
                 "time_col": {
                     "type": "string",
@@ -128,7 +131,7 @@ TIMESERIES_TOOLS = [
             "properties": {
                 "data_json": {
                     "type": "string",
-                    "description": "JSON array of objects containing the time series data.",
+                    "description": "Set to 'USE_CONTEXT_DATA' to use data from the message, or provide a small JSON array.",
                 },
                 "time_col": {
                     "type": "string",
@@ -172,7 +175,7 @@ TIMESERIES_TOOLS = [
             "properties": {
                 "data_json": {
                     "type": "string",
-                    "description": "JSON array of objects containing the time series data.",
+                    "description": "Set to 'USE_CONTEXT_DATA' to use data from the message, or provide a small JSON array.",
                 },
                 "time_col": {
                     "type": "string",
@@ -203,6 +206,74 @@ TIMESERIES_TOOLS = [
         },
     },
 ]
+
+
+# Module-level storage for extracted context data (keyed by session)
+_context_data: Dict[str, str] = {}
+
+
+def _extract_csv_from_message(text: str) -> Optional[str]:
+    """Extract CSV data from a user message and convert to JSON array string.
+
+    Looks for CSV-like content (comma-separated lines with a header row).
+    Returns a JSON string of [{col: val, ...}, ...] or None if no CSV found.
+    """
+    # Try to find CSV inside code blocks first
+    code_block = re.search(r"```(?:csv)?\s*\n(.*?)```", text, re.DOTALL)
+    if code_block:
+        csv_text = code_block.group(1).strip()
+    else:
+        # Look for lines that look like CSV (header + data rows)
+        lines = text.split("\n")
+        csv_lines = []
+        header_found = False
+        for line in lines:
+            stripped = line.strip()
+            if not stripped:
+                if header_found and csv_lines:
+                    break  # End of CSV block
+                continue
+            # CSV line: has commas and looks like data (not prose)
+            if "," in stripped and not stripped.startswith("#"):
+                parts = stripped.split(",")
+                if len(parts) >= 2:
+                    if not header_found:
+                        # Check if this looks like a header
+                        if any(c.isalpha() for c in parts[0]):
+                            header_found = True
+                            csv_lines.append(stripped)
+                    else:
+                        csv_lines.append(stripped)
+            elif header_found and csv_lines:
+                break  # Non-CSV line after CSV data = end of block
+        csv_text = "\n".join(csv_lines) if len(csv_lines) >= 2 else ""
+
+    if not csv_text or len(csv_text.split("\n")) < 2:
+        return None
+
+    try:
+        reader = csv.DictReader(io.StringIO(csv_text))
+        rows = []
+        for row in reader:
+            parsed = {}
+            for k, v in row.items():
+                k = k.strip()
+                v = v.strip() if v else ""
+                # Try numeric conversion
+                try:
+                    parsed[k] = int(v)
+                except ValueError:
+                    try:
+                        parsed[k] = float(v)
+                    except ValueError:
+                        parsed[k] = v
+            rows.append(parsed)
+        if rows:
+            logger.info(f"Extracted {len(rows)} rows of CSV data from message")
+            return json.dumps(rows)
+    except Exception as e:
+        logger.warning(f"CSV extraction failed: {e}")
+    return None
 
 
 def _get_nixtla_client() -> NixtlaClient:
@@ -238,11 +309,20 @@ def _parse_data(data_json: str, time_col: str, freq: str = None) -> pd.DataFrame
     return df
 
 
-def execute_tool(tool_name: str, arguments: dict) -> str:
+def execute_tool(tool_name: str, arguments: dict, session_id: str = None) -> str:
     """Execute a TimeGEN-1 tool and return the result as a string."""
     try:
         client = _get_nixtla_client()
-        data_json = arguments["data_json"]
+        data_json = arguments.get("data_json", "USE_CONTEXT_DATA")
+
+        # Resolve USE_CONTEXT_DATA placeholder
+        if data_json == "USE_CONTEXT_DATA" or not data_json or data_json == "{}":
+            if session_id and session_id in _context_data:
+                data_json = _context_data[session_id]
+                logger.info(f"Using extracted context data ({len(data_json)} chars)")
+            else:
+                return json.dumps({"error": "No data provided. Include CSV data in your message or provide data_json."})
+
         time_col = arguments["time_col"]
         target_col = arguments["target_col"]
         freq = arguments["freq"]
@@ -361,10 +441,12 @@ You help users analyze time series data by calling the right tool for their task
 
 When the user provides data (CSV text, JSON, tables, or describes a dataset):
 
-1. **Identify columns**: Determine which column is the timestamp, which is the target value, and whether there's an ID column for multi-series data. Any remaining numeric columns are exogenous variables.
+1. **Identify columns**: Determine which column is the timestamp, which is the target value, and whether there's an ID column for multi-series data.
 2. **Determine frequency**: Infer the time frequency from the data (daily, weekly, monthly, hourly, etc.) and use the correct pandas frequency string.
-3. **Structure the data**: Convert the user's data into a JSON array of objects for the tool call.
+3. **Set data_json to "USE_CONTEXT_DATA"**: The system automatically extracts CSV/table data from the message. You do NOT need to copy or re-type the data. Just set data_json="USE_CONTEXT_DATA" and specify the column names.
 4. **Choose the right tool** based on what the user is asking for.
+
+**IMPORTANT**: NEVER try to copy or re-serialize large datasets into data_json. Always use "USE_CONTEXT_DATA" when the message contains data. Only provide actual JSON for tiny datasets (under 20 rows) that you construct yourself.
 
 ## Column mapping guidelines
 
@@ -407,6 +489,11 @@ Your question here
     async def run_conversation_stream(self, session_id: str, user_message: str):
         if not self._initialized:
             await self.create_agent()
+
+        # Extract CSV data from the message and store it for tool calls
+        extracted = _extract_csv_from_message(user_message)
+        if extracted:
+            _context_data[session_id] = extracted
 
         client = self._get_client()
         model = os.getenv("AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME", "gpt-4o")
@@ -488,7 +575,7 @@ Your question here
                         # Run tool synchronously in executor to not block
                         loop = asyncio.get_event_loop()
                         result = await loop.run_in_executor(
-                            None, execute_tool, tool_name, arguments
+                            None, execute_tool, tool_name, arguments, session_id
                         )
 
                         tool_results.append({
