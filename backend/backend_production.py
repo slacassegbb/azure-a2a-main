@@ -54,7 +54,7 @@ os.environ.setdefault("WEBSOCKET_SERVER_URL", "http://localhost:8080")
 # When running in Azure Container Apps, this will automatically use managed identity
 
 # Import logging config
-from log_config import log_debug
+from log_config import log_debug, log_info, log_warning, log_error, log_success
 
 log_debug(f"Environment loaded, A2A_HOST: {os.environ.get('A2A_HOST')}")
 log_debug(f"WebSocket URL: {os.environ.get('WEBSOCKET_SERVER_URL')}")
@@ -287,10 +287,10 @@ def test_database_connection():
     database_url = os.getenv("DATABASE_URL")
     
     if not database_url:
-        print("[INFO] 💾 No DATABASE_URL found - using local JSON storage")
+        log_info("No DATABASE_URL found - using local JSON storage")
         return False
-    
-    print("[INFO] 💾 DATABASE_URL found - testing PostgreSQL connection...")
+
+    log_info("DATABASE_URL found - testing PostgreSQL connection...")
     
     try:
         import psycopg2
@@ -302,7 +302,7 @@ def test_database_connection():
         else:
             safe_url = database_url
         
-        print(f"[INFO] 🔌 Connecting to: {safe_url}")
+        log_info(f"Connecting to: {safe_url}")
         
         # Test connection
         conn = psycopg2.connect(database_url)
@@ -315,16 +315,16 @@ def test_database_connection():
         cursor.close()
         conn.close()
         
-        print(f"[INFO] ✅ Database connection successful!")
-        print(f"[INFO] 📊 PostgreSQL version: {version[:50]}...")
+        log_info("Database connection successful!")
+        log_info(f"PostgreSQL version: {version[:50]}...")
         return True
         
     except ImportError:
-        print("[ERROR] ❌ psycopg2 not installed. Run: pip install psycopg2-binary")
+        log_error("psycopg2 not installed. Run: pip install psycopg2-binary")
         return False
     except Exception as e:
-        print(f"[ERROR] ❌ Database connection failed: {e}")
-        print("[ERROR] 💡 Falling back to local JSON storage")
+        log_error(f"Database connection failed: {e}")
+        log_error("Falling back to local JSON storage")
         return False
 
 
@@ -367,7 +367,7 @@ async def execute_scheduled_workflow(workflow_name: str, session_id: str, timeou
         if name and name not in agent_names_needed:
             agent_names_needed.append(name)
     
-    print(f"[SCHEDULER] Workflow '{workflow_name}' needs agents: {agent_names_needed}")
+    log_debug(f"[SCHEDULER] Workflow '{workflow_name}' needs agents: {agent_names_needed}")
     
     # Look up each agent in global registry and enable for scheduler session
     # For scheduled workflows, always use production_url if available
@@ -380,22 +380,22 @@ async def execute_scheduled_workflow(workflow_name: str, session_id: str, timeou
             if 'production_url' in agent_config and agent_config['production_url']:
                 agent_config = agent_config.copy()
                 agent_config['url'] = agent_config['production_url']
-                print(f"[SCHEDULER] 🌐 Using production URL for '{agent_name}': {agent_config['url']}")
+                log_debug(f"[SCHEDULER] Using production URL for '{agent_name}': {agent_config['url']}")
             elif 'url' in agent_config:
-                print(f"[SCHEDULER] 🔗 Using URL for '{agent_name}': {agent_config['url']}")
+                log_debug(f"[SCHEDULER] Using URL for '{agent_name}': {agent_config['url']}")
             else:
-                print(f"[SCHEDULER] ⚠️  No URL found for '{agent_name}'")
+                log_warning(f"[SCHEDULER] No URL found for '{agent_name}'")
             
             # Enable this agent for the scheduler session (use isolated scheduler_session_id)
             was_enabled = session_registry.enable_agent(scheduler_session_id, agent_config)
             if was_enabled:
                 enabled_count += 1
-                print(f"[SCHEDULER] ✅ Enabled agent '{agent_name}' for session {scheduler_session_id}")
+                log_debug(f"[SCHEDULER] Enabled agent '{agent_name}' for session {scheduler_session_id}")
             else:
-                print(f"[SCHEDULER] ℹ️ Agent '{agent_name}' already enabled for session {scheduler_session_id}")
+                log_debug(f"[SCHEDULER] Agent '{agent_name}' already enabled for session {scheduler_session_id}")
         else:
             missing_agents.append(agent_name)
-            print(f"[SCHEDULER] ❌ Agent '{agent_name}' NOT FOUND in global registry!")
+            log_error(f"[SCHEDULER] Agent '{agent_name}' NOT FOUND in global registry!")
     
     if missing_agents:
         return {
@@ -403,11 +403,11 @@ async def execute_scheduled_workflow(workflow_name: str, session_id: str, timeou
             "error": f"Missing agents in registry: {', '.join(missing_agents)}. Available agents can be found in the Agent Catalog."
         }
     
-    print(f"[SCHEDULER] Enabled {enabled_count} agents for session {scheduler_session_id}")
+    log_debug(f"[SCHEDULER] Enabled {enabled_count} agents for session {scheduler_session_id}")
     # --- END ENABLE AGENTS ---
     
     # Build workflow text (supports evaluation steps with branching)
-    print(f"[SCHEDULER] 📝 Building workflow text from {len(workflow.steps or [])} steps...")
+    log_debug(f"[SCHEDULER] Building workflow text from {len(workflow.steps or [])} steps...")
     workflow_text = generate_workflow_text(workflow.steps or [], workflow.connections or [])
 
     initial_message = f'Run the "{workflow.name}" workflow.'
@@ -416,18 +416,18 @@ async def execute_scheduled_workflow(workflow_name: str, session_id: str, timeou
     # Use scheduler_session_id for context to isolate from user's active session
     context_id = f"{scheduler_session_id}::{conversation_id}"
     
-    print(f"[SCHEDULER] 📝 Workflow text:\n{workflow_text}")
-    print(f"[SCHEDULER] 📨 Context ID: {context_id} (isolated from user session {session_id})")
+    log_debug(f"[SCHEDULER] Workflow text:\n{workflow_text}")
+    log_debug(f"[SCHEDULER] Context ID: {context_id} (isolated from user session {session_id})")
     
     if not agent_server:
-        print(f"[SCHEDULER] ❌ agent_server is None!")
+        log_error("[SCHEDULER] agent_server is None!")
         return {"success": False, "error": "Agent server is None"}
-    
+
     if not hasattr(agent_server, 'manager'):
-        print(f"[SCHEDULER] ❌ agent_server has no 'manager' attribute!")
+        log_error("[SCHEDULER] agent_server has no 'manager' attribute!")
         return {"success": False, "error": "Agent server has no manager"}
-    
-    print(f"[SCHEDULER] ✅ agent_server.manager exists: {type(agent_server.manager)}")
+
+    log_debug(f"[SCHEDULER] agent_server.manager exists: {type(agent_server.manager)}")
     
     from a2a.types import Message, Part, TextPart, Role
     
@@ -438,17 +438,17 @@ async def execute_scheduled_workflow(workflow_name: str, session_id: str, timeou
         parts=[Part(root=TextPart(text=initial_message))]
     )
     
-    print(f"[SCHEDULER] 📩 Message created: {initial_message}")
+    log_debug(f"[SCHEDULER] Message created: {initial_message}")
     
     # Use a shorter timeout for testing (60 seconds instead of 300)
     effective_timeout = min(timeout, 120)
-    print(f"[SCHEDULER] ⏱️ Timeout set to {effective_timeout}s")
+    log_debug(f"[SCHEDULER] Timeout set to {effective_timeout}s")
     
     try:
         start_time = time.time()
         
-        print(f"[SCHEDULER] ⏳ Calling agent_server.manager.process_message()...")
-        print(f"[SCHEDULER] ⏳ This may take a while if agents are being called...")
+        log_debug("[SCHEDULER] Calling agent_server.manager.process_message()...")
+        log_debug("[SCHEDULER] This may take a while if agents are being called...")
         
         # Await directly since we're already in an async context on the main loop
         responses = await asyncio.wait_for(
@@ -463,7 +463,7 @@ async def execute_scheduled_workflow(workflow_name: str, session_id: str, timeou
         )
         
         elapsed_time = time.time() - start_time
-        print(f"[SCHEDULER] ✅ Workflow execution completed in {elapsed_time:.1f}s")
+        log_debug(f"[SCHEDULER] Workflow execution completed in {elapsed_time:.1f}s")
         
         result_text = ""
         if responses:
@@ -472,11 +472,11 @@ async def execute_scheduled_workflow(workflow_name: str, session_id: str, timeou
             else:
                 result_text = str(responses)
         
-        print(f"[SCHEDULER] 📄 Result length: {len(result_text)} chars")
+        log_debug(f"[SCHEDULER] Result length: {len(result_text)} chars")
         if len(result_text) > 500:
-            print(f"[SCHEDULER] 📄 Result preview: {result_text[:500]}...")
+            log_debug(f"[SCHEDULER] Result preview: {result_text[:500]}...")
         else:
-            print(f"[SCHEDULER] 📄 Result: {result_text}")
+            log_debug(f"[SCHEDULER] Result: {result_text}")
         
         return {
             "success": True,
@@ -488,12 +488,10 @@ async def execute_scheduled_workflow(workflow_name: str, session_id: str, timeou
         
     except asyncio.TimeoutError:
         elapsed = time.time() - start_time
-        print(f"[SCHEDULER] ⏰ TIMEOUT after {elapsed:.1f}s (limit was {effective_timeout}s)")
+        log_warning(f"[SCHEDULER] TIMEOUT after {elapsed:.1f}s (limit was {effective_timeout}s)")
         return {"success": False, "error": f"Workflow execution timed out after {effective_timeout} seconds"}
     except Exception as e:
-        print(f"[SCHEDULER] ❌ Error executing workflow: {e}")
-        import traceback
-        traceback.print_exc()
+        log_error(f"[SCHEDULER] Error executing workflow: {e}")
         return {"success": False, "error": str(e)}
 
 
@@ -506,7 +504,7 @@ async def wake_up_remote_agents():
     """
     import asyncio
     
-    print("[STARTUP] 🔔 Waking up remote agents with public URLs...")
+    log_info("[STARTUP] Waking up remote agents with public URLs...")
     
     try:
         registry = get_registry()
@@ -519,10 +517,10 @@ async def wake_up_remote_agents():
         ]
         
         if not remote_agents:
-            print("[STARTUP] No remote agents with public URLs found")
+            log_info("[STARTUP] No remote agents with public URLs found")
             return
-        
-        print(f"[STARTUP] Found {len(remote_agents)} remote agents to wake up")
+
+        log_info(f"[STARTUP] Found {len(remote_agents)} remote agents to wake up")
         
         # Wake up agents in parallel with a short timeout
         async def ping_agent(agent: dict) -> tuple:
@@ -535,16 +533,16 @@ async def wake_up_remote_agents():
                 async with httpx.AsyncClient(timeout=10.0) as client:
                     response = await client.get(health_url)
                     if response.status_code == 200:
-                        print(f"[STARTUP] ✅ {name}: AWAKE (status: {response.status_code})")
+                        log_debug(f"[STARTUP] {name}: AWAKE (status: {response.status_code})")
                         return (name, True)
                     else:
-                        print(f"[STARTUP] ⚠️  {name}: responded with status {response.status_code}")
+                        log_warning(f"[STARTUP] {name}: responded with status {response.status_code}")
                         return (name, False)
             except httpx.TimeoutException:
-                print(f"[STARTUP] ⏳ {name}: still waking up (timeout - container starting)")
+                log_debug(f"[STARTUP] {name}: still waking up (timeout - container starting)")
                 return (name, False)
             except Exception as e:
-                print(f"[STARTUP] ❌ {name}: error - {type(e).__name__}: {e}")
+                log_warning(f"[STARTUP] {name}: error - {type(e).__name__}: {e}")
                 return (name, False)
         
         # Background task to ping agents without blocking startup
@@ -555,14 +553,14 @@ async def wake_up_remote_agents():
             
             # Summary
             awake_count = sum(1 for r in results if isinstance(r, tuple) and r[1])
-            print(f"[STARTUP] 🔔 Wake-up complete: {awake_count}/{len(remote_agents)} agents responded")
+            log_info(f"[STARTUP] Wake-up complete: {awake_count}/{len(remote_agents)} agents responded")
         
         # Fire and forget - don't wait for completion
         asyncio.create_task(ping_agents_background())
-        print(f"[STARTUP] 🚀 Wake-up pings sent (running in background)")
-        
+        log_info("[STARTUP] Wake-up pings sent (running in background)")
+
     except Exception as e:
-        print(f"[STARTUP] ❌ Error during agent wake-up: {type(e).__name__}: {e}")
+        log_error(f"[STARTUP] Error during agent wake-up: {type(e).__name__}: {e}")
 
 
 @asynccontextmanager
@@ -570,45 +568,45 @@ async def lifespan(app: FastAPI):
     """FastAPI lifespan context manager for startup and shutdown."""
     global websocket_streamer, agent_server, workflow_scheduler
     
-    print("[INFO] Starting A2A Backend API...")
+    log_info("Starting A2A Backend API...")
     
     # Start HTTP client
     httpx_client_wrapper.start()
     
     # WebSocket endpoint is now mounted directly on the main app (see below)
     # No need for a separate server on port 8080
-    print("[INFO] WebSocket endpoint available at /events on the main API port")
+    log_info("WebSocket endpoint available at /events on the main API port")
     
     # Initialize WebSocket streamer with error handling
     try:
         websocket_streamer = await get_websocket_streamer()
         if websocket_streamer:
-            print("[INFO] WebSocket streamer initialized successfully")
+            log_info("WebSocket streamer initialized successfully")
         else:
-            print("[WARNING] WebSocket streamer not available - check configuration")
+            log_warning("WebSocket streamer not available - check configuration")
     except Exception as e:
-        print(f"[ERROR] Failed to initialize WebSocket streamer: {type(e).__name__}: {e}")
-        print(f"[ERROR] Error details: {str(e)}")
+        log_error(f"Failed to initialize WebSocket streamer: {type(e).__name__}: {e}")
+        log_error(f"Error details: {str(e)}")
         websocket_streamer = None
     
     # Initialize the conversation server (lightweight — routes only, no heavy init)
     try:
         agent_server = ConversationServer(app, httpx_client_wrapper())
-        print("[INFO] Conversation server initialized successfully")
+        log_info("Conversation server initialized successfully")
     except Exception as e:
-        print(f"[ERROR] Failed to initialize conversation server: {type(e).__name__}: {e}")
-        print(f"[ERROR] Error details: {str(e)}")
+        log_error(f"Failed to initialize conversation server: {type(e).__name__}: {e}")
+        log_error(f"Error details: {str(e)}")
         # Continue startup even if this fails
 
     # Define deferred init (scheduled right before yield, so it runs AFTER the port opens)
     async def _deferred_init():
         try:
             if agent_server and hasattr(agent_server, 'manager') and hasattr(agent_server.manager, 'initialize_async'):
-                print("[INFO] Starting deferred heavy initialization (DB + agent)...")
+                log_info("Starting deferred heavy initialization (DB + agent)...")
                 await agent_server.manager.initialize_async()
-                print("[INFO] Deferred initialization complete — host agent ready")
+                log_info("Deferred initialization complete -- host agent ready")
         except Exception as e:
-            print(f"[ERROR] Deferred initialization failed: {type(e).__name__}: {e}")
+            log_error(f"Deferred initialization failed: {type(e).__name__}: {e}")
 
     # Initialize the workflow scheduler
     try:
@@ -617,22 +615,22 @@ async def lifespan(app: FastAPI):
             workflow_scheduler = get_workflow_scheduler()
             workflow_scheduler.set_workflow_executor(execute_scheduled_workflow)
             await workflow_scheduler.start()
-            print(f"[INFO] Workflow scheduler started with {len(workflow_scheduler.schedules)} schedules")
+            log_info(f"Workflow scheduler started with {len(workflow_scheduler.schedules)} schedules")
         else:
-            print("[WARNING] APScheduler not installed - scheduled workflows disabled")
-            print("[INFO] Install with: pip install apscheduler")
+            log_warning("APScheduler not installed - scheduled workflows disabled")
+            log_info("Install with: pip install apscheduler")
     except Exception as e:
-        print(f"[WARNING] Failed to initialize workflow scheduler: {type(e).__name__}: {e}")
+        log_warning(f"Failed to initialize workflow scheduler: {type(e).__name__}: {e}")
         # Continue startup even if scheduler fails
     
     # Wake up all remote agents with public URLs (for scale-to-zero containers)
     try:
         await wake_up_remote_agents()
     except Exception as e:
-        print(f"[WARNING] Failed to wake up remote agents: {type(e).__name__}: {e}")
+        log_warning(f"Failed to wake up remote agents: {type(e).__name__}: {e}")
         # Continue startup even if wake-up fails
     
-    print("[INFO] A2A Backend API startup complete")
+    log_info("A2A Backend API startup complete")
 
     # Schedule heavy init RIGHT BEFORE yield — no await points between here and
     # yield, so the task cannot run until after the server port is open.
@@ -641,19 +639,19 @@ async def lifespan(app: FastAPI):
     yield
     
     # Cleanup
-    print("[INFO] Shutting down A2A Backend API...")
+    log_info("Shutting down A2A Backend API...")
     
     # Stop workflow scheduler
     if workflow_scheduler:
         try:
             await workflow_scheduler.stop()
-            print("[INFO] Workflow scheduler stopped")
+            log_info("Workflow scheduler stopped")
         except Exception as e:
-            print(f"[WARNING] Error stopping workflow scheduler: {e}")
-    
+            log_warning(f"Error stopping workflow scheduler: {e}")
+
     await httpx_client_wrapper.stop()
     await cleanup_websocket_streamer()
-    print("[INFO] A2A Backend API shutdown complete")
+    log_info("A2A Backend API shutdown complete")
 
 
 def main():
@@ -968,7 +966,7 @@ def main():
             )
             
         except Exception as e:
-            print(f"[ERROR] Login error: {e}")
+            log_error(f"Login error: {e}")
             return LoginResponse(
                 success=False,
                 message="Login failed due to server error"
@@ -986,7 +984,7 @@ def main():
             }
             
         except Exception as e:
-            print(f"[ERROR] Get users error: {e}")
+            log_error(f"Get users error: {e}")
             return {
                 "success": False,
                 "users": [],
@@ -1034,7 +1032,7 @@ def main():
         except HTTPException:
             raise  # Re-raise auth exceptions
         except Exception as e:
-            print(f"[ERROR] Get active users error: {e}")
+            log_error(f"Get active users error: {e}")
             return {
                 "success": False,
                 "users": [],
@@ -1081,7 +1079,7 @@ def main():
             )
             
         except Exception as e:
-            print(f"[ERROR] Registration error: {e}")
+            log_error(f"Registration error: {e}")
             return LoginResponse(
                 success=False,
                 message="Registration failed due to server error"
@@ -1286,10 +1284,8 @@ def main():
         from a2a.types import Message, Part, TextPart, Role
         from service.agent_registry import get_registry, get_session_registry
         
-        print(f"\n{'='*60}")
-        print(f"[Query API] 🔍 Received query: {request.query}")
-        print(f"[Query API] 👤 User ID: {request.user_id} (authenticated: {user['email']})")
-        print(f"{'='*60}")
+        log_debug(f"[Query API] Received query: {request.query}")
+        log_debug(f"[Query API] User ID: {request.user_id} (authenticated: {user['email']})")
         
         # Generate IDs
         session_id = request.session_id or str(uuid.uuid4())
@@ -1297,8 +1293,8 @@ def main():
         message_id = f"msg_{uuid.uuid4().hex[:8]}"
         context_id = f"{session_id}::{conversation_id}"
         
-        print(f"[Query API] Session ID: {session_id}")
-        print(f"[Query API] Context ID: {context_id}")
+        log_debug(f"[Query API] Session ID: {session_id}")
+        log_debug(f"[Query API] Context ID: {context_id}")
         
         # Check if agent_server is available
         if not agent_server or not hasattr(agent_server, 'manager'):
@@ -1314,9 +1310,9 @@ def main():
                 detail="No agents enabled for this session. Please enable agents from the Agents tab first."
             )
         
-        print(f"[Query API] 🔧 Using {len(session_agents)} pre-enabled session agents")
+        log_debug(f"[Query API] Using {len(session_agents)} pre-enabled session agents")
         for agent_config in session_agents:
-            print(f"[Query API] ✅ Session agent: {agent_config.get('name', 'unknown')}")
+            log_debug(f"[Query API] Session agent: {agent_config.get('name', 'unknown')}")
         
         # Build available workflows for intelligent routing (if enabled)
         available_workflows = []
@@ -1327,13 +1323,13 @@ def main():
             
             # Filter workflows by user_id - only include workflows belonging to this user
             user_workflows = [w for w in all_workflows if w.user_id == request.user_id]
-            print(f"[Query API] 👤 Filtered to {len(user_workflows)} workflows for user '{request.user_id}' (out of {len(all_workflows)} total)")
+            log_debug(f"[Query API] Filtered to {len(user_workflows)} workflows for user '{request.user_id}' (out of {len(all_workflows)} total)")
             
             # Further filter by activated workflow IDs if provided
             if request.activated_workflow_ids:
                 activated_ids = set(request.activated_workflow_ids)
                 user_workflows = [w for w in user_workflows if w.id in activated_ids]
-                print(f"[Query API] 🎯 Filtered to {len(user_workflows)} activated workflows (from {len(activated_ids)} activated IDs)")
+                log_debug(f"[Query API] Filtered to {len(user_workflows)} activated workflows (from {len(activated_ids)} activated IDs)")
             
             for w in user_workflows:
                 if w.steps:
@@ -1356,7 +1352,7 @@ def main():
                         "agents": [step.get('agentName', '') for step in sorted_steps if step.get('agentName')]
                     }
                     available_workflows.append(workflow_info)
-            print(f"[Query API] 📋 Found {len(available_workflows)} workflows for routing")
+            log_debug(f"[Query API] Found {len(available_workflows)} workflows for routing")
         
         # Create the message
         message = Message(
@@ -1371,9 +1367,9 @@ def main():
             # If explicit workflow provided, use it directly (workflow designer test mode)
             explicit_workflow = request.workflow if request.workflow else None
             if explicit_workflow:
-                print(f"[Query API] 🎯 Using explicit workflow (workflow designer mode)")
-            
-            print(f"[Query API] 🚀 Processing query (timeout: {request.timeout}s)")
+                log_debug("[Query API] Using explicit workflow (workflow designer mode)")
+
+            log_debug(f"[Query API] Processing query (timeout: {request.timeout}s)")
             start_time = time.time()
             
             # Submit the coroutine to the main event loop
@@ -1393,7 +1389,7 @@ def main():
                 responses = future.result(timeout=request.timeout)
                 elapsed_time = time.time() - start_time
                 
-                print(f"[Query API] ✅ Query completed in {elapsed_time:.2f}s")
+                log_debug(f"[Query API] Query completed in {elapsed_time:.2f}s")
                 
                 # Format the responses
                 result_text = ""
@@ -1420,10 +1416,10 @@ def main():
                                 },
                                 context_id
                             )
-                            print(f"[Query API] 📡 Emitted final_response event for conversation: {conversation_id}")
+                            log_debug(f"[Query API] Emitted final_response event for conversation: {conversation_id}")
                     asyncio.run_coroutine_threadsafe(emit_final_response(), main_loop)
                 except Exception as e:
-                    print(f"[Query API] ⚠️ Failed to emit final_response event: {e}")
+                    log_warning(f"[Query API] Failed to emit final_response event: {e}")
                 
                 return {
                     "success": True,
@@ -1436,7 +1432,7 @@ def main():
                 
             except asyncio.TimeoutError:
                 elapsed_time = time.time() - start_time
-                print(f"[Query API] ⏱️ Query timed out after {elapsed_time:.2f}s")
+                log_warning(f"[Query API] Query timed out after {elapsed_time:.2f}s")
                 raise HTTPException(
                     status_code=408, 
                     detail=f"Query timed out after {request.timeout} seconds"
@@ -1445,9 +1441,7 @@ def main():
         except HTTPException:
             raise
         except Exception as e:
-            print(f"[Query API] ❌ Error processing query: {e}")
-            import traceback
-            traceback.print_exc()
+            log_error(f"[Query API] Error processing query: {e}")
             raise HTTPException(status_code=500, detail=f"Failed to process query: {str(e)}")
 
     # ==================== ACTIVE WORKFLOW (SESSION-SCOPED) ====================
@@ -1507,7 +1501,7 @@ def main():
                         partition_key=session_id
                     )
             except Exception as e:
-                print(f"[ActiveWorkflow] Failed to broadcast: {e}")
+                log_warning(f"[ActiveWorkflow] Failed to broadcast: {e}")
         return {"success": True, "session_id": session_id}
     
     @app.delete("/api/active-workflow")
@@ -1534,7 +1528,7 @@ def main():
                     partition_key=session_id
                 )
         except Exception as e:
-            print(f"[ActiveWorkflow] Failed to broadcast clear: {e}")
+            log_warning(f"[ActiveWorkflow] Failed to broadcast clear: {e}")
         return {"success": True, "session_id": session_id}
 
     # ==================== MULTI-WORKFLOW API ENDPOINTS ====================
@@ -1571,7 +1565,7 @@ def main():
                     partition_key=session_id
                 )
         except Exception as e:
-            print(f"[ActiveWorkflows] Failed to broadcast: {e}")
+            log_warning(f"[ActiveWorkflows] Failed to broadcast: {e}")
         
         return {"success": True, "workflows": workflows}
     
@@ -1597,7 +1591,7 @@ def main():
                     partition_key=session_id
                 )
         except Exception as e:
-            print(f"[ActiveWorkflows] Failed to broadcast add: {e}")
+            log_warning(f"[ActiveWorkflows] Failed to broadcast add: {e}")
         
         return {"success": True, "workflows": workflows}
     
@@ -1620,7 +1614,7 @@ def main():
                     partition_key=session_id
                 )
         except Exception as e:
-            print(f"[ActiveWorkflows] Failed to broadcast remove: {e}")
+            log_warning(f"[ActiveWorkflows] Failed to broadcast remove: {e}")
         
         return {"success": True, "workflows": workflows}
     
@@ -1640,7 +1634,7 @@ def main():
                     partition_key=session_id
                 )
         except Exception as e:
-            print(f"[ActiveWorkflows] Failed to broadcast clear: {e}")
+            log_warning(f"[ActiveWorkflows] Failed to broadcast clear: {e}")
         
         return {"success": True, "workflows": []}
 
@@ -1716,9 +1710,7 @@ def main():
                 for w in user_workflows
             ]
         except Exception as e:
-            print(f"[ERROR] Failed to list workflows: {e}")
-            import traceback
-            traceback.print_exc()
+            log_error(f"Failed to list workflows: {e}")
             return []
     
     @app.get("/api/schedules")
@@ -1846,7 +1838,7 @@ def main():
         except HTTPException:
             raise
         except Exception as e:
-            print(f"[Scheduler] Error creating schedule: {e}")
+            log_error(f"[Scheduler] Error creating schedule: {e}")
             raise HTTPException(status_code=500, detail=f"Failed to create schedule: {str(e)}")
     
     @app.put("/api/schedules/{schedule_id}")
@@ -1884,7 +1876,7 @@ def main():
         except HTTPException:
             raise
         except Exception as e:
-            print(f"[Scheduler] Error updating schedule: {e}")
+            log_error(f"[Scheduler] Error updating schedule: {e}")
             raise HTTPException(status_code=500, detail=f"Failed to update schedule: {str(e)}")
     
     @app.delete("/api/schedules/{schedule_id}")
@@ -2018,9 +2010,7 @@ def main():
                     "message": "Failed to clear memory index"
                 }
         except Exception as e:
-            print(f"Error clearing memory: {e}")
-            import traceback
-            traceback.print_exc()
+            log_error(f"Error clearing memory: {e}")
             return {
                 "success": False,
                 "message": f"Error clearing memory: {str(e)}"
@@ -2054,13 +2044,13 @@ def main():
                 account_url = f"https://{storage_account_name}.blob.core.windows.net"
                 credential = DefaultAzureCredential()
                 blob_service_client = BlobServiceClient(account_url, credential=credential)
-                print(f"✅ Using managed identity for blob storage: {account_url}")
+                log_debug(f"Using managed identity for blob storage: {account_url}")
             elif connection_string:
                 # Use connection string authentication (legacy)
                 blob_service_client = BlobServiceClient.from_connection_string(connection_string)
-                print(f"✅ Using connection string for blob storage")
+                log_debug("Using connection string for blob storage")
             else:
-                print(f"[WARN] No Azure Storage configuration found, returning local path")
+                log_warning("No Azure Storage configuration found, returning local path")
                 return local_fallback
             
             container_name = os.getenv('AZURE_BLOB_CONTAINER', 'a2a-files')
@@ -2114,13 +2104,11 @@ def main():
                     return blob_url
             
             # For managed identity, return blob URL directly (container must be public or use user delegation SAS)
-            print(f"[INFO] File uploaded to Azure Blob (managed identity): {blob_client.url}")
+            log_debug(f"File uploaded to Azure Blob (managed identity): {blob_client.url}")
             return blob_client.url
-                
+
         except Exception as e:
-            print(f"[ERROR] Azure Blob upload failed: {e}, falling back to local storage")
-            import traceback
-            traceback.print_exc()
+            log_error(f"Azure Blob upload failed: {e}, falling back to local storage")
             return local_fallback
 
     # Add file upload endpoint
@@ -2188,7 +2176,7 @@ def main():
             }
             
         except Exception as e:
-            print(f"[ERROR] File upload failed: {e}")
+            log_error(f"File upload failed: {e}")
             return {
                 "success": False,
                 "error": str(e)
@@ -2213,7 +2201,7 @@ def main():
             # Get processed filenames from Azure Search (fast single query)
             from hosts.multiagent.a2a_memory_service import a2a_memory_service
             processed_filenames = a2a_memory_service.get_processed_filenames(session_id)
-            print(f"[INFO] Found {len(processed_filenames)} processed files in memory for session {session_id}")
+            log_debug(f"Found {len(processed_filenames)} processed files in memory for session {session_id}")
             
             # Try blob storage first
             try:
@@ -2244,7 +2232,7 @@ def main():
                 for blob in container_client.list_blobs(name_starts_with=prefix):
                     # Skip if 0 bytes (empty/failed uploads)
                     if blob.size == 0:
-                        print(f"[DEBUG] Skipping 0-byte blob: {blob.name}")
+                        log_debug(f"Skipping 0-byte blob: {blob.name}")
                         continue
                     
                     # Parse blob path to extract file_id and filename
@@ -2294,10 +2282,10 @@ def main():
                             "status": file_status
                         })
                 
-                print(f"[INFO] Listed {len(files)} files from blob storage for session: {session_id}")
-                
+                log_debug(f"Listed {len(files)} files from blob storage for session: {session_id}")
+
             except Exception as blob_error:
-                print(f"[WARN] Blob storage unavailable, falling back to local filesystem: {blob_error}")
+                log_warning(f"Blob storage unavailable, falling back to local filesystem: {blob_error}")
                 
                 # Fallback to local filesystem
                 local_dir = UPLOADS_DIR / session_id
@@ -2323,7 +2311,7 @@ def main():
                                 "status": file_status
                             })
                 
-                print(f"[INFO] Listed {len(files)} files from local filesystem for session: {session_id}")
+                log_debug(f"Listed {len(files)} files from local filesystem for session: {session_id}")
             
             # NO DEDUPLICATION - show all files from blob storage as-is
             # Each file has a unique ID (file_id from path), even if filenames are identical
@@ -2338,9 +2326,7 @@ def main():
             }
             
         except Exception as e:
-            print(f"[ERROR] Failed to list files: {e}")
-            import traceback
-            traceback.print_exc()
+            log_error(f"Failed to list files: {e}")
             return {
                 "success": False,
                 "error": str(e)
@@ -2399,10 +2385,10 @@ def main():
                         blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob.name)
                         blob_client.delete_blob()
                         deleted_count += 1
-                        print(f"[INFO] Deleted blob: {blob.name}")
+                        log_debug(f"Deleted blob: {blob.name}")
                     except Exception as delete_err:
                         # Ignore errors (file might be expired/already deleted)
-                        print(f"[WARN] Could not delete blob {blob.name}: {delete_err}")
+                        log_warning(f"Could not delete blob {blob.name}: {delete_err}")
                 
                 # FALLBACK: Also check legacy agent-specific paths (image-generator, video-generator, email-attachments)
                 if deleted_count == 0:
@@ -2417,19 +2403,19 @@ def main():
                                 blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob.name)
                                 blob_client.delete_blob()
                                 deleted_count += 1
-                                print(f"[INFO] Deleted legacy blob: {blob.name}")
+                                log_debug(f"Deleted legacy blob: {blob.name}")
                             except Exception as delete_err:
-                                print(f"[WARN] Could not delete legacy blob {blob.name}: {delete_err}")
+                                log_warning(f"Could not delete legacy blob {blob.name}: {delete_err}")
                 
                 if deleted_count > 0:
                     deleted_from_blob = True
-                    print(f"[INFO] Deleted {deleted_count} blob(s) for file_id: {file_id}")
+                    log_debug(f"Deleted {deleted_count} blob(s) for file_id: {file_id}")
                 else:
-                    print(f"[INFO] No blobs found for file_id: {file_id} (might be expired/already deleted)")
+                    log_debug(f"No blobs found for file_id: {file_id} (might be expired/already deleted)")
                 
             except Exception as blob_error:
                 # Don't fail if blob storage is unavailable or file doesn't exist
-                print(f"[WARN] Blob storage delete failed (this is OK): {blob_error}")
+                log_warning(f"Blob storage delete failed (this is OK): {blob_error}")
             
             # Try to delete from local filesystem
             try:
@@ -2441,16 +2427,16 @@ def main():
                                 if file_path.is_file():
                                     file_path.unlink()
                                     deleted_from_local = True
-                                    print(f"[INFO] Deleted local file: {file_path}")
+                                    log_debug(f"Deleted local file: {file_path}")
                                 elif file_path.is_dir():
                                     import shutil
                                     shutil.rmtree(file_path)
                                     deleted_from_local = True
-                                    print(f"[INFO] Deleted local directory: {file_path}")
+                                    log_debug(f"Deleted local directory: {file_path}")
                             except Exception as delete_err:
-                                print(f"[WARN] Could not delete local file {file_path}: {delete_err}")
+                                log_warning(f"Could not delete local file {file_path}: {delete_err}")
             except Exception as local_error:
-                print(f"[WARN] Local filesystem delete failed (this is OK): {local_error}")
+                log_warning(f"Local filesystem delete failed (this is OK): {local_error}")
             
             # Try to delete from memory index (if filename provided)
             if filename:
@@ -2458,11 +2444,11 @@ def main():
                     from hosts.multiagent.a2a_memory_service import a2a_memory_service
                     deleted_from_memory = a2a_memory_service.delete_by_filename(session_id, filename)
                     if deleted_from_memory:
-                        print(f"[INFO] Deleted memory chunks for file: {filename}")
+                        log_debug(f"Deleted memory chunks for file: {filename}")
                     else:
-                        print(f"[INFO] No memory chunks found for file: {filename}")
+                        log_debug(f"No memory chunks found for file: {filename}")
                 except Exception as memory_error:
-                    print(f"[WARN] Memory index delete failed (this is OK): {memory_error}")
+                    log_warning(f"Memory index delete failed (this is OK): {memory_error}")
             
             # Delete from agent file registry
             deleted_from_registry = False
@@ -2470,11 +2456,11 @@ def main():
                 from service.agent_file_registry import delete_agent_file
                 deleted_from_registry = delete_agent_file(session_id, file_id)
                 if deleted_from_registry:
-                    print(f"[INFO] Deleted file from agent file registry: {file_id}")
+                    log_debug(f"Deleted file from agent file registry: {file_id}")
                 else:
-                    print(f"[INFO] File not found in agent file registry: {file_id}")
+                    log_debug(f"File not found in agent file registry: {file_id}")
             except Exception as registry_error:
-                print(f"[WARN] Agent file registry delete failed (this is OK): {registry_error}")
+                log_warning(f"Agent file registry delete failed (this is OK): {registry_error}")
             
             # Always return success (idempotent operation)
             return {
@@ -2488,9 +2474,7 @@ def main():
         
         except Exception as e:
             # Even on error, return success to prevent UI errors
-            print(f"[ERROR] Error deleting file: {e}")
-            import traceback
-            traceback.print_exc()
+            log_error(f"Error deleting file: {e}")
             return {
                 "success": True,  # Still return success
                 "error": str(e),
@@ -2520,7 +2504,7 @@ def main():
             if not file_id or not filename:
                 return {"success": False, "error": "Missing file_id or filename"}
             
-            print(f"[INFO] Processing file: {filename} (id: {file_id}, session: {session_id})")
+            log_debug(f"Processing file: {filename} (id: {file_id}, session: {session_id})")
             
             # Try to get file bytes from blob storage or local filesystem
             file_bytes = None
@@ -2533,9 +2517,9 @@ def main():
                         response = await client.get(uri, timeout=60.0)
                         if response.status_code == 200:
                             file_bytes = response.content
-                            print(f"[INFO] Downloaded {len(file_bytes)} bytes from Azure Blob")
+                            log_debug(f"Downloaded {len(file_bytes)} bytes from Azure Blob")
                 except Exception as blob_err:
-                    print(f"[WARN] Could not download from blob: {blob_err}")
+                    log_warning(f"Could not download from blob: {blob_err}")
             
             # Try local filesystem
             if file_bytes is None:
@@ -2545,7 +2529,7 @@ def main():
                         if file_path.is_file():
                             with open(file_path, 'rb') as f:
                                 file_bytes = f.read()
-                            print(f"[INFO] Read {len(file_bytes)} bytes from local filesystem")
+                            log_debug(f"Read {len(file_bytes)} bytes from local filesystem")
                             break
             
             if file_bytes is None:
@@ -2572,7 +2556,7 @@ def main():
                 result = await process_file_part(file_part, artifact_info, session_id=session_id)
                 
                 if result.get("success"):
-                    print(f"[INFO] Document processing completed for: {filename}")
+                    log_debug(f"Document processing completed for: {filename}")
                     
                     # Update blob metadata to mark as analyzed
                     try:
@@ -2593,12 +2577,12 @@ def main():
                                     blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob_path)
                                     if blob_client.exists():
                                         blob_client.set_blob_metadata({"status": "analyzed"})
-                                        print(f"[INFO] Set blob metadata status=analyzed for: {blob_path}")
+                                        log_debug(f"Set blob metadata status=analyzed for: {blob_path}")
                                         break
                                 except Exception:
                                     continue
                     except Exception as meta_err:
-                        print(f"[WARN] Could not set blob metadata: {meta_err}")
+                        log_warning(f"Could not set blob metadata: {meta_err}")
                     
                     return {
                         "success": True,
@@ -2610,25 +2594,21 @@ def main():
                     }
                 else:
                     error_msg = result.get("error", "Unknown processing error")
-                    print(f"[WARN] Document processing failed for {filename}: {error_msg}")
+                    log_warning(f"Document processing failed for {filename}: {error_msg}")
                     return {
                         "success": False,
                         "error": error_msg
                     }
                     
             except ImportError as e:
-                print(f"[ERROR] Could not import document processor: {e}")
+                log_error(f"Could not import document processor: {e}")
                 return {"success": False, "error": "Document processor not available"}
             except Exception as process_err:
-                print(f"[ERROR] Document processing error: {process_err}")
-                import traceback
-                traceback.print_exc()
+                log_error(f"Document processing error: {process_err}")
                 return {"success": False, "error": str(process_err)}
-        
+
         except Exception as e:
-            print(f"[ERROR] Error in process_file endpoint: {e}")
-            import traceback
-            traceback.print_exc()
+            log_error(f"Error in process_file endpoint: {e}")
             return {"success": False, "error": str(e)}
 
     # Add voice upload endpoint with transcription
@@ -2703,7 +2683,7 @@ def main():
                         "message": "Voice recording transcribed successfully"
                     }
                 else:
-                    print(f"[WARNING] Audio transcription returned empty result")
+                    log_warning("Audio transcription returned empty result")
                     return {
                         "success": False,
                         "error": "Could not transcribe audio - no speech detected or transcription failed",
@@ -2712,7 +2692,7 @@ def main():
                     }
                     
             except ImportError as e:
-                print(f"[ERROR] Could not import document processor: {e}")
+                log_error(f"Could not import document processor: {e}")
                 return {
                     "success": False,
                     "error": "Audio transcription service not available",
@@ -2720,23 +2700,21 @@ def main():
                     "file_id": file_id
                 }
             except Exception as e:
-                print(f"[ERROR] Audio transcription failed: {e}")
-                print(f"[ERROR] Exception type: {type(e).__name__}")
-                
+                log_error(f"Audio transcription failed: {e} (type: {type(e).__name__})")
+
                 # Try to get more details if it's a RuntimeError from the Azure service
                 if "Request failed" in str(e):
-                    print(f"[ERROR] Azure Content Understanding service request failed")
-                    print(f"[ERROR] This usually indicates an issue with the audio file format, content, or service configuration")
-                
+                    log_error("Azure Content Understanding service request failed - check audio file format, content, or service configuration")
+
                 return {
                     "success": False,
                     "error": f"Transcription failed: {str(e)}",
                     "filename": file.filename or filename,
                     "file_id": file_id
                 }
-            
+
         except Exception as e:
-            print(f"[ERROR] Voice upload failed: {e}")
+            log_error(f"Voice upload failed: {e}")
             return {
                 "success": False,
                 "error": str(e)
@@ -2767,15 +2745,13 @@ def main():
     host = os.environ.get('A2A_UI_HOST', '0.0.0.0')
     port = int(os.environ.get('A2A_UI_PORT', '12000'))
 
-    print(f"[INFO] Starting A2A Backend API server on {host}:{port}")
-    print(f"[INFO] Health check available at: http://{host}:{port}/health")
-    print(f"[INFO] API docs available at: http://{host}:{port}/docs")
-    print(f"[INFO] OpenAPI spec available at: http://{host}:{port}/openapi.json")
-    
+    log_info(f"Starting A2A Backend API server on {host}:{port}")
+    log_info(f"Health check available at: http://{host}:{port}/health")
+    log_info(f"API docs available at: http://{host}:{port}/docs")
+    log_info(f"OpenAPI spec available at: http://{host}:{port}/openapi.json")
+
     # Test database connection
-    print("[INFO] " + "="*60)
     test_database_connection()
-    print("[INFO] " + "="*60)
 
     # Configure uvicorn with log config
     import logging.config

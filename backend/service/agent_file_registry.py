@@ -7,8 +7,18 @@ the delete_agent_file() function used by the DELETE /api/files/{file_id} endpoin
 """
 
 import os
+import sys
 import threading
+from pathlib import Path
+
 import psycopg2
+
+# Add backend directory to path for log_config import
+backend_dir = Path(__file__).resolve().parent.parent
+if str(backend_dir) not in sys.path:
+    sys.path.insert(0, str(backend_dir))
+
+from log_config import log_debug, log_error
 
 # Thread lock for safe concurrent access
 _lock = threading.Lock()
@@ -44,7 +54,7 @@ def _get_db_connection():
 
         return _db_conn
     except Exception as e:
-        print(f"[AgentFileRegistry] Database connection failed: {e}")
+        log_error(f"[AgentFileRegistry] Database connection failed: {e}")
         _use_database = False
         return None
 
@@ -70,10 +80,10 @@ def delete_agent_file(session_id: str, file_id: str) -> bool:
                 db_conn.commit()
                 cur.close()
                 if deleted:
-                    print(f"[AgentFileRegistry] Deleted file {file_id} from database")
+                    log_debug(f"[AgentFileRegistry] Deleted file {file_id} from database")
                 return deleted
             except Exception as e:
-                print(f"[AgentFileRegistry] Error deleting file from database: {e}")
+                log_error(f"[AgentFileRegistry] Error deleting file from database: {e}")
                 db_conn.rollback()
                 return False
         return False

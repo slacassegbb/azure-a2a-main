@@ -98,6 +98,8 @@ BACKEND_ROOT = Path(__file__).resolve().parents[2]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
+from log_config import log_debug, log_info, log_warning, log_error
+
 from hosts.multiagent.host_agent import HostAgent
 from hosts.multiagent.remote_agent_connection import (
     TaskCallbackArg,
@@ -168,7 +170,7 @@ class ADKHostManager(ApplicationManager):
     def _ensure_agent_initialized(self):
         """Lazily initialize the agent when first needed to avoid startup blocking."""
         if not self._agent_initialized:
-            print("[DEBUG] Initializing ADK agent...")
+            log_debug("Initializing ADK agent...")
             try:
                 agent = self._host_agent.create_agent()
                 self._host_runner = Runner(
@@ -179,9 +181,9 @@ class ADKHostManager(ApplicationManager):
                     memory_service=self._memory_service,
                 )
                 self._agent_initialized = True
-                print("[DEBUG] ADK agent initialized successfully")
+                log_info("ADK agent initialized successfully")
             except Exception as e:
-                print(f"[DEBUG] Failed to initialize ADK agent: {e}")
+                log_error(f"Failed to initialize ADK agent: {e}")
                 raise
 
     async def create_conversation(self) -> Conversation:
@@ -242,11 +244,11 @@ class ADKHostManager(ApplicationManager):
             self._context_to_conversation[context_id] = conversation.conversation_id
             
             # Stream conversation creation to WebSocket
-            print("[DEBUG] Streaming conversation creation to WebSocket...")
+            log_debug("Streaming conversation creation to WebSocket...")
             try:
                 from service.websocket_streamer import get_websocket_streamer
                 import asyncio
-                
+
                 async def stream_conversation_created():
                     try:
                         streamer = await get_websocket_streamer()
@@ -258,25 +260,21 @@ class ADKHostManager(ApplicationManager):
                                 "isActive": True,
                                 "messageCount": 0
                             }
-                            
+
                             success = await streamer._send_event("conversation_created", event_data, context_id)
                             if success:
-                                print(f"[DEBUG] Conversation creation streamed: {event_data}")
+                                log_debug(f"Conversation creation streamed: {event_data}")
                             else:
-                                print("[DEBUG] Failed to stream conversation creation")
+                                log_debug("Failed to stream conversation creation")
                         else:
-                            print("[DEBUG] WebSocket streamer not available for conversation creation")
+                            log_debug("WebSocket streamer not available for conversation creation")
                     except Exception as e:
-                        print(f"[DEBUG] SPECIFIC ERROR in conversation streaming: {e}")
-                        import traceback
-                        traceback.print_exc()
-                
+                        log_debug(f"Error in conversation streaming: {e}")
+
                 asyncio.create_task(stream_conversation_created())
-                
+
             except Exception as e:
-                print(f"[DEBUG] Error streaming conversation creation: {e}")
-                import traceback
-                traceback.print_exc()
+                log_debug(f"Error streaming conversation creation: {e}")
         
         # Add message to conversation and messages list
         self._messages.append(message)
@@ -465,10 +463,8 @@ class ADKHostManager(ApplicationManager):
         elif not task.history and task.status.message:
             task.history = [task.status.message]
         else:
-            print(
-                'Message id already in history',
-                get_message_id(task.status.message) if task.status.message else '',
-                task.history,
+            log_debug(
+                f"Message id already in history: {get_message_id(task.status.message) if task.status.message else ''}"
             )
 
     def add_or_get_task(self, event: TaskCallbackArg):
@@ -753,7 +749,7 @@ class ADKHostManager(ApplicationManager):
                         contextId=context_id,
                     )
         except Exception as e:
-            print("Couldn't convert to messages:", e)
+            log_error(f"Couldn't convert to messages: {e}")
             parts.append(
                 Part(root=DataPart(data=part.function_response.model_dump()))
             )

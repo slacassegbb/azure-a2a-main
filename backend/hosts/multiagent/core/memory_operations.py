@@ -25,6 +25,7 @@ from a2a.types import Artifact, DataPart
 
 from ..a2a_memory_service import a2a_memory_service
 from utils.tenant import get_tenant_from_context
+from log_config import log_debug, log_error, log_memory_debug
 
 
 class MemoryOperations:
@@ -50,9 +51,9 @@ class MemoryOperations:
             # Extract session_id for tenant isolation
             session_id = get_tenant_from_context(context_id)
             
-            print(f"🔍 [_search_relevant_memory] context_id: {context_id}")
-            print(f"🔍 [_search_relevant_memory] extracted session_id: {session_id}")
-            print(f"🔍 [_search_relevant_memory] query: {query}")
+            log_memory_debug(f"[_search_relevant_memory] context_id: {context_id}")
+            log_memory_debug(f"[_search_relevant_memory] extracted session_id: {session_id}")
+            log_memory_debug(f"[_search_relevant_memory] query: {query}")
             
             # Build filters if agent name is specified
             filters = {}
@@ -67,7 +68,7 @@ class MemoryOperations:
                 top_k=top_k
             )
             
-            print(f"🔍 [_search_relevant_memory] results count: {len(memory_results) if memory_results else 0}")
+            log_memory_debug(f"[_search_relevant_memory] results count: {len(memory_results) if memory_results else 0}")
             
             return memory_results
             
@@ -100,7 +101,7 @@ class MemoryOperations:
             return None
             
         try:
-            print(f"Creating memory artifact from {len(memory_results)} interactions")
+            log_memory_debug(f"Creating memory artifact from {len(memory_results)} interactions")
             
             # Process memory results into structured format
             session_timeline = []
@@ -200,14 +201,14 @@ class MemoryOperations:
                 ]
             )
             
-            print(f"✅ Created memory artifact with {len(session_timeline)} timeline entries")
-            print(f"✅ Memory artifact includes {len(agent_patterns)} agent patterns")
-            print(f"✅ Memory artifact includes {len(file_references)} file references")
+            log_memory_debug(f"Created memory artifact with {len(session_timeline)} timeline entries")
+            log_memory_debug(f"Memory artifact includes {len(agent_patterns)} agent patterns")
+            log_memory_debug(f"Memory artifact includes {len(file_references)} file references")
             
             return memory_artifact
             
         except Exception as e:
             import traceback
-            print(f"❌ Error creating memory artifact: {e}")
-            print(f"❌ Traceback: {traceback.format_exc()}")
+            log_error(f"Error creating memory artifact: {e}")
+            log_error(f"Traceback: {traceback.format_exc()}")
             return None

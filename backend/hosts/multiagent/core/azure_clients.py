@@ -68,7 +68,7 @@ class AzureClients:
             try:
                 # If the client was created in a different loop, recreate it
                 if hasattr(self, '_project_client_loop') and self._project_client_loop != current_loop:
-                    log_foundry_debug("🔄 Event loop changed, recreating AIProjectClient...")
+                    log_foundry_debug("Event loop changed, recreating AIProjectClient...")
                     # Close the old client if possible
                     if hasattr(self.project_client, 'close'):
                         try:
@@ -98,19 +98,19 @@ class AzureClients:
                 log_foundry_debug("Recreated AzureCliCredential for new event loop")
         
         if self.project_client is None:
-            log_foundry_debug("🔧 Initializing AIProjectClient...")
+            log_foundry_debug("Initializing AIProjectClient...")
             self.project_client = AIProjectClient(
                 endpoint=self.endpoint,
                 credential=self.credential,
             )
             self._project_client_loop = current_loop
-            log_foundry_debug("✅ AIProjectClient initialized")
+            log_foundry_debug("AIProjectClient initialized")
         
         # Initialize OpenAI client for Responses API
         if not hasattr(self, 'openai_client') or self.openai_client is None:
-            log_foundry_debug("🔧 Getting OpenAI client from project...")
+            log_foundry_debug("Getting OpenAI client from project...")
             self.openai_client = self.project_client.get_openai_client()
-            log_foundry_debug("✅ OpenAI client ready for Responses API")
+            log_foundry_debug("OpenAI client ready for Responses API")
 
     def _init_azure_blob_client(self):
         """Initialize Azure Blob Storage client if environment variables are configured."""
@@ -154,46 +154,46 @@ class AzureClients:
     async def _verify_blob_connection(self):
         """Log diagnostics about the configured Azure Blob container."""
         if not self._azure_blob_client or not self._azure_blob_container:
-            print("ℹ️ Azure Blob verification skipped: client or container not set")
+            log_debug("Azure Blob verification skipped: client or container not set")
             return
 
         try:
-            print("🔍 Azure Blob check: resolving container client...")
+            log_debug("Azure Blob check: resolving container client...")
             container_client = self._azure_blob_client.get_container_client(self._azure_blob_container)
 
-            print("🔍 Azure Blob check: ensuring container exists...")
+            log_debug("Azure Blob check: ensuring container exists...")
             try:
                 await asyncio.to_thread(container_client.create_container)
-                print(f"✅ Azure Blob container '{self._azure_blob_container}' created")
+                log_debug(f"Azure Blob container '{self._azure_blob_container}' created")
             except Exception as create_err:
                 from azure.core.exceptions import ResourceExistsError
                 if isinstance(create_err, ResourceExistsError):
-                    print(f"ℹ️ Azure Blob container '{self._azure_blob_container}' already exists")
+                    log_debug(f"Azure Blob container '{self._azure_blob_container}' already exists")
                 else:
                     raise
 
-            print("🔍 Azure Blob check: listing blobs (up to 5 entries)...")
+            log_debug("Azure Blob check: listing blobs (up to 5 entries)...")
             blob_count = 0
             for blob in container_client.list_blobs(name_starts_with="a2a-artifacts/"):
-                print(f"   • Existing blob: {blob.name} (size={blob.size})")
+                log_debug(f"   Existing blob: {blob.name} (size={blob.size})")
                 blob_count += 1
                 if blob_count >= 5:
-                    print("   • ... additional blobs omitted ...")
+                    log_debug("   ... additional blobs omitted ...")
                     break
             if blob_count == 0:
-                print("   • No blobs found yet in this container")
+                log_debug("   No blobs found yet in this container")
 
-            print("🔍 Azure Blob check: uploading connectivity probe...")
+            log_debug("Azure Blob check: uploading connectivity probe...")
             probe_blob_name = f"a2a-artifacts/_connectivity_probe_.txt"
             probe_client = container_client.get_blob_client(probe_blob_name)
             probe_payload = f"connection verified at {datetime.now(timezone.utc).isoformat()}"
             await asyncio.to_thread(probe_client.upload_blob, probe_payload, overwrite=True)
-            print(f"✅ Azure Blob probe uploaded: {probe_blob_name}")
+            log_debug(f"Azure Blob probe uploaded: {probe_blob_name}")
 
         except Exception as e:
-            print(f"❌ Azure Blob verification failed: {e}")
+            log_error(f"Azure Blob verification failed: {e}")
             import traceback
-            print(traceback.format_exc())
+            log_error(traceback.format_exc())
 
     async def _get_auth_headers(self) -> Dict[str, str]:
         """
@@ -216,7 +216,7 @@ class AzureClients:
             # Add 5 minute buffer before expiry
             buffer_time = dt.now() + timedelta(minutes=5)
             if self._token_expiry > buffer_time:
-                log_foundry_debug(f"✅ Using cached token (expires: {self._token_expiry})")
+                log_foundry_debug(f"Using cached token (expires: {self._token_expiry})")
                 return {
                     "Authorization": f"Bearer {self._cached_token}",
                     "Content-Type": "application/json"
@@ -263,55 +263,55 @@ class AzureClients:
                     "Authorization": f"Bearer {token.token}",
                     "Content-Type": "application/json"
                 }
-                log_foundry_debug(f"✅ Authentication headers obtained successfully (expires: {self._token_expiry})")
+                log_foundry_debug(f"Authentication headers obtained successfully (expires: {self._token_expiry})")
                 return headers
                 
             except asyncio.TimeoutError:
                 error_name = "TimeoutError"
                 error_msg = "Authentication request timed out after 8 seconds"
-                log_foundry_debug(f"⚠️ Auth attempt {attempt + 1} timed out after 8 seconds")
+                log_foundry_debug(f"Auth attempt {attempt + 1} timed out after 8 seconds")
                 
             except Exception as e:
                 error_name = type(e).__name__
                 error_msg = str(e)
                 
                 if attempt < max_retries - 1:
-                    log_foundry_debug(f"⚠️ Auth attempt {attempt + 1} failed ({error_name}), retrying in 3 seconds...")
-                    log_foundry_debug(f"⚠️ Error details: {error_msg}")
+                    log_foundry_debug(f"Auth attempt {attempt + 1} failed ({error_name}), retrying in 3 seconds...")
+                    log_foundry_debug(f"Error details: {error_msg}")
                     await asyncio.sleep(3)  # Wait 3 seconds before retry
                     continue
                 else:
-                    log_foundry_debug(f"❌ Failed to get authentication token after {max_retries} attempts: {error_name}: {e}")
+                    log_foundry_debug(f"Failed to get authentication token after {max_retries} attempts: {error_name}: {e}")
                     
                     # Provide specific help based on error type
                     if "CredentialUnavailableError" in error_name and "Azure CLI" in error_msg:
-                        print("💡 DEBUG: Azure CLI authentication failed. Try:")
-                        print("   1. az login --tenant <your-tenant-id>")
-                        print("   2. az account set --subscription <your-subscription-id>")
-                        print("   3. Set environment variables for service principal auth")
+                        log_debug("Azure CLI authentication failed. Try:")
+                        log_debug("   1. az login --tenant <your-tenant-id>")
+                        log_debug("   2. az account set --subscription <your-subscription-id>")
+                        log_debug("   3. Set environment variables for service principal auth")
                     elif "TimeoutError" in error_name or "timed out" in error_msg.lower():
-                        print("💡 DEBUG: Authentication timed out. Try:")
-                        print("   1. Check your network connection")
-                        print("   2. Run 'az login' to refresh your session")
-                        print("   3. Consider using service principal authentication for better reliability")
+                        log_debug("Authentication timed out. Try:")
+                        log_debug("   1. Check your network connection")
+                        log_debug("   2. Run 'az login' to refresh your session")
+                        log_debug("   3. Consider using service principal authentication for better reliability")
                     elif "ChainedTokenCredential" in error_msg:
-                        print("💡 DEBUG: All credential types failed. Options:")
-                        print("   1. Set environment variables: AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET")
-                        print("   2. Run 'az login' and try again")
-                        print("   3. Run from Azure environment (VM, Container App, etc.)")
+                        log_debug("All credential types failed. Options:")
+                        log_debug("   1. Set environment variables: AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET")
+                        log_debug("   2. Run 'az login' and try again")
+                        log_debug("   3. Run from Azure environment (VM, Container App, etc.)")
                     
                     raise
 
     def _clear_cached_token(self):
         """Clear cached authentication token to force refresh on next request"""
-        log_foundry_debug(f"🔄 Clearing cached authentication token")
+        log_foundry_debug("Clearing cached authentication token")
         self._cached_token = None
         self._token_expiry = None
 
     async def refresh_azure_cli_session(self):
         """Helper method to refresh Azure CLI session when authentication fails"""
         try:
-            log_foundry_debug(f"🔄 Attempting to refresh Azure CLI session...")
+            log_foundry_debug("Attempting to refresh Azure CLI session...")
             import subprocess
             import asyncio
             
@@ -325,18 +325,18 @@ class AzureClients:
             stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=10.0)
             
             if process.returncode == 0:
-                log_foundry_debug(f"✅ Azure CLI session refreshed successfully")
+                log_foundry_debug("Azure CLI session refreshed successfully")
                 self._clear_cached_token()  # Clear cache to use fresh token
                 return True
             else:
-                log_foundry_debug(f"❌ Azure CLI refresh failed: {stderr.decode()}")
+                log_foundry_debug(f"Azure CLI refresh failed: {stderr.decode()}")
                 return False
                 
         except asyncio.TimeoutError:
-            log_foundry_debug(f"❌ Azure CLI refresh timed out")
+            log_foundry_debug("Azure CLI refresh timed out")
             return False
         except Exception as e:
-            log_foundry_debug(f"❌ Error refreshing Azure CLI session: {e}")
+            log_foundry_debug(f"Error refreshing Azure CLI session: {e}")
             return False
 
     def _get_openai_endpoint(self) -> str:
@@ -377,7 +377,7 @@ class AzureClients:
     def _get_client(self):
         """Legacy method - now throws error to identify remaining SDK usage"""
         raise NotImplementedError(
-            "❌ _get_client() is no longer supported! "
+            "_get_client() is no longer supported! "
             "The foundry_agent_a2a.py now uses HTTP API calls instead of the azure.ai.agents SDK. "
             "This error indicates that some code is still trying to use the old SDK approach. "
             "Please update the calling code to use HTTP-based methods."

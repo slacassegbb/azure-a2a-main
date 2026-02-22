@@ -226,7 +226,7 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
         
         try:
             log_foundry_debug("Initializing Azure AI Foundry Agent Service...")
-            print("💡 TIP: If you see authentication errors, run 'python test_azure_auth.py' to diagnose")
+            log_debug("[INIT] TIP: If you see authentication errors, run 'python test_azure_auth.py' to diagnose")
             
             from azure.identity.aio import AzureCliCredential, DefaultAzureCredential, ManagedIdentityCredential
             
@@ -235,21 +235,21 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
             
             if is_azure_container:
                 # Use DefaultAzureCredential in Azure (will use managed identity)
-                log_foundry_debug("🔵 Running in Azure Container Apps - using DefaultAzureCredential (Managed Identity)")
+                log_foundry_debug("Running in Azure Container Apps - using DefaultAzureCredential (Managed Identity)")
                 self.credential = DefaultAzureCredential(exclude_interactive_browser_credential=True)
-                log_foundry_debug("✅ Using DefaultAzureCredential for managed identity")
+                log_foundry_debug("Using DefaultAzureCredential for managed identity")
             else:
                 # Use AzureCliCredential locally
                 cli_credential = AzureCliCredential(process_timeout=5)
                 self.credential = cli_credential
-                log_foundry_debug("✅ Using AzureCliCredential for local development")
+                log_foundry_debug("Using AzureCliCredential for local development")
                     
         except Exception as e:
-            log_foundry_debug(f"⚠️ Credential initialization failed: {e}")
-            print("💡 DEBUG: Falling back to DefaultAzureCredential only")
+            log_foundry_debug(f"Credential initialization failed: {e}")
+            log_debug("Falling back to DefaultAzureCredential only")
             from azure.identity.aio import DefaultAzureCredential
             self.credential = DefaultAzureCredential(exclude_interactive_browser_credential=True)
-            log_foundry_debug("✅ Using DefaultAzureCredential as fallback")
+            log_foundry_debug("Using DefaultAzureCredential as fallback")
         
         # Initialize Azure AI Project Client (async)
         self.project_client: Optional[AIProjectClient] = None
@@ -357,26 +357,26 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
     async def _create_agent_at_startup_task(self):
         """Background task to create the agent at startup with proper error handling."""
         try:
-            log_debug("🚀 Creating Azure AI Foundry agent at startup...")
+            log_debug("[INIT] Creating Azure AI Foundry agent at startup...")
             await self.create_agent()
-            print("✅ Azure AI Foundry agent created successfully at startup!")
+            log_info("Azure AI Foundry agent created successfully at startup!")
         except Exception as e:
-            print(f"❌ Failed to create agent at startup: {e}")
-            print("💡 Agent will be created lazily when first conversation occurs")
+            log_error(f"Failed to create agent at startup: {e}")
+            log_info("Agent will be created lazily when first conversation occurs")
             # Don't raise - allow the application to continue and create agent lazily
 
     def _clear_memory_on_startup(self):
         """Clear memory index automatically on startup for clean testing"""
-        print(f"🧹 Auto-clearing memory index on startup...")
+        log_info("Auto-clearing memory index on startup...")
         try:
             success = a2a_memory_service.clear_all_interactions()
             if success:
-                print(f"✅ Memory index auto-cleared successfully")
+                log_info("Memory index auto-cleared successfully")
             else:
-                print(f"⚠️ Memory index auto-clear had no effect (may be empty)")
+                log_warning(f"Memory index auto-clear had no effect (may be empty)")
         except Exception as e:
-            print(f"⚠️ Error auto-clearing memory index: {e}")
-            print(f"Continuing with startup...")
+            log_warning(f"Error auto-clearing memory index: {e}")
+            log_debug(f"Continuing with startup...")
 
     def _format_tools_for_responses_api(self) -> List[Dict[str, Any]]:
         """
@@ -396,10 +396,10 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
             # Fallback to _get_tools() if agent_tools not set yet
             tools = self._get_tools()
             
-        print(f"🔧 [TOOLS] _format_tools_for_responses_api returning {len(tools)} tools:")
+        log_debug(f"[TOOLS] _format_tools_for_responses_api returning {len(tools)} tools:")
         for tool in tools:
             tool_name = tool.get('name', tool.get('type', 'unknown'))
-            print(f"  • Tool: {tool_name}")
+            log_debug(f"  Tool: {tool_name}")
         return tools
 
     async def _create_response_with_streaming(
@@ -448,11 +448,11 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
                     # Create the streaming response using Responses API
                     # Pass instructions directly - this is supported by the OpenAI SDK!
                     # Instructions parameter overrides any agent_reference instructions
-                    print(f"🔵 [AZURE] Creating stream (attempt {attempt + 1}/{max_retries + 1})...")
-                    print(f"🔵 [AZURE] Agent: {self.agent.name if self.agent else 'None'}, Input length: {len(user_message)}")
-                    print(f"🔵 [AZURE] Instructions length: {len(instructions)} chars")
-                    print(f"🔵 [AZURE] Checking if Email Agent is in instructions: {'Email Agent' in instructions}")
-                    print(f"🔵 [AZURE] Tools count: {len(tools)}")
+                    log_foundry_debug(f"[AZURE] Creating stream (attempt {attempt + 1}/{max_retries + 1})...")
+                    log_foundry_debug(f"[AZURE] Agent: {self.agent.name if self.agent else 'None'}, Input length: {len(user_message)}")
+                    log_foundry_debug(f"[AZURE] Instructions length: {len(instructions)} chars")
+                    log_foundry_debug(f"[AZURE] Checking if Email Agent is in instructions: {'Email Agent'in instructions}")
+                    log_foundry_debug(f"[AZURE] Tools count: {len(tools)}")
 
                     # Build multimodal input when images are present
                     if image_urls:
@@ -460,12 +460,12 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
                         for img_url in image_urls:
                             content_items.append({"type": "input_image", "image_url": img_url})
                         api_input = [{"role": "user", "content": content_items}]
-                        print(f"🖼️ [AZURE] Using multimodal input with {len(image_urls)} image(s)")
+                        log_foundry_debug(f"[AZURE] Using multimodal input with {len(image_urls)} image(s)")
                     else:
                         api_input = user_message
 
                     client_base = getattr(self.openai_client, '_base_url', getattr(self.openai_client, 'base_url', 'unknown'))
-                    print(f"🔵 [AZURE] responses.create() → model={self.model_name}, client_base_url={client_base}")
+                    log_foundry_debug(f"[AZURE] responses.create() -> model={self.model_name}, client_base_url={client_base}")
                     stream = await self.openai_client.responses.create(
                         input=api_input,
                         previous_response_id=previous_response_id,
@@ -474,7 +474,7 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
                         tools=tools,
                         stream=True,
                     )
-                    print(f"✅ [AZURE] Stream created successfully")
+                    log_foundry_debug("[AZURE] Stream created successfully")
                     break  # Success, exit retry loop
                 except Exception as stream_error:
                     last_error = stream_error
@@ -489,13 +489,11 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
                     
                     if is_retryable and attempt < max_retries:
                         wait_time = (2 ** attempt) + 1  # Exponential backoff: 2s, 3s, 5s
-                        log_error(f"⚠️ Azure OpenAI error (attempt {attempt + 1}/{max_retries + 1}), retrying in {wait_time}s: {stream_error}")
+                        log_error(f"Azure OpenAI error (attempt {attempt + 1}/{max_retries + 1}), retrying in {wait_time}s: {stream_error}")
                         await asyncio.sleep(wait_time)
                         continue
                     else:
                         log_error(f"Error creating stream (attempt {attempt + 1}/{max_retries + 1}): {stream_error}")
-                        import traceback
-                        traceback.print_exc()
                         return {
                             "id": None,
                             "text": f"I apologize, but I encountered an error processing your request: {str(stream_error)}",
@@ -519,7 +517,7 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
             max_stream_retries = 2
             event_count = 0
             
-            print(f"🔵 [AZURE] Starting stream processing...")
+            log_foundry_debug(f"[AZURE] Starting stream processing...")
             while stream_retry_count <= max_stream_retries:
                 try:
                     async for event in stream:
@@ -527,13 +525,13 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
                         event_type = event.type
                         
                         if event_count <= 3 or event_count % 10 == 0:
-                            print(f"🔵 [AZURE] Event {event_count}: {event_type}")
+                            log_foundry_debug(f"[AZURE] Event {event_count}: {event_type}")
                         
                         if event_type == "response.created":
                             response_id = event.response.id
                             self._response_ids[context_id] = response_id  # Track for multi-turn
-                            log_debug(f"📝 Response created: {response_id}")
-                            print(f"📝 [AZURE] Response created: {response_id}")
+                            log_debug(f"Response created: {response_id}")
+                            log_foundry_debug(f"[AZURE] Response created: {response_id}")
                         
                         elif event_type == "response.output_text.delta":
                             chunk = event.delta
@@ -546,10 +544,10 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
                             if hasattr(event, 'item') and event.item.type == "function_call":
                                 tool_call = event.item
                                 tool_calls_to_execute.append(tool_call)
-                                print(f"🔧 [FUNCTION CALL] name={tool_call.name}, arguments={tool_call.arguments}")
+                                log_debug(f"[FUNCTION CALL] name={tool_call.name}, arguments={tool_call.arguments}")
                         
                         elif event_type == "response.completed":
-                            log_debug(f"✅ Response completed")
+                            log_debug(f"Response completed")
                             break
                         
                         elif event_type == "error":
@@ -565,12 +563,12 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
                     error_str = str(stream_proc_error).lower()
                     
                     # DEBUG: Print full exception details
-                    print(f"🔴 [AZURE] Stream exception type: {type(stream_proc_error).__name__}")
-                    print(f"🔴 [AZURE] Stream exception: {stream_proc_error}")
+                    log_foundry_debug(f"[AZURE] Stream exception type: {type(stream_proc_error).__name__}")
+                    log_foundry_debug(f"[AZURE] Stream exception: {stream_proc_error}")
                     if hasattr(stream_proc_error, 'response'):
-                        print(f"🔴 [AZURE] Response status: {stream_proc_error.response.status_code if hasattr(stream_proc_error.response, 'status_code') else 'N/A'}")
+                        log_foundry_debug(f"[AZURE] Response status: {stream_proc_error.response.status_code if hasattr(stream_proc_error.response, 'status_code') else 'N/A'}")
                     if hasattr(stream_proc_error, 'body'):
-                        print(f"🔴 [AZURE] Response body: {stream_proc_error.body}")
+                        log_foundry_debug(f"[AZURE] Response body: {stream_proc_error.body}")
                     
                     # Check if this is a retryable error
                     is_retryable = any(keyword in error_str for keyword in [
@@ -581,7 +579,7 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
                     
                     if is_retryable and stream_retry_count <= max_stream_retries:
                         wait_time = (2 ** stream_retry_count) + 1
-                        log_error(f"⚠️ Stream processing error (attempt {stream_retry_count}/{max_stream_retries + 1}), retrying in {wait_time}s: {stream_proc_error}")
+                        log_error(f"Stream processing error (attempt {stream_retry_count}/{max_stream_retries + 1}), retrying in {wait_time}s: {stream_proc_error}")
                         await asyncio.sleep(wait_time)
                         
                         # Need to recreate the stream for retry
@@ -624,7 +622,7 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
             
             while tool_calls_to_execute and tool_iteration < max_tool_iterations:
                 tool_iteration += 1
-                log_debug(f"🔧 Tool iteration {tool_iteration}: {len(tool_calls_to_execute)} calls")
+                log_debug(f"Tool iteration {tool_iteration}: {len(tool_calls_to_execute)} calls")
                 
                 # Execute tool calls — send_message calls run in parallel, others sequential
                 tool_outputs = []
@@ -638,7 +636,7 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
 
                 # Parallel execution for send_message calls
                 if len(send_message_calls) > 1:
-                    log_debug(f"🚀 Executing {len(send_message_calls)} send_message calls in parallel")
+                    log_debug(f"Executing {len(send_message_calls)} send_message calls in parallel")
                     for tc in send_message_calls:
                         asyncio.create_task(self._emit_granular_agent_event(
                             "foundry-host-agent", f"🛠️ Calling: {tc.name}", context_id,
@@ -765,13 +763,11 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
                         
                         if is_retryable and continue_retry_count <= max_continue_retries:
                             wait_time = (2 ** continue_retry_count) + 1
-                            log_error(f"⚠️ Tool continuation error (attempt {continue_retry_count}/{max_continue_retries + 1}), retrying in {wait_time}s: {continue_error}")
+                            log_error(f"Tool continuation error (attempt {continue_retry_count}/{max_continue_retries + 1}), retrying in {wait_time}s: {continue_error}")
                             await asyncio.sleep(wait_time)
                             continue
                         
                         log_error(f"Error continuing conversation: {continue_error}")
-                        import traceback
-                        traceback.print_exc()
                         break
             
             return {
@@ -974,8 +970,6 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
                     top_k = arguments.get("top_k", 5)
                     output = await self.search_memory_sync(query=query, top_k=top_k)
                 except Exception as e:
-                    import traceback
-                    traceback.print_exc()
                     output = json.dumps({"error": str(e), "results": []})
             # Note: web_search is now handled by native BingGroundingTool
             else:
@@ -1040,21 +1034,21 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
             instructions = self.root_instruction('foundry-host-agent')
             
             log_foundry_debug(f"Agent parameters:")
-            print(f"  - model: {model_name}")
-            print(f"  - name: foundry-host-agent")
-            print(f"  - instructions length: {len(instructions)}")
+            log_debug(f"- model: {model_name}")
+            log_debug(f"- name: foundry-host-agent")
+            log_debug(f"- instructions length: {len(instructions)}")
             
             # Get Bing connection ID
             self.bing_connection_id = os.environ.get("BING_CONNECTION_ID")
             if self.bing_connection_id:
-                print(f"🔍 Bing connection ID loaded: {self.bing_connection_id[:50]}...")
+                log_debug(f"Bing connection ID loaded: {self.bing_connection_id[:50]}...")
             else:
-                print(f"⚠️ BING_CONNECTION_ID not set - web search disabled")
+                log_warning(f"BING_CONNECTION_ID not set - web search disabled")
             
             # Create tools list - convert to NEW SDK FunctionTool format
             tools_list = []
             
-            print(f"🔧 Converting function tools to NEW SDK format...")
+            log_debug(f"Converting function tools to NEW SDK format...")
             # Get function definitions from _get_tools()
             # These are in Responses API format: {"type": "function", "name": "...", "description": "...", "parameters": {...}}
             old_tools = self._get_tools()
@@ -1070,7 +1064,7 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
                     )
                     tools_list.append(function_tool)
             
-            print(f"🔧 Added {len(tools_list)} function tools")
+            log_debug(f"Added {len(tools_list)} function tools")
             
             # Add Bing Grounding Tool if connection ID is available
             if self.bing_connection_id:
@@ -1085,13 +1079,13 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
                     )
                 )
                 tools_list.append(bing_tool)
-                print(f"🔍 Added BingGroundingAgentTool to tools list")
-                print(f"   Connection ID: {self.bing_connection_id[:50]}...")
-                log_foundry_debug(f"🔍 Added BingGroundingAgentTool to tools list")
+                log_debug(f"Added BingGroundingAgentTool to tools list")
+                log_debug(f"Connection ID: {self.bing_connection_id[:50]}...")
+                log_foundry_debug(f"Added BingGroundingAgentTool to tools list")
             else:
-                print(f"⚠️ NO Bing connection ID found!")
+                log_warning(f"NO Bing connection ID found!")
             
-            print(f"🔧 Creating agent with {len(tools_list)} total tools (Azure Agent Service)")
+            log_foundry_debug(f"Creating agent with {len(tools_list)} total tools (Azure Agent Service)")
             
             # Create agent using Azure AI Projects SDK
             agent_definition = PromptAgentDefinition(
@@ -1112,18 +1106,15 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
             # Allowlist of valid model deployment names for live switching
             self.allowed_models = ["gpt-4o", "gpt-5.2"]
 
-            print(f"✅ Azure Agent created successfully!")
-            log_foundry_debug(f"✅ Agent created successfully! ID: {self.agent.id}")
-            log_foundry_debug(f"🔧 Agent object attributes: {dir(self.agent)}")
-            print(f"🎉 Agent visible in Azure AI Foundry portal: {self.agent.id}")
+            log_foundry_debug(f"Azure Agent created successfully!")
+            log_foundry_debug(f"Agent created successfully! ID: {self.agent.id}")
+            log_foundry_debug(f"Agent object attributes: {dir(self.agent)}")
+            log_foundry_debug(f"Agent visible in Azure AI Foundry portal: {self.agent.id}")
             
             return True
             
         except Exception as e:
-            log_foundry_debug(f"❌ Exception in create_agent(): {type(e).__name__}: {e}")
-            log_foundry_debug(f"❌ Full traceback:")
-            import traceback
-            traceback.print_exc()
+            log_foundry_debug(f"Exception in create_agent(): {type(e).__name__}: {e}")
             raise
     
     def get_model_name(self) -> str:
@@ -1136,7 +1127,7 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
             raise ValueError(f"Model '{model}' not in allowed list: {self.allowed_models}")
         old = self.model_name
         self.model_name = model
-        print(f"🔄 Host agent model switched: {old} → {model}")
+        log_debug(f"Host agent model switched: {old} -> {model}")
         self._swap_openai_client_for_model(model)
 
     def _swap_openai_client_for_model(self, model: str) -> None:
@@ -1146,7 +1137,7 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
             # Restore original project client's OpenAI client
             if self._original_openai_client:
                 self.openai_client = self._original_openai_client
-                print(f"🔄 Restored original OpenAI client (primary endpoint) for {model}")
+                log_debug(f"Restored original OpenAI client (primary endpoint) for {model}")
         elif endpoint_key:
             # Save original client on first swap
             if not self._original_openai_client and hasattr(self, 'openai_client') and self.openai_client:
@@ -1155,7 +1146,7 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
             if endpoint_key not in self._alt_openai_clients:
                 self._alt_openai_clients[endpoint_key] = self._create_alt_responses_client(endpoint_key)
             self.openai_client = self._alt_openai_clients[endpoint_key]
-            print(f"🔄 Switched OpenAI client to alt endpoint for {model}: {endpoint_key}")
+            log_debug(f"Switched OpenAI client to alt endpoint for {model}: {endpoint_key}")
 
     def _create_alt_responses_client(self, endpoint: str):
         """Create an AsyncAzureOpenAI client for an alternate Azure endpoint (Responses API).
@@ -1171,7 +1162,7 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
         token_provider = get_bearer_token_provider(credential, "https://cognitiveservices.azure.com/.default")
         resource_name = endpoint.split("//")[1].split(".")[0]
         azure_endpoint = f"https://{resource_name}.openai.azure.com"
-        print(f"🔧 Creating alt Responses API client (AsyncAzureOpenAI): {azure_endpoint}")
+        log_foundry_debug(f"Creating alt Responses API client (AsyncAzureOpenAI): {azure_endpoint}")
         client = AsyncAzureOpenAI(
             azure_endpoint=azure_endpoint,
             azure_ad_token_provider=token_provider,
@@ -1212,20 +1203,20 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
           STOP message that tells GPT-4 to halt and wait for human input
         - The original user goal is saved for automatic resumption when the human responds
         """
-        print(f"\n🔥🔥🔥 [SEND_MESSAGE_SYNC] CALLED by Azure SDK!")
-        print(f"🔥 agent_name: {agent_name}")
-        print(f"🔥 message: {message[:100]}...")
-        print(f"🔥 file_uris: {file_uris}")
-        print(f"🔥 video_metadata: {video_metadata}")
+        log_foundry_debug("[SEND_MESSAGE_SYNC] CALLED by Azure SDK!")
+        log_debug(f"agent_name: {agent_name}")
+        log_debug(f"message: {message[:100]}...")
+        log_debug(f"file_uris: {file_uris}")
+        log_debug(f"video_metadata: {video_metadata}")
         
         # Use contextvars for async-safe context_id (prevents race conditions between concurrent workflows)
         # Fall back to instance variable for backwards compatibility
         context_id_to_use = _current_context_id.get() or getattr(self, '_current_host_context_id', None)
         
-        log_debug(f"🔍 [send_message_sync] context_id from contextvar: {_current_context_id.get()}")
-        log_debug(f"🔍 [send_message_sync] context_id from instance: {getattr(self, '_current_host_context_id', None)}")
-        log_debug(f"🔍 [send_message_sync] using context_id: {context_id_to_use}")
-        log_debug(f"🔍 [send_message_sync] session_contexts keys: {list(self.session_contexts.keys())}")
+        log_debug(f"[send_message_sync] context_id from contextvar: {_current_context_id.get()}")
+        log_debug(f"[send_message_sync] context_id from instance: {getattr(self, '_current_host_context_id', None)}")
+        log_debug(f"[send_message_sync] using context_id: {context_id_to_use}")
+        log_debug(f"[send_message_sync] session_contexts keys: {list(self.session_contexts.keys())}")
         
         # CRITICAL: If we don't have the current context_id, this is a bug
         if not context_id_to_use:
@@ -1234,7 +1225,7 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
         # Get existing session context or create new one with proper contextId
         session_ctx = self.session_contexts.get(context_id_to_use)
         if not session_ctx:
-            log_debug(f"🔍 [send_message_sync] SessionContext NOT FOUND, creating new one with contextId={context_id_to_use}")
+            log_debug(f"[send_message_sync] SessionContext NOT FOUND, creating new one with contextId={context_id_to_use}")
             session_ctx = SessionContext(
                 agent_mode=False,
                 host_task=None,
@@ -1243,9 +1234,9 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
             )
             # CRITICAL: Store the new session context so it persists for HITL resumption
             self.session_contexts[context_id_to_use] = session_ctx
-            log_debug(f"🔍 [send_message_sync] Stored new SessionContext in self.session_contexts")
+            log_debug(f"[send_message_sync] Stored new SessionContext in self.session_contexts")
         else:
-            log_debug(f"🔍 [send_message_sync] SessionContext FOUND with contextId={session_ctx.contextId}")
+            log_debug(f"[send_message_sync] SessionContext FOUND with contextId={session_ctx.contextId}")
         
         # Create a task context mock
         tool_context = type('obj', (object,), {
@@ -1290,11 +1281,9 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
         Returns:
             JSON string with search results containing relevant excerpts
         """
-        import traceback
-        
-        print(f"\n🧠🧠🧠 [SEARCH_MEMORY_SYNC] CALLED by Azure SDK!")
-        print(f"🧠 query: {query}")
-        print(f"🧠 top_k: {top_k}")
+        log_foundry_debug(f"[SEARCH_MEMORY_SYNC] CALLED by Azure SDK!")
+        log_debug(f"query: {query}")
+        log_debug(f"top_k: {top_k}")
         
         # Ensure top_k is an integer
         try:
@@ -1304,12 +1293,12 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
         
         # Use contextvars for async-safe context_id (prevents race conditions)
         context_id = _current_context_id.get() or getattr(self, '_current_host_context_id', None)
-        print(f"🧠 context_id (contextvar): {_current_context_id.get()}")
-        print(f"🧠 context_id (instance): {getattr(self, '_current_host_context_id', None)}")
-        print(f"🧠 context_id (using): {context_id}")
+        log_debug(f"context_id (contextvar): {_current_context_id.get()}")
+        log_debug(f"context_id (instance): {getattr(self, '_current_host_context_id', None)}")
+        log_debug(f"context_id (using): {context_id}")
         
         if not context_id:
-            print(f"🧠 ERROR: No active context!")
+            log_warning(f"ERROR: No active context!")
             return json.dumps({
                 "error": "No active context",
                 "results": []
@@ -1317,17 +1306,17 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
         
         try:
             # Search memory using the same service remote agents use
-            print(f"🧠 Calling _search_relevant_memory...")
+            log_memory_debug(f"Calling _search_relevant_memory...")
             memory_results = await self._search_relevant_memory(
                 query=query,
                 context_id=context_id,
                 agent_name=None,  # Search all sources
                 top_k=top_k
             )
-            print(f"🧠 _search_relevant_memory returned: {len(memory_results) if memory_results else 0} results")
+            log_memory_debug(f"_search_relevant_memory returned: {len(memory_results) if memory_results else 0} results")
             
             if not memory_results:
-                log_debug(f"🧠 [SEARCH_MEMORY] No results found for query: {query}")
+                log_debug(f"[SEARCH_MEMORY] No results found for query: {query}")
                 return json.dumps({
                     "status": "success",
                     "query": query,
@@ -1336,7 +1325,7 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
                     "results": []
                 })
             
-            log_debug(f"🧠 [SEARCH_MEMORY] Found {len(memory_results)} results")
+            log_debug(f"[SEARCH_MEMORY] Found {len(memory_results)} results")
             
             # Format results for the model
             formatted_results = []
@@ -1395,7 +1384,7 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
                         formatted_results.append(result_entry)
                 
                 except Exception as e:
-                    print(f"⚠️ Error processing memory result {i}: {e}")
+                    log_warning(f"Error processing memory result {i}: {e}")
                     continue
             
             # Build source citations for the response with section info
@@ -1419,7 +1408,7 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
                         unique_citations.append(c)
                 sources_text = "\n\n📄 **Sources:** " + " | ".join(unique_citations[:5])  # Limit to 5 citations
             
-            print(f"🧠 Returning {len(formatted_results)} formatted results from sources: {unique_sources}")
+            log_debug(f"Returning {len(formatted_results)} formatted results from sources: {unique_sources}")
             return json.dumps({
                 "status": "success",
                 "query": query,
@@ -1432,8 +1421,7 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
             }, indent=2)
         
         except Exception as e:
-            print(f"❌ [SEARCH_MEMORY] Exception: {e}")
-            traceback.print_exc()
+            log_error(f"[SEARCH_MEMORY] Exception: {e}")
             return json.dumps({
                 "error": str(e),
                 "results": []
@@ -1557,11 +1545,11 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
             agent_mode: Whether to use agent mode instructions (default: False for orchestrator mode)
         """
         if not self.agent:
-            print(f"⚠️ No agent initialized to update")
+            log_warning(f"No agent initialized to update")
             return
             
         try:
-            print(f"🔄 Updating agent instructions with {len(self.cards)} registered agents (agent_mode={agent_mode})...")
+            log_debug(f"Updating agent instructions with {len(self.cards)} registered agents (agent_mode={agent_mode})...")
             
             # CRITICAL: Update self.agents FIRST with current agent list
             self.agents = json.dumps(self.list_remote_agents(), indent=2)
@@ -1572,13 +1560,11 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
             # Also update the tools list in case agents changed
             self.agent_tools = self._get_tools()
             
-            print(f"✅ Agent instructions updated successfully!")
-            print(f"   Agent now knows about: {', '.join(self.cards.keys())}")
+            log_info(f"Agent instructions updated successfully!")
+            log_debug(f"Agent now knows about: {', '.join(self.cards.keys())}")
                     
         except Exception as e:
-            print(f"❌ Error updating agent instructions: {e}")
-            import traceback
-            traceback.print_exc()
+            log_error(f"Error updating agent instructions: {e}")
             # Don't fail the registration if instruction update fails
             pass
 
@@ -1676,7 +1662,7 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
         Uses Pydantic models to enforce response schema validation.
         """
         try:
-            print(f"🤖 [Agent Mode] Calling Azure OpenAI for structured output...")
+            log_foundry_debug(f"[Agent Mode] Calling Azure OpenAI for structured output...")
             await self._emit_granular_agent_event(
                 "foundry-host-agent", "Planning next task with AI...", context_id,
                 event_type="phase", metadata={"phase": "planning_ai"}
@@ -1685,8 +1671,8 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
             # Use live model name and endpoint (supports model switching)
             model_name = self.model_name or os.environ.get("AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME", "gpt-4o")
             base_endpoint = self._get_base_endpoint()
-            print(f"🤖 [Agent Mode] Azure endpoint: {base_endpoint}")
-            print(f"🤖 [Agent Mode] Model deployment: {model_name}")
+            log_foundry_debug(f"[Agent Mode] Azure endpoint: {base_endpoint}")
+            log_debug(f"[Agent Mode] Model deployment: {model_name}")
 
             # Get Azure credential token
             from azure.identity import DefaultAzureCredential, get_bearer_token_provider
@@ -1701,7 +1687,7 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
                 api_version="2024-08-01-preview"  # Version that supports structured outputs
             )
 
-            print(f"🤖 [Agent Mode] Making structured output request with OpenAI SDK...")
+            log_debug(f"[Agent Mode] Making structured output request with OpenAI SDK...")
 
             # Use OpenAI SDK's parse method for structured outputs
             completion = await client.beta.chat.completions.parse(
@@ -1716,21 +1702,19 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
             )
             
             parsed = completion.choices[0].message.parsed
-            print(f"🤖 [Agent Mode] Got structured response: {parsed.model_dump_json()[:200]}...")
+            log_debug(f"[Agent Mode] Got structured response: {parsed.model_dump_json()[:200]}...")
             
             # Extract token usage from orchestration call
             if hasattr(completion, 'usage') and completion.usage:
                 self.host_token_usage["prompt_tokens"] += completion.usage.prompt_tokens or 0
                 self.host_token_usage["completion_tokens"] += completion.usage.completion_tokens or 0
                 self.host_token_usage["total_tokens"] += completion.usage.total_tokens or 0
-                print(f"🎟️ [Host Agent] Orchestration tokens: +{completion.usage.total_tokens} (total: {self.host_token_usage['total_tokens']})")
+                log_debug(f"[Host Agent] Orchestration tokens: +{completion.usage.total_tokens} (total: {self.host_token_usage['total_tokens']})")
             
             return parsed
                     
         except Exception as e:
             log_error(f"[Agent Mode] Error calling Azure OpenAI: {e}")
-            import traceback
-            traceback.print_exc()
             raise
 
     async def _call_azure_openai_raw(
@@ -1829,8 +1813,8 @@ Return the name of the best agent for this task (exact match from the list above
     async def update_root_instruction(self, new_instruction: str) -> bool:
         """Update the root instruction and apply it to the Azure AI Foundry agent"""
         try:
-            print(f"🔄 Updating root instruction...")
-            print(f"   New instruction length: {len(new_instruction)} characters")
+            log_debug(f"Updating root instruction...")
+            log_debug(f"New instruction length: {len(new_instruction)} characters")
             
             # Store the custom instruction
             self.custom_root_instruction = new_instruction
@@ -1838,17 +1822,17 @@ Return the name of the best agent for this task (exact match from the list above
             # Update the Azure AI Foundry agent with the new instruction
             await self._update_agent_instructions()
             
-            print(f"✅ Root instruction updated successfully!")
+            log_info(f"Root instruction updated successfully!")
             return True
             
         except Exception as e:
-            print(f"❌ Error updating root instruction: {e}")
+            log_error(f"Error updating root instruction: {e}")
             return False
 
     async def reset_root_instruction(self) -> bool:
         """Reset to default root instruction"""
         try:
-            print(f"🔄 Resetting to default root instruction...")
+            log_debug(f"Resetting to default root instruction...")
             
             # Clear the custom instruction
             self.custom_root_instruction = None
@@ -1856,28 +1840,28 @@ Return the name of the best agent for this task (exact match from the list above
             # Update the Azure AI Foundry agent with the default instruction
             await self._update_agent_instructions()
             
-            print(f"✅ Root instruction reset to default!")
+            log_info(f"Root instruction reset to default!")
             return True
             
         except Exception as e:
-            print(f"❌ Error resetting root instruction: {e}")
+            log_error(f"Error resetting root instruction: {e}")
             return False
 
     # Note: _stream_remote_agent_activity, _default_task_callback, _display_task_status_update,
     # _get_status_display_text, _extract_message_content, _extract_text_from_response
     # have been extracted to streaming_handlers.py
     def get_session_context(self, context_id: str) -> SessionContext:
-        log_debug(f"🔍 [get_session_context] Called with context_id: {context_id}")
-        log_debug(f"🔍 [get_session_context] Existing session_contexts keys: {list(self.session_contexts.keys())}")
+        log_debug(f"[get_session_context] Called with context_id: {context_id}")
+        log_debug(f"[get_session_context] Existing session_contexts keys: {list(self.session_contexts.keys())}")
         
         if context_id not in self.session_contexts:
             # Clear host response tracking for new conversations
             if context_id in self._host_responses_sent:
                 self._host_responses_sent.remove(context_id)
-            log_debug(f"🔍 [get_session_context] Creating NEW SessionContext with contextId={context_id}")
+            log_debug(f"[get_session_context] Creating NEW SessionContext with contextId={context_id}")
             self.session_contexts[context_id] = SessionContext(contextId=context_id)
         else:
-            log_debug(f"🔍 [get_session_context] FOUND existing SessionContext for key={context_id}")
+            log_debug(f"[get_session_context] FOUND existing SessionContext for key={context_id}")
             
         return self.session_contexts[context_id]
 
@@ -1927,7 +1911,7 @@ Answer with just JSON:
 
 {{"is_successful": true/false, "reason": "brief reason"}}"""
 
-            print(f"Making direct Azure OpenAI call for evaluation...")
+            log_foundry_debug(f"Making direct Azure OpenAI call for evaluation...")
             
             # Use the same Azure AI Foundry approach as the rest of the system
             from openai import AsyncAzureOpenAI
@@ -1962,7 +1946,7 @@ Answer with just JSON:
             )
             
             evaluation_response = response.choices[0].message.content
-            print(f"Direct OpenAI evaluation response: {evaluation_response}")
+            log_debug(f"Direct OpenAI evaluation response: {evaluation_response}")
             
             # Parse JSON response
             try:
@@ -1972,7 +1956,7 @@ Answer with just JSON:
                 if start_idx >= 0 and end_idx > start_idx:
                     json_str = evaluation_response[start_idx:end_idx]
                     evaluation_result = json.loads(json_str)
-                    print(f"✅ Parsed evaluation result: {evaluation_result}")
+                    log_debug(f"Parsed evaluation result: {evaluation_result}")
                     
                     # Add default fields if missing from simplified response
                     if "retry_suggestion" not in evaluation_result:
@@ -1984,36 +1968,36 @@ Answer with just JSON:
                         
                     return evaluation_result
                 else:
-                    print(f"❌ No valid JSON found in evaluation response")
+                    log_error(f"No valid JSON found in evaluation response")
                     return {"is_successful": True, "reason": "Could not parse evaluation"}
                     
             except json.JSONDecodeError as e:
-                print(f"❌ JSON parsing error: {e}")
+                log_error(f"JSON parsing error: {e}")
                 return {"is_successful": True, "reason": "Could not parse evaluation"}
                 
         except Exception as e:
-            print(f"❌ Error during task evaluation: {e}")
+            log_error(f"Error during task evaluation: {e}")
             # Default to successful if evaluation fails to avoid blocking user
             return {"is_successful": True, "reason": f"Evaluation error: {str(e)}"}
 
     async def _log_evaluation_result(self, original_request: str, task_response: Task, agent_name: str):
         """Background evaluation for monitoring - doesn't affect user experience"""
         try:
-            print(f"[BACKGROUND] Running evaluation for monitoring...")
+            log_debug(f"[BACKGROUND] Running evaluation for monitoring...")
             evaluation = await self._evaluate_task_completion(original_request, task_response, agent_name)
             
             # Just log the results for monitoring/analytics
             if evaluation.get("is_successful", True):
-                print(f"✅ [BACKGROUND] Task evaluation: SUCCESS - {evaluation.get('reason', '')}")
+                log_debug(f"[BACKGROUND] Task evaluation: SUCCESS - {evaluation.get('reason', '')}")
             else:
-                print(f"⚠️ [BACKGROUND] Task evaluation: FAILED - {evaluation.get('reason', '')}")
-                print(f"💡 [BACKGROUND] Suggestion: {evaluation.get('retry_suggestion', 'None')}")
+                log_error(f"[BACKGROUND] Task evaluation: FAILED - {evaluation.get('reason', '')}")
+                log_debug(f"[BACKGROUND] Suggestion: {evaluation.get('retry_suggestion', 'None')}")
                 
             # Could store results for analytics dashboard
             # await self._store_evaluation_analytics(original_request, task_response, agent_name, evaluation)
             
         except Exception as e:
-            print(f"❌ [BACKGROUND] Evaluation error (non-blocking): {e}")
+            log_error(f"[BACKGROUND] Evaluation error (non-blocking): {e}")
             # Background evaluation errors don't affect user experience
 
 
@@ -2519,7 +2503,7 @@ Answer with just JSON:
             history = history[-self.last_host_turns :]
         session_context.host_turn_history = history
         
-        log_debug(f"📝 [Context] Updated host_turn_history with response from {agent_name} ({len(combined)} chars)")
+        log_debug(f"[Context] Updated host_turn_history with response from {agent_name} ({len(combined)} chars)")
         logger.debug(
             "[A2A] Cached host turn for agent %s (len=%d, history=%d)",
             agent_name,
@@ -2561,21 +2545,21 @@ Answer with just JSON:
                     # Check if search term is contained in agent name or vice versa
                     if search_lower in agent_name_lower or agent_name_lower in search_lower:
                         agent_config = agent
-                        print(f"🔍 [CATALOG_FALLBACK] Fuzzy match: '{agent_name}' -> '{agent.get('name')}'")
+                        log_debug(f"[CATALOG_FALLBACK] Fuzzy match: '{agent_name}' -> '{agent.get('name')}'")
                         break
                     # Also check for word overlap (e.g., "QuickBooks" matches "AI Foundry QuickBooks Agent")
                     search_words = set(search_lower.split())
                     agent_words = set(agent_name_lower.split())
                     if search_words & agent_words:  # If there's any word overlap
                         agent_config = agent
-                        print(f"🔍 [CATALOG_FALLBACK] Word match: '{agent_name}' -> '{agent.get('name')}'")
+                        log_debug(f"[CATALOG_FALLBACK] Word match: '{agent_name}' -> '{agent.get('name')}'")
                         break
-            
+
             if not agent_config:
-                print(f"🔍 [CATALOG_FALLBACK] Agent '{agent_name}' not found in catalog (tried fuzzy match)")
+                log_warning(f"[CATALOG_FALLBACK] Agent '{agent_name}' not found in catalog (tried fuzzy match)")
                 return False
-            
-            print(f"🔍 [CATALOG_FALLBACK] Found agent '{agent_config.get('name')}' in catalog: {agent_config.get('url')}")
+
+            log_debug(f"[CATALOG_FALLBACK] Found agent '{agent_config.get('name')}' in catalog: {agent_config.get('url')}")
             
             # Build AgentCard from catalog data
             skills = []
@@ -2616,11 +2600,11 @@ Answer with just JSON:
             # Register the agent card (this adds to self.cards and self.remote_agent_connections)
             self.register_agent_card(card)
             
-            print(f"✅ [CATALOG_FALLBACK] Registered agent '{agent_name}' from catalog")
+            log_debug(f"[CATALOG_FALLBACK] Registered agent '{agent_name}' from catalog")
             return True
             
         except Exception as e:
-            print(f"⚠️ [CATALOG_FALLBACK] Error loading agent '{agent_name}': {e}")
+            log_warning(f"[CATALOG_FALLBACK] Error loading agent '{agent_name}': {e}")
             return False
 
     async def send_message(
@@ -2679,7 +2663,7 @@ Answer with just JSON:
 
             # CHECK FOR CANCELLATION - bail early if workflow was cancelled
             if self.is_cancelled(session_context.contextId):
-                log_info(f"🛑 [SEND_MESSAGE] Workflow cancelled, skipping call to {agent_name}")
+                log_info(f"[SEND_MESSAGE] Workflow cancelled, skipping call to {agent_name}")
                 return ["[Workflow cancelled by user]"]
 
             # CRITICAL: DO NOT generate new contextId - it comes from the session_context
@@ -2698,17 +2682,17 @@ Answer with just JSON:
             # Check if agent exists - if not, try to load from global catalog
             # This enables workflows/scheduled workflows to call agents without session registration
             if agent_name not in self.remote_agent_connections:
-                print(f"🔍 [SEND_MESSAGE] Agent '{agent_name}' not in session, checking global catalog...")
+                log_debug(f"[SEND_MESSAGE] Agent '{agent_name}' not in session, checking global catalog...")
                 agent_loaded = await self._load_agent_from_catalog(agent_name)
                 if not agent_loaded:
                     available_agents = list(self.remote_agent_connections.keys())
-                    print(f"⚠️ [SEND_MESSAGE] Agent '{agent_name}' not found in session or catalog! Available: {available_agents}")
+                    log_warning(f"[SEND_MESSAGE] Agent '{agent_name}' not found in session or catalog! Available: {available_agents}")
                     raise ValueError(f"Agent '{agent_name}' not found. Available agents: {available_agents}")
-                print(f"✅ [SEND_MESSAGE] Agent '{agent_name}' loaded from catalog")
+                log_debug(f"[SEND_MESSAGE] Agent '{agent_name}' loaded from catalog")
             
             client = self.remote_agent_connections[agent_name]
             if not client:
-                print(f"⚠️ [SEND_MESSAGE] Client not available for {agent_name}")
+                log_warning(f"[SEND_MESSAGE] Client not available for {agent_name}")
                 raise ValueError(f"Client not available for {agent_name}")
 
             # Ensure message is clean text, not a JSON structure
@@ -2721,7 +2705,7 @@ Answer with just JSON:
                         for part in msg_obj['parts']:
                             if isinstance(part, dict) and part.get('kind') == 'text' and 'text' in part:
                                 clean_message = part['text']
-                                print(f"⚠️ Cleaned JSON message structure to text: {clean_message[:100]}...")
+                                log_warning(f"Cleaned JSON message structure to text: {clean_message[:100]}...")
                                 break
                 except:
                     pass  # Keep original if parsing fails
@@ -2735,9 +2719,9 @@ Answer with just JSON:
             )
             
             # Log the size of the contextualized message for debugging token usage
-            print(f"📏 [send_message] Message to {agent_name}: {len(contextualized_message)} chars (~{len(contextualized_message)//4} tokens)")
+            log_debug(f"[send_message] Message to {agent_name}: {len(contextualized_message)} chars (~{len(contextualized_message)//4} tokens)")
             if len(contextualized_message) > 500:
-                print(f"   Preview: {contextualized_message[:200]}...")
+                log_debug(f"Preview: {contextualized_message[:200]}...")
 
             # Respect any active cooldown for this agent due to throttling
             try:
@@ -2774,7 +2758,7 @@ Answer with just JSON:
             # The contextvar is set correctly in run_conversation_with_parts, but session_context
             # may have a stale contextId from a previous workflow when passed through function params
             contextId = _current_context_id.get() or session_context.contextId
-            print(f"🔗 [send_message] Using contextId: {contextId} (contextvar: {_current_context_id.get()}, session: {session_context.contextId})")
+            log_debug(f"[send_message] Using contextId: {contextId} (contextvar: {_current_context_id.get()}, session: {session_context.contextId})")
             messageId = str(uuid.uuid4())  # Generate fresh message ID for this specific call
 
             prepared_parts: List[Any] = [Part(root=TextPart(text=contextualized_message))]
@@ -2782,15 +2766,15 @@ Answer with just JSON:
             # EXPLICIT FILE ROUTING (Option 3): Construct parts from arguments
             # GPT-4 passes file_uris and video_metadata explicitly - no shared state needed
             log_foundry_debug(f"Before sending to {agent_name}:")
-            log_debug(f"  • file_uris: {file_uris}")
-            log_debug(f"  • video_metadata: {video_metadata}")
-            log_debug(f"  • agent_mode: {getattr(session_context, 'agent_mode', False)}")
+            log_debug(f"  file_uris: {file_uris}")
+            log_debug(f"  video_metadata: {video_metadata}")
+            log_debug(f"  agent_mode: {getattr(session_context, 'agent_mode', False)}")
 
             # Add FileParts from explicit file_uris (passed by GPT-4 from previous agent responses)
             # Look up stored metadata (name, role) to preserve info lost in URI-only routing
             uri_metadata = getattr(session_context, '_file_uri_metadata', {})
             if file_uris:
-                log_debug(f"📦 Adding {len(file_uris)} explicit file URIs for remote agent {agent_name}")
+                log_debug(f"Adding {len(file_uris)} explicit file URIs for remote agent {agent_name}")
                 for uri in file_uris:
                     if uri and isinstance(uri, str) and uri.startswith(('http://', 'https://')):
                         # Look up stored metadata by stripping SAS params
@@ -2820,12 +2804,12 @@ Answer with just JSON:
 
                         file_part = FilePart(**file_part_kwargs)
                         prepared_parts.append(Part(root=file_part))
-                        log_debug(f"  • Added FilePart: {file_name} ({mime_type}, role={stored_role})")
+                        log_debug(f"  Added FilePart: {file_name} ({mime_type}, role={stored_role})")
             
             # Add video metadata for remix operations (passed by GPT-4)
             if video_metadata and video_metadata.get('video_id'):
                 video_id = video_metadata['video_id']
-                log_debug(f"📹 Adding video_remix_request with video_id: {video_id}")
+                log_debug(f"Adding video_remix_request with video_id: {video_id}")
                 remix_data_part = DataPart(data={
                     "type": "video_remix_request",
                     "video_id": video_id
@@ -2845,8 +2829,8 @@ Answer with just JSON:
                 ),
             )
             
-            log_debug(f"🚀 Calling agent: {agent_name} with context: {contextId}, task_id: {taskId}")
-            print(f"🔍 [SEND_MESSAGE] taskId={taskId}, last_task_id={last_task_id}, last_task_state={last_task_state}")
+            log_debug(f"Calling agent: {agent_name} with context: {contextId}, task_id: {taskId}")
+            log_debug(f"[SEND_MESSAGE] taskId={taskId}, last_task_id={last_task_id}, last_task_state={last_task_state}")
             
             # Track start time for processing duration
             start_time = time.time()
@@ -2886,7 +2870,7 @@ Answer with just JSON:
                 def streaming_task_callback(event, agent_card):
                     """Enhanced callback for streaming execution that captures detailed agent activities"""
                     agent_name = agent_card.name
-                    log_debug(f"🎬 [streaming_task_callback] CALLED for {agent_name}: {type(event).__name__}")
+                    log_debug(f"[streaming_task_callback] CALLED for {agent_name}: {type(event).__name__}")
                     log_debug(f"[STREAMING] Detailed callback from {agent_name}: {type(event).__name__}")
                     
                     # ========================================================================
@@ -3061,19 +3045,19 @@ Answer with just JSON:
                 asyncio.create_task(self._emit_outgoing_message_event(agent_name, clean_message, contextId))
                 
                 response = await client.send_message(request, streaming_task_callback)
-                log_debug(f"✅ Agent {agent_name} responded successfully")
+                log_debug(f"Agent {agent_name} responded successfully")
                 
             except Exception as e:
-                log_debug(f"❌ Agent {agent_name} failed: {e}")
+                log_debug(f"Agent {agent_name} failed: {e}")
                 import traceback
-                log_debug(f"❌ Traceback: {traceback.format_exc()}")
+                log_debug(f"Traceback: {traceback.format_exc()}")
                 raise
             
             # Process response based on type
             if isinstance(response, Task):
                 task = response
-                print(f"📊 [TASK RESPONSE] Agent {agent_name} returned Task with state={task.status.state}")
-                log_debug(f"📊 Task response from {agent_name}: state={task.status.state if hasattr(task, 'status') else 'N/A'}")
+                log_debug(f"[TASK RESPONSE] Agent {agent_name} returned Task with state={task.status.state}")
+                log_debug(f"Task response from {agent_name}: state={task.status.state if hasattr(task, 'status') else 'N/A'}")
                 
                 # Update session context
                 context_id = get_context_id(task)
@@ -3097,9 +3081,9 @@ Answer with just JSON:
                 if task.status.state == TaskState.completed:
                     # IMPORTANT: Clear the task_id so future requests create new tasks
                     # The A2A protocol treats completed tasks as terminal - we can't reuse them
-                    print(f"🧹 [TASK COMPLETED] Clearing task_id and state for '{agent_name}'")
-                    print(f"   Before: agent_task_ids={dict(session_context.agent_task_ids)}")
-                    print(f"   Before: agent_task_states={dict(session_context.agent_task_states)}")
+                    log_debug(f"[TASK COMPLETED] Clearing task_id and state for '{agent_name}'")
+                    log_debug(f"Before: agent_task_ids={dict(session_context.agent_task_ids)}")
+                    log_debug(f"Before: agent_task_states={dict(session_context.agent_task_states)}")
                     if agent_name in session_context.agent_task_ids:
                         del session_context.agent_task_ids[agent_name]
                     if agent_name in session_context.agent_task_states:
@@ -3107,9 +3091,9 @@ Answer with just JSON:
                     # Clear from active tasks (cancellation tracking)
                     if contextId in self._active_agent_tasks:
                         self._active_agent_tasks[contextId].pop(agent_name, None)
-                    print(f"   After: agent_task_ids={dict(session_context.agent_task_ids)}")
-                    print(f"   After: agent_task_states={dict(session_context.agent_task_states)}")
-                    log_debug(f"🧹 Cleared completed task state for {agent_name} to allow new tasks")
+                    log_debug(f"After: agent_task_ids={dict(session_context.agent_task_ids)}")
+                    log_debug(f"After: agent_task_states={dict(session_context.agent_task_states)}")
+                    log_debug(f"Cleared completed task state for {agent_name} to allow new tasks")
                     
                     # Emit completed status for remote agent - the streaming callback doesn't always
                     # receive a final status-update event with state=completed from remote agents
@@ -3132,7 +3116,7 @@ Answer with just JSON:
                                         'completion_tokens': data.get('completion_tokens', 0),
                                         'total_tokens': data.get('total_tokens', 0)
                                     }
-                                    print(f"💰 [send_message] Token usage from {agent_name}: prompt={data.get('prompt_tokens', 0)}, completion={data.get('completion_tokens', 0)}, total={data.get('total_tokens', 0)}")
+                                    log_debug(f"[send_message] Token usage from {agent_name}: prompt={data.get('prompt_tokens', 0)}, completion={data.get('completion_tokens', 0)}, total={data.get('total_tokens', 0)}")
                                     break
                     
                     if task.status.message:
@@ -3166,7 +3150,7 @@ Answer with just JSON:
                                         file_name = getattr(file_obj, 'name', 'agent-artifact')
                                         mime_type = getattr(file_obj, 'mimeType', 'application/octet-stream')
                                         if file_uri.startswith(('http://', 'https://')):
-                                            log_debug(f"🎬 Emitting file artifact event for completed task: {file_name}")
+                                            log_debug(f"Emitting file artifact event for completed task: {file_name}")
                                             # Files are already in blob storage at uploads/{session_id}/
                                             
                                             # Determine if file will be auto-indexed via Content Understanding
@@ -3317,7 +3301,7 @@ Answer with just JSON:
                                 current_task_id = session_context.agent_task_ids.get(agent_name)
                                 session_context.pending_input_agent = agent_name
                                 session_context.pending_input_task_id = current_task_id
-                                log_info(f"🔄 [HITL] Retry task input_required from '{agent_name}', setting pending_input_agent (task_id: {current_task_id})")
+                                log_info(f"[HITL] Retry task input_required from '{agent_name}', setting pending_input_agent (task_id: {current_task_id})")
                                 
                                 if task2.status.message:
                                     retry_input = await self.convert_parts(task2.status.message.parts, tool_context)
@@ -3343,15 +3327,15 @@ Answer with just JSON:
                     # Without this, the A2A SDK rejects new messages with "Task is in terminal state: failed"
                     if agent_name in session_context.agent_task_ids:
                         del session_context.agent_task_ids[agent_name]
-                        log_debug(f"🧹 Cleared task_id for {agent_name} after failed task")
+                        log_debug(f"Cleared task_id for {agent_name} after failed task")
                     # Clear from active tasks (cancellation tracking)
                     if contextId in self._active_agent_tasks:
                         self._active_agent_tasks[contextId].pop(agent_name, None)
                     return [f"Agent {agent_name} failed to complete the task"]
 
                 elif task.status.state == TaskState.input_required:
-                    print(f"⚠️ [HITL] Agent {agent_name} requires input - SETTING pending_input_agent!")
-                    log_debug(f"⚠️ [STREAMING] Agent {agent_name} requires input")
+                    log_warning(f"[HITL] Agent {agent_name} requires input - SETTING pending_input_agent!")
+                    log_debug(f"[STREAMING] Agent {agent_name} requires input")
                     
                     # CRITICAL: Set pending_input_agent so the human response gets routed correctly
                     # The streaming callback also sets this, but we need it here as a fallback
@@ -3359,8 +3343,8 @@ Answer with just JSON:
                     current_task_id = session_context.agent_task_ids.get(agent_name)
                     session_context.pending_input_agent = agent_name
                     session_context.pending_input_task_id = current_task_id
-                    print(f"🔄 [HITL] Task response input_required from '{agent_name}', setting pending_input_agent='{agent_name}' (task_id: {current_task_id})")
-                    log_info(f"🔄 [HITL] Task response input_required from '{agent_name}', setting pending_input_agent (task_id: {current_task_id})")
+                    log_debug(f"[HITL] Task response input_required from '{agent_name}', setting pending_input_agent='{agent_name}'(task_id: {current_task_id})")
+                    log_info(f"[HITL] Task response input_required from '{agent_name}', setting pending_input_agent (task_id: {current_task_id})")
                     
                     if task.status.message:
                         response_parts = await self.convert_parts(task.status.message.parts, tool_context)
@@ -3468,7 +3452,7 @@ Answer with just JSON:
             top_k_results = 10
             # Use contextvar for async-safe context isolation (fixes stale session_context issue)
             effective_context_id = _current_context_id.get() or session_context.contextId
-            print(f"🔗 [_add_context_to_message] Using context_id: {effective_context_id} (contextvar: {_current_context_id.get()}, session: {session_context.contextId})")
+            log_debug(f"[_add_context_to_message] Using context_id: {effective_context_id} (contextvar: {_current_context_id.get()}, session: {session_context.contextId})")
             memory_results = await self._search_relevant_memory(
                 query=message,
                 context_id=effective_context_id,
@@ -3492,27 +3476,27 @@ Answer with just JSON:
                             if 'inbound_payload' in result and result['inbound_payload']:
                                 inbound = result['inbound_payload']
 
-                                print(f"[DEBUG MEMORY] Result {i} from {agent_name}:")
-                                print(f"[DEBUG MEMORY]   Inbound type: {type(inbound)}")
-                                print(f"[DEBUG MEMORY]   Inbound keys: {inbound.keys() if isinstance(inbound, dict) else 'N/A'}")
+                                log_memory_debug(f"[MEMORY] Result {i} from {agent_name}:")
+                                log_memory_debug(f"[MEMORY] Inbound type: {type(inbound)}")
+                                log_memory_debug(f"[MEMORY] Inbound keys: {inbound.keys() if isinstance(inbound, dict) else 'N/A'}")
 
                                 # Parse JSON string if needed
                                 if isinstance(inbound, str):
-                                    print(f"[DEBUG MEMORY]   Inbound is string, length: {len(inbound)} chars, parsing JSON...")
+                                    log_memory_debug(f"[MEMORY] Inbound is string, length: {len(inbound)} chars, parsing JSON...")
                                     try:
                                         inbound = json.loads(inbound)
-                                        print(f"[DEBUG MEMORY]   Parsed JSON keys: {inbound.keys() if isinstance(inbound, dict) else 'N/A'}")
+                                        log_memory_debug(f"[MEMORY] Parsed JSON keys: {inbound.keys() if isinstance(inbound, dict) else 'N/A'}")
                                     except json.JSONDecodeError as e:
-                                        print(f"[DEBUG MEMORY]   JSON parse failed: {e}")
+                                        log_memory_debug(f"[MEMORY] JSON parse failed: {e}")
                                         inbound = {}
 
                                 # Try direct content field (DocumentProcessor format)
                                 if isinstance(inbound, dict) and 'content' in inbound:
                                     content_length = len(str(inbound['content']))
-                                    print(f"[DEBUG MEMORY]   Found 'content' field: {content_length} chars")
+                                    log_memory_debug(f"[MEMORY] Found 'content' field: {content_length} chars")
                                     content_summary = str(inbound['content'])
-                                    print(f"[DEBUG MEMORY]   Content summary length: {len(content_summary)} chars")
-                                    print(f"[DEBUG MEMORY]   Content preview: {content_summary[:200]}...")
+                                    log_memory_debug(f"[MEMORY] Content summary length: {len(content_summary)} chars")
+                                    log_memory_debug(f"[MEMORY] Content preview: {content_summary[:200]}...")
 
                                 # Try Task structure: status.message.parts (A2A Task format)
                                 if not content_summary and isinstance(inbound, dict) and 'status' in inbound:
@@ -3572,7 +3556,7 @@ Answer with just JSON:
                             # Method 3: Skip - don't dump raw JSON, just skip if we can't extract text
                             if not content_summary:
                                 # Skip this memory result - we couldn't extract meaningful text
-                                print(f"⚠️ Skipping memory result {i} from {agent_name} - no clean text extracted")
+                                log_warning(f"Skipping memory result {i} from {agent_name} - no clean text extracted")
                                 continue
                             
                             # CLEANUP: Handle legacy malformed format {'result': '...'} stored in text field
@@ -3583,7 +3567,7 @@ Answer with just JSON:
                                     parsed = ast.literal_eval(content_summary) if content_summary.startswith("{'") else json.loads(content_summary)
                                     if isinstance(parsed, dict) and 'result' in parsed:
                                         content_summary = str(parsed['result'])
-                                        print(f"🔧 Cleaned malformed result format from memory entry {i}")
+                                        log_memory_debug(f"Cleaned malformed result format from memory entry {i}")
                                 except:
                                     pass  # Keep original if parsing fails
                             
@@ -3597,17 +3581,17 @@ Answer with just JSON:
                                     content_summary = content_summary[:max_chars] + "..."
                                 context_parts.append(f"  {i}. From {agent_name}: {content_summary}")
                             else:
-                                print(f"⚠️ No content found in memory result {i} from {agent_name}")
+                                log_warning(f"No content found in memory result {i} from {agent_name}")
                         
                         except Exception as e:
-                            print(f"⚠️ Error processing memory result {i}: {e}")
+                            log_warning(f"Error processing memory result {i}: {e}")
                             continue
                 
             else:
-                log_debug(f"🧠 No relevant memory context found")
+                log_debug(f"No relevant memory context found")
         
         except Exception as e:
-            print(f"❌ Error searching memory: {e}")
+            log_error(f"Error searching memory: {e}")
             context_parts.append("Note: Unable to retrieve relevant context from memory")
         
         # NOTE: host_turn_history injection has been removed.
@@ -3619,7 +3603,7 @@ Answer with just JSON:
         # Fallback: Add minimal recent thread context only if memory search failed
         if not context_parts and thread_id:
             try:
-                print(f"🧵 Fallback: Using recent thread context (memory search failed)")
+                log_debug("Fallback: Using recent thread context (memory search failed)")
                 messages = await self._http_list_messages(thread_id, limit=5)
                 
                 if messages and len(messages) > 0:
@@ -3632,9 +3616,9 @@ Answer with just JSON:
                                     role = msg.get('role', 'unknown')
                                     text = content['text']['value']
                                     context_parts.append(f"{role}: {text}")
-                print(f"🧵 Added {len(context_parts)-1} recent messages to context")
+                log_debug(f"Added {len(context_parts)-1} recent messages to context")
             except Exception as e:
-                print(f"❌ Error accessing thread context: {e}")
+                log_error(f"Error accessing thread context: {e}")
         
         # Combine context with original message
         # IMPORTANT: Ensure message is clean text, not JSON structure
@@ -3679,7 +3663,7 @@ Answer with just JSON:
                 context_id=context_id
             )
         except Exception as e:
-            print(f"❌ Background A2A interaction storage failed for {agent_name}: {e}")
+            log_error(f"Background A2A interaction storage failed for {agent_name}: {e}")
             # Don't let storage errors affect parallel execution
 
     async def _index_agent_file_artifacts(
@@ -3720,12 +3704,12 @@ Answer with just JSON:
             
             if file_ext in indexable_extensions:
                 files_to_index.append(artifact)
-                print(f"📄 Queuing for indexing: {file_name} ({artifact.get('mime_type', 'unknown')})")
+                log_debug(f"Queuing for indexing: {file_name} ({artifact.get('mime_type', 'unknown')})")
             else:
-                print(f"⏭️ Skipping non-document: {file_name} (not indexable)")
+                log_warning(f"Skipping non-document: {file_name} (not indexable)")
         
         if not files_to_index:
-            print(f"📭 No indexable documents from {agent_name}")
+            log_warning(f"No indexable documents from {agent_name}")
             return []
         
         # Emit orchestrator status - file received from agent
@@ -3744,7 +3728,7 @@ Answer with just JSON:
                 file_uri = artifact.get('uri', '')
                 file_name = artifact.get('name', 'unknown')
                 
-                print(f"📥 Downloading {file_name} from {file_uri[:50]}...")
+                log_debug(f"Downloading {file_name} from {file_uri[:50]}...")
                 
                 # Emit per-file extraction status
                 asyncio.create_task(self._emit_granular_agent_event(
@@ -3762,7 +3746,7 @@ Answer with just JSON:
                     response.raise_for_status()
                     file_bytes = response.content
                 
-                print(f"📄 Processing {file_name} ({len(file_bytes)} bytes)...")
+                log_debug(f"Processing {file_name} ({len(file_bytes)} bytes)...")
                 
                 # Process and index the file
                 result = await process_file_part(
@@ -3779,7 +3763,7 @@ Answer with just JSON:
                 if result and result.get('success'):
                     chunks_stored = result.get('chunks_stored', 0)
                     indexed_count += 1
-                    print(f"✅ Indexed {file_name}: {chunks_stored} chunks stored in memory")
+                    log_memory_debug(f"Indexed {file_name}: {chunks_stored} chunks stored in memory")
 
                     # Get the extracted content for display and for subsequent steps
                     extracted_content = result.get('content', '')
@@ -3795,7 +3779,7 @@ Answer with just JSON:
                         
                         # Emit detailed extraction result to orchestrator
                         extraction_message = f"📄 **Extracted from {file_name} (from {agent_name}):**\n\n{content_preview}\n\n---\n📊 Stored {chunks_stored} searchable chunks in memory"
-                        print(f"📤 [DOC_EXTRACTION] Emitting orchestrator extraction event: {len(content_preview)} chars")
+                        log_debug(f"[DOC_EXTRACTION] Emitting orchestrator extraction event: {len(content_preview)} chars")
                         asyncio.create_task(self._emit_granular_agent_event(
                             "foundry-host-agent",
                             extraction_message,
@@ -3804,7 +3788,7 @@ Answer with just JSON:
                             metadata={"phase": "document_extraction_complete", "file_name": file_name, "chunks": chunks_stored, "source_agent": agent_name}
                         ))
                     else:
-                        print(f"⚠️ [DOC_EXTRACTION] No extracted content from {file_name}")
+                        log_warning(f"[DOC_EXTRACTION] No extracted content from {file_name}")
                     
                     # Emit file_processing_completed event so frontend updates status to 'analyzed'
                     # This uses the same event type that the /api/files/process endpoint uses
@@ -3816,7 +3800,7 @@ Answer with just JSON:
                     ))
                 else:
                     error = result.get('error', 'Unknown error') if result else 'No result'
-                    print(f"⚠️ Failed to index {file_name}: {error}")
+                    log_error(f"Failed to index {file_name}: {error}")
                     # Emit file_processing_completed with 'error' status so UI updates
                     asyncio.create_task(self._emit_file_analyzed_event(
                         filename=file_name,
@@ -3827,9 +3811,7 @@ Answer with just JSON:
                     ))
                     
             except Exception as e:
-                print(f"❌ Error indexing {artifact.get('name', 'unknown')}: {e}")
-                import traceback
-                traceback.print_exc()
+                log_error(f"Error indexing {artifact.get('name', 'unknown')}: {e}")
                 # Emit file_processing_completed with 'error' status so UI updates
                 asyncio.create_task(self._emit_file_analyzed_event(
                     filename=artifact.get('name', 'unknown'),
@@ -3848,9 +3830,9 @@ Answer with just JSON:
                 event_type="info",
                 metadata={"phase": "document_indexing_complete", "indexed_count": indexed_count, "source_agent": agent_name}
             ))
-            print(f"🎉 Successfully indexed {indexed_count}/{len(files_to_index)} documents from {agent_name}")
+            log_debug(f"Successfully indexed {indexed_count}/{len(files_to_index)} documents from {agent_name}")
         else:
-            print(f"⚠️ No documents were successfully indexed from {agent_name}")
+            log_warning(f"No documents were successfully indexed from {agent_name}")
 
         return extracted_contents
 
@@ -3942,11 +3924,11 @@ Answer with just JSON:
                     }
                     
                     await streamer._send_event("a2a_payload", a2a_payload_event, context_id)
-                    log_debug(f"📡 [A2A PAYLOAD] Emitted A2A payload to WebSocket for {agent_name}")
+                    log_debug(f"[A2A PAYLOAD] Emitted A2A payload to WebSocket for {agent_name}")
                 else:
-                    log_debug("⚠️ WebSocket streamer not available for A2A payload emission")
+                    log_debug("WebSocket streamer not available for A2A payload emission")
             except Exception as ws_error:
-                log_debug(f"⚠️ Failed to emit A2A payload to WebSocket: {ws_error}")
+                log_debug(f"Failed to emit A2A payload to WebSocket: {ws_error}")
                 # Don't fail the entire storage operation if WebSocket emission fails
                 
         except Exception as e:
@@ -3966,7 +3948,7 @@ Answer with just JSON:
         artifact_info: Dict[int, Dict[str, str]] = None,
         session_context: Any = None
     ):
-        """Safe wrapper for User→Host memory storage that won't block conversation.
+        """Safe wrapper for User->Host memory storage that won't block conversation.
         
         NOTE: Respects the inter-agent memory toggle. If memory is disabled,
         this function returns early without storing anything.
@@ -3975,7 +3957,7 @@ Answer with just JSON:
         if session_context is not None:
             enable_memory = getattr(session_context, 'enable_inter_agent_memory', False)
             if not enable_memory:
-                log_debug(f"[Memory] Skipping User→Host interaction storage (memory disabled)")
+                log_debug(f"[Memory] Skipping User->Host interaction storage (memory disabled)")
                 return
         
         try:
@@ -3988,10 +3970,10 @@ Answer with just JSON:
                 artifact_info=artifact_info
             )
         except Exception as e:
-            print(f"❌ User→Host interaction storage failed: {e}")
+            log_error(f"User->Host interaction storage failed: {e}")
             log_error(f"Exception type: {type(e).__name__}")
             import traceback
-            print(f"Traceback: {traceback.format_exc()}")
+            log_debug(f"Traceback: {traceback.format_exc()}")
 
     async def _store_user_host_interaction(
         self,
@@ -4003,7 +3985,7 @@ Answer with just JSON:
         artifact_info: Dict[int, Dict[str, str]] = None
     ):
         """
-        Store User→Host A2A protocol exchange for memory/search.
+        Store User->Host A2A protocol exchange for memory/search.
         
         KEY FIX: Skip Message objects in response list - they contain FileParts
         which are handled separately and can't be JSON serialized directly.
@@ -4142,7 +4124,7 @@ Answer with just JSON:
             List of response strings from the host agent
         """
         """Run conversation with A2A message parts (including files)."""
-        print(f"🔍 [ENTRY DEBUG] run_conversation_with_parts: workflow={workflow}, available_workflows={available_workflows}", flush=True)
+        log_debug(f"[ENTRY DEBUG] run_conversation_with_parts: workflow={workflow}, available_workflows={available_workflows}")
         log_debug(f"ENTRY: run_conversation_with_parts called with {len(message_parts) if message_parts else 0} parts")
         try:
             log_debug(f"Step: About to create tracer span...")
@@ -4156,14 +4138,14 @@ Answer with just JSON:
                 log_debug(f"Step: Set span attribute")
             log_debug(f"run_conversation_with_parts: {len(message_parts)} parts")
             
-            log_debug(f"🔍 [run_conversation_with_parts] ENTRY - context_id param: {context_id}")
+            log_debug(f"[run_conversation_with_parts] ENTRY - context_id param: {context_id}")
             
             # CRITICAL: context_id must be provided by caller (foundry_host_manager.process_message)
             # It should NEVER be None - if it is, that's a bug in the caller
             if not context_id:
                 raise ValueError(f"context_id is required but was None or empty. This is a bug - foundry_host_manager should always provide context_id")
             
-            log_debug(f"🔍 [run_conversation_with_parts] Using context_id: {context_id}")
+            log_debug(f"[run_conversation_with_parts] Using context_id: {context_id}")
             
             # Clear any previous cancellation flag - new message starts fresh
             self.clear_cancellation(context_id)
@@ -4173,7 +4155,7 @@ Answer with just JSON:
             # between concurrent workflows. Also keep instance variable for backwards compat.
             _current_context_id.set(context_id)
             self._current_host_context_id = context_id
-            log_debug(f"🔍 [run_conversation_with_parts] SET context_id (contextvar + instance) to: {context_id}")
+            log_debug(f"[run_conversation_with_parts] SET context_id (contextvar + instance) to: {context_id}")
             
             # Extract text message for thread
             log_debug(f"Step: About to extract text message...")
@@ -4187,10 +4169,10 @@ Answer with just JSON:
             # Store the original user message for HITL resumption
             # This allows send_message_sync to save the goal when an agent returns input_required
             self._current_user_message = user_message
-            log_debug(f"💾 [HITL] Stored _current_user_message for potential HITL resumption")
+            log_debug(f"[HITL] Stored _current_user_message for potential HITL resumption")
             
             log_debug(f"Extracted user message: {user_message}")
-            print(f"Processing {len(message_parts)} parts including files")
+            log_debug(f"Processing {len(message_parts)} parts including files")
             
             # Persist user message to chat history database
             try:
@@ -4212,7 +4194,7 @@ Answer with just JSON:
                     "metadata": {"type": "user_message"}
                 })
             except Exception as e:
-                print(f"[ChatHistory] Error persisting user message: {e}")
+                log_debug(f"[ChatHistory] Error persisting user message: {e}")
             
             # Ensure agent is created (may be lazy creation if startup creation failed)
             log_debug(f"Step: About to ensure agent exists...")
@@ -4220,7 +4202,7 @@ Answer with just JSON:
             if self.agent:
                 log_foundry_debug(f"Agent ready with model: {self.model_name}")
             else:
-                print("⚠️ Agent not created at startup, creating now (lazy creation)...")
+                log_warning("Agent not created at startup, creating now (lazy creation)...")
                 log_foundry_debug(f"Calling create_agent()...")
                 await self.create_agent()
                 log_foundry_debug(f"create_agent() completed")
@@ -4270,7 +4252,7 @@ Answer with just JSON:
                         )
                     log_foundry_debug(f"File processing status emitted successfully")
                 except Exception as e:
-                    log_foundry_debug(f"❌ Exception emitting file processing status: {e}")
+                    log_foundry_debug(f"Exception emitting file processing status: {e}")
                     # Don't let status emission failures stop the main flow
             
             log_foundry_debug(f"PART: About to process {len(message_parts)} parts:")
@@ -4294,9 +4276,9 @@ Answer with just JSON:
                             log_foundry_debug(f"PART: convert_part result for part {i}: {type(processed_result)} - {str(processed_result)[:120]}...")
                         processed_parts.append(processed_result)
                 except Exception as e:
-                    print(f"❌ CRITICAL ERROR in convert_part for part {i}: {e}")
+                    log_error(f"CRITICAL ERROR in convert_part for part {i}: {e}")
                     import traceback
-                    print(f"❌ CONVERT_PART TRACEBACK: {traceback.format_exc()}")
+                    log_error(f"CONVERT_PART TRACEBACK: {traceback.format_exc()}")
                     raise
             
             log_debug(f"Processed {len(processed_parts)} parts")
@@ -4309,7 +4291,7 @@ Answer with just JSON:
             # NOTE: No longer storing parts in _latest_processed_parts (EXPLICIT FILE ROUTING)
             # GPT-4 now routes files explicitly via file_uris parameter in send_message calls
             session_context._agent_generated_artifacts = []
-            log_debug(f"📦 Prepared {len(prepared_parts_for_agents)} parts (explicit routing via file_uris)")
+            log_debug(f"Prepared {len(prepared_parts_for_agents)} parts (explicit routing via file_uris)")
             
             # If files were processed, include information about them in the message
             # EXPLICIT FILE ROUTING: Include URIs so GPT-4 can pass them to agents
@@ -4335,7 +4317,7 @@ Answer with just JSON:
                             extracted = result.data['extracted_content']
                             formatted_content = f"\n\n--- Extracted from {file_name} ---\n{extracted}\n--- End of {file_name} ---\n"
                             file_contents.append(formatted_content)
-                            print(f"📄 Added extracted content to message: {len(extracted)} characters from {file_name}")
+                            log_debug(f"Added extracted content to message: {len(extracted)} characters from {file_name}")
 
                 elif isinstance(result, FilePart) or (isinstance(result, Part) and isinstance(getattr(result, 'root', None), FilePart)):
                     # FileParts that passed through convert_part (already had HTTP URIs)
@@ -4350,11 +4332,11 @@ Answer with just JSON:
                             entry["role"] = str(fp_role).lower()
                         file_uris_for_gpt4.append(entry)
                         file_info.append(f"File uploaded: {fp_name}")
-                        log_debug(f"📎 Captured passthrough FilePart URI for GPT-4: {fp_name} (role={fp_role})")
+                        log_debug(f"Captured passthrough FilePart URI for GPT-4: {fp_name} (role={fp_role})")
 
                 elif isinstance(result, str) and result.startswith("File:") and "Content:" in result:
                     # Legacy format - this is processed file content from uploaded files
-                    print(f"📄 Found processed file content (legacy format): {len(result)} characters")
+                    log_debug(f"Found processed file content (legacy format): {len(result)} characters")
                     file_contents.append(result)
             
             # Store URI→metadata mapping so send_message can restore roles and filenames
@@ -4371,7 +4353,7 @@ Answer with just JSON:
                         "role": entry.get("role"),
                     }
             if session_context._file_uri_metadata:
-                log_debug(f"📎 Stored URI metadata for {len(session_context._file_uri_metadata)} files: {list(session_context._file_uri_metadata.values())}")
+                log_debug(f"Stored URI metadata for {len(session_context._file_uri_metadata)} files: {list(session_context._file_uri_metadata.values())}")
 
             # Emit completion status if files were processed
             if file_count > 0 and (file_info or file_contents):
@@ -4412,7 +4394,7 @@ Answer with just JSON:
                     if uri:
                         image_uris_for_vision.append(uri)
             if image_uris_for_vision:
-                log_debug(f"🖼️ Collected {len(image_uris_for_vision)} image(s) for GPT-4o vision input")
+                log_debug(f"Collected {len(image_uris_for_vision)} image(s) for GPT-4o vision input")
                 # Process images through content understanding and store in memory
                 # This makes image content available to remote agents via search_memory
                 session_id = get_tenant_from_context(context_id) if context_id else None
@@ -4432,9 +4414,9 @@ Answer with just JSON:
                                     content = processing_result.get("content", "")
                                     if content:
                                         image_descriptions.append(f"\n\n--- Image description: {img_name} ---\n{content}\n--- End of {img_name} ---\n")
-                                        log_debug(f"🖼️ Processed image for memory: {img_name} ({len(content)} chars)")
+                                        log_debug(f"Processed image for memory: {img_name} ({len(content)} chars)")
                             except Exception as e:
-                                log_debug(f"⚠️ Image content understanding failed for {img_name}: {e}")
+                                log_debug(f"Image content understanding failed for {img_name}: {e}")
                 if image_descriptions:
                     enhanced_message = f"{enhanced_message}\n\n{''.join(image_descriptions)}"
 
@@ -4449,8 +4431,8 @@ Answer with just JSON:
             if session_context.pending_input_agent:
                 pending_agent = session_context.pending_input_agent
                 pending_task_id = session_context.pending_input_task_id
-                print(f"🔄 [HITL RESUME] Detected pending_input_agent='{pending_agent}', skipping routing")
-                log_info(f"🔄 [HITL RESUME] Detected pending_input_agent='{pending_agent}', routing directly to agent")
+                log_warning(f"[HITL RESUME] Detected pending_input_agent='{pending_agent}', skipping routing")
+                log_info(f"[HITL RESUME] Detected pending_input_agent='{pending_agent}', routing directly to agent")
                 await self._emit_granular_agent_event(
                     "foundry-host-agent", f"Resuming with your input...", context_id,
                     event_type="phase", metadata={"phase": "hitl_resume", "agent": pending_agent}
@@ -4465,9 +4447,9 @@ Answer with just JSON:
                         context_id, 
                         pending_task_id or str(uuid.uuid4())
                     ))
-                    log_info(f"📤 [HITL RESUME] Emitted 'completed' status for {pending_agent} to clear Waiting state")
+                    log_info(f"[HITL RESUME] Emitted 'completed'status for {pending_agent} to clear Waiting state")
                 except Exception as e:
-                    log_debug(f"⚠️ [HITL RESUME] Failed to emit completed status: {e}")
+                    log_debug(f"[HITL RESUME] Failed to emit completed status: {e}")
                 
                 # CRITICAL FIX: Do NOT create a synthetic one-step workflow here!
                 # The workflow was already restored from the saved plan by foundry_host_manager.py
@@ -4476,10 +4458,10 @@ Answer with just JSON:
                 # If no workflow was passed in (edge case), use the saved plan's workflow
                 if not workflow and session_context.current_plan and session_context.current_plan.workflow:
                     workflow = session_context.current_plan.workflow
-                    log_info(f"🔄 [HITL RESUME] Restored workflow from saved plan ({len(workflow)} chars)")
+                    log_info(f"[HITL RESUME] Restored workflow from saved plan ({len(workflow)} chars)")
                 if not workflow_goal and session_context.current_plan and session_context.current_plan.workflow_goal:
                     workflow_goal = session_context.current_plan.workflow_goal
-                    log_info(f"🔄 [HITL RESUME] Restored workflow_goal from saved plan")
+                    log_info(f"[HITL RESUME] Restored workflow_goal from saved plan")
                 
                 # CRITICAL: Mark the input_required task as completed now that user has responded
                 # This ensures the orchestrator knows to skip this step when resuming
@@ -4490,7 +4472,7 @@ Answer with just JSON:
                             task.output = {"result": f"HITL Response: {enhanced_message[:200]}"}
                             from datetime import datetime, timezone
                             task.updated_at = datetime.now(timezone.utc)
-                            log_info(f"✅ [HITL RESUME] Marked task '{task.task_description[:50]}...' as completed")
+                            log_info(f"[HITL RESUME] Marked task '{task.task_description[:50]}...'as completed")
                             break  # Only mark the first input_required task
                 
                 # SYNTHETIC WORKFLOW DETECTION: Workflows auto-generated for single-agent routing
@@ -4504,13 +4486,13 @@ Answer with just JSON:
                         lines = [l for l in workflow_stripped.split('\n') if l.strip()]
                         if len(lines) == 1:
                             is_synthetic_single_step = True
-                            log_info(f"🔄 [HITL RESUME] Detected synthetic single-step workflow - treating as non-workflow HITL")
+                            log_info(f"[HITL RESUME] Detected synthetic single-step workflow - treating as non-workflow HITL")
                             workflow = None  # Clear workflow so it uses non-workflow path
                 
                 # Check if we have a workflow - if not, just acknowledge the HITL response
                 if not workflow:
-                    print(f"🔄 [HITL RESUME] No workflow - HITL completed, acknowledging response")
-                    log_info(f"🔄 [HITL RESUME] No workflow context - just acknowledging HITL response")
+                    log_warning(f"[HITL RESUME] No workflow - HITL completed, acknowledging response")
+                    log_info(f"[HITL RESUME] No workflow context - just acknowledging HITL response")
                     
                     # Clear the pending_input_agent
                     session_context.pending_input_agent = None
@@ -4525,18 +4507,18 @@ Answer with just JSON:
                         event_type="info", metadata={"hitl_ack": True, "agent": pending_agent}
                     )
                     
-                    log_info(f"✅ [HITL RESUME] Non-workflow HITL completed, acknowledged response")
+                    log_info(f"[HITL RESUME] Non-workflow HITL completed, acknowledged response")
                     return [ack_message]
                 else:
                     # We have a workflow - enable agent mode for orchestration
                     agent_mode = True
-                    log_info(f"🔄 [HITL RESUME] Using workflow with {len(workflow)} chars (continuing orchestration)")
+                    log_info(f"[HITL RESUME] Using workflow with {len(workflow)} chars (continuing orchestration)")
                 
                 # Clear the pending_input_agent so subsequent requests don't loop
                 # (The agent will set it again if it needs more input)
                 session_context.pending_input_agent = None
                 session_context.pending_input_task_id = None
-                log_info(f"🧹 [HITL RESUME] Cleared pending_input_agent after routing")
+                log_info(f"[HITL RESUME] Cleared pending_input_agent after routing")
             
             # =====================================================================
             # MULTI-WORKFLOW ROUTING: LLM selects best approach when multiple workflows available
@@ -4544,10 +4526,10 @@ Answer with just JSON:
             # Track selected workflow metadata for run history (initialized here, may be set during routing)
             selected_workflow_metadata = None
             
-            print(f"🔍 [DEBUG] available_workflows = {available_workflows}, workflow = {workflow}", flush=True)
+            log_debug(f"[DEBUG] available_workflows = {available_workflows}, workflow = {workflow}")
             if available_workflows and len(available_workflows) > 0 and not workflow:
-                print(f"🔀 [Multi-Workflow] {len(available_workflows)} workflows available, invoking intelligent routing")
-                log_debug(f"🔀 [Multi-Workflow] {len(available_workflows)} workflows available, invoking intelligent routing")
+                log_debug(f"[Multi-Workflow] {len(available_workflows)} workflows available, invoking intelligent routing")
+                log_debug(f"[Multi-Workflow] {len(available_workflows)} workflows available, invoking intelligent routing")
                 await self._emit_granular_agent_event(
                     "foundry-host-agent", f"Analyzing request against {len(available_workflows)} available workflows...", context_id,
                     event_type="phase", metadata={"phase": "routing", "workflow_count": len(available_workflows)}
@@ -4560,9 +4542,9 @@ Answer with just JSON:
                         context_id=context_id
                     )
                     
-                    print(f"🔀 [Route] Decision: approach={route_selection.approach}, workflow={route_selection.selected_workflow}, workflows={route_selection.selected_workflows}, agent={getattr(route_selection, 'selected_agent', None)}, confidence={route_selection.confidence:.2f}")
-                    print(f"🔀 [Route] Reasoning: {route_selection.reasoning}")
-                    log_debug(f"🔀 [Route] Decision: {route_selection.approach} (confidence: {route_selection.confidence})")
+                    log_debug(f"[Route] Decision: approach={route_selection.approach}, workflow={route_selection.selected_workflow}, workflows={route_selection.selected_workflows}, agent={getattr(route_selection, 'selected_agent', None)}, confidence={route_selection.confidence:.2f}")
+                    log_debug(f"[Route] Reasoning: {route_selection.reasoning}")
+                    log_debug(f"[Route] Decision: {route_selection.approach} (confidence: {route_selection.confidence})")
                     
                     if route_selection.approach == "workflow" and route_selection.selected_workflow:
                         # Find the selected workflow from available_workflows (case-insensitive match)
@@ -4584,7 +4566,7 @@ Answer with just JSON:
                                 'name': selected_wf.get('name', ''),
                                 'goal': selected_wf.get('goal', '')
                             }
-                            log_debug(f"🔀 [Multi-Workflow] Selected workflow: {route_selection.selected_workflow}")
+                            log_debug(f"[Multi-Workflow] Selected workflow: {route_selection.selected_workflow}")
                             await self._emit_granular_agent_event(
                                 "foundry-host-agent", f"🔄 Route Decision: Using WORKFLOW '{route_selection.selected_workflow}'", context_id,
                                 event_type="info", metadata={"route": "workflow", "workflow_name": route_selection.selected_workflow}
@@ -4598,7 +4580,7 @@ Answer with just JSON:
                         # Note: asyncio is already imported at module level
                         
                         parallel_workflow_names = route_selection.selected_workflows
-                        log_debug(f"🔀 [Multi-Workflow] Parallel execution of {len(parallel_workflow_names)} workflows: {parallel_workflow_names}")
+                        log_debug(f"[Multi-Workflow] Parallel execution of {len(parallel_workflow_names)} workflows: {parallel_workflow_names}")
                         await self._emit_granular_agent_event(
                             "foundry-host-agent", f"Executing {len(parallel_workflow_names)} workflows in parallel...", context_id,
                             event_type="phase", metadata={"phase": "parallel_workflows", "workflow_count": len(parallel_workflow_names)}
@@ -4644,7 +4626,7 @@ Answer with just JSON:
                                     return [f"Error in {wf_name_str}: {str(wf_err)}"]
                             
                             # Run all workflows in parallel
-                            print(f"🔀 [Multi-Workflow] Launching {len(parallel_workflows)} workflows in parallel")
+                            log_debug(f"[Multi-Workflow] Launching {len(parallel_workflows)} workflows in parallel")
                             parallel_results = await asyncio.gather(
                                 *[execute_single_workflow(wf) for wf in parallel_workflows],
                                 return_exceptions=True
@@ -4664,7 +4646,7 @@ Answer with just JSON:
                             
                             # Return combined response directly
                             combined_response = "\n\n---\n\n".join(all_parallel_outputs)
-                            print(f"✅ [Multi-Workflow] Parallel execution complete - {len(parallel_workflows)} workflows")
+                            log_debug(f"[Multi-Workflow] Parallel execution complete - {len(parallel_workflows)} workflows")
                             await self._emit_granular_agent_event(
                                 "foundry-host-agent", "All parallel workflows completed", context_id,
                                 event_type="phase", metadata={"phase": "complete", "parallel_workflows": True}
@@ -4689,7 +4671,7 @@ Answer with just JSON:
                     elif route_selection.approach == "single_agent" and route_selection.selected_agent:
                         # Direct call to a single agent - use orchestration but targeted
                         single_agent_name = route_selection.selected_agent
-                        log_debug(f"🔀 [Route Selection] Using single agent: {single_agent_name}")
+                        log_debug(f"[Route Selection] Using single agent: {single_agent_name}")
                         await self._emit_granular_agent_event(
                             "foundry-host-agent", f"🔄 Route Decision: Direct call to AGENT '{single_agent_name}'", context_id,
                             event_type="info", metadata={"route": "single_agent", "agent_name": single_agent_name}
@@ -4705,7 +4687,7 @@ Answer with just JSON:
                         
                         # If not in session, try to load from catalog
                         if not agent_exists:
-                            log_debug(f"🔍 [Single Agent] Agent '{single_agent_name}' not in session, checking catalog...")
+                            log_debug(f"[Single Agent] Agent '{single_agent_name}'not in session, checking catalog...")
                             agent_loaded = await self._load_agent_from_catalog(single_agent_name)
                             if agent_loaded:
                                 agent_exists = True
@@ -4714,7 +4696,7 @@ Answer with just JSON:
                                     if card.name.lower().strip() == single_agent_name.lower().strip():
                                         single_agent_name = card.name
                                         break
-                                log_debug(f"✅ [Single Agent] Loaded agent '{single_agent_name}' from catalog")
+                                log_debug(f"[Single Agent] Loaded agent '{single_agent_name}'from catalog")
                         
                         if agent_exists:
                             # Use agent mode orchestration WITHOUT a synthetic workflow
@@ -4723,10 +4705,10 @@ Answer with just JSON:
                             agent_mode = True
                             workflow = None  # Don't create synthetic workflow - causes HITL issues
                             workflow_goal = None
-                            log_debug(f"🎯 [Single Agent] Using agent mode for {single_agent_name} (no synthetic workflow)")
+                            log_debug(f"[Single Agent] Using agent mode for {single_agent_name} (no synthetic workflow)")
                         else:
                             # Agent not found even in catalog - give clear error
-                            log_error(f"[Single Agent] Agent '{single_agent_name}' not found in session or catalog")
+                            log_error(f"[Single Agent] Agent '{single_agent_name}'not found in session or catalog")
                             await self._emit_granular_agent_event(
                                 "foundry-host-agent", f"⚠️ Agent '{single_agent_name}' not available", context_id,
                                 event_type="agent_error", metadata={"agent_name": single_agent_name}
@@ -4747,7 +4729,7 @@ Answer with just JSON:
                         agent_mode = True
                         workflow = None
                         workflow_goal = None  # Clear workflow_goal so orchestrator uses user's message
-                        log_debug(f"🔀 [Route Selection] Using multi-agent orchestration")
+                        log_debug(f"[Route Selection] Using multi-agent orchestration")
                         await self._emit_granular_agent_event(
                             "foundry-host-agent", "🔄 Route Decision: Using MULTI-AGENT orchestration", context_id,
                             event_type="info", metadata={"route": "multi_agent"}
@@ -4758,7 +4740,7 @@ Answer with just JSON:
                         agent_mode = False
                         workflow = None
                         workflow_goal = None  # Clear workflow_goal
-                        log_debug(f"🔀 [Multi-Workflow] Using direct response (no orchestration)")
+                        log_debug(f"[Multi-Workflow] Using direct response (no orchestration)")
                         await self._emit_granular_agent_event(
                             "foundry-host-agent", "🔄 Route Decision: Direct response (no agents needed)", context_id,
                             event_type="info", metadata={"route": "direct"}
@@ -4778,7 +4760,7 @@ Answer with just JSON:
             
             if use_orchestration:
                 mode_type = "Workflow" if (workflow and workflow.strip()) else "Agent"
-                log_debug(f"🎯 [{mode_type} Mode] Using orchestration loop (workflow={bool(workflow)}, agent_mode={agent_mode}, workflow_goal={workflow_goal[:50] if workflow_goal else None})")
+                log_debug(f"[{mode_type} Mode] Using orchestration loop (workflow={bool(workflow)}, agent_mode={agent_mode}, workflow_goal={workflow_goal[:50] if workflow_goal else None})")
                 await self._emit_granular_agent_event(
                     "foundry-host-agent", "Starting orchestration...", context_id,
                     event_type="phase", metadata={"phase": "orchestration_start"}
@@ -4786,9 +4768,9 @@ Answer with just JSON:
                 
                 # Debug: Log agent count before orchestration
                 cards_count = len(self.cards) if hasattr(self, 'cards') and self.cards else 0
-                print(f"🔍 [DEBUG] Cards available before orchestration: {cards_count}")
+                log_debug(f"[DEBUG] Cards available before orchestration: {cards_count}")
                 if cards_count > 0:
-                    print(f"🔍 [DEBUG] Card names: {list(self.cards.keys())[:5]}...")
+                    log_debug(f"[DEBUG] Card names: {list(self.cards.keys())[:5]}...")
                 
                 # Use agent mode orchestration loop
                 try:
@@ -4810,8 +4792,8 @@ Answer with just JSON:
                     # return only the HITL agent's message (the last output).
                     # =========================================================
                     if session_context.current_plan is not None:
-                        print(f"⏸️ [HITL PAUSE] Detected saved plan - workflow paused for human input")
-                        log_info(f"⏸️ [HITL PAUSE] Plan saved for resume, returning HITL response only")
+                        log_debug(f"[HITL PAUSE] Detected saved plan - workflow paused for human input")
+                        log_info(f"[HITL PAUSE] Plan saved for resume, returning HITL response only")
                         
                         # Show the message that was sent (so user knows what they're approving)
                         # Plus a clear status indicator that we're waiting
@@ -4820,7 +4802,7 @@ Answer with just JSON:
                         
                         # Build response: show what was sent + status
                         hitl_message = f"{agent_output}\n\n⏸️ **Workflow paused** - waiting for your response in {pending_agent.replace(' Agent', '')}."
-                        log_info(f"⏸️ [HITL PAUSE] Returning HITL message with agent output")
+                        log_info(f"[HITL PAUSE] Returning HITL message with agent output")
                         final_responses = [hitl_message]
                         
                         # Persist the HITL waiting message to chat history
@@ -4832,7 +4814,7 @@ Answer with just JSON:
                                     plan_data = session_context.current_plan.model_dump(mode='json', exclude_none=True)
                                     message_metadata["workflow_plan"] = plan_data
                                 except Exception as plan_err:
-                                    print(f"[ChatHistory] Warning - could not serialize plan: {plan_err}")
+                                    log_warning(f"[ChatHistory] Warning - could not serialize plan: {plan_err}")
                             
                             persist_message(context_id, {
                                 "messageId": str(uuid.uuid4()),
@@ -4842,17 +4824,17 @@ Answer with just JSON:
                                 "metadata": message_metadata
                             })
                         except Exception as e:
-                            print(f"[ChatHistory] Error persisting HITL response: {e}")
+                            log_debug(f"[ChatHistory] Error persisting HITL response: {e}")
                         
-                        log_debug(f"⏸️ [HITL PAUSE] Returning early, workflow will resume on next message")
+                        log_debug(f"[HITL PAUSE] Returning early, workflow will resume on next message")
                         return final_responses
                     
                     # =========================================================
                     # CANCELLATION CHECK: If workflow was cancelled, skip synthesis
                     # =========================================================
                     if self.is_cancelled(context_id):
-                        log_info(f"🛑 [CANCEL] Workflow cancelled - skipping LLM synthesis, returning silent cancel")
-                        print(f"🛑 [CANCEL] Workflow cancelled - skipping synthesis")
+                        log_info(f"[CANCEL] Workflow cancelled - skipping LLM synthesis, returning silent cancel")
+                        log_warning(f"[CANCEL] Workflow cancelled - skipping synthesis")
 
                         # Emit a cancelled event so frontend knows
                         await self._emit_granular_agent_event(
@@ -4872,7 +4854,7 @@ Answer with just JSON:
                                 try:
                                     plan_data = session_context.current_plan.model_dump(mode='json', exclude_none=True)
                                 except Exception as plan_err:
-                                    print(f"[ChatHistory] Warning - could not serialize plan for cancel: {plan_err}")
+                                    log_warning(f"[ChatHistory] Warning - could not serialize plan for cancel: {plan_err}")
                             if plan_data is None:
                                 plan_data = self._cancelled_plan_snapshots.pop(context_id, None)
                             if plan_data:
@@ -4887,7 +4869,7 @@ Answer with just JSON:
                                 "metadata": cancel_metadata
                             })
                         except Exception as e:
-                            print(f"[ChatHistory] Error persisting cancel message: {e}")
+                            log_debug(f"[ChatHistory] Error persisting cancel message: {e}")
 
                         # Clear the cancellation token so next message works fresh
                         self.clear_cancellation(context_id)
@@ -4896,8 +4878,8 @@ Answer with just JSON:
 
                     # WORKFLOW MODE: Synthesize outputs into a clean executive summary
                     # The orchestration loop has executed all workflow steps in order
-                    print(f"✅ [Workflow Mode] Workflow completed - {len(orchestration_outputs)} task outputs")
-                    log_debug(f"✅ [Workflow Mode] All workflow steps completed, synthesizing summary")
+                    log_debug(f"[Workflow Mode] Workflow completed - {len(orchestration_outputs)} task outputs")
+                    log_debug(f"[Workflow Mode] All workflow steps completed, synthesizing summary")
 
                     # Use LLM to synthesize a clean, professional summary from raw agent outputs
                     if orchestration_outputs:
@@ -4969,12 +4951,12 @@ WORKFLOW STEPS AND OUTPUTS:
                             if not combined_response.strip():
                                 # Fallback if synthesis returned empty
                                 combined_response = "\n\n".join(orchestration_outputs)
-                                log_debug(f"⚠️ [Workflow Mode] Synthesis returned empty, using raw outputs")
+                                log_debug(f"[Workflow Mode] Synthesis returned empty, using raw outputs")
                             else:
-                                log_debug(f"✅ [Workflow Mode] LLM synthesis: {len(combined_response)} chars from {len(orchestration_outputs)} outputs")
+                                log_debug(f"[Workflow Mode] LLM synthesis: {len(combined_response)} chars from {len(orchestration_outputs)} outputs")
                         
                         except Exception as synth_err:
-                            log_error(f"⚠️ [Workflow Mode] Synthesis failed ({synth_err}), using raw outputs")
+                            log_error(f"[Workflow Mode] Synthesis failed ({synth_err}), using raw outputs")
                             combined_response = "\n\n".join(orchestration_outputs)
                     else:
                         combined_response = "Workflow completed successfully."
@@ -5021,7 +5003,7 @@ WORKFLOW STEPS AND OUTPUTS:
                                     messageId=str(uuid.uuid4()),
                                 )
                                 final_responses.append(combined_message)
-                                log_debug(f"📦 [Workflow Mode] Including {len(artifact_file_parts)} artifact(s) in persisted response")
+                                log_debug(f"[Workflow Mode] Including {len(artifact_file_parts)} artifact(s) in persisted response")
                     
                     # Record workflow run in history (for on-demand runs via routing)
                     if selected_workflow_metadata:
@@ -5042,12 +5024,12 @@ WORKFLOW STEPS AND OUTPUTS:
                                 completed_at=None,
                                 execution_time=None
                             )
-                            log_debug(f"📋 [Run History] Recorded on-demand workflow run: {selected_workflow_metadata.get('name')}")
+                            log_debug(f"[Run History] Recorded on-demand workflow run: {selected_workflow_metadata.get('name')}")
                         except Exception as history_err:
                             log_error(f"[Run History] Failed to record workflow run: {history_err}")
                     
                     # Store the interaction and return
-                    log_debug("About to store User→Host interaction for context_id: {context_id}")
+                    log_debug("About to store User->Host interaction for context_id: {context_id}")
                     await self._store_user_host_interaction_safe(
                         user_message_parts=message_parts,
                         user_message_text=enhanced_message,
@@ -5068,7 +5050,7 @@ WORKFLOW STEPS AND OUTPUTS:
                                     plan_data = session_context.current_plan.model_dump(mode='json', exclude_none=True)
                                     message_metadata["workflow_plan"] = plan_data
                                 except Exception as plan_err:
-                                    print(f"[ChatHistory] Warning - could not serialize plan: {plan_err}")
+                                    log_warning(f"[ChatHistory] Warning - could not serialize plan: {plan_err}")
 
                             persist_message(context_id, {
                                 "messageId": str(uuid.uuid4()),
@@ -5078,7 +5060,7 @@ WORKFLOW STEPS AND OUTPUTS:
                                 "metadata": message_metadata
                             })
                     except Exception as e:
-                        print(f"[ChatHistory] Error persisting agent response: {e}")
+                        log_debug(f"[ChatHistory] Error persisting agent response: {e}")
 
                     # =========================================================
                     # CONVERSATION HISTORY: Record workflow in Responses API
@@ -5112,27 +5094,25 @@ Workflow completed with result:
                         # Store the response ID for conversation continuity
                         if hasattr(context_response, 'id') and context_response.id:
                             self._response_ids[context_id] = context_response.id
-                            log_info(f"📝 [Workflow] Recorded workflow context in conversation history: {context_response.id}")
+                            log_info(f"[Workflow] Recorded workflow context in conversation history: {context_response.id}")
                         
                     except Exception as ctx_err:
-                        log_debug(f"⚠️ [Workflow] Failed to record workflow context: {ctx_err}")
+                        log_debug(f"[Workflow] Failed to record workflow context: {ctx_err}")
                         # Non-critical - workflow still completed successfully
                     
-                    log_debug(f"🎯 [Workflow Mode] Orchestration complete, returning 1 combined response")
+                    log_debug(f"[Workflow Mode] Orchestration complete, returning 1 combined response")
                     return final_responses
                     
                 except Exception as e:
                     log_error(f"[Agent Mode] Orchestration error: {e}")
-                    import traceback
-                    traceback.print_exc()
-                    
+
                     # Get error type and message
                     error_type = type(e).__name__
                     error_msg = str(e) if str(e) else error_type
                     
                     # If synthesis failed but we have agent outputs, return them directly
                     if orchestration_outputs:
-                        print(f"⚠️ [Agent Mode] Synthesis failed ({error_msg}), but returning {len(orchestration_outputs)} agent outputs directly")
+                        log_error(f"[Agent Mode] Synthesis failed ({error_msg}), but returning {len(orchestration_outputs)} agent outputs directly")
                         # Strip markdown image references — images displayed separately as FileParts
                         import re as _re
                         final_responses = [
@@ -5153,7 +5133,7 @@ Workflow completed with result:
                                         artifact_dicts.append(file_part)
                             
                             if artifact_dicts:
-                                log_debug(f"📦 [Agent Mode] Including {len(artifact_dicts)} agent-generated artifact(s) in fallback response")
+                                log_debug(f"[Agent Mode] Including {len(artifact_dicts)} agent-generated artifact(s) in fallback response")
                                 final_responses.extend(artifact_dicts)
                         
                         # Persist agent response to chat history database
@@ -5166,7 +5146,7 @@ Workflow completed with result:
                                         plan_data = session_context.current_plan.model_dump(mode='json', exclude_none=True)
                                         message_metadata["workflow_plan"] = plan_data
                                     except Exception as plan_err:
-                                        print(f"[ChatHistory] Warning - could not serialize plan: {plan_err}")
+                                        log_warning(f"[ChatHistory] Warning - could not serialize plan: {plan_err}")
 
                                 persist_message(context_id, {
                                     "messageId": str(uuid.uuid4()),
@@ -5176,7 +5156,7 @@ Workflow completed with result:
                                     "metadata": message_metadata
                                 })
                         except Exception as e:
-                            print(f"[ChatHistory] Error persisting agent response: {e}")
+                            log_debug(f"[ChatHistory] Error persisting agent response: {e}")
 
                         return final_responses
                     else:
@@ -5190,7 +5170,7 @@ Workflow completed with result:
                                     plan_data = session_context.current_plan.model_dump(mode='json', exclude_none=True)
                                     message_metadata["workflow_plan"] = plan_data
                                 except Exception as plan_err:
-                                    print(f"[ChatHistory] Warning - could not serialize plan: {plan_err}")
+                                    log_warning(f"[ChatHistory] Warning - could not serialize plan: {plan_err}")
                             
                             persist_message(context_id, {
                                 "messageId": str(uuid.uuid4()),
@@ -5200,7 +5180,7 @@ Workflow completed with result:
                                 "metadata": message_metadata
                             })
                         except Exception as e:
-                            print(f"[ChatHistory] Error persisting error response: {e}")
+                            log_debug(f"[ChatHistory] Error persisting error response: {e}")
                         return final_responses
             
             # Continue with standard conversation flow using Responses API (streaming)
@@ -5215,11 +5195,11 @@ Workflow completed with result:
             tools = self._format_tools_for_responses_api()
             
             # Create streaming response
-            print(f"🔥 [DEBUG] About to create response with instructions containing {len(self.cards)} agents")
-            print(f"🔥 [DEBUG] Agent names in self.cards: {list(self.cards.keys())}")
-            print(f"🔥 [DEBUG] self.agents JSON value:\n{self.agents}")
-            print(f"🔥 [DEBUG] FULL INSTRUCTIONS being sent to Azure:\n{self.agent_instructions if self.agent_instructions else 'NONE'}")
-            print(f"🔥 [DEBUG] ===== END INSTRUCTIONS =====")
+            log_debug(f"[DEBUG] About to create response with instructions containing {len(self.cards)} agents")
+            log_debug(f"[DEBUG] Agent names in self.cards: {list(self.cards.keys())}")
+            log_debug(f"[DEBUG] self.agents JSON value:\n{self.agents}")
+            log_foundry_debug(f"[DEBUG] FULL INSTRUCTIONS being sent to Azure:\n{self.agent_instructions if self.agent_instructions else 'NONE'}")
+            log_debug(f"[DEBUG] ===== END INSTRUCTIONS =====")
             response = await self._create_response_with_streaming(
                 user_message=enhanced_message,
                 context_id=context_id,
@@ -5287,7 +5267,7 @@ Workflow completed with result:
                     )
                     log_foundry_debug(f"Created follow-up response after tool execution: {response['id']}, status: {response['status']}")
                 else:
-                    log_debug(f"⚠️ No tool outputs generated, breaking tool loop")
+                    log_debug(f"No tool outputs generated, breaking tool loop")
                     break
             
             log_foundry_debug(f"Tool handling loop completed. Final status: {response['status']}, iterations: {tool_iteration}")
@@ -5364,7 +5344,7 @@ Workflow completed with result:
                         if isinstance(target, DataPart) and isinstance(target.data, dict):
                             if target.data.get('type') == 'video_metadata':
                                 video_metadata_parts.append(part)
-                                print(f"📎 [VideoRemix] Collected video_metadata with video_id: {target.data.get('video_id')}")
+                                log_debug(f"[VideoRemix] Collected video_metadata with video_id: {target.data.get('video_id')}")
                                 continue  # Don't convert to FilePart
                         
                         # Use utility to extract URI from any format
@@ -5375,17 +5355,17 @@ Workflow completed with result:
                                 # Already a FilePart, use directly
                                 actual_part = part.root if hasattr(part, 'root') and is_file_part(part.root) else part
                                 artifact_file_parts.append(actual_part)
-                                log_debug(f"📦 Found FilePart artifact: {uri[:80]}...")
+                                log_debug(f"Found FilePart artifact: {uri[:80]}...")
                             else:
                                 # Convert legacy DataPart to FilePart
                                 file_part = convert_artifact_dict_to_file_part(part)
                                 if file_part:
                                     artifact_file_parts.append(file_part)
-                                    log_debug(f"📦 Converted DataPart to FilePart: {uri[:80]}...")
+                                    log_debug(f"Converted DataPart to FilePart: {uri[:80]}...")
                     
                     # Group video FileParts with their metadata to preserve video_id for remix
                     if artifact_file_parts:
-                        log_debug(f"📦 [Standard Mode] Including {len(artifact_file_parts)} FilePart artifact(s) in response")
+                        log_debug(f"[Standard Mode] Including {len(artifact_file_parts)} FilePart artifact(s) in response")
                         
                         # Create a Message containing all artifact parts (FileParts + video_metadata)
                         # This ensures video_id flows through to frontend
@@ -5411,13 +5391,13 @@ Workflow completed with result:
                                 messageId=str(uuid.uuid4()),
                             )
                             final_responses.append(combined_message)
-                            print(f"📦 [VideoRemix] Created combined message with {len(artifact_file_parts)} FileParts and {len(video_metadata_parts)} video_metadata")
+                            log_debug(f"[VideoRemix] Created combined message with {len(artifact_file_parts)} FileParts and {len(video_metadata_parts)} video_metadata")
                         
                         for idx, fp in enumerate(artifact_file_parts):
                             file_obj = getattr(fp, 'file', None)
                             uri = getattr(file_obj, 'uri', '') if file_obj else ''
                             filename = getattr(file_obj, 'name', 'unknown') if file_obj else 'unknown'
-                            print(f"  • FilePart Artifact {idx+1}: {filename} (URI: {uri[:80]}...)")
+                            log_debug(f"  FilePart Artifact {idx+1}: {filename} (URI: {uri[:80]}...)")
 
                 # If we have extracted content, prepend it to the response
                 if has_extracted_content:
@@ -5425,7 +5405,7 @@ Workflow completed with result:
                         "The file has been processed. Here is the extracted content:\n\n" + 
                         "\n\n---\n\n".join(extracted_contents)
                     )
-                    log_debug(f"📝 Prepending extracted content to response...")
+                    log_debug(f"Prepending extracted content to response...")
                     final_responses.insert(0, extracted_content_message)
 
                 # Fallback if nothing collected yet
@@ -5443,8 +5423,8 @@ Workflow completed with result:
                 
                 # Note: Conversation history is now managed by OpenAI threads - no need to store separately
                 
-                # Store User→Host A2A interaction (fire-and-forget)
-                log_debug(f"About to store User→Host interaction for context_id: {context_id}")
+                # Store User->Host A2A interaction (fire-and-forget)
+                log_debug(f"About to store User->Host interaction for context_id: {context_id}")
                 
                 # Extract artifact info from processed parts for memory storage
                 artifact_info = {}
@@ -5478,7 +5458,7 @@ Workflow completed with result:
                                 plan_data = session_context.current_plan.model_dump(mode='json', exclude_none=True)
                                 message_metadata["workflow_plan"] = plan_data
                             except Exception as plan_err:
-                                print(f"[ChatHistory] Warning - could not serialize plan: {plan_err}")
+                                log_warning(f"[ChatHistory] Warning - could not serialize plan: {plan_err}")
 
                         persist_message(context_id, {
                             "messageId": str(uuid.uuid4()),
@@ -5488,16 +5468,16 @@ Workflow completed with result:
                             "metadata": message_metadata
                         })
                 except Exception as e:
-                    print(f"[ChatHistory] Error persisting agent response: {e}")
+                    log_debug(f"[ChatHistory] Error persisting agent response: {e}")
                 
                 log_foundry_debug(f"About to return final_responses: {final_responses} (FIRST PATH)")
                 
                 return final_responses
         
         except Exception as e:
-            print(f"❌ CRITICAL ERROR in run_conversation_with_parts: {e}")
+            log_error(f"CRITICAL ERROR in run_conversation_with_parts: {e}")
             import traceback
-            print(f"❌ FULL TRACEBACK: {traceback.format_exc()}")
+            log_error(f"FULL TRACEBACK: {traceback.format_exc()}")
             raise
 
     async def _handle_tool_calls(self, run: Dict[str, Any], thread_id: str, context_id: str, session_context: SessionContext, event_logger=None):
@@ -6227,29 +6207,29 @@ Workflow completed with result:
             bool: True if registration successful, False otherwise
         """
         try:
-            print(f"🤝 Self-registration request from agent at: {agent_address}")
+            log_debug(f"Self-registration request from agent at: {agent_address}")
             
             if agent_card:
                 # Use provided agent card
-                print(f"✅ Using provided agent card: {agent_card.name}")
+                log_debug(f"Using provided agent card: {agent_card.name}")
                 self.register_agent_card(agent_card)
             else:
                 # Retrieve agent card from address
-                print(f"🔍 Retrieving agent card from: {agent_address}")
+                log_debug(f"Retrieving agent card from: {agent_address}")
                 await self.retrieve_card(agent_address)
             
             log_success(f"Successfully registered remote agent from: {agent_address}")
-            print(f"📊 Total registered agents: {len(self.remote_agent_connections)}")
-            log_debug(f"📋 Agent names: {list(self.remote_agent_connections.keys())}")
+            log_info(f"Total registered agents: {len(self.remote_agent_connections)}")
+            log_debug(f"Agent names: {list(self.remote_agent_connections.keys())}")
             
             # Agent will appear in UI sidebar within 15 seconds via periodic sync
             
             return True
             
         except Exception as e:
-            print(f"❌ Failed to register remote agent from {agent_address}: {e}")
+            log_error(f"Failed to register remote agent from {agent_address}: {e}")
             import traceback
-            print(f"❌ Registration error traceback: {traceback.format_exc()}")
+            log_error(f"Registration error traceback: {traceback.format_exc()}")
             return False
 
     async def unregister_remote_agent(self, agent_name: str) -> bool:
@@ -6262,37 +6242,37 @@ Workflow completed with result:
             bool: True if unregistration successful, False otherwise
         """
         try:
-            print(f"🗑️ Unregistration request for agent: {agent_name}")
+            log_debug(f"Unregistration request for agent: {agent_name}")
             
             # Check if agent exists
             if agent_name not in self.remote_agent_connections and agent_name not in self.cards:
-                print(f"❌ Agent {agent_name} not found in registry")
+                log_error(f"Agent {agent_name} not found in registry")
                 return False
             
             # Remove from remote_agent_connections
             if agent_name in self.remote_agent_connections:
                 del self.remote_agent_connections[agent_name]
-                print(f"✅ Removed {agent_name} from remote_agent_connections")
+                log_info(f"Removed {agent_name} from remote_agent_connections")
             
             # Remove from cards
             if agent_name in self.cards:
                 del self.cards[agent_name]
-                print(f"✅ Removed {agent_name} from cards")
+                log_info(f"Removed {agent_name} from cards")
             
             # Update the agents list used in prompts
             self.agents = json.dumps(self.list_remote_agents(), indent=2)
-            print(f"✅ Updated agents list for prompts")
+            log_info(f"Updated agents list for prompts")
             
             log_success(f"Successfully unregistered agent: {agent_name}")
-            print(f"📊 Total registered agents: {len(self.remote_agent_connections)}")
-            log_debug(f"📋 Agent names: {list(self.remote_agent_connections.keys())}")
+            log_info(f"Total registered agents: {len(self.remote_agent_connections)}")
+            log_debug(f"Agent names: {list(self.remote_agent_connections.keys())}")
             
             return True
             
         except Exception as e:
-            print(f"❌ Failed to unregister agent {agent_name}: {e}")
+            log_error(f"Failed to unregister agent {agent_name}: {e}")
             import traceback
-            print(f"❌ Unregistration error traceback: {traceback.format_exc()}")
+            log_error(f"Unregistration error traceback: {traceback.format_exc()}")
             return False
 
     @staticmethod
@@ -6337,7 +6317,7 @@ Workflow completed with result:
         Returns:
             Dict with cancellation status and details
         """
-        log_info(f"🛑 [CANCEL] Cancelling workflow for context: {context_id}")
+        log_info(f"[CANCEL] Cancelling workflow for context: {context_id}")
         
         # Set cancellation flag (Level 1 - graceful stop)
         self._cancellation_tokens[context_id] = True
@@ -6350,15 +6330,15 @@ Workflow completed with result:
         active_tasks = self._active_agent_tasks.get(context_id, {})
         for agent_name, task_id in active_tasks.items():
             try:
-                log_info(f"🛑 [CANCEL] Sending cancel to agent: {agent_name}, task: {task_id}")
+                log_info(f"[CANCEL] Sending cancel to agent: {agent_name}, task: {task_id}")
                 conn = self.remote_agent_connections.get(agent_name)
                 if conn:
                     # Call A2A cancel endpoint
                     await conn.cancel_task(task_id)
                     cancelled_agents.append(agent_name)
-                    log_info(f"✅ [CANCEL] Successfully cancelled {agent_name}")
+                    log_info(f"[CANCEL] Successfully cancelled {agent_name}")
             except Exception as e:
-                log_error(f"⚠️ [CANCEL] Failed to cancel {agent_name}: {e}")
+                log_error(f"[CANCEL] Failed to cancel {agent_name}: {e}")
         
         # Clear active tasks for this context
         self._active_agent_tasks.pop(context_id, None)
@@ -6378,7 +6358,7 @@ Workflow completed with result:
             session_ctx.pending_input_agent = None
             session_ctx.pending_input_task_id = None
             # Note: host_turn_history is preserved for context continuity
-            log_info(f"🧹 [CANCEL] Cleared plan and HITL state for context: {context_id}")
+            log_info(f"[CANCEL] Cleared plan and HITL state for context: {context_id}")
         
         return {
             "status": "cancelled",
@@ -6412,8 +6392,8 @@ Workflow completed with result:
         Returns:
             Dict with interrupt acknowledgment
         """
-        log_info(f"⚡ [INTERRUPT] Queuing interrupt for context: {context_id}")
-        log_info(f"⚡ [INTERRUPT] New instruction: {instruction[:100]}...")
+        log_info(f"[INTERRUPT] Queuing interrupt for context: {context_id}")
+        log_info(f"[INTERRUPT] New instruction: {instruction[:100]}...")
         
         self._interrupt_instructions[context_id] = instruction
         

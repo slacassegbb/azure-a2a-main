@@ -29,7 +29,7 @@ backend_dir = Path(__file__).resolve().parent.parent
 if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
-from log_config import log_websocket_debug, log_info, log_error, log_warning
+from log_config import log_websocket_debug, log_info, log_error, log_warning, log_debug
 from utils.tenant import get_tenant_from_context, is_tenant_aware_context
 from service.collaborative_sessions import get_session_manager, CollaborativeSessionManager, get_online_users_from_connections
 
@@ -169,8 +169,8 @@ class WebSocketManager:
         
         # DEBUG: Log all current tenants for isolation debugging
         all_tenants = list(self.tenant_connections.keys())
-        print(f"🔐 [TENANT REGISTER] New connection for tenant={tenant_id}")
-        print(f"🔐 [TENANT REGISTER] All active tenants: {all_tenants}")
+        log_websocket_debug(f"[TENANT REGISTER] New connection for tenant={tenant_id}")
+        log_websocket_debug(f"[TENANT REGISTER] All active tenants: {all_tenants}")
         logger.info(f"Registered connection for tenant: {tenant_id[:20]}... (total tenant connections: {len(self.tenant_connections[tenant_id])})")
     
     def unregister_tenant_connection(self, websocket: WebSocket):
@@ -269,7 +269,7 @@ class WebSocketManager:
                 logger.info(f"[WebSocket Auth] Registered user connection: {user_id} (total: {len(self.user_connections[user_id])})")
                 # Log all user_connections for debugging collaborative session issues
                 all_user_ids = list(self.user_connections.keys())
-                logger.info(f"[WebSocket Auth] 📋 Current user_connections state: {all_user_ids}")
+                logger.info(f"[WebSocket Auth] Current user_connections state: {all_user_ids}")
             
             # Add user to active users list in auth service
             if auth_service:
@@ -616,15 +616,15 @@ class WebSocketManager:
                     for ws in self.user_connections[member_id]:
                         try:
                             message_to_send = json.dumps(event_data)
-                            logger.info(f"[WebSocket] 📤 About to send to {member_id}: eventType={event_data['eventType']}, {len(session_users)} users")
+                            logger.info(f"[WebSocket] About to send to {member_id}: eventType={event_data['eventType']}, {len(session_users)} users")
                             await ws.send_text(message_to_send)
-                            logger.info(f"[WebSocket] ✅ Successfully sent user list update to member {member_id}")
+                            logger.info(f"[WebSocket] Successfully sent user list update to member {member_id}")
                         except Exception as e:
-                            logger.error(f"[WebSocket] ❌ Failed to send user list to {member_id}: {e}")
+                            logger.error(f"[WebSocket] Failed to send user list to {member_id}: {e}")
                             import traceback
                             logger.error(f"[WebSocket] Traceback: {traceback.format_exc()}")
                 else:
-                    logger.warning(f"[WebSocket] ⚠️ member_id={member_id} NOT in user_connections! Available: {list(self.user_connections.keys())}")
+                    logger.warning(f"[WebSocket] member_id={member_id} NOT in user_connections! Available: {list(self.user_connections.keys())}")
             
             user_names = [u.get('name', 'unknown') for u in session_users]
             logger.info(f"[WebSocket] Broadcasted user list to session: {len(session_users)} user(s): {user_names}")
@@ -677,7 +677,7 @@ class WebSocketManager:
                 await self.smart_broadcast(event_data)
             else:
                 logger.debug(f"Skipping agent status broadcast - no context_id provided (multi-tenant isolation)")
-            print(f"[WEBSOCKET] Emitted agent status update: {status_event.get('agent_name')} -> {status_event.get('status')}")
+            log_websocket_debug(f"Emitted agent status update: {status_event.get('agent_name')} -> {status_event.get('status')}")
             
         except Exception as e:
             logger.error(f"Failed to emit agent status update: {e}")
@@ -707,7 +707,7 @@ class WebSocketManager:
         tenant_websockets = self.tenant_connections.get(tenant_id, set())
         
         event_type = event_data.get('eventType', 'unknown')
-        print(f"🔒 [TENANT DEBUG] broadcast_to_tenant: tenant={tenant_id}, event={event_type}, connections={len(tenant_websockets)}")
+        log_websocket_debug(f"[TENANT DEBUG] broadcast_to_tenant: tenant={tenant_id}, event={event_type}, connections={len(tenant_websockets)}")
         
         if not tenant_websockets:
             logger.debug(f"No connections for tenant {tenant_id[:20]}..., skipping broadcast (no fallback)")
@@ -806,8 +806,8 @@ class WebSocketManager:
             
             # DEBUG: Log tenant isolation details
             event_type = event_data.get('eventType', 'unknown')
-            print(f"🔒 [TENANT DEBUG] smart_broadcast: event={event_type}, context_id={context_id[:40]}...")
-            print(f"🔒 [TENANT DEBUG] Available tenants: {list(self.tenant_connections.keys())}")
+            log_websocket_debug(f"[TENANT DEBUG] smart_broadcast: event={event_type}, context_id={context_id[:40]}...")
+            log_websocket_debug(f"[TENANT DEBUG] Available tenants: {list(self.tenant_connections.keys())}")
             
             # Always extract the base tenant (session) from context_id
             # For "user_3::uuid" format, extract "user_3"
@@ -817,18 +817,18 @@ class WebSocketManager:
             # Broadcast to the full context_id if it's registered as a tenant
             # (e.g., voice hook connects with user_3::conversation-uuid)
             if context_id in self.tenant_connections and context_id != base_tenant_id:
-                print(f"🔒 [TENANT DEBUG] Direct match: broadcasting to full contextId tenant={context_id[:40]}...")
+                log_websocket_debug(f"[TENANT DEBUG] Direct match: broadcasting to full contextId tenant={context_id[:40]}...")
                 sent_count += await self.broadcast_to_tenant(event_data, context_id)
             
             # ALSO broadcast to the base session tenant (e.g., user_3)
             # This ensures the main EventHub receives events too
             if base_tenant_id in self.tenant_connections:
                 session_id = base_tenant_id
-                print(f"🔒 [TENANT DEBUG] Base tenant match: broadcasting to tenant={base_tenant_id}")
+                log_websocket_debug(f"[TENANT DEBUG] Base tenant match: broadcasting to tenant={base_tenant_id}")
                 sent_count += await self.broadcast_to_tenant(event_data, base_tenant_id)
             elif context_id not in self.tenant_connections:
                 # Neither full contextId nor base tenant found
-                print(f"🔒 [TENANT DEBUG] ⚠️ No tenant match found! Event will NOT be broadcast.")
+                log_websocket_debug(f"[TENANT DEBUG] No tenant match found! Event will NOT be broadcast.")
             
             # Also broadcast to collaborative session members
             # These are users who joined this session but have different user_ids
@@ -1534,12 +1534,12 @@ def create_websocket_app() -> FastAPI:
                             for member_ws in websocket_manager.user_connections[member_id]:
                                 try:
                                     await member_ws.send_text(session_ended_event)
-                                    logger.info(f"[Collaborative] ✅ Sent session_ended to former member {member_id}")
+                                    logger.info(f"[Collaborative] Sent session_ended to former member {member_id}")
                                 except Exception as e:
-                                    logger.error(f"[Collaborative] ❌ Failed to notify member {member_id}: {e}")
+                                    logger.error(f"[Collaborative] Failed to notify member {member_id}: {e}")
                         else:
-                            logger.warning(f"[Collaborative] ⚠️ Member {member_id} NOT in user_connections!")
-        
+                            logger.warning(f"[Collaborative] Member {member_id} NOT in user_connections!")
+
         await websocket.send_text(json.dumps({
             "type": "left_session",
             "session_id": session_id
@@ -1618,11 +1618,11 @@ def create_websocket_app() -> FastAPI:
                                 for member_ws in websocket_manager.user_connections[member_id]:
                                     try:
                                         await member_ws.send_text(session_ended_event)
-                                        logger.info(f"[Collaborative] ✅ Sent session_ended to former member {member_id}")
+                                        logger.info(f"[Collaborative] Sent session_ended to former member {member_id}")
                                     except Exception as e:
-                                        logger.error(f"[Collaborative] ❌ Failed to notify member {member_id}: {e}")
+                                        logger.error(f"[Collaborative] Failed to notify member {member_id}: {e}")
                             else:
-                                logger.warning(f"[Collaborative] ⚠️ Member {member_id} NOT in user_connections!")
+                                logger.warning(f"[Collaborative] Member {member_id} NOT in user_connections!")
         
         logger.info(f"[Collaborative] User {username} logout session cleanup complete")
     
@@ -1713,15 +1713,15 @@ def create_websocket_app() -> FastAPI:
             for target_ws in websocket_manager.user_connections[target_user_id]:
                 try:
                     await target_ws.send_text(kicked_event)
-                    logger.info(f"[Collaborative] ✅ Sent kicked event to {target_username}")
+                    logger.info(f"[Collaborative] Sent kicked event to {target_username}")
                 except Exception as e:
-                    logger.error(f"[Collaborative] ❌ Failed to notify kicked user: {e}")
+                    logger.error(f"[Collaborative] Failed to notify kicked user: {e}")
         
         # Remove user from session
         success = collaborative_session_manager.leave_session(session_id, target_user_id)
         
         if success:
-            logger.info(f"[Collaborative] ✅ Successfully kicked {target_username} from session")
+            logger.info(f"[Collaborative] Successfully kicked {target_username} from session")
             
             # Broadcast updated user list to remaining members
             updated_session = collaborative_session_manager.get_session(session_id)
@@ -2067,27 +2067,27 @@ class WebSocketServerThread:
     def _schedule_agent_sync(self):
         """Schedule periodic agent registry sync."""
         log_websocket_debug(f"_schedule_agent_sync() called, running={self.running}")
-        logger.info(f"⏰ Scheduler called (running={self.running}, sync_in_progress={self.sync_in_progress})")
+        logger.info(f"Scheduler called (running={self.running}, sync_in_progress={self.sync_in_progress})")
         
         if not self.running:
-            logger.warning("⚠️ Scheduler called but server not running, stopping sync")
+            logger.warning("Scheduler called but server not running, stopping sync")
             log_websocket_debug("Not running, returning early from _schedule_agent_sync")
             return
         
         # Check if sync is already in progress
         if self.sync_in_progress:
-            logger.info("ℹ️ Sync already in progress, skipping this cycle but rescheduling next")
+            logger.info("Sync already in progress, skipping this cycle but rescheduling next")
             log_websocket_debug("Sync already in progress, skipping this cycle")
             # Still schedule the next sync
             log_websocket_debug(f"Creating timer for next sync in {self.sync_interval} seconds")
             self.sync_timer = threading.Timer(self.sync_interval, self._schedule_agent_sync)
             self.sync_timer.daemon = True
             self.sync_timer.start()
-            logger.info(f"✅ Next sync scheduled in {self.sync_interval}s (skipped current)")
+            logger.info(f"Next sync scheduled in {self.sync_interval}s (skipped current)")
             log_websocket_debug("Timer started successfully")
             return
             
-        logger.info(f"🚀 Starting new sync cycle (interval: {self.sync_interval}s)")
+        logger.info(f"Starting new sync cycle (interval: {self.sync_interval}s)")
         log_websocket_debug("About to start sync thread")
         
         # Run sync in background thread
@@ -2099,9 +2099,9 @@ class WebSocketServerThread:
         self.sync_timer = threading.Timer(self.sync_interval, self._schedule_agent_sync)
         self.sync_timer.daemon = True
         self.sync_timer.start()
-        logger.info(f"✅ Next sync scheduled in {self.sync_interval}s")
+        logger.info(f"Next sync scheduled in {self.sync_interval}s")
         log_websocket_debug("Timer started successfully")
-    
+
     def _run_sync(self):
         """Run agent registry sync in a separate thread."""
         # Use lock to prevent concurrent syncs
@@ -2144,18 +2144,18 @@ class WebSocketServerThread:
     async def _sync_agent_registry(self):
         """Sync agent registry to all connected clients."""
         sync_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-        logger.info(f"🔄 Starting agent registry sync at {sync_time}")
+        logger.info(f"Starting agent registry sync at {sync_time}")
         
         try:
-            logger.info("  📡 Fetching agent list from backend...")
+            logger.info("  Fetching agent list from backend...")
             agents = websocket_manager.get_agent_registry()
-            logger.info(f"  ✅ Retrieved {len(agents)} agents from registry")
+            logger.info(f"  Retrieved {len(agents)} agents from registry")
             log_websocket_debug(f"Retrieved {len(agents)} agents from registry")
             
             if agents:
                 # Log agent statuses for debugging
                 agent_statuses = [(agent.get('name', 'unknown'), agent.get('status', 'unknown')) for agent in agents]
-                logger.info(f"  📊 Agent statuses: {agent_statuses}")
+                logger.info(f"  Agent statuses: {agent_statuses}")
                 
                 # Send full registry sync
                 registry_event = {
@@ -2165,12 +2165,12 @@ class WebSocketServerThread:
                     },
                     'timestamp': sync_time
                 }
-                logger.info(f"  📤 Broadcasting to WebSocket clients...")
+                logger.info(f"  Broadcasting to WebSocket clients...")
                 client_count = await websocket_manager.broadcast_event(registry_event)
-                logger.info(f"  ✅ Synced {len(agents)} agents to {client_count} clients")
+                logger.info(f"  Synced {len(agents)} agents to {client_count} clients")
                 log_websocket_debug(f"Sent registry sync to {client_count} clients")
             else:
-                logger.info("  ℹ️  No agents to sync, broadcasting empty list...")
+                logger.info("  No agents to sync, broadcasting empty list...")
                 registry_event = {
                     'eventType': 'agent_registry_sync',
                     'data': {
@@ -2179,12 +2179,12 @@ class WebSocketServerThread:
                     'timestamp': sync_time
                 }
                 client_count = await websocket_manager.broadcast_event(registry_event)
-                logger.info(f"  ✅ Synced 0 agents to {client_count} clients")
+                logger.info(f"  Synced 0 agents to {client_count} clients")
                 
-            logger.info(f"✅ Sync completed successfully at {sync_time}")
+            logger.info(f"Sync completed successfully at {sync_time}")
                 
         except Exception as e:
-            logger.error(f"❌ Failed to sync agent registry: {e}")
+            logger.error(f"Failed to sync agent registry: {e}")
             log_websocket_debug(f"Sync failed: {e}")
             import traceback
             logger.error(f"Traceback: {traceback.format_exc()}")

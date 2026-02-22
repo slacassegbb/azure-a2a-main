@@ -15,6 +15,8 @@ from dataclasses import dataclass, field, asdict
 import psycopg2
 from psycopg2.extras import RealDictCursor
 
+from log_config import log_debug, log_info, log_warning, log_error
+
 # Default data directory (matches other services)
 DEFAULT_DATA_DIR = Path(__file__).parent.parent / "data"
 
@@ -75,10 +77,10 @@ class WorkflowService:
             try:
                 self.db_conn = psycopg2.connect(self.database_url)
                 self.use_database = True
-                print(f"[WorkflowService] ✅ Using PostgreSQL database")
+                log_info("[WorkflowService] Using PostgreSQL database")
             except Exception as e:
-                print(f"[WorkflowService] ⚠️  Database connection failed: {e}")
-                print(f"[WorkflowService] Falling back to JSON file storage")
+                log_warning(f"[WorkflowService] Database connection failed: {e}")
+                log_warning("[WorkflowService] Falling back to JSON file storage")
         
         # Fallback to JSON file if database not available
         if not self.use_database:
@@ -92,7 +94,7 @@ class WorkflowService:
             
             # Load workflows from JSON file
             self._load_workflows_from_file()
-            print(f"[WorkflowService] Using JSON file storage")
+            log_info("[WorkflowService] Using JSON file storage")
         else:
             # When using database, load into memory on init
             self.workflows: Dict[str, Workflow] = {}
@@ -131,9 +133,9 @@ class WorkflowService:
                 self.workflows[workflow.id] = workflow
             
             cur.close()
-            print(f"[WorkflowService] Loaded {len(self.workflows)} workflows from database")
+            log_debug(f"[WorkflowService] Loaded {len(self.workflows)} workflows from database")
         except Exception as e:
-            print(f"[WorkflowService] Error loading from database: {e}")
+            log_error(f"[WorkflowService] Error loading from database: {e}")
     
     def _save_workflow_to_database(self, workflow: Workflow) -> bool:
         """Save a single workflow to PostgreSQL database using UPSERT."""
@@ -175,7 +177,7 @@ class WorkflowService:
             cur.close()
             return True
         except Exception as e:
-            print(f"[WorkflowService] Error saving workflow to database: {e}")
+            log_error(f"[WorkflowService] Error saving workflow to database: {e}")
             self.db_conn.rollback()
             return False
     
@@ -189,7 +191,7 @@ class WorkflowService:
             cur.close()
             return rows_deleted > 0
         except Exception as e:
-            print(f"[WorkflowService] Error deleting workflow from database: {e}")
+            log_error(f"[WorkflowService] Error deleting workflow from database: {e}")
             self.db_conn.rollback()
             return False
     
@@ -213,15 +215,15 @@ class WorkflowService:
                         updated_at=workflow_data.get('updated_at', '')
                     )
                     self.workflows[workflow.id] = workflow
-            print(f"[WorkflowService] Loaded {len(self.workflows)} workflows from {self.workflows_file}")
+            log_debug(f"[WorkflowService] Loaded {len(self.workflows)} workflows from {self.workflows_file}")
         except FileNotFoundError:
-            print(f"[WorkflowService] Workflows file {self.workflows_file} not found, creating empty file")
+            log_warning(f"[WorkflowService] Workflows file {self.workflows_file} not found, creating empty file")
             self._create_empty_workflows_file()
         except json.JSONDecodeError as e:
-            print(f"[WorkflowService] Error parsing {self.workflows_file}: {e}")
+            log_error(f"[WorkflowService] Error parsing {self.workflows_file}: {e}")
             self._create_empty_workflows_file()
         except Exception as e:
-            print(f"[WorkflowService] Error loading workflows: {e}")
+            log_error(f"[WorkflowService] Error loading workflows: {e}")
             self._create_empty_workflows_file()
     
     def _create_empty_workflows_file(self):
@@ -229,7 +231,7 @@ class WorkflowService:
         workflows_data = {"workflows": []}
         with open(self.workflows_file, 'w') as f:
             json.dump(workflows_data, f, indent=2)
-        print(f"[WorkflowService] Created empty {self.workflows_file}")
+        log_debug(f"[WorkflowService] Created empty {self.workflows_file}")
     
     def _save_workflows_to_file(self):
         """Save current workflows to JSON file."""
@@ -252,7 +254,7 @@ class WorkflowService:
         
         with open(self.workflows_file, 'w') as f:
             json.dump(workflows_data, f, indent=2)
-        print(f"[WorkflowService] Saved {len(self.workflows)} workflows to {self.workflows_file}")
+        log_debug(f"[WorkflowService] Saved {len(self.workflows)} workflows to {self.workflows_file}")
     
     def create_workflow(
         self,
@@ -289,7 +291,7 @@ class WorkflowService:
         else:
             self._save_workflows_to_file()
         
-        print(f"[WorkflowService] Created workflow '{name}' (id={workflow_id}) for user {user_id}")
+        log_debug(f"[WorkflowService] Created workflow '{name}' (id={workflow_id}) for user {user_id}")
         return workflow
     
     def update_workflow(
@@ -310,7 +312,7 @@ class WorkflowService:
         
         # Check ownership
         if workflow.user_id != user_id:
-            print(f"[WorkflowService] User {user_id} cannot update workflow {workflow_id} owned by {workflow.user_id}")
+            log_warning(f"[WorkflowService] User {user_id} cannot update workflow {workflow_id} owned by {workflow.user_id}")
             return None
         
         # Update fields
@@ -334,7 +336,7 @@ class WorkflowService:
         else:
             self._save_workflows_to_file()
         
-        print(f"[WorkflowService] Updated workflow '{workflow.name}' (id={workflow_id})")
+        log_debug(f"[WorkflowService] Updated workflow '{workflow.name}' (id={workflow_id})")
         return workflow
     
     def delete_workflow(self, workflow_id: str, user_id: str) -> bool:
@@ -345,7 +347,7 @@ class WorkflowService:
         
         # Check ownership
         if workflow.user_id != user_id:
-            print(f"[WorkflowService] User {user_id} cannot delete workflow {workflow_id} owned by {workflow.user_id}")
+            log_warning(f"[WorkflowService] User {user_id} cannot delete workflow {workflow_id} owned by {workflow.user_id}")
             return False
         
         del self.workflows[workflow_id]
@@ -355,7 +357,7 @@ class WorkflowService:
         else:
             self._save_workflows_to_file()
         
-        print(f"[WorkflowService] Deleted workflow {workflow_id}")
+        log_debug(f"[WorkflowService] Deleted workflow {workflow_id}")
         return True
     
     def get_workflow(self, workflow_id: str) -> Optional[Workflow]:

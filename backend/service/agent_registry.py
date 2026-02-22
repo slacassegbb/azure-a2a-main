@@ -14,6 +14,7 @@ from pathlib import Path
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from service.agent_colors import assign_color_for_agent
+from log_config import log_debug, log_info, log_warning, log_error
 
 
 class AgentRegistry:
@@ -39,11 +40,11 @@ class AgentRegistry:
                 self.db_conn.autocommit = True
                 self.use_database = True
                 env_type = "PRODUCTION" if self.use_prod else "LOCAL"
-                print(f"[AgentRegistry] ✅ Using PostgreSQL database ({env_type} URLs)")
+                log_info(f"[AgentRegistry] Using PostgreSQL database ({env_type} URLs)")
                 self._run_migrations()
             except Exception as e:
-                print(f"[AgentRegistry] ⚠️  Database connection failed: {e}")
-                print(f"[AgentRegistry] Falling back to JSON file storage")
+                log_warning(f"[AgentRegistry] Database connection failed: {e}")
+                log_warning("[AgentRegistry] Falling back to JSON file storage")
         
         # Fallback to JSON file if database not available
         if not self.use_database:
@@ -56,7 +57,7 @@ class AgentRegistry:
                 self.registry_file = Path(registry_file)
             
             env_type = "PRODUCTION" if self.use_prod else "LOCAL"
-            print(f"[AgentRegistry] Using JSON file storage ({env_type} URLs)")
+            log_info(f"[AgentRegistry] Using JSON file storage ({env_type} URLs)")
             self.registry_file.parent.mkdir(parents=True, exist_ok=True)
             self._ensure_registry_file()
     
@@ -108,9 +109,9 @@ class AgentRegistry:
                 cur.execute("UPDATE agents SET color = %s WHERE name = %s", (color, name))
             self.db_conn.commit()
             cur.close()
-            print(f"[AgentRegistry] ✅ Migrated {len(curated_colors)} agents to curated colors")
+            log_info(f"[AgentRegistry] Migrated {len(curated_colors)} agents to curated colors")
         except Exception as e:
-            print(f"[AgentRegistry] Color migration warning: {e}")
+            log_warning(f"[AgentRegistry] Color migration warning: {e}")
             self.db_conn.rollback()
 
     def _ensure_registry_file(self):
@@ -166,7 +167,7 @@ class AgentRegistry:
             # Normalize agents to have 'url' field based on environment
             return [self._normalize_agent_url(agent) for agent in agents]
         except Exception as e:
-            print(f"[AgentRegistry] Error loading from database: {e}")
+            log_error(f"[AgentRegistry] Error loading from database: {e}")
             return []
     
     def _load_registry(self) -> List[Dict[str, Any]]:
@@ -249,11 +250,11 @@ class AgentRegistry:
             if not color:
                 color = assign_color_for_agent(agent.get('name', ''))
 
-            print(f"[AgentRegistry] _save_agent_to_database: {agent.get('name')}")
-            print(f"[AgentRegistry]   local_url: {local_url}")
-            print(f"[AgentRegistry]   production_url: {production_url}")
-            print(f"[AgentRegistry]   color: {color}")
-            print(f"[AgentRegistry]   skills: {[s.get('id') for s in agent.get('skills', [])]}")
+            log_debug(f"[AgentRegistry] _save_agent_to_database: {agent.get('name')}")
+            log_debug(f"[AgentRegistry]   local_url: {local_url}")
+            log_debug(f"[AgentRegistry]   production_url: {production_url}")
+            log_debug(f"[AgentRegistry]   color: {color}")
+            log_debug(f"[AgentRegistry]   skills: {[s.get('id') for s in agent.get('skills', [])]}")
 
             cur = self.db_conn.cursor()
             cur.execute("""
@@ -295,7 +296,7 @@ class AgentRegistry:
             cur.close()
             return True
         except Exception as e:
-            print(f"[AgentRegistry] Error saving agent to database: {e}")
+            log_error(f"[AgentRegistry] Error saving agent to database: {e}")
             self.db_conn.rollback()
             return False
     
@@ -368,25 +369,25 @@ class AgentRegistry:
         Returns:
             True if agent was updated, False if not found
         """
-        print(f"[AgentRegistry] update_agent called for: {name}")
-        print(f"[AgentRegistry] Agent data keys: {list(agent.keys())}")
-        print(f"[AgentRegistry] Skills count: {len(agent.get('skills', []))}")
-        
+        log_debug(f"[AgentRegistry] update_agent called for: {name}")
+        log_debug(f"[AgentRegistry] Agent data keys: {list(agent.keys())}")
+        log_debug(f"[AgentRegistry] Skills count: {len(agent.get('skills', []))}")
+
         # Validate required fields
         if not self._validate_agent(agent):
-            print(f"[AgentRegistry] ❌ Validation FAILED for {name}")
+            log_debug(f"[AgentRegistry] Validation FAILED for {name}")
             raise ValueError("Invalid agent configuration")
-        
-        print(f"[AgentRegistry] ✅ Validation passed for {name}")
+
+        log_debug(f"[AgentRegistry] Validation passed for {name}")
         
         if self.use_database:
             # Check if agent exists
             existing = self.get_agent(name)
             if not existing:
-                print(f"[AgentRegistry] ❌ Agent {name} not found in database")
+                log_debug(f"[AgentRegistry] Agent {name} not found in database")
                 return False
-            
-            print(f"[AgentRegistry] 📝 Updating {name} in database...")
+
+            log_debug(f"[AgentRegistry] Updating {name} in database...")
             # Update in database
             return self._save_agent_to_database(agent)
         else:
@@ -471,7 +472,7 @@ class AgentRegistry:
                 cur.close()
                 return rows_deleted > 0
             except Exception as e:
-                print(f"[AgentRegistry] Error removing agent from database: {e}")
+                log_error(f"[AgentRegistry] Error removing agent from database: {e}")
                 self.db_conn.rollback()
                 return False
         else:
@@ -619,22 +620,22 @@ class SessionAgentRegistry:
     
     def __init__(self):
         self._sessions: Dict[str, List[Dict[str, Any]]] = {}
-        print("[SessionAgentRegistry] Initialized with empty session agents (cleared on restart)")
+        log_debug("[SessionAgentRegistry] Initialized with empty session agents (cleared on restart)")
     
     def enable_agent(self, session_id: str, agent: Dict[str, Any]) -> bool:
         """Enable an agent for a session."""
-        print(f"🟢 [SessionRegistry.enable_agent] session_id='{session_id}', agent={agent.get('name')}")
+        log_debug(f"[SessionRegistry.enable_agent] session_id='{session_id}', agent={agent.get('name')}")
         if session_id not in self._sessions:
             self._sessions[session_id] = []
-        
+
         # Check if already enabled (by URL)
         if any(a.get('url') == agent.get('url') for a in self._sessions[session_id]):
-            print(f"🟢 [SessionRegistry.enable_agent] Agent already enabled, skipping")
+            log_debug("[SessionRegistry.enable_agent] Agent already enabled, skipping")
             return False
-        
+
         self._sessions[session_id].append(agent)
-        print(f"🟢 [SessionRegistry.enable_agent] Now {len(self._sessions[session_id])} agents in session")
-        print(f"🟢 [SessionRegistry.enable_agent] All sessions: {list(self._sessions.keys())}")
+        log_debug(f"[SessionRegistry.enable_agent] Now {len(self._sessions[session_id])} agents in session")
+        log_debug(f"[SessionRegistry.enable_agent] All sessions: {list(self._sessions.keys())}")
         return True
     
     def disable_agent(self, session_id: str, agent_url: str) -> bool:
@@ -651,8 +652,8 @@ class SessionAgentRegistry:
     def get_session_agents(self, session_id: str) -> List[Dict[str, Any]]:
         """Get all enabled agents for a session."""
         agents = self._sessions.get(session_id, [])
-        print(f"🔵 [SessionRegistry.get_session_agents] session_id='{session_id}' -> {len(agents)} agents")
-        print(f"🔵 [SessionRegistry.get_session_agents] All sessions: {list(self._sessions.keys())}")
+        log_debug(f"[SessionRegistry.get_session_agents] session_id='{session_id}' -> {len(agents)} agents")
+        log_debug(f"[SessionRegistry.get_session_agents] All sessions: {list(self._sessions.keys())}")
         return agents
     
     def is_enabled(self, session_id: str, agent_url: str) -> bool:
@@ -667,7 +668,7 @@ class SessionAgentRegistry:
         count = sum(len(agents) for agents in self._sessions.values())
         session_count = len(self._sessions)
         self._sessions = {}
-        print(f"[SessionAgentRegistry] Cleared {count} agents from {session_count} sessions")
+        log_info(f"[SessionAgentRegistry] Cleared {count} agents from {session_count} sessions")
 
 
 _session_registry = None

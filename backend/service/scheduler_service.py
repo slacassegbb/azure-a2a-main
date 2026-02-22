@@ -132,9 +132,9 @@ class WorkflowScheduler:
             try:
                 self.db_conn = psycopg2.connect(self.database_url)
                 self.use_database = True
-                logger.info("[WorkflowScheduler] ✅ Using PostgreSQL database")
+                logger.info("[WorkflowScheduler] Using PostgreSQL database")
             except Exception as e:
-                logger.warning(f"[WorkflowScheduler] ⚠️  Database connection failed: {e}")
+                logger.warning(f"[WorkflowScheduler] Database connection failed: {e}")
                 logger.warning("[WorkflowScheduler] Falling back to JSON file storage")
         
         if not self.use_database:
@@ -431,7 +431,7 @@ class WorkflowScheduler:
             # Get the current event loop and store reference for thread-safe calls
             loop = asyncio.get_event_loop()
             self._main_event_loop = loop
-            print(f"[Scheduler] Starting scheduler with event loop: {loop}")
+            logger.debug(f"[Scheduler] Starting scheduler with event loop: {loop}")
             
             self.scheduler = AsyncIOScheduler(
                 jobstores={'default': MemoryJobStore()},
@@ -442,21 +442,19 @@ class WorkflowScheduler:
             # Start the scheduler first
             self.scheduler.start()
             self._is_running = True
-            print(f"[Scheduler] ✅ AsyncIOScheduler started, running={self.scheduler.running}")
+            logger.info(f"[Scheduler] AsyncIOScheduler started, running={self.scheduler.running}")
             
             # Then restore all enabled schedules
-            logger.info(f"🕐 Restoring {len([s for s in self.schedules.values() if s.enabled])} enabled schedules...")
+            logger.info(f"Restoring {len([s for s in self.schedules.values() if s.enabled])} enabled schedules...")
             for schedule in self.schedules.values():
                 if schedule.enabled:
                     self._add_job_to_scheduler(schedule)
             
-            logger.info(f"🕐 Workflow scheduler started with {len(self.schedules)} total schedules")
+            logger.info(f"Workflow scheduler started with {len(self.schedules)} total schedules")
             return True
             
         except Exception as e:
             logger.error(f"Failed to start scheduler: {e}")
-            import traceback
-            traceback.print_exc()
             return False
     
     async def stop(self):
@@ -464,21 +462,21 @@ class WorkflowScheduler:
         if self.scheduler and self._is_running:
             self.scheduler.shutdown(wait=False)
             self._is_running = False
-            logger.info("🛑 Workflow scheduler stopped")
+            logger.info("Workflow scheduler stopped")
     
     def _add_job_to_scheduler(self, schedule: ScheduledWorkflow):
         """Add a job to the APScheduler."""
-        print(f"[Scheduler] _add_job_to_scheduler called for {schedule.id}, scheduler={self.scheduler is not None}, _is_running={self._is_running}")
-        
+        logger.debug(f"[Scheduler] _add_job_to_scheduler called for {schedule.id}, scheduler={self.scheduler is not None}, _is_running={self._is_running}")
+
         if not self.scheduler or not self._is_running:
-            print(f"[Scheduler] ❌ Cannot add job: scheduler={self.scheduler is not None}, _is_running={self._is_running}")
+            logger.debug(f"[Scheduler] Cannot add job: scheduler={self.scheduler is not None}, _is_running={self._is_running}")
             return
-        
+
         try:
-            print(f"[Scheduler] Creating trigger for schedule type: {schedule.schedule_type}")
+            logger.debug(f"[Scheduler] Creating trigger for schedule type: {schedule.schedule_type}")
             trigger = self._create_trigger(schedule)
             if trigger:
-                print(f"[Scheduler] Trigger created: {trigger}, adding job to scheduler...")
+                logger.debug(f"[Scheduler] Trigger created: {trigger}, adding job to scheduler...")
                 self.scheduler.add_job(
                     self._execute_scheduled_workflow_sync,
                     trigger=trigger,
@@ -487,7 +485,7 @@ class WorkflowScheduler:
                     replace_existing=True,
                     misfire_grace_time=60
                 )
-                
+
                 # Update next run time
                 job = self.scheduler.get_job(schedule.id)
                 if job and job.next_run_time:
@@ -496,16 +494,14 @@ class WorkflowScheduler:
                         self._save_schedule_to_database(schedule)
                     else:
                         self._save_schedules()
-                    print(f"[Scheduler] 📅 Job added! Next run: {job.next_run_time}")
-                    
-                print(f"[Scheduler] 📅 Scheduled workflow '{schedule.workflow_name}' ({schedule.schedule_type.value})")
+                    logger.debug(f"[Scheduler] Job added! Next run: {job.next_run_time}")
+
+                logger.debug(f"[Scheduler] Scheduled workflow '{schedule.workflow_name}' ({schedule.schedule_type.value})")
             else:
-                print(f"[Scheduler] ❌ Failed to create trigger for schedule {schedule.id}")
-                
+                logger.debug(f"[Scheduler] Failed to create trigger for schedule {schedule.id}")
+
         except Exception as e:
-            print(f"[Scheduler] ❌ Error adding job to scheduler: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.error(f"[Scheduler] Error adding job to scheduler: {e}")
     
     def _create_trigger(self, schedule: ScheduledWorkflow):
         """Create an APScheduler trigger based on schedule type."""
@@ -557,50 +553,43 @@ class WorkflowScheduler:
     
     def _execute_scheduled_workflow_sync(self, schedule_id: str):
         """Synchronous wrapper to execute a scheduled workflow."""
-        print(f"[Scheduler] ⏰⏰⏰ TRIGGER! Scheduler triggered for workflow ID: {schedule_id}")
-        logger.info(f"⏰ Scheduler triggered for workflow ID: {schedule_id}")
-        
+        logger.info(f"Scheduler triggered for workflow ID: {schedule_id}")
+
         # Run the async execution in the main event loop (thread-safe)
         try:
             if self._main_event_loop and self._main_event_loop.is_running():
                 # Use run_coroutine_threadsafe to schedule on the main event loop
-                print(f"[Scheduler] Scheduling workflow execution on main event loop...")
+                logger.debug("[Scheduler] Scheduling workflow execution on main event loop...")
                 future = asyncio.run_coroutine_threadsafe(
                     self._execute_scheduled_workflow(schedule_id),
                     self._main_event_loop
                 )
-                print(f"[Scheduler] ✅ Workflow execution scheduled on main event loop")
+                logger.debug("[Scheduler] Workflow execution scheduled on main event loop")
                 # Don't wait for result - let it run asynchronously
             else:
                 # Fallback: create a new event loop
-                print(f"[Scheduler] No main event loop, using asyncio.run()...")
+                logger.debug("[Scheduler] No main event loop, using asyncio.run()...")
                 asyncio.run(self._execute_scheduled_workflow(schedule_id))
-                print(f"[Scheduler] Workflow execution complete")
+                logger.debug("[Scheduler] Workflow execution complete")
         except Exception as e:
-            print(f"[Scheduler] ❌ Error in scheduler wrapper: {e}")
-            import traceback
-            traceback.print_exc()
             logger.error(f"Error in scheduler wrapper: {e}")
     
     async def _execute_scheduled_workflow(self, schedule_id: str):
         """Execute a scheduled workflow."""
         import time
         
-        print(f"[Scheduler] 🚀 _execute_scheduled_workflow started for {schedule_id}")
-        
+        logger.debug(f"[Scheduler] _execute_scheduled_workflow started for {schedule_id}")
+
         schedule = self.schedules.get(schedule_id)
         if not schedule:
-            print(f"[Scheduler] ❌ Schedule {schedule_id} not found")
             logger.warning(f"Schedule {schedule_id} not found")
             return
-        
+
         if not schedule.enabled:
-            print(f"[Scheduler] ⏸️ Schedule {schedule_id} is disabled, skipping")
             logger.info(f"Schedule {schedule_id} is disabled, skipping")
             return
-        
-        print(f"[Scheduler] 🚀 Executing scheduled workflow: {schedule.workflow_name}")
-        logger.info(f"🚀 Executing scheduled workflow: {schedule.workflow_name}")
+
+        logger.info(f"Executing scheduled workflow: {schedule.workflow_name}")
         
         # Mark as running
         start_time = time.time()
@@ -629,17 +618,17 @@ class WorkflowScheduler:
                 if result.get('success', False):
                     execution_success = True
                     result_text = result.get('result', 'Workflow completed successfully')
-                    logger.info(f"✅ Scheduled workflow '{schedule.workflow_name}' completed successfully")
+                    logger.info(f"Scheduled workflow '{schedule.workflow_name}' completed successfully")
                 else:
                     error_message = result.get('error', 'Workflow execution failed')
-                    logger.error(f"❌ Scheduled workflow '{schedule.workflow_name}' failed: {error_message}")
+                    logger.error(f"Scheduled workflow '{schedule.workflow_name}' failed: {error_message}")
             else:
                 error_message = "No workflow executor configured"
                 logger.warning(error_message)
                 
         except Exception as e:
             error_message = str(e)
-            logger.error(f"❌ Error executing scheduled workflow '{schedule.workflow_name}': {e}")
+            logger.error(f"Error executing scheduled workflow '{schedule.workflow_name}': {e}")
         
         execution_time = time.time() - start_time
         
@@ -661,7 +650,7 @@ class WorkflowScheduler:
         
         # Check if max_runs limit reached (only count successful runs for the limit)
         if schedule.max_runs is not None and schedule.success_count >= schedule.max_runs:
-            logger.info(f"⏹️  Schedule '{schedule.workflow_name}' reached max successful runs ({schedule.max_runs}), disabling")
+            logger.info(f"Schedule '{schedule.workflow_name}' reached max successful runs ({schedule.max_runs}), disabling")
             schedule.enabled = False
             # Remove from scheduler
             if self.scheduler and self.scheduler.get_job(schedule_id):
@@ -723,13 +712,13 @@ class WorkflowScheduler:
         else:
             self._save_schedules()
         
-        print(f"[Scheduler] Created schedule {schedule.id}, enabled={schedule.enabled}, _is_running={self._is_running}")
-        
+        logger.debug(f"[Scheduler] Created schedule {schedule.id}, enabled={schedule.enabled}, _is_running={self._is_running}")
+
         if schedule.enabled and self._is_running:
-            print(f"[Scheduler] Adding job to APScheduler...")
+            logger.debug("[Scheduler] Adding job to APScheduler...")
             self._add_job_to_scheduler(schedule)
         else:
-            print(f"[Scheduler] ⚠️ NOT adding job: enabled={schedule.enabled}, _is_running={self._is_running}")
+            logger.debug(f"[Scheduler] NOT adding job: enabled={schedule.enabled}, _is_running={self._is_running}")
         
         logger.info(f"Created schedule {schedule.id} for workflow '{workflow_name}'")
         return schedule

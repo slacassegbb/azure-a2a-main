@@ -18,7 +18,7 @@ from a2a.types import (
     FileWithUri,
 )
 
-from log_config import log_debug, log_error
+from log_config import log_debug, log_info, log_warning, log_error
 
 # Runtime directory for file storage
 RUNTIME_DIR = Path(__file__).resolve().parents[2] / ".runtime"
@@ -89,15 +89,15 @@ class DummyToolContext:
         Returns:
             DataPart with artifact-id, artifact-uri, and storage metadata
         """
-        print(f"save_artifact called for file: {file_id}")
+        log_debug(f"save_artifact called for file: {file_id}")
         
         # Generate unique artifact ID (A2A best practice)
         artifact_id = str(uuid.uuid4())
-        print(f"Generated artifact ID: {artifact_id}")
+        log_debug(f"Generated artifact ID: {artifact_id}")
         
         try:
             # Extract file data with robust error handling (A2A-native format)
-            print(f"Extracting file data from file_part type: {type(file_part)}")
+            log_debug(f"Extracting file data from file_part type: {type(file_part)}")
             file_role = None
             
             if isinstance(file_part, dict):
@@ -109,7 +109,7 @@ class DummyToolContext:
                     log_debug(f"Extracted {len(file_bytes)} bytes from A2A file part")
                     file_role = file_info.get('role')
                 else:
-                    print(f"Could not extract file bytes from A2A file part: {file_part.keys()}")
+                    log_error(f"Could not extract file bytes from A2A file part: {file_part.keys()}")
                     return DataPart(data={'error': 'Invalid A2A file format'})
             elif hasattr(file_part, 'inline_data') and hasattr(file_part.inline_data, 'data'):
                 # Handle Google ADK format (fallback)
@@ -123,10 +123,10 @@ class DummyToolContext:
                 log_debug(f"Extracted {len(file_bytes)} bytes from data attribute")
                 file_role = getattr(file_part, 'role', None)
             else:
-                print(f"Could not extract file bytes from artifact: {type(file_part)}")
+                log_error(f"Could not extract file bytes from artifact: {type(file_part)}")
                 return DataPart(data={'error': 'Invalid file format'})
             
-            print(f"File size: {len(file_bytes)} bytes, MIME type: {mime_type}")
+            log_debug(f"File size: {len(file_bytes)} bytes, MIME type: {mime_type}")
             
             # Enhanced security: Validate file before processing
             if len(file_bytes) > 50 * 1024 * 1024:  # 50MB limit
@@ -143,19 +143,13 @@ class DummyToolContext:
 
             if (use_azure_blob or force_blob_flag) and hasattr(self, '_azure_blob_client'):
                 # A2A URI mechanism with Azure Blob Storage
-                print(f"Using Azure Blob Storage for large file")
+                log_debug("Using Azure Blob Storage for large file")
                 try:
                     file_uri = self._upload_to_azure_blob(artifact_id, file_id, file_bytes, mime_type)
-                    print(f"✅ Azure Blob upload succeeded: {file_uri[:80]}...")
+                    log_info(f"Azure Blob upload succeeded: {file_uri[:80]}...")
                 except Exception as blob_err:
-                    print(f"❌ Azure Blob upload exception caught:")
-                    print(f"   Exception type: {type(blob_err).__name__}")
-                    print(f"   Exception message: {str(blob_err)}")
                     import traceback
-                    print(f"   Full traceback:")
-                    for line in traceback.format_exc().split('\n'):
-                        if line.strip():
-                            print(f"   {line}")
+                    log_error(f"Azure Blob upload failed: {type(blob_err).__name__}: {blob_err}\n{traceback.format_exc()}")
                     # Fall back to local storage path below
                     file_uri = None
                 
@@ -195,11 +189,11 @@ class DummyToolContext:
                     'role': normalized_role,
                 }
 
-                print(f"A2A Artifact stored in Azure Blob: {artifact_id} -> {file_uri}")
+                log_debug(f"A2A Artifact stored in Azure Blob: {artifact_id} -> {file_uri}")
 
             else:
                 # Local storage with inline bytes (current implementation)
-                print(f"Using local storage for file")
+                log_debug("Using local storage for file")
                 safe_filename = file_id.replace('/', '_').replace('\\', '_')
                 file_path = os.path.join(self.storage_dir, f"host_received_{safe_filename}")
                 
@@ -242,8 +236,8 @@ class DummyToolContext:
                     'role': normalized_role,
                 }
                 
-                print(f"A2A Artifact stored locally: {artifact_id} for file: {file_id}")
-                print(f"File saved to: {file_path} ({len(file_bytes)} bytes)")
+                log_debug(f"A2A Artifact stored locally: {artifact_id} for file: {file_id}")
+                log_debug(f"File saved to: {file_path} ({len(file_bytes)} bytes)")
             
             # Return A2A compliant DataPart with artifact reference
             artifact_uri = file_part_obj.file.uri
@@ -263,9 +257,8 @@ class DummyToolContext:
             return response
             
         except Exception as e:
-            print(f"Error saving A2A artifact: {e}")
             import traceback
-            log_error(f"Full traceback: {traceback.format_exc()}")
+            log_error(f"Error saving A2A artifact: {e}\n{traceback.format_exc()}")
             return DataPart(data={
                 'error': f'Failed to save artifact: {str(e)}',
                 'file-name': file_id,
@@ -279,15 +272,10 @@ class DummyToolContext:
         force_azure = normalize_env_bool(os.getenv('FORCE_AZURE_BLOB'), False)
         has_azure_config = self._azure_blob_client is not None
  
-        print(f"Azure Blob decision factors:")
-        print(f"   - File size: {file_size_bytes:,} bytes")
-        print(f"   - Size threshold: {size_threshold:,} bytes")
-        print(f"   - Force Azure: {force_azure}")
-        print(f"   - Has Azure client: {has_azure_config}")
-        print(f"   - Size exceeds threshold: {file_size_bytes > size_threshold}")
- 
+        log_debug(f"Azure Blob decision factors: file_size={file_size_bytes:,}b, threshold={size_threshold:,}b, force={force_azure}, has_client={has_azure_config}, exceeds_threshold={file_size_bytes > size_threshold}")
+
         decision = has_azure_config and (force_azure or file_size_bytes > size_threshold)
-        log_debug(f"🎯 Azure Blob decision: {'YES' if decision else 'NO'}")
+        log_debug(f"Azure Blob decision: {'YES' if decision else 'NO'}")
  
         return decision
     
@@ -296,14 +284,10 @@ class DummyToolContext:
         from azure.storage.blob import BlobServiceClient, generate_blob_sas, BlobSasPermissions, ContentSettings
         
         try:
-            print(f"🔥 _upload_to_azure_blob ENTRY (SYNC)")
-            print(f"   artifact_id: {artifact_id}")
-            print(f"   file_name: {file_name}")
-            print(f"   file_bytes size: {len(file_bytes)} bytes")
-            print(f"   mime_type: {mime_type}")
+            log_debug(f"_upload_to_azure_blob ENTRY: artifact_id={artifact_id}, file_name={file_name}, size={len(file_bytes)} bytes, mime_type={mime_type}")
             
             if not self._azure_blob_client:
-                print(f"❌ _upload_to_azure_blob: Azure Blob client is None!")
+                log_error("_upload_to_azure_blob: Azure Blob client is None")
                 raise Exception("Azure Blob client not initialized")
             
             # Generate blob name with artifact ID for uniqueness
@@ -325,7 +309,7 @@ class DummyToolContext:
             )
             
             # Upload with metadata (synchronous call)
-            print(f"   🔄 Starting blob upload...")
+            log_debug("Starting blob upload...")
             blob_client.upload_blob(
                 file_bytes,
                 content_settings=content_settings,
@@ -337,7 +321,7 @@ class DummyToolContext:
                 },
                 overwrite=True
             )
-            print(f"   ✅ Blob uploaded successfully!")
+            log_debug("Blob uploaded successfully")
             
             # Extract account key from connection string for SAS token generation
             connection_string = os.getenv('AZURE_STORAGE_CONNECTION_STRING')
@@ -350,7 +334,7 @@ class DummyToolContext:
             
             sas_token = None
             if account_key:
-                print(f"   🔐 Generating SAS token with account key...")
+                log_debug("Generating SAS token with account key...")
                 sas_token = generate_blob_sas(
                     account_name=blob_client.account_name,
                     container_name=blob_client.container_name,
@@ -363,7 +347,7 @@ class DummyToolContext:
             else:
                 # Attempt user-delegation SAS when using Azure AD credentials
                 try:
-                    print(f"   🔐 Requesting user delegation key for SAS...")
+                    log_debug("Requesting user delegation key for SAS...")
                     delegation_key = self._azure_blob_client.get_user_delegation_key(
                         key_start_time=datetime.now(timezone.utc) - timedelta(minutes=5),
                         key_expiry_time=datetime.now(timezone.utc) + timedelta(hours=24),
@@ -377,23 +361,22 @@ class DummyToolContext:
                         expiry=datetime.now(timezone.utc) + timedelta(hours=24),
                         version="2023-11-03",
                     )
-                    print(f"   ✅ User delegation SAS generated")
+                    log_debug("User delegation SAS generated")
                 except Exception as ude_err:
-                    print(f"   ⚠️ Failed to generate user delegation SAS: {ude_err}")
+                    log_warning(f"Failed to generate user delegation SAS: {ude_err}")
 
             if sas_token:
                 blob_uri = f"{blob_client.url}?{sas_token}"
-                print(f"   ✅ SAS token generated: {blob_uri[:80]}...")
+                log_debug(f"SAS token generated: {blob_uri[:80]}...")
             else:
                 raise RuntimeError("Unable to generate SAS token for blob upload")
             
-            print(f"🔥 _upload_to_azure_blob EXIT - returning URI")
+            log_debug("_upload_to_azure_blob EXIT - returning URI")
             return blob_uri
             
         except Exception as e:
-            print(f"❌ _upload_to_azure_blob ERROR: {e}")
             import traceback
-            print(f"   Full traceback: {traceback.format_exc()}")
+            log_error(f"_upload_to_azure_blob failed: {e}\n{traceback.format_exc()}")
             raise Exception(f"Azure Blob upload failed: {str(e)}")
     
     def get_artifact(self, artifact_id: str) -> Optional[Artifact]:

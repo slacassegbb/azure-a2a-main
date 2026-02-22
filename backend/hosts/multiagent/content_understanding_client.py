@@ -2,8 +2,16 @@ import requests
 from requests.models import Response
 import logging
 import json
+import sys
 import time
 from pathlib import Path
+
+# Add backend directory to path for log_config import
+backend_dir = Path(__file__).resolve().parent.parent
+if str(backend_dir) not in sys.path:
+    sys.path.insert(0, str(backend_dir))
+
+from log_config import log_debug, log_error
 
 
 class AzureContentUnderstandingClient:
@@ -261,7 +269,7 @@ class AzureContentUnderstandingClient:
 
             return response.content
         except requests.exceptions.RequestException as e:
-            print(f"HTTP request failed: {e}")
+            log_error(f"HTTP request failed: {e}")
             return None
 
     def poll_result(
@@ -311,7 +319,7 @@ class AzureContentUnderstandingClient:
                 return response.json()
             elif status == "failed":
                 error_response = response.json()
-                print(f"[DEBUG] Azure Content Understanding failed. Full response: {error_response}")
+                log_debug(f"Azure Content Understanding failed. Full response: {error_response}")
                 self._logger.error(f"Request failed. Reason: {error_response}")
                 raise RuntimeError(f"Request failed. Details: {error_response}")
             else:

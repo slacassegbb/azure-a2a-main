@@ -24,7 +24,7 @@ backend_dir = Path(__file__).resolve().parents[2]
 if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
-from log_config import log_debug
+from log_config import log_debug, log_info, log_warning, log_error
 
 from service.types import (
     Conversation,
@@ -59,7 +59,7 @@ async def trigger_websocket_agent_refresh():
         websocket_server = get_websocket_server()
         if websocket_server:
             websocket_server.trigger_immediate_sync()
-            log_debug("🔔 Triggered immediate agent registry sync (direct)")
+            log_debug("Triggered immediate agent registry sync (direct)")
             return True
         
         # Otherwise use HTTP call to WebSocket server
@@ -67,13 +67,13 @@ async def trigger_websocket_agent_refresh():
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.post(f"{websocket_url}/refresh-agents")
             if response.status_code == 200:
-                log_debug("🔔 Triggered immediate agent registry sync via HTTP")
+                log_debug("Triggered immediate agent registry sync via HTTP")
                 return True
             else:
-                log_debug(f"⚠️ HTTP refresh-agents returned {response.status_code}")
+                log_debug(f"HTTP refresh-agents returned {response.status_code}")
                 return False
     except Exception as e:
-        log_debug(f"⚠️ Failed to trigger agent refresh: {e}")
+        log_debug(f"Failed to trigger agent refresh: {e}")
         return False
 
 
@@ -162,7 +162,7 @@ class ConversationServer:
         # Clear session agents on startup (they should not persist across restarts)
         session_registry = get_session_registry()
         session_registry.clear_all()
-        print("[Server] Session agent registry cleared on startup")
+        log_info("[Server] Session agent registry cleared on startup")
 
         # Get API key from environment
         api_key = os.environ.get('GOOGLE_API_KEY', '')
@@ -317,7 +317,7 @@ class ConversationServer:
                         file_part_kwargs = {'file': FileWithUri(**file_kwargs)}
                         if file_data.get('role'):
                             file_part_kwargs['metadata'] = {'role': file_data.get('role')}
-                            print(f"🎭 [server.py] Setting metadata role='{file_data.get('role')}' for file: {file_data.get('name', 'unknown')}")
+                            log_debug(f"[server.py] Setting metadata role='{file_data.get('role')}' for file: {file_data.get('name', 'unknown')}")
                         
                         transformed_parts.append(A2APart(root=A2AFilePart(**file_part_kwargs)))
                     else:
@@ -363,31 +363,24 @@ class ConversationServer:
                     db_workflow = get_workflow_service().get_workflow_by_name(wf_name)
                     if db_workflow and db_workflow.steps and db_workflow.connections:
                         workflow = generate_workflow_text(db_workflow.steps, db_workflow.connections)
-                        print(f"📋 [_send_message] Generated workflow text from DB '{wf_name}' ({len(workflow)} chars):")
-                        for line in workflow.split('\n'):
-                            print(f"    {line}")
+                        log_debug(f"[_send_message] Generated workflow text from DB '{wf_name}' ({len(workflow)} chars)")
                     else:
-                        print(f"⚠️ [_send_message] Workflow '{wf_name}' not in DB or has no connections, using frontend text")
+                        log_warning(f"[_send_message] Workflow '{wf_name}' not in DB or has no connections, using frontend text")
             except Exception as e:
-                print(f"⚠️ [_send_message] DB workflow lookup failed: {e}, using frontend text")
+                log_warning(f"[_send_message] DB workflow lookup failed: {e}, using frontend text")
         user_id = message_data.get('params', {}).get('userId')  # Extract userId for color lookup
         log_debug(f"_send_message: Agent Mode = {agent_mode}, Inter-Agent Memory = {enable_inter_agent_memory}, Workflow = {workflow[:50] if workflow else None}, WorkflowGoal = {workflow_goal[:50] if workflow_goal else None}, AvailableWorkflows = {len(available_workflows) if available_workflows else 0}")
         
-        # DEBUG: Log the full workflow text to verify all steps are included
         if workflow:
-            print(f"📋 [_send_message] FULL WORKFLOW TEXT ({len(workflow)} chars):")
-            for line in workflow.split('\n'):
-                print(f"    {line}")
+            log_debug(f"[_send_message] Workflow text ready ({len(workflow)} chars)")
         
-        # DEBUG: Log the contextId from frontend
         frontend_context_id = message_data.get('params', {}).get('contextId')
-        log_debug(f"🔍 [_send_message] Frontend sent contextId: {frontend_context_id}")
+        log_debug(f"[_send_message] Frontend sent contextId: {frontend_context_id}")
         
         # Transform the message data to handle frontend format
         transformed_params = self._transform_message_data(message_data['params'])
         
-        # DEBUG: Check if contextId survived transformation
-        log_debug(f"🔍 [_send_message] After transform, contextId: {transformed_params.get('contextId')}")
+        log_debug(f"[_send_message] After transform, contextId: {transformed_params.get('contextId')}")
         
         # Add required fields if missing
         if 'messageId' not in transformed_params:
@@ -403,10 +396,10 @@ class ConversationServer:
         
         # Store userId mapping for this message (for user color lookup later)
         msg_id = get_message_id(message)
-        print(f"[DEBUG] _send_message: user_id={user_id}, msg_id={msg_id}")
+        log_debug(f"_send_message: user_id={user_id}, msg_id={msg_id}")
         if user_id and msg_id:
             message_user_map[msg_id] = user_id
-            print(f"[DEBUG] Stored userId mapping: {msg_id} -> {user_id}, map now has {len(message_user_map)} entries")
+            log_debug(f"Stored userId mapping: {msg_id} -> {user_id}, map now has {len(message_user_map)} entries")
             log_debug(f"_send_message: Stored userId mapping: {msg_id} -> {user_id}")
         
         log_debug(f"_send_message: Processing message asynchronously for contextId: {get_context_id(message)}")
@@ -473,14 +466,14 @@ class ConversationServer:
                     uri_str = str(file_obj.uri)
                     if uri_str.startswith(('http://', 'https://')):
                         # Keep the original blob storage URI
-                        log_debug(f"📸 Preserving blob URI for file: {uri_str[:80]}...")
+                        log_debug(f"Preserving blob URI for file: {uri_str[:80]}...")
                         new_parts.append(p)
                         continue
                 
                 # Only cache files with embedded bytes (FileWithBytes)
                 if not hasattr(file_obj, 'bytes') or not file_obj.bytes:
                     # No bytes and no valid URI - skip this part
-                    log_debug(f"⚠️ FilePart has no bytes and no valid URI, skipping")
+                    log_debug("FilePart has no bytes and no valid URI, skipping")
                     new_parts.append(p)
                     continue
                 
@@ -636,8 +629,8 @@ class ConversationServer:
             if not conversation_id:
                 return {"success": False, "error": "conversationId required"}
             
-            log_debug(f"🗑️  Delete request - conversationId: {conversation_id}, sessionId: {session_id}")
-            log_debug(f"🗑️  Conversations in memory: {[c.conversation_id for c in self.manager.conversations]}")
+            log_debug(f"Delete request - conversationId: {conversation_id}, sessionId: {session_id}")
+            log_debug(f"Conversations in memory: {[c.conversation_id for c in self.manager.conversations]}")
             
             # Reconstruct full contextId if session provided
             full_id = f"{session_id}::{conversation_id}" if session_id else None
@@ -669,13 +662,13 @@ class ConversationServer:
                 log_debug(f"Error deleting from database: {db_error}")
             
             if len(filtered) == original_length:
-                log_debug(f"⚠️  Conversation not found: {conversation_id}")
+                log_debug(f"Conversation not found: {conversation_id}")
                 return {"success": False, "error": "Conversation not found"}
             
-            log_debug(f"✅  Deleted! Remaining: {[c.conversation_id for c in self.manager.conversations]}")
+            log_debug(f"Deleted conversation. Remaining: {[c.conversation_id for c in self.manager.conversations]}")
             return {"success": True}
         except Exception as e:
-            log_debug(f"❌  Error: {e}")
+            log_debug(f"Error in _delete_conversation: {e}")
             return {"success": False, "error": str(e)}
 
     async def _update_conversation_title(self, request: Request):
@@ -691,12 +684,12 @@ class ConversationServer:
             if not title:
                 return {"success": False, "error": "title required"}
             
-            log_debug(f"📝  Update title request - conversationId: {conversation_id}, title: {title}")
+            log_debug(f"Update title request - conversationId: {conversation_id}, title: {title}")
             
             # Update in database
             try:
                 chat_history_service.update_conversation_name(conversation_id, title)
-                log_debug(f"✅  Title updated in database")
+                log_debug("Title updated in database")
             except Exception as db_error:
                 log_debug(f"Error updating title in database: {db_error}")
                 return {"success": False, "error": str(db_error)}
@@ -705,12 +698,12 @@ class ConversationServer:
             for conv in self.manager.conversations:
                 if conv.conversation_id == conversation_id or conv.conversation_id.endswith(f"::{conversation_id}"):
                     conv.name = title
-                    log_debug(f"✅  Title updated in memory")
+                    log_debug("Title updated in memory")
                     break
             
             return {"success": True}
         except Exception as e:
-            log_debug(f"❌  Error updating title: {e}")
+            log_debug(f"Error updating title: {e}")
             return {"success": False, "error": str(e)}
 
     async def _delete_all_conversations(self, request: Request):
@@ -726,7 +719,7 @@ class ConversationServer:
             if not session_id:
                 return {"success": False, "error": "sessionId required"}
             
-            log_debug(f"🗑️  Delete ALL conversations request for session: {session_id}")
+            log_debug(f"Delete ALL conversations request for session: {session_id}")
             
             # Clear from in-memory manager
             conversations = self.manager.conversations
@@ -745,7 +738,7 @@ class ConversationServer:
             self.manager._conversations = filtered
             
             deleted_memory_count = original_length - len(filtered)
-            log_debug(f"🗑️  Deleted {deleted_memory_count} conversations from memory")
+            log_debug(f"Deleted {deleted_memory_count} conversations from memory")
             
             # Delete from database
             try:
@@ -753,10 +746,10 @@ class ConversationServer:
             except Exception as db_error:
                 log_debug(f"Error deleting all from database: {db_error}")
             
-            log_debug(f"✅  Deleted all conversations for session {session_id}")
+            log_debug(f"Deleted all conversations for session {session_id}")
             return {"success": True, "deleted_count": deleted_memory_count}
         except Exception as e:
-            log_debug(f"❌  Error deleting all conversations: {e}")
+            log_debug(f"Error deleting all conversations: {e}")
             return {"success": False, "error": str(e)}
 
     def _get_events(self):
@@ -780,12 +773,10 @@ class ConversationServer:
             agent_address = message_data.get('agent_address') or message_data.get('url')
             agent_card_data = message_data.get('agent_card')
             
-            log_debug(f"🤝 Self-registration request received:")
-            log_debug(f"  - Agent address: {agent_address}")
-            log_debug(f"  - Has agent card: {agent_card_data is not None}")
+            log_debug(f"Self-registration request received: address={agent_address}, has_card={agent_card_data is not None}")
             
             if not agent_address:
-                log_debug("❌ No agent address provided in self-registration request")
+                log_debug("No agent address provided in self-registration request")
                 return {"success": False, "error": "agent_address required"}
             
             # Handle self-registration based on manager type
@@ -800,7 +791,7 @@ class ConversationServer:
                 success = await self.manager.handle_self_registration(agent_address, agent_card)
                 
                 if success:
-                    log_debug(f"✅ Self-registration successful for: {agent_address}")
+                    log_info(f"Self-registration successful for: {agent_address}")
                     
                     # Trigger immediate WebSocket sync to update UI in real-time
                     try:
@@ -808,19 +799,18 @@ class ConversationServer:
                         import httpx
                         websocket_url = os.environ.get("WEBSOCKET_SERVER_URL", "http://localhost:8080")
                         sync_url = f"{websocket_url}/agents/sync"
-                        log_debug(f"🔔 Triggering immediate sync via HTTP POST to: {sync_url}")
+                        log_debug(f"Triggering immediate sync via HTTP POST to: {sync_url}")
                         
                         async with httpx.AsyncClient(timeout=5.0, verify=False) as client:
                             response = await client.post(sync_url)
                             if response.status_code == 200:
-                                log_debug("✅ Immediate agent registry sync triggered successfully")
+                                log_debug("Immediate agent registry sync triggered successfully")
                             else:
-                                log_debug(f"⚠️ Sync trigger returned status {response.status_code}")
+                                log_debug(f"Sync trigger returned status {response.status_code}")
                     except Exception as sync_error:
-                        log_debug(f"⚠️ Failed to trigger immediate sync: {sync_error}")
+                        log_debug(f"Failed to trigger immediate sync: {sync_error}")
                     
-                    # Stream agent self-registration over WebSocket
-                    log_debug("🌊 Attempting to stream agent self-registration to WebSocket...")
+                    log_debug("Attempting to stream agent self-registration to WebSocket...")
                     try:
                         streamer = await get_websocket_streamer()
                         if streamer:
@@ -834,63 +824,63 @@ class ConversationServer:
                                 "endpoint": agent_address,
                                 "metadata": agent_card_data if agent_card_data else {}
                             }
-                            log_debug(f"🌊 Agent info for WebSocket streaming: {agent_info}")
+                            log_debug(f"Agent info for WebSocket streaming: {agent_info}")
                             stream_success = await streamer.stream_agent_self_registered(agent_info)
                             if stream_success:
-                                log_debug("✅ Agent self-registration event streamed over WebSocket successfully")
+                                log_debug("Agent self-registration event streamed over WebSocket successfully")
                             else:
-                                log_debug("⚠️ WebSocket streaming not available - agent registration will proceed without streaming")
+                                log_debug("WebSocket streaming not available - agent registration will proceed without streaming")
                         else:
-                            log_debug("⚠️ WebSocket streamer not configured - agent registration will proceed without streaming")
+                            log_debug("WebSocket streamer not configured - agent registration will proceed without streaming")
                     except Exception as e:
-                        log_debug(f"⚠️ WebSocket streaming error (non-blocking): {e}")
+                        log_debug(f"WebSocket streaming error (non-blocking): {e}")
                         # Streaming errors should not block agent registration
                     
                     # Trigger immediate WebSocket sync to update UI for all clients
                     try:
                         await trigger_websocket_agent_refresh()
                     except Exception as sync_error:
-                        log_debug(f"⚠️ Failed to trigger immediate sync: {sync_error}")
-                    
+                        log_debug(f"Failed to trigger immediate sync: {sync_error}")
+
                     return {"success": True, "message": f"Agent {agent_address} registered successfully"}
                 else:
-                    log_debug(f"❌ Self-registration failed for: {agent_address}")
+                    log_debug(f"Self-registration failed for: {agent_address}")
                     return {"success": False, "error": "Registration failed"}
             else:
                 # Fallback to regular registration for other manager types
-                log_debug(f"ℹ️ Using fallback registration for manager type: {type(self.manager).__name__}")
+                log_debug(f"Using fallback registration for manager type: {type(self.manager).__name__}")
                 self.manager.register_agent(agent_address)
                 
                 # Stream agent registration over WebSocket
-                print(f"[DEBUG] 🌊 Attempting to stream agent registration to WebSocket (fallback)...")
+                log_debug("Attempting to stream agent registration to WebSocket (fallback)...")
                 try:
                     streamer = await get_websocket_streamer()
                     if streamer:
                         stream_success = await streamer.stream_agent_registered(agent_address)
                         if stream_success:
-                            print(f"[DEBUG] ✅ Agent registration event streamed over WebSocket successfully (fallback)")
+                            log_debug("Agent registration event streamed over WebSocket successfully (fallback)")
                         else:
-                            print(f"[DEBUG] ⚠️ WebSocket streaming not available - agent registration will proceed without streaming (fallback)")
+                            log_debug("WebSocket streaming not available - agent registration will proceed without streaming (fallback)")
                     else:
-                        print(f"[DEBUG] ⚠️ WebSocket streamer not configured - agent registration will proceed without streaming (fallback)")
+                        log_debug("WebSocket streamer not configured - agent registration will proceed without streaming (fallback)")
                 except Exception as e:
-                    print(f"[DEBUG] ⚠️ WebSocket streaming error (non-blocking, fallback): {e}")
+                    log_debug(f"WebSocket streaming error (non-blocking, fallback): {e}")
                     # Streaming errors should not block agent registration
                 
                 # Trigger immediate WebSocket sync to update UI for all clients
                 try:
                     await trigger_websocket_agent_refresh()
                 except Exception as sync_error:
-                    print(f"[DEBUG] ⚠️ Failed to trigger immediate sync (fallback): {sync_error}")
+                    log_debug(f"Failed to trigger immediate sync (fallback): {sync_error}")
                 
                 return {"success": True, "message": f"Agent {agent_address} registered successfully (fallback)"}
                 
                 return {"success": True, "message": f"Agent {agent_address} registered successfully (fallback)"}
                 
         except Exception as e:
-            print(f"[DEBUG] ❌ Self-registration error: {e}")
+            log_error(f"Self-registration error: {e}")
             import traceback
-            print(f"[DEBUG] ❌ Self-registration traceback: {traceback.format_exc()}")
+            log_error(f"Self-registration traceback: {traceback.format_exc()}")
             return {"success": False, "error": str(e)}
 
     async def _unregister_agent(self, request: Request):
@@ -899,10 +889,10 @@ class ConversationServer:
             message_data = await request.json()
             agent_name = message_data.get('agentName')
             
-            print(f"[DEBUG] 🗑️ Unregister agent request: {agent_name}")
-            
+            log_debug(f"Unregister agent request: {agent_name}")
+
             if not agent_name:
-                print(f"[DEBUG] ❌ No agent name provided in unregister request")
+                log_debug("No agent name provided in unregister request")
                 return {"success": False, "error": "agentName required"}
             
             # Handle unregistration based on manager type
@@ -910,26 +900,26 @@ class ConversationServer:
                 success = await self.manager.unregister_agent(agent_name)
                 
                 if success:
-                    print(f"[DEBUG] ✅ Agent unregistered successfully: {agent_name}")
-                    
+                    log_debug(f"Agent unregistered successfully: {agent_name}")
+
                     # Trigger immediate WebSocket sync to update UI
                     try:
                         await trigger_websocket_agent_refresh()
                     except Exception as sync_error:
-                        print(f"[DEBUG] ⚠️ Failed to trigger immediate sync: {sync_error}")
+                        log_debug(f"Failed to trigger immediate sync: {sync_error}")
                     
                     return {"success": True, "message": f"Agent {agent_name} unregistered successfully"}
                 else:
-                    print(f"[DEBUG] ❌ Agent unregistration failed: {agent_name}")
+                    log_error(f"Agent unregistration failed: {agent_name}")
                     return {"success": False, "error": "Agent not found or unregistration failed"}
             else:
-                print(f"[DEBUG] ❌ Unregistration not supported for manager type: {type(self.manager).__name__}")
+                log_error(f"Unregistration not supported for manager type: {type(self.manager).__name__}")
                 return {"success": False, "error": "Unregistration not supported for this manager type"}
                 
         except Exception as e:
-            print(f"[DEBUG] ❌ Unregister agent error: {e}")
+            log_error(f"Unregister agent error: {e}")
             import traceback
-            print(f"[DEBUG] ❌ Unregister agent traceback: {traceback.format_exc()}")
+            log_error(f"Unregister agent traceback: {traceback.format_exc()}")
             return {"success": False, "error": str(e)}
 
     async def _register_agent_by_address(self, request: Request):
@@ -938,7 +928,7 @@ class ConversationServer:
             message_data = await request.json()
             agent_address = message_data.get('address')
             
-            print(f"[DEBUG] 🔗 Register agent by address request: {agent_address}")
+            log_debug(f"Register agent by address request: {agent_address}")
             
             if not agent_address:
                 return {"success": False, "error": "Agent address is required"}
@@ -954,7 +944,7 @@ class ConversationServer:
             
             # Handle registration based on manager type
             if isinstance(self.manager, FoundryHostManager):
-                print(f"[DEBUG] 🚀 Using FoundryHostManager for agent registration")
+                log_debug("Using FoundryHostManager for agent registration")
                 
                 # Ensure the host agent is initialized before use
                 await self.manager.ensure_host_agent_initialized()
@@ -963,7 +953,7 @@ class ConversationServer:
                 success = await self.manager._host_agent.register_remote_agent(agent_address)
                 
                 if success:
-                    print(f"[DEBUG] ✅ Agent registration successful: {agent_address}")
+                    log_info(f"Agent registration successful: {agent_address}")
 
                     # Persist to database registry so agent survives restarts
                     try:
@@ -986,9 +976,9 @@ class ConversationServer:
                                 "skills": [{"id": getattr(s, 'id', ''), "name": getattr(s, 'name', ''), "description": getattr(s, 'description', ''), "examples": getattr(s, 'examples', []), "tags": getattr(s, 'tags', [])} for s in card.skills] if hasattr(card, 'skills') and card.skills else [],
                             }
                             registry.update_or_add_agent(agent_dict)
-                            print(f"[DEBUG] ✅ Agent persisted to database registry: {card.name}")
+                            log_debug(f"Agent persisted to database registry: {card.name}")
                     except Exception as db_error:
-                        print(f"[DEBUG] ⚠️ Failed to persist agent to database: {db_error}")
+                        log_warning(f"Failed to persist agent to database: {db_error}")
 
                     # Trigger immediate WebSocket sync to update UI in real-time
                     try:
@@ -996,31 +986,31 @@ class ConversationServer:
                         import httpx
                         websocket_url = os.environ.get("WEBSOCKET_SERVER_URL", "http://localhost:8080")
                         sync_url = f"{websocket_url}/agents/sync"
-                        print(f"[DEBUG] 🔔 Triggering immediate sync via HTTP POST to: {sync_url}")
+                        log_debug(f"Triggering immediate sync via HTTP POST to: {sync_url}")
 
                         async with httpx.AsyncClient(timeout=5.0, verify=False) as client:
                             response = await client.post(sync_url)
                             if response.status_code == 200:
-                                print(f"[DEBUG] ✅ Immediate agent registry sync triggered successfully")
+                                log_debug("Immediate agent registry sync triggered successfully")
                             else:
-                                print(f"[DEBUG] ⚠️ Sync trigger returned status {response.status_code}")
+                                log_debug(f"Sync trigger returned status {response.status_code}")
                     except Exception as sync_error:
-                        print(f"[DEBUG] ⚠️ Failed to trigger immediate sync: {sync_error}")
+                        log_debug(f"Failed to trigger immediate sync: {sync_error}")
 
                     return {"success": True, "message": f"Agent at {agent_address} registered successfully"}
                 else:
-                    print(f"[DEBUG] ❌ Agent registration failed: {agent_address}")
+                    log_error(f"Agent registration failed: {agent_address}")
                     return {"success": False, "error": f"Failed to register agent at {agent_address}"}
             else:
                 # Fallback for other manager types
-                print(f"[DEBUG] ℹ️ Using fallback registration for manager type: {type(self.manager).__name__}")
+                log_debug(f"Using fallback registration for manager type: {type(self.manager).__name__}")
                 self.manager.register_agent(agent_address)
                 return {"success": True, "message": f"Agent at {agent_address} registered successfully"}
                 
         except Exception as e:
-            print(f"[DEBUG] ❌ Register agent by address error: {e}")
+            log_error(f"Register agent by address error: {e}")
             import traceback
-            print(f"[DEBUG] ❌ Register agent by address traceback: {traceback.format_exc()}")
+            log_error(f"Register agent by address traceback: {traceback.format_exc()}")
             return {"success": False, "error": f"Registration failed: {str(e)}"}
 
     async def _list_agents(self):
@@ -1037,7 +1027,7 @@ class ConversationServer:
         if agent_url in self._health_cache:
             status, timestamp = self._health_cache[agent_url]
             if current_time - timestamp < 30.0:  # Increased from 10 to 30 seconds to reduce flapping
-                log_debug(f"Using cached health status for {agent_url}: {'✓' if status else '✗'}")
+                log_debug(f"Using cached health status for {agent_url}: {'ONLINE' if status else 'OFFLINE'}")
                 return status
         
         try:
@@ -1057,7 +1047,7 @@ class ConversationServer:
             async with httpx.AsyncClient(timeout=timeout_value) as client:  # More generous timeout for network latency
                 response = await client.get(health_url)
                 is_healthy = response.status_code == 200
-                log_debug(f"Health check {health_url}: {'✓ ONLINE' if is_healthy else '✗ OFFLINE'} (status: {response.status_code})")
+                log_debug(f"Health check {health_url}: {'ONLINE' if is_healthy else 'OFFLINE'} (status: {response.status_code})")
                 self._health_cache[agent_url] = (is_healthy, current_time)
                 return is_healthy
         except Exception as e:
@@ -1141,8 +1131,8 @@ class ConversationServer:
             }
         except Exception as e:
             import traceback
-            print(f"[DEBUG] Error in agent registry sync: {str(e)}")
-            traceback.print_exc()
+            log_error(f"Error in agent registry sync: {str(e)}")
+            log_error(f"Agent registry sync traceback: {traceback.format_exc()}")
             return {
                 "success": False,
                 "error": str(e),
@@ -1307,7 +1297,7 @@ class ConversationServer:
         session_id = body.get('session_id')
         agent = body.get('agent')
         
-        print(f"🟢 [API /agents/session/enable] session_id='{session_id}', agent={agent.get('name') if agent else None}")
+        log_debug(f"[API /agents/session/enable] session_id='{session_id}', agent={agent.get('name') if agent else None}")
         
         if not session_id or not agent:
             return {'status': 'error', 'message': 'session_id and agent required'}
@@ -1328,9 +1318,9 @@ class ConversationServer:
                     },
                     timeout=5.0
                 )
-                log_debug(f"🔔 Broadcasted session_agent_enabled for {agent.get('name')}")
+                log_debug(f"Broadcasted session_agent_enabled for {agent.get('name')}")
         except Exception as e:
-            log_debug(f"⚠️ Failed to broadcast session_agent_enabled: {e}")
+            log_debug(f"Failed to broadcast session_agent_enabled: {e}")
         
         return {'status': 'success', 'agent': agent}
 
@@ -1360,9 +1350,9 @@ class ConversationServer:
                         },
                         timeout=5.0
                     )
-                    log_debug(f"🔔 Broadcasted session_agent_disabled for {agent_url}")
+                    log_debug(f"Broadcasted session_agent_disabled for {agent_url}")
             except Exception as e:
-                log_debug(f"⚠️ Failed to broadcast session_agent_disabled: {e}")
+                log_debug(f"Failed to broadcast session_agent_disabled: {e}")
         
         return {'status': 'success', 'removed': removed}
 

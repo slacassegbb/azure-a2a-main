@@ -128,7 +128,7 @@ class EventEmitters:
                 task_state = "completed" if status == "success" else "failed"
                 
                 if not context_id:
-                    log_debug(f"⚠️ [_emit_tool_response_event] No context_id for agent {agent_name}, cannot emit task_updated")
+                    log_debug(f"[_emit_tool_response_event] No context_id for agent {agent_name}, cannot emit task_updated")
                     return
                 
                 task_updated_data = {
@@ -288,7 +288,7 @@ class EventEmitters:
                             file_id = path_parts[i + 2]
                             break
                 except Exception as e:
-                    print(f"⚠️ Could not parse file_id from URI {uri}: {e}")
+                    log_debug(f"Could not parse file_id from URI {uri}: {e}")
                 
                 # Fallback: hash the blob path (sans SAS query params) for deterministic ID
                 if not file_id:
@@ -296,7 +296,7 @@ class EventEmitters:
                     _parsed = urlparse(uri)
                     _base_uri = f"{_parsed.scheme}://{_parsed.netloc}{_parsed.path}"
                     file_id = hashlib.md5(_base_uri.encode()).hexdigest()[:16]
-                    print(f"⚠️ Using fallback hash ID for {filename}: {file_id}")
+                    log_debug(f"Using fallback hash ID for {filename}: {file_id}")
                 
                 event_data = {
                     "fileId": file_id,
@@ -306,14 +306,14 @@ class EventEmitters:
                 }
                 
                 await streamer._send_event("file_processing_completed", event_data, context_id)
-                print(f"📤 File {status} event sent: {filename} (id={file_id})")
+                log_debug(f"File {status} event sent: {filename} (id={file_id})")
                 log_debug(f"File analyzed event sent: {filename}")
                 return True
             else:
                 log_debug(f"No WebSocket streamer available for file analyzed event: {filename}")
                 return False
         except Exception as e:
-            print(f"❌ Error emitting file analyzed event: {e}")
+            log_debug(f"Error emitting file analyzed event: {e}")
             log_debug(f"Error emitting file analyzed event: {e}")
             return False
 
@@ -346,7 +346,7 @@ class EventEmitters:
                 routing_context_id = context_id or stored_host_context
                 
                 if not routing_context_id:
-                    log_debug(f"⚠️ [_emit_granular_agent_event] No context_id for {agent_name}, skipping")
+                    log_debug(f"[_emit_granular_agent_event] No context_id for {agent_name}, skipping")
                     return
                 
                 # Extract conversationId from contextId (format: session_id::conversation_id)
@@ -376,21 +376,21 @@ class EventEmitters:
                     event_data["metadata"]["parallel_call_id"] = parallel_call_id
 
                 # DEBUG: Log what we're sending
-                print(f"📡 [WS_EMIT] Sending remote_agent_activity: agent={agent_name}, type={event_type}, convId={conversation_id}")
+                log_debug(f"[WS_EMIT] Sending remote_agent_activity: agent={agent_name}, type={event_type}, convId={conversation_id}")
                 
                 success = await streamer._send_event("remote_agent_activity", event_data, routing_context_id)
                 if not success:
                     log_debug(f"Failed to stream remote agent activity: {agent_name}")
-                    print(f"❌ [WS_EMIT] Failed to send event for {agent_name}")
+                    log_debug(f"[WS_EMIT] Failed to send event for {agent_name}")
                 else:
-                    print(f"✅ [WS_EMIT] Successfully sent event for {agent_name}")
+                    log_debug(f"[WS_EMIT] Successfully sent event for {agent_name}")
             else:
                 log_debug(f"WebSocket streamer not available for remote agent activity")
-                print(f"⚠️ [WS_EMIT] No WebSocket streamer available for {agent_name}")
+                log_debug(f"[WS_EMIT] No WebSocket streamer available for {agent_name}")
                 
         except Exception as e:
             log_debug(f"Error emitting granular agent event: {e}")
-            print(f"❌ [WS_EMIT] Error emitting event for {agent_name}: {e}")
+            log_debug(f"[WS_EMIT] Error emitting event for {agent_name}: {e}")
 
     async def _emit_plan_update(self, plan, context_id: str, reasoning: str = None):
         """Emit the full workflow plan to WebSocket for frontend rendering.
@@ -413,7 +413,7 @@ class EventEmitters:
                 routing_context_id = context_id or stored_host_context
                 
                 if not routing_context_id:
-                    log_debug(f"⚠️ [_emit_plan_update] No context_id, skipping")
+                    log_debug(f"[_emit_plan_update] No context_id, skipping")
                     return
                 
                 conversation_id = get_conversation_from_context(routing_context_id)
@@ -434,7 +434,7 @@ class EventEmitters:
                 
                 success = await streamer._send_event("plan_update", event_data, routing_context_id)
                 if success:
-                    log_debug(f"📋 Plan update emitted: {len(plan_data.get('tasks', []))} tasks")
+                    log_debug(f"Plan update emitted: {len(plan_data.get('tasks', []))} tasks")
                 else:
                     log_debug(f"Failed to stream plan update")
             else:

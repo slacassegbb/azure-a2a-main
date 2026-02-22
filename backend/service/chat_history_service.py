@@ -15,6 +15,7 @@ import json
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 from dataclasses import dataclass, field
+from log_config import log_debug, log_info, log_warning, log_error
 
 # Database connection
 DATABASE_URL = os.getenv('DATABASE_URL')
@@ -38,7 +39,7 @@ def _get_connection():
             cur.close()
             return _db_conn
         except Exception as e:
-            print(f"[ChatHistoryService] ⚠️ Connection test failed: {e}, reconnecting...")
+            log_warning(f"[ChatHistoryService] Connection test failed: {e}, reconnecting...")
             try:
                 _db_conn.close()
             except:
@@ -50,14 +51,14 @@ def _get_connection():
             import psycopg2
             _db_conn = psycopg2.connect(DATABASE_URL)
             _use_database = True
-            print("[ChatHistoryService] ✅ Connected to PostgreSQL")
+            log_info("[ChatHistoryService] Connected to PostgreSQL")
             return _db_conn
         except Exception as e:
-            print(f"[ChatHistoryService] ❌ Failed to connect: {e}")
+            log_error(f"[ChatHistoryService] Failed to connect: {e}")
             _use_database = False
             return None
     else:
-        print("[ChatHistoryService] ⚠️ DATABASE_URL not set, using in-memory only")
+        log_warning("[ChatHistoryService] DATABASE_URL not set, using in-memory only")
         return None
 
 
@@ -115,10 +116,10 @@ def _load_conversations_from_database(session_id: str = None):
                     _conversations_cache[row[0]]["task_ids"].append(row[1])
         
         cur.close()
-        print(f"[ChatHistoryService] Loaded {len(_conversations_cache)} conversations from database")
+        log_debug(f"[ChatHistoryService] Loaded {len(_conversations_cache)} conversations from database")
         
     except Exception as e:
-        print(f"[ChatHistoryService] Error loading conversations: {e}")
+        log_error(f"[ChatHistoryService] Error loading conversations: {e}")
 
 
 def _load_messages_for_conversation(conversation_id: str) -> List[Dict[str, Any]]:
@@ -157,12 +158,12 @@ def _load_messages_for_conversation(conversation_id: str) -> List[Dict[str, Any]
         
         # Cache the messages
         _messages_cache[conversation_id] = messages
-        print(f"[ChatHistoryService] Loaded {len(messages)} messages for conversation {conversation_id[:8]}...")
+        log_debug(f"[ChatHistoryService] Loaded {len(messages)} messages for conversation {conversation_id[:8]}...")
         
         return messages
         
     except Exception as e:
-        print(f"[ChatHistoryService] Error loading messages: {e}")
+        log_error(f"[ChatHistoryService] Error loading messages: {e}")
         return []
 
 
@@ -202,9 +203,9 @@ def create_conversation(conversation_id: str, session_id: str, name: str = "") -
             """, (conversation_id, session_id, name, True, now, now))
             conn.commit()
             cur.close()
-            print(f"[ChatHistoryService] Created conversation {conversation_id[:8]}...")
+            log_debug(f"[ChatHistoryService] Created conversation {conversation_id[:8]}...")
         except Exception as e:
-            print(f"[ChatHistoryService] Error creating conversation: {e}")
+            log_error(f"[ChatHistoryService] Error creating conversation: {e}")
             conn.rollback()
     
     return conversation
@@ -244,7 +245,7 @@ def get_conversation(conversation_id: str) -> Optional[Dict[str, Any]]:
                 _conversations_cache[conversation_id] = conv
                 return conv
         except Exception as e:
-            print(f"[ChatHistoryService] Error getting conversation: {e}")
+            log_error(f"[ChatHistoryService] Error getting conversation: {e}")
     
     return None
 
@@ -282,10 +283,10 @@ def delete_conversation(conversation_id: str) -> bool:
             cur.execute("DELETE FROM conversations WHERE conversation_id = %s", (conversation_id,))
             conn.commit()
             cur.close()
-            print(f"[ChatHistoryService] Deleted conversation {conversation_id[:8]}...")
+            log_debug(f"[ChatHistoryService] Deleted conversation {conversation_id[:8]}...")
             return True
         except Exception as e:
-            print(f"[ChatHistoryService] Error deleting conversation: {e}")
+            log_error(f"[ChatHistoryService] Error deleting conversation: {e}")
             conn.rollback()
     
     return True  # Return true even if only cache was cleared
@@ -314,7 +315,7 @@ def delete_all_conversations(session_id: str) -> bool:
         if conv_id in _messages_cache:
             del _messages_cache[conv_id]
     
-    print(f"[ChatHistoryService] Cleared {len(conv_ids_to_delete)} conversations from cache for session {session_id[:8]}...")
+    log_debug(f"[ChatHistoryService] Cleared {len(conv_ids_to_delete)} conversations from cache for session {session_id[:8]}...")
     
     # Delete from database
     conn = _get_connection()
@@ -329,10 +330,10 @@ def delete_all_conversations(session_id: str) -> bool:
             deleted_count = cur.rowcount
             conn.commit()
             cur.close()
-            print(f"[ChatHistoryService] Deleted {deleted_count} conversations from database for session {session_id[:8]}...")
+            log_debug(f"[ChatHistoryService] Deleted {deleted_count} conversations from database for session {session_id[:8]}...")
             return True
         except Exception as e:
-            print(f"[ChatHistoryService] Error deleting all conversations: {e}")
+            log_error(f"[ChatHistoryService] Error deleting all conversations: {e}")
             conn.rollback()
     
     return True  # Return true even if only cache was cleared
@@ -367,10 +368,10 @@ def update_conversation_name(conversation_id: str, name: str) -> bool:
             rows_updated = cur.rowcount
             conn.commit()
             cur.close()
-            print(f"[ChatHistoryService] Updated name for {rows_updated} conversation(s) matching {conversation_id}")
+            log_debug(f"[ChatHistoryService] Updated name for {rows_updated} conversation(s) matching {conversation_id}")
             return rows_updated > 0
         except Exception as e:
-            print(f"[ChatHistoryService] Error updating conversation name: {e}")
+            log_error(f"[ChatHistoryService] Error updating conversation name: {e}")
             conn.rollback()
     
     return False
@@ -443,7 +444,7 @@ def add_message(conversation_id: str, message: Dict[str, Any]) -> bool:
     # Persist to database
     conn = _get_connection()
     if not conn:
-        print(f"[ChatHistoryService] ❌ No database connection - message NOT persisted: {message_id[:16]}...")
+        log_error(f"[ChatHistoryService] No database connection - message NOT persisted: {message_id[:16]}...")
         return False
     
     try:
@@ -469,7 +470,7 @@ def add_message(conversation_id: str, message: Dict[str, Any]) -> bool:
         return True
         
     except Exception as e:
-        print(f"[ChatHistoryService] ❌ Error adding message: {e}")
+        log_error(f"[ChatHistoryService] Error adding message: {e}")
         try:
             conn.rollback()
         except:
@@ -502,7 +503,7 @@ def add_task_to_conversation(conversation_id: str, task_id: str) -> bool:
             cur.close()
             return True
         except Exception as e:
-            print(f"[ChatHistoryService] Error adding task: {e}")
+            log_error(f"[ChatHistoryService] Error adding task: {e}")
             conn.rollback()
     
     return False
