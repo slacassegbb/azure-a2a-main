@@ -351,7 +351,7 @@ class WebSocketManager:
         
         total_connections = len(self.active_connections)
         authenticated_connections = len(self.authenticated_connections)
-        logger.debug(f"WebSocket client connected. Total: {total_connections}, Authenticated: {authenticated_connections}")
+        logger.info(f"WebSocket client connected. Total: {total_connections}, Authenticated: {authenticated_connections}")
     
     async def disconnect(self, websocket: WebSocket):
         """Remove a WebSocket connection."""
@@ -407,7 +407,7 @@ class WebSocketManager:
         total_connections = len(self.active_connections)
         authenticated_connections = len(self.authenticated_connections)
         tenant_count = len(self.tenant_connections)
-        logger.debug(f"WebSocket client disconnected. Total: {total_connections}, Authenticated: {authenticated_connections}, Tenants: {tenant_count}")
+        logger.info(f"WebSocket client disconnected. Total: {total_connections}, Authenticated: {authenticated_connections}")
     
     def get_connection_info(self, websocket: WebSocket) -> Optional[AuthenticatedConnection]:
         """Get connection info for a websocket."""
@@ -921,7 +921,8 @@ def create_websocket_app() -> FastAPI:
     async def handle_websocket_message(websocket: WebSocket, message: Dict[str, Any]):
         """Handle incoming WebSocket messages from clients."""
         message_type = message.get("type")
-        
+        logger.debug(f"[WebSocket] Received message type: {message_type}")
+
         if message_type == "chat":
             # Handle chat message
             auth_conn = websocket_manager.get_connection_info(websocket)
