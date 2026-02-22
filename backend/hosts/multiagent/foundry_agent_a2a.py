@@ -2829,7 +2829,7 @@ Answer with just JSON:
                 ),
             )
             
-            log_debug(f"Calling agent: {agent_name} with context: {contextId}, task_id: {taskId}")
+            log_info(f"[A2A] -> {agent_name} (context: {contextId[:12]}..., task: {taskId[:12]}...)")
             log_debug(f"[SEND_MESSAGE] taskId={taskId}, last_task_id={last_task_id}, last_task_state={last_task_state}")
             
             # Track start time for processing duration
@@ -3056,7 +3056,8 @@ Answer with just JSON:
             # Process response based on type
             if isinstance(response, Task):
                 task = response
-                log_debug(f"[TASK RESPONSE] Agent {agent_name} returned Task with state={task.status.state}")
+                duration = time.time() - start_time
+                log_info(f"[A2A] <- {agent_name} (state={task.status.state}, {duration:.1f}s)")
                 log_debug(f"Task response from {agent_name}: state={task.status.state if hasattr(task, 'status') else 'N/A'}")
                 
                 # Update session context
@@ -3331,6 +3332,7 @@ Answer with just JSON:
                     # Clear from active tasks (cancellation tracking)
                     if contextId in self._active_agent_tasks:
                         self._active_agent_tasks[contextId].pop(agent_name, None)
+                    log_warning(f"[A2A] <- {agent_name} FAILED after retries")
                     return [f"Agent {agent_name} failed to complete the task"]
 
                 elif task.status.state == TaskState.input_required:
@@ -3358,6 +3360,7 @@ Answer with just JSON:
                     
             elif isinstance(response, Message):
                 # Direct message response
+                log_info(f"[A2A] <- {agent_name} (Message, {len(response.parts)} parts)")
                 result = await self.convert_parts(response.parts, tool_context)
                 self._update_last_host_turn(session_context, agent_name, result)
                 
