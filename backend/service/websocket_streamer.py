@@ -130,7 +130,7 @@ class WebSocketStreamer:
                     
                     if response.status_code == 200:
                         self.is_initialized = True
-                        logger.info("✅ WebSocket streamer initialized successfully")
+                        logger.info("WebSocket streamer initialized successfully")
                         log_debug(f"WebSocket streamer connected to {self.websocket_url}")
                         return True
                     else:
@@ -227,8 +227,8 @@ class WebSocketStreamer:
                 if response.status_code == 200:
                     result = response.json()
                     client_count = result.get('clientCount', 0)
-                    log_debug(f"✅ Event {event_type} sent successfully to {client_count} WebSocket clients")
-                    logger.info(f"✅ Event {event_type} sent successfully to {client_count} WebSocket clients")
+                    log_debug(f"Event {event_type} sent successfully to {client_count} WebSocket clients")
+                    logger.debug(f"Event {event_type} sent successfully to {client_count} WebSocket clients")
                     return True
                 else:
                     response_text = response.text[:500] if hasattr(response, 'text') else 'No response text'

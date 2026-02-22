@@ -7,7 +7,11 @@ Set VERBOSE_LOGGING=true in environment to see detailed debug logs.
 import os
 import logging
 import sys
+import warnings
 from typing import Any
+
+# Suppress noisy third-party warnings (e.g. google-cloud-storage FutureWarning)
+warnings.filterwarnings("ignore", category=FutureWarning, module="google")
 
 # Read verbose flag from environment (defaults to False for clean logs)
 VERBOSE_LOGGING = os.environ.get("VERBOSE_LOGGING", "false").lower() in ("true", "1", "yes")
@@ -36,6 +40,7 @@ def suppress_noisy_libraries() -> None:
         "a2a",
         "a2a.utils",
         "a2a.utils.telemetry",
+        "google.cloud",
     ]
     for name in noisy_loggers:
         logging.getLogger(name).setLevel(logging.WARNING)
