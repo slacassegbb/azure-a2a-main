@@ -7,6 +7,8 @@
  * Format: contextId = `${sessionId}::${conversationId}`
  */
 
+import { logDebug, logInfo } from '@/lib/debug';
+
 const SESSION_STORAGE_KEY = 'a2a_session_id';
 const SESSION_CREATED_KEY = 'a2a_session_created';
 
@@ -62,9 +64,9 @@ export function getOrCreateSessionId(): string {
   
   // Check if in a collaborative session first (takes priority)
   const collaborativeSession = sessionStorage.getItem('a2a_collaborative_session');
-  console.log('[Session] getOrCreateSessionId called. a2a_collaborative_session =', collaborativeSession);
+  logDebug('[Session] getOrCreateSessionId called. a2a_collaborative_session =', collaborativeSession);
   if (collaborativeSession) {
-    console.log('[Session] Using collaborative session:', collaborativeSession);
+    logDebug('[Session] Using collaborative session:', collaborativeSession);
     return collaborativeSession;
   }
   
@@ -76,7 +78,7 @@ export function getOrCreateSessionId(): string {
       const payload = JSON.parse(atob(token.split('.')[1]));
       if (payload.user_id) {
         // Use user_id as session for logged-in users (already has "user_" prefix from backend)
-        console.log('[Session] Using user-based session:', payload.user_id);
+        logInfo('[Session] Using user-based session:', payload.user_id);
         return payload.user_id;
       }
     } catch (error) {
@@ -91,7 +93,7 @@ export function getOrCreateSessionId(): string {
     sessionId = generateSessionId();
     localStorage.setItem(SESSION_STORAGE_KEY, sessionId);
     localStorage.setItem(SESSION_CREATED_KEY, new Date().toISOString());
-    console.log('[Session] Created new anonymous session:', sessionId);
+    logInfo('[Session] Created new anonymous session:', sessionId);
   }
   
   return sessionId;
@@ -127,7 +129,7 @@ export function clearSession(): void {
   sessionStorage.removeItem('a2a_collaborative_session');
   sessionStorage.removeItem('a2a_collaborative_session_just_joined');
   localStorage.removeItem('a2a_backend_session_id');
-  console.log('[Session] Session and auth cleared');
+  logInfo('[Session] Session and auth cleared');
 }
 
 /**
@@ -262,10 +264,10 @@ export function joinCollaborativeSession(sessionId: string, conversationId?: str
   // Store the target conversation for auto-navigation after reload
   if (conversationId) {
     sessionStorage.setItem(COLLABORATIVE_CONVERSATION_KEY, conversationId);
-    console.log('[Session] Joining collaborative session:', sessionId, 'with conversation:', conversationId);
+    logInfo('[Session] Joining collaborative session:', sessionId, 'with conversation:', conversationId);
   } else {
     sessionStorage.removeItem(COLLABORATIVE_CONVERSATION_KEY);
-    console.log('[Session] Joining collaborative session:', sessionId);
+    logInfo('[Session] Joining collaborative session:', sessionId);
   }
   
   if (reload) {
@@ -323,7 +325,7 @@ export function leaveCollaborativeSession(
   
   // Send explicit leave message to backend if we have a sendMessage function
   if (sessionId && sendMessage) {
-    console.log('[Session] Sending leave_collaborative_session message to backend');
+    logDebug('[Session] Sending leave_collaborative_session message to backend');
     sendMessage({
       type: 'leave_collaborative_session',
       session_id: sessionId
@@ -332,7 +334,7 @@ export function leaveCollaborativeSession(
   
   // Clear local storage
   sessionStorage.removeItem(COLLABORATIVE_SESSION_KEY);
-  console.log('[Session] Left collaborative session, returning to own session');
+  logInfo('[Session] Left collaborative session, returning to own session');
   
   if (reload) {
     window.location.reload();

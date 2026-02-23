@@ -5,6 +5,7 @@
  */
 
 import { getOrCreateSessionId } from './session'
+import { logDebug } from '@/lib/debug'
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
 
@@ -39,7 +40,7 @@ export async function listConversations(): Promise<ListConversationsResult> {
     const { getOrCreateSessionId } = await import('./session')
     const sessionId = getOrCreateSessionId()
     
-    console.log('[ConversationAPI] Calling listConversations endpoint for session:', sessionId)
+    logDebug('[ConversationAPI] Calling listConversations endpoint for session:', sessionId)
     const response = await fetch(`${API_BASE_URL}/conversation/list`, {
       method: 'POST',
       headers: {
@@ -61,11 +62,11 @@ export async function listConversations(): Promise<ListConversationsResult> {
     }
 
     const data = await response.json()
-    console.log('[ConversationAPI] Raw response data:', JSON.stringify(data, null, 2))
+    logDebug('[ConversationAPI] Raw response data:', JSON.stringify(data, null, 2))
     
     const conversations = data.result || []
     const messageUserMap = data.message_user_map || {}
-    console.log('[ConversationAPI] Parsed conversations:', conversations.length, 'messageUserMap entries:', Object.keys(messageUserMap).length)
+    logDebug('[ConversationAPI] Parsed conversations:', conversations.length, 'messageUserMap entries:', Object.keys(messageUserMap).length)
     
     return { conversations, messageUserMap }
   } catch (error) {
@@ -96,7 +97,7 @@ export async function createConversation(): Promise<Conversation | null> {
     }
 
     const data = await response.json()
-    console.log('[ConversationAPI] Create conversation response:', data)
+    logDebug('[ConversationAPI] Create conversation response:', data)
     
     return data.result
   } catch (error) {
@@ -115,15 +116,15 @@ export interface GetConversationResult {
 
 export async function getConversation(conversationId: string): Promise<GetConversationResult> {
   try {
-    console.log('[ConversationAPI] Getting conversation:', conversationId)
+    logDebug('[ConversationAPI] Getting conversation:', conversationId)
     const { conversations, messageUserMap } = await listConversations()
     const conversation = conversations.find(conv => conv.conversation_id === conversationId)
     
     if (conversation) {
-      console.log('[ConversationAPI] Found conversation with', conversation.messages?.length || 0, 'embedded messages')
+      logDebug('[ConversationAPI] Found conversation with', conversation.messages?.length || 0, 'embedded messages')
       return { conversation, messageUserMap }
     } else {
-      console.log('[ConversationAPI] Conversation not found:', conversationId)
+      logDebug('[ConversationAPI] Conversation not found:', conversationId)
       return { conversation: null, messageUserMap }
     }
   } catch (error) {
@@ -137,14 +138,14 @@ export async function getConversation(conversationId: string): Promise<GetConver
  */
 export async function listMessages(conversationId: string): Promise<Message[]> {
   try {
-    console.log('[ConversationAPI] Listing messages for conversation:', conversationId)
+    logDebug('[ConversationAPI] Listing messages for conversation:', conversationId)
     const requestBody = {
       jsonrpc: '2.0',
       method: 'message/list',
       params: conversationId,  // Send conversationId directly, not as object
       id: `req_${Date.now()}`
     }
-    console.log('[ConversationAPI] Request body:', JSON.stringify(requestBody, null, 2))
+    logDebug('[ConversationAPI] Request body:', JSON.stringify(requestBody, null, 2))
     
     const response = await fetch(`${API_BASE_URL}/message/list`, {
       method: 'POST',
@@ -160,7 +161,7 @@ export async function listMessages(conversationId: string): Promise<Message[]> {
     }
 
     const data = await response.json()
-    console.log('[ConversationAPI] List messages response:', JSON.stringify(data, null, 2))
+    logDebug('[ConversationAPI] List messages response:', JSON.stringify(data, null, 2))
     
     if (data.error) {
       console.error('[ConversationAPI] API error:', data.error)
@@ -168,7 +169,7 @@ export async function listMessages(conversationId: string): Promise<Message[]> {
     }
     
     const messages = data.result || []
-    console.log('[ConversationAPI] Returning', messages.length, 'messages')
+    logDebug('[ConversationAPI] Returning', messages.length, 'messages')
     return messages
   } catch (error) {
     console.error('[ConversationAPI] Failed to list messages:', error)
@@ -205,7 +206,7 @@ export async function deleteConversation(conversationId: string): Promise<boolea
     const result = await response.json()
     
     if (result.success) {
-      console.log('[ConversationAPI] Successfully deleted conversation:', conversationId)
+      logDebug('[ConversationAPI] Successfully deleted conversation:', conversationId)
       return true
     } else {
       console.error('[ConversationAPI] Delete conversation failed:', result.error)
@@ -222,7 +223,7 @@ export async function deleteConversation(conversationId: string): Promise<boolea
  */
 export async function updateConversationTitle(conversationId: string, title: string): Promise<boolean> {
   try {
-    console.log('[ConversationAPI] Updating title:', { conversationId, title })
+    logDebug('[ConversationAPI] Updating title:', { conversationId, title })
     
     // Persist to database
     const response = await fetch(`${API_BASE_URL}/conversation/update-title`, {
@@ -241,7 +242,7 @@ export async function updateConversationTitle(conversationId: string, title: str
         detail: { conversationId, title }
       })
       window.dispatchEvent(event)
-      console.log('[ConversationAPI] Title updated and event emitted:', { conversationId, title })
+      logDebug('[ConversationAPI] Title updated and event emitted:', { conversationId, title })
       return true
     } else {
       console.error('[ConversationAPI] Failed to update title:', result.error)
@@ -257,12 +258,12 @@ export async function updateConversationTitle(conversationId: string, title: str
  * Notify that a new conversation was created
  */
 export function notifyConversationCreated(conversation: Conversation): void {
-  console.log('[ConversationAPI] About to emit conversationCreated event for:', conversation.conversation_id)
+  logDebug('[ConversationAPI] About to emit conversationCreated event for:', conversation.conversation_id)
   const event = new CustomEvent('conversationCreated', {
     detail: { conversation }
   })
   window.dispatchEvent(event)
-  console.log('[ConversationAPI] Conversation created event emitted successfully:', conversation)
+  logDebug('[ConversationAPI] Conversation created event emitted successfully:', conversation)
 }
 
 /**
@@ -273,7 +274,7 @@ export async function deleteAllConversations(): Promise<boolean> {
     const baseUrl = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
     const sessionId = getOrCreateSessionId()
     
-    console.log('[ConversationAPI] Deleting all conversations for session:', sessionId)
+    logDebug('[ConversationAPI] Deleting all conversations for session:', sessionId)
     
     const response = await fetch(`${baseUrl}/conversation/delete-all`, {
       method: 'POST',
@@ -295,7 +296,7 @@ export async function deleteAllConversations(): Promise<boolean> {
     const result = await response.json()
     
     if (result.success) {
-      console.log('[ConversationAPI] Successfully deleted all conversations, count:', result.deleted_count)
+      logDebug('[ConversationAPI] Successfully deleted all conversations, count:', result.deleted_count)
       return true
     } else {
       console.error('[ConversationAPI] Delete all conversations failed:', result.error)

@@ -26,6 +26,7 @@ import { useState, useEffect, useCallback, useRef } from "react"
 import { useEventHub } from "@/contexts/event-hub-context"
 import { useSearchParams } from "next/navigation"
 import { getOrCreateSessionId } from "@/lib/session"
+import { logDebug, warnDebug, errorDebug, logInfo } from '@/lib/debug'
 
 type Agent = {
   name: string
@@ -251,14 +252,14 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
       const isNewNonTerminal = mappedState === "working" || mappedState === "submitted"
       
       if (isCurrentTerminal && isNewNonTerminal) {
-        console.log('[AgentNetwork] ⏭️ Blocking backwards transition:', currentTaskState, '→', mappedState)
+        logDebug('[AgentNetwork] ⏭️ Blocking backwards transition:', currentTaskState, '→', mappedState)
         return prev
       }
       
       // ALWAYS allow completed to override input-required (HITL resume)
       // The "completed" event means the human has responded and the task is done
       if (currentTaskState === "input-required" && (mappedState === "completed" || mappedState === "failed")) {
-        console.log('[AgentNetwork] ✅ HITL complete: allowing', mappedState, 'to override input-required')
+        logDebug('[AgentNetwork] ✅ HITL complete: allowing', mappedState, 'to override input-required')
         // Skip timestamp check - completed always wins over waiting
       } else {
         // Check timestamp ordering (with timezone normalization)
@@ -273,13 +274,13 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
           const currentTime = new Date(normalizeTs(currentTimestamp)).getTime()
           const newTime = new Date(normalizeTs(timestamp)).getTime()
           if (newTime < currentTime) {
-            console.log('[AgentNetwork] ⏭️ Ignoring older event')
+            logDebug('[AgentNetwork] ⏭️ Ignoring older event')
             return prev
           }
         }
       }
       
-      console.log('[AgentNetwork] ✅ State transition:', currentTaskState || 'none', '→', mappedState, 'for', targetAgent)
+      logDebug('[AgentNetwork] ✅ State transition:', currentTaskState || 'none', '→', mappedState, 'for', targetAgent)
       
       const updatedStatus = {
         ...currentStatus,
@@ -335,13 +336,13 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
     try {
       const { taskId, state, contextId, agentName, timestamp } = eventData
       
-      console.log('[AgentNetwork] 📥 task_updated received:', { agentName, state, taskId: taskId?.substring?.(0, 8), timestamp })
-      console.log('[AgentNetwork] 🔍 About to check targetAgent...')
+      logDebug('[AgentNetwork] 📥 task_updated received:', { agentName, state, taskId: taskId?.substring?.(0, 8), timestamp })
+      logDebug('[AgentNetwork] 🔍 About to check targetAgent...')
       
       let targetAgent = agentName
     
     if (!targetAgent) {
-      console.log('[AgentNetwork] ❌ No targetAgent, returning early')
+      logDebug('[AgentNetwork] ❌ No targetAgent, returning early')
       return
     }
     
@@ -350,16 +351,16 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
     // The agent might be registered later, and status should still show
     const agentExists = registeredAgentsRef.current.some(agent => agent.name === targetAgent)
     if (!agentExists) {
-      console.log('[AgentNetwork] ⚠️ Agent not in registry yet, but continuing with status update:', targetAgent)
+      logDebug('[AgentNetwork] ⚠️ Agent not in registry yet, but continuing with status update:', targetAgent)
       // Continue processing - don't return early
     }
     
     if (!taskId || !state) {
-      console.log('[AgentNetwork] ❌ Missing taskId or state:', { taskId, state })
+      logDebug('[AgentNetwork] ❌ Missing taskId or state:', { taskId, state })
       return
     }
     
-    console.log('[AgentNetwork] ✅ Passed validation checks, processing event...')
+    logDebug('[AgentNetwork] ✅ Passed validation checks, processing event...')
     
     // Map A2A task states to our UI states
     let mappedState: TaskState = "working"
@@ -377,7 +378,7 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
       mappedState = "input-required"
     }
     
-    console.log('[AgentNetwork] 🎨 Mapped state:', stateStr, '→', mappedState)
+    logDebug('[AgentNetwork] 🎨 Mapped state:', stateStr, '→', mappedState)
     
     // ========================================================================
     // MINIMUM WORKING TIME: Ensure "working" state is visible before "completed"
@@ -390,7 +391,7 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
         const remainingTime = MIN_WORKING_DISPLAY_TIME - elapsedTime
         
         if (remainingTime > 0) {
-          console.log(`[AgentNetwork] ⏳ Delaying ${mappedState} by ${remainingTime}ms to show working state for ${targetAgent}`)
+          logDebug(`[AgentNetwork] ⏳ Delaying ${mappedState} by ${remainingTime}ms to show working state for ${targetAgent}`)
           
           // Cancel any existing pending completed for this agent
           const existing = pendingCompletedRef.current.get(targetAgent)
@@ -400,7 +401,7 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
           
           // Schedule the completed update after remaining time
           const timeoutId = setTimeout(() => {
-            console.log(`[AgentNetwork] ⏰ Delayed ${mappedState} now applying for ${targetAgent}`)
+            logDebug(`[AgentNetwork] ⏰ Delayed ${mappedState} now applying for ${targetAgent}`)
             applyStatusUpdate(targetAgent, taskId, mappedState, contextId, timestamp)
             pendingCompletedRef.current.delete(targetAgent)
           }, remainingTime)
@@ -420,7 +421,7 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
 
   // Handle agent status updates from WebSocket
   const handleAgentStatusUpdate = useCallback((eventData: any) => {
-    console.log('[AgentNetwork] Agent status update received:', eventData)
+    logDebug('[AgentNetwork] Agent status update received:', eventData)
     
     const { agentName, status } = eventData
     
@@ -583,18 +584,18 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
     
     // Track host agent inference state
     const handleInferenceStarted = () => {
-      console.log('[AgentNetwork] Host inference started')
+      logDebug('[AgentNetwork] Host inference started')
       setIsHostInferencing(true)
     }
     const handleInferenceEnded = () => {
-      console.log('[AgentNetwork] Host inference ended')
+      logDebug('[AgentNetwork] Host inference ended')
       setIsHostInferencing(false)
     }
     
     subscribe('shared_inference_started', handleInferenceStarted)
     subscribe('shared_inference_ended', handleInferenceEnded)
     
-    console.log('[AgentNetwork] ✅ Subscribed to task_updated, agent_status_updated, shared_inference_*')
+    logDebug('[AgentNetwork] ✅ Subscribed to task_updated, agent_status_updated, shared_inference_*')
 
     return () => {
       unsubscribe('task_updated', handleTaskUpdate)
@@ -727,7 +728,7 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
         setCurrentInstruction(editedInstruction)
         setIsSystemPromptDialogOpen(false)
         // Show success message or toast here
-        console.log('System prompt updated successfully!')
+        logDebug('System prompt updated successfully!')
       } else {
         console.error('Failed to update instruction:', data.message)
         alert('Failed to update system prompt: ' + data.message)
@@ -753,7 +754,7 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
       if (data.status === 'success') {
         // Reload the current instruction to show the default
         await loadCurrentInstruction()
-        console.log('System prompt reset to default!')
+        logDebug('System prompt reset to default!')
       } else {
         console.error('Failed to reset instruction:', data.message)
         alert('Failed to reset system prompt: ' + data.message)
@@ -782,7 +783,7 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
       const data = await response.json()
       
       if (data.success) {
-        console.log('Memory cleared successfully!')
+        logDebug('Memory cleared successfully!')
       } else {
         console.error('Failed to clear memory:', data.message)
       }
@@ -819,7 +820,7 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
       })
 
       if (response.ok) {
-        console.log('Agent disabled successfully:', agentName)
+        logDebug('Agent disabled successfully:', agentName)
         // Emit event to update UI (AgentNetwork will handle removal from registeredAgents)
         emit('session_agent_disabled', { agent_url: agentUrl })
       } else {

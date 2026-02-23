@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
+import { logDebug } from '@/lib/debug';
 import { useVoiceRealtime } from "@/hooks/use-voice-realtime";
 import { Phone, PhoneOff, Mic, MicOff, AlertTriangle, Volume2, Loader2, X, Maximize2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -85,11 +86,11 @@ export function VoiceButton({ sessionId, contextId, conversationId, workflow, on
     contextId: activeContextId,    // Full context ID for conversation tracking (may be updated after conversation creation)
     workflow: workflow,    // Optional explicit workflow for workflow designer testing
     onTranscript: (text) => {
-      console.log("[VoiceButton] Transcript:", text);
+      logDebug("[VoiceButton] Transcript:", text);
       lastTranscriptRef.current = text;
     },
     onResult: (result) => {
-      console.log("[VoiceButton] Result:", result);
+      logDebug("[VoiceButton] Result:", result);
       lastResultRef.current = result;
     },
     onError: (error) => {
@@ -105,7 +106,7 @@ export function VoiceButton({ sessionId, contextId, conversationId, workflow, on
     
     // If we're on the default conversation and have a callback to create one, do it first
     if (conversationId === 'frontend-chat-context' && onEnsureConversation) {
-      console.log("[VoiceButton] Creating conversation before starting voice...");
+      logDebug("[VoiceButton] Creating conversation before starting voice...");
       const newConversationId = await onEnsureConversation();
       if (newConversationId) {
         // Mark as new conversation - needs title update on first message
@@ -113,7 +114,7 @@ export function VoiceButton({ sessionId, contextId, conversationId, workflow, on
         
         // Update the active context ID to use the new conversation
         const newContextId = `${sessionId}::${newConversationId}`;
-        console.log("[VoiceButton] Using new conversation:", newContextId);
+        logDebug("[VoiceButton] Using new conversation:", newContextId);
         
         // Update the voice hook's context synchronously via ref (before React re-renders)
         voice.updateContextId(newContextId);
@@ -132,7 +133,7 @@ export function VoiceButton({ sessionId, contextId, conversationId, workflow, on
   // This allows chat-panel to update the title like it does for text messages
   useEffect(() => {
     if (voice.isConnected && voice.transcript && isNewConversationRef.current && !firstMessageSentRef.current && onFirstMessage && activeConversationId && activeConversationId !== 'frontend-chat-context') {
-      console.log("[VoiceButton] First voice message for new conversation:", voice.transcript);
+      logDebug("[VoiceButton] First voice message for new conversation:", voice.transcript);
       onFirstMessage(activeConversationId, voice.transcript);
       firstMessageSentRef.current = true;
     }

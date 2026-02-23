@@ -10,6 +10,7 @@ import { useEventHub } from "@/hooks/use-event-hub"
 import { useToast } from "@/hooks/use-toast"
 import { SessionInviteButton } from "@/components/session-invite"
 import { leaveCollaborativeSession, isInCollaborativeSession, getOrCreateSessionId } from "@/lib/session"
+import { logDebug, warnDebug, errorDebug, logInfo } from '@/lib/debug'
 
 type ConnectedUser = {
   user_id: string
@@ -93,25 +94,25 @@ export function ConnectedUsers() {
 
   // Handle real-time user list updates from WebSocket
   const handleUserListUpdate = useCallback((eventData: any) => {
-    console.log("[ConnectedUsers] Real-time user list update:", eventData)
-    console.log("[ConnectedUsers] Active users data:", eventData.data?.active_users)
-    console.log("[ConnectedUsers] Total active:", eventData.data?.total_active)
+    logDebug("[ConnectedUsers] Real-time user list update:", eventData)
+    logDebug("[ConnectedUsers] Active users data:", eventData.data?.active_users)
+    logDebug("[ConnectedUsers] Total active:", eventData.data?.total_active)
     if (eventData.data?.active_users) {
       setUsers(eventData.data.active_users)
-      console.log("[ConnectedUsers] Updated users state with", eventData.data.active_users.length, "users")
+      logDebug("[ConnectedUsers] Updated users state with", eventData.data.active_users.length, "users")
     } else {
-      console.warn("[ConnectedUsers] Received user_list_update but no active_users data!")
+      warnDebug("[ConnectedUsers] Received user_list_update but no active_users data!")
     }
   }, [])
 
   // Handle session ended (owner left/logged out)
   const handleSessionEnded = useCallback((eventData: any) => {
-    console.log("[ConnectedUsers] Session ended event:", eventData)
+    logDebug("[ConnectedUsers] Session ended event:", eventData)
     const message = eventData.data?.message || "Session has ended"
     
     // Only handle if we're in a collaborative session (we're a member, not owner)
     if (isInCollaborativeSession()) {
-      console.log("[ConnectedUsers] We're in a collaborative session that just ended, returning to own session")
+      logDebug("[ConnectedUsers] We're in a collaborative session that just ended, returning to own session")
       
       // Show toast notification
       toast({
@@ -129,7 +130,7 @@ export function ConnectedUsers() {
 
   // Handle kick result (feedback for session owner)
   const handleKickResult = useCallback((eventData: any) => {
-    console.log("[ConnectedUsers] Kick result:", eventData)
+    logDebug("[ConnectedUsers] Kick result:", eventData)
     if (eventData.success) {
       toast({
         title: "User Removed",
@@ -165,7 +166,7 @@ export function ConnectedUsers() {
   // This is separate from subscriptions so it re-runs when isConnected changes
   useEffect(() => {
     if (isConnected) {
-      console.log("[ConnectedUsers] WebSocket connected, requesting session users...")
+      logDebug("[ConnectedUsers] WebSocket connected, requesting session users...")
       sendMessage({ type: "get_session_users" })
     }
   }, [isConnected])
@@ -194,7 +195,7 @@ export function ConnectedUsers() {
     // Get the session ID (our own session since we're the owner)
     const sessionId = getOrCreateSessionId()
     
-    console.log(`[ConnectedUsers] Kicking user ${targetUserName} (${targetUserId}) from session ${sessionId}`)
+    logDebug(`[ConnectedUsers] Kicking user ${targetUserName} (${targetUserId}) from session ${sessionId}`)
     
     sendMessage({
       type: "kick_user",
@@ -336,7 +337,7 @@ export function ConnectedUsers() {
                         className="h-8 w-8 p-0"
                         onClick={() => {
                           // TODO: Implement call functionality
-                          console.log('Call user:', user.name)
+                          logDebug('Call user:', user.name)
                         }}
                         title="Call"
                       >
@@ -348,7 +349,7 @@ export function ConnectedUsers() {
                         className="h-8 w-8 p-0"
                         onClick={() => {
                           // TODO: Implement message functionality
-                          console.log('Message user:', user.name)
+                          logDebug('Message user:', user.name)
                         }}
                         title="Message"
                       >

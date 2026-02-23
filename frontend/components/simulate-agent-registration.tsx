@@ -17,6 +17,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { useToast } from "@/hooks/use-toast"
 import { AgentCatalog } from "./agent-catalog"
+import { logDebug } from '@/lib/debug'
 
 /**
  * This component allows users to register remote agents by entering their address.
@@ -75,7 +76,7 @@ export function SimulateAgentRegistration() {
         setOpen(false)
         
         // The agent registry will update immediately via WebSocket real-time sync
-        console.log('[Register New Agent] Agent registered - UI will update in real-time')
+        logDebug('[Register New Agent] Agent registered - UI will update in real-time')
       } else {
         const errorMessage = result.error || "Failed to register agent"
         toast({
@@ -158,7 +159,7 @@ export function SimulateAgentRegistration() {
             Agent Catalog
           </Button>
         </DialogTrigger>
-        <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
+        <DialogContent className="max-w-6xl h-[85vh] flex flex-col overflow-hidden">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Store className="h-5 w-5" />

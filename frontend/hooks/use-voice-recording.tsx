@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useRef, useCallback } from 'react'
+import { logDebug } from '@/lib/debug'
 import { getOrCreateSessionId } from '@/lib/session'
 
 export interface VoiceRecordingState {
@@ -39,8 +40,8 @@ export function useVoiceRecording() {
         } 
       })
 
-      console.log('Microphone stream obtained:', stream)
-      console.log('Audio tracks:', stream.getAudioTracks())
+      logDebug('Microphone stream obtained:', stream)
+      logDebug('Audio tracks:', stream.getAudioTracks())
 
       // Check if we have audio tracks
       const audioTracks = stream.getAudioTracks()
@@ -48,7 +49,7 @@ export function useVoiceRecording() {
         throw new Error('No audio tracks found')
       }
 
-      console.log('Audio track settings:', audioTracks[0].getSettings())
+      logDebug('Audio track settings:', audioTracks[0].getSettings())
 
       // Try different MIME types in order of preference
       let mimeType = 'audio/webm;codecs=opus'
@@ -62,7 +63,7 @@ export function useVoiceRecording() {
         }
       }
 
-      console.log('Using MIME type:', mimeType)
+      logDebug('Using MIME type:', mimeType)
 
       // Create MediaRecorder instance
       const mediaRecorder = new MediaRecorder(stream, 

@@ -5,6 +5,8 @@
  * Workflows are persisted server-side and can be shared across browsers/devices.
  */
 
+import { logDebug } from '@/lib/debug'
+
 const API_BASE_URL = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
 
 export interface WorkflowStep {
@@ -129,7 +131,7 @@ export async function createWorkflow(workflow: WorkflowCreateRequest): Promise<W
     }
 
     const data = await response.json()
-    console.log('[WorkflowAPI] Workflow created/updated:', data.message)
+    logDebug('[WorkflowAPI] Workflow created/updated:', data.message)
     return data.workflow || null
   } catch (error) {
     console.error('[WorkflowAPI] Failed to create workflow:', error)
@@ -160,7 +162,7 @@ export async function updateWorkflow(workflowId: string, updates: WorkflowUpdate
     }
 
     const data = await response.json()
-    console.log('[WorkflowAPI] Workflow updated:', data.message)
+    logDebug('[WorkflowAPI] Workflow updated:', data.message)
     return data.workflow || null
   } catch (error) {
     console.error('[WorkflowAPI] Failed to update workflow:', error)
@@ -192,7 +194,7 @@ export async function deleteWorkflow(workflowId: string): Promise<boolean> {
       throw new Error(`HTTP ${response.status}: ${response.statusText}`)
     }
 
-    console.log('[WorkflowAPI] Workflow deleted')
+    logDebug('[WorkflowAPI] Workflow deleted')
     return true
   } catch (error) {
     console.error('[WorkflowAPI] Failed to delete workflow:', error)

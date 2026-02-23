@@ -23,6 +23,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Button } from "@/components/ui/button"
 import { ChevronDown, ChevronRight, FileText } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
+import { logDebug, logInfo } from '@/lib/debug'
 
 const initialDagNodes = [
   { id: "User", group: "user" },
@@ -34,7 +35,6 @@ const initialDagLinks = [
 ]
 
 export function ChatLayout() {
-  const DEBUG = process.env.NEXT_PUBLIC_DEBUG_LOGS === 'true'
   const { toast } = useToast()
   
   // Use the Event Hub hook early for proper client-side initialization
@@ -213,14 +213,14 @@ export function ChatLayout() {
   useEffect(() => {
     // Handle new multi-workflow events
     const handleActiveWorkflowsChanged = (data: { workflows?: ActiveWorkflow[], contextId?: string }) => {
-      console.log('[ChatLayout] Received active_workflows_changed event:', data)
+      logDebug('[ChatLayout] Received active_workflows_changed event:', data)
       
       // Session isolation: only process events for our session
       // This prevents cross-session data leakage if backend routes incorrectly
       const mySessionId = getOrCreateSessionId()
       const eventSessionId = data.contextId
       if (eventSessionId && mySessionId && eventSessionId !== mySessionId) {
-        console.log('[ChatLayout] Ignoring active_workflows_changed from different session:', eventSessionId, 'my session:', mySessionId)
+        logDebug('[ChatLayout] Ignoring active_workflows_changed from different session:', eventSessionId, 'my session:', mySessionId)
         return
       }
       
@@ -270,9 +270,9 @@ export function ChatLayout() {
     // Simple goal message - the workflow details are in the system prompt
     const initialMessage = `Execute the "${workflowDisplayName}" workflow.`
     
-    console.log('[ChatLayout] Running workflow:', workflowDisplayName)
-    console.log('[ChatLayout] Initial message:', initialMessage)
-    console.log('[ChatLayout] Workflow goal:', firstWorkflow.goal || '(none - will use trigger message)')
+    logDebug('[ChatLayout] Running workflow:', workflowDisplayName)
+    logDebug('[ChatLayout] Initial message:', initialMessage)
+    logDebug('[ChatLayout] Workflow goal:', firstWorkflow.goal || '(none - will use trigger message)')
     
     // Emit event for ChatPanel to handle - include workflowGoal for orchestrator
     emit('run_workflow', {
@@ -290,7 +290,7 @@ export function ChatLayout() {
   
   const handleScheduleWorkflow = useCallback(() => {
     const firstWorkflow = activeWorkflows.length > 0 ? activeWorkflows[0] : null
-    console.log('[ChatLayout] Schedule workflow clicked:', firstWorkflow?.name || 'Untitled')
+    logDebug('[ChatLayout] Schedule workflow clicked:', firstWorkflow?.name || 'Untitled')
     setShowScheduleDialog(true)
   }, [activeWorkflows])
 
@@ -392,7 +392,7 @@ export function ChatLayout() {
         
         setRegisteredAgents(agents)
         updateDagFromAgents(agents)
-        if (DEBUG) console.log("[ChatLayout] Loaded", agents.length, "session agents")
+        logDebug("[ChatLayout] Loaded", agents.length, "session agents")
       }
     } catch (err) {
       console.error('[ChatLayout] Error fetching session agents:', err)
@@ -406,7 +406,7 @@ export function ChatLayout() {
 
     // Handle connected users list updates
     const handleUserListUpdate = (eventData: any) => {
-      if (DEBUG) console.log("[ChatLayout] Received user list update")
+      logDebug("[ChatLayout] Received user list update")
       if (eventData.data?.active_users) {
         setConnectedUsers(eventData.data.active_users)
       }
@@ -414,7 +414,7 @@ export function ChatLayout() {
 
     // Handle agent enabled in catalog
     const handleAgentEnabled = (data: any) => {
-      console.log("[ChatLayout] 🎯 Agent enabled event received:", data)
+      logDebug("[ChatLayout] Agent enabled event received:", data)
       if (data.agent) {
         const newAgent = {
           id: data.agent.name.toLowerCase().replace(/\s+/g, '-'),
@@ -444,7 +444,7 @@ export function ChatLayout() {
 
     // Handle agent disabled in catalog
     const handleAgentDisabled = (data: any) => {
-      if (DEBUG) console.log("[ChatLayout] Agent disabled:", data.agent_url)
+      logDebug("[ChatLayout] Agent disabled:", data.agent_url)
       if (data.agent_url) {
         setRegisteredAgents(prev => {
           const updated = prev.filter(a => a.endpoint !== data.agent_url)
@@ -456,19 +456,19 @@ export function ChatLayout() {
 
     // Handle other Event Hub events for logging/debugging
     const handleMessage = (data: any) => {
-      if (DEBUG) console.log("[ChatLayout] Message event")
+      logDebug("[ChatLayout] Message event")
       // ChatPanel already handles message events and emits final_response
       // This avoids duplicate or malformed final_response events here.
     }
 
     const handleConversationCreated = (data: any) => {
-      if (DEBUG) console.log("[ChatLayout] Conversation created")
+      logDebug("[ChatLayout] Conversation created")
       // Forward to chat panel to start inference tracking (use different event name to avoid loop)
       emit("conversation_started", data)
     }
 
     const handleTaskUpdated = (data: any) => {
-      if (DEBUG) console.log("[ChatLayout] Task updated")
+      logDebug("[ChatLayout] Task updated")
       
       // NOTE: ChatLayout no longer emits status_update for workflow display
       // ChatPanel handles that with proper filtering to avoid duplicates
@@ -484,24 +484,24 @@ export function ChatLayout() {
     }
 
     const handleFormSubmitted = (data: any) => {
-      if (DEBUG) console.log("[ChatLayout] Form submitted")
+      logDebug("[ChatLayout] Form submitted")
     }
 
     // Handle session cleared event (triggered on WebSocket reconnect after backend restart)
     const handleSessionCleared = (data: any) => {
-      console.log("[ChatLayout] Session cleared due to:", data?.reason)
+      logInfo("[ChatLayout] Session cleared due to:", data?.reason)
       // Clear the collaborative session but don't reload
       // The user will continue with their current state but on their own session
       const hadSession = sessionStorage.getItem('a2a_collaborative_session')
       if (hadSession) {
         sessionStorage.removeItem('a2a_collaborative_session')
-        console.log("[ChatLayout] Cleared collaborative session, continuing on own session")
+        logInfo("[ChatLayout] Cleared collaborative session, continuing on own session")
       }
     }
 
     // Handle session invalid event (collaborative session no longer exists on backend)
     const handleSessionInvalid = (data: any) => {
-      console.log("[ChatLayout] Collaborative session invalid:", data?.reason)
+      logInfo("[ChatLayout] Collaborative session invalid:", data?.reason)
       toast({
         title: "Collaborative Session Ended",
         description: "The session you were collaborating on is no longer available. You're now working in your own session.",
@@ -513,11 +513,11 @@ export function ChatLayout() {
     // Handle session members updated - this fires when we join a collaborative session
     // We need to reload agents since we're now in a different session
     const handleSessionMembersUpdated = (data: any) => {
-      console.log("[ChatLayout] Session members updated:", data)
+      logInfo("[ChatLayout] Session members updated:", data)
       // Check if our session ID changed
       const newSessionId = getOrCreateSessionId()
       if (newSessionId !== currentSessionId) {
-        console.log("[ChatLayout] Session ID changed from", currentSessionId, "to", newSessionId, "- reloading agents")
+        logDebug("[ChatLayout] Session ID changed from", currentSessionId, "to", newSessionId, "- reloading agents")
         setCurrentSessionId(newSessionId)
         // Reload agents for the new session
         fetchSessionAgents()
@@ -525,7 +525,7 @@ export function ChatLayout() {
     }
 
     // Subscribe to Event Hub events
-    console.log("[ChatLayout] 📡 Subscribing to session_agent_enabled/disabled events")
+    logDebug("[ChatLayout] Subscribing to session_agent_enabled/disabled events")
     subscribe("session_agent_enabled", handleAgentEnabled)
     subscribe("session_agent_disabled", handleAgentDisabled)
     subscribe("message", handleMessage)
@@ -538,10 +538,10 @@ export function ChatLayout() {
     subscribe("session_invalid", handleSessionInvalid)
     subscribe("session_members_updated", handleSessionMembersUpdated)
 
-    if (DEBUG) console.log("[ChatLayout] Subscribed to Event Hub events")
+    logDebug("[ChatLayout] Subscribed to Event Hub events")
 
     // Component initialization complete
-    if (DEBUG) console.log("[ChatLayout] Event Hub subscriptions ready")
+    logDebug("[ChatLayout] Event Hub subscriptions ready")
 
     // Clean up the subscriptions when the component unmounts.
     return () => {
@@ -556,7 +556,7 @@ export function ChatLayout() {
       unsubscribe("session_cleared", handleSessionCleared)
       unsubscribe("session_invalid", handleSessionInvalid)
       unsubscribe("session_members_updated", handleSessionMembersUpdated)
-      if (DEBUG) console.log("[ChatLayout] Unsubscribed from Event Hub events")
+      logDebug("[ChatLayout] Unsubscribed from Event Hub events")
     }
   }, [subscribe, unsubscribe, emit, toast, currentSessionId])
 

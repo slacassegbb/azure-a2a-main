@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input"
 import { Sparkles, Download, Trash2, Save, Search, Clock, Plus, X, Pencil, Play, Pause, ChevronDown, ChevronRight, CheckCircle, XCircle } from "lucide-react"
 import { useState, useEffect, useRef } from "react"
 import { ScheduleWorkflowDialog } from "./schedule-workflow-dialog"
+import { logDebug, warnDebug, errorDebug, logInfo } from '@/lib/debug'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
@@ -207,7 +208,7 @@ interface Props {
 }
 
 export function WorkflowCatalog({ onLoadWorkflow, onSaveWorkflow, onNewWorkflow, onActivateWorkflow, onDeactivateWorkflow, currentWorkflowSteps, refreshTrigger, selectedWorkflowId, activatedWorkflowIds = [] }: Props) {
-  console.log('[WorkflowCatalog] Component mounted/rendered')
+  logDebug('[WorkflowCatalog] Component mounted/rendered')
   
   const [customWorkflows, setCustomWorkflows] = useState<WorkflowTemplate[]>([])
   const [searchQuery, setSearchQuery] = useState("")
@@ -249,7 +250,7 @@ export function WorkflowCatalog({ onLoadWorkflow, onSaveWorkflow, onNewWorkflow,
       })
       
       if (response.ok) {
-        console.log('[WorkflowCatalog] Deleted scheduled workflow:', scheduleId)
+        logDebug('[WorkflowCatalog] Deleted scheduled workflow:', scheduleId)
         // Remove from local state
         setScheduledWorkflows(prev => prev.filter(s => s.id !== scheduleId))
       } else {
@@ -271,7 +272,7 @@ export function WorkflowCatalog({ onLoadWorkflow, onSaveWorkflow, onNewWorkflow,
       
       if (response.ok) {
         const data = await response.json()
-        console.log('[WorkflowCatalog] Toggled scheduled workflow:', scheduleId, 'enabled:', !currentlyEnabled)
+        logDebug('[WorkflowCatalog] Toggled scheduled workflow:', scheduleId, 'enabled:', !currentlyEnabled)
         // Update local state
         setScheduledWorkflows(prev => prev.map(s => 
           s.id === scheduleId ? { ...s, enabled: !currentlyEnabled } : s
@@ -320,14 +321,14 @@ export function WorkflowCatalog({ onLoadWorkflow, onSaveWorkflow, onNewWorkflow,
           }))
           
           setCustomWorkflows(converted)
-          console.log('[WorkflowCatalog] Loaded', converted.length, 'workflows from backend')
+          logDebug('[WorkflowCatalog] Loaded', converted.length, 'workflows from backend')
         } else {
           // Not authenticated - load from localStorage only
           if (typeof window !== 'undefined') {
             const saved = localStorage.getItem('custom-workflows')
             const localWorkflows = saved ? JSON.parse(saved) : []
             setCustomWorkflows(localWorkflows)
-            console.log('[WorkflowCatalog] Loaded', localWorkflows.length, 'workflows from localStorage')
+            logDebug('[WorkflowCatalog] Loaded', localWorkflows.length, 'workflows from localStorage')
           }
         }
       } catch (err) {
@@ -349,7 +350,7 @@ export function WorkflowCatalog({ onLoadWorkflow, onSaveWorkflow, onNewWorkflow,
   useEffect(() => {
     if (!isLoading && customWorkflows.length > 0 && !selectedWorkflowId && !hasAutoLoadedRef.current) {
       hasAutoLoadedRef.current = true
-      console.log('[WorkflowCatalog] Auto-loading first workflow:', customWorkflows[0].name)
+      logDebug('[WorkflowCatalog] Auto-loading first workflow:', customWorkflows[0].name)
       onLoadWorkflow(customWorkflows[0])
     }
   }, [isLoading, customWorkflows, selectedWorkflowId, onLoadWorkflow])
@@ -361,12 +362,12 @@ export function WorkflowCatalog({ onLoadWorkflow, onSaveWorkflow, onNewWorkflow,
       try {
         const { isAuthenticated } = await import('@/lib/workflow-api')
         if (!isAuthenticated()) {
-          console.log('[WorkflowCatalog] User not authenticated, skipping scheduled workflows fetch')
+          logDebug('[WorkflowCatalog] User not authenticated, skipping scheduled workflows fetch')
           setIsLoadingScheduled(false)
           return
         }
         
-        console.log('[WorkflowCatalog] User authenticated, fetching scheduled workflows...')
+        logDebug('[WorkflowCatalog] User authenticated, fetching scheduled workflows...')
 
         const API_BASE_URL = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
         
@@ -379,7 +380,7 @@ export function WorkflowCatalog({ onLoadWorkflow, onSaveWorkflow, onNewWorkflow,
         if (schedulesResponse.ok) {
           const data = await schedulesResponse.json()
           setScheduledWorkflows(data.schedules || [])
-          console.log('[WorkflowCatalog] Loaded', data.schedules?.length || 0, 'scheduled workflows:', data.schedules)
+          logDebug('[WorkflowCatalog] Loaded', data.schedules?.length || 0, 'scheduled workflows:', data.schedules)
         } else {
           console.error('[WorkflowCatalog] Failed to fetch scheduled workflows:', schedulesResponse.status)
         }
@@ -387,7 +388,7 @@ export function WorkflowCatalog({ onLoadWorkflow, onSaveWorkflow, onNewWorkflow,
         if (historyResponse.ok) {
           const historyData = await historyResponse.json()
           setRunHistory(historyData.history || [])
-          console.log('[WorkflowCatalog] Loaded', historyData.history?.length || 0, 'run history items')
+          logDebug('[WorkflowCatalog] Loaded', historyData.history?.length || 0, 'run history items')
         }
       } catch (err) {
         console.error('[WorkflowCatalog] Failed to load scheduled workflows:', err)
@@ -410,7 +411,7 @@ export function WorkflowCatalog({ onLoadWorkflow, onSaveWorkflow, onNewWorkflow,
         // Delete from backend
         const success = await deleteWorkflow(id)
         if (success) {
-          console.log('[WorkflowCatalog] Deleted workflow from backend:', id)
+          logDebug('[WorkflowCatalog] Deleted workflow from backend:', id)
           setCustomWorkflows(prev => prev.filter(w => w.id !== id))
         } else {
           alert("Failed to delete workflow. You may not have permission.")
@@ -420,7 +421,7 @@ export function WorkflowCatalog({ onLoadWorkflow, onSaveWorkflow, onNewWorkflow,
         const updated = customWorkflows.filter(w => w.id !== id)
         setCustomWorkflows(updated)
         localStorage.setItem('custom-workflows', JSON.stringify(updated))
-        console.log('[WorkflowCatalog] Deleted workflow from localStorage:', id)
+        logDebug('[WorkflowCatalog] Deleted workflow from localStorage:', id)
       }
     } catch (err) {
       console.error('[WorkflowCatalog] Delete failed:', err)
@@ -459,7 +460,7 @@ export function WorkflowCatalog({ onLoadWorkflow, onSaveWorkflow, onNewWorkflow,
         category: editCategory
       })
       if (saved) {
-        console.log('[WorkflowCatalog] Updated workflow in backend:', workflowId)
+        logDebug('[WorkflowCatalog] Updated workflow in backend:', workflowId)
         setCustomWorkflows(prev => prev.map(w => w.id === workflowId ? updatedWorkflow : w))
       } else {
         alert("Failed to update workflow")
@@ -470,7 +471,7 @@ export function WorkflowCatalog({ onLoadWorkflow, onSaveWorkflow, onNewWorkflow,
       const updated = customWorkflows.map(w => w.id === workflowId ? updatedWorkflow : w)
       setCustomWorkflows(updated)
       localStorage.setItem('custom-workflows', JSON.stringify(updated))
-      console.log('[WorkflowCatalog] Updated workflow in localStorage:', workflowId)
+      logDebug('[WorkflowCatalog] Updated workflow in localStorage:', workflowId)
     }
     
     setEditingWorkflowId(null)

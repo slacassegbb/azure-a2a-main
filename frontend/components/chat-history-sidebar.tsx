@@ -11,6 +11,7 @@ import { LoginDialog } from "@/components/login-dialog"
 import { useEventHub } from "@/hooks/use-event-hub"
 import { getOrCreateSessionId, leaveCollaborativeSession, isInCollaborativeSession } from "@/lib/session"
 import { clearActiveWorkflow } from "@/lib/active-workflow-api"
+import { logDebug, warnDebug, errorDebug, logInfo } from '@/lib/debug'
 
 type Props = {
   isCollapsed: boolean
@@ -78,9 +79,9 @@ export function ChatHistorySidebar({ isCollapsed, onToggle }: Props) {
     try {
       setIsLoading(true)
       setError(null)
-      console.log('[ChatHistorySidebar] Loading conversations...')
+      logDebug('[ChatHistorySidebar] Loading conversations...')
       const { conversations } = await listConversations()
-      console.log('[ChatHistorySidebar] Received conversations:', conversations)
+      logDebug('[ChatHistorySidebar] Received conversations:', conversations)
       
       // For each conversation without a name, try to get the first message as title
       const conversationsWithTitles = await Promise.all(
@@ -89,7 +90,7 @@ export function ChatHistorySidebar({ isCollapsed, onToggle }: Props) {
             try {
               // Use the embedded messages from the conversation object instead of making a separate API call
               const messages = conv.messages || []
-              console.log('[ChatHistorySidebar] Using embedded messages for conversation:', conv.conversation_id, 'count:', messages.length)
+              logDebug('[ChatHistorySidebar] Using embedded messages for conversation:', conv.conversation_id, 'count:', messages.length)
               
               const firstUserMessage = messages.find(msg => msg.role === 'user')
               if (firstUserMessage && firstUserMessage.parts) {
@@ -108,7 +109,7 @@ export function ChatHistorySidebar({ isCollapsed, onToggle }: Props) {
                 }
               }
             } catch (err) {
-              console.error('[ChatHistorySidebar] Failed to process embedded messages for conversation:', conv.conversation_id, err)
+              errorDebug('[ChatHistorySidebar] Failed to process embedded messages for conversation:', conv.conversation_id, err)
             }
           }
           return conv
@@ -116,9 +117,9 @@ export function ChatHistorySidebar({ isCollapsed, onToggle }: Props) {
       )
       
       setConversations(conversationsWithTitles)
-      console.log('[ChatHistorySidebar] Final conversations with titles:', conversationsWithTitles.map(c => ({ 
-        id: c.conversation_id, 
-        name: c.name 
+      logDebug('[ChatHistorySidebar] Final conversations with titles:', conversationsWithTitles.map(c => ({
+        id: c.conversation_id,
+        name: c.name
       })))
     } catch (err) {
       setError("Failed to load conversations")
@@ -138,7 +139,7 @@ export function ChatHistorySidebar({ isCollapsed, onToggle }: Props) {
 
   // Load conversations on component mount AND when session changes
   useEffect(() => {
-    console.log('[ChatHistorySidebar] Component mounting or session changed, loading conversations...')
+    logDebug('[ChatHistorySidebar] Component mounting or session changed, loading conversations...')
     loadConversations()
   }, [loadConversations, currentSessionId])
 
@@ -148,7 +149,7 @@ export function ChatHistorySidebar({ isCollapsed, onToggle }: Props) {
       const newSessionId = getOrCreateSessionId()
       setCurrentSessionId(prev => {
         if (prev !== newSessionId) {
-          console.log('[ChatHistorySidebar] Session ID changed:', prev, '->', newSessionId)
+          logDebug('[ChatHistorySidebar] Session ID changed:', prev, '->', newSessionId)
           return newSessionId
         }
         return prev
@@ -177,7 +178,7 @@ export function ChatHistorySidebar({ isCollapsed, onToggle }: Props) {
     const handleSessionStarted = (data: any) => {
       const newSessionId = data?.data?.sessionId || data?.sessionId
       if (!newSessionId) {
-        console.log('[ChatHistorySidebar] session_started event but no sessionId found')
+        logDebug('[ChatHistorySidebar] session_started event but no sessionId found')
         return
       }
       
@@ -185,31 +186,31 @@ export function ChatHistorySidebar({ isCollapsed, onToggle }: Props) {
       
       if (storedSessionId && storedSessionId !== newSessionId) {
         // Backend restarted - clear conversation list and reload from server
-        console.log('[ChatHistorySidebar] Backend restarted (session changed), clearing conversations')
-        console.log('[ChatHistorySidebar] Old session:', storedSessionId?.slice(0, 8), '-> New session:', newSessionId.slice(0, 8))
+        logDebug('[ChatHistorySidebar] Backend restarted (session changed), clearing conversations')
+        logDebug('[ChatHistorySidebar] Old session:', storedSessionId?.slice(0, 8), '-> New session:', newSessionId.slice(0, 8))
         setConversations([])
         // Reload conversations from the (new) backend
         loadConversations()
         // If we're currently viewing a conversation, navigate away since it may not exist
         if (currentConversationId) {
-          console.log('[ChatHistorySidebar] Navigating away from stale conversation')
+          logDebug('[ChatHistorySidebar] Navigating away from stale conversation')
           router.push('/')
         }
       }
       
       // Store the new session ID
       localStorage.setItem(BACKEND_SESSION_KEY, newSessionId)
-      console.log('[ChatHistorySidebar] Backend session ID stored:', newSessionId.slice(0, 8))
+      logDebug('[ChatHistorySidebar] Backend session ID stored:', newSessionId.slice(0, 8))
     }
 
     // Handle session members updated - fires when we join a collaborative session
     const handleSessionMembersUpdated = (data: any) => {
-      console.log('[ChatHistorySidebar] Session members updated:', data)
+      logDebug('[ChatHistorySidebar] Session members updated:', data)
       // Check if our session ID changed
       const newSessionId = getOrCreateSessionId()
       setCurrentSessionId(prev => {
         if (prev !== newSessionId) {
-          console.log('[ChatHistorySidebar] Session ID changed after members update:', prev, '->', newSessionId)
+          logDebug('[ChatHistorySidebar] Session ID changed after members update:', prev, '->', newSessionId)
           // Small delay to let session storage settle
           setTimeout(() => loadConversations(), 100)
           return newSessionId
@@ -234,11 +235,11 @@ export function ChatHistorySidebar({ isCollapsed, onToggle }: Props) {
       const title = data?.data?.title || data?.title
       
       if (!conversationId || !title) {
-        console.log('[ChatHistorySidebar] conversation_title_update event missing data:', data)
+        logDebug('[ChatHistorySidebar] conversation_title_update event missing data:', data)
         return
       }
       
-      console.log('[ChatHistorySidebar] Received WebSocket title update:', { conversationId, title })
+      logDebug('[ChatHistorySidebar] Received WebSocket title update:', { conversationId, title })
       
       setConversations(prev => {
         const exists = prev.some(conv => conv.conversation_id === conversationId)
@@ -252,7 +253,7 @@ export function ChatHistorySidebar({ isCollapsed, onToggle }: Props) {
         } else {
           // Conversation doesn't exist yet - add it with the title
           // This handles the case where title_update arrives before/without conversation_created
-          console.log('[ChatHistorySidebar] Adding new conversation from title update:', conversationId)
+          logDebug('[ChatHistorySidebar] Adding new conversation from title update:', conversationId)
           return [{
             conversation_id: conversationId,
             name: title,
@@ -269,7 +270,7 @@ export function ChatHistorySidebar({ isCollapsed, onToggle }: Props) {
     // Reload conversations after subscribing to catch any updates we missed during mount
     // Small delay to ensure subscriptions are fully set up
     const reloadTimeout = setTimeout(() => {
-      console.log('[ChatHistorySidebar] Reloading conversations after subscriptions ready')
+      logDebug('[ChatHistorySidebar] Reloading conversations after subscriptions ready')
       loadConversations()
     }, 500)
     
@@ -280,11 +281,11 @@ export function ChatHistorySidebar({ isCollapsed, onToggle }: Props) {
   }, [subscribe, unsubscribe, loadConversations])
 
   useEffect(() => {
-    console.log('[ChatHistorySidebar] Setting up event listeners...')
+    logDebug('[ChatHistorySidebar] Setting up event listeners...')
     
     const handleTitleUpdate = (event: CustomEvent) => {
       const { conversationId, title } = event.detail
-      console.log('[ChatHistorySidebar] Received title update:', { conversationId, title })
+      logDebug('[ChatHistorySidebar] Received title update:', { conversationId, title })
       
       setConversations(prev => prev.map(conv => 
         conv.conversation_id === conversationId 
@@ -295,7 +296,7 @@ export function ChatHistorySidebar({ isCollapsed, onToggle }: Props) {
 
     const handleConversationCreated = (event: CustomEvent) => {
       const { conversation } = event.detail
-      console.log('[ChatHistorySidebar] Received new conversation event:', conversation)
+      logDebug('[ChatHistorySidebar] Received new conversation event:', conversation)
       
       // Add the conversation to the list immediately for instant feedback
       setConversations(prev => {
@@ -309,10 +310,10 @@ export function ChatHistorySidebar({ isCollapsed, onToggle }: Props) {
 
     window.addEventListener('conversationTitleUpdate', handleTitleUpdate as EventListener)
     window.addEventListener('conversationCreated', handleConversationCreated as EventListener)
-    console.log('[ChatHistorySidebar] Event listeners set up successfully')
+    logDebug('[ChatHistorySidebar] Event listeners set up successfully')
     
     return () => {
-      console.log('[ChatHistorySidebar] Cleaning up event listeners')
+      logDebug('[ChatHistorySidebar] Cleaning up event listeners')
       window.removeEventListener('conversationTitleUpdate', handleTitleUpdate as EventListener)
       window.removeEventListener('conversationCreated', handleConversationCreated as EventListener)
     }
@@ -321,15 +322,15 @@ export function ChatHistorySidebar({ isCollapsed, onToggle }: Props) {
   const handleNewChat = useCallback(() => {
     // Just navigate to home - no conversationId
     // This will show a blank chat, and a conversation will be created on first message
-    console.log("[ChatHistorySidebar] Starting new chat (clearing conversation)")
+    logDebug("[ChatHistorySidebar] Starting new chat (clearing conversation)")
     router.push("/")
   }, [router])
 
   const handleConversationClick = useCallback((conversationId: string) => {
-    console.log('[ChatHistorySidebar] Clicking on conversation:', conversationId)
-    console.log('[ChatHistorySidebar] Current URL params:', searchParams.toString())
+    logDebug('[ChatHistorySidebar] Clicking on conversation:', conversationId)
+    logDebug('[ChatHistorySidebar] Current URL params:', searchParams.toString())
     router.push(`/?conversationId=${conversationId}`)
-    console.log('[ChatHistorySidebar] Navigating to:', `/?conversationId=${conversationId}`)
+    logDebug('[ChatHistorySidebar] Navigating to:', `/?conversationId=${conversationId}`)
   }, [router, searchParams])
 
   const handleDeleteConversation = useCallback(async (conversationId: string, e: React.MouseEvent) => {
@@ -356,7 +357,7 @@ export function ChatHistorySidebar({ isCollapsed, onToggle }: Props) {
     if (conversations.length === 0) return
 
     try {
-      console.log('[ChatHistorySidebar] Clearing all chats...')
+      logDebug('[ChatHistorySidebar] Clearing all chats...')
       const success = await deleteAllConversations()
       if (success) {
         // Clear the conversations list
@@ -365,7 +366,7 @@ export function ChatHistorySidebar({ isCollapsed, onToggle }: Props) {
         if (currentConversationId) {
           router.push("/")
         }
-        console.log('[ChatHistorySidebar] All chats cleared successfully')
+        logDebug('[ChatHistorySidebar] All chats cleared successfully')
       } else {
         setError("Failed to clear all chats")
       }
@@ -421,7 +422,7 @@ export function ChatHistorySidebar({ isCollapsed, onToggle }: Props) {
                   <LoginDialog 
                     onLogin={(email, password) => {
                       // Handle login logic here when implemented
-                      console.log("Login successful for:", email)
+                      logDebug("Login successful for:", email)
                     }} 
                   />
                 )}

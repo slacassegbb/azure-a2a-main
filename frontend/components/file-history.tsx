@@ -6,6 +6,7 @@ import { Trash2, Plus, Loader2, Database, AlertCircle, FileSearch } from "lucide
 import { useEventHub } from "@/hooks/use-event-hub"
 import { getOrCreateSessionId } from "@/lib/session"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
+import { logDebug, warnDebug, logInfo } from '@/lib/debug'
 
 // Processing status for files
 type FileStatus = 'uploading' | 'processing' | 'analyzed' | 'uploaded' | 'error' | undefined
@@ -54,24 +55,24 @@ export function FileHistory({ className, onFileSelect, onFilesLoaded, conversati
       
       if (storedSessionId && storedSessionId !== newSessionId) {
         // Backend restarted - clear file history for old session
-        console.log('[FileHistory] Backend restarted (session changed), clearing file history')
-        console.log('[FileHistory] Old session:', storedSessionId?.slice(0, 8), '-> New session:', newSessionId.slice(0, 8))
+        logInfo('[FileHistory] Backend restarted (session changed), clearing file history')
+        logDebug('[FileHistory] Old session:', storedSessionId?.slice(0, 8), '-> New session:', newSessionId.slice(0, 8))
         setFiles([])
         // Note: We no longer clear localStorage here since each session has its own key
       }
       
       // Store the new session ID
       localStorage.setItem(SESSION_ID_KEY, newSessionId)
-      console.log('[FileHistory] Session ID stored:', newSessionId.slice(0, 8))
+      logDebug('[FileHistory] Session ID stored:', newSessionId.slice(0, 8))
     }
 
     // Handle session members updated - fires when we join a collaborative session
     const handleSessionMembersUpdated = (data: any) => {
-      console.log('[FileHistory] Session members updated:', data)
+      logDebug('[FileHistory] Session members updated:', data)
       const newSessionId = getOrCreateSessionId()
       setCurrentSessionId(prev => {
         if (prev !== newSessionId) {
-          console.log('[FileHistory] Session ID changed after members update:', prev, '->', newSessionId)
+          logDebug('[FileHistory] Session ID changed after members update:', prev, '->', newSessionId)
           return newSessionId
         }
         return prev
@@ -90,7 +91,7 @@ export function FileHistory({ className, onFileSelect, onFilesLoaded, conversati
   // Handle shared file uploads from collaborative session members
   useEffect(() => {
     const handleSharedFileUploaded = (data: any) => {
-      console.log('[FileHistory] Shared file uploaded from session member:', data)
+      logDebug('[FileHistory] Shared file uploaded from session member:', data)
       const fileInfo = data?.fileInfo
       if (!fileInfo) return
 
@@ -122,7 +123,7 @@ export function FileHistory({ className, onFileSelect, onFilesLoaded, conversati
     }
 
     const handleFileProcessingCompleted = (data: any) => {
-      console.log('[FileHistory] File processing completed:', data)
+      logDebug('[FileHistory] File processing completed:', data)
       const { fileId, filename, status } = data
       if (!fileId && !filename) return
 
@@ -138,7 +139,7 @@ export function FileHistory({ className, onFileSelect, onFilesLoaded, conversati
 
     // Handle agent-generated file events (emitted by WebSocket client as 'file_uploaded')
     const handleAgentFileUploaded = (data: any) => {
-      console.log('[FileHistory] Agent file uploaded:', data)
+      logDebug('[FileHistory] Agent file uploaded:', data)
       const fileInfo = data?.fileInfo
       if (!fileInfo) return
 
@@ -179,7 +180,7 @@ export function FileHistory({ className, onFileSelect, onFilesLoaded, conversati
         const sessionId = getOrCreateSessionId()
         const backendUrl = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
         
-        console.log('[FileHistory] Loading files from backend for session:', sessionId.slice(0, 8), 'URL:', backendUrl)
+        logDebug('[FileHistory] Loading files from backend for session:', sessionId.slice(0, 8), 'URL:', backendUrl)
         
         const response = await fetch(`${backendUrl}/api/files`, {
           headers: {
@@ -206,7 +207,7 @@ export function FileHistory({ className, onFileSelect, onFilesLoaded, conversati
           )
           
           setFiles(loadedFiles)
-          console.log('[FileHistory] Loaded', loadedFiles.length, 'files from backend')
+          logDebug('[FileHistory] Loaded', loadedFiles.length, 'files from backend')
           
           // Notify parent about loaded files count
           if (onFilesLoaded) {
@@ -254,14 +255,14 @@ export function FileHistory({ className, onFileSelect, onFilesLoaded, conversati
       const data = await response.json()
       
       if (data.success) {
-        console.log('[FileHistory] File deleted:', data.message)
+        logDebug('[FileHistory] File deleted:', data.message)
       } else {
-        console.warn('[FileHistory] File delete returned error (but UI already updated):', data.error)
+        warnDebug('[FileHistory] File delete returned error (but UI already updated):', data.error)
       }
     } catch (error) {
       // Don't show error to user - file is already removed from UI
       // This is expected for expired/missing files
-      console.log('[FileHistory] File delete request failed (this is OK for expired files):', error)
+      logDebug('[FileHistory] File delete request failed (this is OK for expired files):', error)
     }
   }
 
@@ -276,10 +277,10 @@ export function FileHistory({ className, onFileSelect, onFilesLoaded, conversati
     ))
     
     try {
-      console.log('[FileHistory] Starting document processing for:', file.filename)
+      logDebug('[FileHistory] Starting document processing for:', file.filename)
       const controller = new AbortController()
       const timeoutId = setTimeout(() => controller.abort(), 120000) // 2 minute timeout
-      
+
       const processResponse = await fetch(`${backendUrl}/api/files/process`, {
         method: 'POST',
         headers: {
@@ -296,17 +297,17 @@ export function FileHistory({ className, onFileSelect, onFilesLoaded, conversati
         signal: controller.signal
       })
       clearTimeout(timeoutId)
-      
-      console.log('[FileHistory] Processing response status:', processResponse.status)
+
+      logDebug('[FileHistory] Processing response status:', processResponse.status)
       const processResult = await processResponse.json()
-      console.log('[FileHistory] Processing result:', processResult)
+      logDebug('[FileHistory] Processing result:', processResult)
 
       if (processResult.success) {
         // Update status to 'analyzed'
         setFiles(prev => prev.map(f => 
           f.id === file.id ? { ...f, status: 'analyzed' as FileStatus } : f
         ))
-        console.log('[FileHistory] Document processing completed:', file.filename)
+        logDebug('[FileHistory] Document processing completed:', file.filename)
 
         // Broadcast status update
         if (sendMessage) {
@@ -358,17 +359,17 @@ export function FileHistory({ className, onFileSelect, onFilesLoaded, conversati
         })
         .then(res => res.json())
         .catch(err => {
-          console.log(`[FileHistory] Failed to delete ${file.filename}:`, err)
+          logDebug(`[FileHistory] Failed to delete ${file.filename}:`, err)
           return { success: true } // Treat as success
         })
       })
       
       const results = await Promise.all(deletePromises)
       const successCount = results.filter(r => r.success).length
-      console.log(`[FileHistory] Cleared ${successCount}/${filesToDelete.length} files`)
+      logDebug(`[FileHistory] Cleared ${successCount}/${filesToDelete.length} files`)
       
     } catch (error) {
-      console.log('[FileHistory] Clear all failed (but UI already updated):', error)
+      logDebug('[FileHistory] Clear all failed (but UI already updated):', error)
     }
   }
 
@@ -450,10 +451,10 @@ export function FileHistory({ className, onFileSelect, onFilesLoaded, conversati
 
           // Trigger document processing with timeout
           try {
-            console.log('[FileHistory] Starting document processing for:', uploadResult.filename)
+            logDebug('[FileHistory] Starting document processing for:', uploadResult.filename)
             const controller = new AbortController()
             const timeoutId = setTimeout(() => controller.abort(), 120000) // 2 minute timeout
-            
+
             const processResponse = await fetch(`${backendUrl}/api/files/process`, {
               method: 'POST',
               headers: {
@@ -471,16 +472,16 @@ export function FileHistory({ className, onFileSelect, onFilesLoaded, conversati
             })
             clearTimeout(timeoutId)
             
-            console.log('[FileHistory] Processing response status:', processResponse.status)
+            logDebug('[FileHistory] Processing response status:', processResponse.status)
             const processResult = await processResponse.json()
-            console.log('[FileHistory] Processing result:', processResult)
+            logDebug('[FileHistory] Processing result:', processResult)
 
             if (processResult.success) {
               // Update status to 'analyzed'
               setFiles(prev => prev.map(f => 
                 f.id === uploadResult.file_id ? { ...f, status: 'analyzed' as FileStatus } : f
               ))
-              console.log('[FileHistory] Document processing completed:', uploadResult.filename)
+              logDebug('[FileHistory] Document processing completed:', uploadResult.filename)
 
               // Broadcast status update
               if (sendMessage) {

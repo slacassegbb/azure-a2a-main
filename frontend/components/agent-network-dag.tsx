@@ -4,6 +4,7 @@ import type React from "react"
 import { useEffect, useRef, useState, memo } from "react"
 import { useEventHub } from "@/hooks/use-event-hub"
 import { getAgentHexColor } from "@/lib/agent-colors"
+import { logDebug, warnDebug, errorDebug, logInfo } from '@/lib/debug'
 
 type AgentType = "host" | "remote" | "user"
 
@@ -95,7 +96,7 @@ const AgentNetworkDagComponent = ({ nodes, links, activeNodeId }: AgentNetworkDa
     for (const [url] of imageCache.current) {
       if (!currentImageUrls.has(url) && !currentFileUrls.has(url)) {
         imageCache.current.delete(url)
-        console.log("[AgentNetworkDag] 🗑️ Removed cached file:", url)
+        logDebug("[AgentNetworkDag] 🗑️ Removed cached file:", url)
       }
     }
   }, [agents])
@@ -217,14 +218,14 @@ const AgentNetworkDagComponent = ({ nodes, links, activeNodeId }: AgentNetworkDa
   // WebSocket event listeners for task states
   useEffect(() => {
     // Log all events for debugging
-    console.log("[AgentNetworkDag] Setting up WebSocket listeners")
+    logDebug("[AgentNetworkDag] Setting up WebSocket listeners")
     
     const handleStatusUpdate = (data: any) => {
-      console.log("[AgentNetworkDag] ✅ Status update:", data)
+      logDebug("[AgentNetworkDag] ✅ Status update:", data)
       const { agent: agentName, status, inferenceId } = data
 
       if (!agentName) {
-        console.log("[AgentNetworkDag] ⚠️ No agent name in status update")
+        logDebug("[AgentNetworkDag] ⚠️ No agent name in status update")
         return
       }
 
@@ -262,7 +263,7 @@ const AgentNetworkDagComponent = ({ nodes, links, activeNodeId }: AgentNetworkDa
               addThoughtBubble(agent.id, shortStatus)
             }
 
-            console.log("[AgentNetworkDag] ✨ Updated status for", agentName, "to", newStatus)
+            logDebug("[AgentNetworkDag] ✨ Updated status for", agentName, "to", newStatus)
 
             // Preserve position when updating status
             return {
@@ -299,7 +300,7 @@ const AgentNetworkDagComponent = ({ nodes, links, activeNodeId }: AgentNetworkDa
     }
 
     const handleTaskUpdate = (data: any) => {
-      console.log("[AgentNetworkDag] 📋 Task update:", data)
+      logDebug("[AgentNetworkDag] 📋 Task update:", data)
       const { taskId, state, agentName } = data
 
       if (!agentName) return
@@ -329,25 +330,25 @@ const AgentNetworkDagComponent = ({ nodes, links, activeNodeId }: AgentNetworkDa
     }
 
     const handleAgentMessage = (data: any) => {
-      console.log("[AgentNetworkDag] 💬 Agent message:", data)
+      logDebug("[AgentNetworkDag] 💬 Agent message:", data)
       const { agentName, content } = data
       
       if (agentName && content) {
         const shortContent = content.length > 60 ? content.substring(0, 57) + "..." : content
         const agent = agentsRef.current.find(a => a.name === agentName || a.id === agentName)
         if (agent) {
-          console.log("[AgentNetworkDag] ✨ Adding thought bubble for", agentName, ":", shortContent)
+          logDebug("[AgentNetworkDag] ✨ Adding thought bubble for", agentName, ":", shortContent)
           addThoughtBubble(agent.id, shortContent)
           triggerGlow(agent.id)
         } else {
-          console.log("[AgentNetworkDag] ⚠️ Agent not found:", agentName, "Available:", agentsRef.current.map(a => a.name))
+          logDebug("[AgentNetworkDag] ⚠️ Agent not found:", agentName, "Available:", agentsRef.current.map(a => a.name))
         }
       }
     }
 
     // Handle actual message events from A2A backend
     const handleMessage = (data: any) => {
-      console.log("[AgentNetworkDag] 📨 Message event:", data)
+      logDebug("[AgentNetworkDag] 📨 Message event:", data)
       
       // Extract message content from the event
       let messageText = ""
@@ -379,7 +380,7 @@ const AgentNetworkDagComponent = ({ nodes, links, activeNodeId }: AgentNetworkDa
         const fullContent = messageText
         const agent = agentsRef.current.find(a => a.name === agentName || a.id === agentName)
         if (agent) {
-          console.log("[AgentNetworkDag] ✨ Setting response for", agentName, ":", fullContent.substring(0, 100) + "...")
+          logDebug("[AgentNetworkDag] ✨ Setting response for", agentName, ":", fullContent.substring(0, 100) + "...")
           
           setAgents((prev) =>
             prev.map((a) =>
@@ -400,24 +401,24 @@ const AgentNetworkDagComponent = ({ nodes, links, activeNodeId }: AgentNetworkDa
             )
           }, 15000)
         } else {
-          console.log("[AgentNetworkDag] ⚠️ Agent not found:", agentName, "Available:", agentsRef.current.map(a => a.name))
-          console.log("[AgentNetworkDag] Full event data:", JSON.stringify(data, null, 2))
+          logDebug("[AgentNetworkDag] ⚠️ Agent not found:", agentName, "Available:", agentsRef.current.map(a => a.name))
+          logDebug("[AgentNetworkDag] Full event data:", JSON.stringify(data, null, 2))
         }
       } else {
-        console.log("[AgentNetworkDag] ⚠️ Could not extract message or agent from event")
+        logDebug("[AgentNetworkDag] ⚠️ Could not extract message or agent from event")
       }
     }
 
     // Handle final response events (processed messages)
     const handleFinalResponse = (data: any) => {
-      console.log("[AgentNetworkDag] 🎯 Final response:", data)
+      logDebug("[AgentNetworkDag] 🎯 Final response:", data)
       
       if (data.message?.agent && data.message?.content) {
         // Show FULL message (no truncation)
         const fullContent = data.message.content
         const agent = agentsRef.current.find(a => a.name === data.message.agent || a.id === data.message.agent)
         if (agent) {
-          console.log("[AgentNetworkDag] ✨ Setting response for", data.message.agent, ":", fullContent.substring(0, 100) + "...")
+          logDebug("[AgentNetworkDag] ✨ Setting response for", data.message.agent, ":", fullContent.substring(0, 100) + "...")
           
           setAgents((prev) =>
             prev.map((a) =>
@@ -438,20 +439,20 @@ const AgentNetworkDagComponent = ({ nodes, links, activeNodeId }: AgentNetworkDa
             )
           }, 15000)
         } else {
-          console.log("[AgentNetworkDag] ⚠️ Agent not found:", data.message.agent, "Available:", agentsRef.current.map(a => a.name))
+          logDebug("[AgentNetworkDag] ⚠️ Agent not found:", data.message.agent, "Available:", agentsRef.current.map(a => a.name))
         }
       }
     }
 
     // Handle tool calls
     const handleToolCall = (data: any) => {
-      console.log("[AgentNetworkDag] 🔧 Tool call:", data)
+      logDebug("[AgentNetworkDag] 🔧 Tool call:", data)
       
       if (data.agentName && data.toolName) {
         const message = `🛠️ Calling ${data.toolName}`
         const agent = agentsRef.current.find(a => a.name === data.agentName || a.id === data.agentName)
         if (agent) {
-          console.log("[AgentNetworkDag] ✨ Setting response for", data.agentName, ":", message)
+          logDebug("[AgentNetworkDag] ✨ Setting response for", data.agentName, ":", message)
           
           setAgents((prev) =>
             prev.map((a) =>
@@ -471,14 +472,14 @@ const AgentNetworkDagComponent = ({ nodes, links, activeNodeId }: AgentNetworkDa
             )
           }, 5000)
         } else {
-          console.log("[AgentNetworkDag] ⚠️ Agent not found:", data.agentName, "Available:", agentsRef.current.map(a => a.name))
+          logDebug("[AgentNetworkDag] ⚠️ Agent not found:", data.agentName, "Available:", agentsRef.current.map(a => a.name))
         }
       }
     }
 
     // Handle tool responses
     const handleToolResponse = (data: any) => {
-      console.log("[AgentNetworkDag] 🔧 Tool response:", data)
+      logDebug("[AgentNetworkDag] 🔧 Tool response:", data)
       
       if (data.agentName && data.toolName) {
         const message = data.status === "success" 
@@ -486,7 +487,7 @@ const AgentNetworkDagComponent = ({ nodes, links, activeNodeId }: AgentNetworkDa
           : `❌ ${data.toolName} failed`
         const agent = agentsRef.current.find(a => a.name === data.agentName || a.id === data.agentName)
         if (agent) {
-          console.log("[AgentNetworkDag] ✨ Setting response for", data.agentName, ":", message)
+          logDebug("[AgentNetworkDag] ✨ Setting response for", data.agentName, ":", message)
           
           setAgents((prev) =>
             prev.map((a) =>
@@ -506,14 +507,14 @@ const AgentNetworkDagComponent = ({ nodes, links, activeNodeId }: AgentNetworkDa
             )
           }, 5000)
         } else {
-          console.log("[AgentNetworkDag] ⚠️ Agent not found:", data.agentName, "Available:", agentsRef.current.map(a => a.name))
+          logDebug("[AgentNetworkDag] ⚠️ Agent not found:", data.agentName, "Available:", agentsRef.current.map(a => a.name))
         }
       }
     }
 
     // Handle agent activity
     const handleAgentActivity = (data: any) => {
-      console.log("[AgentNetworkDag] 🔄 Agent activity:", data)
+      logDebug("[AgentNetworkDag] 🔄 Agent activity:", data)
       
       if (data.agentName && data.activity) {
         const shortActivity = data.activity.length > 100 
@@ -521,7 +522,7 @@ const AgentNetworkDagComponent = ({ nodes, links, activeNodeId }: AgentNetworkDa
           : data.activity
         const agent = agentsRef.current.find(a => a.name === data.agentName || a.id === data.agentName)
         if (agent) {
-          console.log("[AgentNetworkDag] ✨ Setting response for", data.agentName, ":", shortActivity)
+          logDebug("[AgentNetworkDag] ✨ Setting response for", data.agentName, ":", shortActivity)
           
           setAgents((prev) =>
             prev.map((a) =>
@@ -541,21 +542,21 @@ const AgentNetworkDagComponent = ({ nodes, links, activeNodeId }: AgentNetworkDa
             )
           }, 8000)
         } else {
-          console.log("[AgentNetworkDag] ⚠️ Agent not found:", data.agentName, "Available:", agentsRef.current.map(a => a.name))
+          logDebug("[AgentNetworkDag] ⚠️ Agent not found:", data.agentName, "Available:", agentsRef.current.map(a => a.name))
         }
       }
     }
 
     // Handle remote agent activity (THIS IS WHAT WE NEED!)
     const handleRemoteAgentActivity = (data: any) => {
-      console.log("[AgentNetworkDag] 🤖 Remote agent activity:", data)
+      logDebug("[AgentNetworkDag] 🤖 Remote agent activity:", data)
       
       if (data.agentName && data.content) {
         // Show FULL message (no truncation)
         const fullContent = data.content
         const agent = agentsRef.current.find(a => a.name === data.agentName || a.id === data.agentName)
         if (agent) {
-          console.log("[AgentNetworkDag] ✨ Setting REMOTE AGENT response for", data.agentName, ":", fullContent.substring(0, 100) + "...")
+          logDebug("[AgentNetworkDag] ✨ Setting REMOTE AGENT response for", data.agentName, ":", fullContent.substring(0, 100) + "...")
           
           // Check if this is a short status message
           const isStatusMessage = fullContent.length < 100 && (
@@ -574,7 +575,7 @@ const AgentNetworkDagComponent = ({ nodes, links, activeNodeId }: AgentNetworkDa
                                fullContent.length > currentResponse.length + 50 // New content is significantly longer
           
           if (shouldUpdate) {
-            console.log("[AgentNetworkDag] ✅ Updating response (isStatus:", isStatusMessage, "currentLen:", currentResponse.length, "newLen:", fullContent.length, ")")
+            logDebug("[AgentNetworkDag] ✅ Updating response (isStatus:", isStatusMessage, "currentLen:", currentResponse.length, "newLen:", fullContent.length, ")")
             setAgents((prev) =>
               prev.map((a) =>
                 a.id === agent.id
@@ -593,17 +594,17 @@ const AgentNetworkDagComponent = ({ nodes, links, activeNodeId }: AgentNetworkDa
               )
             }, 15000)
           } else {
-            console.log("[AgentNetworkDag] ⏭️ Skipping status message (preserving substantial response)")
+            logDebug("[AgentNetworkDag] ⏭️ Skipping status message (preserving substantial response)")
           }
         } else {
-          console.log("[AgentNetworkDag] ⚠️ Remote agent not found:", data.agentName, "Available:", agentsRef.current.map(a => a.name))
+          logDebug("[AgentNetworkDag] ⚠️ Remote agent not found:", data.agentName, "Available:", agentsRef.current.map(a => a.name))
         }
       }
     }
 
     // Handle inference steps
     const handleInferenceStep = (data: any) => {
-      console.log("[AgentNetworkDag] 🧠 Inference step:", data)
+      logDebug("[AgentNetworkDag] 🧠 Inference step:", data)
       
       if (data.agent && data.status) {
         const shortStatus = data.status.length > 80 
@@ -611,7 +612,7 @@ const AgentNetworkDagComponent = ({ nodes, links, activeNodeId }: AgentNetworkDa
           : data.status
         const agent = agentsRef.current.find(a => a.name === data.agent || a.id === data.agent)
         if (agent) {
-          console.log("[AgentNetworkDag] ✨ Setting response for", data.agent, ":", shortStatus)
+          logDebug("[AgentNetworkDag] ✨ Setting response for", data.agent, ":", shortStatus)
           
           // Update agent with current response
           setAgents((prev) =>
@@ -633,20 +634,20 @@ const AgentNetworkDagComponent = ({ nodes, links, activeNodeId }: AgentNetworkDa
             )
           }, 5000)
         } else {
-          console.log("[AgentNetworkDag] ⚠️ Agent not found:", data.agent, "Available:", agentsRef.current.map(a => a.name))
+          logDebug("[AgentNetworkDag] ⚠️ Agent not found:", data.agent, "Available:", agentsRef.current.map(a => a.name))
         }
       }
     }
 
     // Handle outgoing agent messages (Host Agent -> Remote Agent)
     const handleOutgoingMessage = (data: any) => {
-      console.log("[AgentNetworkDag] 📤 Outgoing message:", data)
+      logDebug("[AgentNetworkDag] 📤 Outgoing message:", data)
       
       if (data.targetAgent && data.message) {
         // Find the HOST agent (the one sending the message)
         const hostAgent = agentsRef.current.find(a => a.type === "host")
         if (hostAgent) {
-          console.log("[AgentNetworkDag] 📨 Setting outgoing message on Host Agent to", data.targetAgent)
+          logDebug("[AgentNetworkDag] 📨 Setting outgoing message on Host Agent to", data.targetAgent)
           
           setAgents((prev) =>
             prev.map((a) =>
@@ -675,14 +676,14 @@ const AgentNetworkDagComponent = ({ nodes, links, activeNodeId }: AgentNetworkDa
             )
           }, 8000)
         } else {
-          console.log("[AgentNetworkDag] ⚠️ Host agent not found")
+          logDebug("[AgentNetworkDag] ⚠️ Host agent not found")
         }
       }
     }
 
     // Handle file uploaded (for all files in DAG)
     const handleFileUploaded = (data: any) => {
-      console.log("[AgentNetworkDag] 📎 File uploaded:", data)
+      logDebug("[AgentNetworkDag] 📎 File uploaded:", data)
       
       if (data.fileInfo && data.fileInfo.source_agent && data.fileInfo.uri) {
         const sourceAgent = data.fileInfo.source_agent
@@ -692,7 +693,7 @@ const AgentNetworkDagComponent = ({ nodes, links, activeNodeId }: AgentNetworkDa
         
         const agent = agentsRef.current.find(a => a.name === sourceAgent || a.id === sourceAgent)
         if (agent) {
-          console.log("[AgentNetworkDag] 📄 File generated by", sourceAgent, ":", fileName, `(${contentType})`)
+          logDebug("[AgentNetworkDag] 📄 File generated by", sourceAgent, ":", fileName, `(${contentType})`)
           
           // Store both image and file info
           const isImage = contentType.startsWith("image/")
@@ -728,7 +729,7 @@ const AgentNetworkDagComponent = ({ nodes, links, activeNodeId }: AgentNetworkDa
             )
           }, 10000)
         } else {
-          console.log("[AgentNetworkDag] ⚠️ Agent not found for file:", sourceAgent, "Available:", agentsRef.current.map(a => a.name))
+          logDebug("[AgentNetworkDag] ⚠️ Agent not found for file:", sourceAgent, "Available:", agentsRef.current.map(a => a.name))
         }
       }
     }
@@ -746,10 +747,10 @@ const AgentNetworkDagComponent = ({ nodes, links, activeNodeId }: AgentNetworkDa
     subscribe("file", handleFileUploaded)
     subscribe("outgoing_agent_message", handleOutgoingMessage)
 
-    console.log("[AgentNetworkDag] ✅ All WebSocket listeners registered")
+    logDebug("[AgentNetworkDag] ✅ All WebSocket listeners registered")
 
     return () => {
-      console.log("[AgentNetworkDag] 🔌 Unsubscribing from WebSocket events")
+      logDebug("[AgentNetworkDag] 🔌 Unsubscribing from WebSocket events")
       unsubscribe("status_update", handleStatusUpdate)
       unsubscribe("task_updated", handleTaskUpdate)
       unsubscribe("agent_message", handleAgentMessage)
@@ -1304,25 +1305,25 @@ const AgentNetworkDagComponent = ({ nodes, links, activeNodeId }: AgentNetworkDa
             const imgRef = img // Capture for closure
             // Note: Not setting crossOrigin since Azure Blob Storage SAS tokens work without CORS headers
             imgRef.onload = () => {
-              console.log("[AgentNetworkDag] ✅ Image loaded successfully:", imageUrl)
-              console.log("[AgentNetworkDag] Image dimensions:", imgRef.naturalWidth, "x", imgRef.naturalHeight)
+              logDebug("[AgentNetworkDag] ✅ Image loaded successfully:", imageUrl)
+              logDebug("[AgentNetworkDag] Image dimensions:", imgRef.naturalWidth, "x", imgRef.naturalHeight)
               // Trigger re-render by updating agents state
               setAgents(prev => [...prev])
             }
             imgRef.onerror = (e) => {
-              console.log("[AgentNetworkDag] ❌ Failed to load image:", imageUrl)
-              console.log("[AgentNetworkDag] Error details:", e)
+              logDebug("[AgentNetworkDag] ❌ Failed to load image:", imageUrl)
+              logDebug("[AgentNetworkDag] Error details:", e)
               // Remove from cache so it can be retried
               imageCache.current.delete(imageUrl)
             }
-            console.log("[AgentNetworkDag] 📥 Starting image load:", imageUrl.substring(0, 100) + "...")
+            logDebug("[AgentNetworkDag] 📥 Starting image load:", imageUrl.substring(0, 100) + "...")
             imgRef.src = imageUrl
             imageCache.current.set(imageUrl, imgRef)
           }
           
           // Draw the image if it's loaded
           if (img && img.complete && img.naturalWidth > 0) {
-            console.log("[AgentNetworkDag] Image status - complete:", img.complete, "naturalWidth:", img.naturalWidth)
+            logDebug("[AgentNetworkDag] Image status - complete:", img.complete, "naturalWidth:", img.naturalWidth)
             ctx.save()
             ctx.beginPath()
             ctx.roundRect(imageX, imageY, imageSize, imageSize, 4)

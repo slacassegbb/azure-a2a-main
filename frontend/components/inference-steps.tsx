@@ -4,6 +4,7 @@ import React, { useMemo } from "react"
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
 import { CheckCircle2, Loader, AlertCircle, MessageSquare, Bot, Workflow, Wrench, FileSearch, Send, Zap, FileText, Paperclip, Square } from "lucide-react"
 import { getAgentHexColor } from "@/lib/agent-colors"
+import { logDebug } from '@/lib/debug'
 
 interface StepEvent {
   agent: string
@@ -73,14 +74,14 @@ function parseEventsToAgents(steps: StepEvent[], agentColors?: Record<string, st
   const currentAgentKey = new Map<string, string>()
   
   // Debug: log all incoming steps
-  console.log("[InferenceSteps] Parsing steps:", steps.map(s => ({ agent: s.agent, eventType: s.eventType, statusLen: s.status?.length, hasImage: !!s.imageUrl })))
-  
+  logDebug("[InferenceSteps] Parsing steps:", steps.map(s => ({ agent: s.agent, eventType: s.eventType, statusLen: s.status?.length, hasImage: !!s.imageUrl })))
+
   // Debug: specifically check for Teams Agent
   const teamsEvents = steps.filter(s => s.agent?.toLowerCase().includes("teams"))
   if (teamsEvents.length > 0) {
-    console.log("[InferenceSteps] 🎯 TEAMS AGENT EVENTS FOUND:", teamsEvents)
+    logDebug("[InferenceSteps] TEAMS AGENT EVENTS FOUND:", teamsEvents)
   } else {
-    console.log("[InferenceSteps] ⚠️ No Teams Agent events in steps array")
+    logDebug("[InferenceSteps] No Teams Agent events in steps array")
   }
   
   for (const step of steps) {
@@ -357,16 +358,16 @@ function parseEventsToAgents(steps: StepEvent[], agentColors?: Record<string, st
   })
   
   // Debug: log parsed result
-  console.log("[InferenceSteps] Parsed agents:", sortedAgents.map(a => ({ 
-    name: a.name, 
-    status: a.status, 
+  logDebug("[InferenceSteps] Parsed agents:", sortedAgents.map(a => ({
+    name: a.name,
+    status: a.status,
     stepNumber: a.stepNumber,
     hasOutput: !!a.output,
     outputLen: a.output?.length,
     filesCount: a.extractedFiles.length,
     progressCount: a.progressMessages.length
   })))
-  console.log("[InferenceSteps] Orchestrator activities:", orchestratorActivities.length, orchestratorStatus)
+  logDebug("[InferenceSteps] Orchestrator activities:", orchestratorActivities.length, orchestratorStatus)
   
   return {
     agents: sortedAgents,
