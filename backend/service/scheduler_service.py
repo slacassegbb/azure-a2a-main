@@ -131,6 +131,7 @@ class WorkflowScheduler:
         if self.database_url:
             try:
                 self.db_conn = psycopg2.connect(self.database_url)
+                self.db_conn.autocommit = False
                 self.use_database = True
                 logger.info("[WorkflowScheduler] Using PostgreSQL database")
             except Exception as e:
@@ -146,6 +147,31 @@ class WorkflowScheduler:
         self._load_schedules()
         self._load_run_history()
     
+    def _ensure_db_connection(self) -> bool:
+        """Test and reconnect DB if the connection was dropped (e.g. Azure idle timeout)."""
+        if not self.use_database or not self.database_url:
+            return False
+        try:
+            cur = self.db_conn.cursor()
+            cur.execute("SELECT 1")
+            cur.close()
+            return True
+        except Exception:
+            logger.info("[WorkflowScheduler] DB connection lost, reconnecting...")
+            try:
+                if self.db_conn:
+                    try:
+                        self.db_conn.close()
+                    except Exception:
+                        pass
+                self.db_conn = psycopg2.connect(self.database_url)
+                logger.info("[WorkflowScheduler] DB reconnected successfully")
+                return True
+            except Exception as e:
+                logger.error(f"[WorkflowScheduler] DB reconnect failed: {e}")
+                self.db_conn = None
+                return False
+
     def _load_schedules(self):
         """Load schedules from database or persistent storage."""
         if self.use_database:
@@ -155,6 +181,8 @@ class WorkflowScheduler:
     
     def _load_schedules_from_database(self):
         """Load schedules from PostgreSQL database."""
+        if not self._ensure_db_connection():
+            return
         try:
             cur = self.db_conn.cursor(cursor_factory=RealDictCursor)
             cur.execute("""
@@ -211,6 +239,8 @@ class WorkflowScheduler:
     
     def _save_schedule_to_database(self, schedule: ScheduledWorkflow) -> bool:
         """Save a single schedule to PostgreSQL database using UPSERT."""
+        if not self._ensure_db_connection():
+            return False
         try:
             cur = self.db_conn.cursor()
             cur.execute("""
@@ -284,6 +314,8 @@ class WorkflowScheduler:
     
     def _delete_schedule_from_database(self, schedule_id: str) -> bool:
         """Delete a schedule from PostgreSQL database."""
+        if not self._ensure_db_connection():
+            return False
         try:
             cur = self.db_conn.cursor()
             cur.execute("DELETE FROM scheduled_workflows WHERE id = %s", (schedule_id,))
@@ -339,10 +371,10 @@ class WorkflowScheduler:
                                       started_at: str, completed_at: str, duration_seconds: float,
                                       status: str, result: Optional[str], error: Optional[str]):
         """Add run history entry to database."""
-        if not self.db_conn:
+        if not self._ensure_db_connection():
             logger.error("No database connection available")
             return
-        
+
         try:
             cur = self.db_conn.cursor()
             
@@ -816,30 +848,30 @@ class WorkflowScheduler:
     def get_run_history(self, schedule_id: Optional[str] = None, session_id: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
         """Get run history for schedules with full results, optionally filtered by session."""
         
-        if self.use_database and self.db_conn:
+        if self.use_database and self._ensure_db_connection():
             # Query from database
             try:
                 cur = self.db_conn.cursor()
-                
+
                 # Build query with optional filters
                 query = "SELECT * FROM schedule_run_history WHERE 1=1"
                 params = []
-                
+
                 if schedule_id:
                     query += " AND schedule_id = %s"
                     params.append(schedule_id)
-                
+
                 if session_id:
                     query += " AND session_id = %s"
                     params.append(session_id)
-                
+
                 query += " ORDER BY timestamp DESC LIMIT %s"
                 params.append(limit)
-                
+
                 cur.execute(query, params)
                 rows = cur.fetchall()
                 cur.close()
-                
+
                 # Convert to list of dicts
                 history = []
                 for row in rows:
@@ -858,9 +890,9 @@ class WorkflowScheduler:
                         "error": row[11]
                     }
                     history.append(entry)
-                
+
                 return history
-                
+
             except Exception as e:
                 logger.error(f"Error querying run history from database: {e}")
                 return []
