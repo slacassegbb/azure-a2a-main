@@ -1,0 +1,22 @@
+{
+  "name": "@negokaz/excel-mcp-server",
+  "version": "0.12.0",
+  "description": "An MCP server that reads and writes spreadsheet data to MS Excel file",
+  "author": "negokaz",
+  "license": "MIT",
+  "bin": {
+    "excel-mcp-server": "dist/launcher.js"
+  },
+  "scripts": {
+    "build": "goreleaser build --snapshot --clean && tsc",
+    "watch": "tsc --watch",
+    "debug": "npx @modelcontextprotocol/inspector dist/launcher.js"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.4",
+    "typescript": "^5.7.3"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

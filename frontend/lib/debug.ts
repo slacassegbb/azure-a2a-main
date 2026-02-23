@@ -9,3 +9,11 @@ export const warnDebug = (...args: any[]) => {
   if (DEBUG) console.warn(...args)
 }
 
+export const errorDebug = (...args: any[]) => {
+  if (DEBUG) console.error(...args)
+}
+
+export const logInfo = (...args: any[]) => {
+  console.log(...args)
+}
+

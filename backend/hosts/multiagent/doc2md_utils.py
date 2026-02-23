@@ -2,8 +2,8 @@
 # coding: utf-8
 
 import os
-from tenacity import retry, wait_random_exponential, stop_after_attempt 
-import shutil  
+from tenacity import retry, wait_random_exponential, stop_after_attempt
+import shutil
 import json
 import platform
 import re
@@ -11,6 +11,7 @@ import requests
 import fitz
 from PIL import Image
 from functools import lru_cache
+from log_config import log_debug, log_info, log_error
 
 # Azure OpenAI
 from openai import AzureOpenAI
@@ -53,8 +54,8 @@ def _load_gpt_configuration() -> dict:
     config = {name: os.getenv(name) for name in _GPT_ENV_VARS}
 
     # Basic logging so we can confirm which deployment is in use without exposing secrets.
-    print('Azure OpenAI GPT Base URL:', config["AZURE_OPENAI_GPT_API_BASE"])
-    print('Azure OpenAI GPT Deployment:', config["AZURE_OPENAI_GPT_DEPLOYMENT"])
+    log_info(f'Azure OpenAI GPT Base URL: {config["AZURE_OPENAI_GPT_API_BASE"]}')
+    log_info(f'Azure OpenAI GPT Deployment: {config["AZURE_OPENAI_GPT_DEPLOYMENT"]}')
 
     return config
 
@@ -83,20 +84,20 @@ def ensure_directory_exists(directory_path):
     path = Path(directory_path)  
     if not path.exists():  
         path.mkdir(parents=True, exist_ok=True)  
-        print(f"Directory created: {directory_path}")  
-    else:  
-        print(f"Directory already exists: {directory_path}")  
+        log_debug(f"Directory created: {directory_path}")
+    else:
+        log_debug(f"Directory already exists: {directory_path}")  
   
 # Remove a dir and sub-dirs
 def remove_directory(directory_path):  
     try:  
         if os.path.exists(directory_path):  
-            shutil.rmtree(directory_path)  
-            print(f"Directory '{directory_path}' has been removed successfully.")  
-        else:  
-            print(f"Directory '{directory_path}' does not exist.")  
-    except Exception as e:  
-        print(f"An error occurred while removing the directory: {e}")  
+            shutil.rmtree(directory_path)
+            log_debug(f"Directory '{directory_path}' has been removed successfully.")
+        else:
+            log_debug(f"Directory '{directory_path}' does not exist.")
+    except Exception as e:
+        log_error(f"An error occurred while removing the directory: {e}")  
     
 # Convert to PDF
 def convert_to_pdf(input_path):  
@@ -110,7 +111,7 @@ def convert_to_pdf(input_path):
         filename_no_ext = os.path.splitext(base_filename)[0]
         output_file = os.path.join(PDF_OUTPUT_DIR, filename_no_ext + '.pdf')
     
-        print('Converting', input_path, 'to', output_file)
+        log_debug(f"Converting {input_path} to {output_file}")
         if os.path.exists(output_file):
             os.remove(output_file)
     
@@ -136,15 +137,15 @@ def convert_to_pdf(input_path):
             try:
                 # Run the command  
                 subprocess.run(command, check=True)  
-                print(f"Conversion complete: {output_file}")
+                log_debug(f"Conversion complete: {output_file}")
             except subprocess.CalledProcessError as e:
-                print(f"Error converting file: {e}")
+                log_error(f"Error converting file: {e}")
                 return ""
             except FileNotFoundError:
-                print("LibreOffice not found. Please ensure LibreOffice is installed and the path is correct.")
+                log_error("LibreOffice not found. Please ensure LibreOffice is installed and the path is correct.")
                 return ""
     else:
-        print('File type not supported.')  
+        log_error("File type not supported.")  
         return ""
     
     return output_file
@@ -157,7 +158,7 @@ def extract_pdf_pages_to_images(pdf_path, image_dir):
     ensure_directory_exists(image_out_dir)  
 
     # Open the PDF file and iterate pages
-    print('Extracting images from PDF...')
+    log_debug("Extracting images from PDF...")
     pdf_document = fitz.open(pdf_path)  
 
     for page_number in range(len(pdf_document)):  
@@ -166,7 +167,7 @@ def extract_pdf_pages_to_images(pdf_path, image_dir):
         image_out_file = os.path.join(image_out_dir, f'{page_number + 1}.png')
         image.save(image_out_file)  
         if page_number % 100 == 0:
-            print(f'Processed {page_number} images...')  
+            log_debug(f"Processed {page_number} images...")  
 
     pdf_document.close()
     return doc_id
@@ -209,25 +210,24 @@ def extract_markdown_from_image(image_path):
             ],
             max_tokens=2000 
         )
-        print(response.choices[0].message.content)
         return response.choices[0].message.content
     except Exception as ex:
-        print(f"Error extracting markdown from image: {ex}")
+        log_error(f"Error extracting markdown from image: {ex}")
         return ""
 
 def process_image(file, markdown_out_dir):
     if '.png' in file:
-        print('Processing:', file)
+        log_debug(f"Processing: {file}")
         markdown_file_out = os.path.join(markdown_out_dir, os.path.basename(file).replace('.png', '.txt'))
-        print(markdown_file_out)
+        log_debug(f"{markdown_file_out}")
         if os.path.exists(markdown_file_out) == False:
             markdown_text = extract_markdown_from_image(file)
             with open(markdown_file_out, 'w', encoding='utf-8') as md_out:
                 md_out.write(markdown_text)
         else:
-            print('Skipping processed file.')
+            log_debug("Skipping processed file.")
     else:
-        print('Skipping non PNG file:', file)
+        log_debug(f"Skipping non PNG file: {file}")
 
     return file
 
@@ -270,5 +270,5 @@ def process_document_to_markdown(document_path, output_dir=None):
         return markdown_content
         
     except Exception as e:
-        print(f"Error processing document {document_path}: {e}")
+        log_error(f"Error processing document {document_path}: {e}")
         return f"# Error Processing Document\n\nFile: {os.path.basename(document_path)}\nError: {str(e)}"

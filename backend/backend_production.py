@@ -54,7 +54,7 @@ os.environ.setdefault("WEBSOCKET_SERVER_URL", "http://localhost:8080")
 # When running in Azure Container Apps, this will automatically use managed identity
 
 # Import logging config
-from log_config import log_debug
+from log_config import log_debug, log_info, log_warning, log_error, log_success
 
 log_debug(f"Environment loaded, A2A_HOST: {os.environ.get('A2A_HOST')}")
 log_debug(f"WebSocket URL: {os.environ.get('WEBSOCKET_SERVER_URL')}")
@@ -93,25 +93,48 @@ def generate_workflow_text(steps: List[Dict[str, Any]], connections: List[Dict[s
     """
     Convert workflow steps + connections into text format for the orchestrator.
 
-    Handles evaluation steps with IF-TRUE/IF-FALSE branching.
+    Uses BFS over the connection graph to detect:
+    - Parallel branches (1a, 1b) when a node has multiple outgoing edges
+    - Evaluation branching (IF-TRUE / IF-FALSE)
     """
     if not steps:
         return ""
 
-    sorted_steps = sorted(steps, key=lambda s: s.get('order', 0))
+    from collections import deque
 
-    # Build lookup maps
+    sorted_steps = sorted(steps, key=lambda s: s.get('order', 0))
     step_by_id = {s.get('id'): s for s in sorted_steps}
-    # Outgoing connections from each step: step_id -> [(target_id, condition)]
-    outgoing = {}
+
+    # Build adjacency maps (only non-conditional edges for parallel detection)
+    outgoing = {}       # step_id -> [(target_id, condition)]
+    outgoing_free = {}  # step_id -> [target_id] (non-conditional only)
+    incoming_ids = set()
+    connected_ids = set()
+
     for conn in (connections or []):
         from_id = conn.get('fromStepId')
         to_id = conn.get('toStepId')
-        condition = conn.get('condition')  # "true", "false", or None
+        condition = conn.get('condition')
         if from_id:
             outgoing.setdefault(from_id, []).append((to_id, condition))
+            if condition is None:
+                outgoing_free.setdefault(from_id, []).append(to_id)
+        if from_id:
+            connected_ids.add(from_id)
+        if to_id:
+            connected_ids.add(to_id)
+            incoming_ids.add(to_id)
 
-    # Track which steps are branch targets (IF-TRUE/IF-FALSE destinations)
+    # If no connections, fall back to simple sequential ordering
+    if not connections:
+        lines = []
+        for i, step in enumerate(sorted_steps):
+            agent_name = step.get('agentName') or step.get('agent') or 'Unknown Agent'
+            desc = step.get('description') or f'Use the {agent_name} agent'
+            lines.append(f"{i + 1}. [{agent_name}] {desc}")
+        return "\n".join(lines)
+
+    # Identify branch targets of EVALUATE steps
     branch_target_ids = set()
     for step in sorted_steps:
         agent_name = step.get('agentName') or step.get('agent') or ''
@@ -121,40 +144,102 @@ def generate_workflow_text(steps: List[Dict[str, Any]], connections: List[Dict[s
                 if condition in ('true', 'false'):
                     branch_target_ids.add(target_id)
 
-    # Generate text lines
-    lines = []
-    step_number = 0
-    # Map step_id -> assigned step number (for branch references)
-    step_numbers = {}
+    # BFS with parallel detection
+    root_ids = [s.get('id') for s in sorted_steps
+                if s.get('id') in connected_ids and s.get('id') not in incoming_ids]
 
-    for step in sorted_steps:
-        step_id = step.get('id')
-        agent_name = step.get('agentName') or step.get('agent') or 'Unknown Agent'
-        default_desc = 'Use the ' + agent_name + ' agent'
-        description = step.get('description', default_desc)
+    entries = []  # [{"step_number": int, "sub_letter": str|None, "step": dict}]
+    visited = set()
+    current_step_num = 0
 
-        # Skip branch targets in the main sequence — they'll be emitted as IF-TRUE/IF-FALSE
-        if step_id in branch_target_ids:
+    queue = deque()  # (step_id, parent_num, parallel_siblings, sibling_index)
+    if len(root_ids) > 1:
+        for idx, rid in enumerate(root_ids):
+            queue.append((rid, 0, root_ids, idx))
+    else:
+        for rid in root_ids:
+            queue.append((rid, 0, [], 0))
+
+    while queue:
+        step_id, parent_num, siblings, sib_idx = queue.popleft()
+        if step_id in visited:
+            continue
+        visited.add(step_id)
+
+        step = step_by_id.get(step_id)
+        if not step:
             continue
 
-        step_number += 1
-        step_numbers[step_id] = step_number
-        lines.append(f"{step_number}. [{agent_name}] {description}")
+        if len(siblings) > 1:
+            step_number = parent_num + 1
+            sub_letter = chr(97 + sib_idx)  # 'a', 'b', 'c'...
+        else:
+            current_step_num += 1
+            step_number = current_step_num
+            sub_letter = None
 
-        # If this is an evaluation step, emit IF-TRUE/IF-FALSE branch lines
+        entries.append({"step_number": step_number, "sub_letter": sub_letter, "step": step})
+
+        # Enqueue children (non-conditional edges only)
+        children = outgoing_free.get(step_id, [])
+        if len(children) > 1:
+            for cidx, child_id in enumerate(children):
+                queue.append((child_id, step_number, children, cidx))
+        elif len(children) == 1:
+            queue.append((children[0], step_number, [], 0))
+
+        # Update current_step_num after last parallel sibling
+        if len(siblings) > 1 and sib_idx == len(siblings) - 1:
+            current_step_num = step_number
+
+    # Sort entries by step number, then sub-letter
+    entries.sort(key=lambda e: (e["step_number"], e["sub_letter"] or ''))
+
+    # Sequential numbering pass — parallel siblings share the same number
+    seq_num = 0
+    last_orig = -1
+    step_num_map = {}  # step_id -> seq_num
+
+    for entry in entries:
+        sid = entry["step"].get("id")
+        if sid in branch_target_ids:
+            continue
+        if entry["step_number"] != last_orig:
+            seq_num += 1
+            last_orig = entry["step_number"]
+        step_num_map[sid] = seq_num
+
+        # Also assign numbers to branch targets of eval steps
+        agent_name = entry["step"].get('agentName') or entry["step"].get('agent') or ''
         if agent_name.upper() == 'EVALUATE':
-            for target_id, condition in outgoing.get(step_id, []):
+            for target_id, condition in outgoing.get(sid, []):
+                if condition in ('true', 'false') and target_id not in step_num_map:
+                    seq_num += 1
+                    step_num_map[target_id] = seq_num
+
+    # Generate output lines
+    lines = []
+    for entry in entries:
+        sid = entry["step"].get("id")
+        if sid in branch_target_ids:
+            continue
+
+        num = step_num_map.get(sid, entry["step_number"])
+        label = f"{num}{entry['sub_letter']}" if entry["sub_letter"] else f"{num}"
+        agent_name = entry["step"].get('agentName') or entry["step"].get('agent') or 'Unknown Agent'
+        desc = entry["step"].get('description') or f'Use the {agent_name} agent'
+        lines.append(f"{label}. [{agent_name}] {desc}")
+
+        # Emit IF-TRUE/IF-FALSE for eval steps
+        if agent_name.upper() == 'EVALUATE':
+            for target_id, condition in outgoing.get(sid, []):
                 if condition in ('true', 'false') and target_id in step_by_id:
                     target_step = step_by_id[target_id]
                     target_agent = target_step.get('agentName') or target_step.get('agent') or 'Unknown Agent'
-                    target_desc = target_step.get('description', 'Use the ' + target_agent + ' agent')
-                    # Ensure the branch target has a number assigned
-                    if target_id not in step_numbers:
-                        step_number += 1
-                        step_numbers[target_id] = step_number
-                    branch_num = step_numbers[target_id]
-                    label = "IF-TRUE" if condition == "true" else "IF-FALSE"
-                    lines.append(f"   {label} → {branch_num}. [{target_agent}] {target_desc}")
+                    target_desc = target_step.get('description') or f'Use the {target_agent} agent'
+                    branch_num = step_num_map.get(target_id, 0)
+                    branch_label = "IF-TRUE" if condition == "true" else "IF-FALSE"
+                    lines.append(f"   {branch_label} → {branch_num}. [{target_agent}] {target_desc}")
 
     return "\n".join(lines)
 
@@ -202,10 +287,10 @@ def test_database_connection():
     database_url = os.getenv("DATABASE_URL")
     
     if not database_url:
-        print("[INFO] 💾 No DATABASE_URL found - using local JSON storage")
+        log_info("No DATABASE_URL found - using local JSON storage")
         return False
-    
-    print("[INFO] 💾 DATABASE_URL found - testing PostgreSQL connection...")
+
+    log_info("DATABASE_URL found - testing PostgreSQL connection...")
     
     try:
         import psycopg2
@@ -217,7 +302,7 @@ def test_database_connection():
         else:
             safe_url = database_url
         
-        print(f"[INFO] 🔌 Connecting to: {safe_url}")
+        log_info(f"Connecting to: {safe_url}")
         
         # Test connection
         conn = psycopg2.connect(database_url)
@@ -230,16 +315,16 @@ def test_database_connection():
         cursor.close()
         conn.close()
         
-        print(f"[INFO] ✅ Database connection successful!")
-        print(f"[INFO] 📊 PostgreSQL version: {version[:50]}...")
+        log_info("Database connection successful!")
+        log_info(f"PostgreSQL version: {version[:50]}...")
         return True
         
     except ImportError:
-        print("[ERROR] ❌ psycopg2 not installed. Run: pip install psycopg2-binary")
+        log_error("psycopg2 not installed. Run: pip install psycopg2-binary")
         return False
     except Exception as e:
-        print(f"[ERROR] ❌ Database connection failed: {e}")
-        print("[ERROR] 💡 Falling back to local JSON storage")
+        log_error(f"Database connection failed: {e}")
+        log_error("Falling back to local JSON storage")
         return False
 
 
@@ -282,7 +367,7 @@ async def execute_scheduled_workflow(workflow_name: str, session_id: str, timeou
         if name and name not in agent_names_needed:
             agent_names_needed.append(name)
     
-    print(f"[SCHEDULER] Workflow '{workflow_name}' needs agents: {agent_names_needed}")
+    log_debug(f"[SCHEDULER] Workflow '{workflow_name}' needs agents: {agent_names_needed}")
     
     # Look up each agent in global registry and enable for scheduler session
     # For scheduled workflows, always use production_url if available
@@ -295,22 +380,22 @@ async def execute_scheduled_workflow(workflow_name: str, session_id: str, timeou
             if 'production_url' in agent_config and agent_config['production_url']:
                 agent_config = agent_config.copy()
                 agent_config['url'] = agent_config['production_url']
-                print(f"[SCHEDULER] 🌐 Using production URL for '{agent_name}': {agent_config['url']}")
+                log_debug(f"[SCHEDULER] Using production URL for '{agent_name}': {agent_config['url']}")
             elif 'url' in agent_config:
-                print(f"[SCHEDULER] 🔗 Using URL for '{agent_name}': {agent_config['url']}")
+                log_debug(f"[SCHEDULER] Using URL for '{agent_name}': {agent_config['url']}")
             else:
-                print(f"[SCHEDULER] ⚠️  No URL found for '{agent_name}'")
+                log_warning(f"[SCHEDULER] No URL found for '{agent_name}'")
             
             # Enable this agent for the scheduler session (use isolated scheduler_session_id)
             was_enabled = session_registry.enable_agent(scheduler_session_id, agent_config)
             if was_enabled:
                 enabled_count += 1
-                print(f"[SCHEDULER] ✅ Enabled agent '{agent_name}' for session {scheduler_session_id}")
+                log_debug(f"[SCHEDULER] Enabled agent '{agent_name}' for session {scheduler_session_id}")
             else:
-                print(f"[SCHEDULER] ℹ️ Agent '{agent_name}' already enabled for session {scheduler_session_id}")
+                log_debug(f"[SCHEDULER] Agent '{agent_name}' already enabled for session {scheduler_session_id}")
         else:
             missing_agents.append(agent_name)
-            print(f"[SCHEDULER] ❌ Agent '{agent_name}' NOT FOUND in global registry!")
+            log_error(f"[SCHEDULER] Agent '{agent_name}' NOT FOUND in global registry!")
     
     if missing_agents:
         return {
@@ -318,11 +403,11 @@ async def execute_scheduled_workflow(workflow_name: str, session_id: str, timeou
             "error": f"Missing agents in registry: {', '.join(missing_agents)}. Available agents can be found in the Agent Catalog."
         }
     
-    print(f"[SCHEDULER] Enabled {enabled_count} agents for session {scheduler_session_id}")
+    log_debug(f"[SCHEDULER] Enabled {enabled_count} agents for session {scheduler_session_id}")
     # --- END ENABLE AGENTS ---
     
     # Build workflow text (supports evaluation steps with branching)
-    print(f"[SCHEDULER] 📝 Building workflow text from {len(workflow.steps or [])} steps...")
+    log_debug(f"[SCHEDULER] Building workflow text from {len(workflow.steps or [])} steps...")
     workflow_text = generate_workflow_text(workflow.steps or [], workflow.connections or [])
 
     initial_message = f'Run the "{workflow.name}" workflow.'
@@ -331,18 +416,18 @@ async def execute_scheduled_workflow(workflow_name: str, session_id: str, timeou
     # Use scheduler_session_id for context to isolate from user's active session
     context_id = f"{scheduler_session_id}::{conversation_id}"
     
-    print(f"[SCHEDULER] 📝 Workflow text:\n{workflow_text}")
-    print(f"[SCHEDULER] 📨 Context ID: {context_id} (isolated from user session {session_id})")
+    log_debug(f"[SCHEDULER] Workflow text:\n{workflow_text}")
+    log_debug(f"[SCHEDULER] Context ID: {context_id} (isolated from user session {session_id})")
     
     if not agent_server:
-        print(f"[SCHEDULER] ❌ agent_server is None!")
+        log_error("[SCHEDULER] agent_server is None!")
         return {"success": False, "error": "Agent server is None"}
-    
+
     if not hasattr(agent_server, 'manager'):
-        print(f"[SCHEDULER] ❌ agent_server has no 'manager' attribute!")
+        log_error("[SCHEDULER] agent_server has no 'manager' attribute!")
         return {"success": False, "error": "Agent server has no manager"}
-    
-    print(f"[SCHEDULER] ✅ agent_server.manager exists: {type(agent_server.manager)}")
+
+    log_debug(f"[SCHEDULER] agent_server.manager exists: {type(agent_server.manager)}")
     
     from a2a.types import Message, Part, TextPart, Role
     
@@ -353,17 +438,17 @@ async def execute_scheduled_workflow(workflow_name: str, session_id: str, timeou
         parts=[Part(root=TextPart(text=initial_message))]
     )
     
-    print(f"[SCHEDULER] 📩 Message created: {initial_message}")
+    log_debug(f"[SCHEDULER] Message created: {initial_message}")
     
     # Use a shorter timeout for testing (60 seconds instead of 300)
     effective_timeout = min(timeout, 120)
-    print(f"[SCHEDULER] ⏱️ Timeout set to {effective_timeout}s")
+    log_debug(f"[SCHEDULER] Timeout set to {effective_timeout}s")
     
     try:
         start_time = time.time()
         
-        print(f"[SCHEDULER] ⏳ Calling agent_server.manager.process_message()...")
-        print(f"[SCHEDULER] ⏳ This may take a while if agents are being called...")
+        log_debug("[SCHEDULER] Calling agent_server.manager.process_message()...")
+        log_debug("[SCHEDULER] This may take a while if agents are being called...")
         
         # Await directly since we're already in an async context on the main loop
         responses = await asyncio.wait_for(
@@ -378,7 +463,7 @@ async def execute_scheduled_workflow(workflow_name: str, session_id: str, timeou
         )
         
         elapsed_time = time.time() - start_time
-        print(f"[SCHEDULER] ✅ Workflow execution completed in {elapsed_time:.1f}s")
+        log_debug(f"[SCHEDULER] Workflow execution completed in {elapsed_time:.1f}s")
         
         result_text = ""
         if responses:
@@ -387,11 +472,11 @@ async def execute_scheduled_workflow(workflow_name: str, session_id: str, timeou
             else:
                 result_text = str(responses)
         
-        print(f"[SCHEDULER] 📄 Result length: {len(result_text)} chars")
+        log_debug(f"[SCHEDULER] Result length: {len(result_text)} chars")
         if len(result_text) > 500:
-            print(f"[SCHEDULER] 📄 Result preview: {result_text[:500]}...")
+            log_debug(f"[SCHEDULER] Result preview: {result_text[:500]}...")
         else:
-            print(f"[SCHEDULER] 📄 Result: {result_text}")
+            log_debug(f"[SCHEDULER] Result: {result_text}")
         
         return {
             "success": True,
@@ -403,12 +488,10 @@ async def execute_scheduled_workflow(workflow_name: str, session_id: str, timeou
         
     except asyncio.TimeoutError:
         elapsed = time.time() - start_time
-        print(f"[SCHEDULER] ⏰ TIMEOUT after {elapsed:.1f}s (limit was {effective_timeout}s)")
+        log_warning(f"[SCHEDULER] TIMEOUT after {elapsed:.1f}s (limit was {effective_timeout}s)")
         return {"success": False, "error": f"Workflow execution timed out after {effective_timeout} seconds"}
     except Exception as e:
-        print(f"[SCHEDULER] ❌ Error executing workflow: {e}")
-        import traceback
-        traceback.print_exc()
+        log_error(f"[SCHEDULER] Error executing workflow: {e}")
         return {"success": False, "error": str(e)}
 
 
@@ -421,7 +504,7 @@ async def wake_up_remote_agents():
     """
     import asyncio
     
-    print("[STARTUP] 🔔 Waking up remote agents with public URLs...")
+    log_info("[STARTUP] Waking up remote agents with public URLs...")
     
     try:
         registry = get_registry()
@@ -434,10 +517,10 @@ async def wake_up_remote_agents():
         ]
         
         if not remote_agents:
-            print("[STARTUP] No remote agents with public URLs found")
+            log_info("[STARTUP] No remote agents with public URLs found")
             return
-        
-        print(f"[STARTUP] Found {len(remote_agents)} remote agents to wake up")
+
+        log_info(f"[STARTUP] Found {len(remote_agents)} remote agents to wake up")
         
         # Wake up agents in parallel with a short timeout
         async def ping_agent(agent: dict) -> tuple:
@@ -450,16 +533,16 @@ async def wake_up_remote_agents():
                 async with httpx.AsyncClient(timeout=10.0) as client:
                     response = await client.get(health_url)
                     if response.status_code == 200:
-                        print(f"[STARTUP] ✅ {name}: AWAKE (status: {response.status_code})")
+                        log_debug(f"[STARTUP] {name}: AWAKE (status: {response.status_code})")
                         return (name, True)
                     else:
-                        print(f"[STARTUP] ⚠️  {name}: responded with status {response.status_code}")
+                        log_warning(f"[STARTUP] {name}: responded with status {response.status_code}")
                         return (name, False)
             except httpx.TimeoutException:
-                print(f"[STARTUP] ⏳ {name}: still waking up (timeout - container starting)")
+                log_debug(f"[STARTUP] {name}: still waking up (timeout - container starting)")
                 return (name, False)
             except Exception as e:
-                print(f"[STARTUP] ❌ {name}: error - {type(e).__name__}: {e}")
+                log_warning(f"[STARTUP] {name}: error - {type(e).__name__}: {e}")
                 return (name, False)
         
         # Background task to ping agents without blocking startup
@@ -470,14 +553,14 @@ async def wake_up_remote_agents():
             
             # Summary
             awake_count = sum(1 for r in results if isinstance(r, tuple) and r[1])
-            print(f"[STARTUP] 🔔 Wake-up complete: {awake_count}/{len(remote_agents)} agents responded")
+            log_info(f"[STARTUP] Wake-up complete: {awake_count}/{len(remote_agents)} agents responded")
         
         # Fire and forget - don't wait for completion
         asyncio.create_task(ping_agents_background())
-        print(f"[STARTUP] 🚀 Wake-up pings sent (running in background)")
-        
+        log_info("[STARTUP] Wake-up pings sent (running in background)")
+
     except Exception as e:
-        print(f"[STARTUP] ❌ Error during agent wake-up: {type(e).__name__}: {e}")
+        log_error(f"[STARTUP] Error during agent wake-up: {type(e).__name__}: {e}")
 
 
 @asynccontextmanager
@@ -485,45 +568,45 @@ async def lifespan(app: FastAPI):
     """FastAPI lifespan context manager for startup and shutdown."""
     global websocket_streamer, agent_server, workflow_scheduler
     
-    print("[INFO] Starting A2A Backend API...")
+    log_info("Starting A2A Backend API...")
     
     # Start HTTP client
     httpx_client_wrapper.start()
     
     # WebSocket endpoint is now mounted directly on the main app (see below)
     # No need for a separate server on port 8080
-    print("[INFO] WebSocket endpoint available at /events on the main API port")
+    log_info("WebSocket endpoint available at /events on the main API port")
     
     # Initialize WebSocket streamer with error handling
     try:
         websocket_streamer = await get_websocket_streamer()
         if websocket_streamer:
-            print("[INFO] WebSocket streamer initialized successfully")
+            log_info("WebSocket streamer initialized successfully")
         else:
-            print("[WARNING] WebSocket streamer not available - check configuration")
+            log_warning("WebSocket streamer not available - check configuration")
     except Exception as e:
-        print(f"[ERROR] Failed to initialize WebSocket streamer: {type(e).__name__}: {e}")
-        print(f"[ERROR] Error details: {str(e)}")
+        log_error(f"Failed to initialize WebSocket streamer: {type(e).__name__}: {e}")
+        log_error(f"Error details: {str(e)}")
         websocket_streamer = None
     
     # Initialize the conversation server (lightweight — routes only, no heavy init)
     try:
         agent_server = ConversationServer(app, httpx_client_wrapper())
-        print("[INFO] Conversation server initialized successfully")
+        log_info("Conversation server initialized successfully")
     except Exception as e:
-        print(f"[ERROR] Failed to initialize conversation server: {type(e).__name__}: {e}")
-        print(f"[ERROR] Error details: {str(e)}")
+        log_error(f"Failed to initialize conversation server: {type(e).__name__}: {e}")
+        log_error(f"Error details: {str(e)}")
         # Continue startup even if this fails
 
     # Define deferred init (scheduled right before yield, so it runs AFTER the port opens)
     async def _deferred_init():
         try:
             if agent_server and hasattr(agent_server, 'manager') and hasattr(agent_server.manager, 'initialize_async'):
-                print("[INFO] Starting deferred heavy initialization (DB + agent)...")
+                log_info("Starting deferred heavy initialization (DB + agent)...")
                 await agent_server.manager.initialize_async()
-                print("[INFO] Deferred initialization complete — host agent ready")
+                log_info("Deferred initialization complete -- host agent ready")
         except Exception as e:
-            print(f"[ERROR] Deferred initialization failed: {type(e).__name__}: {e}")
+            log_error(f"Deferred initialization failed: {type(e).__name__}: {e}")
 
     # Initialize the workflow scheduler
     try:
@@ -532,22 +615,22 @@ async def lifespan(app: FastAPI):
             workflow_scheduler = get_workflow_scheduler()
             workflow_scheduler.set_workflow_executor(execute_scheduled_workflow)
             await workflow_scheduler.start()
-            print(f"[INFO] Workflow scheduler started with {len(workflow_scheduler.schedules)} schedules")
+            log_info(f"Workflow scheduler started with {len(workflow_scheduler.schedules)} schedules")
         else:
-            print("[WARNING] APScheduler not installed - scheduled workflows disabled")
-            print("[INFO] Install with: pip install apscheduler")
+            log_warning("APScheduler not installed - scheduled workflows disabled")
+            log_info("Install with: pip install apscheduler")
     except Exception as e:
-        print(f"[WARNING] Failed to initialize workflow scheduler: {type(e).__name__}: {e}")
+        log_warning(f"Failed to initialize workflow scheduler: {type(e).__name__}: {e}")
         # Continue startup even if scheduler fails
     
     # Wake up all remote agents with public URLs (for scale-to-zero containers)
     try:
         await wake_up_remote_agents()
     except Exception as e:
-        print(f"[WARNING] Failed to wake up remote agents: {type(e).__name__}: {e}")
+        log_warning(f"Failed to wake up remote agents: {type(e).__name__}: {e}")
         # Continue startup even if wake-up fails
     
-    print("[INFO] A2A Backend API startup complete")
+    log_info("A2A Backend API startup complete")
 
     # Schedule heavy init RIGHT BEFORE yield — no await points between here and
     # yield, so the task cannot run until after the server port is open.
@@ -556,19 +639,19 @@ async def lifespan(app: FastAPI):
     yield
     
     # Cleanup
-    print("[INFO] Shutting down A2A Backend API...")
+    log_info("Shutting down A2A Backend API...")
     
     # Stop workflow scheduler
     if workflow_scheduler:
         try:
             await workflow_scheduler.stop()
-            print("[INFO] Workflow scheduler stopped")
+            log_info("Workflow scheduler stopped")
         except Exception as e:
-            print(f"[WARNING] Error stopping workflow scheduler: {e}")
-    
+            log_warning(f"Error stopping workflow scheduler: {e}")
+
     await httpx_client_wrapper.stop()
     await cleanup_websocket_streamer()
-    print("[INFO] A2A Backend API shutdown complete")
+    log_info("A2A Backend API shutdown complete")
 
 
 def main():
@@ -788,23 +871,6 @@ def main():
                 "error": str(e)
             }
 
-    @app.get("/api/agents/search")
-    async def search_agents(query: str = None, tags: str = None):
-        """Search agents by query or tags."""
-        try:
-            registry = get_registry()
-            tag_list = tags.split(',') if tags else None
-            agents = registry.search_agents(query=query, tags=tag_list)
-            return {
-                "success": True,
-                "agents": agents
-            }
-        except Exception as e:
-            return {
-                "success": False,
-                "error": str(e)
-            }
-
     @app.get("/api/agents/health/{agent_url:path}")
     async def check_agent_health(agent_url: str):
         """Check health status of an agent."""
@@ -900,7 +966,7 @@ def main():
             )
             
         except Exception as e:
-            print(f"[ERROR] Login error: {e}")
+            log_error(f"Login error: {e}")
             return LoginResponse(
                 success=False,
                 message="Login failed due to server error"
@@ -918,7 +984,7 @@ def main():
             }
             
         except Exception as e:
-            print(f"[ERROR] Get users error: {e}")
+            log_error(f"Get users error: {e}")
             return {
                 "success": False,
                 "users": [],
@@ -966,7 +1032,7 @@ def main():
         except HTTPException:
             raise  # Re-raise auth exceptions
         except Exception as e:
-            print(f"[ERROR] Get active users error: {e}")
+            log_error(f"Get active users error: {e}")
             return {
                 "success": False,
                 "users": [],
@@ -1013,27 +1079,11 @@ def main():
             )
             
         except Exception as e:
-            print(f"[ERROR] Registration error: {e}")
+            log_error(f"Registration error: {e}")
             return LoginResponse(
                 success=False,
                 message="Registration failed due to server error"
             )
-
-    @app.get("/api/auth/me")
-    async def get_current_user_info(current_user: dict = Depends(get_current_user)):
-        """Get current user information from JWT token."""
-        return {
-            "success": True,
-            "user": current_user
-        }
-
-    @app.get("/api/auth/users")
-    async def get_all_users():
-        """Get all users (for development/admin purposes)."""
-        return {
-            "success": True,
-            "users": auth_service.get_all_users()
-        }
 
     # ==========================================================================
     # Workflow API Endpoints
@@ -1171,252 +1221,6 @@ def main():
             "message": "Workflow deleted"
         }
     
-    @app.get("/api/workflows/list")
-    async def list_available_workflows():
-        """
-        List all available workflows (no authentication required).
-        Useful for discovering workflows before running them via API.
-        
-        Example curl:
-            curl http://localhost:12000/api/workflows/list
-        """
-        workflows = workflow_service.get_all_workflows()
-        return {
-            "workflows": [
-                {
-                    "id": w.id,
-                    "name": w.name,
-                    "description": w.description,
-                    "steps_count": len(w.steps) if w.steps else 0,
-                    "owner": w.user_id
-                }
-                for w in workflows
-            ]
-        }
-    
-    class WorkflowRunRequest(BaseModel):
-        workflow_id: Optional[str] = None
-        workflow_name: Optional[str] = None
-        session_id: Optional[str] = None
-        conversation_id: Optional[str] = None
-        initial_message: Optional[str] = None  # Override first step description
-        wait_for_completion: bool = False  # If True, wait and return the result
-        timeout: int = 300  # Timeout in seconds for synchronous mode (default 5 min)
-    
-    @app.post("/api/workflows/run")
-    async def run_workflow(request: WorkflowRunRequest):
-        """
-        Execute a workflow by ID or name.
-        
-        This endpoint allows triggering a workflow execution programmatically
-        without going through the UI. The workflow's first step description
-        is used as the initial message to kick off the orchestration.
-        
-        Modes:
-        - Async (default): Returns immediately with IDs, workflow runs in background
-        - Sync (wait_for_completion=true): Waits for workflow to complete and returns result
-        
-        Example curl (async - returns immediately):
-            curl -X POST http://localhost:12000/api/workflows/run \\
-                -H "Content-Type: application/json" \\
-                -d '{"workflow_name": "Customer Support Pipeline"}'
-        
-        Example curl (sync - waits for result):
-            curl -X POST http://localhost:12000/api/workflows/run \\
-                -H "Content-Type: application/json" \\
-                -d '{"workflow_name": "Customer Support Pipeline", "wait_for_completion": true}'
-        
-        Or by ID:
-            curl -X POST http://localhost:12000/api/workflows/run \\
-                -H "Content-Type: application/json" \\
-                -d '{"workflow_id": "custom-1738435200000", "wait_for_completion": true}'
-        """
-        import uuid
-        import asyncio
-        import threading
-        from service.server.server import main_loop
-        
-        # Find the workflow
-        workflow = None
-        if request.workflow_id:
-            workflow = workflow_service.get_workflow(request.workflow_id)
-        elif request.workflow_name:
-            # Search by name
-            all_workflows = workflow_service.get_all_workflows()
-            for w in all_workflows:
-                if w.name.lower() == request.workflow_name.lower():
-                    workflow = w
-                    break
-        
-        if not workflow:
-            raise HTTPException(
-                status_code=404, 
-                detail=f"Workflow not found: {request.workflow_id or request.workflow_name}"
-            )
-        
-        # Generate workflow text from steps
-        if not workflow.steps:
-            raise HTTPException(status_code=400, detail="Workflow has no steps defined")
-        
-        # Generate workflow text (supports evaluation steps with branching)
-        workflow_text = generate_workflow_text(workflow.steps, workflow.connections or [])
-
-        # DEBUG: Log the workflow details
-        print(f"[WorkflowRun] 📋 WORKFLOW STEPS:")
-        for line in workflow_text.split('\n'):
-            print(f"   {line}")
-        print(f"[WorkflowRun] 🎯 Workflow Goal: {workflow.goal}")
-        
-        # Get initial message - always use standard execution message
-        # The goal is used separately for completion evaluation, not as the trigger
-        if request.initial_message:
-            initial_message = request.initial_message
-        else:
-            # Standard execution message - the workflow steps define what to do
-            initial_message = f'Run the "{workflow.name}" workflow.'
-        
-        # Generate IDs
-        session_id = request.session_id or str(uuid.uuid4())
-        conversation_id = request.conversation_id or str(uuid.uuid4())
-        message_id = f"msg_{uuid.uuid4().hex[:8]}"
-        context_id = f"{session_id}::{conversation_id}"
-        
-        print(f"[WorkflowRun] Starting workflow: {workflow.name}")
-        print(f"[WorkflowRun] Initial message: {initial_message}")
-        print(f"[WorkflowRun] Context ID: {context_id}")
-        print(f"[WorkflowRun] Wait for completion: {request.wait_for_completion}")
-        
-        # Check if agent_server is available
-        if not agent_server or not hasattr(agent_server, 'manager'):
-            raise HTTPException(status_code=503, detail="Agent server not available")
-        
-        # Enable agents in session registry from global registry
-        # This ensures the workflow's agents are available for this session
-        from service.agent_registry import get_registry, get_session_registry
-        registry = get_registry()
-        session_registry = get_session_registry()
-        
-        # Extract agent names from workflow steps
-        agent_names = [step.get('agentName') for step in sorted_steps if step.get('agentName')]
-        print(f"[WorkflowRun] 🔧 Enabling {len(agent_names)} agents for session {session_id}: {agent_names}")
-        
-        for agent_name in agent_names:
-            agent_config = registry.get_agent(agent_name)
-            if agent_config:
-                session_registry.enable_agent(session_id, agent_config)
-                print(f"[WorkflowRun] ✅ Enabled agent: {agent_name} with URL: {agent_config.get('url', 'N/A')}")
-            else:
-                print(f"[WorkflowRun] ⚠️ Agent not found in registry: {agent_name}")
-        
-        # Create the message
-        from a2a.types import Message, Part, TextPart, Role
-        
-        message = Message(
-            messageId=message_id,
-            contextId=context_id,
-            role=Role.user,
-            parts=[Part(root=TextPart(text=initial_message))]
-        )
-        
-        # Process message with workflow
-        try:
-            if request.wait_for_completion:
-                # SYNCHRONOUS MODE: Wait for completion and return result
-                print(f"[WorkflowRun] Running in SYNC mode (timeout: {request.timeout}s)")
-                
-                import time
-                start_time = time.time()
-                
-                # Submit the coroutine to the main event loop
-                future = asyncio.run_coroutine_threadsafe(
-                    agent_server.manager.process_message(
-                        message, 
-                        agent_mode=None,  # Auto-detect from workflow
-                        enable_inter_agent_memory=True,
-                        workflow=workflow_text,
-                        workflow_goal=workflow.goal  # Pass the workflow's goal for completion evaluation
-                    ), 
-                    main_loop
-                )
-                
-                # Wait for the result with timeout
-                try:
-                    responses = future.result(timeout=request.timeout)
-                    elapsed_time = time.time() - start_time
-                    
-                    print(f"[WorkflowRun] ✅ Workflow completed in {elapsed_time:.2f}s")
-                    print(f"[WorkflowRun] Responses: {len(responses) if responses else 0}")
-                    
-                    # Format the responses
-                    result_text = ""
-                    if responses:
-                        if isinstance(responses, list):
-                            result_text = "\n\n".join(str(r) for r in responses)
-                        else:
-                            result_text = str(responses)
-                    
-                    return {
-                        "success": True,
-                        "completed": True,
-                        "message": f"Workflow '{workflow.name}' completed",
-                        "workflow_id": workflow.id,
-                        "workflow_name": workflow.name,
-                        "session_id": session_id,
-                        "conversation_id": conversation_id,
-                        "message_id": message_id,
-                        "initial_message": initial_message,
-                        "steps_count": len(sorted_steps),
-                        "execution_time_seconds": round(elapsed_time, 2),
-                        "result": result_text
-                    }
-                    
-                except asyncio.TimeoutError:
-                    elapsed_time = time.time() - start_time
-                    print(f"[WorkflowRun] ⏱️ Workflow timed out after {elapsed_time:.2f}s")
-                    raise HTTPException(
-                        status_code=408, 
-                        detail=f"Workflow timed out after {request.timeout} seconds. Use wait_for_completion=false for long-running workflows."
-                    )
-                    
-            else:
-                # ASYNC MODE: Fire and forget (original behavior)
-                print(f"[WorkflowRun] Running in ASYNC mode (fire-and-forget)")
-                t = threading.Thread(
-                    target=lambda: asyncio.run_coroutine_threadsafe(
-                        agent_server.manager.process_message(
-                            message, 
-                            agent_mode=None,  # Auto-detect from workflow
-                            enable_inter_agent_memory=True,
-                            workflow=workflow_text,
-                            workflow_goal=workflow.goal  # Pass the workflow's goal for completion evaluation
-                        ), 
-                        main_loop
-                    )
-                )
-                t.start()
-                
-                return {
-                    "success": True,
-                    "completed": False,
-                    "message": f"Workflow '{workflow.name}' started (async mode)",
-                    "workflow_id": workflow.id,
-                    "workflow_name": workflow.name,
-                    "session_id": session_id,
-                    "conversation_id": conversation_id,
-                    "message_id": message_id,
-                    "initial_message": initial_message,
-                    "steps_count": len(sorted_steps),
-                    "note": "Workflow is running in the background. Connect to WebSocket to receive updates."
-                }
-                
-        except HTTPException:
-            raise
-        except Exception as e:
-            print(f"[WorkflowRun] Error starting workflow: {e}")
-            import traceback
-            traceback.print_exc()
-            raise HTTPException(status_code=500, detail=f"Failed to start workflow: {str(e)}")
-
     # ==================== NATURAL LANGUAGE QUERY API ====================
     # Synchronous API endpoint for sending natural language queries
     # Supports intelligent workflow routing
@@ -1480,10 +1284,8 @@ def main():
         from a2a.types import Message, Part, TextPart, Role
         from service.agent_registry import get_registry, get_session_registry
         
-        print(f"\n{'='*60}")
-        print(f"[Query API] 🔍 Received query: {request.query}")
-        print(f"[Query API] 👤 User ID: {request.user_id} (authenticated: {user['email']})")
-        print(f"{'='*60}")
+        log_debug(f"[Query API] Received query: {request.query}")
+        log_debug(f"[Query API] User ID: {request.user_id} (authenticated: {user['email']})")
         
         # Generate IDs
         session_id = request.session_id or str(uuid.uuid4())
@@ -1491,8 +1293,8 @@ def main():
         message_id = f"msg_{uuid.uuid4().hex[:8]}"
         context_id = f"{session_id}::{conversation_id}"
         
-        print(f"[Query API] Session ID: {session_id}")
-        print(f"[Query API] Context ID: {context_id}")
+        log_debug(f"[Query API] Session ID: {session_id}")
+        log_debug(f"[Query API] Context ID: {context_id}")
         
         # Check if agent_server is available
         if not agent_server or not hasattr(agent_server, 'manager'):
@@ -1508,9 +1310,9 @@ def main():
                 detail="No agents enabled for this session. Please enable agents from the Agents tab first."
             )
         
-        print(f"[Query API] 🔧 Using {len(session_agents)} pre-enabled session agents")
+        log_debug(f"[Query API] Using {len(session_agents)} pre-enabled session agents")
         for agent_config in session_agents:
-            print(f"[Query API] ✅ Session agent: {agent_config.get('name', 'unknown')}")
+            log_debug(f"[Query API] Session agent: {agent_config.get('name', 'unknown')}")
         
         # Build available workflows for intelligent routing (if enabled)
         available_workflows = []
@@ -1521,13 +1323,13 @@ def main():
             
             # Filter workflows by user_id - only include workflows belonging to this user
             user_workflows = [w for w in all_workflows if w.user_id == request.user_id]
-            print(f"[Query API] 👤 Filtered to {len(user_workflows)} workflows for user '{request.user_id}' (out of {len(all_workflows)} total)")
+            log_debug(f"[Query API] Filtered to {len(user_workflows)} workflows for user '{request.user_id}' (out of {len(all_workflows)} total)")
             
             # Further filter by activated workflow IDs if provided
             if request.activated_workflow_ids:
                 activated_ids = set(request.activated_workflow_ids)
                 user_workflows = [w for w in user_workflows if w.id in activated_ids]
-                print(f"[Query API] 🎯 Filtered to {len(user_workflows)} activated workflows (from {len(activated_ids)} activated IDs)")
+                log_debug(f"[Query API] Filtered to {len(user_workflows)} activated workflows (from {len(activated_ids)} activated IDs)")
             
             for w in user_workflows:
                 if w.steps:
@@ -1550,7 +1352,7 @@ def main():
                         "agents": [step.get('agentName', '') for step in sorted_steps if step.get('agentName')]
                     }
                     available_workflows.append(workflow_info)
-            print(f"[Query API] 📋 Found {len(available_workflows)} workflows for routing")
+            log_debug(f"[Query API] Found {len(available_workflows)} workflows for routing")
         
         # Create the message
         message = Message(
@@ -1565,9 +1367,9 @@ def main():
             # If explicit workflow provided, use it directly (workflow designer test mode)
             explicit_workflow = request.workflow if request.workflow else None
             if explicit_workflow:
-                print(f"[Query API] 🎯 Using explicit workflow (workflow designer mode)")
-            
-            print(f"[Query API] 🚀 Processing query (timeout: {request.timeout}s)")
+                log_debug("[Query API] Using explicit workflow (workflow designer mode)")
+
+            log_debug(f"[Query API] Processing query (timeout: {request.timeout}s)")
             start_time = time.time()
             
             # Submit the coroutine to the main event loop
@@ -1587,7 +1389,7 @@ def main():
                 responses = future.result(timeout=request.timeout)
                 elapsed_time = time.time() - start_time
                 
-                print(f"[Query API] ✅ Query completed in {elapsed_time:.2f}s")
+                log_debug(f"[Query API] Query completed in {elapsed_time:.2f}s")
                 
                 # Format the responses
                 result_text = ""
@@ -1614,10 +1416,10 @@ def main():
                                 },
                                 context_id
                             )
-                            print(f"[Query API] 📡 Emitted final_response event for conversation: {conversation_id}")
+                            log_debug(f"[Query API] Emitted final_response event for conversation: {conversation_id}")
                     asyncio.run_coroutine_threadsafe(emit_final_response(), main_loop)
                 except Exception as e:
-                    print(f"[Query API] ⚠️ Failed to emit final_response event: {e}")
+                    log_warning(f"[Query API] Failed to emit final_response event: {e}")
                 
                 return {
                     "success": True,
@@ -1630,7 +1432,7 @@ def main():
                 
             except asyncio.TimeoutError:
                 elapsed_time = time.time() - start_time
-                print(f"[Query API] ⏱️ Query timed out after {elapsed_time:.2f}s")
+                log_warning(f"[Query API] Query timed out after {elapsed_time:.2f}s")
                 raise HTTPException(
                     status_code=408, 
                     detail=f"Query timed out after {request.timeout} seconds"
@@ -1639,9 +1441,7 @@ def main():
         except HTTPException:
             raise
         except Exception as e:
-            print(f"[Query API] ❌ Error processing query: {e}")
-            import traceback
-            traceback.print_exc()
+            log_error(f"[Query API] Error processing query: {e}")
             raise HTTPException(status_code=500, detail=f"Failed to process query: {str(e)}")
 
     # ==================== ACTIVE WORKFLOW (SESSION-SCOPED) ====================
@@ -1701,7 +1501,7 @@ def main():
                         partition_key=session_id
                     )
             except Exception as e:
-                print(f"[ActiveWorkflow] Failed to broadcast: {e}")
+                log_warning(f"[ActiveWorkflow] Failed to broadcast: {e}")
         return {"success": True, "session_id": session_id}
     
     @app.delete("/api/active-workflow")
@@ -1728,7 +1528,7 @@ def main():
                     partition_key=session_id
                 )
         except Exception as e:
-            print(f"[ActiveWorkflow] Failed to broadcast clear: {e}")
+            log_warning(f"[ActiveWorkflow] Failed to broadcast clear: {e}")
         return {"success": True, "session_id": session_id}
 
     # ==================== MULTI-WORKFLOW API ENDPOINTS ====================
@@ -1765,7 +1565,7 @@ def main():
                     partition_key=session_id
                 )
         except Exception as e:
-            print(f"[ActiveWorkflows] Failed to broadcast: {e}")
+            log_warning(f"[ActiveWorkflows] Failed to broadcast: {e}")
         
         return {"success": True, "workflows": workflows}
     
@@ -1791,7 +1591,7 @@ def main():
                     partition_key=session_id
                 )
         except Exception as e:
-            print(f"[ActiveWorkflows] Failed to broadcast add: {e}")
+            log_warning(f"[ActiveWorkflows] Failed to broadcast add: {e}")
         
         return {"success": True, "workflows": workflows}
     
@@ -1814,7 +1614,7 @@ def main():
                     partition_key=session_id
                 )
         except Exception as e:
-            print(f"[ActiveWorkflows] Failed to broadcast remove: {e}")
+            log_warning(f"[ActiveWorkflows] Failed to broadcast remove: {e}")
         
         return {"success": True, "workflows": workflows}
     
@@ -1834,7 +1634,7 @@ def main():
                     partition_key=session_id
                 )
         except Exception as e:
-            print(f"[ActiveWorkflows] Failed to broadcast clear: {e}")
+            log_warning(f"[ActiveWorkflows] Failed to broadcast clear: {e}")
         
         return {"success": True, "workflows": []}
 
@@ -1910,9 +1710,7 @@ def main():
                 for w in user_workflows
             ]
         except Exception as e:
-            print(f"[ERROR] Failed to list workflows: {e}")
-            import traceback
-            traceback.print_exc()
+            log_error(f"Failed to list workflows: {e}")
             return []
     
     @app.get("/api/schedules")
@@ -1945,32 +1743,6 @@ def main():
         return {
             "upcoming": upcoming,
             "count": len(upcoming)
-        }
-    
-    @app.get("/api/schedules/debug")
-    async def debug_scheduler():
-        """
-        Debug endpoint to check APScheduler status.
-        
-        Example curl:
-            curl http://localhost:12000/api/schedules/debug
-        """
-        scheduler = get_workflow_scheduler()
-        jobs = []
-        if scheduler.scheduler:
-            for job in scheduler.scheduler.get_jobs():
-                jobs.append({
-                    "id": job.id,
-                    "name": job.name,
-                    "next_run_time": job.next_run_time.isoformat() if job.next_run_time else None,
-                    "trigger": str(job.trigger)
-                })
-        return {
-            "scheduler_running": scheduler._is_running,
-            "scheduler_exists": scheduler.scheduler is not None,
-            "jobs_count": len(jobs),
-            "jobs": jobs,
-            "schedules_in_memory": len(scheduler.schedules)
         }
     
     @app.get("/api/schedules/history")
@@ -2066,7 +1838,7 @@ def main():
         except HTTPException:
             raise
         except Exception as e:
-            print(f"[Scheduler] Error creating schedule: {e}")
+            log_error(f"[Scheduler] Error creating schedule: {e}")
             raise HTTPException(status_code=500, detail=f"Failed to create schedule: {str(e)}")
     
     @app.put("/api/schedules/{schedule_id}")
@@ -2104,7 +1876,7 @@ def main():
         except HTTPException:
             raise
         except Exception as e:
-            print(f"[Scheduler] Error updating schedule: {e}")
+            log_error(f"[Scheduler] Error updating schedule: {e}")
             raise HTTPException(status_code=500, detail=f"Failed to update schedule: {str(e)}")
     
     @app.delete("/api/schedules/{schedule_id}")
@@ -2238,166 +2010,10 @@ def main():
                     "message": "Failed to clear memory index"
                 }
         except Exception as e:
-            print(f"Error clearing memory: {e}")
-            import traceback
-            traceback.print_exc()
+            log_error(f"Error clearing memory: {e}")
             return {
                 "success": False,
                 "message": f"Error clearing memory: {str(e)}"
-            }
-
-    @app.post("/start-agent")
-    async def start_agent(request: Request):
-        """Start an agent by executing a command on the local system."""
-        try:
-            import subprocess
-            import os
-            import time
-            import json
-            
-            from log_config import log_debug
-            # Parse the JSON body
-            body = await request.json()
-            agent_id = body.get("agentId")
-            command = body.get("command")
-            args = body.get("args", [])
-            working_directory = body.get("workingDirectory")
-            
-            log_debug(f"Starting agent {agent_id}")
-            log_debug(f"Command: {command} {' '.join(args)}")
-            log_debug(f"Working directory: {working_directory}")
-            
-            # Security check - only allow specific agents and paths
-            allowed_agents = ["classification-triage"]
-            if agent_id not in allowed_agents:
-                print(f"[ERROR] Agent {agent_id} not in allowed list")
-                return {
-                    "success": False,
-                    "message": f"Agent {agent_id} is not configured for remote startup"
-                }
-            
-            # Verify the working directory exists
-            if not os.path.exists(working_directory):
-                print(f"[ERROR] Working directory does not exist: {working_directory}")
-                return {
-                    "success": False,
-                    "message": f"Working directory does not exist: {working_directory}"
-                }
-            
-            # Build the full command
-            full_command = [command] + args
-            log_debug(f"Full command: {full_command}")
-            
-            # For Windows, create a batch file that runs the command and keeps the window open
-            if os.name == 'nt':
-                import tempfile
-                
-                # Create batch file content with headers and command display
-                batch_content = f"""@echo off
-echo ================================================
-echo Starting Agent: {agent_id}
-echo Directory: {working_directory}
-echo Command: {' '.join(full_command)}
-echo ================================================
-echo.
-cd /d "{working_directory}"
-{' '.join(full_command)}
-echo.
-echo ================================================
-echo Command finished. Exit code: %errorlevel%
-echo ================================================
-pause
-"""
-                
-                # Create temporary batch file
-                with tempfile.NamedTemporaryFile(mode='w', suffix='.bat', delete=False) as batch_file:
-                    batch_file.write(batch_content)
-                    batch_path = batch_file.name
-                
-                log_debug(f"Created batch file: {batch_path}")
-                log_debug(f"Batch content: {batch_content}")
-                
-                # Create PowerShell script file that inherits current environment
-                ps_content = f"""Write-Host "================================================"
-Write-Host "Starting Agent: {agent_id}"
-Write-Host "Directory: {working_directory}"
-Write-Host "Command: {' '.join(full_command)}"
-Write-Host "================================================"
-Write-Host ""
-Set-Location "{working_directory}"
-{' '.join(full_command)}
-Write-Host ""
-Write-Host "================================================"
-Write-Host "Command finished. Exit code: $LASTEXITCODE"
-Write-Host "================================================"
-Read-Host "Press Enter to close this window"
-"""
-                
-                # Create temporary PowerShell script file
-                with tempfile.NamedTemporaryFile(mode='w', suffix='.ps1', delete=False) as ps_file:
-                    ps_file.write(ps_content)
-                    ps_path = ps_file.name
-                
-                log_debug(f"Created PowerShell script: {ps_path}")
-                log_debug(f"PowerShell content: {ps_content}")
-                
-                # Start the PowerShell script in a new window
-                # Inherit current environment to preserve Azure authentication
-                env = os.environ.copy()
-                process = subprocess.Popen(
-                    ['powershell', '-Command', f'Start-Process powershell -ArgumentList "-NoExit", "-ExecutionPolicy", "Bypass", "-File", "{ps_path}"'],
-                    shell=True,
-                    env=env
-                )
-            else:
-                # For non-Windows systems
-                process = subprocess.Popen(
-                    full_command,
-                    cwd=working_directory,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True
-                )
-            
-            # Give the process a moment to start
-            time.sleep(1)
-            
-            # For Windows 'start' command, exit code 0 means the window was opened successfully
-            # Don't treat this as an error
-            poll_result = process.poll()
-            if poll_result is not None and poll_result != 0:
-                # Process terminated with an actual error (not 0)
-                stdout, stderr = process.communicate()
-                print(f"[ERROR] Process terminated with error code {poll_result}")
-                print(f"[ERROR] STDOUT: {stdout}")
-                print(f"[ERROR] STDERR: {stderr}")
-                
-                # Handle None values properly
-                error_msg = stderr[:200] if stderr else "No error output"
-                
-                return {
-                    "success": False,
-                    "message": f"Agent failed to start. Exit code: {poll_result}. Error: {error_msg}",
-                    "stdout": stdout,
-                    "stderr": stderr
-                }
-            
-            print(f"[SUCCESS] Agent {agent_id} console window opened successfully")
-            return {
-                "success": True,
-                "message": f"Agent {agent_id} started successfully in new console window",
-                "process_id": process.pid,
-                "command": f"{command} {' '.join(args)}",
-                "working_directory": working_directory
-            }
-            
-        except Exception as e:
-            print(f"[ERROR] Exception starting agent: {e}")
-            import traceback
-            traceback.print_exc()
-            return {
-                "success": False,
-                "message": f"Error starting agent: {str(e)}"
             }
 
     # Helper function to upload to Azure Blob Storage
@@ -2428,13 +2044,13 @@ Read-Host "Press Enter to close this window"
                 account_url = f"https://{storage_account_name}.blob.core.windows.net"
                 credential = DefaultAzureCredential()
                 blob_service_client = BlobServiceClient(account_url, credential=credential)
-                print(f"✅ Using managed identity for blob storage: {account_url}")
+                log_debug(f"Using managed identity for blob storage: {account_url}")
             elif connection_string:
                 # Use connection string authentication (legacy)
                 blob_service_client = BlobServiceClient.from_connection_string(connection_string)
-                print(f"✅ Using connection string for blob storage")
+                log_debug("Using connection string for blob storage")
             else:
-                print(f"[WARN] No Azure Storage configuration found, returning local path")
+                log_warning("No Azure Storage configuration found, returning local path")
                 return local_fallback
             
             container_name = os.getenv('AZURE_BLOB_CONTAINER', 'a2a-files')
@@ -2488,13 +2104,11 @@ Read-Host "Press Enter to close this window"
                     return blob_url
             
             # For managed identity, return blob URL directly (container must be public or use user delegation SAS)
-            print(f"[INFO] File uploaded to Azure Blob (managed identity): {blob_client.url}")
+            log_debug(f"File uploaded to Azure Blob (managed identity): {blob_client.url}")
             return blob_client.url
-                
+
         except Exception as e:
-            print(f"[ERROR] Azure Blob upload failed: {e}, falling back to local storage")
-            import traceback
-            traceback.print_exc()
+            log_error(f"Azure Blob upload failed: {e}, falling back to local storage")
             return local_fallback
 
     # Add file upload endpoint
@@ -2562,7 +2176,7 @@ Read-Host "Press Enter to close this window"
             }
             
         except Exception as e:
-            print(f"[ERROR] File upload failed: {e}")
+            log_error(f"File upload failed: {e}")
             return {
                 "success": False,
                 "error": str(e)
@@ -2587,7 +2201,7 @@ Read-Host "Press Enter to close this window"
             # Get processed filenames from Azure Search (fast single query)
             from hosts.multiagent.a2a_memory_service import a2a_memory_service
             processed_filenames = a2a_memory_service.get_processed_filenames(session_id)
-            print(f"[INFO] Found {len(processed_filenames)} processed files in memory for session {session_id}")
+            log_debug(f"Found {len(processed_filenames)} processed files in memory for session {session_id}")
             
             # Try blob storage first
             try:
@@ -2618,7 +2232,7 @@ Read-Host "Press Enter to close this window"
                 for blob in container_client.list_blobs(name_starts_with=prefix):
                     # Skip if 0 bytes (empty/failed uploads)
                     if blob.size == 0:
-                        print(f"[DEBUG] Skipping 0-byte blob: {blob.name}")
+                        log_debug(f"Skipping 0-byte blob: {blob.name}")
                         continue
                     
                     # Parse blob path to extract file_id and filename
@@ -2668,10 +2282,10 @@ Read-Host "Press Enter to close this window"
                             "status": file_status
                         })
                 
-                print(f"[INFO] Listed {len(files)} files from blob storage for session: {session_id}")
-                
+                log_debug(f"Listed {len(files)} files from blob storage for session: {session_id}")
+
             except Exception as blob_error:
-                print(f"[WARN] Blob storage unavailable, falling back to local filesystem: {blob_error}")
+                log_warning(f"Blob storage unavailable, falling back to local filesystem: {blob_error}")
                 
                 # Fallback to local filesystem
                 local_dir = UPLOADS_DIR / session_id
@@ -2697,11 +2311,7 @@ Read-Host "Press Enter to close this window"
                                 "status": file_status
                             })
                 
-                print(f"[INFO] Listed {len(files)} files from local filesystem for session: {session_id}")
-            
-            # UNIFIED STORAGE: No need to query agent file registry anymore
-            # All files (user uploads + agent-generated) are in uploads/{session_id}/
-            # The agent file registry is deprecated with unified storage
+                log_debug(f"Listed {len(files)} files from local filesystem for session: {session_id}")
             
             # NO DEDUPLICATION - show all files from blob storage as-is
             # Each file has a unique ID (file_id from path), even if filenames are identical
@@ -2716,9 +2326,7 @@ Read-Host "Press Enter to close this window"
             }
             
         except Exception as e:
-            print(f"[ERROR] Failed to list files: {e}")
-            import traceback
-            traceback.print_exc()
+            log_error(f"Failed to list files: {e}")
             return {
                 "success": False,
                 "error": str(e)
@@ -2768,8 +2376,7 @@ Read-Host "Press Enter to close this window"
                 container_name = os.getenv('AZURE_BLOB_CONTAINER', 'a2a-files')
                 container_client = blob_service_client.get_container_client(container_name)
                 
-                # UNIFIED STORAGE: Delete from uploads/{session_id}/{file_id}/*
-                # This is much faster than scanning all blobs
+                # Delete from uploads/{session_id}/{file_id}/*
                 deleted_count = 0
                 prefix = f"uploads/{session_id}/{file_id}/"
                 
@@ -2778,10 +2385,10 @@ Read-Host "Press Enter to close this window"
                         blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob.name)
                         blob_client.delete_blob()
                         deleted_count += 1
-                        print(f"[INFO] Deleted blob: {blob.name}")
+                        log_debug(f"Deleted blob: {blob.name}")
                     except Exception as delete_err:
                         # Ignore errors (file might be expired/already deleted)
-                        print(f"[WARN] Could not delete blob {blob.name}: {delete_err}")
+                        log_warning(f"Could not delete blob {blob.name}: {delete_err}")
                 
                 # FALLBACK: Also check legacy agent-specific paths (image-generator, video-generator, email-attachments)
                 if deleted_count == 0:
@@ -2796,19 +2403,19 @@ Read-Host "Press Enter to close this window"
                                 blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob.name)
                                 blob_client.delete_blob()
                                 deleted_count += 1
-                                print(f"[INFO] Deleted legacy blob: {blob.name}")
+                                log_debug(f"Deleted legacy blob: {blob.name}")
                             except Exception as delete_err:
-                                print(f"[WARN] Could not delete legacy blob {blob.name}: {delete_err}")
+                                log_warning(f"Could not delete legacy blob {blob.name}: {delete_err}")
                 
                 if deleted_count > 0:
                     deleted_from_blob = True
-                    print(f"[INFO] Deleted {deleted_count} blob(s) for file_id: {file_id}")
+                    log_debug(f"Deleted {deleted_count} blob(s) for file_id: {file_id}")
                 else:
-                    print(f"[INFO] No blobs found for file_id: {file_id} (might be expired/already deleted)")
+                    log_debug(f"No blobs found for file_id: {file_id} (might be expired/already deleted)")
                 
             except Exception as blob_error:
                 # Don't fail if blob storage is unavailable or file doesn't exist
-                print(f"[WARN] Blob storage delete failed (this is OK): {blob_error}")
+                log_warning(f"Blob storage delete failed (this is OK): {blob_error}")
             
             # Try to delete from local filesystem
             try:
@@ -2820,16 +2427,16 @@ Read-Host "Press Enter to close this window"
                                 if file_path.is_file():
                                     file_path.unlink()
                                     deleted_from_local = True
-                                    print(f"[INFO] Deleted local file: {file_path}")
+                                    log_debug(f"Deleted local file: {file_path}")
                                 elif file_path.is_dir():
                                     import shutil
                                     shutil.rmtree(file_path)
                                     deleted_from_local = True
-                                    print(f"[INFO] Deleted local directory: {file_path}")
+                                    log_debug(f"Deleted local directory: {file_path}")
                             except Exception as delete_err:
-                                print(f"[WARN] Could not delete local file {file_path}: {delete_err}")
+                                log_warning(f"Could not delete local file {file_path}: {delete_err}")
             except Exception as local_error:
-                print(f"[WARN] Local filesystem delete failed (this is OK): {local_error}")
+                log_warning(f"Local filesystem delete failed (this is OK): {local_error}")
             
             # Try to delete from memory index (if filename provided)
             if filename:
@@ -2837,11 +2444,11 @@ Read-Host "Press Enter to close this window"
                     from hosts.multiagent.a2a_memory_service import a2a_memory_service
                     deleted_from_memory = a2a_memory_service.delete_by_filename(session_id, filename)
                     if deleted_from_memory:
-                        print(f"[INFO] Deleted memory chunks for file: {filename}")
+                        log_debug(f"Deleted memory chunks for file: {filename}")
                     else:
-                        print(f"[INFO] No memory chunks found for file: {filename}")
+                        log_debug(f"No memory chunks found for file: {filename}")
                 except Exception as memory_error:
-                    print(f"[WARN] Memory index delete failed (this is OK): {memory_error}")
+                    log_warning(f"Memory index delete failed (this is OK): {memory_error}")
             
             # Delete from agent file registry
             deleted_from_registry = False
@@ -2849,11 +2456,11 @@ Read-Host "Press Enter to close this window"
                 from service.agent_file_registry import delete_agent_file
                 deleted_from_registry = delete_agent_file(session_id, file_id)
                 if deleted_from_registry:
-                    print(f"[INFO] Deleted file from agent file registry: {file_id}")
+                    log_debug(f"Deleted file from agent file registry: {file_id}")
                 else:
-                    print(f"[INFO] File not found in agent file registry: {file_id}")
+                    log_debug(f"File not found in agent file registry: {file_id}")
             except Exception as registry_error:
-                print(f"[WARN] Agent file registry delete failed (this is OK): {registry_error}")
+                log_warning(f"Agent file registry delete failed (this is OK): {registry_error}")
             
             # Always return success (idempotent operation)
             return {
@@ -2867,9 +2474,7 @@ Read-Host "Press Enter to close this window"
         
         except Exception as e:
             # Even on error, return success to prevent UI errors
-            print(f"[ERROR] Error deleting file: {e}")
-            import traceback
-            traceback.print_exc()
+            log_error(f"Error deleting file: {e}")
             return {
                 "success": True,  # Still return success
                 "error": str(e),
@@ -2899,7 +2504,7 @@ Read-Host "Press Enter to close this window"
             if not file_id or not filename:
                 return {"success": False, "error": "Missing file_id or filename"}
             
-            print(f"[INFO] Processing file: {filename} (id: {file_id}, session: {session_id})")
+            log_debug(f"Processing file: {filename} (id: {file_id}, session: {session_id})")
             
             # Try to get file bytes from blob storage or local filesystem
             file_bytes = None
@@ -2912,9 +2517,9 @@ Read-Host "Press Enter to close this window"
                         response = await client.get(uri, timeout=60.0)
                         if response.status_code == 200:
                             file_bytes = response.content
-                            print(f"[INFO] Downloaded {len(file_bytes)} bytes from Azure Blob")
+                            log_debug(f"Downloaded {len(file_bytes)} bytes from Azure Blob")
                 except Exception as blob_err:
-                    print(f"[WARN] Could not download from blob: {blob_err}")
+                    log_warning(f"Could not download from blob: {blob_err}")
             
             # Try local filesystem
             if file_bytes is None:
@@ -2924,7 +2529,7 @@ Read-Host "Press Enter to close this window"
                         if file_path.is_file():
                             with open(file_path, 'rb') as f:
                                 file_bytes = f.read()
-                            print(f"[INFO] Read {len(file_bytes)} bytes from local filesystem")
+                            log_debug(f"Read {len(file_bytes)} bytes from local filesystem")
                             break
             
             if file_bytes is None:
@@ -2951,7 +2556,7 @@ Read-Host "Press Enter to close this window"
                 result = await process_file_part(file_part, artifact_info, session_id=session_id)
                 
                 if result.get("success"):
-                    print(f"[INFO] Document processing completed for: {filename}")
+                    log_debug(f"Document processing completed for: {filename}")
                     
                     # Update blob metadata to mark as analyzed
                     try:
@@ -2972,12 +2577,12 @@ Read-Host "Press Enter to close this window"
                                     blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob_path)
                                     if blob_client.exists():
                                         blob_client.set_blob_metadata({"status": "analyzed"})
-                                        print(f"[INFO] Set blob metadata status=analyzed for: {blob_path}")
+                                        log_debug(f"Set blob metadata status=analyzed for: {blob_path}")
                                         break
                                 except Exception:
                                     continue
                     except Exception as meta_err:
-                        print(f"[WARN] Could not set blob metadata: {meta_err}")
+                        log_warning(f"Could not set blob metadata: {meta_err}")
                     
                     return {
                         "success": True,
@@ -2989,25 +2594,21 @@ Read-Host "Press Enter to close this window"
                     }
                 else:
                     error_msg = result.get("error", "Unknown processing error")
-                    print(f"[WARN] Document processing failed for {filename}: {error_msg}")
+                    log_warning(f"Document processing failed for {filename}: {error_msg}")
                     return {
                         "success": False,
                         "error": error_msg
                     }
                     
             except ImportError as e:
-                print(f"[ERROR] Could not import document processor: {e}")
+                log_error(f"Could not import document processor: {e}")
                 return {"success": False, "error": "Document processor not available"}
             except Exception as process_err:
-                print(f"[ERROR] Document processing error: {process_err}")
-                import traceback
-                traceback.print_exc()
+                log_error(f"Document processing error: {process_err}")
                 return {"success": False, "error": str(process_err)}
-        
+
         except Exception as e:
-            print(f"[ERROR] Error in process_file endpoint: {e}")
-            import traceback
-            traceback.print_exc()
+            log_error(f"Error in process_file endpoint: {e}")
             return {"success": False, "error": str(e)}
 
     # Add voice upload endpoint with transcription
@@ -3082,7 +2683,7 @@ Read-Host "Press Enter to close this window"
                         "message": "Voice recording transcribed successfully"
                     }
                 else:
-                    print(f"[WARNING] Audio transcription returned empty result")
+                    log_warning("Audio transcription returned empty result")
                     return {
                         "success": False,
                         "error": "Could not transcribe audio - no speech detected or transcription failed",
@@ -3091,7 +2692,7 @@ Read-Host "Press Enter to close this window"
                     }
                     
             except ImportError as e:
-                print(f"[ERROR] Could not import document processor: {e}")
+                log_error(f"Could not import document processor: {e}")
                 return {
                     "success": False,
                     "error": "Audio transcription service not available",
@@ -3099,23 +2700,21 @@ Read-Host "Press Enter to close this window"
                     "file_id": file_id
                 }
             except Exception as e:
-                print(f"[ERROR] Audio transcription failed: {e}")
-                print(f"[ERROR] Exception type: {type(e).__name__}")
-                
+                log_error(f"Audio transcription failed: {e} (type: {type(e).__name__})")
+
                 # Try to get more details if it's a RuntimeError from the Azure service
                 if "Request failed" in str(e):
-                    print(f"[ERROR] Azure Content Understanding service request failed")
-                    print(f"[ERROR] This usually indicates an issue with the audio file format, content, or service configuration")
-                
+                    log_error("Azure Content Understanding service request failed - check audio file format, content, or service configuration")
+
                 return {
                     "success": False,
                     "error": f"Transcription failed: {str(e)}",
                     "filename": file.filename or filename,
                     "file_id": file_id
                 }
-            
+
         except Exception as e:
-            print(f"[ERROR] Voice upload failed: {e}")
+            log_error(f"Voice upload failed: {e}")
             return {
                 "success": False,
                 "error": str(e)
@@ -3146,15 +2745,13 @@ Read-Host "Press Enter to close this window"
     host = os.environ.get('A2A_UI_HOST', '0.0.0.0')
     port = int(os.environ.get('A2A_UI_PORT', '12000'))
 
-    print(f"[INFO] Starting A2A Backend API server on {host}:{port}")
-    print(f"[INFO] Health check available at: http://{host}:{port}/health")
-    print(f"[INFO] API docs available at: http://{host}:{port}/docs")
-    print(f"[INFO] OpenAPI spec available at: http://{host}:{port}/openapi.json")
-    
+    log_info(f"Starting A2A Backend API server on {host}:{port}")
+    log_info(f"Health check available at: http://{host}:{port}/health")
+    log_info(f"API docs available at: http://{host}:{port}/docs")
+    log_info(f"OpenAPI spec available at: http://{host}:{port}/openapi.json")
+
     # Test database connection
-    print("[INFO] " + "="*60)
     test_database_connection()
-    print("[INFO] " + "="*60)
 
     # Configure uvicorn with log config
     import logging.config

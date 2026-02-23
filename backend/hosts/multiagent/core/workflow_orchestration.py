@@ -14,6 +14,7 @@ The class is designed to be used as a mixin with FoundryHostAgent2.
 
 import asyncio
 import json
+import os
 import re
 import uuid
 from datetime import datetime, timezone
@@ -32,6 +33,7 @@ from log_config import (
     log_debug,
     log_error,
     log_info,
+    log_warning,
 )
 
 from ..models import (
@@ -41,8 +43,10 @@ from ..models import (
     NextStep,
     RouteSelection,
     EvaluationResult,
+    QueryResult,
 )
 from ..tool_context import DummyToolContext
+from ..foundry_agent_a2a import _current_parallel_call_id
 
 
 class WorkflowOrchestration:
@@ -76,7 +80,7 @@ class WorkflowOrchestration:
         """Build an updated goal string that appends the interrupt instruction
         to the original goal, preserving context about completed work."""
         completed_summary = "\n".join([
-            f"- ✅ {t.task_description[:100]} (by {t.recommended_agent})"
+            f"- [DONE] {t.task_description[:100]} (by {t.recommended_agent})"
             for t in completed_tasks if t.state == "completed"
         ]) or "- (none yet)"
         return (
@@ -109,10 +113,10 @@ class WorkflowOrchestration:
             agent_config = registry.get_agent(agent_name)
             
             if not agent_config:
-                print(f"🔍 [CATALOG_FALLBACK] Agent '{agent_name}' not found in catalog")
+                log_debug(f"[CATALOG_FALLBACK] Agent '{agent_name}' not found in catalog")
                 return False
             
-            print(f"🔍 [CATALOG_FALLBACK] Found agent '{agent_name}' in catalog: {agent_config.get('url')}")
+            log_debug(f"[CATALOG_FALLBACK] Found agent '{agent_name}' in catalog: {agent_config.get('url')}")
             
             # Build AgentCard from catalog data
             skills = []
@@ -153,13 +157,11 @@ class WorkflowOrchestration:
             # Register the agent card (this adds to self.cards and self.remote_agent_connections)
             self.register_agent_card(card)
             
-            print(f"✅ [CATALOG_FALLBACK] Registered agent '{agent_name}' from catalog")
+            log_debug(f"[CATALOG_FALLBACK] Registered agent '{agent_name}' from catalog")
             return True
             
         except Exception as e:
-            print(f"⚠️ [CATALOG_FALLBACK] Error loading agent '{agent_name}': {e}")
-            import traceback
-            traceback.print_exc()
+            log_error(f"[CATALOG_FALLBACK] Error loading agent '{agent_name}': {e}")
             return False
 
     def _deduplicate_workflow_files(self, session_context: SessionContext) -> None:
@@ -275,7 +277,7 @@ class WorkflowOrchestration:
         task_desc = task.task_description
         # Strip [Step X] prefix for the evaluation prompt (don't confuse the LLM)
         criteria = re.sub(r'^\[Step\s+\d+[a-z]?\]\s*', '', task_desc)
-        log_info(f"🔍 [EVALUATE] Evaluating condition: {criteria[:100]}")
+        log_info(f"[EVALUATE] Evaluating condition: {criteria[:100]}")
 
         # Emit events under "Evaluate" agent name so the frontend renders
         # an agent card (not hidden in the orchestrator section)
@@ -288,34 +290,47 @@ class WorkflowOrchestration:
 
         # Build context from previous step outputs AND extracted documents
         context_parts = []
+        found_document = False
 
-        # Search Azure Search memory for extracted document content (e.g., PDF invoices)
-        # Documents are extracted by the orchestrator after agents return files,
-        # and stored in memory — but not in previous_task_outputs.
-        try:
-            memory_results = await self._search_relevant_memory(
-                query=criteria,
-                context_id=session_context.contextId,
-                agent_name=None,
-                top_k=5
-            )
-            if memory_results:
-                for result in memory_results:
-                    agent_name = result.get('agent_name', '')
-                    if agent_name == 'DocumentProcessor':
-                        inbound = result.get('inbound_payload', {})
-                        if isinstance(inbound, str):
-                            try:
-                                inbound = json.loads(inbound)
-                            except Exception:
-                                pass
-                        if isinstance(inbound, dict) and 'content' in inbound:
-                            doc_content = str(inbound['content'])
-                            log_info(f"🔍 [EVALUATE] Found document content: {len(doc_content)} chars")
-                            context_parts.append(f"[Extracted Document]\n{doc_content}")
-                            break
-        except Exception as e:
-            log_error(f"[EVALUATE] Error searching memory for document content: {e}")
+        # Primary source: check session_context for recently extracted documents.
+        # These are stored immediately after document processing completes,
+        # bypassing Azure Search indexing latency.
+        extracted_docs = getattr(session_context, '_extracted_documents', [])
+        if extracted_docs:
+            for doc_content in extracted_docs:
+                log_info(f"[EVALUATE] Using session-cached document content: {len(doc_content)} chars")
+                context_parts.append(f"[Extracted Document]\n{doc_content}")
+                found_document = True
+
+        # Fallback: search Azure Search memory for extracted document content.
+        # This covers cases where documents were extracted in a previous session
+        # or the session_context cache was cleared.
+        if not found_document:
+            try:
+                memory_results = await self._search_relevant_memory(
+                    query=criteria,
+                    context_id=session_context.contextId,
+                    agent_name=None,
+                    top_k=5
+                )
+                if memory_results:
+                    for result in memory_results:
+                        agent_name = result.get('agent_name', '')
+                        if agent_name == 'DocumentProcessor':
+                            inbound = result.get('inbound_payload', {})
+                            if isinstance(inbound, str):
+                                try:
+                                    inbound = json.loads(inbound)
+                                except Exception:
+                                    pass
+                            if isinstance(inbound, dict) and 'content' in inbound:
+                                doc_content = str(inbound['content'])
+                                log_info(f"[EVALUATE] Found document content from memory: {len(doc_content)} chars")
+                                context_parts.append(f"[Extracted Document]\n{doc_content}")
+                                found_document = True
+                                break
+            except Exception as e:
+                log_error(f"[EVALUATE] Error searching memory for document content: {e}")
 
         # Add previous task outputs
         if previous_task_outputs:
@@ -347,7 +362,7 @@ Evaluate the condition and return your result."""
             )
 
             result_str = "TRUE" if eval_result.result else "FALSE"
-            log_info(f"🔍 [EVALUATE] Result: {result_str} — {eval_result.reasoning}")
+            log_info(f"[EVALUATE] Result: {result_str} — {eval_result.reasoning}")
 
             # Update task state
             task.state = "completed"
@@ -390,6 +405,297 @@ Evaluate the condition and return your result."""
             )
             return {"error": task.error_message, "output": None}
 
+    async def _execute_query_step(
+        self,
+        task: AgentModeTask,
+        session_context: SessionContext,
+        context_id: str,
+        previous_task_outputs: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
+        """
+        Execute a query step using the host orchestrator LLM.
+
+        Instead of calling a remote agent, this analyzes previous workflow outputs
+        and returns a structured JSON envelope with the query result.
+        """
+        task_desc = task.task_description
+        # Strip [Step X] prefix for the query prompt
+        user_query = re.sub(r'^\[Step\s+\d+[a-z]?\]\s*', '', task_desc)
+        log_info(f"[QUERY] Executing query: {user_query[:100]}")
+
+        # Emit events under "Query" agent name so the frontend renders an agent card
+        query_agent_name = "Query"
+
+        await self._emit_granular_agent_event(
+            query_agent_name, f"Starting task: {task_desc[:80]}...", context_id,
+            event_type="agent_start", metadata={"query": True, "task_description": task_desc}
+        )
+
+        # Build context from previous step outputs AND extracted documents
+        # (same context-gathering logic as _execute_evaluation_step)
+        context_parts = []
+        found_document = False
+
+        # Primary source: session-cached extracted documents
+        extracted_docs = getattr(session_context, '_extracted_documents', [])
+        if extracted_docs:
+            for doc_content in extracted_docs:
+                log_info(f"[QUERY] Using session-cached document content: {len(doc_content)} chars")
+                context_parts.append(f"[Extracted Document]\n{doc_content}")
+                found_document = True
+
+        # Fallback: search Azure Search memory for extracted document content
+        if not found_document:
+            try:
+                memory_results = await self._search_relevant_memory(
+                    query=user_query,
+                    context_id=session_context.contextId,
+                    agent_name=None,
+                    top_k=5
+                )
+                if memory_results:
+                    for result in memory_results:
+                        agent_name = result.get('agent_name', '')
+                        if agent_name == 'DocumentProcessor':
+                            inbound = result.get('inbound_payload', {})
+                            if isinstance(inbound, str):
+                                try:
+                                    inbound = json.loads(inbound)
+                                except Exception:
+                                    pass
+                            if isinstance(inbound, dict) and 'content' in inbound:
+                                doc_content = str(inbound['content'])
+                                log_info(f"[QUERY] Found document content from memory: {len(doc_content)} chars")
+                                context_parts.append(f"[Extracted Document]\n{doc_content}")
+                                found_document = True
+                                break
+            except Exception as e:
+                log_error(f"[QUERY] Error searching memory for document content: {e}")
+
+        # Add previous task outputs (more generous than EVALUATE since queries need more context)
+        if previous_task_outputs:
+            for output in previous_task_outputs[-5:]:
+                context_parts.append(output)
+
+        context_text = "\n\n".join(context_parts)
+        if len(context_text) > 8000:
+            context_text = context_text[:8000] + "... [truncated]"
+
+        system_prompt = """You are analyzing data as part of a multi-agent workflow.
+Based on the context from previous workflow steps, answer the query with structured results.
+Set "ok" to false if the available context is insufficient. Include a confidence score and brief reasoning."""
+
+        user_prompt = f"""### QUERY
+{user_query}
+
+### CONTEXT FROM PREVIOUS WORKFLOW STEPS
+{context_text if context_text else "(no previous output available)"}
+
+Analyze the context and return your structured result."""
+
+        try:
+            query_result = await self._call_azure_openai_structured(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                response_model=QueryResult,
+                context_id=context_id
+            )
+
+            log_info(f"[QUERY] Result: ok={query_result.ok}, task={query_result.task}, confidence={query_result.confidence}")
+
+            # Parse JSON strings back into dicts for the output envelope
+            try:
+                parsed_result = json.loads(query_result.result) if query_result.result else {}
+            except (json.JSONDecodeError, TypeError):
+                parsed_result = {"raw": query_result.result}
+            try:
+                parsed_refs = json.loads(query_result.refs) if query_result.refs else {}
+            except (json.JSONDecodeError, TypeError):
+                parsed_refs = {}
+
+            # Build clean output dict with parsed JSON
+            result_dict = {
+                "ok": query_result.ok,
+                "task": query_result.task,
+                "result": parsed_result,
+                "confidence": query_result.confidence,
+                "notes": query_result.notes,
+                "refs": parsed_refs,
+            }
+
+            # Update task state
+            task.state = "completed"
+            task.output = {**result_dict, "query": True}
+            task.updated_at = datetime.now(timezone.utc)
+
+            # Emit result to frontend as agent output
+            display_text = json.dumps(result_dict, indent=2)
+            await self._emit_granular_agent_event(
+                query_agent_name, display_text, context_id,
+                event_type="agent_output",
+                metadata={"query": True, "ok": query_result.ok, "confidence": query_result.confidence}
+            )
+
+            # Emit agent_complete
+            await self._emit_granular_agent_event(
+                query_agent_name, f"{query_agent_name} completed", context_id,
+                event_type="agent_complete"
+            )
+
+            # Return output as JSON text so downstream steps can read it
+            output_text = json.dumps(result_dict)
+            return {"output": output_text, "hitl_pause": False}
+
+        except Exception as e:
+            log_error(f"[QUERY] Error during query: {e}")
+            task.state = "failed"
+            task.error_message = f"Query failed: {str(e)}"
+            task.updated_at = datetime.now(timezone.utc)
+            await self._emit_granular_agent_event(
+                query_agent_name, f"Error: {str(e)[:200]}", context_id,
+                event_type="agent_error", metadata={"error": str(e)[:500]}
+            )
+            return {"error": task.error_message, "output": None}
+
+    async def _execute_web_search_step(
+        self,
+        task: AgentModeTask,
+        session_context: SessionContext,
+        context_id: str,
+        previous_task_outputs: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
+        """
+        Execute a web search step using an isolated Responses API call with BingGroundingAgentTool.
+
+        This does NOT use _create_response_with_streaming — it makes a single non-streaming
+        responses.create() call with ONLY the Bing tool. No response_id tracking, no orchestrator
+        tools exposed, no streaming side effects.
+        """
+        task_desc = task.task_description
+        user_query = re.sub(r'^\[Step\s+\d+[a-z]?\]\s*', '', task_desc)
+        log_info(f"[WEB_SEARCH] Executing web search: {user_query[:100]}")
+
+        web_search_agent_name = "Web Search"
+
+        await self._emit_granular_agent_event(
+            web_search_agent_name, f"Starting task: {task_desc[:80]}...", context_id,
+            event_type="agent_start", metadata={"web_search": True, "task_description": task_desc}
+        )
+
+        # Build context from previous step outputs (last 3 for relevance)
+        context_parts = []
+        if previous_task_outputs:
+            for output in previous_task_outputs[-3:]:
+                context_parts.append(output)
+        context_text = "\n\n".join(context_parts)
+        if len(context_text) > 4000:
+            context_text = context_text[:4000] + "... [truncated]"
+
+        try:
+            # Ensure Azure client is ready
+            await self._ensure_project_client()
+
+            # Get Bing connection ID
+            bing_conn_id = getattr(self, 'bing_connection_id', None) or os.environ.get("BING_CONNECTION_ID")
+            if not bing_conn_id:
+                raise ValueError("BING_CONNECTION_ID not configured — web search is unavailable")
+
+            # Pass Bing tool as a plain dict — Azure SDK model objects (BingGroundingAgentTool)
+            # are not JSON-serializable by the OpenAI client. The Azure AI Foundry Responses API
+            # accepts bing_grounding as a dict tool type.
+            bing_tool = {
+                "type": "bing_grounding",
+                "bing_grounding": {
+                    "search_configurations": [
+                        {
+                            "project_connection_id": bing_conn_id,
+                            "count": 5
+                        }
+                    ]
+                }
+            }
+
+            # Build the search prompt
+            search_input = f"Search the web for: {user_query}"
+            if context_text:
+                search_input += f"\n\nContext from previous workflow steps:\n{context_text}"
+
+            search_instructions = (
+                "You are a web search assistant. Use the Bing search tool to find current, "
+                "accurate information. Return a clear, factual summary of what you found. "
+                "Include specific numbers, dates, and sources when available."
+            )
+
+            # Isolated, non-streaming responses.create() — no response_id, no orchestrator tools
+            log_info(f"[WEB_SEARCH] Calling responses.create() with bing_grounding tool")
+            response = await self.openai_client.responses.create(
+                input=search_input,
+                instructions=search_instructions,
+                model=self.model_name,
+                tools=[bing_tool],
+            )
+
+            # Extract text from response — guard against None at every level
+            result_text = ""
+            log_info(f"[WEB_SEARCH] Response type: {type(response).__name__}, has output: {hasattr(response, 'output')}")
+            output_items = getattr(response, 'output', None) or []
+            for item in output_items:
+                content_list = getattr(item, 'content', None) or []
+                for content in content_list:
+                    text = getattr(content, 'text', None)
+                    if text:
+                        result_text += text
+
+            # Fallback: some SDK versions expose output_text directly
+            if not result_text.strip():
+                output_text_attr = getattr(response, 'output_text', None)
+                if output_text_attr:
+                    result_text = output_text_attr
+                    log_info(f"[WEB_SEARCH] Used output_text fallback: {len(result_text)} chars")
+
+            if not result_text.strip():
+                # Log response structure for debugging
+                log_info(f"[WEB_SEARCH] Empty response. output_items={len(output_items)}, response attrs={[a for a in dir(response) if not a.startswith('_')]}")
+                result_text = "Web search returned no results."
+
+            log_info(f"[WEB_SEARCH] Got {len(result_text)} chars from web search")
+
+            # Track token usage (Responses API uses input_tokens/output_tokens)
+            if hasattr(response, 'usage') and response.usage:
+                input_tokens = getattr(response.usage, 'input_tokens', 0)
+                output_tokens = getattr(response.usage, 'output_tokens', 0)
+                log_info(f"[WEB_SEARCH] Tokens: input={input_tokens}, output={output_tokens}")
+
+            # Update task state
+            task.state = "completed"
+            task.output = {"web_search": True, "result": result_text}
+            task.updated_at = datetime.now(timezone.utc)
+
+            # Emit result to frontend
+            await self._emit_granular_agent_event(
+                web_search_agent_name, result_text, context_id,
+                event_type="agent_output",
+                metadata={"web_search": True}
+            )
+
+            await self._emit_granular_agent_event(
+                web_search_agent_name, f"{web_search_agent_name} completed", context_id,
+                event_type="agent_complete"
+            )
+
+            return {"output": result_text, "hitl_pause": False}
+
+        except Exception as e:
+            log_error(f"[WEB_SEARCH] Error during web search: {e}")
+            task.state = "failed"
+            task.error_message = f"Web search failed: {str(e)}"
+            task.updated_at = datetime.now(timezone.utc)
+            await self._emit_granular_agent_event(
+                web_search_agent_name, f"Error: {str(e)[:200]}", context_id,
+                event_type="agent_error", metadata={"error": str(e)[:500]}
+            )
+            return {"error": task.error_message, "output": None}
+
     async def _execute_orchestrated_task(
         self,
         task: AgentModeTask,
@@ -425,11 +731,23 @@ Evaluate the condition and return your result."""
         recommended_agent = task.recommended_agent
         task_desc = task.task_description
 
-        log_debug(f"🚀 [Agent Mode] Executing task: {task_desc[:50]}...")
+        log_debug(f"[Agent Mode] Executing task: {task_desc[:50]}...")
 
         # Detect evaluation steps — handled by host LLM, not a remote agent
         if recommended_agent and recommended_agent.upper() == "EVALUATE":
             return await self._execute_evaluation_step(
+                task, session_context, context_id, previous_task_outputs
+            )
+
+        # Detect query steps — handled by host LLM, not a remote agent
+        if recommended_agent and recommended_agent.upper() == "QUERY":
+            return await self._execute_query_step(
+                task, session_context, context_id, previous_task_outputs
+            )
+
+        # Detect web search steps — handled by host with BingGroundingAgentTool
+        if recommended_agent and recommended_agent.upper() == "WEB_SEARCH":
+            return await self._execute_web_search_step(
                 task, session_context, context_id, previous_task_outputs
             )
 
@@ -438,10 +756,10 @@ Evaluate the condition and return your result."""
         # If agent not in session, try to load from global catalog
         # This enables workflows/scheduled workflows to use any cataloged agent
         if recommended_agent and recommended_agent not in self.cards:
-            print(f"🔍 [Agent Mode] Agent '{recommended_agent}' not in session, checking catalog...")
+            log_debug(f"[Agent Mode] Agent '{recommended_agent}' not in session, checking catalog...")
             agent_loaded = await self._load_agent_from_catalog(recommended_agent)
             if agent_loaded:
-                print(f"✅ [Agent Mode] Loaded agent '{recommended_agent}' from catalog")
+                log_debug(f"[Agent Mode] Loaded agent '{recommended_agent}' from catalog")
         
         if not recommended_agent or recommended_agent not in self.cards:
             available_agent_names = list(self.cards.keys()) if self.cards else []
@@ -449,14 +767,14 @@ Evaluate the condition and return your result."""
             task.error_message = f"Agent '{recommended_agent}' not found. Available agents: {available_agent_names}"
             task.updated_at = datetime.now(timezone.utc)
             log_error(f"[Agent Mode] Agent not found: {recommended_agent}. Available: {available_agent_names}")
-            print(f"⚠️ [AGENT NOT FOUND] Requested: '{recommended_agent}', Available: {available_agent_names}")
+            log_debug(f"[AGENT NOT FOUND] Requested: '{recommended_agent}', Available: {available_agent_names}")
             await self._emit_granular_agent_event(
                 recommended_agent, f"⚠️ Agent '{recommended_agent}' not found", context_id,
                 event_type="agent_error", metadata={"error": task.error_message}
             )
             return {"error": task.error_message, "output": None}
         
-        log_debug(f"🎯 [Agent Mode] Calling agent: {recommended_agent}")
+        log_debug(f"[Agent Mode] Calling agent: {recommended_agent}")
         await self._emit_granular_agent_event(
             recommended_agent, f"Starting task: {task_desc[:80]}...", context_id,
             event_type="agent_start", metadata={"task_description": task_desc}
@@ -496,13 +814,13 @@ Evaluate the condition and return your result."""
                                 pass
                         if isinstance(inbound, dict) and 'content' in inbound:
                             document_content = str(inbound['content'])
-                            print(f"📋 [Agent Mode] Found DocumentProcessor content: {len(document_content)} chars")
+                            log_debug(f"[Agent Mode] Found DocumentProcessor content: {len(document_content)} chars")
                             break
         except Exception as e:
-            print(f"⚠️ [Agent Mode] Error searching memory for document content: {e}")
+            log_error(f"[Agent Mode] Error searching memory for document content: {e}")
 
         if previous_task_outputs and len(previous_task_outputs) > 0:
-            print(f"📋 [Agent Mode] Searching {len(previous_task_outputs)} outputs for best context")
+            log_debug(f"[Agent Mode] Searching {len(previous_task_outputs)} outputs for best context")
 
             # Strategy: Prefer DocumentProcessor content if available, otherwise find the longest output
             best_output = None
@@ -520,7 +838,7 @@ Evaluate the condition and return your result."""
 
             # If we have DocumentProcessor content and it's more substantial, prefer it
             if document_content and len(document_content) > best_output_len:
-                print(f"📋 [Agent Mode] Preferring DocumentProcessor content ({len(document_content)} chars) over workflow output ({best_output_len} chars)")
+                log_debug(f"[Agent Mode] Preferring DocumentProcessor content ({len(document_content)} chars) over workflow output ({best_output_len} chars)")
                 best_output = document_content
                 best_output_len = len(document_content)
             
@@ -529,12 +847,12 @@ Evaluate the condition and return your result."""
                 best_output = previous_task_outputs[0]
                 best_output_len = len(best_output) if best_output else 0
             
-            # Truncate to prevent context overflow
-            max_context_chars = 4000  # Increased to fit full invoice tables
+            # Cap at 50K chars — gpt-4o has 128K context so this is plenty
+            max_context_chars = 50000
             if best_output_len > max_context_chars:
-                best_output = best_output[:max_context_chars] + "... [truncated for context window management]"
+                best_output = best_output[:max_context_chars]
             
-            print(f"📋 [Agent Mode] Selected best context ({len(best_output)} chars)")
+            log_debug(f"[Agent Mode] Selected best context ({len(best_output)} chars)")
             
             enhanced_task_message = f"""{task_desc}
 
@@ -575,7 +893,7 @@ Use the above output from the previous workflow step to complete your task."""
         # Check for HITL (input_required) - only if THIS agent requested input
         # BUGFIX: Only pause if pending_input_agent matches the current agent
         if session_context.pending_input_agent and session_context.pending_input_agent == recommended_agent:
-            log_info(f"⏸️ [Agent Mode] Agent '{recommended_agent}' returned input_required")
+            log_info(f"[Agent Mode] Agent '{recommended_agent}' returned input_required")
             task.state = "input_required"
             task.updated_at = datetime.now(timezone.utc)
             
@@ -594,7 +912,7 @@ Use the above output from the previous workflow step to complete your task."""
                     event_type="agent_output", metadata={"output_length": len(output_text), "hitl": True}
                 )
             
-            log_info(f"⏸️ [Agent Mode] Waiting for user response to '{recommended_agent}'")
+            log_info(f"[Agent Mode] Waiting for user response to '{recommended_agent}'")
             await self._emit_granular_agent_event(
                 recommended_agent, f"Waiting for your response...", context_id,
                 event_type="info", metadata={"hitl": True}
@@ -604,7 +922,7 @@ Use the above output from the previous workflow step to complete your task."""
         
         # Clear any stale pending_input_agent that doesn't match this agent
         if session_context.pending_input_agent and session_context.pending_input_agent != recommended_agent:
-            log_info(f"🧹 [Agent Mode] Clearing stale pending_input_agent '{session_context.pending_input_agent}' (current agent: {recommended_agent})")
+            log_info(f"[Agent Mode] Clearing stale pending_input_agent '{session_context.pending_input_agent}' (current agent: {recommended_agent})")
             session_context.pending_input_agent = None
             session_context.pending_input_task_id = None
         
@@ -625,12 +943,19 @@ Use the above output from the previous workflow step to complete your task."""
                 return {"error": task.error_message, "output": None}
             
             output_text = str(response_obj.result) if response_obj.result else ""
-            
+
             # Collect artifacts using helper
             if response_obj.artifacts:
                 artifact_texts = self._collect_artifacts(response_obj.artifacts, session_context)
                 if artifact_texts:
                     output_text = f"{output_text}\n\nArtifacts:\n" + "\n".join(artifact_texts)
+
+            # Strip markdown image references from output text — images are displayed
+            # separately as FilePart artifacts in the frontend, so including them in text
+            # causes duplicate rendering.
+            import re
+            output_text = re.sub(r'!\[[^\]]*\]\([^)]+\)', '', output_text)
+            output_text = re.sub(r'\n{3,}', '\n\n', output_text).strip()
             
             # Emit agent output to workflow panel so users can see what the agent returned
             # Use a higher limit (2000 chars) to avoid cutting off important info
@@ -686,7 +1011,7 @@ Use the above output from the previous workflow step to complete your task."""
         Returns:
             RouteSelection with approach, selected_workflow, confidence, and reasoning
         """
-        log_debug(f"🔀 [Route Selection] Analyzing request with {len(available_workflows)} available workflows")
+        log_debug(f"[Route Selection] Analyzing request with {len(available_workflows)} available workflows")
         
         # Build workflow descriptions for the prompt
         workflow_descriptions = []
@@ -724,9 +1049,9 @@ Use the above output from the previous workflow step to complete your task."""
         agents_text = "\n".join(agent_descriptions) if agent_descriptions else "No agents available"
         
         # Debug: Log agents and workflows counts for troubleshooting
-        log_debug(f"🔀 [Route Selection] Agents in registry: {len(agent_descriptions)}, Workflows: {len(available_workflows)}")
+        log_debug(f"[Route Selection] Agents in registry: {len(agent_descriptions)}, Workflows: {len(available_workflows)}")
         if len(agent_descriptions) == 0:
-            log_error(f"⚠️ [Route Selection] WARNING: No agents registered in self.cards! This may cause routing issues.")
+            log_error(f"[Route Selection] WARNING: No agents registered in self.cards! This may cause routing issues.")
         
         system_prompt = f"""You are an intelligent routing assistant. Analyze the user's request and decide the best execution approach.
 
@@ -805,10 +1130,10 @@ Analyze this request and decide the best approach."""
             )
             
             if selection.approach == "workflows_parallel":
-                log_debug(f"🔀 [Route Selection] Decision: approach={selection.approach}, workflows={selection.selected_workflows}, confidence={selection.confidence}")
+                log_debug(f"[Route Selection] Decision: approach={selection.approach}, workflows={selection.selected_workflows}, confidence={selection.confidence}")
             else:
-                log_debug(f"🔀 [Route Selection] Decision: approach={selection.approach}, workflow={selection.selected_workflow}, confidence={selection.confidence}")
-            log_debug(f"🔀 [Route Selection] Reasoning: {selection.reasoning}")
+                log_debug(f"[Route Selection] Decision: approach={selection.approach}, workflow={selection.selected_workflow}, confidence={selection.confidence}")
+            log_debug(f"[Route Selection] Reasoning: {selection.reasoning}")
             
             return selection
             
@@ -823,6 +1148,92 @@ Analyze this request and decide the best approach."""
                 confidence=0.5,
                 reasoning=f"Fallback to multi_agent due to selection error: {str(e)}"
             )
+
+    def _expand_parallel_from_workflow(
+        self,
+        workflow: str,
+        next_task: Dict[str, Any],
+        completed_tasks: List[Any],
+    ) -> Optional[List[Dict[str, str]]]:
+        """Detect if the LLM's single next_task belongs to a parallel group in the
+        workflow text and expand it to all sibling tasks.
+
+        Parallel groups are steps with the same number but different letter suffixes,
+        e.g. ``1a. [Agent] desc`` and ``1b. [Agent] desc``.
+
+        Returns a list of task dicts (for ``next_tasks``) if expansion applies,
+        or ``None`` if no expansion is needed.
+        """
+        # Parse parallel groups from workflow text
+        # Map: step_number -> [{"label": "1a", "agent": "...", "description": "..."}]
+        parallel_groups: Dict[int, List[Dict[str, str]]] = {}
+        for line in workflow.strip().split('\n'):
+            line = line.strip()
+            if not line:
+                continue
+            match = re.match(r'^(\d+)([a-z])\.\s*\[(.+?)\]\s*(.+)', line)
+            if match:
+                step_num = int(match.group(1))
+                sub_letter = match.group(2)
+                agent = match.group(3)
+                description = match.group(4)
+                if step_num not in parallel_groups:
+                    parallel_groups[step_num] = []
+                parallel_groups[step_num].append({
+                    "label": f"{step_num}{sub_letter}",
+                    "agent": agent,
+                    "description": description,
+                })
+
+        if not parallel_groups:
+            return None
+
+        # Filter to only groups with 2+ entries (actual parallelism)
+        parallel_groups = {k: v for k, v in parallel_groups.items() if len(v) >= 2}
+        if not parallel_groups:
+            return None
+
+        # Determine which parallel groups have already been executed
+        # by checking completed tasks for step labels
+        executed_group_nums = set()
+        for task in completed_tasks:
+            desc = getattr(task, 'task_description', '') or ''
+            step_match = re.search(r'\[Step\s+(\d+)[a-z]\]', desc)
+            if step_match:
+                executed_group_nums.add(int(step_match.group(1)))
+
+        # Try to match the LLM's next_task to an unexecuted parallel group
+        task_agent = (next_task.get("recommended_agent") or "").strip()
+        task_desc = (next_task.get("task_description") or "").strip()
+
+        for step_num in sorted(parallel_groups.keys()):
+            if step_num in executed_group_nums:
+                continue  # Already executed this group
+
+            group = parallel_groups[step_num]
+            # Check if the proposed task matches ANY entry in this parallel group
+            for entry in group:
+                entry_agent = entry["agent"]
+                # Fuzzy agent name matching (one contains the other)
+                agent_match = (
+                    entry_agent.lower() in task_agent.lower()
+                    or task_agent.lower() in entry_agent.lower()
+                )
+                if agent_match:
+                    log_info(
+                        f"🔀 [Parallel Expansion] Task agent '{task_agent}' matches "
+                        f"group {step_num} ({len(group)} tasks: "
+                        f"{', '.join(e['label'] for e in group)})"
+                    )
+                    return [
+                        {
+                            "task_description": e["description"],
+                            "recommended_agent": e["agent"],
+                        }
+                        for e in group
+                    ]
+
+        return None
 
     async def _agent_mode_orchestration_loop(
         self,
@@ -858,7 +1269,7 @@ Analyze this request and decide the best approach."""
         Returns:
             List of response strings from executed tasks for final synthesis
         """
-        log_debug(f"🎯 [Agent Mode] Starting orchestration loop for goal: {user_message[:100]}...")
+        log_debug(f"[Agent Mode] Starting orchestration loop for goal: {user_message[:100]}...")
         
         # Reset host token usage for this workflow
         self.host_token_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
@@ -878,8 +1289,8 @@ Analyze this request and decide the best approach."""
         # =====================================================================
         existing_plan = session_context.current_plan
         if existing_plan:
-            log_info(f"📋 [Agent Mode] Resuming existing plan with {len(existing_plan.tasks)} tasks")
-            log_info(f"📋 [Agent Mode] PLAN DETAILS: {existing_plan.model_dump_json(indent=2)}")
+            log_info(f"[Agent Mode] Resuming existing plan with {len(existing_plan.tasks)} tasks")
+            log_info(f"[Agent Mode] PLAN DETAILS: {existing_plan.model_dump_json(indent=2)}")
             await self._emit_granular_agent_event(
                 "foundry-host-agent", "Resuming workflow with your input...", context_id,
                 event_type="phase", metadata={"phase": "resume"}
@@ -889,10 +1300,10 @@ Analyze this request and decide the best approach."""
             # This ensures the workflow instructions are re-injected into the planner prompt
             if existing_plan.workflow:
                 workflow = existing_plan.workflow
-                log_info(f"📋 [Agent Mode] Restored workflow from plan ({len(workflow)} chars)")
+                log_info(f"[Agent Mode] Restored workflow from plan ({len(workflow)} chars)")
             if existing_plan.workflow_goal:
                 workflow_goal = existing_plan.workflow_goal
-                log_info(f"📋 [Agent Mode] Restored workflow_goal from plan")
+                log_info(f"[Agent Mode] Restored workflow_goal from plan")
             
             # Update the goal to include the user's follow-up
             original_goal = existing_plan.goal
@@ -908,7 +1319,7 @@ Analyze this request and decide the best approach."""
                     task.output = task.output or {}
                     task.output["user_response"] = user_message
                     task.updated_at = datetime.now(timezone.utc)
-                    log_info(f"✅ [Agent Mode] Marked task '{task.task_id}' as completed with user response")
+                    log_info(f"[Agent Mode] Marked task '{task.task_id}' as completed with user response")
             
             # Use the existing plan instead of creating a new one
             plan = existing_plan
@@ -930,11 +1341,11 @@ Analyze this request and decide the best approach."""
                         # Debug: Log output lengths to help diagnose context issues
                         log_info(f"   � Task '{task.task_id}': output={len(output_text)} chars")
             
-            log_info(f"�📋 [Agent Mode] Resumed plan: {len(plan.tasks)} existing tasks, {len(all_task_outputs)} outputs")
+            log_info(f"[Agent Mode] Resumed plan: {len(plan.tasks)} existing tasks, {len(all_task_outputs)} outputs")
             # Debug: Log which output is longest (likely has the data we need)
             if all_task_outputs:
                 sizes = [(i, len(o)) for i, o in enumerate(all_task_outputs)]
-                log_info(f"   📊 Output sizes: {sizes}")
+                log_info(f"   Output sizes: {sizes}")
             
             # Variables needed for the orchestration loop
             iteration = 0
@@ -951,7 +1362,7 @@ Analyze this request and decide the best approach."""
                     step_num = int(step_match.group(1))
                     if step_num > current_step_number:
                         current_step_number = step_num
-            log_info(f"🔢 [Agent Mode] Resuming from step {current_step_number}")
+            log_info(f"[Agent Mode] Resuming from step {current_step_number}")
         else:
             # =====================================================================
             # LLM ORCHESTRATION PATH: All workflows go through the orchestrator
@@ -971,7 +1382,7 @@ Analyze this request and decide the best approach."""
                 # Use workflow_goal from the designer if provided, otherwise fall back to user_message
                 if workflow_goal and workflow_goal.strip():
                     goal_text = workflow_goal
-                    log_debug(f"🎯 [Workflow Mode] Using workflow designer goal: {goal_text[:100]}...")
+                    log_debug(f"[Workflow Mode] Using workflow designer goal: {goal_text[:100]}...")
                 else:
                     goal_text = user_message
                 if context_id not in self._active_conversations:
@@ -1095,7 +1506,7 @@ FAILURE HANDLING:
 """
         
         # Inject workflow if provided
-        print(f"🔍 [Agent Mode] Checking workflow: workflow={workflow}, stripped={workflow.strip() if workflow else 'N/A'}")
+        log_debug(f"[Agent Mode] Checking workflow: workflow={workflow}, stripped={workflow.strip() if workflow else 'N/A'}")
         if workflow and workflow.strip():
             workflow_section = f"""
 
@@ -1110,6 +1521,18 @@ Do NOT skip steps. Do NOT mark goal as completed until ALL workflow steps are do
 - You MUST use the agent specified in brackets for that step - do NOT substitute a different agent
 - Set `recommended_agent` to the exact agent name from the brackets
 - Steps marked [EVALUATE] are handled by the host orchestrator — set recommended_agent to "EVALUATE"
+- Steps marked [QUERY] are handled by the host orchestrator — set recommended_agent to "QUERY"
+- Steps marked [WEB_SEARCH] are handled by the host orchestrator — set recommended_agent to "WEB_SEARCH"
+
+**WEB SEARCH STEPS**:
+- [WEB_SEARCH] steps search the web using Bing for current, real-time information
+- Use them for live data: exchange rates, weather, news, current prices, etc.
+- Their text output is available to subsequent steps (e.g., a [QUERY] step can analyze web search results)
+
+**QUERY STEPS**:
+- [QUERY] steps analyze previous outputs and return structured JSON results (they do NOT branch)
+- Use them to filter, compare, rank, or extract information from previous step outputs
+- Their JSON output is available to subsequent steps in the workflow
 
 **EVALUATION & BRANCHING**:
 - Steps with [EVALUATE] are conditional decision points that return true or false
@@ -1130,7 +1553,7 @@ Do NOT skip steps. Do NOT mark goal as completed until ALL workflow steps are do
 - If a step fails, you may retry or adapt, but you must complete all steps
 """
             system_prompt += workflow_section
-            log_debug(f"📋 [Agent Mode] ✅ Injected workflow into planner prompt ({len(workflow)} chars)")
+            log_debug(f"[Agent Mode] Injected workflow into planner prompt ({len(workflow)} chars)")
         
         # Add workflow-specific completion logic if workflow is present
         if workflow and workflow.strip():
@@ -1157,7 +1580,7 @@ Do NOT skip steps. Do NOT mark goal as completed until ALL workflow steps are do
                 workflow_step_count = top_level_steps + branch_pairs
             else:
                 workflow_step_count = top_level_steps
-            log_debug(f"📊 [Agent Mode] Workflow step count: {workflow_step_count} (top_level={top_level_steps}, branches={branch_pairs})")
+            log_debug(f"[Agent Mode] Workflow step count: {workflow_step_count} (top_level={top_level_steps}, branches={branch_pairs})")
 
             branching_note = ""
             if has_branching:
@@ -1195,13 +1618,13 @@ Do NOT skip steps. Do NOT mark goal as completed until ALL workflow steps are do
         
         while plan.goal_status == "incomplete" and iteration < max_iterations:
             iteration += 1
-            print(f"🔄 [Agent Mode] Iteration {iteration}/{max_iterations}")
+            log_debug(f"[Agent Mode] Iteration {iteration}/{max_iterations}")
             
             # =========================================================
             # CANCELLATION CHECK: Between steps, bail if user cancelled
             # =========================================================
             if self.is_cancelled(context_id):
-                log_info(f"🛑 [CANCEL] Workflow cancelled at iteration {iteration}, stopping orchestration loop")
+                log_info(f"[CANCEL] Workflow cancelled at iteration {iteration}, stopping orchestration loop")
                 await self._emit_granular_agent_event(
                     "foundry-host-agent", "Workflow cancelled by user", context_id,
                     event_type="phase", metadata={"phase": "cancelled"}
@@ -1213,7 +1636,7 @@ Do NOT skip steps. Do NOT mark goal as completed until ALL workflow steps are do
             # =========================================================
             interrupt_instruction = self.get_interrupt(context_id)
             if interrupt_instruction:
-                log_info(f"⚡ [INTERRUPT] Detected interrupt between steps: {interrupt_instruction[:80]}...")
+                log_info(f"[INTERRUPT] Detected interrupt between steps: {interrupt_instruction[:80]}...")
                 completed_tasks = [t for t in plan.tasks if t.state == "completed"]
                 original_goal = plan.goal
                 plan.goal = self._build_interrupted_goal(original_goal, interrupt_instruction, completed_tasks)
@@ -1227,7 +1650,7 @@ Do NOT skip steps. Do NOT mark goal as completed until ALL workflow steps are do
                     metadata={"phase": "interrupted", "new_instruction": interrupt_instruction}
                 )
                 await self._emit_plan_update(plan, context_id, reasoning=f"Redirected: {interrupt_instruction[:100]}")
-                log_info(f"⚡ [INTERRUPT] Goal updated, re-planning with {len(completed_tasks)} completed tasks preserved")
+                log_info(f"[INTERRUPT] Goal updated, re-planning with {len(completed_tasks)} completed tasks preserved")
 
             # Single typed event replaces old untyped _emit_status_event + typed double-emit
             await self._emit_granular_agent_event(
@@ -1259,10 +1682,29 @@ Do NOT skip steps. Do NOT mark goal as completed until ALL workflow steps are do
                     agent_info['skills'] = skills_list
                 
                 available_agents.append(agent_info)
-            
+
+            # Add built-in pseudo-agents only when the workflow uses them,
+            # so they don't confuse the planner for normal agent-routed steps
+            workflow_upper = workflow.upper() if workflow else ""
+            if '[EVALUATE]' in workflow_upper:
+                available_agents.append({
+                    "name": "EVALUATE",
+                    "description": "Built-in host orchestrator capability. Evaluates a condition and returns TRUE/FALSE for workflow branching. Set recommended_agent to 'EVALUATE'."
+                })
+            if '[QUERY]' in workflow_upper:
+                available_agents.append({
+                    "name": "QUERY",
+                    "description": "Built-in host orchestrator capability. Analyzes previous workflow outputs and returns structured JSON results. Can also answer general knowledge questions. Set recommended_agent to 'QUERY'."
+                })
+            if '[WEB_SEARCH]' in workflow_upper:
+                available_agents.append({
+                    "name": "WEB_SEARCH",
+                    "description": "Built-in host orchestrator capability. Searches the web using Bing for current, real-time information (exchange rates, weather, news, prices). Set recommended_agent to 'WEB_SEARCH'."
+                })
+
             # Debug: Log available agents count for troubleshooting
             agent_names = [a.get('name', 'Unknown') for a in available_agents]
-            log_debug(f"📋 [Planner] {len(available_agents)} agents available: {agent_names[:5]}{'...' if len(agent_names) > 5 else ''}")
+            log_debug(f"[Planner] {len(available_agents)} agents available: {agent_names[:5]}{'...' if len(agent_names) > 5 else ''}")
             if iteration == 1:
                 # Only show on first iteration to avoid spam
                 await self._emit_granular_agent_event(
@@ -1279,7 +1721,7 @@ Current Plan (JSON):
 Available Agents (JSON):
 {json.dumps(available_agents, indent=2)}
 
-Analyze the plan and determine the next step. Proceed autonomously - do NOT ask the user for permission or confirmation."""
+Analyze the plan and determine the next step."""
             
             # Get next step from orchestrator
             try:
@@ -1290,7 +1732,7 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                     context_id=context_id
                 )
                 
-                log_debug(f"🤖 [Agent Mode] Orchestrator: {next_step.reasoning[:100]}... | status={next_step.goal_status}")
+                log_debug(f"[Agent Mode] Orchestrator: {next_step.reasoning[:100]}... | status={next_step.goal_status}")
                 await self._emit_granular_agent_event(
                     "foundry-host-agent", next_step.reasoning, context_id,
                     event_type="reasoning", metadata={"step_number": iteration, "goal_status": next_step.goal_status}
@@ -1303,7 +1745,7 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                 if next_step.goal_status == "completed":
                     completed_tasks_count = len([t for t in plan.tasks if t.state == "completed"])
                     input_required_tasks = [t for t in plan.tasks if t.state == "input_required"]
-                    log_info(f"✅ [Agent Mode] Goal completed after {iteration} iterations ({completed_tasks_count} completed, {len(input_required_tasks)} input_required)")
+                    log_info(f"[Agent Mode] Goal completed after {iteration} iterations ({completed_tasks_count} completed, {len(input_required_tasks)} input_required)")
                     await self._emit_granular_agent_event(
                         "foundry-host-agent", "Goal achieved! Generating final response...", context_id,
                         event_type="phase", metadata={"phase": "complete", "tasks_completed": completed_tasks_count, "iterations": iteration}
@@ -1321,9 +1763,9 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                     # resume when user provides the requested information.
                     # =========================================================
                     if input_required_tasks:
-                        log_info(f"💾 [Agent Mode] Saving plan for resume - agent(s) need user input")
+                        log_info(f"[Agent Mode] Saving plan for resume - agent(s) need user input")
                         for t in input_required_tasks:
-                            log_info(f"   ⏸️ Task '{t.task_id}': {t.task_description[:50]}...")
+                            log_info(f"   Task '{t.task_id}': {t.task_description[:50]}...")
                         session_context.current_plan = plan
                     
                     break
@@ -1331,13 +1773,32 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                 # =========================================================
                 # TASK EXECUTION: Handle both sequential and parallel tasks
                 # =========================================================
-                
+
+                # =========================================================
+                # PARALLEL EXPANSION: If LLM proposed a single next_task that
+                # matches a parallel group in the workflow text (e.g., 1a/1b),
+                # expand it to all sibling tasks for parallel execution.
+                # The LLM almost never uses next_tasks — it always picks one
+                # task at a time. This deterministic expansion fixes that.
+                # =========================================================
+                if (workflow and workflow.strip() and next_step.next_task
+                        and not (next_step.next_tasks and len(next_step.next_tasks) > 1)):
+                    expanded = self._expand_parallel_from_workflow(
+                        workflow, next_step.next_task, plan.tasks
+                    )
+                    if expanded:
+                        log_info(f"[Parallel Expansion] Expanded single next_task into {len(expanded)} parallel tasks")
+                        next_step.next_tasks = expanded
+                        next_step.next_task = None
+
                 # Determine which tasks to execute
                 tasks_to_execute = []
-                is_parallel = next_step.parallel and next_step.next_tasks
-                
+                # Auto-detect parallel: if next_tasks has multiple entries, run them in parallel
+                # regardless of the parallel flag (LLM doesn't reliably set it)
+                is_parallel = next_step.next_tasks and len(next_step.next_tasks) > 1
+
                 if is_parallel and next_step.next_tasks:
-                    log_info(f"🔀 [Agent Mode] PARALLEL execution: {len(next_step.next_tasks)} tasks")
+                    log_info(f"[Agent Mode] PARALLEL execution: {len(next_step.next_tasks)} tasks")
                     await self._emit_granular_agent_event(
                         "foundry-host-agent", f"Executing {len(next_step.next_tasks)} tasks in parallel...", context_id,
                         event_type="phase", metadata={"phase": "parallel_execution", "task_count": len(next_step.next_tasks)}
@@ -1355,17 +1816,17 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                     })
                 
                 if not tasks_to_execute:
-                    print(f"⚠️ [Agent Mode] No tasks to execute, breaking loop")
+                    log_warning("[Agent Mode] No tasks to execute, breaking loop")
                     break
                 
                 # Validate all tasks have descriptions
                 for task_dict in tasks_to_execute:
                     if not task_dict.get("task_description"):
-                        print(f"⚠️ [Agent Mode] Task missing description, skipping")
+                        log_warning("[Agent Mode] Task missing description, skipping")
                         tasks_to_execute.remove(task_dict)
                 
                 if not tasks_to_execute:
-                    print(f"⚠️ [Agent Mode] No valid tasks after validation, breaking loop")
+                    log_warning("[Agent Mode] No valid tasks after validation, breaking loop")
                     break
                 
                 # =========================================================
@@ -1398,8 +1859,8 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                         retry_count = sum(1 for d in recent_descs if any(kw in d for kw in similar_keywords))
                         
                         if retry_count >= 2 or is_retry_task:
-                            log_error(f"🔁 [LOOP DETECTION] Agent '{agent_name}' has been called {len(same_agent_tasks)} times with repeated retry tasks. Breaking loop.")
-                            print(f"🔁 [LOOP DETECTION] Breaking loop - '{agent_name}' called too many times with retry tasks")
+                            log_error(f"[LOOP DETECTION] Agent '{agent_name}' has been called {len(same_agent_tasks)} times with repeated retry tasks. Breaking loop.")
+                            log_debug(f"[LOOP DETECTION] Breaking loop - '{agent_name}' called too many times with retry tasks")
                             await self._emit_granular_agent_event(
                                 agent_name, f"⚠️ {agent_name} connection issue - cannot complete automatically. Please re-authenticate manually.", context_id,
                                 event_type="agent_error", metadata={"loop_detection": True}
@@ -1414,7 +1875,7 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                 
                 if not tasks_to_execute or plan.goal_status == "completed":
                     if plan.goal_status == "completed":
-                        log_info(f"🔁 [LOOP DETECTION] Goal marked completed due to loop detection")
+                        log_info(f"[LOOP DETECTION] Goal marked completed due to loop detection")
                     break
                 
                 # Create AgentModeTask objects for all tasks
@@ -1451,7 +1912,7 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                                     if prev_step_num >= current_step_number:
                                         is_retry = True
                                         retry_step_label = prev_step_label
-                                        log_info(f"🔄 [Agent Mode] Detected retry of step {retry_step_label} (same agent {recommended_agent})")
+                                        log_info(f"[Agent Mode] Detected retry of step {retry_step_label} (same agent {recommended_agent})")
                                         break
                                     
                                     # Also check for explicit retry keywords
@@ -1459,7 +1920,7 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                                     if any(kw in original_description.lower() for kw in retry_keywords):
                                         is_retry = True
                                         retry_step_label = prev_step_label
-                                        log_info(f"🔄 [Agent Mode] Detected retry of step {retry_step_label} (retry keywords)")
+                                        log_info(f"[Agent Mode] Detected retry of step {retry_step_label} (retry keywords)")
                                         break
                     
                     # Determine the step label for this task
@@ -1493,7 +1954,7 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                     )
                     plan.tasks.append(task)
                     pydantic_tasks.append(task)
-                    log_debug(f"📋 [Agent Mode] Created task: {task.task_description[:50]}...")
+                    log_debug(f"[Agent Mode] Created task: {task.task_description[:50]}...")
                 
                 # Execute tasks (parallel or sequential)
                 if is_parallel:
@@ -1501,7 +1962,7 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                     # PARALLEL EXECUTION via asyncio.gather()
                     # ============================================
                     import asyncio as async_lib  # Import locally to avoid any scoping issues
-                    log_info(f"🔀 [Agent Mode] Executing {len(pydantic_tasks)} tasks IN PARALLEL")
+                    log_info(f"[Agent Mode] Executing {len(pydantic_tasks)} tasks IN PARALLEL")
                     await self._emit_granular_agent_event(
                         "foundry-host-agent", f"Executing {len(pydantic_tasks)} tasks simultaneously...", context_id,
                         event_type="phase", metadata={"phase": "parallel_execution", "task_count": len(pydantic_tasks)}
@@ -1509,9 +1970,11 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                     
                     async def execute_task_parallel(task: AgentModeTask) -> Dict[str, Any]:
                         """Execute a single task and return result dict."""
+                        # Set parallel_call_id so WebSocket events include it for frontend grouping
+                        _current_parallel_call_id.set(task.task_id)
                         task.state = "running"
                         task.updated_at = datetime.now(timezone.utc)
-                        
+
                         try:
                             # Pass ALL accumulated outputs - smart context selection will pick the best one
                             # This is critical for HITL workflows where step N-1 may return a short response
@@ -1532,7 +1995,7 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                             # IMPORTANT: Check if HITL was triggered before the error
                             recommended_agent = task.recommended_agent
                             if session_context.pending_input_agent and session_context.pending_input_agent == recommended_agent:
-                                log_info(f"⏸️ [Agent Mode] Parallel task exception but HITL triggered")
+                                log_info(f"[Agent Mode] Parallel task exception but HITL triggered")
                                 task.state = "input_required"
                                 task.updated_at = datetime.now(timezone.utc)
                                 return {"output": str(e), "hitl_pause": True, "task_id": task.task_id}
@@ -1581,8 +2044,8 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                             elif result.get("output"):
                                 all_task_outputs.append(result["output"])
                             # Emit agent_complete for successfully finished tasks
-                            # Skip EVALUATE tasks — they emit their own events inside _execute_evaluation_step()
-                            is_eval = task.recommended_agent and task.recommended_agent.upper() == "EVALUATE"
+                            # Skip EVALUATE/QUERY tasks — they emit their own events
+                            is_eval = task.recommended_agent and task.recommended_agent.upper() in ("EVALUATE", "QUERY", "WEB_SEARCH")
                             if task.state == "completed" and task.recommended_agent and not result.get("hitl_pause") and not is_eval:
                                 await self._emit_granular_agent_event(
                                     task.recommended_agent, f"{task.recommended_agent} completed", context_id,
@@ -1593,11 +2056,11 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                     # If any task triggered HITL pause, save plan and return
                     if hitl_pause:
                         session_context.current_plan = plan
-                        log_info(f"💾 [Agent Mode] Saved plan for HITL resume (parallel tasks)")
+                        log_info(f"[Agent Mode] Saved plan for HITL resume (parallel tasks)")
                         await self._emit_plan_update(plan, context_id, reasoning=next_step.reasoning if next_step else None)
                         return all_task_outputs
                     
-                    log_info(f"✅ [Agent Mode] {len(pydantic_tasks)} parallel tasks completed")
+                    log_info(f"[Agent Mode] {len(pydantic_tasks)} parallel tasks completed")
                     # Emit plan update after parallel tasks complete
                     await self._emit_plan_update(plan, context_id, reasoning=next_step.reasoning if next_step else None)
                     
@@ -1630,19 +2093,19 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                                 all_task_outputs.append(result["output"])
                             # Save plan for resume on next turn
                             session_context.current_plan = plan
-                            log_info(f"💾 [Agent Mode] Saved plan for HITL resume (sequential task)")
-                            log_info(f"💾 [Agent Mode] SAVED PLAN: {plan.model_dump_json(indent=2)}")
+                            log_info(f"[Agent Mode] Saved plan for HITL resume (sequential task)")
+                            log_info(f"[Agent Mode] SAVED PLAN: {plan.model_dump_json(indent=2)}")
                             # VERIFICATION: Confirm the plan was actually set
-                            log_info(f"💾 [Agent Mode] VERIFY: session_context.current_plan is not None: {session_context.current_plan is not None}")
-                            log_info(f"💾 [Agent Mode] VERIFY: session_context.contextId: {session_context.contextId}")
+                            log_info(f"[Agent Mode] VERIFY: session_context.current_plan is not None: {session_context.current_plan is not None}")
+                            log_info(f"[Agent Mode] VERIFY: session_context.contextId: {session_context.contextId}")
                             return all_task_outputs
                         
                         if result.get("output"):
                             all_task_outputs.append(result["output"])
                         
                         # Emit agent_complete/agent_error based on task state from the plan
-                        # Skip EVALUATE tasks — they emit their own events inside _execute_evaluation_step()
-                        is_evaluate = task.recommended_agent and task.recommended_agent.upper() == "EVALUATE"
+                        # Skip EVALUATE/QUERY tasks — they emit their own events
+                        is_evaluate = task.recommended_agent and task.recommended_agent.upper() in ("EVALUATE", "QUERY", "WEB_SEARCH")
                         if task.state == "completed" and task.recommended_agent and not is_evaluate:
                             await self._emit_granular_agent_event(
                                 task.recommended_agent, f"{task.recommended_agent} completed", context_id,
@@ -1659,12 +2122,12 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                         # Sometimes the SSE stream errors out AFTER input_required was set
                         recommended_agent = task.recommended_agent
                         if session_context.pending_input_agent and session_context.pending_input_agent == recommended_agent:
-                            log_info(f"⏸️ [Agent Mode] Exception but HITL triggered - treating as input_required")
+                            log_info(f"[Agent Mode] Exception but HITL triggered - treating as input_required")
                             task.state = "input_required"
                             task.updated_at = datetime.now(timezone.utc)
                             # Save plan for resume
                             session_context.current_plan = plan
-                            log_info(f"💾 [Agent Mode] Saved plan for HITL resume (exception with pending input)")
+                            log_info(f"[Agent Mode] Saved plan for HITL resume (exception with pending input)")
                             return all_task_outputs
                         
                         task.state = "failed"
@@ -1691,13 +2154,13 @@ Analyze the plan and determine the next step. Proceed autonomously - do NOT ask 
                 break
         
         if iteration >= max_iterations:
-            log_debug(f"⚠️ [Agent Mode] Reached max iterations ({max_iterations})")
+            log_debug(f"[Agent Mode] Reached max iterations ({max_iterations})")
             await self._emit_granular_agent_event(
                 "foundry-host-agent", "Maximum iterations reached, completing...", context_id,
                 event_type="phase", metadata={"phase": "complete", "reason": "max_iterations"}
             )
         
-        log_info(f"🎬 [Agent Mode] Complete: {len(all_task_outputs)} outputs, {iteration} iterations, {len(plan.tasks)} tasks")
+        log_info(f"[Agent Mode] Complete: {len(all_task_outputs)} outputs, {iteration} iterations, {len(plan.tasks)} tasks")
         
         # Emit host token usage to frontend
         try:

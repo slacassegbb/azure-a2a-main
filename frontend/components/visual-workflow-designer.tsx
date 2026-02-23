@@ -3,7 +3,7 @@
 import type React from "react"
 import { useEffect, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
-import { X, Plus, Trash2, Download, Upload, Library, X as CloseIcon, Send, Loader2, PlayCircle, StopCircle, ChevronLeft, ChevronRight, Save, FileText } from "lucide-react"
+import { X, Plus, Trash2, Download, Upload, Library, Send, Loader2, PlayCircle, StopCircle, ChevronLeft, ChevronRight, Save, FileText } from "lucide-react"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { WorkflowCatalog } from "./workflow-catalog"
 import { Input } from "@/components/ui/input"
@@ -14,6 +14,7 @@ import { VoiceButton } from "@/components/voice-button"
 import { useSearchParams } from "next/navigation"
 import { createContextId, getOrCreateSessionId } from "@/lib/session"
 import { getAgentHexColor } from "@/lib/agent-colors"
+import { logDebug } from '@/lib/debug'
 
 interface WorkflowStep {
   id: string
@@ -66,6 +67,10 @@ interface VisualWorkflowDesignerProps {
 const HOST_COLOR = "#6366f1"
 const EVALUATE_COLOR = "#f59e0b"  // Amber for evaluation steps
 const EVALUATE_AGENT_NAME = "EVALUATE"
+const QUERY_COLOR = "#8b5cf6"  // Purple for query steps
+const QUERY_AGENT_NAME = "QUERY"
+const WEB_SEARCH_COLOR = "#0ea5e9"  // Sky blue for web search steps
+const WEB_SEARCH_AGENT_NAME = "WEB_SEARCH"
 
 // Helper function to adjust color brightness for gradients
 function adjustColorBrightness(color: string, amount: number): string {
@@ -106,7 +111,7 @@ export function VisualWorkflowDesigner({
   // Use the conversation ID from URL (most reliable) or prop or generate new
   const activeConversationId = urlConversationId || externalConversationId
   
-  console.log("[VisualWorkflowDesigner] Conversation IDs:", {
+  logDebug("[VisualWorkflowDesigner] Conversation IDs:", {
     fromUrl: urlConversationId,
     fromProp: externalConversationId,
     active: activeConversationId
@@ -209,7 +214,7 @@ export function VisualWorkflowDesigner({
     if (!selectedWorkflowId) {
       const newId = `workflow_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`
       setSelectedWorkflowId(newId)
-      console.log('[AutoSave] Generated new workflow ID for auto-save:', newId)
+      logDebug('[AutoSave] Generated new workflow ID for auto-save:', newId)
       // Also set a default name if empty
       if (!workflowName.trim()) {
         setWorkflowName("Untitled Workflow")
@@ -265,7 +270,7 @@ export function VisualWorkflowDesigner({
             : `${process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'}/api/workflows/${selectedWorkflowId}`
           const method = isNewWorkflow ? 'POST' : 'PUT'
           
-          console.log(`[AutoSave] ${isNewWorkflow ? 'Creating' : 'Updating'} workflow:`, selectedWorkflowId)
+          logDebug(`[AutoSave] ${isNewWorkflow ? 'Creating' : 'Updating'} workflow:`, selectedWorkflowId)
           
           const response = await fetch(url, {
             method,
@@ -278,7 +283,7 @@ export function VisualWorkflowDesigner({
           
           if (response.ok) {
             const data = await response.json()
-            console.log('[AutoSave] Workflow saved successfully')
+            logDebug('[AutoSave] Workflow saved successfully')
             setAutoSaveStatus('saved')
             setHasUnsavedChanges(false)
             setIsWorkflowSavedToBackend(true) // Mark as saved to backend
@@ -296,7 +301,7 @@ export function VisualWorkflowDesigner({
           }
         } else if (!token && selectedWorkflowId) {
           // Not authenticated - save to localStorage
-          console.log('[AutoSave] User not authenticated, saving to localStorage')
+          logDebug('[AutoSave] User not authenticated, saving to localStorage')
           const saved = localStorage.getItem('custom-workflows')
           const existing = saved ? JSON.parse(saved) : []
           const index = existing.findIndex((w: any) => w.id === selectedWorkflowId)
@@ -359,7 +364,7 @@ export function VisualWorkflowDesigner({
   const { subscribe, unsubscribe, emit } = useEventHub()
   
   // Helper function to generate workflow text from current refs
-  // NEW: Supports parallel branches with sub-lettered steps (2a, 2b, etc.)
+  // Supports parallel branches with sub-lettered steps (2a, 2b, etc.)
   const generateWorkflowTextFromRefs = (): string => {
     const steps = workflowStepsRef.current
     const conns = connectionsRef.current
@@ -476,11 +481,17 @@ export function VisualWorkflowDesigner({
       })
 
       // Assign sequential numbers, skipping branch targets
+      // Parallel steps (same stepNumber from BFS) share the same seqNum
       let seqNum = 0
+      let lastOrigStepNum = -1
       const stepNumMap = new Map<string, number>()
       entries.forEach(entry => {
         if (branchTargetIds.has(entry.step.id)) return
-        seqNum++
+        // Only increment for a new step group (not for parallel siblings)
+        if (entry.stepNumber !== lastOrigStepNum) {
+          seqNum++
+          lastOrigStepNum = entry.stepNumber
+        }
         stepNumMap.set(entry.step.id, seqNum)
         // Also assign numbers to branch targets of this eval step
         if (entry.step.agentName.toUpperCase() === EVALUATE_AGENT_NAME) {
@@ -579,7 +590,7 @@ export function VisualWorkflowDesigner({
     })
     
     if (allStepsCompleted) {
-      console.log("[WorkflowTest] 🎉 All steps completed!")
+      logDebug("[WorkflowTest] 🎉 All steps completed!")
       
       // NOTE: Don't update URL here - the chat panel is already showing everything live
       // URL updates cause the chat panel to reload, which creates a jarring "refresh" effect
@@ -588,7 +599,7 @@ export function VisualWorkflowDesigner({
       // Mark workflow as no longer testing, but KEEP the visual data (statuses, messages, tokens, duration)
       // so the user can see the completed workflow results. Data is only cleared when starting a new test.
       const timeoutId = setTimeout(() => {
-        console.log("[WorkflowTest] ✅ Workflow complete - keeping visual data for review")
+        logDebug("[WorkflowTest] ✅ Workflow complete - keeping visual data for review")
         setIsTesting(false)
         // Don't clear stepStatuses, hostMessages, etc. - keep them visible!
         // They will be cleared when the user starts a new test
@@ -1034,11 +1045,11 @@ export function VisualWorkflowDesigner({
         messageText = data.content
       }
       
-      console.log(`[VD handleMessage] agentName="${agentName}", messageText="${messageText?.substring(0, 50)}..."`)
-      
+      logDebug(`[VD handleMessage] agentName="${agentName}", messageText="${messageText?.substring(0, 50)}..."`)
+
       // Check if this is a foundry-host-agent orchestration message
       if (agentName.toLowerCase().includes('host') || agentName.toLowerCase().includes('foundry-host-agent')) {
-        console.log(`[VD] 📤 HOST MESSAGE: "${messageText?.substring(0, 100)}"`)
+        logDebug(`[VD] 📤 HOST MESSAGE: "${messageText?.substring(0, 100)}"`)
         // Display in sidebar
         if (messageText) {
           setHostMessages(prev => {
@@ -1049,7 +1060,7 @@ export function VisualWorkflowDesigner({
               agentColor: "#6366f1",
               isHost: true
             }]
-            console.log(`[VD] Host messages count: ${newMessages.length}`)
+            logDebug(`[VD] Host messages count: ${newMessages.length}`)
             return newMessages
           })
         }
@@ -1101,11 +1112,11 @@ export function VisualWorkflowDesigner({
       const { agentName, content } = data
       if (!agentName || !content) return
       
-      console.log(`[VD handleRemoteAgentActivity] agentName="${agentName}", content="${content?.substring(0, 50)}..."`)
-      
+      logDebug(`[VD handleRemoteAgentActivity] agentName="${agentName}", content="${content?.substring(0, 50)}..."`)
+
       // Check if this is a foundry-host-agent orchestration message
       if (agentName.toLowerCase().includes('host') || agentName.toLowerCase().includes('foundry-host-agent')) {
-        console.log(`[VD] 📤 HOST ACTIVITY: "${content?.substring(0, 100)}"`)
+        logDebug(`[VD] 📤 HOST ACTIVITY: "${content?.substring(0, 100)}"`)
         // Display in sidebar
         setHostMessages(prev => {
           const newMessages = [...prev, {
@@ -1115,7 +1126,7 @@ export function VisualWorkflowDesigner({
             agentColor: "#6366f1",
             isHost: true
           }]
-          console.log(`[VD] Host messages count: ${newMessages.length}`)
+          logDebug(`[VD] Host messages count: ${newMessages.length}`)
           return newMessages
         })
         return
@@ -1224,7 +1235,7 @@ export function VisualWorkflowDesigner({
     // Host agent token usage
     const handleHostTokenUsage = (data: any) => {
       if (data.tokenUsage) {
-        console.log("[VD] Host token usage received:", data.tokenUsage)
+        logDebug("[VD] Host token usage received:", data.tokenUsage)
         setHostTokenUsage(data.tokenUsage)
       }
     }
@@ -1283,7 +1294,7 @@ export function VisualWorkflowDesigner({
       setWorkflowGoal("Complete the workflow tasks efficiently and accurately")
       setIsWorkflowSavedToBackend(false)
       isInitialLoadRef.current = false // Enable auto-save immediately
-      console.log('[VisualWorkflowDesigner] Auto-created workflow on first agent drop:', newId)
+      logDebug('[VisualWorkflowDesigner] Auto-created workflow on first agent drop:', newId)
     }
     
     const canvas = canvasRef.current
@@ -1310,7 +1321,7 @@ export function VisualWorkflowDesigner({
       agentName: draggedAgent.name,
       agentColor: getAgentHexColor(draggedAgent.name, (draggedAgent as any).color),
       agentIconUrl: (draggedAgent as any).iconUrl || (draggedAgent as any).avatar,
-      description: draggedAgent.name === EVALUATE_AGENT_NAME ? "Is the condition met?" : `Use the ${draggedAgent.name}`,
+      description: draggedAgent.name === EVALUATE_AGENT_NAME ? "Is the condition met?" : draggedAgent.name === QUERY_AGENT_NAME ? "Analyze the results" : draggedAgent.name === WEB_SEARCH_AGENT_NAME ? "Search the web for..." : `Use the ${draggedAgent.name}`,
       x,
       y,
       order
@@ -1398,7 +1409,7 @@ export function VisualWorkflowDesigner({
     const freshConversationId = currentUrl.searchParams.get('conversationId')
     const newConversationId = freshConversationId || activeConversationId || `conv-${Date.now()}`
     setWorkflowConversationId(newConversationId)
-    console.log("[WorkflowTest] Using conversation ID:", newConversationId, freshConversationId ? "(from URL)" : activeConversationId ? "(from prop)" : "(new)")
+    logDebug("[WorkflowTest] Using conversation ID:", newConversationId, freshConversationId ? "(from URL)" : activeConversationId ? "(from prop)" : "(new)")
     
     setIsTesting(true)
     setTestMessages([{ role: "user", content: testInput }])
@@ -1407,7 +1418,7 @@ export function VisualWorkflowDesigner({
     agentStepIndexRef.current = new Map()  // Reset agent step counters
     setHostTokenUsage(null)  // Reset host tokens for new workflow
     
-    console.log("[WorkflowTest] 🚀 Starting test with workflow:", currentWorkflowText)
+    logDebug("[WorkflowTest] 🚀 Starting test with workflow:", currentWorkflowText)
     
     try {
       const baseUrl = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
@@ -1423,7 +1434,7 @@ export function VisualWorkflowDesigner({
         }
       ]
       
-      console.log('[WorkflowTest] Sending message:', {
+      logDebug('[WorkflowTest] Sending message:', {
         messageId,
         contextId: createContextId(newConversationId),
         workflow: currentWorkflowText.substring(0, 100) + '...',
@@ -1448,7 +1459,7 @@ export function VisualWorkflowDesigner({
         })
       })
       
-      console.log('[WorkflowTest] Response status:', response.status)
+      logDebug('[WorkflowTest] Response status:', response.status)
       
       if (!response.ok) {
         const errorText = await response.text()
@@ -1459,7 +1470,7 @@ export function VisualWorkflowDesigner({
       }
       
       // Successfully sent - response will come through WebSocket events
-      console.log('[WorkflowTest] Message sent successfully, waiting for events...')
+      logDebug('[WorkflowTest] Message sent successfully, waiting for events...')
       
       // Emit message_sent event so chat panel can show the user message
       emit("message_sent", {
@@ -1478,7 +1489,7 @@ export function VisualWorkflowDesigner({
         clearTimeout(testTimeoutRef.current)
       }
       testTimeoutRef.current = setTimeout(() => {
-        console.log('[WorkflowTest] Test timeout reached (10 minutes), stopping...')
+        logDebug('[WorkflowTest] Test timeout reached (10 minutes), stopping...')
         setIsTesting(false)
       }, 600000) // 600 seconds (10 minutes) - allows for multi-step workflows with retries and fallbacks
       
@@ -1511,7 +1522,7 @@ export function VisualWorkflowDesigner({
   // Handle response submission when an agent is waiting for input
   const handleWaitingResponse = async () => {
     if (!waitingResponse.trim() || !waitingStepId || !workflowConversationId) {
-      console.log("[WorkflowTest] ❌ Cannot send response - missing:", {
+      logDebug("[WorkflowTest] ❌ Cannot send response - missing:", {
         hasResponse: !!waitingResponse.trim(),
         hasStepId: !!waitingStepId,
         hasConversationId: !!workflowConversationId
@@ -1520,7 +1531,7 @@ export function VisualWorkflowDesigner({
     }
     
     const waitingStep = workflowSteps.find(s => s.id === waitingStepId)
-    console.log("[WorkflowTest] 📨 Sending response to waiting agent:", waitingStep?.agentName, "conversationId:", workflowConversationId)
+    logDebug("[WorkflowTest] 📨 Sending response to waiting agent:", waitingStep?.agentName, "conversationId:", workflowConversationId)
     
     // Add user message to test messages
     setTestMessages(prev => [...prev, { role: "user", content: waitingResponse }])
@@ -1565,7 +1576,7 @@ export function VisualWorkflowDesigner({
         { root: { kind: 'text', text: responseToSend } }
       ]
       
-      console.log('[WorkflowTest] Sending reply:', {
+      logDebug('[WorkflowTest] Sending reply:', {
         messageId,
         contextId: createContextId(workflowConversationId),
         workflow: generatedWorkflowText?.substring(0, 100) + '...'
@@ -1591,7 +1602,7 @@ export function VisualWorkflowDesigner({
         const errorText = await response.text()
         console.error("[WorkflowTest] ❌ API error:", response.status, response.statusText, errorText)
       } else {
-        console.log("[WorkflowTest] ✅ Response sent successfully")
+        logDebug("[WorkflowTest] ✅ Response sent successfully")
         
         // Emit message_sent event so chat panel can show the user message
         emit("message_sent", {
@@ -1643,7 +1654,7 @@ export function VisualWorkflowDesigner({
           const data = await response.json()
           if (data.workflow) {
             workflowData = data.workflow
-            console.log('[VisualWorkflowDesigner] Fetched fresh workflow data with', workflowData.steps?.length || 0, 'steps')
+            logDebug('[VisualWorkflowDesigner] Fetched fresh workflow data with', workflowData.steps?.length || 0, 'steps')
           }
         }
       }
@@ -1681,7 +1692,7 @@ export function VisualWorkflowDesigner({
     setTimeout(() => {
       // Guard against empty/undefined steps
       if (!workflowData.steps || workflowData.steps.length === 0) {
-        console.log('[VisualWorkflowDesigner] No steps in workflow, keeping canvas empty')
+        logDebug('[VisualWorkflowDesigner] No steps in workflow, keeping canvas empty')
         return
       }
       
@@ -1847,7 +1858,7 @@ export function VisualWorkflowDesigner({
       }))
     }
 
-    console.log('[VisualWorkflowDesigner] Quick save - workflow data:', {
+    logDebug('[VisualWorkflowDesigner] Quick save - workflow data:', {
       name: workflowData.name,
       goal: workflowData.goal,
       selectedWorkflowId
@@ -1868,7 +1879,7 @@ export function VisualWorkflowDesigner({
         })
         
         if (response.ok) {
-          console.log('[VisualWorkflowDesigner] Workflow updated successfully')
+          logDebug('[VisualWorkflowDesigner] Workflow updated successfully')
           setIsWorkflowSavedToBackend(true)
         } else {
           console.error('[VisualWorkflowDesigner] Failed to update workflow')
@@ -1891,7 +1902,7 @@ export function VisualWorkflowDesigner({
           const data = await response.json()
           setSelectedWorkflowId(data.workflow?.id || newId)
           setIsWorkflowSavedToBackend(true)
-          console.log('[VisualWorkflowDesigner] New workflow created:', data.workflow?.id || newId)
+          logDebug('[VisualWorkflowDesigner] New workflow created:', data.workflow?.id || newId)
         } else {
           console.error('[VisualWorkflowDesigner] Failed to create workflow')
           alert("Failed to save workflow. Please try again.")
@@ -1913,7 +1924,7 @@ export function VisualWorkflowDesigner({
           setSelectedWorkflowId(newId)
         }
         localStorage.setItem('customWorkflows', JSON.stringify(customWorkflows))
-        console.log('[VisualWorkflowDesigner] Workflow saved to localStorage')
+        logDebug('[VisualWorkflowDesigner] Workflow saved to localStorage')
       }
       
       // Clear unsaved changes flag after successful save
@@ -1944,7 +1955,7 @@ export function VisualWorkflowDesigner({
     
     // Use existing workflow ID if editing, otherwise generate new one
     const workflowId = selectedWorkflowId || `custom-${Date.now()}`
-    console.log('[VisualWorkflowDesigner] Saving workflow with ID:', workflowId, 'isUpdate:', !!selectedWorkflowId)
+    logDebug('[VisualWorkflowDesigner] Saving workflow with ID:', workflowId, 'isUpdate:', !!selectedWorkflowId)
     
     const customWorkflow = {
       id: workflowId,
@@ -1980,7 +1991,7 @@ export function VisualWorkflowDesigner({
         
         // If we have a selectedWorkflowId, UPDATE existing workflow, otherwise CREATE new one
         if (selectedWorkflowId) {
-          console.log('[VisualWorkflowDesigner] Updating existing workflow:', selectedWorkflowId)
+          logDebug('[VisualWorkflowDesigner] Updating existing workflow:', selectedWorkflowId)
           savedWorkflow = await updateWorkflow(selectedWorkflowId, {
             name: customWorkflow.name,
             description: customWorkflow.description,
@@ -1990,7 +2001,7 @@ export function VisualWorkflowDesigner({
             connections: customWorkflow.connections
           })
         } else {
-          console.log('[VisualWorkflowDesigner] Creating new workflow')
+          logDebug('[VisualWorkflowDesigner] Creating new workflow')
           savedWorkflow = await createWorkflow({
             id: customWorkflow.id,
             name: customWorkflow.name,
@@ -2007,7 +2018,7 @@ export function VisualWorkflowDesigner({
         }
         
         if (savedWorkflow) {
-          console.log('[VisualWorkflowDesigner] Workflow saved to backend:', savedWorkflow.id)
+          logDebug('[VisualWorkflowDesigner] Workflow saved to backend:', savedWorkflow.id)
           savedToBackend = true
           setIsWorkflowSavedToBackend(true) // Mark workflow as saved to backend
         } else {
@@ -2017,7 +2028,7 @@ export function VisualWorkflowDesigner({
         }
       } else {
         // Not authenticated - save to localStorage only
-        console.log('[VisualWorkflowDesigner] User not authenticated, saving to localStorage')
+        logDebug('[VisualWorkflowDesigner] User not authenticated, saving to localStorage')
         const saved = localStorage.getItem('custom-workflows')
         const existing = saved ? JSON.parse(saved) : []
         existing.push(customWorkflow)
@@ -2039,7 +2050,7 @@ export function VisualWorkflowDesigner({
     const currentWorkflowText = generateWorkflowTextFromRefs()
     if (currentWorkflowText) {
       onWorkflowGeneratedRef.current(currentWorkflowText)
-      console.log('[VisualWorkflowDesigner] Updated parent with workflow text:', currentWorkflowText)
+      logDebug('[VisualWorkflowDesigner] Updated parent with workflow text:', currentWorkflowText)
     }
     
     // Close dialog but keep the workflow name displayed
@@ -2304,6 +2315,8 @@ export function VisualWorkflowDesigner({
         const icy = iconY + iconSize/2
 
         const isEvalStep = step.agentName.toUpperCase() === EVALUATE_AGENT_NAME
+        const isQueryStep = step.agentName.toUpperCase() === QUERY_AGENT_NAME
+        const isWebSearchStep = step.agentName.toUpperCase() === WEB_SEARCH_AGENT_NAME
 
         if (isEvalStep) {
           // Diamond icon for evaluation steps
@@ -2321,6 +2334,30 @@ export function VisualWorkflowDesigner({
           ctx.textAlign = "center"
           ctx.textBaseline = "middle"
           ctx.fillText("?", icx, icy + 1)
+        } else if (isQueryStep) {
+          // Circle icon for query steps
+          ctx.fillStyle = QUERY_COLOR
+          ctx.beginPath()
+          ctx.arc(icx, icy, 12, 0, Math.PI * 2)
+          ctx.fill()
+          // "Q" inside circle
+          ctx.fillStyle = "#ffffff"
+          ctx.font = "bold 12px -apple-system, system-ui, sans-serif"
+          ctx.textAlign = "center"
+          ctx.textBaseline = "middle"
+          ctx.fillText("Q", icx, icy + 1)
+        } else if (isWebSearchStep) {
+          // Circle icon for web search steps
+          ctx.fillStyle = WEB_SEARCH_COLOR
+          ctx.beginPath()
+          ctx.arc(icx, icy, 12, 0, Math.PI * 2)
+          ctx.fill()
+          // "W" inside circle
+          ctx.fillStyle = "#ffffff"
+          ctx.font = "bold 12px -apple-system, system-ui, sans-serif"
+          ctx.textAlign = "center"
+          ctx.textBaseline = "middle"
+          ctx.fillText("W", icx, icy + 1)
         } else {
           // Bot icon for agent steps
           ctx.fillStyle = step.agentColor
@@ -3446,6 +3483,36 @@ export function VisualWorkflowDesigner({
                 <div className="text-xs text-slate-400 mt-1">True/false condition branching</div>
               </div>
 
+              {/* Query step - always available */}
+              <div
+                draggable
+                onDragStart={() => setDraggedAgent({ name: QUERY_AGENT_NAME, description: "Query/analyze data with structured JSON output", color: QUERY_COLOR })}
+                onDragEnd={() => setDraggedAgent(null)}
+                className="p-3 bg-slate-800 rounded border border-slate-700 hover:border-slate-600 cursor-move transition-colors"
+                style={{
+                  borderLeftColor: QUERY_COLOR,
+                  borderLeftWidth: '3px'
+                }}
+              >
+                <div className="text-sm font-medium text-purple-300">Query</div>
+                <div className="text-xs text-slate-400 mt-1">Structured JSON analysis</div>
+              </div>
+
+              {/* Web Search step - always available */}
+              <div
+                draggable
+                onDragStart={() => setDraggedAgent({ name: WEB_SEARCH_AGENT_NAME, description: "Search the web for real-time information", color: WEB_SEARCH_COLOR })}
+                onDragEnd={() => setDraggedAgent(null)}
+                className="p-3 bg-slate-800 rounded border border-slate-700 hover:border-slate-600 cursor-move transition-colors"
+                style={{
+                  borderLeftColor: WEB_SEARCH_COLOR,
+                  borderLeftWidth: '3px'
+                }}
+              >
+                <div className="text-sm font-medium text-sky-300">Web Search</div>
+                <div className="text-xs text-slate-400 mt-1">Live web data via Bing</div>
+              </div>
+
               {registeredAgents.length === 0 ? (
                 <p className="text-xs text-slate-500">No agents registered</p>
               ) : (
@@ -4038,7 +4105,7 @@ export function VisualWorkflowDesigner({
                       category: workflow.category,
                       goal: workflow.goal || "",
                       steps: workflow.steps || [],
-                      connections: workflow.connections || []
+                      connections: workflow.connections || [],
                     })
                   } : undefined}
                   onDeactivateWorkflow={onDeactivateWorkflow}

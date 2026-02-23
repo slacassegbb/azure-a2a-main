@@ -60,7 +60,7 @@ class AgentRegistry:
         self.remote_agent_connections.clear()
         self.agents = ''
         
-        print(f"🔷 [SET_SESSION_AGENTS] Received {len(session_agents)} agents to register")
+        log_debug(f"[SET_SESSION_AGENTS] Received {len(session_agents)} agents to register")
         
         # Track successful and failed registrations
         successful_agents = []
@@ -70,7 +70,7 @@ class AgentRegistry:
         for agent_data in session_agents:
             agent_url = agent_data.get('url')
             agent_name = agent_data.get('name', 'Unknown')
-            print(f"🔷 [SET_SESSION_AGENTS]   - Registering: {agent_name} @ {agent_url}")
+            log_debug(f"[SET_SESSION_AGENTS]   - Registering: {agent_name} @ {agent_url}")
             
             if not agent_url:
                 failed_agents.append(f"{agent_name} (no URL)")
@@ -86,25 +86,23 @@ class AgentRegistry:
                     log_debug(f"Session agent registered (from cache): {agent_name}")
                 else:
                     # Fallback: Fetch card via HTTP (only if data is incomplete)
-                    print(f"🔷 [SET_SESSION_AGENTS]   ⚠️ Incomplete data for {agent_name}, fetching via HTTP...")
+                    log_debug(f"[SET_SESSION_AGENTS] Incomplete data for {agent_name}, fetching via HTTP...")
                     await asyncio.wait_for(self.retrieve_card(agent_url), timeout=15.0)
                     successful_agents.append(agent_name)
                     log_debug(f"Session agent registered (via HTTP): {agent_name}")
                     
             except asyncio.TimeoutError:
                 failed_agents.append(f"{agent_name} (TIMEOUT)")
-                log_error(f"⚠️ TIMEOUT registering agent {agent_name} @ {agent_url}")
-                print(f"⚠️ [SET_SESSION_AGENTS] TIMEOUT: {agent_name} @ {agent_url}")
+                log_error(f"TIMEOUT registering agent {agent_name} @ {agent_url}")
             except Exception as e:
                 failed_agents.append(f"{agent_name} ({type(e).__name__})")
-                log_error(f"⚠️ Failed to register session agent {agent_url}: {e}")
-                print(f"⚠️ [SET_SESSION_AGENTS] FAILED: {agent_name} - {e}")
+                log_error(f"Failed to register session agent {agent_url}: {e}")
         
         # Log summary
-        print(f"🔷 [SET_SESSION_AGENTS] Final self.cards has {len(self.cards)} agents: {list(self.cards.keys())}")
+        log_debug(f"[SET_SESSION_AGENTS] Final self.cards has {len(self.cards)} agents: {list(self.cards.keys())}")
         if failed_agents:
-            print(f"⚠️ [SET_SESSION_AGENTS] WARNING: {len(failed_agents)} agents failed to register: {failed_agents}")
-        print(f"🔷 [SET_SESSION_AGENTS] self.agents string length: {len(self.agents)} chars")
+            log_debug(f"[SET_SESSION_AGENTS] WARNING: {len(failed_agents)} agents failed to register: {failed_agents}")
+        log_debug(f"[SET_SESSION_AGENTS] self.agents string length: {len(self.agents)} chars")
         log_debug(f"Session has {len(self.cards)} agents: {list(self.cards.keys())}")
         
         # Return summary for debugging
@@ -188,9 +186,9 @@ class AgentRegistry:
         registry_path = backend_root / "data" / "agent_registry.json"
         registry_path.parent.mkdir(parents=True, exist_ok=True)
         if registry_path.exists():
-            log_debug(f"📋 Found agent registry at: {registry_path}")
+            log_debug(f"Found agent registry at: {registry_path}")
         else:
-            log_debug(f"📋 Agent registry will be created at: {registry_path}")
+            log_debug(f"Agent registry will be created at: {registry_path}")
         return registry_path
 
     def _load_agent_registry(self) -> List[Dict[str, Any]]:
@@ -200,7 +198,7 @@ class AgentRegistry:
                 with open(self._agent_registry_path, 'r', encoding='utf-8') as f:
                     return json.load(f)
             else:
-                log_debug(f"📋 Agent registry file not found at {self._agent_registry_path}, returning empty list")
+                log_debug(f"Agent registry file not found at {self._agent_registry_path}, returning empty list")
                 return []
         except Exception as e:
             log_error(f"Error loading agent registry: {e}")
@@ -214,7 +212,7 @@ class AgentRegistry:
             
             with open(self._agent_registry_path, 'w', encoding='utf-8') as f:
                 json.dump(agents, f, indent=2, ensure_ascii=False)
-            log_debug(f"📋 Saved agent registry with {len(agents)} agents to {self._agent_registry_path}")
+            log_debug(f"Saved agent registry with {len(agents)} agents to {self._agent_registry_path}")
         except Exception as e:
             log_error(f"Error saving agent registry: {e}")
 
@@ -283,10 +281,10 @@ class AgentRegistry:
             
             if existing_index is not None:
                 registry[existing_index] = card_dict
-                log_debug(f"📋 Updated existing agent in registry: {card.name} at {card.url}")
+                log_debug(f"Updated existing agent in registry: {card.name} at {card.url}")
             else:
                 registry.append(card_dict)
-                log_debug(f"📋 Added new agent to registry: {card.name} at {card.url}")
+                log_debug(f"Added new agent to registry: {card.name} at {card.url}")
             
             self._save_agent_registry(registry)
             
@@ -313,11 +311,11 @@ class AgentRegistry:
         if hasattr(card, 'capabilities') and card.capabilities:
             streaming_flag = getattr(card.capabilities, 'streaming', None)
             if streaming_flag is True:
-                log_debug(f"🔄 [STREAMING] {card.name} supports streaming; enabling granular UI visibility")
+                log_debug(f"[STREAMING] {card.name} supports streaming; enabling granular UI visibility")
             elif streaming_flag is False:
-                log_debug(f"ℹ️ [STREAMING] {card.name} does not support streaming; using non-streaming mode")
+                log_debug(f"[STREAMING] {card.name} does not support streaming; using non-streaming mode")
             else:
-                log_debug(f"ℹ️ [STREAMING] {card.name} did not specify streaming capability; defaulting to non-streaming mode")
+                log_debug(f"[STREAMING] {card.name} did not specify streaming capability; defaulting to non-streaming mode")
                 try:
                     card.capabilities.streaming = False
                 except Exception:
@@ -325,7 +323,7 @@ class AgentRegistry:
         
         self._update_agent_registry(card)
         
-        log_debug(f"🔗 [CALLBACK] Registering {card.name} with callback: {self.task_callback.__name__ if hasattr(self.task_callback, '__name__') else type(self.task_callback)}")
+        log_debug(f"[CALLBACK] Registering {card.name} with callback: {self.task_callback.__name__ if hasattr(self.task_callback, '__name__') else type(self.task_callback)}")
         remote_connection = RemoteAgentConnections(self.httpx_client, card, self.task_callback)
         self.remote_agent_connections[card.name] = remote_connection
         self.cards[card.name] = card
@@ -340,10 +338,10 @@ class AgentRegistry:
             
             if existing_index is not None:
                 self._host_manager._agents[existing_index] = card
-                log_debug(f"🔄 Updated {card.name} in host manager agent list")
+                log_debug(f"Updated {card.name} in host manager agent list")
             else:
                 self._host_manager._agents.append(card)
-                log_debug(f"✅ Added {card.name} to host manager agent list")
+                log_debug(f"Added {card.name} to host manager agent list")
         
         # Emit registration event (inherited from EventEmitters mixin)
         self._emit_agent_registration_event(card)
@@ -379,9 +377,9 @@ class AgentRegistry:
         
         # Log what agents are being returned (helps debug delegation issues)
         if agents:
-            print(f"🔶 [LIST_REMOTE_AGENTS] Returning {len(agents)} agents: {[a['name'] for a in agents]}")
+            log_debug(f"[LIST_REMOTE_AGENTS] Returning {len(agents)} agents: {[a['name'] for a in agents]}")
         else:
-            print(f"🔶 [LIST_REMOTE_AGENTS] Returning EMPTY list - no agents available for this session!")
+            log_debug(f"[LIST_REMOTE_AGENTS] Returning EMPTY list - no agents available for this session!")
         
         return agents
 
@@ -392,18 +390,18 @@ class AgentRegistry:
         The underlying list_remote_agents() method is synchronous, so this wrapper
         can also be synchronous. AsyncFunctionTool will handle it appropriately.
         """
-        log_debug("🔧 [TOOL] list_remote_agents_sync called by SDK!")
+        log_debug("[TOOL] list_remote_agents_sync called by SDK!")
         result = self.list_remote_agents()
         
         # If no agents are registered, return a helpful message instead of empty list
         # This prevents Azure AI Agents API from choking on empty responses
         if not result or len(result) == 0:
-            log_debug("🔧 [TOOL] list_remote_agents_sync returning: [] (no agents registered)")
+            log_debug("[TOOL] list_remote_agents_sync returning: [] (no agents registered)")
             return [{
                 "name": "No Agents Available",
                 "description": "No specialized remote agents are currently registered. The host agent can still respond to general queries.",
                 "status": "info"
             }]
         
-        log_debug(f"🔧 [TOOL] list_remote_agents_sync returning: {result}")
+        log_debug(f"[TOOL] list_remote_agents_sync returning: {result}")
         return result

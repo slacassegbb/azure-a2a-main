@@ -2023,7 +2023,7 @@ Always validate the prompt for safety before invoking the tool.
         session_id = None
         if context_id and '::' in context_id:
             session_id = context_id.split('::')[0]
-        
+
         # Use unified path if session_id available, else fallback to agent-specific path
         if session_id:
             blob_name = f"uploads/{session_id}/{file_id}/{file_path.name}"

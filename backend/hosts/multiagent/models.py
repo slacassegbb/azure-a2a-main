@@ -77,6 +77,16 @@ class EvaluationResult(BaseModel):
     reasoning: str = Field(..., description="Brief explanation of why the condition evaluated to this result.")
 
 
+class QueryResult(BaseModel):
+    """Result of a host-orchestrator query step (structured JSON analysis)."""
+    ok: bool = Field(..., description="Whether the query succeeded based on available context.")
+    task: str = Field(..., description="Short label for what was queried (e.g., 'pick_best_image', 'filter_invoices').")
+    result: str = Field(..., description='The query result as a JSON string (e.g., \'{"best_image_id": "img2.png"}\').')
+    confidence: float = Field(..., description="Confidence score 0.0-1.0.", ge=0.0, le=1.0)
+    notes: str = Field("", description="Optional explanation or caveats.")
+    refs: str = Field("", description='Optional JSON string with references to inputs/candidates used (e.g., \'{"candidates": ["a","b"]}\').')
+
+
 class NextStep(BaseModel):
     """Orchestrator decision for the next action in a multi-agent workflow."""
     goal_status: GoalStatus = Field(..., description="Whether the goal is completed or not.")

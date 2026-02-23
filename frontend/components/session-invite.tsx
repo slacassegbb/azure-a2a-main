@@ -15,6 +15,7 @@ import { User, UserPlus, Check, X, Loader2 } from "lucide-react"
 import { useEventHub } from "@/hooks/use-event-hub"
 import { useToast } from "@/hooks/use-toast"
 import { getOrCreateSessionId, joinCollaborativeSession } from "@/lib/session"
+import { logDebug, warnDebug, errorDebug, logInfo } from '@/lib/debug'
 
 type OnlineUser = {
   user_id: string
@@ -40,7 +41,7 @@ export function SessionInviteButton() {
 
   // Handle receiving online users list
   const handleOnlineUsers = useCallback((eventData: any) => {
-    console.log("[SessionInvite] Received online users:", eventData)
+    logDebug("[SessionInvite] Received online users:", eventData)
     if (eventData.users) {
       setOnlineUsers(eventData.users)
     }
@@ -49,7 +50,7 @@ export function SessionInviteButton() {
 
   // Handle invitation sent confirmation
   const handleInviteSent = useCallback((eventData: any) => {
-    console.log("[SessionInvite] Invitation sent:", eventData)
+    logDebug("[SessionInvite] Invitation sent:", eventData)
     setInvitingUserId(null)
     toast({
       title: "Invitation Sent",
@@ -59,7 +60,7 @@ export function SessionInviteButton() {
 
   // Handle invitation error
   const handleInviteError = useCallback((eventData: any) => {
-    console.log("[SessionInvite] Invitation error:", eventData)
+    logDebug("[SessionInvite] Invitation error:", eventData)
     setInvitingUserId(null)
     toast({
       title: "Error",
@@ -70,7 +71,7 @@ export function SessionInviteButton() {
 
   // Handle invitation response
   const handleInviteResponse = useCallback((eventData: any) => {
-    console.log("[SessionInvite] Invitation response:", eventData)
+    logDebug("[SessionInvite] Invitation response:", eventData)
     setInvitingUserId(null)  // Stop the spinner
     setIsOpen(false)  // Close the dialog
     if (eventData.accepted) {
@@ -78,7 +79,7 @@ export function SessionInviteButton() {
       // Set the sessionStorage so isInCollaborativeSession becomes true
       const mySessionId = getOrCreateSessionId()
       sessionStorage.setItem('a2a_collaborative_session', mySessionId)
-      console.log("[SessionInvite] Set collaborative session for owner:", mySessionId)
+      logDebug("[SessionInvite] Set collaborative session for owner:", mySessionId)
       toast({
         title: "Invitation Accepted!",
         description: `${eventData.from_username} has joined your session`,
@@ -116,10 +117,10 @@ export function SessionInviteButton() {
       
       if (!success && attempts < 5) {
         // WebSocket not ready, retry after a delay
-        console.log(`[SessionInvite] Send failed, retrying in ${(attempts + 1) * 500}ms...`)
+        logDebug(`[SessionInvite] Send failed, retrying in ${(attempts + 1) * 500}ms...`)
         setTimeout(() => trySend(attempts + 1), (attempts + 1) * 500)
       } else if (!success) {
-        console.log("[SessionInvite] Failed to send after 5 attempts")
+        logDebug("[SessionInvite] Failed to send after 5 attempts")
         setLoading(false)
         setOnlineUsers([])
       }
@@ -131,7 +132,7 @@ export function SessionInviteButton() {
   const sendInvitation = (user: OnlineUser) => {
     // Get session ID using the session management module
     const sessionId = getOrCreateSessionId()
-    console.log("[SessionInvite] Sending invitation to", user.username, "for session:", sessionId)
+    logDebug("[SessionInvite] Sending invitation to", user.username, "for session:", sessionId)
 
     if (!sessionId) {
       toast({
@@ -150,7 +151,7 @@ export function SessionInviteButton() {
       session_id: sessionId
     })
     
-    console.log("[SessionInvite] sendMessage result:", success)
+    logDebug("[SessionInvite] sendMessage result:", success)
     
     if (!success) {
       setInvitingUserId(null)
@@ -244,7 +245,7 @@ export function SessionInvitationNotification() {
 
   // Handle receiving an invitation
   const handleInviteReceived = useCallback((eventData: any) => {
-    console.log("[SessionInvite] Received invitation:", eventData)
+    logDebug("[SessionInvite] Received invitation:", eventData)
     setPendingInvitations(prev => [...prev, {
       invitation_id: eventData.invitation_id,
       from_user_id: eventData.from_user_id,
@@ -270,13 +271,13 @@ export function SessionInvitationNotification() {
 
   // Handle session members updated - this confirms the backend processed our acceptance
   const handleMembersUpdated = useCallback((eventData: any) => {
-    console.log("[SessionInvite] Session members updated:", eventData)
+    logDebug("[SessionInvite] Session members updated:", eventData)
     // Check if this is confirmation for our pending join
     if (pendingJoin && eventData.session_id === pendingJoin.sessionId) {
-      console.log("[SessionInvite] Backend confirmed membership, now joining session:", pendingJoin.sessionId)
+      logDebug("[SessionInvite] Backend confirmed membership, now joining session:", pendingJoin.sessionId)
       // Get the current conversation from the event data for auto-navigation
       const currentConversation = eventData.current_conversation_id
-      console.log("[SessionInvite] Current conversation for auto-navigation:", currentConversation)
+      logDebug("[SessionInvite] Current conversation for auto-navigation:", currentConversation)
       // Backend has confirmed we're added - now safe to reload
       joinCollaborativeSession(pendingJoin.sessionId, currentConversation)
     }
@@ -314,7 +315,7 @@ export function SessionInvitationNotification() {
       
       // Set pending join - we'll actually join when we receive session_members_updated
       // This ensures the backend has processed our acceptance before we reload
-      console.log("[SessionInvite] Waiting for backend confirmation before joining:", invitation.session_id)
+      logDebug("[SessionInvite] Waiting for backend confirmation before joining:", invitation.session_id)
       setPendingJoin({
         sessionId: invitation.session_id,
         invitationId: invitation.invitation_id
@@ -323,7 +324,7 @@ export function SessionInvitationNotification() {
       // Fallback: If we don't get confirmation within 3 seconds, join anyway
       // This handles edge cases like network issues with the confirmation event
       setTimeout(() => {
-        console.log("[SessionInvite] Fallback: joining after timeout for session:", invitation.session_id)
+        logDebug("[SessionInvite] Fallback: joining after timeout for session:", invitation.session_id)
         joinCollaborativeSession(invitation.session_id)
       }, 3000)
     }

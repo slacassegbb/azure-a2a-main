@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from typing import Optional, Dict, Any, List
 
 import jwt
+from log_config import log_debug, log_info, log_warning, log_error
 
 # Authentication constants
 SECRET_KEY = os.environ.get("SECRET_KEY", "change-me")
@@ -62,14 +63,14 @@ class AuthService:
                 import psycopg2
                 self.db_conn = psycopg2.connect(self.database_url)
                 self.use_database = True
-                print(f"[AuthService] ✅ Using PostgreSQL database for user storage")
+                log_info("[AuthService] Using PostgreSQL database for user storage")
             except ImportError:
-                print(f"[AuthService] ⚠️  psycopg2 not installed, falling back to JSON storage")
+                log_warning("[AuthService] psycopg2 not installed, falling back to JSON storage")
             except Exception as e:
-                print(f"[AuthService] ⚠️  Database connection failed: {e}, falling back to JSON storage")
+                log_warning(f"[AuthService] Database connection failed: {e}, falling back to JSON storage")
         
         if not self.use_database:
-            print(f"[AuthService] 📁 Using JSON file storage: {self.users_file}")
+            log_info(f"[AuthService] Using JSON file storage: {self.users_file}")
             # Ensure data directory exists
             self.users_file.parent.mkdir(parents=True, exist_ok=True)
             # Load users from JSON file
@@ -109,9 +110,9 @@ class AuthService:
                 self.users[user.email] = user
             
             cursor.close()
-            print(f"[AuthService] Loaded {len(self.users)} users from PostgreSQL database")
+            log_debug(f"[AuthService] Loaded {len(self.users)} users from PostgreSQL database")
         except Exception as e:
-            print(f"[AuthService] Error loading users from database: {e}")
+            log_error(f"[AuthService] Error loading users from database: {e}")
             raise
     
     def _load_users_from_file(self):
@@ -133,15 +134,15 @@ class AuthService:
                         last_login=datetime.fromisoformat(user_data['last_login'].replace('Z', '+00:00')) if user_data.get('last_login') else None
                     )
                     self.users[user.email] = user
-            print(f"[AuthService] Loaded {len(self.users)} users from {self.users_file}")
+            log_debug(f"[AuthService] Loaded {len(self.users)} users from {self.users_file}")
         except FileNotFoundError:
-            print(f"[AuthService] Users file {self.users_file} not found, creating with default users")
+            log_info(f"[AuthService] Users file {self.users_file} not found, creating with default users")
             self._create_default_users_file()
         except json.JSONDecodeError as e:
-            print(f"[AuthService] Error parsing {self.users_file}: {e}")
+            log_warning(f"[AuthService] Error parsing {self.users_file}: {e}")
             self._create_default_users_file()
         except Exception as e:
-            print(f"[AuthService] Error loading users: {e}")
+            log_error(f"[AuthService] Error loading users: {e}")
             self._create_default_users_file()
     
     def _create_default_users_file(self):
@@ -186,7 +187,7 @@ class AuthService:
         # Save to file
         with open(self.users_file, 'w') as f:
             json.dump(users_data, f, indent=2)
-        print(f"[AuthService] Created {self.users_file} with {len(default_users)} default users")
+        log_info(f"[AuthService] Created {self.users_file} with {len(default_users)} default users")
     
     def _save_users_to_file(self):
         """Save current users to JSON file."""
@@ -290,7 +291,7 @@ class AuthService:
             self.db_conn.commit()
             cursor.close()
         except Exception as e:
-            print(f"[AuthService] Error saving user to database: {e}")
+            log_error(f"[AuthService] Error saving user to database: {e}")
             self.db_conn.rollback()
             raise
     
@@ -322,19 +323,15 @@ class AuthService:
         return user
     
     def create_access_token(self, user: User, expires_delta: Optional[timedelta] = None) -> str:
-        """Create a JWT access token for a user."""
-        if expires_delta:
-            expire = datetime.utcnow() + expires_delta
-        else:
-            expire = datetime.utcnow() + timedelta(hours=24)
-            
+        """Create a JWT access token for a user (no expiration by default)."""
         to_encode = {
             "sub": user.email,
             "user_id": user.user_id,
             "name": user.name,
-            "exp": expire,
             "iat": datetime.utcnow()
         }
+        if expires_delta:
+            to_encode["exp"] = datetime.utcnow() + expires_delta
         
         encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
         return encoded_jwt
@@ -342,14 +339,14 @@ class AuthService:
     def verify_token(self, token: str) -> Optional[Dict[str, Any]]:
         """Verify and decode a JWT token - reloads from database/file."""
         try:
-            print(f"[AuthService] Verifying token...")
+            log_debug("[AuthService] Verifying token...")
             payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
             email: str = payload.get("sub")
             user_id: str = payload.get("user_id")
-            print(f"[AuthService] Token decoded - email: {email}, user_id: {user_id}")
+            log_debug(f"[AuthService] Token decoded - email: {email}, user_id: {user_id}")
             
             if email is None:
-                print(f"[AuthService] Token verification failed: no email in payload")
+                log_debug("[AuthService] Token verification failed: no email in payload")
                 return None
                 
             # Reload users from database/file to get latest data
@@ -361,10 +358,10 @@ class AuthService:
             # Check if user still exists
             user = self.users.get(email)
             if user is None:
-                print(f"[AuthService] Token verification failed: user {email} not found in users database")
+                log_debug(f"[AuthService] Token verification failed: user {email} not found in users database")
                 return None
             
-            print(f"[AuthService] Token verified successfully for user: {email}")
+            log_debug(f"[AuthService] Token verified successfully for user: {email}")
             return {
                 "user_id": payload.get("user_id"),
                 "email": email,
@@ -372,10 +369,10 @@ class AuthService:
                 "exp": payload.get("exp")
             }
         except jwt.ExpiredSignatureError:
-            print(f"[AuthService] Token verification failed: TOKEN EXPIRED")
+            log_debug("[AuthService] Token verification failed: TOKEN EXPIRED")
             return None
         except jwt.JWTError as e:
-            print(f"[AuthService] Token verification failed: JWT Error - {e}")
+            log_debug(f"[AuthService] Token verification failed: JWT Error - {e}")
             return None
     
     def get_user_by_email(self, email: str) -> Optional[User]:
@@ -423,11 +420,11 @@ class AuthService:
         user_id = user_data.get("user_id")
         if user_id:
             self.active_users[user_id] = user_data
-            print(f"[AuthService] Added active user: {user_data.get('name', 'Unknown')} ({user_data.get('email', 'No email')})")
+            log_debug(f"[AuthService] Added active user: {user_data.get('name', 'Unknown')} ({user_data.get('email', 'No email')})")
     
     def remove_active_user(self, user_data: Dict[str, Any]):
         """Remove a user from the active users list (for logging purposes)."""
         user_id = user_data.get("user_id")
         if user_id and user_id in self.active_users:
             removed_user = self.active_users.pop(user_id)
-            print(f"[AuthService] Removed active user: {removed_user.get('name', 'Unknown')} ({removed_user.get('email', 'No email')})")
+            log_debug(f"[AuthService] Removed active user: {removed_user.get('name', 'Unknown')} ({removed_user.get('email', 'No email')})")

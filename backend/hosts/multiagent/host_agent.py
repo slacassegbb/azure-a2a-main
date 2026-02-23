@@ -1,11 +1,20 @@
 import asyncio
 import base64
 import json
+import sys
 import uuid
 
 from typing import List
+from pathlib import Path
 
 import httpx
+
+# Add backend directory to path for log_config import
+backend_dir = Path(__file__).resolve().parent.parent
+if str(backend_dir) not in sys.path:
+    sys.path.insert(0, str(backend_dir))
+
+from log_config import log_debug, log_error
 
 from a2a.client import A2ACardResolver
 from a2a.types import (
@@ -188,12 +197,12 @@ Current agent: {current_agent['active_agent']}
                 acceptedOutputModes=['text', 'text/plain', 'image/png'],
             ),
         )
-        print(f"[DEBUG] send_message called for agent: {agent_name}, message: {message}")
-        print(f"[DEBUG] tool_context.state before send: {json.dumps(tool_context.state, default=str)}")
-        print(f"[DEBUG] MessageSendParams (as dict): {json.dumps(request.model_dump(), default=str)}")
+        log_debug(f"send_message called for agent: {agent_name}, message: {message}")
+        log_debug(f"tool_context.state before send: {json.dumps(tool_context.state, default=str)}")
+        log_debug(f"MessageSendParams (as dict): {json.dumps(request.model_dump(), default=str)}")
         response = await client.send_message(request, self.task_callback)
-        print(f"[DEBUG] Raw response from remote agent: {response}")
-        print(f"[DEBUG] Response type: {type(response)}")
+        log_debug(f"Raw response from remote agent: {response}")
+        log_debug(f"Response type: {type(response)}")
         if isinstance(response, Message):
             return await convert_parts(task.parts, tool_context)
         task: Task = response
@@ -233,14 +242,14 @@ Current agent: {current_agent['active_agent']}
 
 async def convert_parts(parts: list[Part], tool_context: ToolContext):
     rval = []
-    print("[DEBUG] convert_parts: parts:", parts)
+    log_debug(f"convert_parts: parts: {parts}")
     for p in parts:
         rval.append(await convert_part(p, tool_context))
     return rval
 
 
 async def convert_part(part: Part, tool_context: ToolContext):
-    print("[DEBUG] convert_part: part:", part)
+    log_debug(f"convert_part: part: {part}")
     if part.root.kind == 'text':
         return part.root.text
     elif part.root.kind == 'data':
@@ -257,7 +266,7 @@ async def convert_part(part: Part, tool_context: ToolContext):
         )
         artifact_response = await tool_context.save_artifact(file_id, file_part)
         if isinstance(artifact_response, DataPart) and getattr(artifact_response, 'data', None):
-            print(f"[DEBUG] convert_part: received artifact response with data {artifact_response.data}")
+            log_debug(f"convert_part: received artifact response with data {artifact_response.data}")
         tool_context.actions.skip_summarization = True
         tool_context.actions.escalate = True
         if isinstance(artifact_response, DataPart):

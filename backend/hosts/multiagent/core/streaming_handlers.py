@@ -109,16 +109,14 @@ class StreamingHandlers:
         remote agent status updates to prevent duplicate events in the UI.
         """
         agent_name = agent_card.name
-        print(f"🔔 [CALLBACK] Task callback invoked from {agent_name}: {type(event).__name__}")
-        import sys
-        sys.stdout.flush()
+        log_debug(f"[CALLBACK] Task callback invoked from {agent_name}: {type(event).__name__}")
         log_debug(f"[STREAMING] Task callback from {agent_name}: {type(event).__name__}")
         
         # Keep session context task mapping in sync per agent
         try:
             context_id_cb = get_context_id(event, None)
             task_id_cb = get_task_id(event, None)
-            print(f"🔔 [CALLBACK] context_id_cb='{context_id_cb}', task_id_cb='{task_id_cb}'")
+            log_debug(f"[CALLBACK] context_id_cb='{context_id_cb}', task_id_cb='{task_id_cb}'")
             if context_id_cb and task_id_cb:
                 session_ctx = self.get_session_context(context_id_cb)
                 session_ctx.agent_task_ids[agent_name] = task_id_cb
@@ -127,22 +125,22 @@ class StreamingHandlers:
                     state_obj = getattr(getattr(event, 'status', None), 'state', None)
                     if state_obj is not None:
                         state_str = state_obj.value if hasattr(state_obj, 'value') else str(state_obj)
-                        print(f"🔔 [CALLBACK] Setting agent_task_states['{agent_name}'] = '{state_str}'")
+                        log_debug(f"[CALLBACK] Setting agent_task_states['{agent_name}'] = '{state_str}'")
                         session_ctx.agent_task_states[agent_name] = state_str
                         
                         # HUMAN-IN-THE-LOOP: Track input_required state from remote agents
                         if state_str == 'input_required' or state_str == 'input-required':
                             session_ctx.pending_input_agent = agent_name
                             session_ctx.pending_input_task_id = task_id_cb
-                            print(f"🔄 [HITL CALLBACK] Streaming callback detected input_required from '{agent_name}', context_id='{context_id_cb}'")
-                            log_info(f"🔄 [HITL] Callback detected input_required from '{agent_name}', setting pending_input_agent (task_id: {task_id_cb})")
+                            log_debug(f"[HITL CALLBACK] Streaming callback detected input_required from '{agent_name}', context_id='{context_id_cb}'")
+                            log_info(f"[HITL] Callback detected input_required from '{agent_name}', setting pending_input_agent (task_id: {task_id_cb})")
                         
                         # BUGFIX: Clear pending_input_agent when task completes or fails
                         # This prevents stale input_required flags from blocking subsequent workflow steps
                         elif state_str in ('completed', 'failed', 'canceled', 'cancelled'):
                             if session_ctx.pending_input_agent == agent_name:
-                                print(f"🧹 [HITL CALLBACK] Clearing pending_input_agent (was '{agent_name}') - task {state_str}")
-                                log_info(f"🧹 [HITL] Clearing pending_input_agent for '{agent_name}' - task {state_str}")
+                                log_debug(f"[HITL CALLBACK] Clearing pending_input_agent (was '{agent_name}') - task {state_str}")
+                                log_info(f"[HITL] Clearing pending_input_agent for '{agent_name}' - task {state_str}")
                                 session_ctx.pending_input_agent = None
                                 session_ctx.pending_input_task_id = None
         except Exception as e:
@@ -156,12 +154,12 @@ class StreamingHandlers:
         if hasattr(event, 'kind'):
             event_kind = getattr(event, 'kind', 'unknown')
             log_debug(f"[STREAMING] Event kind from {agent_name}: {event_kind}")
-            print(f"🔔 [STREAMING] Received event from {agent_name}: kind={event_kind}")
+            log_debug(f"[STREAMING] Received event from {agent_name}: kind={event_kind}")
             
             # Only emit status-update and artifact-update to UI (NOT 'task' events)
             if event_kind in ['artifact-update', 'status-update']:
                 log_debug(f"[STREAMING] Emitting via _emit_task_event for {agent_name}: {event_kind}")
-                print(f"📤 [STREAMING] Calling _emit_task_event for {agent_name}: {event_kind}")
+                log_debug(f"[STREAMING] Calling _emit_task_event for {agent_name}: {event_kind}")
                 self._emit_task_event(event, agent_card)
                 
                 # NOTE: _emit_granular_agent_event is NOT called here anymore
@@ -220,7 +218,7 @@ class StreamingHandlers:
         contextId_from_event = get_context_id(event, None)
         
         if not contextId_from_event:
-            log_debug(f"⚠️ [_emit_task_event] Event from {agent_card.name} has no contextId, using UUID fallback")
+            log_debug(f"[_emit_task_event] Event from {agent_card.name} has no contextId, using UUID fallback")
             contextId = str(uuid.uuid4())
         else:
             contextId = contextId_from_event
@@ -283,11 +281,11 @@ class StreamingHandlers:
                 
                 if conversation:
                     conversation.messages.append(status_message)
-                    log_debug(f"✅ Added status message to conversation: {status_text}")
+                    log_debug(f"Added status message to conversation: {status_text}")
                 else:
-                    log_debug(f"❌ No conversation found for context_id: {context_id}")
+                    log_debug(f"No conversation found for context_id: {context_id}")
             else:
-                log_debug(f"❌ No host manager reference available")
+                log_debug(f"No host manager reference available")
             
             # Also add to local messages list
             if hasattr(self, '_messages'):
@@ -306,7 +304,7 @@ class StreamingHandlers:
             log_debug(f"Status message created successfully: {status_text}")
             
         except Exception as e:
-            log_debug(f"❌ Error displaying task status update: {e}")
+            log_debug(f"Error displaying task status update: {e}")
             import traceback
             traceback.print_exc()
 
@@ -362,7 +360,7 @@ class StreamingHandlers:
                 return str(message.content)
             return ""
         except Exception as e:
-            log_debug(f"⚠️ Error extracting message content: {e}")
+            log_debug(f"Error extracting message content: {e}")
             return ""
 
     @staticmethod

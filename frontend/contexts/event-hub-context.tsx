@@ -9,6 +9,7 @@
 
 import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
 import type { EventCallback } from '@/lib/websocket-client';
+import { logDebug, warnDebug } from '@/lib/debug';
 
 // Import types only to avoid client/server issues
 interface WebSocketConfig {
@@ -42,7 +43,6 @@ interface EventHubContextType {
 const EventHubContext = createContext<EventHubContextType | null>(null);
 
 export function EventHubProvider({ children }: { children: React.ReactNode }) {
-  const DEBUG = process.env.NEXT_PUBLIC_DEBUG_LOGS === 'true'
   const [client, setClient] = useState<WebSocketClientInterface | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
@@ -60,7 +60,7 @@ export function EventHubProvider({ children }: { children: React.ReactNode }) {
     
     // Apply pending subscriptions when client becomes available
     if (client && pendingSubscriptionsRef.current.size > 0) {
-      console.log(`[EventHubProvider] Applying ${pendingSubscriptionsRef.current.size} pending subscription types`);
+      logDebug(`[EventHubProvider] Applying ${pendingSubscriptionsRef.current.size} pending subscription types`);
       pendingSubscriptionsRef.current.forEach((callbacks, eventName) => {
         callbacks.forEach(callback => {
           client.subscribe(eventName, callback);
@@ -74,24 +74,24 @@ export function EventHubProvider({ children }: { children: React.ReactNode }) {
     // Get configuration from environment variables
     const websocketUrl = process.env.NEXT_PUBLIC_WEBSOCKET_URL || 'ws://localhost:8080/events';
     
-    if (DEBUG) console.log("[EventHubProvider] Creating WebSocket client...");
-    
+    logDebug("[EventHubProvider] Creating WebSocket client...");
+
     // Dynamic import to ensure client-side only
     const { WebSocketClient } = await import('@/lib/websocket-client');
-    
+
     const config: WebSocketConfig = {
       url: websocketUrl,
       reconnectInterval: 3000,
       maxReconnectAttempts: 10
     };
 
-    if (DEBUG) console.log("[EventHubProvider] Creating WebSocket client with config:", config);
+    logDebug("[EventHubProvider] Creating WebSocket client with config:", config);
     return new WebSocketClient(config);
   }, []);
 
   const initializeClient = useCallback(async () => {
     if (initializationRef.current) {
-      if (DEBUG) console.log("[EventHubProvider] Initialization already in progress, skipping");
+      logDebug("[EventHubProvider] Initialization already in progress, skipping");
       return; // Already initializing or initialized
     }
 
@@ -108,14 +108,14 @@ export function EventHubProvider({ children }: { children: React.ReactNode }) {
         const success = await newClient.initialize();
         if (success) {
           setIsConnected(true);
-          if (DEBUG) console.log("[EventHubProvider] Successfully connected to WebSocket server");
+          logDebug("[EventHubProvider] Successfully connected to WebSocket server");
         } else {
           throw new Error("Failed to initialize WebSocket client");
         }
       } else {
         // Mock client - consider it "connected" for UI purposes
         setIsConnected(false); // Keep false to show it's a mock
-        if (DEBUG) console.log("[EventHubProvider] Using mock WebSocket client");
+        logDebug("[EventHubProvider] Using mock WebSocket client");
       }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Unknown error';
@@ -129,7 +129,7 @@ export function EventHubProvider({ children }: { children: React.ReactNode }) {
         await mockClient.initialize();
         setClient(mockClient);
         setIsConnected(false);
-        if (DEBUG) console.log("[EventHubProvider] Fallback to mock client successful");
+        logDebug("[EventHubProvider] Fallback to mock client successful");
       } catch (mockErr) {
         console.error("[EventHubProvider] Even mock client failed:", mockErr);
       }
@@ -140,11 +140,11 @@ export function EventHubProvider({ children }: { children: React.ReactNode }) {
   }, [createClient]);
 
   const reconnect = useCallback(async () => {
-    if (DEBUG) console.log("[EventHubProvider] Reconnect requested");
-    
+    logDebug("[EventHubProvider] Reconnect requested");
+
     // Prevent multiple concurrent reconnects
     if (isConnecting) {
-      if (DEBUG) console.log("[EventHubProvider] Reconnect already in progress, skipping");
+      logDebug("[EventHubProvider] Reconnect already in progress, skipping");
       return;
     }
     
@@ -168,7 +168,7 @@ export function EventHubProvider({ children }: { children: React.ReactNode }) {
       clientRef.current.subscribe(eventName, callback);
     } else {
       // Queue subscription for when client becomes available
-      console.log(`[EventHubProvider] Queuing subscription for ${eventName} (client not ready)`);
+      logDebug(`[EventHubProvider] Queuing subscription for ${eventName} (client not ready)`);
       if (!pendingSubscriptionsRef.current.has(eventName)) {
         pendingSubscriptionsRef.current.set(eventName, new Set());
       }
@@ -199,7 +199,7 @@ export function EventHubProvider({ children }: { children: React.ReactNode }) {
     if (clientRef.current && 'sendMessage' in clientRef.current && typeof clientRef.current.sendMessage === 'function') {
       return clientRef.current.sendMessage(message);
     }
-    if (DEBUG) console.warn('[EventHubProvider] Cannot send message - client does not support sending');
+    warnDebug('[EventHubProvider] Cannot send message - client does not support sending');
     return false;
   }, []);
 
@@ -207,13 +207,13 @@ export function EventHubProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     // Only initialize if not already initialized or initializing
     if (!client && !initializationRef.current) {
-      if (DEBUG) console.log("[EventHubProvider] Starting WebSocket initialization...");
+      logDebug("[EventHubProvider] Starting WebSocket initialization...");
       initializeClient();
     }
 
     // Cleanup on unmount
     return () => {
-      if (DEBUG) console.log("[EventHubProvider] Cleaning up WebSocket connection...");
+      logDebug("[EventHubProvider] Cleaning up WebSocket connection...");
       if (client && 'close' in client && typeof client.close === 'function') {
         client.close();
       }

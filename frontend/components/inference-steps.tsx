@@ -4,6 +4,7 @@ import React, { useMemo } from "react"
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
 import { CheckCircle2, Loader, AlertCircle, MessageSquare, Bot, Workflow, Wrench, FileSearch, Send, Zap, FileText, Paperclip, Square } from "lucide-react"
 import { getAgentHexColor } from "@/lib/agent-colors"
+import { logDebug } from '@/lib/debug'
 
 interface StepEvent {
   agent: string
@@ -33,7 +34,8 @@ interface AgentInfo {
   output: string | null
   progressMessages: string[]
   extractedFiles: { name: string; url?: string; type?: string }[]
-  stepNumber?: number  // Extracted from [Step X] in content
+  stepNumber?: string  // Extracted from [Step X] in content, e.g. "2", "2a", "2b"
+  mapKey: string       // Unique key for React rendering (handles parallel same-agent cards)
 }
 
 interface OrchestratorActivity {
@@ -67,16 +69,19 @@ function parseEventsToAgents(steps: StepEvent[], agentColors?: Record<string, st
   const seenOrchestratorLabels = new Set<string>()
   let orchestratorStatus: "idle" | "planning" | "dispatching" | "complete" = "idle"
   let activityIndex = 0
+  // Track the current map key for each agent name to support multiple invocations
+  // When an agent completes and new events arrive, a new key (e.g., "AgentName::2") is created
+  const currentAgentKey = new Map<string, string>()
   
   // Debug: log all incoming steps
-  console.log("[InferenceSteps] Parsing steps:", steps.map(s => ({ agent: s.agent, eventType: s.eventType, statusLen: s.status?.length, hasImage: !!s.imageUrl })))
-  
+  logDebug("[InferenceSteps] Parsing steps:", steps.map(s => ({ agent: s.agent, eventType: s.eventType, statusLen: s.status?.length, hasImage: !!s.imageUrl })))
+
   // Debug: specifically check for Teams Agent
   const teamsEvents = steps.filter(s => s.agent?.toLowerCase().includes("teams"))
   if (teamsEvents.length > 0) {
-    console.log("[InferenceSteps] 🎯 TEAMS AGENT EVENTS FOUND:", teamsEvents)
+    logDebug("[InferenceSteps] TEAMS AGENT EVENTS FOUND:", teamsEvents)
   } else {
-    console.log("[InferenceSteps] ⚠️ No Teams Agent events in steps array")
+    logDebug("[InferenceSteps] No Teams Agent events in steps array")
   }
   
   for (const step of steps) {
@@ -189,11 +194,42 @@ function parseEventsToAgents(steps: StepEvent[], agentColors?: Record<string, st
     // Skip if this looks like orchestrator content leaked through
     if (agentName.includes("foundry") || agentName.includes("host-agent")) continue
     
-    // Handle regular agents
-    if (!agentMap.has(agentName)) {
-      // Extract step number from content if present
-      const stepMatch = content.match(/\[Step\s*(\d+)\]/i)
-      agentMap.set(agentName, {
+    // Handle regular agents - support multiple invocations of the same agent
+    // Two strategies:
+    // 1. Parallel calls: backend sends parallel_call_id in metadata → use as grouping key
+    // 2. Sequential calls: detect when a completed agent gets new dispatch events
+    const parallelCallId = step.metadata?.parallel_call_id
+    let mapKey: string
+
+    if (parallelCallId) {
+      // Parallel execution: each call has a unique ID from the backend
+      mapKey = `${agentName}::${parallelCallId}`
+    } else {
+      // Sequential execution: track by completion state
+      mapKey = currentAgentKey.get(agentName) || agentName
+      if (agentMap.has(mapKey)) {
+        const existing = agentMap.get(mapKey)!
+        // If the agent already completed and we see a new dispatch event, it's a new invocation
+        const isNewDispatchEvent = eventType === "agent_start" || eventType === "agent_progress"
+        if (existing.status === "complete" && isNewDispatchEvent) {
+          let invocation = 2
+          while (agentMap.has(`${agentName}::${invocation}`)) {
+            const prev = agentMap.get(`${agentName}::${invocation}`)!
+            if (prev.status !== "complete") break
+            invocation++
+          }
+          mapKey = `${agentName}::${invocation}`
+          currentAgentKey.set(agentName, mapKey)
+        }
+      } else {
+        currentAgentKey.set(agentName, mapKey)
+      }
+    }
+
+    if (!agentMap.has(mapKey)) {
+      // Extract step number from content if present (supports letter suffixes like 2a, 2b for parallel)
+      const stepMatch = content.match(/\[Step\s*(\d+[a-z]?)\]/i)
+      agentMap.set(mapKey, {
         name: agentName,
         displayName: formatAgentName(agentName),
         color: getAgentHexColor(agentName, agentColors?.[agentName]),
@@ -202,11 +238,12 @@ function parseEventsToAgents(steps: StepEvent[], agentColors?: Record<string, st
         output: null,
         progressMessages: [],
         extractedFiles: [],
-        stepNumber: stepMatch ? parseInt(stepMatch[1]) : undefined,
+        stepNumber: stepMatch ? stepMatch[1] : undefined,
+        mapKey,
       })
     }
-    
-    const agent = agentMap.get(agentName)!
+
+    const agent = agentMap.get(mapKey)!
     
     // Check for file extraction events (📎 prefix or imageUrl present)
     if (step.imageName || content.startsWith("📎")) {
@@ -223,8 +260,8 @@ function parseEventsToAgents(steps: StepEvent[], agentColors?: Record<string, st
     
     // Extract step number if we haven't yet
     if (!agent.stepNumber) {
-      const stepMatch = content.match(/\[Step\s*(\d+)\]/i)
-      if (stepMatch) agent.stepNumber = parseInt(stepMatch[1])
+      const stepMatch = content.match(/\[Step\s*(\d+[a-z]?)\]/i)
+      if (stepMatch) agent.stepNumber = stepMatch[1]
     }
     
     if (eventType === "agent_start") {
@@ -306,25 +343,31 @@ function parseEventsToAgents(steps: StepEvent[], agentColors?: Record<string, st
     }
   }
   
-  // Sort agents by step number if available
+  // Sort agents by step number if available (supports "2a" < "2b" < "3")
   const sortedAgents = Array.from(agentMap.values()).sort((a, b) => {
-    if (a.stepNumber && b.stepNumber) return a.stepNumber - b.stepNumber
+    if (a.stepNumber && b.stepNumber) {
+      const aNum = parseInt(a.stepNumber)
+      const bNum = parseInt(b.stepNumber)
+      if (aNum !== bNum) return aNum - bNum
+      // Same numeric prefix — compare suffix (e.g. "a" vs "b")
+      return a.stepNumber.localeCompare(b.stepNumber)
+    }
     if (a.stepNumber) return -1
     if (b.stepNumber) return 1
     return 0
   })
   
   // Debug: log parsed result
-  console.log("[InferenceSteps] Parsed agents:", sortedAgents.map(a => ({ 
-    name: a.name, 
-    status: a.status, 
+  logDebug("[InferenceSteps] Parsed agents:", sortedAgents.map(a => ({
+    name: a.name,
+    status: a.status,
     stepNumber: a.stepNumber,
     hasOutput: !!a.output,
     outputLen: a.output?.length,
     filesCount: a.extractedFiles.length,
     progressCount: a.progressMessages.length
   })))
-  console.log("[InferenceSteps] Orchestrator activities:", orchestratorActivities.length, orchestratorStatus)
+  logDebug("[InferenceSteps] Orchestrator activities:", orchestratorActivities.length, orchestratorStatus)
   
   return {
     agents: sortedAgents,
@@ -406,17 +449,17 @@ function AgentCard({ agent, stepNumber, isLive }: { agent: AgentInfo; stepNumber
   const isWaiting = status === "waiting"
   const isCancelled = status === "cancelled"
   
-  // Use agent's extracted step number, or fall back to position
-  const displayStepNumber = agent.stepNumber || stepNumber
-  
-  // Clean task description - remove [Step X] prefix
-  const cleanTaskDesc = taskDescription?.replace(/^\[Step\s*\d+\]\s*/i, "").trim()
-  
+  // Use agent's extracted step number (preserving letter suffix for parallel steps like 1a, 1b)
+  const displayStepNumber = agent.stepNumber || String(stepNumber)
+
+  // Clean task description - remove [Step X] prefix (with optional letter suffix)
+  const cleanTaskDesc = taskDescription?.replace(/^\[Step\s*\d+[a-z]?\]\s*/i, "").trim()
+
   // Clean output - remove duplicated sections (same text appearing twice)
   const cleanOutput = useMemo(() => {
     if (!output) return null
     // Remove [Step X] prefix from output
-    let cleaned = output.replace(/^\[Step\s*\d+\]\s*/i, "").trim()
+    let cleaned = output.replace(/^\[Step\s*\d+[a-z]?\]\s*/i, "").trim()
     // If output has same paragraph twice, dedupe it
     const paragraphs = cleaned.split(/\n\n+/)
     const seen = new Set<string>()
@@ -586,7 +629,7 @@ export function InferenceSteps({ steps, isInferencing, plan, cancelled, agentCol
           <OrchestratorSection activities={orchestratorActivities} status={orchestratorStatus} isLive={true} />
           
           <div className="space-y-1 pr-1">
-            {agents.map((agent: AgentInfo, i: number) => <AgentCard key={agent.name} agent={agent} stepNumber={i + 1} isLive={true} />)}
+            {agents.map((agent: AgentInfo, i: number) => <AgentCard key={agent.mapKey} agent={agent} stepNumber={i + 1} isLive={true} />)}
           </div>
         </div>
       </div>
@@ -629,7 +672,7 @@ export function InferenceSteps({ steps, isInferencing, plan, cancelled, agentCol
         <AccordionContent>
           <OrchestratorSection activities={orchestratorActivities} status={orchestratorStatus} isLive={false} />
           <div className="space-y-1 pt-1 pb-2">
-            {agents.map((agent: AgentInfo, i: number) => <AgentCard key={agent.name} agent={agent} stepNumber={i + 1} isLive={false} />)}
+            {agents.map((agent: AgentInfo, i: number) => <AgentCard key={agent.mapKey} agent={agent} stepNumber={i + 1} isLive={false} />)}
           </div>
         </AccordionContent>
       </AccordionItem>

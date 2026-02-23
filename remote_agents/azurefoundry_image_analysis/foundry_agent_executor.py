@@ -365,9 +365,7 @@ class FoundryImageAnalysisAgentExecutor(AgentExecutor):
                 else:
                     encoded_parts.append({"kind": "data", "data": p.data})
             elif isinstance(p.file, FileWithUri):
-                role_hint = getattr(p.file, "role", None)
-                metadata_role = (p.metadata or {}).get("role") if getattr(p, "metadata", None) else None
-                resolved_role = (role_hint or metadata_role)
+                resolved_role = (p.metadata or {}).get("role") if getattr(p, "metadata", None) else None
                 file_payload = {
                     "name": getattr(p.file, "name", "file"),
                     "mimeType": getattr(p.file, "mimeType", "application/octet-stream"),
@@ -388,12 +386,13 @@ class FoundryImageAnalysisAgentExecutor(AgentExecutor):
                 except Exception:
                     raw_bytes = p.file.bytes if isinstance(p.file.bytes, (bytes, bytearray)) else None
 
+                bytes_role = (p.metadata or {}).get("role") if getattr(p, "metadata", None) else None
                 file_entry: Dict[str, Any] = {
                     "kind": "file",
                     "file": {
                         "name": getattr(p.file, "name", "file"),
                         "mimeType": getattr(p.file, "mimeType", "application/octet-stream"),
-                        **({"role": getattr(p.file, "role", None)} if getattr(p.file, "role", None) else {}),
+                        **({"role": bytes_role} if bytes_role else {}),
                     },
                 }
 

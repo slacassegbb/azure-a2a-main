@@ -29,7 +29,7 @@ backend_dir = Path(__file__).resolve().parent.parent
 if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
-from log_config import log_websocket_debug, log_info, log_error, log_warning
+from log_config import log_websocket_debug, log_info, log_error, log_warning, log_debug
 from utils.tenant import get_tenant_from_context, is_tenant_aware_context
 from service.collaborative_sessions import get_session_manager, CollaborativeSessionManager, get_online_users_from_connections
 
@@ -81,9 +81,9 @@ class WebSocketManager:
         self.tenant_event_history: Dict[str, List[Dict[str, Any]]] = {}
         self.max_history = 100
         # Backend URL for fetching agent registry
-        # In Azure Container Apps, use internal service discovery or full URL
-        self.backend_host = os.getenv("BACKEND_HOST", "localhost")
-        self.backend_port = int(os.getenv("BACKEND_PORT", "12000"))
+        # BACKEND_API_URL is set in production (Azure Container Apps)
+        # Falls back to localhost for local development
+        self.backend_api_url = os.getenv("BACKEND_API_URL", "http://localhost:12000")
         # Session ID generated at server startup - used to detect backend restarts
         # Frontend clears file history when session_id changes
         import uuid
@@ -97,14 +97,10 @@ class WebSocketManager:
         
         for attempt in range(max_retries + 1):
             try:
-                # Try to get agents from the backend's agent registry
-                # Use https for port 443 (Azure Container Apps public endpoint)
-                if self.backend_port == 443:
-                    backend_url = f"https://{self.backend_host}/agents"
-                else:
-                    backend_url = f"http://{self.backend_host}:{self.backend_port}/agents"
+                # Fetch agents from the backend's agent registry
+                backend_url = f"{self.backend_api_url}/api/agents"
                 
-                logger.info(f"Fetching agent registry from: {backend_url}")
+                logger.debug(f"Fetching agent registry from: {backend_url}")
                 # Disable SSL verification for Azure Container Apps internal communication
                 response = requests.get(backend_url, timeout=20, verify=False)
                 
@@ -132,7 +128,7 @@ class WebSocketManager:
                         }
                         agents.append(agent_info)
                     
-                    logger.info(f"Retrieved {len(agents)} agents from backend registry")
+                    logger.debug(f"Retrieved {len(agents)} agents from backend registry")
                     return agents
                 else:
                     if attempt < max_retries:
@@ -169,9 +165,9 @@ class WebSocketManager:
         
         # DEBUG: Log all current tenants for isolation debugging
         all_tenants = list(self.tenant_connections.keys())
-        print(f"🔐 [TENANT REGISTER] New connection for tenant={tenant_id}")
-        print(f"🔐 [TENANT REGISTER] All active tenants: {all_tenants}")
-        logger.info(f"Registered connection for tenant: {tenant_id[:20]}... (total tenant connections: {len(self.tenant_connections[tenant_id])})")
+        log_websocket_debug(f"[TENANT REGISTER] New connection for tenant={tenant_id}")
+        log_websocket_debug(f"[TENANT REGISTER] All active tenants: {all_tenants}")
+        logger.debug(f"Registered connection for tenant: {tenant_id[:20]}... (total tenant connections: {len(self.tenant_connections[tenant_id])})")
     
     def unregister_tenant_connection(self, websocket: WebSocket):
         """Unregister a WebSocket connection from its tenant.
@@ -187,7 +183,7 @@ class WebSocketManager:
                 del self.tenant_connections[tenant_id]
                 # Also clean up tenant event history
                 self.tenant_event_history.pop(tenant_id, None)
-            logger.info(f"Unregistered connection for tenant: {tenant_id[:20]}...")
+            logger.debug(f"Unregistered connection for tenant: {tenant_id[:20]}...")
     
     async def connect(self, websocket: WebSocket, token: Optional[str] = None, tenant_id: Optional[str] = None):
         """Accept a new WebSocket connection with optional authentication and tenant.
@@ -203,13 +199,13 @@ class WebSocketManager:
         # Handle authentication first to get user_id
         user_data = None
         user_id = None
-        logger.info(f"[WebSocket Auth] Connection attempt - token present: {bool(token)}, auth_service present: {bool(auth_service)}")
+        logger.debug(f"[WebSocket Auth] Connection attempt - token present: {bool(token)}, auth_service present: {bool(auth_service)}")
         if token and auth_service:
-            logger.info(f"[WebSocket Auth] Token received (len={len(token)}), attempting verification...")
+            logger.debug(f"[WebSocket Auth] Token received (len={len(token)}), attempting verification...")
             user_data = auth_service.verify_token(token)
             if user_data:
                 user_id = user_data.get('user_id')
-                logger.info(f"[WebSocket Auth] Token verified successfully for user_id: {user_id}, name: {user_data.get('name')}")
+                logger.debug(f"[WebSocket Auth] Token verified successfully for user_id: {user_id}, name: {user_data.get('name')}")
             else:
                 logger.warning(f"[WebSocket Auth] Token verification FAILED - returned None")
         elif token and not auth_service:
@@ -228,14 +224,14 @@ class WebSocketManager:
             if base_tenant_id == user_id or tenant_id == user_id:
                 # User's own session - register with the FULL tenant_id they provided
                 # This allows events routed to sess_xxx::conv-uuid to reach them
-                logger.info(f"[WebSocket] User {user_id} connecting with tenant {tenant_id[:40]}...")
+                logger.debug(f"[WebSocket] User {user_id} connecting with tenant {tenant_id[:40]}...")
                 self.register_tenant_connection(websocket, tenant_id)
             else:
                 # Different tenant - check if it's a valid collaborative session they're a member of
                 session = collaborative_session_manager.get_session(base_tenant_id)
                 if session and session.is_member(user_id):
                     # Valid collaborative session - register with the collaborative session's tenant
-                    logger.info(f"[WebSocket] User {user_id} connecting to collaborative session {tenant_id[:20]}...")
+                    logger.debug(f"[WebSocket] User {user_id} connecting to collaborative session {tenant_id[:20]}...")
                     self.register_tenant_connection(websocket, tenant_id)
                 else:
                     # Invalid/stale collaborative session - use user's own session instead
@@ -266,33 +262,33 @@ class WebSocketManager:
                 if user_id not in self.user_connections:
                     self.user_connections[user_id] = set()
                 self.user_connections[user_id].add(websocket)
-                logger.info(f"[WebSocket Auth] Registered user connection: {user_id} (total: {len(self.user_connections[user_id])})")
+                logger.debug(f"[WebSocket Auth] Registered user connection: {user_id} (total: {len(self.user_connections[user_id])})")
                 # Log all user_connections for debugging collaborative session issues
                 all_user_ids = list(self.user_connections.keys())
-                logger.info(f"[WebSocket Auth] 📋 Current user_connections state: {all_user_ids}")
+                logger.debug(f"[WebSocket Auth] Current user_connections state: {all_user_ids}")
             
             # Add user to active users list in auth service
             if auth_service:
                 auth_service.add_active_user(user_data)
-                logger.info(f"[WebSocket Auth] Added user to active list: {auth_conn.username}")
+                logger.debug(f"[WebSocket Auth] Added user to active list: {auth_conn.username}")
                 
                 # Send session-specific user info to this connection only
                 # (multi-tenancy: each session only sees their own user)
                 await self.send_session_user_update(websocket, auth_conn)
-                logger.info(f"[WebSocket Auth] Sent session-specific user_list_update to {auth_conn.username}")
+                logger.debug(f"[WebSocket Auth] Sent session-specific user_list_update to {auth_conn.username}")
                 
                 # Send any pending session invitations to this user
                 await self.send_pending_invitations(websocket, user_id)
             else:
                 logger.warning("[WebSocket Auth] Auth service not available - cannot track active user")
-            logger.info(f"[WebSocket Auth] Authenticated connection established for user: {auth_conn.username} ({auth_conn.email})")
+            logger.debug(f"[WebSocket Auth] Authenticated connection established for user: {auth_conn.username} ({auth_conn.email})")
         elif token and not auth_service:
             logger.warning(f"[WebSocket Auth] Token provided but auth_service is None!")
         elif not token:
-            logger.info("[WebSocket Auth] No token provided - anonymous connection")
+            logger.debug("[WebSocket Auth] No token provided - anonymous connection")
         
         if not user_data:
-            logger.info("[WebSocket Auth] Established anonymous WebSocket connection")
+            logger.debug("[WebSocket Auth] Established anonymous WebSocket connection")
         
         # Send recent history to new client (excluding message-related events)
         # Message events are loaded via conversation API, replaying them causes duplicates
@@ -317,7 +313,7 @@ class WebSocketManager:
                     'timestamp': time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
                 }
                 await websocket.send_text(json.dumps(registry_event))
-                logger.info(f"Sent agent registry with {len(agents)} agents to new client")
+                logger.debug(f"Sent agent registry with {len(agents)} agents to new client")
         except Exception as e:
             logger.error(f"Failed to send agent registry to new client: {e}")
         
@@ -345,7 +341,7 @@ class WebSocketManager:
         }
         try:
             await websocket.send_text(json.dumps(session_event))
-            logger.info(f"Sent session ID to new client: {self.session_id[:8]}...")
+            logger.debug(f"Sent session ID to new client: {self.session_id[:8]}...")
         except:
             pass
         
@@ -373,7 +369,7 @@ class WebSocketManager:
                 self.user_connections[user_id].discard(websocket)
                 if not self.user_connections[user_id]:
                     del self.user_connections[user_id]
-                    logger.info(f"[Collaborative] User {auth_conn.username} has no more active connections")
+                    logger.debug(f"[Collaborative] User {auth_conn.username} has no more active connections")
                     # NOTE: We intentionally do NOT auto-leave sessions here
                     # Users should stay as "reconnecting" members during page refreshes
                     # The frontend sends explicit leave_collaborative_session when logging out
@@ -381,7 +377,7 @@ class WebSocketManager:
             # Remove user from active users list in auth service
             if auth_service:
                 auth_service.remove_active_user(auth_conn.user_data)
-                logger.info(f"[WebSocket Auth] Removed user from active list: {auth_conn.username}")
+                logger.debug(f"[WebSocket Auth] Removed user from active list: {auth_conn.username}")
                 
                 # Check if this user was in a collaborative session
                 collaborative_session = None
@@ -396,18 +392,18 @@ class WebSocketManager:
                 # If user was in a collaborative session, notify remaining members
                 # The broadcast includes ALL session members (even disconnected ones with status "reconnecting")
                 if collaborative_session:
-                    logger.info(f"[WebSocket Auth] User {auth_conn.username} disconnected from collaborative session {collaborative_session.session_id}")
+                    logger.debug(f"[WebSocket Auth] User {auth_conn.username} disconnected from collaborative session {collaborative_session.session_id}")
                     # Broadcast updated user list to all remaining members in the session
                     await self.broadcast_user_list_to_session(collaborative_session)
                 else:
-                    logger.info(f"[WebSocket Auth] Session for {auth_conn.username} ended (no broadcast needed - session isolated)")
+                    logger.debug(f"[WebSocket Auth] Session for {auth_conn.username} ended (no broadcast needed - session isolated)")
             
-            logger.info(f"Authenticated user {auth_conn.username} disconnected")
+            logger.debug(f"Authenticated user {auth_conn.username} disconnected")
         
         total_connections = len(self.active_connections)
         authenticated_connections = len(self.authenticated_connections)
         tenant_count = len(self.tenant_connections)
-        logger.info(f"WebSocket client disconnected. Total: {total_connections}, Authenticated: {authenticated_connections}, Tenants: {tenant_count}")
+        logger.info(f"WebSocket client disconnected. Total: {total_connections}, Authenticated: {authenticated_connections}")
     
     def get_connection_info(self, websocket: WebSocket) -> Optional[AuthenticatedConnection]:
         """Get connection info for a websocket."""
@@ -430,12 +426,12 @@ class WebSocketManager:
             tenant_id = self.connection_tenants.get(websocket)
             user_id = auth_conn.user_data.get('user_id') if auth_conn.user_data else None
             
-            logger.info(f"[WebSocket] send_session_user_update: tenant_id={tenant_id}, user_id={user_id}")
-            logger.info(f"[WebSocket] Total authenticated_connections: {len(self.authenticated_connections)}")
+            logger.debug(f"[WebSocket] send_session_user_update: tenant_id={tenant_id}, user_id={user_id}")
+            logger.debug(f"[WebSocket] Total authenticated_connections: {len(self.authenticated_connections)}")
             for conn, conn_info in self.authenticated_connections.items():
                 conn_user_id = conn_info.user_data.get('user_id') if conn_info.user_data else None
                 conn_tenant = self.connection_tenants.get(conn)
-                logger.info(f"[WebSocket]   - Connection: user_id={conn_user_id}, tenant={conn_tenant}, username={conn_info.username}")
+                logger.debug(f"[WebSocket]   - Connection: user_id={conn_user_id}, tenant={conn_tenant}, username={conn_info.username}")
             
             # Check if this user is in a collaborative session
             # First check if they own a session (session_id = tenant_id)
@@ -444,25 +440,25 @@ class WebSocketManager:
             if tenant_id:
                 # Check if this user owns a collaborative session
                 collaborative_session = collaborative_session_manager.get_session(tenant_id)
-                logger.info(f"[WebSocket] Checking collaborative session for tenant_id={tenant_id}: found={collaborative_session is not None}")
+                logger.debug(f"[WebSocket] Checking collaborative session for tenant_id={tenant_id}: found={collaborative_session is not None}")
                 
                 # If not the owner, check if this user is a member of any session
                 if not collaborative_session and user_id:
                     user_session_ids = collaborative_session_manager.get_user_sessions(user_id)
-                    logger.info(f"[WebSocket] User {user_id} is member of sessions: {user_session_ids}")
+                    logger.debug(f"[WebSocket] User {user_id} is member of sessions: {user_session_ids}")
                     if user_session_ids:
                         # Get the first session they're part of (typically only one)
                         collaborative_session = collaborative_session_manager.get_session(user_session_ids[0])
                         if collaborative_session:
-                            logger.info(f"[WebSocket] Found collaborative session via membership: {user_session_ids[0]}")
+                            logger.debug(f"[WebSocket] Found collaborative session via membership: {user_session_ids[0]}")
                 
                 if collaborative_session:
-                    logger.info(f"[WebSocket] Collaborative session details: owner={collaborative_session.owner_user_id}, members={collaborative_session.member_user_ids}")
+                    logger.debug(f"[WebSocket] Collaborative session details: owner={collaborative_session.owner_user_id}, members={collaborative_session.member_user_ids}")
             
             if collaborative_session:
                 # In a collaborative session - get all members
                 all_member_ids = collaborative_session.get_all_member_ids()
-                logger.info(f"[WebSocket] User {auth_conn.username} is in collaborative session with {len(all_member_ids)} members: {all_member_ids}")
+                logger.debug(f"[WebSocket] User {auth_conn.username} is in collaborative session with {len(all_member_ids)} members: {all_member_ids}")
                 
                 for member_id in all_member_ids:
                     # Try to get user data for each member
@@ -510,11 +506,11 @@ class WebSocketManager:
                             "status": "active"
                         }
                         session_users.append(user_data)
-                        logger.info(f"[WebSocket] Added user to session_users (non-collab): {user.email}")
+                        logger.debug(f"[WebSocket] Added user to session_users (non-collab): {user.email}")
             
             # Debug: Log what we're about to send
             user_ids_to_send = [u.get('user_id', 'unknown') for u in session_users]
-            logger.info(f"[WebSocket] About to send user_list_update with {len(session_users)} users: {user_ids_to_send}")
+            logger.debug(f"[WebSocket] About to send user_list_update with {len(session_users)} users: {user_ids_to_send}")
             
             event_data = {
                 "eventType": "user_list_update",
@@ -528,7 +524,7 @@ class WebSocketManager:
             }
             await websocket.send_text(json.dumps(event_data))
             user_names = [u.get('name', 'unknown') for u in session_users]
-            logger.info(f"[WebSocket] Sent session user update to {auth_conn.username}: {len(session_users)} user(s): {user_names}")
+            logger.debug(f"[WebSocket] Sent session user update to {auth_conn.username}: {len(session_users)} user(s): {user_names}")
         except Exception as e:
             logger.error(f"Failed to send session user update to {auth_conn.username}: {e}")
     
@@ -540,9 +536,9 @@ class WebSocketManager:
         """
         try:
             all_member_ids = collaborative_session.get_all_member_ids()
-            logger.info(f"[WebSocket] Broadcasting user list to collaborative session {collaborative_session.session_id[:20]}...")
-            logger.info(f"[WebSocket] Session members to broadcast to: {all_member_ids}")
-            logger.info(f"[WebSocket] Current user_connections: {list(self.user_connections.keys())}")
+            logger.debug(f"[WebSocket] Broadcasting user list to collaborative session {collaborative_session.session_id[:20]}...")
+            logger.debug(f"[WebSocket] Session members to broadcast to: {all_member_ids}")
+            logger.debug(f"[WebSocket] Current user_connections: {list(self.user_connections.keys())}")
             
             # Build the user list from ALL session members (not just connected ones)
             # This ensures users who are refreshing still appear in the list
@@ -594,7 +590,7 @@ class WebSocketManager:
                                 "is_session_owner": member_id == collaborative_session.owner_user_id
                             }
                             session_users.append(user_data)
-                            logger.info(f"[WebSocket] Member {user.name} is in session but not connected (likely refreshing)")
+                            logger.debug(f"[WebSocket] Member {user.name} is in session but not connected (likely refreshing)")
             
             # Broadcast to all connected members
             event_data = {
@@ -609,25 +605,25 @@ class WebSocketManager:
             }
             
             for member_id in all_member_ids:
-                logger.info(f"[WebSocket] Checking member_id={member_id} in user_connections...")
+                logger.debug(f"[WebSocket] Checking member_id={member_id} in user_connections...")
                 if member_id in self.user_connections:
                     num_connections = len(self.user_connections[member_id])
-                    logger.info(f"[WebSocket] Found {num_connections} connection(s) for member {member_id}")
+                    logger.debug(f"[WebSocket] Found {num_connections} connection(s) for member {member_id}")
                     for ws in self.user_connections[member_id]:
                         try:
                             message_to_send = json.dumps(event_data)
-                            logger.info(f"[WebSocket] 📤 About to send to {member_id}: eventType={event_data['eventType']}, {len(session_users)} users")
+                            logger.debug(f"[WebSocket] About to send to {member_id}: eventType={event_data['eventType']}, {len(session_users)} users")
                             await ws.send_text(message_to_send)
-                            logger.info(f"[WebSocket] ✅ Successfully sent user list update to member {member_id}")
+                            logger.debug(f"[WebSocket] Successfully sent user list update to member {member_id}")
                         except Exception as e:
-                            logger.error(f"[WebSocket] ❌ Failed to send user list to {member_id}: {e}")
+                            logger.error(f"[WebSocket] Failed to send user list to {member_id}: {e}")
                             import traceback
                             logger.error(f"[WebSocket] Traceback: {traceback.format_exc()}")
                 else:
-                    logger.warning(f"[WebSocket] ⚠️ member_id={member_id} NOT in user_connections! Available: {list(self.user_connections.keys())}")
+                    logger.warning(f"[WebSocket] member_id={member_id} NOT in user_connections! Available: {list(self.user_connections.keys())}")
             
             user_names = [u.get('name', 'unknown') for u in session_users]
-            logger.info(f"[WebSocket] Broadcasted user list to session: {len(session_users)} user(s): {user_names}")
+            logger.debug(f"[WebSocket] Broadcasted user list to session: {len(session_users)} user(s): {user_names}")
         except Exception as e:
             logger.error(f"Failed to broadcast user list to session: {e}")
     
@@ -653,7 +649,7 @@ class WebSocketManager:
                     "timestamp": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
                 }
                 await websocket.send_text(json.dumps(event_data))
-                logger.info(f"[Collaborative] Sent pending invitation {invitation.invitation_id} to {user_id}")
+                logger.debug(f"[Collaborative] Sent pending invitation {invitation.invitation_id} to {user_id}")
         except Exception as e:
             logger.error(f"Failed to send pending invitations to {user_id}: {e}")
     
@@ -677,7 +673,7 @@ class WebSocketManager:
                 await self.smart_broadcast(event_data)
             else:
                 logger.debug(f"Skipping agent status broadcast - no context_id provided (multi-tenant isolation)")
-            print(f"[WEBSOCKET] Emitted agent status update: {status_event.get('agent_name')} -> {status_event.get('status')}")
+            log_websocket_debug(f"Emitted agent status update: {status_event.get('agent_name')} -> {status_event.get('status')}")
             
         except Exception as e:
             logger.error(f"Failed to emit agent status update: {e}")
@@ -707,7 +703,7 @@ class WebSocketManager:
         tenant_websockets = self.tenant_connections.get(tenant_id, set())
         
         event_type = event_data.get('eventType', 'unknown')
-        print(f"🔒 [TENANT DEBUG] broadcast_to_tenant: tenant={tenant_id}, event={event_type}, connections={len(tenant_websockets)}")
+        log_websocket_debug(f"[TENANT DEBUG] broadcast_to_tenant: tenant={tenant_id}, event={event_type}, connections={len(tenant_websockets)}")
         
         if not tenant_websockets:
             logger.debug(f"No connections for tenant {tenant_id[:20]}..., skipping broadcast (no fallback)")
@@ -731,7 +727,7 @@ class WebSocketManager:
             await self.disconnect(websocket)
         
         event_type = event_data.get('eventType', 'unknown')
-        logger.info(f"Broadcasted {event_type} event to {sent_count} clients for tenant {tenant_id[:20]}...")
+        logger.debug(f"Broadcasted {event_type} event to {sent_count} clients for tenant {tenant_id[:20]}...")
         return sent_count
     
     async def broadcast_event(self, event_data: Dict[str, Any]) -> int:
@@ -770,7 +766,7 @@ class WebSocketManager:
             await self.disconnect(websocket)
         
         event_type = event_data.get('eventType', 'unknown')
-        logger.info(f"Broadcasted {event_type} event to {sent_count} clients (global)")
+        logger.debug(f"Broadcasted {event_type} event to {sent_count} clients (global)")
         return sent_count
     
     async def smart_broadcast(self, event_data: Dict[str, Any]) -> int:
@@ -806,8 +802,8 @@ class WebSocketManager:
             
             # DEBUG: Log tenant isolation details
             event_type = event_data.get('eventType', 'unknown')
-            print(f"🔒 [TENANT DEBUG] smart_broadcast: event={event_type}, context_id={context_id[:40]}...")
-            print(f"🔒 [TENANT DEBUG] Available tenants: {list(self.tenant_connections.keys())}")
+            log_websocket_debug(f"[TENANT DEBUG] smart_broadcast: event={event_type}, context_id={context_id[:40]}...")
+            log_websocket_debug(f"[TENANT DEBUG] Available tenants: {list(self.tenant_connections.keys())}")
             
             # Always extract the base tenant (session) from context_id
             # For "user_3::uuid" format, extract "user_3"
@@ -817,18 +813,18 @@ class WebSocketManager:
             # Broadcast to the full context_id if it's registered as a tenant
             # (e.g., voice hook connects with user_3::conversation-uuid)
             if context_id in self.tenant_connections and context_id != base_tenant_id:
-                print(f"🔒 [TENANT DEBUG] Direct match: broadcasting to full contextId tenant={context_id[:40]}...")
+                log_websocket_debug(f"[TENANT DEBUG] Direct match: broadcasting to full contextId tenant={context_id[:40]}...")
                 sent_count += await self.broadcast_to_tenant(event_data, context_id)
             
             # ALSO broadcast to the base session tenant (e.g., user_3)
             # This ensures the main EventHub receives events too
             if base_tenant_id in self.tenant_connections:
                 session_id = base_tenant_id
-                print(f"🔒 [TENANT DEBUG] Base tenant match: broadcasting to tenant={base_tenant_id}")
+                log_websocket_debug(f"[TENANT DEBUG] Base tenant match: broadcasting to tenant={base_tenant_id}")
                 sent_count += await self.broadcast_to_tenant(event_data, base_tenant_id)
             elif context_id not in self.tenant_connections:
                 # Neither full contextId nor base tenant found
-                print(f"🔒 [TENANT DEBUG] ⚠️ No tenant match found! Event will NOT be broadcast.")
+                log_websocket_debug(f"[TENANT DEBUG] No tenant match found! Event will NOT be broadcast.")
             
             # Also broadcast to collaborative session members
             # These are users who joined this session but have different user_ids
@@ -870,6 +866,33 @@ class WebSocketManager:
             "max_history": self.max_history
         }
 
+    async def sync_agent_registry(self):
+        """Sync agent registry to all connected clients (runs in the server event loop)."""
+        sync_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+        try:
+            # get_agent_registry() is synchronous (uses requests), run in executor
+            loop = asyncio.get_running_loop()
+            agents = await loop.run_in_executor(None, self.get_agent_registry)
+
+            registry_event = {
+                'eventType': 'agent_registry_sync',
+                'data': {'agents': agents},
+                'timestamp': sync_time
+            }
+            client_count = await self.broadcast_event(registry_event)
+            logger.info(f"Synced {len(agents)} agents to {client_count} clients")
+        except Exception as e:
+            logger.warning(f"Agent registry sync failed: {e}")
+
+    def trigger_immediate_sync(self):
+        """Trigger an immediate agent registry sync (non-blocking, safe from any thread)."""
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(self.sync_agent_registry())
+        except RuntimeError:
+            # No running event loop (called from a non-async context) — skip gracefully
+            logger.debug("trigger_immediate_sync called outside event loop, skipping")
+
 
 # Global WebSocket manager
 websocket_manager = WebSocketManager()
@@ -880,7 +903,29 @@ collaborative_session_manager = get_session_manager()
 
 def create_websocket_app() -> FastAPI:
     """Create FastAPI app with WebSocket support."""
-    app = FastAPI(title="A2A WebSocket Server", version="1.0.0")
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        """Start periodic agent registry sync as an asyncio background task."""
+        sync_interval = int(os.getenv("AGENT_SYNC_INTERVAL", "15"))
+
+        async def _periodic_sync():
+            while True:
+                await asyncio.sleep(sync_interval)
+                await websocket_manager.sync_agent_registry()
+
+        sync_task = asyncio.create_task(_periodic_sync())
+        logger.info(f"Periodic agent sync started (every {sync_interval}s)")
+        yield
+        sync_task.cancel()
+        try:
+            await sync_task
+        except asyncio.CancelledError:
+            pass
+        logger.info("Periodic agent sync stopped")
+
+    app = FastAPI(title="A2A WebSocket Server", version="1.0.0", lifespan=lifespan)
     
     @app.websocket("/events")
     async def websocket_endpoint(
@@ -894,10 +939,10 @@ def create_websocket_app() -> FastAPI:
             token: Optional JWT authentication token
             tenantId: Optional tenant identifier for multi-tenancy isolation
         """
-        logger.info(f"[WebSocket] New connection attempt from {websocket.client}, tenant: {tenant_id[:20] if tenant_id else 'none'}...")
+        logger.debug(f"[WebSocket] New connection attempt from {websocket.client}, tenant: {tenant_id[:20] if tenant_id else 'none'}...")
         
         await websocket_manager.connect(websocket, token, tenant_id)
-        logger.info(f"[WebSocket] Client connected successfully: {websocket.client}")
+        logger.debug(f"[WebSocket] Client connected successfully: {websocket.client}")
         
         try:
             while True:
@@ -912,7 +957,7 @@ def create_websocket_app() -> FastAPI:
                     logger.warning(f"Invalid JSON received from {websocket.client}: {data}")
                     
         except WebSocketDisconnect:
-            logger.info(f"[WebSocket] Client disconnected: {websocket.client}")
+            logger.debug(f"[WebSocket] Client disconnected: {websocket.client}")
             await websocket_manager.disconnect(websocket)
         except Exception as e:
             logger.error(f"WebSocket error: {e}")
@@ -921,7 +966,8 @@ def create_websocket_app() -> FastAPI:
     async def handle_websocket_message(websocket: WebSocket, message: Dict[str, Any]):
         """Handle incoming WebSocket messages from clients."""
         message_type = message.get("type")
-        
+        logger.debug(f"[WebSocket] Received message type: {message_type}")
+
         if message_type == "chat":
             # Handle chat message
             auth_conn = websocket_manager.get_connection_info(websocket)
@@ -939,7 +985,7 @@ def create_websocket_app() -> FastAPI:
                 
                 # Broadcast to all clients
                 await websocket_manager.broadcast_event(chat_event)
-                logger.info(f"Chat message from {auth_conn.username}: {message.get('text', '')[:50]}...")
+                logger.debug(f"Chat message from {auth_conn.username}: {message.get('text', '')[:50]}...")
             else:
                 # Anonymous user - reject chat
                 error_event = {
@@ -973,7 +1019,7 @@ def create_websocket_app() -> FastAPI:
                 await websocket_manager.smart_broadcast(shared_event)
             else:
                 logger.debug(f"Skipping shared_message broadcast - no tenant found (multi-tenant isolation)")
-            logger.info(f"Shared message broadcasted: {message_data.get('content', '')[:50]}...")
+            logger.debug(f"Shared message broadcasted: {message_data.get('content', '')[:50]}...")
         
         elif message_type == "shared_inference_started":
             # Handle shared inference started event
@@ -993,7 +1039,7 @@ def create_websocket_app() -> FastAPI:
                 await websocket_manager.smart_broadcast(inference_event)
             else:
                 logger.debug(f"Skipping shared_inference_started broadcast - no tenant found (multi-tenant isolation)")
-            logger.info(f"Shared inference started broadcasted for conversation: {inference_data.get('conversationId')}")
+            logger.debug(f"Shared inference started broadcasted for conversation: {inference_data.get('conversationId')}")
         
         elif message_type == "shared_inference_ended":
             # Handle shared inference ended event
@@ -1013,7 +1059,7 @@ def create_websocket_app() -> FastAPI:
                 await websocket_manager.smart_broadcast(inference_event)
             else:
                 logger.debug(f"Skipping shared_inference_ended broadcast - no tenant found (multi-tenant isolation)")
-            logger.info(f"Shared inference ended broadcasted for conversation: {inference_data.get('conversationId')}")
+            logger.debug(f"Shared inference ended broadcasted for conversation: {inference_data.get('conversationId')}")
         
         elif message_type == "shared_file_uploaded":
             # Handle shared file upload event for collaborative sessions
@@ -1037,7 +1083,7 @@ def create_websocket_app() -> FastAPI:
                 await websocket_manager.smart_broadcast(file_event)
             else:
                 logger.debug(f"Skipping shared_file_uploaded broadcast - no tenant found (multi-tenant isolation)")
-            logger.info(f"Shared file uploaded broadcasted for conversation: {conversation_id}")
+            logger.debug(f"Shared file uploaded broadcasted for conversation: {conversation_id}")
         
         elif message_type == "ping":
             # Handle ping/pong for keepalive
@@ -1100,7 +1146,7 @@ def create_websocket_app() -> FastAPI:
                 # Add contextId for smart_broadcast to route to collaborative members
                 title_event["contextId"] = sender_tenant
                 await websocket_manager.smart_broadcast(title_event)
-                logger.info(f"Conversation title update broadcasted: {conversation_id} -> '{title}'")
+                logger.debug(f"Conversation title update broadcasted: {conversation_id} -> '{title}'")
             else:
                 logger.debug(f"Skipping conversation_title_update broadcast - no tenant found")
         
@@ -1122,7 +1168,7 @@ def create_websocket_app() -> FastAPI:
         The WebSocket server runs in a separate process from the API server,
         so we call the API server's /workflow/cancel endpoint via HTTP.
         """
-        logger.info("[WebSocket] Received cancel_workflow request")
+        logger.debug("[WebSocket] Received cancel_workflow request")
 
         conversation_id = message.get("conversationId", "")
         session_id = message.get("sessionId", "")
@@ -1146,7 +1192,7 @@ def create_websocket_app() -> FastAPI:
             }))
             return
 
-        logger.info(f"[WebSocket] Cancelling workflow for context: {context_id}")
+        logger.debug(f"[WebSocket] Cancelling workflow for context: {context_id}")
 
         try:
             # Call the API server's cancel endpoint (separate process)
@@ -1177,7 +1223,7 @@ def create_websocket_app() -> FastAPI:
                 cancel_event["contextId"] = sender_tenant
                 await websocket_manager.smart_broadcast(cancel_event)
 
-            logger.info(f"[WebSocket] Workflow cancelled: {result}")
+            logger.debug(f"[WebSocket] Workflow cancelled: {result}")
 
         except Exception as e:
             logger.error(f"[WebSocket] Error cancelling workflow: {e}")
@@ -1195,7 +1241,7 @@ def create_websocket_app() -> FastAPI:
         between workflow steps, causing the orchestrator to re-plan.
         Calls the API server via HTTP (separate process).
         """
-        logger.info("[WebSocket] Received interrupt_workflow request")
+        logger.debug("[WebSocket] Received interrupt_workflow request")
 
         conversation_id = message.get("conversationId", "")
         session_id = message.get("sessionId", "")
@@ -1220,7 +1266,7 @@ def create_websocket_app() -> FastAPI:
             }))
             return
 
-        logger.info(f"[WebSocket] Interrupting workflow for context: {context_id}")
+        logger.debug(f"[WebSocket] Interrupting workflow for context: {context_id}")
 
         try:
             backend_url = os.environ.get("BACKEND_API_URL", "http://localhost:12000")
@@ -1243,7 +1289,7 @@ def create_websocket_app() -> FastAPI:
             }
 
             await websocket.send_text(json.dumps(interrupt_event))
-            logger.info(f"[WebSocket] Workflow interrupt queued: {result}")
+            logger.debug(f"[WebSocket] Workflow interrupt queued: {result}")
 
         except Exception as e:
             logger.error(f"[WebSocket] Error interrupting workflow: {e}")
@@ -1264,7 +1310,7 @@ def create_websocket_app() -> FastAPI:
         auth_conn = websocket_manager.get_connection_info(websocket)
         if auth_conn:
             await websocket_manager.send_session_user_update(websocket, auth_conn)
-            logger.info(f"[WebSocket] Sent session users on request to {auth_conn.username}")
+            logger.debug(f"[WebSocket] Sent session users on request to {auth_conn.username}")
         else:
             # Not authenticated - send empty list
             await websocket.send_text(json.dumps({
@@ -1276,11 +1322,11 @@ def create_websocket_app() -> FastAPI:
                 },
                 "timestamp": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
             }))
-            logger.info("[WebSocket] Sent empty session users (not authenticated)")
+            logger.debug("[WebSocket] Sent empty session users (not authenticated)")
 
     async def handle_get_online_users(websocket: WebSocket, message: Dict[str, Any]):
         """Handle request to get list of online users for invitation."""
-        logger.info("[Collaborative] Received get_online_users request")
+        logger.debug("[Collaborative] Received get_online_users request")
         auth_conn = websocket_manager.get_connection_info(websocket)
         if not auth_conn:
             await websocket.send_text(json.dumps({
@@ -1301,7 +1347,7 @@ def create_websocket_app() -> FastAPI:
             "eventType": "online_users",
             "users": online_users
         }))
-        logger.info(f"[Collaborative] Sent online users list to {auth_conn.username}: {len(online_users)} users")
+        logger.debug(f"[Collaborative] Sent online users list to {auth_conn.username}: {len(online_users)} users")
     
     async def handle_session_invite(websocket: WebSocket, message: Dict[str, Any]):
         """Handle sending a session invitation to another user."""
@@ -1344,7 +1390,7 @@ def create_websocket_app() -> FastAPI:
             return
         
         # Send invitation to target user's connections
-        logger.info(f"[Collaborative] Looking for target user {target_user_id} in user_connections. Available users: {list(websocket_manager.user_connections.keys())}")
+        logger.debug(f"[Collaborative] Looking for target user {target_user_id} in user_connections. Available users: {list(websocket_manager.user_connections.keys())}")
         if target_user_id in websocket_manager.user_connections:
             invite_message = json.dumps({
                 "eventType": "session_invite_received",
@@ -1357,7 +1403,7 @@ def create_websocket_app() -> FastAPI:
             for target_ws in websocket_manager.user_connections[target_user_id]:
                 try:
                     await target_ws.send_text(invite_message)
-                    logger.info(f"[Collaborative] Sent invite to {target_user_id} successfully")
+                    logger.debug(f"[Collaborative] Sent invite to {target_user_id} successfully")
                 except Exception as e:
                     logger.error(f"[Collaborative] Failed to send invite to {target_user_id}: {e}")
         else:
@@ -1369,7 +1415,7 @@ def create_websocket_app() -> FastAPI:
             "invitation_id": invitation.invitation_id,
             "to_user_id": target_user_id
         }))
-        logger.info(f"[Collaborative] {from_username} invited user {target_user_id} to session {session_id[:8]}...")
+        logger.debug(f"[Collaborative] {from_username} invited user {target_user_id} to session {session_id[:8]}...")
     
     async def handle_session_invite_response(websocket: WebSocket, message: Dict[str, Any]):
         """Handle response to a session invitation."""
@@ -1458,12 +1504,12 @@ def create_websocket_app() -> FastAPI:
                 # Broadcast updated user list to all session members
                 await websocket_manager.broadcast_user_list_to_session(session)
         
-        logger.info(f"[Collaborative] User {auth_conn.username} {'accepted' if accepted else 'declined'} invitation {invitation_id}")
+        logger.debug(f"[Collaborative] User {auth_conn.username} {'accepted' if accepted else 'declined'} invitation {invitation_id}")
     
     async def handle_leave_session(websocket: WebSocket, message: Dict[str, Any]):
         """Handle leaving a collaborative session."""
-        logger.info(f"[Collaborative] ===== handle_leave_session called =====")
-        logger.info(f"[Collaborative] Message: {message}")
+        logger.debug(f"[Collaborative] ===== handle_leave_session called =====")
+        logger.debug(f"[Collaborative] Message: {message}")
         
         auth_conn = websocket_manager.get_connection_info(websocket)
         if not auth_conn:
@@ -1473,7 +1519,7 @@ def create_websocket_app() -> FastAPI:
         session_id = message.get("session_id")
         user_id = auth_conn.user_data.get('user_id')
         
-        logger.info(f"[Collaborative] session_id={session_id}, user_id={user_id}")
+        logger.debug(f"[Collaborative] session_id={session_id}, user_id={user_id}")
         
         if not session_id:
             logger.warning(f"[Collaborative] No session_id in message!")
@@ -1481,8 +1527,8 @@ def create_websocket_app() -> FastAPI:
         
         # Get session and member list before leaving
         session = collaborative_session_manager.get_session(session_id)
-        logger.info(f"[Collaborative] Found session: {session is not None}")
-        logger.info(f"[Collaborative] Active sessions: {list(collaborative_session_manager.active_sessions.keys())}")
+        logger.debug(f"[Collaborative] Found session: {session is not None}")
+        logger.debug(f"[Collaborative] Active sessions: {list(collaborative_session_manager.active_sessions.keys())}")
         
         if not session:
             logger.warning(f"[Collaborative] Session {session_id} not found!")
@@ -1492,28 +1538,28 @@ def create_websocket_app() -> FastAPI:
         all_members_before = session.get_all_member_ids()
         is_owner = user_id == session.owner_user_id
         
-        logger.info(f"[Collaborative] User {auth_conn.username} (owner={is_owner}) leaving session {session_id[:8]}...")
-        logger.info(f"[Collaborative] Members before leave: {all_members_before}")
+        logger.debug(f"[Collaborative] User {auth_conn.username} (owner={is_owner}) leaving session {session_id[:8]}...")
+        logger.debug(f"[Collaborative] Members before leave: {all_members_before}")
         
         # Now actually leave the session
         success = collaborative_session_manager.leave_session(session_id, user_id)
         
         if success:
-            logger.info(f"[Collaborative] Successfully left session - broadcasting update to remaining members")
-            logger.info(f"[Collaborative] Current user_connections keys: {list(websocket_manager.user_connections.keys())}")
+            logger.debug(f"[Collaborative] Successfully left session - broadcasting update to remaining members")
+            logger.debug(f"[Collaborative] Current user_connections keys: {list(websocket_manager.user_connections.keys())}")
             
             # Get the updated session (will be None if owner left and session was deleted)
             updated_session = collaborative_session_manager.get_session(session_id)
             
             if updated_session:
                 # Session still exists - member left, broadcast updated user list
-                logger.info(f"[Collaborative] Session still exists, broadcasting user list to remaining members")
-                logger.info(f"[Collaborative] Updated session members: {updated_session.get_all_member_ids()}")
+                logger.debug(f"[Collaborative] Session still exists, broadcasting user list to remaining members")
+                logger.debug(f"[Collaborative] Updated session members: {updated_session.get_all_member_ids()}")
                 await websocket_manager.broadcast_user_list_to_session(updated_session)
             else:
                 # Session was deleted (owner left) - notify all former members to return to their own sessions
-                logger.info(f"[Collaborative] Session ended (owner left), notifying all former members")
-                logger.info(f"[Collaborative] Former members to notify: {all_members_before}")
+                logger.debug(f"[Collaborative] Session ended (owner left), notifying all former members")
+                logger.debug(f"[Collaborative] Former members to notify: {all_members_before}")
                 
                 # Send session_ended event - frontend will handle returning to own session
                 session_ended_event = json.dumps({
@@ -1527,25 +1573,25 @@ def create_websocket_app() -> FastAPI:
                 })
                 
                 for member_id in all_members_before:
-                    logger.info(f"[Collaborative] Checking member {member_id}, user_id={user_id}, same={member_id == user_id}")
+                    logger.debug(f"[Collaborative] Checking member {member_id}, user_id={user_id}, same={member_id == user_id}")
                     if member_id != user_id:
                         if member_id in websocket_manager.user_connections:
-                            logger.info(f"[Collaborative] Member {member_id} has {len(websocket_manager.user_connections[member_id])} connections")
+                            logger.debug(f"[Collaborative] Member {member_id} has {len(websocket_manager.user_connections[member_id])} connections")
                             for member_ws in websocket_manager.user_connections[member_id]:
                                 try:
                                     await member_ws.send_text(session_ended_event)
-                                    logger.info(f"[Collaborative] ✅ Sent session_ended to former member {member_id}")
+                                    logger.debug(f"[Collaborative] Sent session_ended to former member {member_id}")
                                 except Exception as e:
-                                    logger.error(f"[Collaborative] ❌ Failed to notify member {member_id}: {e}")
+                                    logger.error(f"[Collaborative] Failed to notify member {member_id}: {e}")
                         else:
-                            logger.warning(f"[Collaborative] ⚠️ Member {member_id} NOT in user_connections!")
-        
+                            logger.warning(f"[Collaborative] Member {member_id} NOT in user_connections!")
+
         await websocket.send_text(json.dumps({
             "type": "left_session",
             "session_id": session_id
         }))
-        logger.info(f"[Collaborative] User {auth_conn.username} leave_session handling complete")
-        logger.info(f"[Collaborative] User {auth_conn.username} left session {session_id[:8]}...")
+        logger.debug(f"[Collaborative] User {auth_conn.username} leave_session handling complete")
+        logger.debug(f"[Collaborative] User {auth_conn.username} left session {session_id[:8]}...")
     
     async def handle_user_logout(websocket: WebSocket):
         """Handle user logging out - clean up all their collaborative sessions.
@@ -1554,7 +1600,7 @@ def create_websocket_app() -> FastAPI:
         1. User owns sessions (as session owner) - end those sessions and notify members
         2. User is a member of sessions (joined someone else's) - leave those sessions
         """
-        logger.info(f"[Collaborative] ===== handle_user_logout called =====")
+        logger.debug(f"[Collaborative] ===== handle_user_logout called =====")
         
         auth_conn = websocket_manager.get_connection_info(websocket)
         if not auth_conn:
@@ -1568,11 +1614,11 @@ def create_websocket_app() -> FastAPI:
             logger.warning(f"[Collaborative] No user_id found for logout!")
             return
         
-        logger.info(f"[Collaborative] User {username} ({user_id}) logging out - checking for sessions to clean up")
+        logger.debug(f"[Collaborative] User {username} ({user_id}) logging out - checking for sessions to clean up")
         
         # Get all sessions this user is part of (as owner or member)
         user_session_ids = collaborative_session_manager.get_user_sessions(user_id)
-        logger.info(f"[Collaborative] User is in {len(user_session_ids)} session(s): {[s[:8] for s in user_session_ids]}")
+        logger.debug(f"[Collaborative] User is in {len(user_session_ids)} session(s): {[s[:8] for s in user_session_ids]}")
         
         for session_id in user_session_ids:
             session = collaborative_session_manager.get_session(session_id)
@@ -1584,7 +1630,7 @@ def create_websocket_app() -> FastAPI:
             all_members_before = session.get_all_member_ids()
             is_owner = user_id == session.owner_user_id
             
-            logger.info(f"[Collaborative] Processing session {session_id[:8]}: is_owner={is_owner}, members={all_members_before}")
+            logger.debug(f"[Collaborative] Processing session {session_id[:8]}: is_owner={is_owner}, members={all_members_before}")
             
             # Leave the session (this will delete it if user is owner)
             success = collaborative_session_manager.leave_session(session_id, user_id)
@@ -1595,11 +1641,11 @@ def create_websocket_app() -> FastAPI:
                 
                 if updated_session:
                     # Session still exists - member left, broadcast updated user list
-                    logger.info(f"[Collaborative] Session still exists, broadcasting user list to remaining members")
+                    logger.debug(f"[Collaborative] Session still exists, broadcasting user list to remaining members")
                     await websocket_manager.broadcast_user_list_to_session(updated_session)
                 else:
                     # Session was deleted (owner left) - notify all former members to return to their own sessions
-                    logger.info(f"[Collaborative] Session ended (owner logged out), notifying {len(all_members_before) - 1} former member(s)")
+                    logger.debug(f"[Collaborative] Session ended (owner logged out), notifying {len(all_members_before) - 1} former member(s)")
                     
                     # Send session_ended event - frontend will handle returning to own session
                     session_ended_event = json.dumps({
@@ -1618,17 +1664,17 @@ def create_websocket_app() -> FastAPI:
                                 for member_ws in websocket_manager.user_connections[member_id]:
                                     try:
                                         await member_ws.send_text(session_ended_event)
-                                        logger.info(f"[Collaborative] ✅ Sent session_ended to former member {member_id}")
+                                        logger.debug(f"[Collaborative] Sent session_ended to former member {member_id}")
                                     except Exception as e:
-                                        logger.error(f"[Collaborative] ❌ Failed to notify member {member_id}: {e}")
+                                        logger.error(f"[Collaborative] Failed to notify member {member_id}: {e}")
                             else:
-                                logger.warning(f"[Collaborative] ⚠️ Member {member_id} NOT in user_connections!")
+                                logger.warning(f"[Collaborative] Member {member_id} NOT in user_connections!")
         
-        logger.info(f"[Collaborative] User {username} logout session cleanup complete")
+        logger.debug(f"[Collaborative] User {username} logout session cleanup complete")
     
     async def handle_kick_user(websocket: WebSocket, message: Dict[str, Any]):
         """Handle session owner kicking a user from their session."""
-        logger.info(f"[Collaborative] ===== handle_kick_user called =====")
+        logger.debug(f"[Collaborative] ===== handle_kick_user called =====")
         
         auth_conn = websocket_manager.get_connection_info(websocket)
         if not auth_conn:
@@ -1696,7 +1742,7 @@ def create_websocket_app() -> FastAPI:
                 target_username = member_conn.username
                 break
         
-        logger.info(f"[Collaborative] Owner {owner_username} kicking {target_username} from session {session_id[:8]}")
+        logger.debug(f"[Collaborative] Owner {owner_username} kicking {target_username} from session {session_id[:8]}")
         
         # Send kicked event to the target user BEFORE removing them
         kicked_event = json.dumps({
@@ -1713,15 +1759,15 @@ def create_websocket_app() -> FastAPI:
             for target_ws in websocket_manager.user_connections[target_user_id]:
                 try:
                     await target_ws.send_text(kicked_event)
-                    logger.info(f"[Collaborative] ✅ Sent kicked event to {target_username}")
+                    logger.debug(f"[Collaborative] Sent kicked event to {target_username}")
                 except Exception as e:
-                    logger.error(f"[Collaborative] ❌ Failed to notify kicked user: {e}")
+                    logger.error(f"[Collaborative] Failed to notify kicked user: {e}")
         
         # Remove user from session
         success = collaborative_session_manager.leave_session(session_id, target_user_id)
         
         if success:
-            logger.info(f"[Collaborative] ✅ Successfully kicked {target_username} from session")
+            logger.debug(f"[Collaborative] Successfully kicked {target_username} from session")
             
             # Broadcast updated user list to remaining members
             updated_session = collaborative_session_manager.get_session(session_id)
@@ -1860,10 +1906,10 @@ def create_websocket_app() -> FastAPI:
     async def refresh_agents():
         """HTTP endpoint to trigger immediate agent registry refresh."""
         try:
-            websocket_manager.trigger_immediate_sync()
+            await websocket_manager.sync_agent_registry()
             return JSONResponse({
                 "success": True,
-                "message": "Agent registry refresh triggered"
+                "message": "Agent registry refresh completed"
             })
         except Exception as e:
             logger.error(f"Error triggering agent refresh: {e}")
@@ -2067,27 +2113,27 @@ class WebSocketServerThread:
     def _schedule_agent_sync(self):
         """Schedule periodic agent registry sync."""
         log_websocket_debug(f"_schedule_agent_sync() called, running={self.running}")
-        logger.info(f"⏰ Scheduler called (running={self.running}, sync_in_progress={self.sync_in_progress})")
+        logger.debug(f"Scheduler called (running={self.running}, sync_in_progress={self.sync_in_progress})")
         
         if not self.running:
-            logger.warning("⚠️ Scheduler called but server not running, stopping sync")
+            logger.warning("Scheduler called but server not running, stopping sync")
             log_websocket_debug("Not running, returning early from _schedule_agent_sync")
             return
         
         # Check if sync is already in progress
         if self.sync_in_progress:
-            logger.info("ℹ️ Sync already in progress, skipping this cycle but rescheduling next")
+            logger.debug("Sync already in progress, skipping this cycle but rescheduling next")
             log_websocket_debug("Sync already in progress, skipping this cycle")
             # Still schedule the next sync
             log_websocket_debug(f"Creating timer for next sync in {self.sync_interval} seconds")
             self.sync_timer = threading.Timer(self.sync_interval, self._schedule_agent_sync)
             self.sync_timer.daemon = True
             self.sync_timer.start()
-            logger.info(f"✅ Next sync scheduled in {self.sync_interval}s (skipped current)")
+            logger.debug(f"Next sync scheduled in {self.sync_interval}s (skipped current)")
             log_websocket_debug("Timer started successfully")
             return
             
-        logger.info(f"🚀 Starting new sync cycle (interval: {self.sync_interval}s)")
+        logger.debug(f"Starting new sync cycle (interval: {self.sync_interval}s)")
         log_websocket_debug("About to start sync thread")
         
         # Run sync in background thread
@@ -2099,9 +2145,9 @@ class WebSocketServerThread:
         self.sync_timer = threading.Timer(self.sync_interval, self._schedule_agent_sync)
         self.sync_timer.daemon = True
         self.sync_timer.start()
-        logger.info(f"✅ Next sync scheduled in {self.sync_interval}s")
+        logger.debug(f"Next sync scheduled in {self.sync_interval}s")
         log_websocket_debug("Timer started successfully")
-    
+
     def _run_sync(self):
         """Run agent registry sync in a separate thread."""
         # Use lock to prevent concurrent syncs
@@ -2112,7 +2158,7 @@ class WebSocketServerThread:
         try:
             self.sync_in_progress = True
             log_websocket_debug("_run_sync() starting...")
-            logger.info("WebSocket sync thread starting...")
+            logger.debug("WebSocket sync thread starting...")
             # Create a new event loop for this thread
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
@@ -2120,7 +2166,7 @@ class WebSocketServerThread:
             loop.run_until_complete(self._sync_agent_registry())
             loop.close()
             log_websocket_debug("_run_sync() completed successfully")
-            logger.info("WebSocket sync thread completed")
+            logger.debug("WebSocket sync thread completed")
         except Exception as e:
             log_websocket_debug(f"_run_sync() failed: {e}")
             logger.error(f"Failed to run agent sync: {e}")
@@ -2136,26 +2182,26 @@ class WebSocketServerThread:
         """Trigger an immediate agent registry sync (non-blocking)."""
         if self.sync_in_progress:
             log_websocket_debug("Sync already in progress, skipping immediate sync")
-            logger.info("Sync already in progress, skipping immediate sync")
+            logger.debug("Sync already in progress, skipping immediate sync")
             return
         threading.Thread(target=self._run_sync, daemon=True).start()
-        logger.info("Manual agent registry sync triggered")
+        logger.debug("Manual agent registry sync triggered")
     
     async def _sync_agent_registry(self):
         """Sync agent registry to all connected clients."""
         sync_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-        logger.info(f"🔄 Starting agent registry sync at {sync_time}")
+        logger.debug(f"Starting agent registry sync at {sync_time}")
         
         try:
-            logger.info("  📡 Fetching agent list from backend...")
+            logger.debug("  Fetching agent list from backend...")
             agents = websocket_manager.get_agent_registry()
-            logger.info(f"  ✅ Retrieved {len(agents)} agents from registry")
+            logger.debug(f"  Retrieved {len(agents)} agents from registry")
             log_websocket_debug(f"Retrieved {len(agents)} agents from registry")
             
             if agents:
                 # Log agent statuses for debugging
                 agent_statuses = [(agent.get('name', 'unknown'), agent.get('status', 'unknown')) for agent in agents]
-                logger.info(f"  📊 Agent statuses: {agent_statuses}")
+                logger.debug(f"  Agent statuses: {agent_statuses}")
                 
                 # Send full registry sync
                 registry_event = {
@@ -2165,12 +2211,12 @@ class WebSocketServerThread:
                     },
                     'timestamp': sync_time
                 }
-                logger.info(f"  📤 Broadcasting to WebSocket clients...")
+                logger.debug(f"  Broadcasting to WebSocket clients...")
                 client_count = await websocket_manager.broadcast_event(registry_event)
-                logger.info(f"  ✅ Synced {len(agents)} agents to {client_count} clients")
+                logger.debug(f"  Synced {len(agents)} agents to {client_count} clients")
                 log_websocket_debug(f"Sent registry sync to {client_count} clients")
             else:
-                logger.info("  ℹ️  No agents to sync, broadcasting empty list...")
+                logger.debug("  No agents to sync, broadcasting empty list...")
                 registry_event = {
                     'eventType': 'agent_registry_sync',
                     'data': {
@@ -2179,12 +2225,12 @@ class WebSocketServerThread:
                     'timestamp': sync_time
                 }
                 client_count = await websocket_manager.broadcast_event(registry_event)
-                logger.info(f"  ✅ Synced 0 agents to {client_count} clients")
+                logger.debug(f"  Synced 0 agents to {client_count} clients")
                 
-            logger.info(f"✅ Sync completed successfully at {sync_time}")
+            logger.debug(f"Sync completed successfully at {sync_time}")
                 
         except Exception as e:
-            logger.error(f"❌ Failed to sync agent registry: {e}")
+            logger.error(f"Failed to sync agent registry: {e}")
             log_websocket_debug(f"Sync failed: {e}")
             import traceback
             logger.error(f"Traceback: {traceback.format_exc()}")

@@ -6,11 +6,11 @@ const execAsync = promisify(exec)
 
 export async function GET() {
   try {
-    // For Voice Live API, use the Azure OpenAI API key from environment
-    const apiKey = process.env.AZURE_OPENAI_GPT_API_KEY
+    // Use voice-specific key if available, fall back to general Azure OpenAI key
+    const apiKey = process.env.AZURE_VOICE_API_KEY || process.env.AZURE_OPENAI_GPT_API_KEY
 
     if (!apiKey) {
-      throw new Error('AZURE_OPENAI_GPT_API_KEY not found in environment')
+      throw new Error('AZURE_VOICE_API_KEY or AZURE_OPENAI_GPT_API_KEY not found in environment')
     }
 
     console.log('[Azure Token API] API key fetched successfully from environment')

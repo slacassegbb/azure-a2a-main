@@ -15,6 +15,10 @@
 .DS_Store
 **/.DS_Store
 
+# Editor artifacts
+.vscode/
+.idea/
+
 # Logs
 *.log
 

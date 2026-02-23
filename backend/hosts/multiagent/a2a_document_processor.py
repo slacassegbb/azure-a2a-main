@@ -16,6 +16,8 @@ import json
 from . import doc2md_utils
 from .content_understanding_client import AzureContentUnderstandingClient
 
+from log_config import log_debug, log_info, log_warning, log_error
+
 # Import the A2A memory service
 from .a2a_memory_service import a2a_memory_service
 
@@ -46,7 +48,7 @@ def get_content_understanding_client():
         or os.getenv("AZURE_AI_SERVICE_ENDPOINT")
     )
     if not azure_ai_service_endpoint:
-        print("⚠️ Missing AZURE_CONTENT_UNDERSTANDING_ENDPOINT (or AZURE_AI_SERVICE_ENDPOINT) environment variable.")
+        log_warning("Missing AZURE_CONTENT_UNDERSTANDING_ENDPOINT (or AZURE_AI_SERVICE_ENDPOINT) environment variable.")
         return None
 
     azure_ai_service_endpoint = azure_ai_service_endpoint.strip().rstrip("/")
@@ -59,9 +61,9 @@ def get_content_understanding_client():
     # Check if API key is provided, otherwise use managed identity
     api_key = os.getenv("AZURE_CONTENT_UNDERSTANDING_API_KEY")
 
-    print(f"Azure Content Understanding endpoint: {azure_ai_service_endpoint}")
-    print(f"Azure Content Understanding API version: {azure_ai_service_api_version}")
-    print(f"Azure Content Understanding auth: {'API Key' if api_key else 'Managed Identity'}")
+    log_debug(f"Azure Content Understanding endpoint: {azure_ai_service_endpoint}")
+    log_debug(f"Azure Content Understanding API version: {azure_ai_service_api_version}")
+    log_debug(f"Azure Content Understanding auth: {'API Key' if api_key else 'Managed Identity'}")
 
     try:
         if api_key:
@@ -85,7 +87,7 @@ def get_content_understanding_client():
 
         return client
     except Exception as e:
-        print(f"Error initializing Content Understanding client: {e}")
+        log_error(f"Error initializing Content Understanding client: {e}")
         return None
 
 def sanitize_doc_id(doc_id):
@@ -141,7 +143,7 @@ def text_to_speech(text: str, output_path: str = None) -> str:
         return output_path
             
     except Exception as e:
-        print(f"Error in text_to_speech: {e}")
+        log_error(f"Error in text_to_speech: {e}")
         return None
 
 def process_audio(audio_path: str, return_text: bool = False):
@@ -149,11 +151,11 @@ def process_audio(audio_path: str, return_text: bool = False):
     Process audio file - from user's original working code.
     If return_text is True, returns the transcript text instead of JSON file paths.
     """
-    print(f"Processing audio: {audio_path}")
+    log_debug(f"Processing audio: {audio_path}")
     client = get_content_understanding_client()
     
     if client is None:
-        print("Content Understanding client not available. Skipping audio processing.")
+        log_warning("Content Understanding client not available. Skipping audio processing.")
         return None if return_text else []
     
     analyzer_id = f"audio-analyzer-{str(uuid.uuid4())}"
@@ -165,15 +167,15 @@ def process_audio(audio_path: str, return_text: bool = False):
             analyzer_template_path="analyzer_templates/audio_transcription.json"
         )
         result = client.poll_result(response)
-        print(f"Successfully created analyzer: {analyzer_id}")
-        
+        log_debug(f"Successfully created analyzer: {analyzer_id}")
+
         # Analyze the audio content
-        print(f"[DEBUG] Starting analysis of audio file: {audio_path}")
+        log_debug(f"Starting analysis of audio file: {audio_path}")
         response = client.begin_analyze(analyzer_id, audio_path)
-        print(f"[DEBUG] Analysis request sent, polling for results...")
+        log_debug("Analysis request sent, polling for results...")
         result = client.poll_result(response)
-        print(f"Successfully analyzed audio with analyzer: {analyzer_id}")
-        print(f"[DEBUG] Analysis result keys: {list(result.keys()) if isinstance(result, dict) else 'Not a dict'}")
+        log_debug(f"Successfully analyzed audio with analyzer: {analyzer_id}")
+        log_debug(f"Analysis result keys: {list(result.keys()) if isinstance(result, dict) else 'Not a dict'}")
         
         # Extract transcript from the result
         audio_content = result["result"]
@@ -208,37 +210,37 @@ def process_audio(audio_path: str, return_text: bool = False):
         return full_content
             
     except Exception as e:
-        print(f"Error processing audio: {e}")
-        print(f"Error type: {type(e).__name__}")
-        
+        log_error(f"Error processing audio: {e}")
+        log_error(f"Error type: {type(e).__name__}")
+
         # Try to get more details from the exception
         if hasattr(e, 'response'):
-            print(f"HTTP Response status: {e.response.status_code}")
+            log_error(f"HTTP Response status: {e.response.status_code}")
             try:
-                print(f"HTTP Response body: {e.response.text}")
+                log_error(f"HTTP Response body: {e.response.text}")
             except:
-                print("Could not get response body")
-        
+                log_error("Could not get response body")
+
         # If it's a RuntimeError from poll_result, try to extract more info
         if isinstance(e, RuntimeError) and "Request failed" in str(e):
-            print("This is a RuntimeError from Azure Content Understanding service")
-            print("The actual error details should be in the Azure service logs")
-        
+            log_error("This is a RuntimeError from Azure Content Understanding service")
+            log_error("The actual error details should be in the Azure service logs")
+
         try:
             client.delete_analyzer(analyzer_id)
         except Exception as cleanup_error:
-            print(f"Error during cleanup: {cleanup_error}")
+            log_error(f"Error during cleanup: {cleanup_error}")
         
         return None if return_text else []
 
 def process_video(video_path):
     """Process video files - from user's original working code"""
-    print(f"Processing video: {video_path}")
+    log_debug(f"Processing video: {video_path}")
     client = get_content_understanding_client()
     
     # Check if client is available
     if client is None:
-        print("Content Understanding client not available. Skipping video processing.")
+        log_warning("Content Understanding client not available. Skipping video processing.")
         return []
     
     # Create a unique analyzer ID for the video
@@ -249,19 +251,19 @@ def process_video(video_path):
         # Get the directory where this module is located
         module_dir = os.path.dirname(os.path.abspath(__file__))
         template_path = os.path.join(module_dir, "analyzer_templates", "video_content_understanding.json")
-        print(f"Looking for video analyzer template at: {template_path}")
+        log_debug(f"Looking for video analyzer template at: {template_path}")
         
         response = client.begin_create_analyzer(
             analyzer_id=analyzer_id,
             analyzer_template_path=template_path
         )
         result = client.poll_result(response)
-        print(f"Successfully created analyzer: {analyzer_id}")
-        
+        log_debug(f"Successfully created video analyzer: {analyzer_id}")
+
         # Analyze the video content
         response = client.begin_analyze(analyzer_id, video_path)
         result = client.poll_result(response)
-        print(f"Successfully analyzed video with analyzer: {analyzer_id}")
+        log_debug(f"Successfully analyzed video with analyzer: {analyzer_id}")
         
         # Process the results
         video_content = result["result"]["contents"]
@@ -291,7 +293,7 @@ def process_video(video_path):
         return full_content
         
     except Exception as e:
-        print(f"Error processing video: {e}")
+        log_error(f"Error processing video: {e}")
         # Try to clean up analyzer even if there was an error
         try:
             client.delete_analyzer(analyzer_id)
@@ -301,12 +303,12 @@ def process_video(video_path):
 
 def process_document(document_path):
     """Process document files using Azure Content Understanding (like video/audio)"""
-    print(f"Processing document: {document_path}")
+    log_debug(f"Processing document: {document_path}")
     client = get_content_understanding_client()
     
     # Check if client is available
     if client is None:
-        print("Content Understanding client not available. Falling back to GPT-4 Vision method.")
+        log_warning("Content Understanding client not available. Falling back to GPT-4 Vision method.")
         return process_document_legacy(document_path)
     
     # Create a unique analyzer ID for the document
@@ -316,24 +318,24 @@ def process_document(document_path):
         # Create the document analyzer using the template
         module_dir = os.path.dirname(os.path.abspath(__file__))
         template_path = os.path.join(module_dir, "analyzer_templates", "content_document.json")
-        print(f"Looking for document analyzer template at: {template_path}")
+        log_debug(f"Looking for document analyzer template at: {template_path}")
         
         response = client.begin_create_analyzer(
             analyzer_id=analyzer_id,
             analyzer_template_path=template_path
         )
         result = client.poll_result(response)
-        print(f"Successfully created document analyzer: {analyzer_id}")
-        
+        log_debug(f"Successfully created document analyzer: {analyzer_id}")
+
         # Analyze the document content
         response = client.begin_analyze(analyzer_id, document_path)
         result = client.poll_result(response)
-        print(f"Successfully analyzed document with analyzer: {analyzer_id}")
-        
-        # DEBUG: Log the full result structure to understand what we're getting
-        print(f"[DEBUG] Result keys: {list(result.keys()) if isinstance(result, dict) else 'Not a dict'}")
+        log_debug(f"Successfully analyzed document with analyzer: {analyzer_id}")
+
+        # Log the result structure for debugging
+        log_debug(f"Result keys: {list(result.keys()) if isinstance(result, dict) else 'Not a dict'}")
         if "result" in result:
-            print(f"[DEBUG] result['result'] keys: {list(result['result'].keys()) if isinstance(result.get('result'), dict) else 'Not a dict'}")
+            log_debug(f"result['result'] keys: {list(result['result'].keys()) if isinstance(result.get('result'), dict) else 'Not a dict'}")
         
         # Extract content from the result
         document_content = result.get("result", {})
@@ -342,9 +344,9 @@ def process_document(document_path):
         
         # Extract text content from the analysis result
         if "contents" in document_content:
-            print(f"[DEBUG] Found {len(document_content['contents'])} content sections")
+            log_debug(f"Found {len(document_content['contents'])} content sections")
             for i, content in enumerate(document_content["contents"]):
-                print(f"[DEBUG] Content {i} keys: {list(content.keys()) if isinstance(content, dict) else 'Not a dict'}")
+                log_debug(f"Content {i} keys: {list(content.keys()) if isinstance(content, dict) else 'Not a dict'}")
                 
                 # Extract markdown/text content if available
                 if "markdown" in content:
@@ -371,14 +373,13 @@ def process_document(document_path):
         # Cleanup
         client.delete_analyzer(analyzer_id)
 
-        print(f"Document extracted content length: {len(full_content)} chars")
-        print(f"[DEBUG] FULL EXTRACTED CONTENT:\n{full_content}\n[END FULL CONTENT]")
+        log_debug(f"Document extracted content length: {len(full_content)} chars")
         return full_content
         
     except Exception as e:
-        print(f"Error processing document with Content Understanding: {e}")
+        log_error(f"Error processing document with Content Understanding: {e}")
         import traceback
-        print(traceback.format_exc())
+        log_error(traceback.format_exc())
         
         # Try to clean up analyzer even if there was an error
         try:
@@ -387,25 +388,25 @@ def process_document(document_path):
             pass
         
         # Fall back to legacy GPT-4 Vision method
-        print("Falling back to GPT-4 Vision method...")
+        log_warning("Falling back to GPT-4 Vision method...")
         return process_document_legacy(document_path)
 
 
 def process_document_legacy(document_path):
     """Legacy document processing using GPT-4 Vision (fallback method)"""
-    print(f"Processing document (legacy): {document_path}")
+    log_debug(f"Processing document (legacy): {document_path}")
     
     # Convert file to PDF
     pdf_path = doc2md_utils.convert_to_pdf(document_path)
     if not pdf_path:
-        print(f"Error: Could not convert {document_path} to PDF")
+        log_error(f"Could not convert {document_path} to PDF")
         return []
 
     # Extract PDF pages to images
     doc_id = doc2md_utils.extract_pdf_pages_to_images(pdf_path, image_path)
     pdf_images_dir = os.path.join(image_path, doc_id)
     files = doc2md_utils.get_all_files(pdf_images_dir)
-    print(f'Total Image Files to Process: {len(files)}')
+    log_debug(f"Total Image Files to Process: {len(files)}")
 
     # Convert images to markdown in parallel
     markdown_out_dir = os.path.join(markdown_path, doc_id)
@@ -418,7 +419,7 @@ def process_document_legacy(document_path):
     # Get markdown files exactly like in the user's code
     files = os.listdir(markdown_out_dir)
     txt_files = [f for f in files if f.endswith('.txt')]
-    print(f'Total Markdown Files: {len(txt_files)}')
+    log_debug(f"Total Markdown Files: {len(txt_files)}")
     
     # Combine all markdown content
     combined_content = ""
@@ -431,7 +432,7 @@ def process_document_legacy(document_path):
 
 def process_image(image_path):
     """Process a single image file - from user's original working code"""
-    print(f"Processing image: {image_path}")
+    log_debug(f"Processing image: {image_path}")
     
     # Convert the image to markdown using existing utility
     markdown_text = doc2md_utils.extract_markdown_from_image(image_path)
@@ -442,7 +443,7 @@ def process_text_file(text_file_path):
     """
     Process a text-based file directly - from user's original working code.
     """
-    print(f"Processing text-based file: {text_file_path}")
+    log_debug(f"Processing text-based file: {text_file_path}")
     
     try:
         # Try to read the file as text with different encodings
@@ -453,7 +454,7 @@ def process_text_file(text_file_path):
             try:
                 with open(text_file_path, 'r', encoding=encoding) as f:
                     text_content = f.read()
-                print(f"Successfully read file with {encoding} encoding")
+                log_debug(f"Successfully read file with {encoding} encoding")
                 break
             except UnicodeDecodeError:
                 continue
@@ -477,22 +478,22 @@ def process_text_file(text_file_path):
         return text_content
         
     except Exception as e:
-        print(f"Error processing text file: {e}")
+        log_error(f"Error processing text file: {e}")
         import traceback
-        print(traceback.format_exc())
+        log_error(traceback.format_exc())
         return ""
 
 def process_file(file_path):
     """Process a file based on its type - from user's original working code"""
     if not os.path.exists(file_path):
-        print(f"Error: File {file_path} does not exist")
+        log_error(f"File {file_path} does not exist")
         return ""
     
     file_type = determine_file_type(file_path)
     
     # Convert to absolute path for processing
     abs_file_path = os.path.abspath(file_path)
-    print(f"Processing {file_type} file: {abs_file_path}")
+    log_debug(f"Processing {file_type} file: {abs_file_path}")
     
     if file_type == "audio":
         return process_audio(abs_file_path, return_text=True)
@@ -509,7 +510,7 @@ def process_file(file_path):
     elif file_type == "text":
         return process_text_file(abs_file_path)
     else:
-        print(f"Error: Unsupported file type for {abs_file_path}")
+        log_error(f"Unsupported file type for {abs_file_path}")
         return ""
 
 # A2A Integration Function
@@ -528,11 +529,11 @@ async def process_file_part(file_part, artifact_info=None, session_id: str = Non
         filename = getattr(file_part, 'name', f'unknown_file_{uuid.uuid4()}')
         if artifact_info and 'file_name' in artifact_info:
             filename = artifact_info['file_name']
-        print(f"[A2ADocumentProcessor] Processing file: {filename}")
+        log_debug(f"[A2ADocumentProcessor] Processing file: {filename}")
         
         filename_lower = filename.lower()
         if "-mask" in filename_lower or "_mask" in filename_lower:
-            print(f"[A2ADocumentProcessor] Skipping mask file {filename}")
+            log_debug(f"[A2ADocumentProcessor] Skipping mask file {filename}")
             return {
                 "success": True,
                 "content": "",
@@ -564,29 +565,29 @@ async def process_file_part(file_part, artifact_info=None, session_id: str = Non
             # First check if file bytes are directly available (for local files)
             if 'file_bytes' in artifact_info:
                 file_bytes = artifact_info['file_bytes']
-                print(f"[A2ADocumentProcessor] Using file bytes from artifact_info: {len(file_bytes)} bytes")
+                log_debug(f"[A2ADocumentProcessor] Using file bytes from artifact_info: {len(file_bytes)} bytes")
             elif 'artifact_uri' in artifact_info:
                 artifact_uri = artifact_info['artifact_uri']
                 
                 # Check if it's an Azure Blob URI (contains blob.core.windows.net)
                 if 'blob.core.windows.net' in artifact_uri:
-                    print(f"[A2ADocumentProcessor] Downloading file from Azure Blob: {artifact_uri}")
+                    log_debug(f"[A2ADocumentProcessor] Downloading file from Azure Blob: {artifact_uri}")
                     
                     try:
                         import requests
                         response = requests.get(artifact_uri)
                         response.raise_for_status()
                         file_bytes = response.content
-                        print(f"[A2ADocumentProcessor] Downloaded {len(file_bytes)} bytes from Azure Blob")
+                        log_debug(f"[A2ADocumentProcessor] Downloaded {len(file_bytes)} bytes from Azure Blob")
                     except Exception as e:
-                        print(f"[A2ADocumentProcessor] Error downloading from Azure Blob: {e}")
+                        log_error(f"[A2ADocumentProcessor] Error downloading from Azure Blob: {e}")
                         return {"success": False, "error": f"Failed to download from Azure Blob: {e}"}
                 else:
-                    print(f"[A2ADocumentProcessor] Unknown URI type (not Azure Blob): {artifact_uri}")
+                    log_error(f"[A2ADocumentProcessor] Unknown URI type (not Azure Blob): {artifact_uri}")
                     return {"success": False, "error": "Unknown URI type (not Azure Blob)"}
         
         if file_bytes is None:
-            print(f"[A2ADocumentProcessor] Could not find file bytes in file part or artifact URI")
+            log_error("[A2ADocumentProcessor] Could not find file bytes in file part or artifact URI")
             return {"success": False, "error": "Could not find file bytes"}
         
         # Write to temporary file
@@ -606,7 +607,7 @@ async def process_file_part(file_part, artifact_info=None, session_id: str = Non
             pass
         
         if not processed_content:
-            print(f"[A2ADocumentProcessor] No content extracted from file")
+            log_error("[A2ADocumentProcessor] No content extracted from file")
             return {"success": False, "error": "No content extracted"}
         
         processed_content = _strip_markdown_fences(processed_content)
@@ -645,13 +646,17 @@ async def process_file_part(file_part, artifact_info=None, session_id: str = Non
                 chunks_stored = max(1, len(processed_content) // (CHUNK_SIZE - 500))
             else:
                 chunks_stored = 1
-            
-            await a2a_memory_service.store_interaction(interaction_data, session_id=session_id)
-            print(f"[A2ADocumentProcessor] Successfully processed and stored: {filename} (session: {session_id})")
+
+            store_success = await a2a_memory_service.store_interaction(interaction_data, session_id=session_id)
+            if store_success:
+                log_info(f"[A2ADocumentProcessor] Successfully stored in memory: {filename} (session: {session_id}, chunks: {chunks_stored})")
+            else:
+                log_error(f"[A2ADocumentProcessor] FAILED to store in memory: {filename} (session: {session_id}) -- store_interaction returned False")
+                chunks_stored = 0  # Correct the estimate since storage actually failed
         else:
-            print(f"[A2ADocumentProcessor] Warning: No session_id, skipping memory storage for {filename}")
+            log_warning(f"[A2ADocumentProcessor] No session_id, skipping memory storage for {filename}")
         
-        print(f"[A2ADocumentProcessor] Content length: {len(processed_content)} characters")
+        log_debug(f"[A2ADocumentProcessor] Content length: {len(processed_content)} characters")
         
         # Return both success status AND the extracted content for immediate use
         return {
@@ -663,9 +668,9 @@ async def process_file_part(file_part, artifact_info=None, session_id: str = Non
         }
         
     except Exception as e:
-        print(f"[A2ADocumentProcessor] Error processing file: {e}")
+        log_error(f"[A2ADocumentProcessor] Error processing file: {e}")
         import traceback
-        print(f"[A2ADocumentProcessor] Traceback: {traceback.format_exc()}")
+        log_error(f"[A2ADocumentProcessor] Traceback: {traceback.format_exc()}")
         return {"success": False, "error": str(e)}
 
 # Class wrapper for compatibility

@@ -130,7 +130,7 @@ class WebSocketStreamer:
                     
                     if response.status_code == 200:
                         self.is_initialized = True
-                        logger.info("✅ WebSocket streamer initialized successfully")
+                        logger.info("WebSocket streamer initialized successfully")
                         log_debug(f"WebSocket streamer connected to {self.websocket_url}")
                         return True
                     else:
@@ -148,14 +148,14 @@ class WebSocketStreamer:
                     continue
             
             # If we get here, all attempts failed
-            logger.error(f"❌ Failed to connect to WebSocket server at {self.websocket_url}")
+            logger.error(f"Failed to connect to WebSocket server at {self.websocket_url}")
             # Still mark as initialized but warn it might not work
             self.is_initialized = True  # Allow it to try sending events anyway
             log_debug("WebSocket streamer initialized but connection uncertain")
             return True
                 
         except Exception as e:
-            logger.error(f"❌ Failed to initialize WebSocket streamer: {e}")
+            logger.error(f"Failed to initialize WebSocket streamer: {e}")
             return False
     
     async def cleanup(self):
@@ -227,13 +227,13 @@ class WebSocketStreamer:
                 if response.status_code == 200:
                     result = response.json()
                     client_count = result.get('clientCount', 0)
-                    log_debug(f"✅ Event {event_type} sent successfully to {client_count} WebSocket clients")
-                    logger.info(f"✅ Event {event_type} sent successfully to {client_count} WebSocket clients")
+                    log_debug(f"Event {event_type} sent successfully to {client_count} WebSocket clients")
+                    logger.debug(f"Event {event_type} sent successfully to {client_count} WebSocket clients")
                     return True
                 else:
                     response_text = response.text[:500] if hasattr(response, 'text') else 'No response text'
-                    logger.error(f"❌ Failed to send {event_type} event: HTTP {response.status_code}, Response: {response_text}")
-                    log_debug(f"❌ Failed to send {event_type} event: HTTP {response.status_code}, Response: {response_text}")
+                    logger.error(f"Failed to send {event_type} event: HTTP {response.status_code}, Response: {response_text}")
+                    log_debug(f"Failed to send {event_type} event: HTTP {response.status_code}, Response: {response_text}")
                     return False
                     
             except (httpx.ReadError, httpx.ConnectError, httpx.WriteError) as e:
@@ -244,16 +244,16 @@ class WebSocketStreamer:
                     retry_delay *= 2  # Exponential backoff
                     continue
                 else:
-                    logger.error(f"❌ Failed to send {event_type} event after {max_retries} attempts: {e}")
-                    log_debug(f"❌ Failed to send {event_type} event after retries: {e}")
+                    logger.error(f"Failed to send {event_type} event after {max_retries} attempts: {e}")
+                    log_debug(f"Failed to send {event_type} event after retries: {e}")
                     return False
                     
             except Exception as e:
                 import traceback
                 error_details = traceback.format_exc()
-                logger.error(f"❌ Error sending {event_type} event: {e}")
+                logger.error(f"Error sending {event_type} event: {e}")
                 logger.error(f"Full traceback: {error_details}")
-                log_debug(f"❌ Error sending {event_type} event: {e}")
+                log_debug(f"Error sending {event_type} event: {e}")
                 log_debug(f"Full traceback: {error_details}")
                 return False
         

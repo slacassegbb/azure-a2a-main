@@ -16,10 +16,13 @@ name: Deploy to Azure Container Apps
 # - AZURE_SEARCH_INDEX_NAME: Azure Search index name (e.g., microsoft-results)
 # - BING_CONNECTION_ID: (Optional) Bing Grounding connection ID for web search
 # - DATABASE_URL: PostgreSQL database connection string
+# - VOICE_HOST: Azure OpenAI Realtime host (e.g., myresource.cognitiveservices.azure.com)
+# - VOICE_DEPLOYMENT: Realtime model deployment name (e.g., gpt-realtime)
+# - AZURE_VOICE_API_KEY: API key for the voice realtime endpoint
 
 on:
   push:
-    branches: [ main, feature/multi-tenancy, benjamin-highschool, feature/postgresql-migration, feature/evaluation-step ]
+    branches: [ main, feature/multi-tenancy, benjamin-highschool, feature/postgresql-migration, feature/evaluation-step, repo-clean-up ]
     paths:
       - 'frontend/**'
       - 'backend/**'
@@ -74,18 +77,24 @@ jobs:
             --build-arg NEXT_PUBLIC_A2A_API_URL="https://backend-uami.ambitioussky-6c709152.westus2.azurecontainerapps.io" \
             --build-arg NEXT_PUBLIC_WEBSOCKET_URL="wss://websocket-uami.ambitioussky-6c709152.westus2.azurecontainerapps.io/events" \
             --build-arg NEXT_PUBLIC_DEV_MODE="false" \
+            --build-arg NEXT_PUBLIC_AZURE_AI_FOUNDRY_PROJECT_ENDPOINT="${{ secrets.AZURE_AI_FOUNDRY_PROJECT_ENDPOINT }}" \
+            --build-arg NEXT_PUBLIC_VOICE_HOST="${{ secrets.VOICE_HOST }}" \
+            --build-arg NEXT_PUBLIC_VOICE_DEPLOYMENT="${{ secrets.VOICE_DEPLOYMENT }}" \
             -t ${{ env.REGISTRY }}/frontend:${{ github.sha }} \
             -t ${{ env.REGISTRY }}/frontend:latest \
             ./frontend
           docker push ${{ env.REGISTRY }}/frontend:${{ github.sha }}
           docker push ${{ env.REGISTRY }}/frontend:latest
-      
+
       - name: Deploy to Container App
         run: |
           az containerapp update \
             --name frontend-uami \
             --resource-group ${{ env.RESOURCE_GROUP }} \
-            --image ${{ env.REGISTRY }}/frontend:${{ github.sha }}
+            --image ${{ env.REGISTRY }}/frontend:${{ github.sha }} \
+            --set-env-vars \
+              "AZURE_OPENAI_GPT_API_KEY=${{ secrets.AZURE_OPENAI_GPT_API_KEY }}" \
+              "AZURE_VOICE_API_KEY=${{ secrets.AZURE_VOICE_API_KEY }}"
       
       - name: Verify Deployment
         run: |

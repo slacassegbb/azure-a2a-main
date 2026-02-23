@@ -7,20 +7,8 @@
 
 import {
   A2AEventEnvelope,
-  A2A_EVENT_TYPES,
-  parseA2AEvent,
-  isAgentRegisteredEvent,
-  isAgentSelfRegisteredEvent,
-  isMessageEvent,
-  isConversationCreatedEvent,
-  isTaskEvent,
-  isFileUploadEvent,
-  isFormSubmittedEvent,
-  isToolCallEvent,
-  isToolResponseEvent,
-  isRemoteAgentToolCallEvent
 } from "./a2a-event-types";
-import { DEBUG, logDebug, warnDebug } from "./debug";
+import { DEBUG, logDebug, warnDebug, logInfo } from "./debug";
 
 export type EventCallback = (data: any) => void;
 type Subscribers = {
@@ -154,13 +142,13 @@ export class WebSocketClient {
           // If we have a collaborative session but DON'T have a backend session stored,
           // it means this is a fresh browser session connecting with stale data - clear it
           if (collaborativeSession && !storedBackendSessionId && !justJoined) {
-            console.log('[WebSocket] Clearing stale collaborative session (no backend session stored):', collaborativeSession);
+            logDebug('[WebSocket] Clearing stale collaborative session (no backend session stored):', collaborativeSession);
             sessionStorage.removeItem('a2a_collaborative_session');
           }
           
           // Add authentication token if available
           const token = sessionStorage.getItem('auth_token');
-          console.log('[WebSocket] Auth token present:', !!token, token ? `(${token.substring(0, 20)}...)` : '(none)');
+          logDebug('[WebSocket] Auth token present:', !!token, token ? `(${token.substring(0, 20)}...)` : '(none)');
           if (token) {
             params.push(`token=${encodeURIComponent(token)}`);
           }
@@ -168,7 +156,7 @@ export class WebSocketClient {
           // Add tenant ID (session ID) for multi-tenancy isolation
           const { getOrCreateSessionId } = await import('./session');
           const tenantId = getOrCreateSessionId();
-          console.log('[WebSocket] Tenant ID:', tenantId);
+          logDebug('[WebSocket] Tenant ID:', tenantId);
           if (tenantId) {
             params.push(`tenantId=${encodeURIComponent(tenantId)}`);
           }
@@ -177,7 +165,7 @@ export class WebSocketClient {
             const separator = wsUrl.includes('?') ? '&' : '?';
             wsUrl = `${wsUrl}${separator}${params.join('&')}`;
           }
-          console.log('[WebSocket] Connecting with URL params:', params.length, 'params');
+          logDebug('[WebSocket] Connecting with URL params:', params.length, 'params');
         }
         
         this.websocket = new WebSocket(wsUrl);
@@ -191,7 +179,7 @@ export class WebSocketClient {
           
           this.websocket!.onopen = () => {
             clearTimeout(connectionTimeout);
-            console.log("[WebSocket] CONNECTED successfully");
+            logInfo("[WebSocket] CONNECTED successfully");
             
             // Don't clear collaborative session on reconnect!
             // The backend validates the session and will send session_invalid if needed.
@@ -248,7 +236,7 @@ export class WebSocketClient {
           // Connection successful, set up message handling
           this.websocket.onmessage = (event) => {
             try {
-              console.log('[WebSocket] 📨 Raw message received:', event.data.slice(0, 200));
+              logDebug('[WebSocket] Raw message received:', event.data.slice(0, 200));
               const data = JSON.parse(event.data);
               this.handleEvent(data);
             } catch (error) {
@@ -258,7 +246,7 @@ export class WebSocketClient {
           
           this.websocket.onclose = (event) => {
             // Always log close events to help debug connection issues
-            console.log(`[WebSocket] CLOSED: code=${event.code} reason='${event.reason || 'n/a'}' wasClean=${event.wasClean}`);
+            logInfo(`[WebSocket] CLOSED: code=${event.code} reason='${event.reason || 'n/a'}' wasClean=${event.wasClean}`);
             this.isConnected = false;
             
             // Stop keepalive pings
@@ -311,7 +299,7 @@ export class WebSocketClient {
     const backoffMultiplier = Math.min(Math.floor(this.reconnectAttempts / 3) + 1, 5);
     const delay = Math.min(baseInterval * backoffMultiplier, 10000);
     
-    console.log(`[WebSocket] Scheduling reconnection attempt ${this.reconnectAttempts}/${this.config.maxReconnectAttempts} in ${delay}ms`);
+    logDebug(`[WebSocket] Scheduling reconnection attempt ${this.reconnectAttempts}/${this.config.maxReconnectAttempts} in ${delay}ms`);
     
     this.reconnectTimeout = setTimeout(async () => {
       this.reconnectTimeout = null;
@@ -334,7 +322,7 @@ export class WebSocketClient {
     try {
       // Always log event type for debugging collaborative features
       const incomingEventType = eventData.eventType || eventData.type || 'unknown';
-      console.log(`[WebSocket] handleEvent called with eventType: ${incomingEventType}`);
+      logDebug(`[WebSocket] handleEvent called with eventType: ${incomingEventType}`);
       
       if (DEBUG && typeof eventData === 'object') {
         // Avoid massive spam by eliding big payloads
@@ -357,7 +345,7 @@ export class WebSocketClient {
           break;
         }
         case 'remote_agent_activity':
-          console.log('[WebSocket] 🎯 GOT remote_agent_activity, emitting to listeners:', eventData);
+          logDebug('[WebSocket] GOT remote_agent_activity, emitting to listeners:', eventData);
           this.emit('remote_agent_activity', eventData);
           break;
         case 'conversation':
@@ -382,6 +370,10 @@ export class WebSocketClient {
         case 'file':
           this.handleFileEvent(eventData);
           break;
+        case 'file_processing_completed':
+          logDebug(`[WebSocket] file_processing_completed for ${eventData.filename}: ${eventData.status}`);
+          this.emit('file_processing_completed', eventData);
+          break;
         case 'form':
           this.handleFormEvent(eventData);
           break;
@@ -404,12 +396,12 @@ export class WebSocketClient {
           this.handleUserListUpdateEvent(eventData);
           break;
         case 'online_users':
-          console.log('[WebSocket] Received online_users event:', eventData);
+          logDebug('[WebSocket] Received online_users event:', eventData);
           this.emit('online_users', eventData);
           break;
         case 'session_agent_enabled':
         case 'session_agent_disabled':
-          console.log(`[WebSocket] Received ${eventType} event:`, eventData);
+          logDebug(`[WebSocket] Received ${eventType} event:`, eventData);
           this.emit(eventType, eventData);
           break;
         case 'session_started':
@@ -421,27 +413,27 @@ export class WebSocketClient {
           const justJoined = sessionStorage.getItem('a2a_collaborative_session_just_joined');
           const currentCollabSession = sessionStorage.getItem('a2a_collaborative_session');
           
-          console.log('[WebSocket] session_started - stored:', storedBackendSessionId?.slice(0,8), 'new:', newBackendSessionId?.slice(0,8), 'justJoined:', justJoined, 'collabSession:', currentCollabSession);
+          logDebug('[WebSocket] session_started - stored:', storedBackendSessionId?.slice(0,8), 'new:', newBackendSessionId?.slice(0,8), 'justJoined:', justJoined, 'collabSession:', currentCollabSession);
           
           if (newBackendSessionId) {
             if (storedBackendSessionId && storedBackendSessionId !== newBackendSessionId) {
               // Backend actually restarted - check if we should clear collaborative session
               if (justJoined) {
                 // User just joined a collaborative session - don't clear it
-                console.log('[WebSocket] Backend restarted but user just joined collaborative session, NOT clearing');
+                logDebug('[WebSocket] Backend restarted but user just joined collaborative session, NOT clearing');
                 sessionStorage.removeItem('a2a_collaborative_session_just_joined');
               } else {
                 // User was already in session before restart - clear stale session
                 const staleSession = sessionStorage.getItem('a2a_collaborative_session');
                 if (staleSession) {
-                  console.log('[WebSocket] Backend restarted (session changed), clearing stale collaborative session:', staleSession);
+                  logDebug('[WebSocket] Backend restarted (session changed), clearing stale collaborative session:', staleSession);
                   sessionStorage.removeItem('a2a_collaborative_session');
                 }
               }
             } else {
               // Same backend session - just clear the just_joined flag if present
               if (justJoined) {
-                console.log('[WebSocket] Same backend session, clearing just_joined flag')
+                logDebug('[WebSocket] Same backend session, clearing just_joined flag')
               }
               sessionStorage.removeItem('a2a_collaborative_session_just_joined');
             }
@@ -449,7 +441,7 @@ export class WebSocketClient {
             localStorage.setItem(BACKEND_SESSION_KEY, newBackendSessionId);
           }
           
-          console.log('[WebSocket] Received session_started event:', eventData);
+          logDebug('[WebSocket] Received session_started event:', eventData);
           this.emit('session_started', eventData);
           break;
         case 'session_invite_sent':
@@ -458,7 +450,7 @@ export class WebSocketClient {
         case 'session_invite_response_received':
         case 'session_invite_response_error':
         case 'session_members_updated':
-          console.log(`[WebSocket] Received ${eventType} event:`, eventData);
+          logDebug(`[WebSocket] Received ${eventType} event:`, eventData);
           this.emit(eventType, eventData);
           break;
         case 'session_invalid':
@@ -467,12 +459,12 @@ export class WebSocketClient {
           // The user will now be on their own session
           const hadCollaborativeSession = sessionStorage.getItem('a2a_collaborative_session');
           if (hadCollaborativeSession) {
-            console.log('[WebSocket] Collaborative session invalid, clearing (no reload):', eventData);
+            logDebug('[WebSocket] Collaborative session invalid, clearing (no reload):', eventData);
             sessionStorage.removeItem('a2a_collaborative_session');
             // Emit event so UI can show a notification
             this.emit('session_invalid', eventData);
           } else {
-            console.log('[WebSocket] Received session_invalid but no collaborative session stored, ignoring');
+            logDebug('[WebSocket] Received session_invalid but no collaborative session stored, ignoring');
           }
           break;
         default:
@@ -618,20 +610,20 @@ export class WebSocketClient {
       timestamp: eventData.timestamp
     };
     
-    console.log('[WebSocket] Agent registered event:', agentEvent);
+    logDebug('[WebSocket] Agent registered event:', agentEvent);
     
     this.emit('agent_registered', agentEvent);
   }
 
   private handleAgentRegistrySync(eventData: any) {
-    console.log('[WebSocket] Agent registry sync received:', eventData);
+    logDebug('[WebSocket] Agent registry sync received:', eventData);
     
     // Extract agent list from the event data
     const agents = eventData.data?.agents || [];
     
     // Convert to UI format with all the rich data
     const agentList = agents.map((agent: any) => {
-      console.log(`[WebSocket] Processing agent ${agent.name} with status: ${agent.status}`);
+      logDebug(`[WebSocket] Processing agent ${agent.name} with status: ${agent.status}`);
       return {
         name: agent.name || 'Unknown Agent',
         description: agent.description || '',
@@ -655,7 +647,7 @@ export class WebSocketClient {
       };
     });
     
-    console.log(`[WebSocket] Registry sync: ${agentList.length} agents with enhanced data`);
+    logDebug(`[WebSocket] Registry sync: ${agentList.length} agents with enhanced data`);
     
     // Emit the registry sync event with the enhanced agent list
     this.emit('agent_registry_sync', {
@@ -666,7 +658,7 @@ export class WebSocketClient {
   }
 
   private handleSharedMessageEvent(eventData: any) {
-    console.log("[WebSocket] Shared message event received:", eventData);
+    logDebug("[WebSocket] Shared message event received:", eventData);
     
     // Extract the message data and conversationId
     const messageData = eventData.data?.message;
@@ -685,7 +677,7 @@ export class WebSocketClient {
   }
 
   private handleSharedInferenceStartedEvent(eventData: any) {
-    console.log("[WebSocket] Shared inference started event received:", eventData);
+    logDebug("[WebSocket] Shared inference started event received:", eventData);
     
     // Extract conversationId from data
     const conversationId = eventData.data?.conversationId || "";
@@ -700,7 +692,7 @@ export class WebSocketClient {
   }
 
   private handleSharedInferenceEndedEvent(eventData: any) {
-    console.log("[WebSocket] Shared inference ended event received:", eventData);
+    logDebug("[WebSocket] Shared inference ended event received:", eventData);
     
     // Extract conversationId from data
     const conversationId = eventData.data?.conversationId || "";
@@ -715,7 +707,7 @@ export class WebSocketClient {
   }
 
   private handleUserListUpdateEvent(eventData: any) {
-    console.log("[WebSocket] User list update event received:", eventData);
+    logDebug("[WebSocket] User list update event received:", eventData);
     
     // Emit the user_list_update event for the frontend to handle
     this.emit('user_list_update', {
@@ -730,13 +722,13 @@ export class WebSocketClient {
       this.subscribers[eventName] = [];
     }
     this.subscribers[eventName].push(callback);
-    console.log(`[WebSocket] Subscribed to event: ${eventName}`);
+    logDebug(`[WebSocket] Subscribed to event: ${eventName}`);
   }
 
   unsubscribe(eventName: string, callback: EventCallback): void {
     if (this.subscribers[eventName]) {
       this.subscribers[eventName] = this.subscribers[eventName].filter(cb => cb !== callback);
-      console.log(`[WebSocket] Unsubscribed from event: ${eventName}`);
+      logDebug(`[WebSocket] Unsubscribed from event: ${eventName}`);
     }
   }
 
@@ -757,7 +749,7 @@ export class WebSocketClient {
       try {
         const messageStr = typeof message === 'string' ? message : JSON.stringify(message);
         this.websocket.send(messageStr);
-        console.log('[WebSocket] Message sent:', messageStr);
+        logDebug('[WebSocket] Message sent:', messageStr);
         return true;
       } catch (error) {
         console.error('[WebSocket] Error sending message:', error);
@@ -794,7 +786,7 @@ export class WebSocketClient {
       }
       
       this.isConnected = false;
-      console.log("[WebSocket] Client closed");
+      logInfo("[WebSocket] Client closed");
     } catch (error) {
       console.error("[WebSocket] Error closing client:", error);
     }
@@ -807,11 +799,11 @@ export class MockWebSocketClient {
   private isConnected: boolean = false;
 
   constructor() {
-    console.log("[WebSocket] Using mock WebSocket client");
+    logDebug("[WebSocket] Using mock WebSocket client");
   }
 
   async initialize(): Promise<boolean> {
-    console.log("[WebSocket] Mock client initialized");
+    logDebug("[WebSocket] Mock client initialized");
     this.isConnected = true;
     
     // Simulate some events for testing
@@ -834,13 +826,13 @@ export class MockWebSocketClient {
       this.subscribers[eventName] = [];
     }
     this.subscribers[eventName].push(callback);
-    console.log(`[WebSocket] Mock subscribed to event: ${eventName}`);
+    logDebug(`[WebSocket] Mock subscribed to event: ${eventName}`);
   }
 
   unsubscribe(eventName: string, callback: EventCallback): void {
     if (this.subscribers[eventName]) {
       this.subscribers[eventName] = this.subscribers[eventName].filter(cb => cb !== callback);
-      console.log(`[WebSocket] Mock unsubscribed from event: ${eventName}`);
+      logDebug(`[WebSocket] Mock unsubscribed from event: ${eventName}`);
     }
   }
 
@@ -861,13 +853,13 @@ export class MockWebSocketClient {
   }
 
   sendMessage(message: any): boolean {
-    console.log("[WebSocket] Mock sendMessage called with:", message);
+    logDebug("[WebSocket] Mock sendMessage called with:", message);
     return true; // Mock always succeeds
   }
 
   async close(): Promise<void> {
     this.isConnected = false;
-    console.log("[WebSocket] Mock client closed");
+    logDebug("[WebSocket] Mock client closed");
   }
 }
 

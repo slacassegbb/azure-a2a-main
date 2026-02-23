@@ -7,8 +7,17 @@ Pattern: Memory is primary for reads, database is synced on writes.
 
 import os
 import json
+import sys
 from typing import Dict, List, Any, Optional
 from datetime import datetime
+from pathlib import Path
+
+# Add backend directory to path for log_config import
+backend_dir = Path(__file__).resolve().parent.parent
+if str(backend_dir) not in sys.path:
+    sys.path.insert(0, str(backend_dir))
+
+from log_config import log_debug, log_info, log_error, log_warning
 
 # Database connection
 DATABASE_URL = os.getenv('DATABASE_URL')
@@ -29,13 +38,13 @@ def _init_database():
             import psycopg2
             _db_conn = psycopg2.connect(DATABASE_URL)
             _use_database = True
-            print("[ActiveWorkflowService] ✅ Using PostgreSQL database")
+            log_info("[ActiveWorkflowService] Using PostgreSQL database")
             _load_from_database()
         except Exception as e:
-            print(f"[ActiveWorkflowService] ❌ Failed to connect to database: {e}")
+            log_error(f"[ActiveWorkflowService] Failed to connect to database: {e}")
             _use_database = False
     else:
-        print("[ActiveWorkflowService] ⚠️ DATABASE_URL not set, using in-memory only")
+        log_warning("[ActiveWorkflowService] DATABASE_URL not set, using in-memory only")
 
 
 def _load_from_database():
@@ -68,10 +77,10 @@ def _load_from_database():
             _multi_workflows[session_id].append(workflow_data)
         
         cur.close()
-        print(f"[ActiveWorkflowService] Loaded {len(_single_workflows)} single workflows, {len(_multi_workflows)} multi-workflow sessions")
+        log_debug(f"[ActiveWorkflowService] Loaded {len(_single_workflows)} single workflows, {len(_multi_workflows)} multi-workflow sessions")
         
     except Exception as e:
-        print(f"[ActiveWorkflowService] Error loading from database: {e}")
+        log_error(f"[ActiveWorkflowService] Error loading from database: {e}")
 
 
 # ==================== Single Workflow API ====================
@@ -108,7 +117,7 @@ def set_active_workflow(session_id: str, workflow: str, name: str, goal: str) ->
             _db_conn.commit()
             cur.close()
         except Exception as e:
-            print(f"[ActiveWorkflowService] Error saving to database: {e}")
+            log_error(f"[ActiveWorkflowService] Error saving to database: {e}")
             _db_conn.rollback()
             return False
     
@@ -129,7 +138,7 @@ def clear_active_workflow(session_id: str) -> bool:
             _db_conn.commit()
             cur.close()
         except Exception as e:
-            print(f"[ActiveWorkflowService] Error deleting from database: {e}")
+            log_error(f"[ActiveWorkflowService] Error deleting from database: {e}")
             _db_conn.rollback()
             return False
     
@@ -167,7 +176,7 @@ def set_active_workflows(session_id: str, workflows: List[Dict[str, Any]]) -> bo
             _db_conn.commit()
             cur.close()
         except Exception as e:
-            print(f"[ActiveWorkflowService] Error saving multi-workflows to database: {e}")
+            log_error(f"[ActiveWorkflowService] Error saving multi-workflows to database: {e}")
             _db_conn.rollback()
             return False
     
@@ -200,7 +209,7 @@ def add_active_workflow(session_id: str, workflow: Dict[str, Any]) -> List[Dict[
                 _db_conn.commit()
                 cur.close()
             except Exception as e:
-                print(f"[ActiveWorkflowService] Error adding workflow to database: {e}")
+                log_error(f"[ActiveWorkflowService] Error adding workflow to database: {e}")
                 _db_conn.rollback()
     
     return _multi_workflows[session_id]
@@ -225,7 +234,7 @@ def remove_active_workflow(session_id: str, workflow_id: str) -> List[Dict[str, 
             _db_conn.commit()
             cur.close()
         except Exception as e:
-            print(f"[ActiveWorkflowService] Error removing workflow from database: {e}")
+            log_error(f"[ActiveWorkflowService] Error removing workflow from database: {e}")
             _db_conn.rollback()
     
     return _multi_workflows.get(session_id, [])
@@ -244,7 +253,7 @@ def clear_active_workflows(session_id: str) -> bool:
             _db_conn.commit()
             cur.close()
         except Exception as e:
-            print(f"[ActiveWorkflowService] Error clearing workflows from database: {e}")
+            log_error(f"[ActiveWorkflowService] Error clearing workflows from database: {e}")
             _db_conn.rollback()
             return False
     

@@ -1,31 +1,46 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo } from "react"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
+import { Input } from "@/components/ui/input"
+import { ScrollArea } from "@/components/ui/scroll-area"
 import { useToast } from "@/hooks/use-toast"
 import { useEventHub } from "@/hooks/use-event-hub"
 import { getOrCreateSessionId } from "@/lib/session"
-import { 
-  Bot, 
-  Play, 
-  Zap, 
-  ExternalLink, 
-  Globe, 
+import {
+  Bot,
+  Zap,
+  ExternalLink,
+  Globe,
   Search,
   FileText,
   Shield,
   Database,
   RefreshCw,
-  UserPlus,
-  Check,
-  X,
-  UserCheck,
-  UserMinus,
   Power,
   Plus,
-  Minus
+  Minus,
+  Mail,
+  BarChart3,
+  Code,
+  MessageSquare,
+  Phone,
+  CreditCard,
+  Receipt,
+  Image,
+  Palette,
+  MapPin,
+  FileSpreadsheet,
+  FileType,
+  Presentation,
+  ClipboardCheck,
+  AlertTriangle,
+  Clock,
+  UserSearch,
+  Handshake,
+  BrainCircuit,
 } from "lucide-react"
 import {
   Dialog,
@@ -33,13 +48,7 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from "@/components/ui/dialog"
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible"
 import {
   Tooltip,
   TooltipContent,
@@ -48,76 +57,120 @@ import {
 } from "@/components/ui/tooltip"
 
 import { getAgentTextClass, getAgentBgClass } from "@/lib/agent-colors"
+import { deriveCategory, getAllCategories, CATEGORY_ICONS } from "@/lib/agent-categories"
+import { warnDebug } from '@/lib/debug'
 
 export function AgentCatalog() {
   const { toast } = useToast()
   const { emit } = useEventHub()
   const [selectedAgent, setSelectedAgent] = useState<any>(null)
   const [startingAgent, setStartingAgent] = useState<string | null>(null)
-  const [registeringAgent, setRegisteringAgent] = useState<string | null>(null)
-  const [expandedAgents, setExpandedAgents] = useState<Set<string>>(new Set())
+  const [searchQuery, setSearchQuery] = useState("")
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(null)
   const [catalogAgents, setCatalogAgents] = useState<any[]>([])
   const [enabledAgentUrls, setEnabledAgentUrls] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  // Helper function to check if an endpoint is localhost (wake-up doesn't make sense for local agents)
+  // Derived categories from agents
+  const categories = useMemo(() => getAllCategories(catalogAgents), [catalogAgents])
+
+  // Filtered agents based on search and category
+  const filteredAgents = useMemo(() => {
+    return catalogAgents.filter(agent => {
+      // Category filter
+      if (selectedCategory && deriveCategory(agent) !== selectedCategory) return false
+
+      // Text search across name, description, skills
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase()
+        const nameMatch = agent.name.toLowerCase().includes(q)
+        const descMatch = agent.description?.toLowerCase().includes(q)
+        const categoryMatch = deriveCategory(agent).toLowerCase().includes(q)
+        const skillMatch = agent.skills?.some((s: any) =>
+          s.name?.toLowerCase().includes(q) ||
+          s.description?.toLowerCase().includes(q) ||
+          s.tags?.some((t: string) => t.toLowerCase().includes(q))
+        )
+        if (!nameMatch && !descMatch && !categoryMatch && !skillMatch) return false
+      }
+
+      return true
+    })
+  }, [catalogAgents, searchQuery, selectedCategory])
+
+  // Helper function to check if an endpoint is localhost
   const isLocalhostEndpoint = (endpoint: string): boolean => {
     const lower = endpoint.toLowerCase()
     return lower.includes('localhost') || lower.includes('127.0.0.1')
   }
 
-    // Function to check agent health status via backend proxy
+  // Function to check agent health status via backend proxy
   const checkAgentHealth = async (url: string): Promise<boolean> => {
     try {
-      // Extract just the localhost:port part from the URL
       const urlParts = url.replace('http://', '').replace('https://', '')
       const baseUrl = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
       const healthCheckUrl = `${baseUrl}/api/agents/health/${urlParts}`
-      console.log(`Checking health for agent URL: ${url} -> ${healthCheckUrl}`)
-      
+
       const response = await fetch(healthCheckUrl)
-      
-      if (!response.ok) {
-        console.error(`Health check failed with status: ${response.status}`)
-        return false
-      }
-      
+
+      if (!response.ok) return false
+
       const data = await response.json()
-      console.log(`Health check response for ${url}:`, JSON.stringify(data))
-      
-      // Check if the response has success and online fields
       if (data.success && typeof data.online === 'boolean') {
-        console.log(`Agent online status: ${data.online}`)
         return data.online
-      } else {
-        console.error(`Invalid health response structure:`, data)
-        return false
       }
-    } catch (error) {
-      console.warn(`Health check failed for ${url}:`, error)
+      return false
+    } catch {
       return false
     }
   }
 
   // Function to check health status for all agents
   const checkAllAgentsHealth = async (agents: any[]) => {
-    console.log(`Starting health checks for ${agents.length} agents`)
-    
-    const healthChecks = agents.map(async (agent, index) => {
-      console.log(`Health check ${index + 1}: Checking ${agent.name} at ${agent.endpoint}`)
+    const healthChecks = agents.map(async (agent) => {
       const isOnline = await checkAgentHealth(agent.endpoint)
-      console.log(`Health check ${index + 1}: ${agent.name} is ${isOnline ? 'ONLINE' : 'OFFLINE'}`)
-      
-      return {
-        ...agent,
-        status: isOnline ? "Online" : "Offline"
-      }
+      return { ...agent, status: isOnline ? "Online" : "Offline" }
     })
-    
-    const results = await Promise.all(healthChecks)
-    console.log(`Health checks complete. Results:`, results.map(r => `${r.name}: ${r.status}`))
-    return results
+    return Promise.all(healthChecks)
+  }
+
+  // Helper function to get icon based on agent name, then category fallback
+  const getIconForAgent = (name: string, agent?: any) => {
+    const n = name.toLowerCase()
+    // Specific keyword matches
+    if (n.includes('email')) return Mail
+    if (n.includes('teams') || n.includes('chat') || n.includes('messaging')) return MessageSquare
+    if (n.includes('twilio') || n.includes('sms') || n.includes('phone')) return Phone
+    if (n.includes('stock') || n.includes('market') || n.includes('trading')) return BarChart3
+    if (n.includes('quickbooks') || n.includes('invoice')) return Receipt
+    if (n.includes('stripe') || n.includes('payment') || n.includes('billing')) return CreditCard
+    if (n.includes('github') || n.includes('code') || n.includes('developer')) return Code
+    if (n.includes('search') || n.includes('knowledge') || n.includes('deep search')) return Search
+    if (n.includes('legal') || n.includes('compliance')) return FileText
+    if (n.includes('classification') || n.includes('triage')) return Shield
+    if (n.includes('claims') || n.includes('insurance')) return ClipboardCheck
+    if (n.includes('fraud') || n.includes('risk')) return AlertTriangle
+    if (n.includes('assessment') || n.includes('estimation')) return ClipboardCheck
+    if (n.includes('branding') || n.includes('creative') || n.includes('content')) return Palette
+    if (n.includes('image') || n.includes('vision') || n.includes('photo')) return Image
+    if (n.includes('google') || n.includes('maps') || n.includes('location')) return MapPin
+    if (n.includes('excel') || n.includes('spreadsheet')) return FileSpreadsheet
+    if (n.includes('word') || n.includes('document')) return FileType
+    if (n.includes('powerpoint') || n.includes('presentation') || n.includes('slide')) return Presentation
+    if (n.includes('servicenow') || n.includes('ticket')) return Database
+    if (n.includes('interview') || n.includes('recruit') || n.includes('hr')) return UserSearch
+    if (n.includes('human') || n.includes('approval')) return Handshake
+    if (n.includes('time') || n.includes('forecast') || n.includes('series')) return Clock
+    if (n.includes('sentiment') || n.includes('analytic') || n.includes('intelligence')) return BrainCircuit
+    if (n.includes('reporter') || n.includes('report')) return FileText
+    // Category-based fallback
+    if (agent) {
+      const cat = deriveCategory(agent)
+      const catIcon = CATEGORY_ICONS[cat]
+      if (catIcon) return catIcon
+    }
+    return Bot
   }
 
   // Function to fetch agents from registry
@@ -127,24 +180,23 @@ export function AgentCatalog() {
       setError(null)
       const baseUrl = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
       const response = await fetch(`${baseUrl}/api/agents`)
-      
+
       if (!response.ok) {
         throw new Error(`Failed to fetch agents: ${response.status}`)
       }
-      
+
       const data = await response.json()
-      const agents = data.agents || data // Handle both wrapped and unwrapped responses
-      
-      // Transform registry data to match UI expectations
-      const transformedAgents = agents.map((agent: any, index: number) => ({
+      const agents = data.agents || data
+
+      const transformedAgents = agents.map((agent: any) => ({
         id: agent.name.toLowerCase().replace(/\s+/g, '-'),
         name: agent.name,
         description: agent.description,
-        status: "Checking...", // Initial status while checking health
+        status: "Checking...",
         version: agent.version,
         endpoint: agent.url,
-        organization: "Registry Agent", // Default organization
-        icon: getIconForAgent(agent.name), // Helper function to get icon
+        organization: "Registry Agent",
+        icon: getIconForAgent(agent.name, agent),
         rawColor: agent.color,
         color: getAgentTextClass(agent.name, agent.color),
         bgColor: getAgentBgClass(agent.name, agent.color),
@@ -153,16 +205,14 @@ export function AgentCatalog() {
         defaultInputModes: agent.defaultInputModes,
         defaultOutputModes: agent.defaultOutputModes
       }))
-      
-      // Set initial agents with "Checking..." status and stop loading immediately
+
       setCatalogAgents(transformedAgents)
-      setLoading(false) // Stop loading spinner right away - show agents immediately
-      
-      // Check health status for all agents in background (non-blocking)
+      setLoading(false)
+
       checkAllAgentsHealth(transformedAgents).then(agentsWithHealthStatus => {
         setCatalogAgents(agentsWithHealthStatus)
       }).catch(err => {
-        console.warn('Background health check failed:', err)
+        warnDebug('Background health check failed:', err)
       })
     } catch (err) {
       console.error('Error fetching agents:', err)
@@ -174,16 +224,6 @@ export function AgentCatalog() {
       })
       setLoading(false)
     }
-  }
-
-  // Helper function to get icon based on agent name
-  const getIconForAgent = (name: string) => {
-    if (name.toLowerCase().includes('sentiment')) return Bot
-    if (name.toLowerCase().includes('classification') || name.toLowerCase().includes('triage')) return Shield
-    if (name.toLowerCase().includes('legal') || name.toLowerCase().includes('compliance')) return FileText
-    if (name.toLowerCase().includes('search') || name.toLowerCase().includes('knowledge')) return Search
-    if (name.toLowerCase().includes('servicenow') || name.toLowerCase().includes('web')) return Database
-    return Bot // Default icon
   }
 
   // Load agents on component mount
@@ -198,7 +238,7 @@ export function AgentCatalog() {
       const sessionId = getOrCreateSessionId()
       const baseUrl = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
       const response = await fetch(`${baseUrl}/agents/session?session_id=${sessionId}`)
-      
+
       if (response.ok) {
         const data = await response.json()
         const urls = new Set<string>((data.agents || []).map((a: any) => a.url))
@@ -214,8 +254,7 @@ export function AgentCatalog() {
     try {
       const sessionId = getOrCreateSessionId()
       const baseUrl = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
-      
-      // Build the agent data to send (full agent card)
+
       const agentData = {
         name: agent.name,
         description: agent.description,
@@ -227,13 +266,13 @@ export function AgentCatalog() {
         defaultInputModes: agent.defaultInputModes,
         defaultOutputModes: agent.defaultOutputModes
       }
-      
+
       const response = await fetch(`${baseUrl}/agents/session/enable`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ session_id: sessionId, agent: agentData })
       })
-      
+
       if (response.ok) {
         setEnabledAgentUrls(prev => new Set([...prev, agent.endpoint]))
         emit('session_agent_enabled', { agent: agentData })
@@ -257,13 +296,13 @@ export function AgentCatalog() {
     try {
       const sessionId = getOrCreateSessionId()
       const baseUrl = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
-      
+
       const response = await fetch(`${baseUrl}/agents/session/disable`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ session_id: sessionId, agent_url: agent.endpoint })
       })
-      
+
       if (response.ok) {
         setEnabledAgentUrls(prev => {
           const next = new Set(prev)
@@ -286,7 +325,7 @@ export function AgentCatalog() {
     }
   }
 
-  // Function to refresh agents (for refresh button)
+  // Function to refresh agents
   const refreshAgents = () => {
     fetchAgents()
     fetchEnabledAgents()
@@ -296,65 +335,34 @@ export function AgentCatalog() {
     })
   }
 
-  const toggleAgent = (agentId: string, newState?: boolean) => {
-    const newExpanded = new Set(expandedAgents)
-    if (newState !== undefined) {
-      // Use explicit state if provided
-      if (newState) {
-        newExpanded.add(agentId)
-      } else {
-        newExpanded.delete(agentId)
-      }
-    } else {
-      // Toggle current state
-      if (newExpanded.has(agentId)) {
-        newExpanded.delete(agentId)
-      } else {
-        newExpanded.add(agentId)
-      }
-    }
-    setExpandedAgents(newExpanded)
-  }
-
   const handleStartAgent = async (agent: any) => {
     setStartingAgent(agent.id)
-    
+
     try {
       toast({
         title: "Waking Up Agent...",
         description: `Triggering ${agent.name} (may take 10-15 seconds if cold start)`,
       })
-      
-      // Ping the agent's health endpoint multiple times to trigger Azure auto-scale
-      // This will wake up the container if it's scaled to 0
+
       const maxRetries = 3
       let isOnline = false
-      
+
       for (let i = 0; i < maxRetries; i++) {
-        console.log(`[Agent Catalog] Wake-up attempt ${i + 1}/${maxRetries} for ${agent.name}`)
-        
-        // Check agent health (this will trigger auto-scale)
         isOnline = await checkAgentHealth(agent.endpoint)
-        
-        if (isOnline) {
-          console.log(`[Agent Catalog] Agent ${agent.name} is now online!`)
-          break
-        }
-        
-        // Wait between retries (10 seconds for cold start)
+
+        if (isOnline) break
+
         if (i < maxRetries - 1) {
           await new Promise(resolve => setTimeout(resolve, 10000))
         }
       }
-      
+
       if (isOnline) {
         toast({
-          title: "Agent Awake! ✅",
+          title: "Agent Awake!",
           description: `${agent.name} is now running and ready`,
         })
-        
-        // Refresh the agent's status in the UI
-        setCatalogAgents(prev => prev.map(a => 
+        setCatalogAgents(prev => prev.map(a =>
           a.id === agent.id ? { ...a, status: "Online" } : a
         ))
       } else {
@@ -376,334 +384,317 @@ export function AgentCatalog() {
     }
   }
 
-  const handleRegisterAgent = async (agent: any) => {
-    try {
-      // Set loading state for this specific agent
-      setRegisteringAgent(agent.name)
-      
-      toast({
-        title: "Registering Agent...",
-        description: `Registering ${agent.name} to the platform`,
-      })
-      
-      // Call backend to register the agent using its URL from the registry
-      const response = await fetch('/api/register-agent', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ address: agent.endpoint.trim() }),
-      })
-
-      const result = await response.json()
-
-      if (response.ok && result.success) {
-        toast({
-          title: "Agent Registered",
-          description: `Successfully registered ${agent.name} at ${agent.endpoint}`,
-        })
-        
-        // The agent registry will update immediately via WebSocket real-time sync
-        console.log('[Agent Catalog] Agent registered - UI will update in real-time')
-      } else {
-        const errorMessage = result.error || "Failed to register agent"
-        toast({
-          title: "Registration Failed",
-          description: errorMessage.includes("404") 
-            ? `Agent at ${agent.endpoint} does not have a valid A2A agent card at /.well-known/agent-card.json`
-            : errorMessage,
-          variant: "destructive",
-        })
-      }
-    } catch (error) {
-      console.error('[Agent Catalog] Error registering agent:', error)
-      toast({
-        title: "Registration Failed",
-        description: "Failed to register agent",
-        variant: "destructive"
-      })
-    } finally {
-      // Clear loading state after registration completes (success or failure)
-      setRegisteringAgent(null)
-    }
-  }
-
+  // Loading state
   if (loading) {
     return (
-      <div className="space-y-4">
-        <div className="flex items-center justify-end">
-          <Button variant="outline" size="sm" disabled>
-            <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
-            Loading...
-          </Button>
+      <div className="flex-1 flex items-center justify-center">
+        <div className="text-center space-y-3">
+          <RefreshCw className="h-6 w-6 animate-spin mx-auto text-slate-400" />
+          <p className="text-sm text-slate-400">Loading agents from registry...</p>
         </div>
-        <div className="text-center py-8">Loading agents from registry...</div>
       </div>
     )
   }
 
+  // Error state
   if (error) {
     return (
-      <div className="space-y-4">
-        <div className="flex items-center justify-end">
+      <div className="flex-1 flex items-center justify-center">
+        <div className="text-center space-y-3">
+          <p className="text-sm text-red-400">Error: {error}</p>
           <Button variant="outline" size="sm" onClick={refreshAgents}>
             <RefreshCw className="h-4 w-4 mr-2" />
             Retry
           </Button>
-        </div>
-        <div className="text-center py-8 text-red-600">
-          Error: {error}
         </div>
       </div>
     )
   }
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-end">
-        <Button variant="outline" size="sm" onClick={refreshAgents}>
-          <RefreshCw className="h-4 w-4 mr-2" />
-          Refresh
-        </Button>
-      </div>
-      
-      <div className="grid gap-2">
-        {catalogAgents.map((agent) => {
-          const isStarting = startingAgent === agent.id
-          const isOffline = agent.status === "Offline"
-          const AgentIcon = agent.icon
-          const isEnabled = enabledAgentUrls.has(agent.endpoint)
-          
-          return (
-            <Card key={agent.id} className="transition-all duration-200 hover:shadow-md">
-              <Collapsible 
-                open={expandedAgents.has(agent.id)} 
-                onOpenChange={(open) => toggleAgent(agent.id, open)}
+    <div className="flex flex-col flex-1 min-h-0">
+      {/* Header: search + filters */}
+      <div className="space-y-3 pb-4 border-b border-slate-700/50 flex-shrink-0">
+        {/* Search bar row */}
+        <div className="flex gap-2">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-slate-400" />
+            <Input
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search agents by name, description, or skills..."
+              className="pl-10 h-9 text-sm bg-slate-800 border-slate-700 text-slate-200 placeholder:text-slate-500"
+            />
+          </div>
+          <Button variant="outline" size="sm" onClick={refreshAgents} className="h-9 px-3 border-slate-700 text-slate-400 hover:text-slate-200">
+            <RefreshCw className="h-4 w-4" />
+          </Button>
+        </div>
+
+        {/* Category filter pills */}
+        <div className="flex flex-wrap gap-1.5">
+          <Button
+            variant={selectedCategory === null ? "default" : "outline"}
+            size="sm"
+            onClick={() => setSelectedCategory(null)}
+            className="h-7 text-xs rounded-full px-3"
+          >
+            All ({catalogAgents.length})
+          </Button>
+          {categories.map(cat => {
+            const CatIcon = CATEGORY_ICONS[cat]
+            const count = catalogAgents.filter(a => deriveCategory(a) === cat).length
+            return (
+              <Button
+                key={cat}
+                variant={selectedCategory === cat ? "default" : "outline"}
+                size="sm"
+                onClick={() => setSelectedCategory(cat === selectedCategory ? null : cat)}
+                className="h-7 text-xs rounded-full px-3"
               >
-                <CollapsibleTrigger asChild>
-                  <CardHeader className="cursor-pointer p-3 hover:bg-muted/50 transition-colors">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <div className={`p-2 rounded-lg ${agent.bgColor}`}>
-                          <AgentIcon className={`h-4 w-4 ${agent.color}`} />
-                        </div>
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2">
-                            <CardTitle className="text-sm font-semibold">{agent.name}</CardTitle>
-                            <div className={`w-2 h-2 rounded-full ${
-                              agent.status === "Online" ? "bg-green-500" : 
-                              agent.status === "Offline" ? "bg-red-500" : 
-                              "bg-yellow-500 animate-pulse"
-                            }`} title={`Status: ${agent.status}`}></div>
-                            {isEnabled && (
-                              <Badge variant="secondary" className="text-xs">In Team</Badge>
-                            )}
-                          </div>
-                          <CardDescription className="text-xs mt-1 line-clamp-2">
-                            {agent.description}
-                          </CardDescription>
-                        </div>
-                      </div>
-                      <div className="ml-2 flex gap-2" onClick={(e) => e.stopPropagation()}>
-                        <TooltipProvider>
-                          {agent.status === "Online" && (
-                            isEnabled ? (
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <Button
-                                    onClick={() => handleDisableAgent(agent)}
-                                    size="icon"
-                                    className="h-9 w-9 rounded-full bg-red-500 hover:bg-red-600 text-white shadow-sm hover:shadow-md transition-all duration-200"
-                                  >
-                                    <Minus className="h-5 w-5" />
-                                  </Button>
-                                </TooltipTrigger>
-                                <TooltipContent>
-                                  <p>Remove agent from your team</p>
-                                </TooltipContent>
-                              </Tooltip>
-                            ) : (
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <Button
-                                    onClick={() => handleEnableAgent(agent)}
-                                    size="icon"
-                                    className="h-9 w-9 rounded-full bg-green-500 hover:bg-green-600 text-white shadow-sm hover:shadow-md transition-all duration-200"
-                                  >
-                                    <Plus className="h-5 w-5" />
-                                  </Button>
-                                </TooltipTrigger>
-                                <TooltipContent>
-                                  <p>Add agent to your team</p>
-                                </TooltipContent>
-                              </Tooltip>
-                            )
-                          )}
-                          {agent.status === "Offline" && !isLocalhostEndpoint(agent.endpoint) && (
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <Button
-                                  onClick={() => handleStartAgent(agent)}
-                                  disabled={isStarting}
-                                  size="icon"
-                                  className="h-9 w-9 rounded-full bg-sky-500 hover:bg-sky-600 text-white shadow-sm hover:shadow-md transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-                                >
-                                  <Power className="h-4 w-4" />
-                                </Button>
-                              </TooltipTrigger>
-                              <TooltipContent>
-                                <p>Wake up the agent container</p>
-                              </TooltipContent>
-                            </Tooltip>
-                          )}
-                        </TooltipProvider>
-                      </div>
-                    </div>
-                  </CardHeader>
-                </CollapsibleTrigger>
-                
-                <CollapsibleContent>
-                  <CardContent className="pt-0 space-y-3">
-                    {/* Real-time Status */}
-                    <div className="flex items-center justify-between text-xs">
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-2">
-                          <span className="text-muted-foreground">Connection:</span>
-                          <span className={
-                            agent.status === "Online" ? "text-green-600" : 
-                            agent.status === "Offline" ? "text-red-600" : 
-                            "text-yellow-600"
-                          }>
-                            {agent.status.toLowerCase()}
-                          </span>
-                        </div>
-                        {agent.status === "Online" && (
-                          <div className="flex items-center gap-2">
-                            <span className="text-muted-foreground">Last Seen:</span>
-                            <span className="text-foreground">Now</span>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Version and Endpoint */}
-                    <div className="space-y-1 text-xs">
-                      <div className="flex items-center gap-2">
-                        <span className="text-muted-foreground"># Version:</span>
-                        <span className="font-mono">{agent.version}</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Globe className="h-3 w-3 text-muted-foreground" />
-                        <span className="text-muted-foreground">Endpoint:</span>
-                        <span className="font-mono text-xs truncate">{agent.endpoint}</span>
-                      </div>
-                    </div>
-
-                    {/* Capabilities */}
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-2">
-                        <Zap className="h-3 w-3 text-muted-foreground" />
-                        <span className="text-xs font-medium text-muted-foreground">Capabilities</span>
-                      </div>
-                      <div className="flex flex-wrap gap-1">
-                        {Object.entries(agent.capabilities || {}).map(([key, value]) => 
-                          value ? (
-                            <Badge key={key} variant="secondary" className="text-xs">
-                              {key.replace(/([A-Z])/g, ' $1').trim()}
-                            </Badge>
-                          ) : null
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Skills Summary */}
-                    <div className="space-y-2">
-                      <span className="text-xs font-medium text-muted-foreground">
-                        Skills ({agent.skills?.length || 0})
-                      </span>
-                      <div className="space-y-1">
-                        {agent.skills && agent.skills.length > 0 && (
-                          <div className="bg-muted/50 rounded p-2">
-                            <div className="font-medium text-xs">{agent.skills[0].name}</div>
-                            <div className="text-xs text-muted-foreground mt-1 line-clamp-2">
-                              {agent.skills[0].description}
-                            </div>
-                            <div className="flex flex-wrap gap-1 mt-2">
-                              {agent.skills[0].tags?.slice(0, 3).map((tag: string, idx: number) => (
-                                <Badge key={idx} variant="outline" className="text-xs">
-                                  {tag}
-                                </Badge>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Action Buttons */}
-                    <div className="flex gap-2 pt-2">
-                      <Dialog>
-                        <DialogTrigger asChild>
-                          <Button variant="outline" size="sm" onClick={() => setSelectedAgent(agent)} className="w-full">
-                            <ExternalLink className="h-3 w-3 mr-2" />
-                            View Details
-                          </Button>
-                        </DialogTrigger>
-                        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
-                          <DialogHeader>
-                            <DialogTitle className="flex items-center gap-2">
-                              <AgentIcon className={`h-5 w-5 ${agent.color}`} />
-                              {agent.name}
-                            </DialogTitle>
-                            <DialogDescription>
-                              Detailed information about this agent
-                            </DialogDescription>
-                          </DialogHeader>
-                          
-                          {selectedAgent && (
-                            <div className="space-y-4">
-                              <div>
-                                <h4 className="font-medium mb-2">Description</h4>
-                                <p className="text-sm text-muted-foreground">{selectedAgent.description}</p>
-                              </div>
-                              
-                              <div>
-                                <h4 className="font-medium mb-2">Organization</h4>
-                                <p className="text-sm">{selectedAgent.organization}</p>
-                              </div>
-                              
-                              <div>
-                                <h4 className="font-medium mb-2">All Skills</h4>
-                                <div className="space-y-2">
-                                  {selectedAgent.skills.map((skill: any, idx: number) => (
-                                    <div key={idx} className="bg-muted/50 rounded p-3">
-                                      <div className="font-medium text-sm">{skill.name}</div>
-                                      <div className="text-sm text-muted-foreground mt-1">
-                                        {skill.description}
-                                      </div>
-                                      <div className="flex flex-wrap gap-1 mt-2">
-                                        {skill.tags.map((tag: string, tagIdx: number) => (
-                                          <Badge key={tagIdx} variant="outline" className="text-xs">
-                                            {tag}
-                                          </Badge>
-                                        ))}
-                                      </div>
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-                            </div>
-                          )}
-                        </DialogContent>
-                      </Dialog>
-                    </div>
-                  </CardContent>
-                </CollapsibleContent>
-              </Collapsible>
-            </Card>
-          )
-        })}
+                {CatIcon && <CatIcon className="h-3 w-3 mr-1" />}
+                {cat} ({count})
+              </Button>
+            )
+          })}
+        </div>
       </div>
+
+      {/* Agent grid */}
+      <ScrollArea className="flex-1 min-h-0 pt-4">
+        {filteredAgents.length === 0 ? (
+          <div className="text-center py-16 text-slate-400">
+            <Search className="h-8 w-8 mx-auto mb-3 opacity-50" />
+            <p className="text-sm">No agents found{searchQuery ? ` matching "${searchQuery}"` : ""}</p>
+            {selectedCategory && (
+              <Button
+                variant="link"
+                size="sm"
+                className="mt-2 text-xs text-slate-500"
+                onClick={() => { setSelectedCategory(null); setSearchQuery("") }}
+              >
+                Clear filters
+              </Button>
+            )}
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 pb-4">
+            {filteredAgents.map((agent) => {
+              const isStarting = startingAgent === agent.id
+              const AgentIcon = agent.icon
+              const isEnabled = enabledAgentUrls.has(agent.endpoint)
+              const category = deriveCategory(agent)
+              const skillNames = (agent.skills || []).map((s: any) => s.name)
+
+              return (
+                <Card
+                  key={agent.id}
+                  className={`bg-slate-800/80 border transition-all duration-200 hover:shadow-lg hover:shadow-indigo-500/5 flex flex-col ${
+                    isEnabled
+                      ? "border-green-500/40 hover:border-green-400/60"
+                      : "border-slate-700/60 hover:border-indigo-500/60"
+                  }`}
+                >
+                  {/* Header: icon + name + status on one line */}
+                  <div className="flex items-center gap-2.5 px-3 pt-3">
+                    <div className={`p-2 rounded-lg ${agent.bgColor} flex-shrink-0`}>
+                      <AgentIcon className={`h-4 w-4 ${agent.color}`} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <h3 className="text-[13px] font-semibold text-slate-100 truncate">
+                          {agent.name}
+                        </h3>
+                        <div
+                          className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                            agent.status === "Online" ? "bg-green-500" :
+                            agent.status === "Offline" ? "bg-red-500" :
+                            "bg-yellow-500 animate-pulse"
+                          }`}
+                          title={agent.status}
+                        />
+                      </div>
+                    </div>
+                    {isEnabled && (
+                      <Badge className="text-[9px] px-1.5 py-0 h-4 bg-green-500/15 text-green-400 border-green-500/30 hover:bg-green-500/15 flex-shrink-0">
+                        In Team
+                      </Badge>
+                    )}
+                  </div>
+
+                  {/* Category */}
+                  <span className="text-[10px] text-slate-500 uppercase tracking-wider font-medium px-3 mt-1">{category}</span>
+
+                  {/* Description — fill the card */}
+                  <p className="text-[11px] text-slate-400 line-clamp-3 leading-relaxed px-3 mt-1.5 flex-1">
+                    {agent.description}
+                  </p>
+
+                  {/* Skills as bubbles — pinned to bottom */}
+                  {skillNames.length > 0 && (
+                    <div className="flex flex-wrap gap-1 px-3 mt-1.5">
+                      {skillNames.map((name: string, i: number) => (
+                        <span
+                          key={i}
+                          className="text-[10px] px-2 py-[1px] rounded-full bg-slate-700/50 text-slate-400 border border-slate-600/30"
+                        >
+                          {name}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Footer: action buttons */}
+                  <div className="flex items-center justify-end gap-1 px-3 py-2">
+                    <TooltipProvider delayDuration={300}>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 text-slate-500 hover:text-indigo-400 hover:bg-indigo-400/10"
+                            onClick={() => setSelectedAgent(agent)}
+                          >
+                            <ExternalLink className="h-3.5 w-3.5" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent side="bottom"><p>View details</p></TooltipContent>
+                      </Tooltip>
+
+                      {agent.status === "Online" && (
+                        isEnabled ? (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                onClick={() => handleDisableAgent(agent)}
+                                size="icon"
+                                className="h-7 w-7 rounded-full bg-red-500/90 hover:bg-red-500 text-white"
+                              >
+                                <Minus className="h-3.5 w-3.5" />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent side="bottom"><p>Remove from team</p></TooltipContent>
+                          </Tooltip>
+                        ) : (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                onClick={() => handleEnableAgent(agent)}
+                                size="icon"
+                                className="h-7 w-7 rounded-full bg-green-500/90 hover:bg-green-500 text-white"
+                              >
+                                <Plus className="h-3.5 w-3.5" />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent side="bottom"><p>Add to team</p></TooltipContent>
+                          </Tooltip>
+                        )
+                      )}
+                      {agent.status === "Offline" && !isLocalhostEndpoint(agent.endpoint) && (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              onClick={() => handleStartAgent(agent)}
+                              disabled={isStarting}
+                              size="icon"
+                              className="h-7 w-7 rounded-full bg-sky-500/90 hover:bg-sky-500 text-white disabled:opacity-50"
+                            >
+                              <Power className="h-3.5 w-3.5" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent side="bottom"><p>Wake up agent</p></TooltipContent>
+                        </Tooltip>
+                      )}
+                    </TooltipProvider>
+                  </div>
+                </Card>
+              )
+            })}
+          </div>
+        )}
+      </ScrollArea>
+
+      {/* Shared detail dialog */}
+      <Dialog open={!!selectedAgent} onOpenChange={(open) => { if (!open) setSelectedAgent(null) }}>
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+          {selectedAgent && (
+            <>
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                  {(() => { const Icon = selectedAgent.icon; return <Icon className={`h-5 w-5 ${selectedAgent.color}`} /> })()}
+                  {selectedAgent.name}
+                </DialogTitle>
+                <DialogDescription>
+                  Agent details and capabilities
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="space-y-4">
+                <div>
+                  <h4 className="font-medium mb-2 text-sm">Description</h4>
+                  <p className="text-sm text-muted-foreground">{selectedAgent.description}</p>
+                </div>
+
+                {/* Version and Endpoint */}
+                <div className="space-y-1 text-xs">
+                  <div className="flex items-center gap-2">
+                    <span className="text-muted-foreground">Version:</span>
+                    <span className="font-mono">{selectedAgent.version}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Globe className="h-3 w-3 text-muted-foreground" />
+                    <span className="text-muted-foreground">Endpoint:</span>
+                    <span className="font-mono text-xs truncate">{selectedAgent.endpoint}</span>
+                  </div>
+                </div>
+
+                {/* Capabilities */}
+                {selectedAgent.capabilities && Object.keys(selectedAgent.capabilities).length > 0 && (
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2">
+                      <Zap className="h-3 w-3 text-muted-foreground" />
+                      <span className="text-xs font-medium text-muted-foreground">Capabilities</span>
+                    </div>
+                    <div className="flex flex-wrap gap-1">
+                      {Object.entries(selectedAgent.capabilities).map(([key, value]) =>
+                        value ? (
+                          <Badge key={key} variant="secondary" className="text-xs">
+                            {key.replace(/([A-Z])/g, ' $1').trim()}
+                          </Badge>
+                        ) : null
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* All Skills */}
+                <div>
+                  <h4 className="font-medium mb-2 text-sm">All Skills ({selectedAgent.skills?.length || 0})</h4>
+                  <div className="space-y-2">
+                    {(selectedAgent.skills || []).map((skill: any, idx: number) => (
+                      <div key={idx} className="bg-muted/50 rounded p-3">
+                        <div className="font-medium text-sm">{skill.name}</div>
+                        <div className="text-sm text-muted-foreground mt-1">
+                          {skill.description}
+                        </div>
+                        {skill.tags && skill.tags.length > 0 && (
+                          <div className="flex flex-wrap gap-1 mt-2">
+                            {skill.tags.map((tag: string, tagIdx: number) => (
+                              <Badge key={tagIdx} variant="outline" className="text-xs">
+                                {tag}
+                              </Badge>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

@@ -28,6 +28,7 @@ const HEX_TO_TAILWIND: Record<string, { text: string; bg: string }> = {
   "#14b8a6": { text: "text-teal-400", bg: "bg-teal-950" },
   "#f97316": { text: "text-orange-400", bg: "bg-orange-950" },
   "#a855f7": { text: "text-violet-400", bg: "bg-violet-950" },
+  "#0ea5e9": { text: "text-sky-400", bg: "bg-sky-950" },
 }
 
 function hashAgentName(name: string): number {

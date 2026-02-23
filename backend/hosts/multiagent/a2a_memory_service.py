@@ -28,7 +28,7 @@ backend_dir = Path(__file__).resolve().parents[2]
 if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
-from log_config import log_memory_debug, log_info, log_success, log_warning, log_error
+from log_config import log_memory_debug, log_info, log_success, log_warning, log_error, log_debug
 
 # Azure Cognitive Search configuration
 service_endpoint = os.getenv("AZURE_SEARCH_SERVICE_ENDPOINT")
@@ -47,8 +47,8 @@ class A2AMemoryService:
     def __init__(self):
         # Initialize the search clients only if environment variables are available
         if not admin_key or not service_endpoint:
-            print(f"⚠️ Azure Search not configured (admin_key: {admin_key is not None}, service_endpoint: {service_endpoint is not None})")
-            print(f"⚠️ Memory service will be disabled")
+            log_warning(f"Azure Search not configured (admin_key: {admin_key is not None}, service_endpoint: {service_endpoint is not None})")
+            log_warning("Memory service will be disabled")
             self.credential = None
             self.index_client = None
             self.search_client = None
@@ -70,22 +70,22 @@ class A2AMemoryService:
                     api_key=azure_openai_key,
                     api_version="2024-02-01"
                 )
-                print(f"✅ Azure OpenAI client initialized")
+                log_info("Azure OpenAI client initialized")
             else:
-                print(f"⚠️ Azure OpenAI not configured - embeddings disabled")
+                log_warning("Azure OpenAI not configured - embeddings disabled")
                 self.openai_client = None
             
             self.search_client = None
             self.index_name = index_name
             
             self._enabled = True
-            print(f"✅ Azure Search initialized successfully")
+            log_info("Azure Search initialized successfully")
             
             # Create index on initialization
             self._create_index_if_not_exists()
             
         except Exception as e:
-            print(f"❌ Failed to initialize Azure Search: {e}")
+            log_error(f"Failed to initialize Azure Search: {e}")
             self.credential = None
             self.index_client = None
             self.search_client = None
@@ -353,29 +353,30 @@ class A2AMemoryService:
 
     async def store_interaction(self, interaction_data: Dict[str, Any], session_id: str = None) -> bool:
         """Store A2A protocol payloads in the search index with tenant isolation.
-        
+
         For large documents, automatically chunks content into multiple search documents
         with overlapping text for better semantic search coverage.
-        
+
         Args:
             interaction_data: Dict containing agent_name, outbound_payload, inbound_payload, etc.
             session_id: Required for multi-tenancy. The session/tenant identifier.
         """
+        agent_name = interaction_data.get('agent_name', 'unknown')
         if not self._enabled:
-            log_memory_debug("Memory service disabled - skipping store_interaction")
+            log_debug(f"[MEMORY] store_interaction SKIPPED - memory service disabled (agent: {agent_name})")
             return True  # Return success to avoid breaking the flow
-        
+
         # Validate session_id for multi-tenancy
         if not session_id:
-            log_memory_debug("⚠️ No session_id provided - memory will not be stored (multi-tenancy required)")
+            log_debug(f"[MEMORY] store_interaction SKIPPED - no session_id (agent: {agent_name})")
             return False
-            
+
         log_memory_debug("store_interaction called")
         log_memory_debug(f"Session ID: {session_id}")
-        log_memory_debug(f"Agent name: {interaction_data.get('agent_name', 'unknown')}")
-        
+        log_memory_debug(f"Agent name: {agent_name}")
+
         if not self.search_client:
-            log_memory_debug("Search client not initialized")
+            log_error(f"[MEMORY] store_interaction FAILED - search_client is None (agent: {agent_name}, session: {session_id})")
             return False
 
         try:
@@ -429,7 +430,7 @@ class A2AMemoryService:
             
             embedding = await self._create_embedding(searchable_text.strip())
             if not embedding or len(embedding) != vector_dimension:
-                log_memory_debug("Failed to create valid embedding")
+                log_error(f"[MEMORY] _store_single_document FAILED - embedding creation failed (dim={len(embedding) if embedding else 0}, expected={vector_dimension})")
                 return False
 
             document = {
@@ -442,13 +443,13 @@ class A2AMemoryService:
                 "inbound_payload": json.dumps(interaction_data.get('inbound_payload', {})),
                 "interaction_vector": embedding
             }
-            
+
             self.search_client.upload_documents([document])
-            log_success(f"Successfully stored document {document['id']} for session {session_id}")
+            log_debug(f"[MEMORY] Stored document {document['id']} (agent: {interaction_data.get('agent_name', '')}, session: {session_id})")
             return True
 
         except Exception as e:
-            log_memory_debug(f"Error storing single document: {str(e)}")
+            log_error(f"[MEMORY] _store_single_document FAILED - {e}")
             return False
 
     async def _store_chunked_document(self, interaction_data: Dict[str, Any], session_id: str, content: str) -> bool:
@@ -540,28 +541,26 @@ class A2AMemoryService:
             top_k: Number of results to return
         """
         if not self._enabled:
-            log_memory_debug("Memory service disabled - returning empty results")
+            log_debug("[MEMORY] search SKIPPED - memory service disabled")
             return []
-        
+
         # Validate session_id for multi-tenancy
         if not session_id:
-            log_memory_debug("⚠️ No session_id provided - returning empty results (multi-tenancy required)")
+            log_debug("[MEMORY] search SKIPPED - no session_id")
             return []
-            
+
         if not self.search_client:
-            log_memory_debug("Search client not initialized")
+            log_error(f"[MEMORY] search FAILED - search_client is None (session: {session_id})")
             return []
 
         try:
             # Create embedding for query
             query_embedding = await self._create_embedding(query)
             if not query_embedding:
-                log_memory_debug("Failed to create query embedding")
+                log_error(f"[MEMORY] search FAILED - embedding creation returned None (query: {query[:80]})")
                 return []
             if len(query_embedding) != vector_dimension:
-                log_memory_debug(
-                    f"Query embedding dimension {len(query_embedding)} does not match configured vector dimension {vector_dimension}."
-                )
+                log_error(f"[MEMORY] search FAILED - embedding dim {len(query_embedding)} != expected {vector_dimension}")
                 return []
 
             # Build filter expression - ALWAYS include session_id for tenant isolation
@@ -682,7 +681,7 @@ class A2AMemoryService:
             return deduped_results
 
         except Exception as e:
-            log_memory_debug(f"Error searching interactions: {str(e)}")
+            log_error(f"[MEMORY] search FAILED - exception: {e}")
             return []
 
     def get_agent_interactions(self, agent_name: str, session_id: str = None, limit: int = 10) -> List[Dict[str, Any]]:
@@ -698,7 +697,7 @@ class A2AMemoryService:
         
         # Validate session_id for multi-tenancy
         if not session_id:
-            log_memory_debug("⚠️ No session_id provided - returning empty results (multi-tenancy required)")
+            log_memory_debug("No session_id provided - returning empty results (multi-tenancy required)")
             return []
 
         try:

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useRef, useState, useEffect } from "react";
+import { logDebug, logInfo, warnDebug } from '@/lib/debug';
 
 interface VoiceRealtimeConfig {
   apiUrl: string;
@@ -113,7 +114,7 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig): VoiceRealtimeHook
   
   // Allow external code to update contextId synchronously (before React re-renders)
   const updateContextId = useCallback((newContextId: string) => {
-    console.log("[VoiceRealtime] Updating contextId to:", newContextId);
+    logDebug("[VoiceRealtime] Updating contextId to:", newContextId);
     contextIdRef.current = newContextId;
     // Also extract and update sessionId
     if (newContextId.includes('::')) {
@@ -136,29 +137,17 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig): VoiceRealtimeHook
   const speakFillerViaAzure = useCallback((text: string) => {
     // Check if we have an active Azure WebSocket connection
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
-      console.log("[VoiceRealtime] Azure WebSocket not ready for filler TTS");
+      logDebug("[VoiceRealtime] Azure WebSocket not ready for filler TTS");
       return;
     }
     
     // Skip if there's already an active response (to avoid "Conversation already has an active response" error)
     if (isResponseActiveRef.current) {
-      console.log("[VoiceRealtime] Skipping filler - response already active:", text);
+      logDebug("[VoiceRealtime] Skipping filler - response already active:", text);
       return;
     }
     
-    console.log("[VoiceRealtime] 🗣️ Speaking filler via Azure Voice Live:", text);
-    isResponseActiveRef.current = true;
-    
-    // Use response.create with conversation: "none" for out-of-band TTS
-    // This generates audio without affecting the conversation history or pending function calls
-    wsRef.current.send(JSON.stringify({
-      type: "response.create",
-      response: {
-        conversation: "none",  // Critical: creates out-of-band response that doesn't affect conversation
-        modalities: ["audio"],
-        instructions: `You are a status announcer. Your ONLY job is to speak exactly this message and nothing else: "${text}"`,
-      }
-    }));
+    logDebug("[VoiceRealtime] 🗣️ Filler skipped (not supported on standard Realtime API):", text);
   }, []);
 
   // Connect to backend WebSocket for status events
@@ -171,13 +160,13 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig): VoiceRealtimeHook
     const wsUrl = wsBaseUrl.endsWith('/events') 
       ? `${wsBaseUrl}?tenantId=${encodeURIComponent(contextIdRef.current)}`
       : `${wsBaseUrl}/events?tenantId=${encodeURIComponent(contextIdRef.current)}`;
-    console.log("[VoiceRealtime] Connecting to backend WebSocket:", wsUrl);
+    logInfo("[VoiceRealtime] Connecting to backend WebSocket:", wsUrl);
 
     const ws = new WebSocket(wsUrl);
     backendWsRef.current = ws;
 
     ws.onopen = () => {
-      console.log("[VoiceRealtime] Backend WebSocket connected");
+      logInfo("[VoiceRealtime] Backend WebSocket connected");
     };
 
     ws.onmessage = (event) => {
@@ -186,15 +175,15 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig): VoiceRealtimeHook
         
         // Debug: Log all incoming events (reduce noise)
         if (data.eventType !== "agent_registry_sync") {
-          console.log("[VoiceRealtime] Backend event received:", data.eventType, "isProcessing:", isProcessingRef.current);
+          logDebug("[VoiceRealtime] Backend event received:", data.eventType, "isProcessing:", isProcessingRef.current);
         }
         
         // Handle remote_agent_activity events - update visual status
         if (data.eventType === "remote_agent_activity") {
-          console.log("[VoiceRealtime] 📣 remote_agent_activity event:", JSON.stringify(data).substring(0, 300));
+          logDebug("[VoiceRealtime] 📣 remote_agent_activity event:", JSON.stringify(data).substring(0, 300));
           
           if (!isProcessingRef.current) {
-            console.log("[VoiceRealtime] ⚠️ Ignoring remote_agent_activity - not processing");
+            logDebug("[VoiceRealtime] ⚠️ Ignoring remote_agent_activity - not processing");
             return;
           }
           
@@ -220,25 +209,25 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig): VoiceRealtimeHook
             // Only announce each agent once per request
             if (!announcedAgentsRef.current.has(friendlyName.toLowerCase())) {
               announcedAgentsRef.current.add(friendlyName.toLowerCase());
-              console.log("[VoiceRealtime] 🎯 Announcing agent:", friendlyName);
+              logDebug("[VoiceRealtime] 🎯 Announcing agent:", friendlyName);
               // Speak filler via Azure Voice Live TTS (out-of-band, won't corrupt conversation)
               speakFillerViaAzure(`Calling the ${friendlyName} agent.`);
             } else {
-              console.log("[VoiceRealtime] Agent already announced, skipping:", friendlyName);
+              logDebug("[VoiceRealtime] Agent already announced, skipping:", friendlyName);
             }
           }
         }
       } catch (err) {
-        console.log("[VoiceRealtime] Parse error:", err);
+        logDebug("[VoiceRealtime] Parse error:", err);
       }
     };
 
     ws.onerror = () => {
-      console.log("[VoiceRealtime] Backend WebSocket error");
+      logDebug("[VoiceRealtime] Backend WebSocket error");
     };
 
     ws.onclose = () => {
-      console.log("[VoiceRealtime] Backend WebSocket disconnected");
+      logInfo("[VoiceRealtime] Backend WebSocket disconnected");
     };
   }, [config.apiUrl, speakFillerViaAzure]);  // contextId is now read from ref, no need in deps
 
@@ -283,9 +272,9 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig): VoiceRealtimeHook
         conversationIdOnly = currentContextId.split('::')[1];
       }
       
-      console.log("[VoiceRealtime] Calling /api/query with:", { 
-        query, 
-        user_id: authenticatedUserId, 
+      logDebug("[VoiceRealtime] Calling /api/query with:", {
+        query,
+        user_id: authenticatedUserId,
         session_id: currentSessionId,  // Session ID for agent lookup (sess_xxx)
         conversation_id: conversationIdOnly,  // Just the conversation part (e.g., frontend-chat-context)
       });
@@ -299,11 +288,11 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig): VoiceRealtimeHook
           // Only include if it's a non-empty array
           if (Array.isArray(parsed) && parsed.length > 0) {
             activatedWorkflowIds = parsed;
-            console.log("[VoiceRealtime] Including activated workflows:", activatedWorkflowIds);
+            logDebug("[VoiceRealtime] Including activated workflows:", activatedWorkflowIds);
           }
         }
       } catch (e) {
-        console.warn("[VoiceRealtime] Failed to get activated workflows:", e);
+        warnDebug("[VoiceRealtime] Failed to get activated workflows:", e);
       }
       
       // Build request body - use ref values for session/context to get latest
@@ -323,10 +312,10 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig): VoiceRealtimeHook
       // Include explicit workflow if provided (workflow designer testing mode)
       if (config.workflow) {
         requestBody.workflow = config.workflow;
-        console.log("[VoiceRealtime] 🎯 Using explicit workflow (workflow designer mode)");
+        logDebug("[VoiceRealtime] 🎯 Using explicit workflow (workflow designer mode)");
       }
       
-      console.log("[VoiceRealtime] Request body:", requestBody);
+      logDebug("[VoiceRealtime] Request body:", requestBody);
       
       const response = await fetch(`${config.apiUrl}/api/query`, {
         method: "POST",
@@ -348,7 +337,7 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig): VoiceRealtimeHook
       }
 
       const data = await response.json();
-      console.log("[VoiceRealtime] Query result:", data);
+      logDebug("[VoiceRealtime] Query result:", data);
       
       return data.result || "I completed the task but have no additional details to share.";
     } catch (err: unknown) {
@@ -403,7 +392,7 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig): VoiceRealtimeHook
           setTimeout(() => {
             isPlayingRef.current = false;
             setIsSpeaking(false);
-            console.log("[VoiceRealtime] 🔊 Playback complete, mic re-enabled");
+            logDebug("[VoiceRealtime] 🔊 Playback complete, mic re-enabled");
           }, 300);
         }
       };
@@ -430,7 +419,7 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig): VoiceRealtimeHook
       isPlayingRef.current = true;
       setIsSpeaking(true);
       nextStartTimeRef.current = playbackContextRef.current.currentTime + 0.05;
-      console.log("[VoiceRealtime] 🔊 Starting playback, mic muted");
+      logDebug("[VoiceRealtime] 🔊 Starting playback, mic muted");
     }
 
     // Process all available chunks
@@ -444,20 +433,19 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig): VoiceRealtimeHook
     async (event: MessageEvent) => {
       try {
         const msg = JSON.parse(event.data);
-        console.log("[VoiceRealtime] Event:", msg.type);
+        logDebug("[VoiceRealtime] Event:", msg.type);
 
         switch (msg.type) {
           case "session.created":
           case "session.updated":
-            console.log("[VoiceRealtime] Session ready");
+            logInfo("[VoiceRealtime] Session ready");
             setIsListening(true);
             
-            // Send a friendly greeting using out-of-band TTS (only on session.created)
+            // Send a friendly greeting (only on session.created)
             if (msg.type === "session.created" && wsRef.current?.readyState === WebSocket.OPEN) {
               wsRef.current.send(JSON.stringify({
                 type: "response.create",
                 response: {
-                  conversation: "none",  // Out-of-band: won't affect conversation history
                   modalities: ["audio", "text"],
                   instructions: "Say a brief, warm greeting like: 'Hey there! How can I help you today?' Keep it natural and friendly, just 1 sentence.",
                 }
@@ -466,30 +454,30 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig): VoiceRealtimeHook
             break;
 
           case "input_audio_buffer.speech_started":
-            console.log("[VoiceRealtime] 🎤 Speech started - VAD detected voice");
+            logDebug("[VoiceRealtime] 🎤 Speech started - VAD detected voice");
             break;
 
           case "input_audio_buffer.speech_stopped":
-            console.log("[VoiceRealtime] 🎤 Speech stopped - VAD detected silence");
+            logDebug("[VoiceRealtime] 🎤 Speech stopped - VAD detected silence");
             break;
 
           case "input_audio_buffer.committed":
-            console.log("[VoiceRealtime] 🎤 Audio buffer committed");
+            logDebug("[VoiceRealtime] 🎤 Audio buffer committed");
             break;
 
           case "conversation.item.input_audio_transcription.completed":
-            console.log("[VoiceRealtime] User said:", msg.transcript);
+            logDebug("[VoiceRealtime] User said:", msg.transcript);
             setTranscript(msg.transcript || "");
             config.onTranscript?.(msg.transcript || "", true);
             break;
 
           case "response.created":
-            console.log("[VoiceRealtime] 🤖 Response started");
+            logDebug("[VoiceRealtime] 🤖 Response started");
             setIsListening(false);
             break;
 
           case "response.function_call_arguments.done":
-            console.log("[VoiceRealtime] Function call:", msg.name, msg.arguments);
+            logDebug("[VoiceRealtime] Function call:", msg.name, msg.arguments);
             // Only process if we have a pending call and haven't processed it yet
             if (msg.name === "execute_query" && pendingCallRef.current) {
               const currentCallId = pendingCallRef.current.call_id;
@@ -504,16 +492,16 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig): VoiceRealtimeHook
               
               try {
                 const args = JSON.parse(msg.arguments || "{}");
-                console.log("[VoiceRealtime] 📤 Calling /api/query with:", args.query || transcript);
+                logDebug("[VoiceRealtime] 📤 Calling /api/query with:", args.query || transcript);
                 const queryResult = await executeQuery(args.query || transcript);
                 
-                console.log("[VoiceRealtime] 📥 Query result received:", queryResult?.substring(0, 200));
+                logDebug("[VoiceRealtime] 📥 Query result received:", queryResult?.substring(0, 200));
                 setResult(queryResult);
                 config.onResult?.(queryResult);
 
                 // Inject result back to Realtime API
                 if (wsRef.current?.readyState === WebSocket.OPEN) {
-                  console.log("[VoiceRealtime] 📤 Sending function output to Realtime API");
+                  logDebug("[VoiceRealtime] 📤 Sending function output to Realtime API");
                   // Send function output
                   wsRef.current.send(
                     JSON.stringify({
@@ -526,7 +514,7 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig): VoiceRealtimeHook
                     })
                   );
 
-                  console.log("[VoiceRealtime] 📤 Requesting response.create");
+                  logDebug("[VoiceRealtime] 📤 Requesting response.create");
                   // Request AI to respond with the result
                   wsRef.current.send(JSON.stringify({ type: "response.create" }));
                 } else {
@@ -544,7 +532,7 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig): VoiceRealtimeHook
 
           case "conversation.item.created":
             if (msg.item?.type === "function_call") {
-              console.log("[VoiceRealtime] Function call created:", msg.item.name);
+              logDebug("[VoiceRealtime] Function call created:", msg.item.name);
               pendingCallRef.current = {
                 call_id: msg.item.call_id,
                 item_id: msg.item.id,
@@ -565,7 +553,7 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig): VoiceRealtimeHook
             break;
 
           case "response.audio.done":
-            console.log("[VoiceRealtime] 🔊 All audio chunks received");
+            logDebug("[VoiceRealtime] 🔊 All audio chunks received");
             // Flush any remaining chunks
             if (audioQueueRef.current.length > 0) {
               playAudioQueue();
@@ -573,7 +561,7 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig): VoiceRealtimeHook
             break;
 
           case "response.done":
-            console.log("[VoiceRealtime] Response complete");
+            logDebug("[VoiceRealtime] Response complete");
             isResponseActiveRef.current = false;  // Allow new fillers
             setIsListening(true);
             break;
@@ -641,7 +629,7 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig): VoiceRealtimeHook
           // Log every 50th chunk
           audioChunkCount++;
           if (audioChunkCount % 50 === 0) {
-            console.log("[VoiceRealtime] 🎤 Sent", audioChunkCount, "audio chunks");
+            logDebug("[VoiceRealtime] 🎤 Sent", audioChunkCount, "audio chunks");
           }
         }
       };
@@ -649,7 +637,7 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig): VoiceRealtimeHook
       source.connect(processor);
       processor.connect(audioContextRef.current.destination);
 
-      console.log("[VoiceRealtime] Microphone started");
+      logInfo("[VoiceRealtime] Microphone started");
     } catch (err) {
       console.error("[VoiceRealtime] Microphone error:", err);
       setError("Microphone access denied");
@@ -682,25 +670,17 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig): VoiceRealtimeHook
       // Get Azure token
       const token = await getAzureToken();
 
-      // Get resource name from environment - use AZURE_AI_FOUNDRY_PROJECT_ENDPOINT like main frontend
-      const foundryUrl = process.env.NEXT_PUBLIC_AZURE_AI_FOUNDRY_PROJECT_ENDPOINT || "";
-      
-      if (!foundryUrl) {
-        throw new Error("NEXT_PUBLIC_AZURE_AI_FOUNDRY_PROJECT_ENDPOINT is not configured");
-      }
-      
-      const resourceMatch = foundryUrl.match(/https:\/\/([^.]+)/);
-      const resourceName = resourceMatch?.[1];
-      
-      if (!resourceName) {
-        throw new Error(`Invalid Foundry URL: ${foundryUrl}. Expected: https://[resource].services.ai.azure.com/...`);
+      // Build WebSocket URL from resource host and deployment name
+      const voiceHost = process.env.NEXT_PUBLIC_VOICE_HOST || "";
+      const voiceDeployment = process.env.NEXT_PUBLIC_VOICE_DEPLOYMENT || "gpt-realtime";
+
+      if (!voiceHost) {
+        throw new Error("NEXT_PUBLIC_VOICE_HOST is not configured");
       }
 
-      // Build WebSocket URL - using Voice Live API (same as main frontend)
-      const model = process.env.NEXT_PUBLIC_VOICE_MODEL || "gpt-4o-realtime-preview";
-      const wsUrl = `wss://${resourceName}.services.ai.azure.com/voice-live/realtime?api-version=2025-10-01&api-key=${token}&model=${model}`;
+      const wsUrl = `wss://${voiceHost}/openai/realtime?api-version=2025-04-01-preview&deployment=${voiceDeployment}&api-key=${token}`;
 
-      console.log("[VoiceRealtime] Connecting to:", wsUrl.replace(token, "***"));
+      logInfo("[VoiceRealtime] Connecting to:", wsUrl.replace(token, "***"));
 
       // Create WebSocket
       const ws = new WebSocket(wsUrl);
@@ -711,7 +691,7 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig): VoiceRealtimeHook
       nextStartTimeRef.current = 0;
 
       ws.onopen = () => {
-        console.log("[VoiceRealtime] Connected");
+        logInfo("[VoiceRealtime] Connected");
         setIsConnected(true);
 
         // Configure session - using Voice Live API format (matching main frontend)
@@ -727,31 +707,18 @@ IMPORTANT RULES:
 3. Do not read long technical details - summarize them
 4. Be conversational and friendly`,
               modalities: ["text", "audio"],
-              // Voice Live API enhanced turn detection
               turn_detection: {
-                type: "azure_semantic_vad",
+                type: "server_vad",
                 threshold: 0.5,
                 prefix_padding_ms: 300,
                 silence_duration_ms: 500,
-                remove_filler_words: false,
               },
               input_audio_format: "pcm16",
               output_audio_format: "pcm16",
-              input_audio_sampling_rate: 24000,
-              input_audio_noise_reduction: {
-                type: "azure_deep_noise_suppression",
-              },
-              input_audio_echo_cancellation: {
-                type: "server_echo_cancellation",
-              },
               input_audio_transcription: {
                 model: "whisper-1",
               },
-              voice: {
-                name: "en-US-Ava:DragonHDLatestNeural",
-                type: "azure-standard",
-                temperature: 0.6,
-              },
+              voice: "alloy",
               temperature: 0.6,
               tools: [
                 {
@@ -792,9 +759,9 @@ IMPORTANT RULES:
       };
 
       ws.onclose = (event) => {
-        console.log("[VoiceRealtime] Disconnected:", event.code, event.reason);
+        logInfo("[VoiceRealtime] Disconnected:", event.code, event.reason);
         if (event.code === 1006) {
-          setError("Connection failed - check NEXT_PUBLIC_AZURE_AI_FOUNDRY_PROJECT_ENDPOINT");
+          setError("Connection failed - check NEXT_PUBLIC_VOICE_HOST configuration");
         }
         setIsConnected(false);
         setIsListening(false);
@@ -809,7 +776,7 @@ IMPORTANT RULES:
 
   // Stop conversation
   const stopConversation = useCallback(() => {
-    console.log("[VoiceRealtime] Stopping conversation");
+    logInfo("[VoiceRealtime] Stopping conversation");
     
     if (wsRef.current) {
       wsRef.current.close();

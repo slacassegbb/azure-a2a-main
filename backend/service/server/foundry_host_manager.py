@@ -12,7 +12,7 @@ BACKEND_ROOT = Path(__file__).resolve().parents[2]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
-from log_config import log_debug, log_info, log_success, log_error
+from log_config import log_debug, log_info, log_success, log_error, log_warning
 
 from a2a.types import AgentCard, Message, Task, TextPart, DataPart, TaskStatus, TaskState, FilePart, FileWithUri, FileWithBytes, Part
 from hosts.multiagent.foundry_agent_a2a import FoundryHostAgent2
@@ -186,23 +186,30 @@ class FoundryHostManager(ApplicationManager):
                                     parts.append(Part(root=TextPart(text=part_data.get("text", ""))))
                                 elif kind == "file" or "file" in part_data:
                                     file_data = part_data.get("file", {})
-                                    parts.append(Part(root=FilePart(file=FileWithUri(
+                                    fp_kwargs = {"file": FileWithUri(
                                         uri=file_data.get("uri", ""),
                                         name=file_data.get("name", ""),
                                         mimeType=file_data.get("mimeType", "")
-                                    ))))
+                                    )}
+                                    if part_data.get("metadata"):
+                                        fp_kwargs["metadata"] = part_data["metadata"]
+                                    parts.append(Part(root=FilePart(**fp_kwargs)))
                                 elif kind == "data" or "data" in part_data:
                                     parts.append(Part(root=DataPart(data=part_data.get("data", {}))))
                                 # Legacy format with root wrapper (shouldn't happen but just in case)
                                 elif part_data.get("root", {}).get("kind") == "text":
                                     parts.append(Part(root=TextPart(text=part_data["root"].get("text", ""))))
                                 elif part_data.get("root", {}).get("kind") == "file":
-                                    file_data = part_data["root"].get("file", {})
-                                    parts.append(Part(root=FilePart(file=FileWithUri(
+                                    root_data = part_data["root"]
+                                    file_data = root_data.get("file", {})
+                                    fp_kwargs = {"file": FileWithUri(
                                         uri=file_data.get("uri", ""),
                                         name=file_data.get("name", ""),
                                         mimeType=file_data.get("mimeType", "")
-                                    ))))
+                                    )}
+                                    if root_data.get("metadata"):
+                                        fp_kwargs["metadata"] = root_data["metadata"]
+                                    parts.append(Part(root=FilePart(**fp_kwargs)))
                         
                         if parts:
                             msg = Message(
@@ -352,10 +359,10 @@ class FoundryHostManager(ApplicationManager):
         
         # DEBUG: Log what get_context_id returns
         extracted_context_id = get_context_id(message)
-        log_debug(f"🔍 [process_message] get_context_id returned: {extracted_context_id}")
+        log_debug(f"[process_message] get_context_id returned: {extracted_context_id}")
         
         context_id = extracted_context_id or str(uuid.uuid4())
-        log_debug(f"🔍 [process_message] Final context_id (after UUID fallback): {context_id}")
+        log_debug(f"[process_message] Final context_id (after UUID fallback): {context_id}")
         
         # Auto-detect agent_mode based on workflow presence (backward compatible)
         # If agent_mode is explicitly passed, use it; otherwise detect from workflow
@@ -367,23 +374,23 @@ class FoundryHostManager(ApplicationManager):
         try:
             session_ctx = self._host_agent.get_session_context(context_id)
             # DEBUG: Log the session context state
-            log_debug(f"🔍 [HITL CHECK] session_ctx.contextId: {session_ctx.contextId}")
-            log_debug(f"🔍 [HITL CHECK] session_ctx.current_plan is not None: {session_ctx.current_plan is not None}")
-            log_debug(f"🔍 [HITL CHECK] session_ctx.pending_input_agent: {session_ctx.pending_input_agent}")
+            log_debug(f"[HITL CHECK] session_ctx.contextId: {session_ctx.contextId}")
+            log_debug(f"[HITL CHECK] session_ctx.current_plan is not None: {session_ctx.current_plan is not None}")
+            log_debug(f"[HITL CHECK] session_ctx.pending_input_agent: {session_ctx.pending_input_agent}")
             if session_ctx and session_ctx.current_plan:
-                log_debug(f"🔄 [HITL RESUME] Found pending workflow plan for context {context_id}, forcing agent_mode=True")
+                log_debug(f"[HITL RESUME] Found pending workflow plan for context {context_id}, forcing agent_mode=True")
                 effective_agent_mode = True
                 # Restore workflow and workflow_goal from the saved plan
                 if session_ctx.current_plan.workflow:
                     workflow = session_ctx.current_plan.workflow
-                    log_debug(f"🔄 [HITL RESUME] Restored workflow from plan ({len(workflow)} chars)")
+                    log_debug(f"[HITL RESUME] Restored workflow from plan ({len(workflow)} chars)")
                 if session_ctx.current_plan.workflow_goal:
                     workflow_goal = session_ctx.current_plan.workflow_goal
-                    log_debug(f"🔄 [HITL RESUME] Restored workflow_goal from plan")
+                    log_debug("[HITL RESUME] Restored workflow_goal from plan")
             else:
-                log_debug(f"🔍 [HITL CHECK] No current_plan found - proceeding as new request")
+                log_debug("[HITL CHECK] No current_plan found - proceeding as new request")
         except Exception as e:
-            log_debug(f"⚠️ [HITL RESUME] Error checking for pending plan: {e}")
+            log_debug(f"[HITL RESUME] Error checking for pending plan: {e}")
         
         log_debug(f"process_message: Agent Mode = {effective_agent_mode} (explicit={agent_mode}), Inter-Agent Memory = {enable_inter_agent_memory}, Workflow = {workflow[:50] if workflow else None}")
         conversation = self.get_conversation(context_id)
@@ -450,9 +457,7 @@ class FoundryHostManager(ApplicationManager):
                 
             except Exception as e:
                 log_debug(f"Error streaming conversation creation: {e}")
-                import traceback
-                traceback.print_exc()
-        
+
         log_debug("About to append message to conversation...")
         self._messages.append(message)
         if conversation:
@@ -504,9 +509,7 @@ class FoundryHostManager(ApplicationManager):
             
         except Exception as e:
             log_debug(f"Error streaming task creation to WebSocket: {e}")
-            import traceback
-            traceback.print_exc()
-        
+
         log_debug("Task creation complete, setting up event logger...")
         # Route to FoundryHostAgent
         tool_call_events = []
@@ -652,24 +655,24 @@ class FoundryHostManager(ApplicationManager):
         
         # Set session-specific agents before processing
         session_id = parse_session_from_context(context_id)
-        print(f"🟢 [MANAGER] Parsed session_id: {session_id}")
+        log_debug(f"[MANAGER] Parsed session_id: {session_id}")
         if session_id:
             session_registry = get_session_registry()
             session_agents = session_registry.get_session_agents(session_id)
-            print(f"🔵 [MANAGER] Retrieved {len(session_agents)} agents from session registry for {session_id[:12]}")
+            log_debug(f"[MANAGER] Retrieved {len(session_agents)} agents from session registry for {session_id[:12]}")
             for idx, agent in enumerate(session_agents):
-                print(f"🟢 [MANAGER]   Agent {idx+1}: {agent.get('name')} - {agent.get('url')}")
-            print(f"🟢 [MANAGER] Calling set_session_agents...")
+                log_debug(f"[MANAGER]   Agent {idx+1}: {agent.get('name')} - {agent.get('url')}")
+            log_debug("[MANAGER] Calling set_session_agents...")
             await self._host_agent.set_session_agents(session_agents)
-            print(f"🟢 [MANAGER] After set_session_agents, host has {len(self._host_agent.cards)} agents")
-            
-            # 🔥 CRITICAL: Update agent instructions with session agents included
+            log_debug(f"[MANAGER] After set_session_agents, host has {len(self._host_agent.cards)} agents")
+
+            # CRITICAL: Update agent instructions with session agents included
             # This ensures the system prompt includes session-scoped agents like Email Agent
             # Use the proper method to ensure self.agents is updated FIRST, then instructions
             await self._host_agent._update_agent_instructions(agent_mode=effective_agent_mode)
-            print(f"✅ [MANAGER] Updated agent instructions with {len(self._host_agent.cards)} agents")
+            log_debug(f"[MANAGER] Updated agent instructions with {len(self._host_agent.cards)} agents")
         else:
-            print("⚠️ [MANAGER] No session ID found in context, host agent will have no agents")
+            log_warning("[MANAGER] No session ID found in context, host agent will have no agents")
         
         # Pass the entire message with all parts (including files) to the host agent
         user_text = message.parts[0].root.text if message.parts and message.parts[0].root.kind == 'text' else ""
@@ -692,9 +695,9 @@ class FoundryHostManager(ApplicationManager):
             return [fallback_response]
         # Build mapping of agent names from tool call events
         # These are used for status_agent_name to send correct task_updated events to frontend
-        print(f"📋 [TOOL_EVENTS] Processing {len(tool_call_events)} tool call events")
+        log_debug(f"[TOOL_EVENTS] Processing {len(tool_call_events)} tool call events")
         for i, te in enumerate(tool_call_events):
-            print(f"📋 [TOOL_EVENT {i}] actor={te.actor}, id={te.id}")
+            log_debug(f"[TOOL_EVENT {i}] actor={te.actor}, id={te.id}")
         
         agent_names_from_tools = []
         for tool_event in tool_call_events:
@@ -706,7 +709,7 @@ class FoundryHostManager(ApplicationManager):
                     log_debug(f"Found agent name from tool event actor: {tool_event.actor}")
         
         log_debug(f"Agent names from tool calls: {agent_names_from_tools}")
-        print(f"🎯 [SIDEBAR FIX] Found {len(agent_names_from_tools)} agent names from tool calls: {agent_names_from_tools}")
+        log_debug(f"[SIDEBAR] Found {len(agent_names_from_tools)} agent names from tool calls: {agent_names_from_tools}")
         log_debug(f"Number of responses: {len(responses)}")
         log_debug(f"All foundry responses will be attributed to foundry-host-agent")
         
@@ -738,8 +741,6 @@ class FoundryHostManager(ApplicationManager):
                     log_debug("Failed to stream task status update")
             except Exception as e:
                 log_debug(f"SPECIFIC ERROR in task status streaming: {e}")
-                import traceback
-                traceback.print_exc()
 
         for resp_index, resp in enumerate(responses):
             log_debug(f"Response {resp_index}: type={type(resp)}, is_dict={isinstance(resp, dict)}")
@@ -764,7 +765,7 @@ class FoundryHostManager(ApplicationManager):
                 if resp_index < len(agent_names_from_tools)
                 else actor_name
             )
-            print(f"🎯 [SIDEBAR] Response {resp_index}: status_agent_name={status_agent_name} (from list: {agent_names_from_tools})")
+            log_debug(f"[SIDEBAR] Response {resp_index}: status_agent_name={status_agent_name} (from list: {agent_names_from_tools})")
             log_debug(f"Using agent name for response {resp_index}: {status_agent_name}")
             
             self.add_event(Event(
@@ -945,17 +946,24 @@ class FoundryHostManager(ApplicationManager):
                         self._pending_artifacts.pop(context_id, None)
 
                     success = await streamer._send_event("message", event_data, context_id)
-                    print(f"📁 [FILE_HISTORY] Checking {len(event_data['content'])} content items for images...")
+                    log_debug(f"[FILE_HISTORY] Checking {len(event_data['content'])} content items for images...")
                     for content_item in event_data["content"]:
                         if content_item.get("type") == "image":
-                            print(f"📁 [FILE_HISTORY] Found image content with uri: {content_item.get('uri', 'no-uri')[:80]}...")
+                            log_debug(f"[FILE_HISTORY] Found image content with uri: {content_item.get('uri', 'no-uri')[:80]}...")
                             log_debug(f"Found file content with uri: {content_item.get('uri')}")
                         if content_item.get("type") == "image" and content_item.get("uri"):
                             file_uri = content_item.get("uri")
                             # Emit file_uploaded event so it appears in File History
                             # Deduplication is handled by websocket streamer's per-conversation tracking
+                            # Use deterministic hash from blob path (sans SAS query params)
+                            # so it matches the file_processing_completed event
+                            import hashlib
+                            from urllib.parse import urlparse
+                            _parsed = urlparse(file_uri)
+                            _base_uri = f"{_parsed.scheme}://{_parsed.netloc}{_parsed.path}"
+                            file_id = hashlib.md5(_base_uri.encode()).hexdigest()[:16]
                             file_info = {
-                                "file_id": str(uuid.uuid4()),
+                                "file_id": file_id,
                                 "filename": content_item.get("fileName", "agent-artifact.png"),
                                 "uri": file_uri,
                                 "size": content_item.get("fileSize", 0),
@@ -963,14 +971,11 @@ class FoundryHostManager(ApplicationManager):
                                 "source_agent": status_agent_name,
                                 "contextId": context_id
                             }
-                            print(f"📁 [FILE_HISTORY] Emitting file_uploaded event for: {file_info['filename']}")
+                            log_debug(f"[FILE_HISTORY] Emitting file_uploaded event for: {file_info['filename']}")
                             await streamer.stream_file_uploaded(file_info, context_id)
                             log_debug(f"File uploaded event sent for agent artifact: {file_info['filename']}")
                             
-                            # UNIFIED STORAGE: No need to register - files are already in uploads/{session_id}/
-                            # The /api/files endpoint queries blob storage directly
-                            
-                            # Note: File availability is already communicated via file_uploaded event
+                            # File availability is already communicated via file_uploaded event
                             # No need to send additional remote_agent_activity events
                     if success:
                         log_debug(f"Message streamed to WebSocket: {event_data}")
@@ -981,8 +986,6 @@ class FoundryHostManager(ApplicationManager):
                 
             except Exception as e:
                 log_debug(f"Error streaming to WebSocket: {e}")
-                import traceback
-                traceback.print_exc()
             
             # Determine task state from response
             # Priority: 1) A2A protocol status, 2) Session context (HITL), 3) Default to completed
@@ -1002,7 +1005,7 @@ class FoundryHostManager(ApplicationManager):
             try:
                 session_ctx = self._host_agent.get_session_context(context_id)
                 if session_ctx and session_ctx.pending_input_agent:
-                    log_debug(f"🔄 [HITL] Detected pending_input_agent: {session_ctx.pending_input_agent}, overriding state to input_required")
+                    log_debug(f"[HITL] Detected pending_input_agent: {session_ctx.pending_input_agent}, overriding state to input_required")
                     state = TaskState.input_required
                     # Use the pending agent name for accurate status attribution
                     status_agent_name = session_ctx.pending_input_agent
@@ -1113,6 +1116,31 @@ class FoundryHostManager(ApplicationManager):
                                         root = part_data['root']
                                         if root.get('kind') == 'text':
                                             parts.append(Part(root=TextPart(text=root.get('text', ''))))
+                                        elif root.get('kind') == 'file':
+                                            file_data = root.get('file', {})
+                                            fp_kwargs = {'file': FileWithUri(
+                                                uri=file_data.get('uri', ''),
+                                                name=file_data.get('name', ''),
+                                                mimeType=file_data.get('mimeType', '')
+                                            )}
+                                            if root.get('metadata'):
+                                                fp_kwargs['metadata'] = root['metadata']
+                                            parts.append(Part(root=FilePart(**fp_kwargs)))
+                                    elif isinstance(part_data, dict):
+                                        # Flat format (no root wrapper) — matches startup loader
+                                        kind = part_data.get('kind')
+                                        if kind == 'text' or 'text' in part_data:
+                                            parts.append(Part(root=TextPart(text=part_data.get('text', ''))))
+                                        elif kind == 'file' or 'file' in part_data:
+                                            file_data = part_data.get('file', {})
+                                            fp_kwargs = {'file': FileWithUri(
+                                                uri=file_data.get('uri', ''),
+                                                name=file_data.get('name', ''),
+                                                mimeType=file_data.get('mimeType', '')
+                                            )}
+                                            if part_data.get('metadata'):
+                                                fp_kwargs['metadata'] = part_data['metadata']
+                                            parts.append(Part(root=FilePart(**fp_kwargs)))
                                     elif isinstance(part_data, str):
                                         parts.append(Part(root=TextPart(text=part_data)))
                                 if parts:
@@ -1162,7 +1190,7 @@ class FoundryHostManager(ApplicationManager):
             bool: True if registration successful, False otherwise
         """
         try:
-            log_debug(f"🤝 Host manager handling self-registration from: {agent_address}")
+            log_debug(f"[REGISTRATION] Host manager handling self-registration from: {agent_address}")
             
             # Ensure agent is initialized before registration
             await self.ensure_host_agent_initialized()
@@ -1184,11 +1212,11 @@ class FoundryHostManager(ApplicationManager):
                     # Update existing agent card
                     old_name = self._agents[existing_index].name
                     self._agents[existing_index] = agent_card
-                    log_debug(f"🔄 Updated {agent_card.name} in UI agent list (was: {old_name})")
+                    log_debug(f"[REGISTRATION] Updated {agent_card.name} in UI agent list (was: {old_name})")
                 else:
                     # Add new agent
                     self._agents.append(agent_card)
-                    log_debug(f"✅ Added {agent_card.name} to UI agent list")
+                    log_debug(f"[REGISTRATION] Added {agent_card.name} to UI agent list")
                 
                 # Persist to agent registry file for persistence across restarts
                 try:
@@ -1203,15 +1231,15 @@ class FoundryHostManager(ApplicationManager):
                     if existing_agent:
                         # Update existing agent in registry
                         registry.update_agent(agent_card.name, agent_dict)
-                        log_debug(f"💾 Updated {agent_card.name} in persistent agent registry")
+                        log_debug(f"[REGISTRATION] Updated {agent_card.name} in persistent agent registry")
                     else:
                         # Add new agent to registry
                         if registry.add_agent(agent_dict):
-                            log_debug(f"💾 Persisted {agent_card.name} to agent registry file")
+                            log_debug(f"[REGISTRATION] Persisted {agent_card.name} to agent registry file")
                         else:
-                            log_debug(f"⚠️ Agent {agent_card.name} already exists in registry (skipped)")
+                            log_debug(f"[REGISTRATION] Agent {agent_card.name} already exists in registry (skipped)")
                 except Exception as persist_error:
-                    log_debug(f"⚠️ Failed to persist agent to registry: {persist_error}")
+                    log_warning(f"[REGISTRATION] Failed to persist agent to registry: {persist_error}")
                 
                 # Trigger immediate WebSocket sync to update UI in real-time
                 # This happens for both new and updated agents
@@ -1219,12 +1247,12 @@ class FoundryHostManager(ApplicationManager):
                     from service.server.server import trigger_websocket_agent_refresh
                     await trigger_websocket_agent_refresh()
                 except Exception as sync_error:
-                    log_debug(f"⚠️ Failed to trigger immediate sync: {sync_error}")
-                
+                    log_warning(f"[REGISTRATION] Failed to trigger immediate sync: {sync_error}")
+
             return success
-            
+
         except Exception as e:
-            log_debug(f"❌ Host manager registration error: {e}")
+            log_error(f"[REGISTRATION] Host manager registration error: {e}")
             return False
 
     async def unregister_agent(self, agent_name: str) -> bool:
@@ -1239,7 +1267,7 @@ class FoundryHostManager(ApplicationManager):
             bool: True if unregistration successful, False otherwise
         """
         try:
-            log_debug(f"🗑️ Host manager handling unregistration for: {agent_name}")
+            log_debug(f"[UNREGISTER] Host manager handling unregistration for: {agent_name}")
             
             # Ensure agent is initialized
             await self.ensure_host_agent_initialized()
@@ -1250,23 +1278,21 @@ class FoundryHostManager(ApplicationManager):
             if success:
                 # Also remove from our local agent list for UI consistency
                 self._agents = [a for a in self._agents if a.name != agent_name]
-                log_debug(f"✅ Removed {agent_name} from UI agent list")
+                log_debug(f"[UNREGISTER] Removed {agent_name} from UI agent list")
                 
                 # Trigger immediate WebSocket sync to update UI
                 try:
                     from service.server.server import trigger_websocket_agent_refresh
                     await trigger_websocket_agent_refresh()
                 except Exception as sync_error:
-                    log_debug(f"⚠️ Failed to trigger immediate sync: {sync_error}")
+                    log_warning(f"[UNREGISTER] Failed to trigger immediate sync: {sync_error}")
             else:
-                log_debug(f"❌ Agent {agent_name} not found or unregistration failed")
-                
+                log_warning(f"[UNREGISTER] Agent {agent_name} not found or unregistration failed")
+
             return success
-            
+
         except Exception as e:
-            log_debug(f"❌ Host manager unregistration error: {e}")
-            import traceback
-            log_debug(f"❌ Unregistration traceback: {traceback.format_exc()}")
+            log_error(f"[UNREGISTER] Host manager unregistration error: {e}")
             return False
 
     @property
