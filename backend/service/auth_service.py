@@ -323,19 +323,15 @@ class AuthService:
         return user
     
     def create_access_token(self, user: User, expires_delta: Optional[timedelta] = None) -> str:
-        """Create a JWT access token for a user."""
-        if expires_delta:
-            expire = datetime.utcnow() + expires_delta
-        else:
-            expire = datetime.utcnow() + timedelta(hours=24)
-            
+        """Create a JWT access token for a user (no expiration by default)."""
         to_encode = {
             "sub": user.email,
             "user_id": user.user_id,
             "name": user.name,
-            "exp": expire,
             "iat": datetime.utcnow()
         }
+        if expires_delta:
+            to_encode["exp"] = datetime.utcnow() + expires_delta
         
         encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
         return encoded_jwt

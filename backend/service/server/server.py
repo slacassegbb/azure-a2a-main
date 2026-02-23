@@ -429,12 +429,82 @@ class ConversationServer:
     async def _list_messages(self, request: Request):
         message_data = await request.json()
         conversation_id = message_data['params']
+        log_info(f"[_list_messages] Loading messages for conversation: {conversation_id}")
+
+        # Try in-memory first (active conversations)
+        # Check both short UUID and session-prefixed format
         conversation = self.manager.get_conversation(conversation_id)
-        if conversation:
+        if conversation and conversation.messages:
+            log_info(f"[_list_messages] Found {len(conversation.messages)} messages in memory (exact)")
             return ListMessageResponse(
                 result=self.cache_content(conversation.messages)
             )
+
+        # Also check session-prefixed format in memory (messages are stored under user_3::uuid)
+        if not (conversation and conversation.messages):
+            for conv in self.manager.conversations:
+                if conv.conversation_id.endswith(f"::{conversation_id}") and conv.messages:
+                    log_info(f"[_list_messages] Found {len(conv.messages)} messages in memory (prefixed)")
+                    return ListMessageResponse(
+                        result=self.cache_content(conv.messages)
+                    )
+
+        # Fall back to database for persisted conversations
+        # Try exact match first, then suffix match (frontend sends short UUID,
+        # but DB stores as session_id::uuid)
+        db_messages = chat_history_service.get_messages(conversation_id)
+        if not db_messages:
+            db_messages = chat_history_service.get_messages_by_short_id(conversation_id)
+
+        if db_messages:
+            log_info(f"[_list_messages] Found {len(db_messages)} messages from DB")
+            message_objects = self._convert_db_messages(db_messages, conversation_id)
+            return ListMessageResponse(result=self.cache_content(message_objects))
+
+        log_info(f"[_list_messages] No messages found for {conversation_id[:12]}...")
         return ListMessageResponse(result=[])
+
+    def _convert_db_messages(self, db_messages: list, context_id: str) -> list[Message]:
+        """Convert raw database message dicts to A2A Message objects."""
+        message_objects = []
+        for msg_data in db_messages:
+            try:
+                parts = []
+                for part_data in msg_data.get("parts", []):
+                    if isinstance(part_data, dict):
+                        kind = part_data.get("kind") or part_data.get("root", {}).get("kind")
+                        if kind == "text":
+                            text = part_data.get("text") or part_data.get("root", {}).get("text", "")
+                            parts.append(Part(root=TextPart(text=text)))
+                        elif kind == "data":
+                            data = part_data.get("data") or part_data.get("root", {}).get("data", {})
+                            parts.append(Part(root=DataPart(data=data)))
+                        elif kind == "file":
+                            file_data = part_data.get("file") or part_data.get("root", {}).get("file", {})
+                            fp_kwargs = {"file": FileWithUri(
+                                name=file_data.get("name", ""),
+                                uri=file_data.get("uri", ""),
+                                mimeType=file_data.get("mimeType", "application/octet-stream")
+                            )}
+                            part_meta = part_data.get("metadata") or part_data.get("root", {}).get("metadata")
+                            if part_meta:
+                                fp_kwargs["metadata"] = part_meta
+                            parts.append(Part(root=FilePart(**fp_kwargs)))
+
+                if parts:
+                    msg_kwargs = {
+                        "messageId": msg_data.get("messageId") or msg_data.get("message_id", str(uuid.uuid4())),
+                        "role": Role.user if msg_data.get("role") == "user" else Role.agent,
+                        "parts": parts,
+                        "contextId": msg_data.get("context_id") or msg_data.get("contextId", context_id),
+                    }
+                    if msg_data.get("metadata"):
+                        msg_kwargs["metadata"] = msg_data["metadata"]
+                    message_objects.append(Message(**msg_kwargs))
+            except Exception as e:
+                log_debug(f"Error converting DB message: {e}")
+                continue
+        return message_objects
 
     def cache_content(self, messages: list[Message]):
         """Process messages for API response.
@@ -506,90 +576,62 @@ class ConversationServer:
         )
 
     async def _list_conversation(self, request: Request):
-        """List conversations, optionally filtered by session ID.
-        
+        """List conversations (metadata only — messages are loaded on demand via /message/list).
+
         Request body can include:
         - sessionId: Filter conversations for this session (tenant isolation)
-        
+
         Combines in-memory conversations with database persisted conversations.
+        For unnamed conversations, includes first_message_text so the sidebar can generate titles.
         """
         try:
             message_data = await request.json()
             session_id = message_data.get('params', {}).get('sessionId') if isinstance(message_data.get('params'), dict) else None
-            
-            # If sessionId is provided, load conversations from database for that session
+
             if session_id:
-                # First, get any conversations from database for this session
                 db_conversations = chat_history_service.list_conversations(session_id)
                 log_debug(f"[_list_conversation] Loaded {len(db_conversations)} conversations from database for session {session_id}")
-                
-                # Convert database conversations to Conversation objects
+
                 filtered_conversations = []
                 seen_conv_ids = set()
-                
+                # Collect unnamed conversation IDs so we can batch-fetch first message text
+                unnamed_conv_map = {}  # full_conv_id -> index in filtered_conversations
+
                 for db_conv in db_conversations:
                     full_conv_id = db_conv.get("conversation_id", "")
-                    # Strip session prefix for frontend display
                     conv_id_only = full_conv_id.split('::', 1)[1] if '::' in full_conv_id else full_conv_id
-                    
+
                     if conv_id_only in seen_conv_ids:
                         continue
                     seen_conv_ids.add(conv_id_only)
-                    
-                    # Load messages for this conversation
-                    messages = chat_history_service.get_messages(full_conv_id)
-                    
-                    # Convert to Message objects
-                    message_objects = []
-                    for msg_data in messages:
-                        try:
-                            parts = []
-                            for part_data in msg_data.get("parts", []):
-                                if isinstance(part_data, dict):
-                                    kind = part_data.get("kind") or part_data.get("root", {}).get("kind")
-                                    if kind == "text":
-                                        text = part_data.get("text") or part_data.get("root", {}).get("text", "")
-                                        parts.append(Part(root=TextPart(text=text)))
-                                    elif kind == "data":
-                                        data = part_data.get("data") or part_data.get("root", {}).get("data", {})
-                                        parts.append(Part(root=DataPart(data=data)))
-                                    elif kind == "file":
-                                        file_data = part_data.get("file") or part_data.get("root", {}).get("file", {})
-                                        fp_kwargs = {"file": FileWithUri(
-                                            name=file_data.get("name", ""),
-                                            uri=file_data.get("uri", ""),
-                                            mimeType=file_data.get("mimeType", "application/octet-stream")
-                                        )}
-                                        # Preserve metadata (e.g. role='mask') for proper rendering
-                                        part_meta = part_data.get("metadata") or part_data.get("root", {}).get("metadata")
-                                        if part_meta:
-                                            fp_kwargs["metadata"] = part_meta
-                                        parts.append(Part(root=FilePart(**fp_kwargs)))
 
-                            if parts:
-                                msg_kwargs = {
-                                    "messageId": msg_data.get("messageId") or msg_data.get("message_id", str(uuid.uuid4())),
-                                    "role": Role.user if msg_data.get("role") == "user" else Role.agent,
-                                    "parts": parts,
-                                    "contextId": msg_data.get("context_id", full_conv_id),
-                                }
-                                # Preserve message-level metadata (agentName, workflow_plan, etc.)
-                                if msg_data.get("metadata"):
-                                    msg_kwargs["metadata"] = msg_data["metadata"]
-                                message_objects.append(Message(**msg_kwargs))
-                        except Exception as e:
-                            log_debug(f"Error converting message: {e}")
-                            continue
-                    
+                    conv_name = db_conv.get("name", "")
                     conv = Conversation(
                         conversation_id=conv_id_only,
-                        name=db_conv.get("name", ""),
+                        name=conv_name,
                         is_active=db_conv.get("is_active", True),
                         task_ids=db_conv.get("task_ids", []),
-                        messages=message_objects
+                        messages=[]
                     )
                     filtered_conversations.append(conv)
-                
+
+                    if not conv_name.strip():
+                        unnamed_conv_map[full_conv_id] = len(filtered_conversations) - 1
+
+                # Batch-fetch first user message text for unnamed conversations
+                if unnamed_conv_map:
+                    first_texts = chat_history_service.get_first_user_message_texts(list(unnamed_conv_map.keys()))
+                    for full_conv_id, text in first_texts.items():
+                        idx = unnamed_conv_map[full_conv_id]
+                        if text:
+                            title = text[:47] + '...' if len(text) > 50 else text
+                            filtered_conversations[idx].name = title
+                            # Persist the generated title (fire and forget)
+                            try:
+                                chat_history_service.update_conversation_name(full_conv_id, title)
+                            except Exception:
+                                pass
+
                 # Also include any in-memory conversations for this session not in database
                 for conv in self.manager.conversations:
                     if conv.conversation_id.startswith(f"{session_id}::"):
@@ -600,18 +642,28 @@ class ConversationServer:
                                 name=conv.name,
                                 is_active=conv.is_active,
                                 task_ids=conv.task_ids,
-                                messages=conv.messages
+                                messages=[]
                             )
                             filtered_conversations.append(conv_copy)
-                
-                log_debug(f"[_list_conversation] Returning {len(filtered_conversations)} conversations for session {session_id}")
+
+                log_debug(f"[_list_conversation] Returning {len(filtered_conversations)} conversations (metadata only) for session {session_id}")
                 return ListConversationResponse(result=filtered_conversations, message_user_map=message_user_map)
-            
-            # No session filter - return all in-memory conversations
-            return ListConversationResponse(result=self.manager.conversations, message_user_map=message_user_map)
+
+            # No session filter - return all in-memory conversations (metadata only)
+            metadata_only = [
+                Conversation(
+                    conversation_id=conv.conversation_id,
+                    name=conv.name,
+                    is_active=conv.is_active,
+                    task_ids=conv.task_ids,
+                    messages=[]
+                )
+                for conv in self.manager.conversations
+            ]
+            return ListConversationResponse(result=metadata_only, message_user_map=message_user_map)
         except Exception as e:
             log_debug(f"Error in _list_conversation: {e}")
-            return ListConversationResponse(result=self.manager.conversations, message_user_map=message_user_map)
+            return ListConversationResponse(result=[], message_user_map=message_user_map)
 
     async def _delete_conversation(self, request: Request):
         """Delete a conversation by ID.

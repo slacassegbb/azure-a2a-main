@@ -6,12 +6,12 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { MessageSquarePlus, PanelLeftClose, PanelLeftOpen, Trash2, LogOut, SquarePen } from "lucide-react"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { cn } from "@/lib/utils"
-import { listConversations, createConversation, deleteConversation, deleteAllConversations, listMessages, notifyConversationCreated, updateConversationTitle, type Conversation } from "@/lib/conversation-api"
+import { listConversations, createConversation, deleteConversation, deleteAllConversations, listMessages, notifyConversationCreated, type Conversation } from "@/lib/conversation-api"
 import { LoginDialog } from "@/components/login-dialog"
 import { useEventHub } from "@/hooks/use-event-hub"
 import { getOrCreateSessionId, leaveCollaborativeSession, isInCollaborativeSession } from "@/lib/session"
 import { clearActiveWorkflow } from "@/lib/active-workflow-api"
-import { logDebug, warnDebug, errorDebug, logInfo } from '@/lib/debug'
+import { logDebug } from '@/lib/debug'
 
 type Props = {
   isCollapsed: boolean
@@ -81,46 +81,12 @@ export function ChatHistorySidebar({ isCollapsed, onToggle }: Props) {
       setError(null)
       logDebug('[ChatHistorySidebar] Loading conversations...')
       const { conversations } = await listConversations()
-      logDebug('[ChatHistorySidebar] Received conversations:', conversations)
-      
-      // For each conversation without a name, try to get the first message as title
-      const conversationsWithTitles = await Promise.all(
-        conversations.map(async (conv) => {
-          if (!conv.name?.trim()) {
-            try {
-              // Use the embedded messages from the conversation object instead of making a separate API call
-              const messages = conv.messages || []
-              logDebug('[ChatHistorySidebar] Using embedded messages for conversation:', conv.conversation_id, 'count:', messages.length)
-              
-              const firstUserMessage = messages.find(msg => msg.role === 'user')
-              if (firstUserMessage && firstUserMessage.parts) {
-                // Extract text from message parts
-                const text = firstUserMessage.parts
-                  .map((part: any) => part.text || part.content || '')
-                  .join(' ')
-                  .trim()
-                
-                if (text) {
-                  // Generate a title from the first message
-                  const title = text.length > 50 ? text.slice(0, 47) + '...' : text
-                  // Persist the generated title to the database (fire and forget)
-                  updateConversationTitle(conv.conversation_id, title)
-                  return { ...conv, name: title }
-                }
-              }
-            } catch (err) {
-              errorDebug('[ChatHistorySidebar] Failed to process embedded messages for conversation:', conv.conversation_id, err)
-            }
-          }
-          return conv
-        })
-      )
-      
-      setConversations(conversationsWithTitles)
-      logDebug('[ChatHistorySidebar] Final conversations with titles:', conversationsWithTitles.map(c => ({
-        id: c.conversation_id,
-        name: c.name
-      })))
+      logDebug('[ChatHistorySidebar] Received', conversations.length, 'conversations (metadata only)')
+
+      // Backend now generates titles for unnamed conversations,
+      // so we just use whatever name the backend provides.
+      // Conversations without names show as "New Chat".
+      setConversations(conversations)
     } catch (err) {
       setError("Failed to load conversations")
       console.error("Error loading conversations:", err)

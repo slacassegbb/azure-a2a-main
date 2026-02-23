@@ -99,11 +99,6 @@ class AgentRegistry:
                 'Sentiment Analysis Agent': '#a855f7',
                 'Twilio SMS Agent': '#3b82f6',
                 'Sora 2 Video Generator': '#f97316',
-                'SportsResultAgent': '#06b6d4',
-                'Benjamin School AP-Calculus Study Buddy': '#ef4444',
-                'Benjamin School AP Environmental Science Study Buddy': '#10b981',
-                'Benjamin School Biology Teacher': '#14b8a6',
-                'Benjamin School English Teacher': '#3b82f6',
             }
             for name, color in curated_colors.items():
                 cur.execute("UPDATE agents SET color = %s WHERE name = %s", (color, name))

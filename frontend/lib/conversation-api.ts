@@ -107,7 +107,7 @@ export async function createConversation(): Promise<Conversation | null> {
 }
 
 /**
- * Get a specific conversation with its embedded messages
+ * Get a specific conversation with its messages (loaded on demand via /message/list).
  */
 export interface GetConversationResult {
   conversation: Conversation | null
@@ -117,16 +117,23 @@ export interface GetConversationResult {
 export async function getConversation(conversationId: string): Promise<GetConversationResult> {
   try {
     logDebug('[ConversationAPI] Getting conversation:', conversationId)
-    const { conversations, messageUserMap } = await listConversations()
-    const conversation = conversations.find(conv => conv.conversation_id === conversationId)
-    
-    if (conversation) {
-      logDebug('[ConversationAPI] Found conversation with', conversation.messages?.length || 0, 'embedded messages')
-      return { conversation, messageUserMap }
-    } else {
-      logDebug('[ConversationAPI] Conversation not found:', conversationId)
-      return { conversation: null, messageUserMap }
+
+    // Load messages on demand — don't re-fetch the entire conversation list
+    const messages = await listMessages(conversationId)
+    logDebug('[ConversationAPI] Loaded', messages.length, 'messages for conversation', conversationId)
+
+    // Also get the messageUserMap from the conversation list (lightweight, no messages)
+    const { messageUserMap } = await listConversations()
+
+    const conversation: Conversation = {
+      conversation_id: conversationId,
+      name: '',
+      is_active: true,
+      task_ids: [],
+      messages,
     }
+
+    return { conversation, messageUserMap }
   } catch (error) {
     console.error('[ConversationAPI] Failed to get conversation:', error)
     return { conversation: null, messageUserMap: {} }

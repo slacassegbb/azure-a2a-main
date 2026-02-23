@@ -483,6 +483,81 @@ def get_messages(conversation_id: str) -> List[Dict[str, Any]]:
     return _load_messages_for_conversation(conversation_id)
 
 
+def get_messages_by_short_id(short_id: str) -> List[Dict[str, Any]]:
+    """Get messages when only the short UUID is known (without session prefix).
+
+    The DB stores conversation_ids as 'session_id::uuid', but the frontend
+    sends just 'uuid'. This resolves the full ID via a DB lookup, then loads
+    messages normally.
+    """
+    conn = _get_connection()
+    if not conn:
+        return []
+
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT conversation_id FROM conversations
+            WHERE conversation_id LIKE %s
+            LIMIT 1
+        """, (f"%::{short_id}",))
+        row = cur.fetchone()
+        cur.close()
+
+        if row:
+            full_conv_id = row[0]
+            log_debug(f"[ChatHistoryService] Resolved short ID {short_id[:8]}... to {full_conv_id[:20]}...")
+            return _load_messages_for_conversation(full_conv_id)
+
+        return []
+    except Exception as e:
+        log_error(f"[ChatHistoryService] Error resolving short conversation ID: {e}")
+        return []
+
+
+def get_first_user_message_texts(conversation_ids: List[str]) -> Dict[str, str]:
+    """Get the first user message text for each conversation (batch query).
+
+    Used to generate titles for unnamed conversations without loading all messages.
+    Returns a dict of conversation_id -> first user message text.
+    """
+    if not conversation_ids:
+        return {}
+
+    conn = _get_connection()
+    if not conn:
+        return {}
+
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT DISTINCT ON (conversation_id)
+                conversation_id, parts
+            FROM messages
+            WHERE conversation_id = ANY(%s) AND role = 'user'
+            ORDER BY conversation_id, created_at
+        """, (conversation_ids,))
+
+        result = {}
+        for row in cur.fetchall():
+            conv_id = row[0]
+            parts = row[1] if isinstance(row[1], list) else json.loads(row[1]) if row[1] else []
+            # Extract text from the first text part
+            for part in parts:
+                if isinstance(part, dict):
+                    kind = part.get("kind") or part.get("root", {}).get("kind")
+                    if kind == "text":
+                        text = (part.get("text") or part.get("root", {}).get("text", "")).strip()
+                        if text:
+                            result[conv_id] = text
+                            break
+        cur.close()
+        return result
+    except Exception as e:
+        log_error(f"[ChatHistoryService] Error getting first user message texts: {e}")
+        return {}
+
+
 def add_task_to_conversation(conversation_id: str, task_id: str) -> bool:
     """Associate a task with a conversation."""
     # Update cache

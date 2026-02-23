@@ -1,12 +1,14 @@
 """
 WebSocket Server Startup Script
-Starts the WebSocket server with periodic agent registry sync enabled.
+
+Runs the WebSocket server directly with uvicorn in a single event loop.
+Periodic agent registry sync runs as an asyncio background task via the
+FastAPI lifespan — no background threads, no cross-loop issues.
 """
-import signal
 import sys
-import time
 import logging
-from service.websocket_server import start_websocket_server, set_auth_service
+import uvicorn
+from service.websocket_server import create_websocket_app, set_auth_service
 
 # Suppress noisy third-party loggers
 for _name in ["azure", "azure.core", "azure.identity", "httpx", "httpcore",
@@ -31,43 +33,31 @@ sys.stderr.reconfigure(line_buffering=True)
 
 logger = logging.getLogger(__name__)
 
+
 def main():
-    """Start WebSocket server with proper periodic sync."""
-    logger.info("Starting WebSocket server with periodic sync...")
+    """Start WebSocket server — single process, single event loop."""
+    logger.info("Starting WebSocket server...")
 
-    try:
-        # Initialize AuthService for WebSocket authentication
-        logger.info("Initializing AuthService for WebSocket authentication...")
-        from service.auth_service import AuthService
-        auth_service_instance = AuthService()
-        set_auth_service(auth_service_instance)
-        logger.info("AuthService initialized successfully")
+    # Initialize AuthService for WebSocket authentication
+    logger.info("Initializing AuthService for WebSocket authentication...")
+    from service.auth_service import AuthService
+    auth_service_instance = AuthService()
+    set_auth_service(auth_service_instance)
+    logger.info("AuthService initialized successfully")
 
-        # Start server (includes 15-second periodic sync)
-        server = start_websocket_server(host='0.0.0.0', port=8080)
-        logger.info("WebSocket server started successfully")
+    # Create the FastAPI app (lifespan handles periodic sync)
+    app = create_websocket_app()
 
-        # Handle graceful shutdown
-        def shutdown_handler(signum, frame):
-            logger.info("Shutting down WebSocket server...")
-            server.stop()
-            sys.exit(0)
+    # Run uvicorn directly — everything in one event loop
+    # Ctrl+C / SIGTERM handled by uvicorn's built-in signal handling
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=8080,
+        log_level="warning",
+        access_log=False,
+    )
 
-        signal.signal(signal.SIGTERM, shutdown_handler)
-        signal.signal(signal.SIGINT, shutdown_handler)
-
-        logger.info("WebSocket server running with periodic agent sync (interval: 15s)")
-
-        # Keep the main thread alive
-        try:
-            while True:
-                time.sleep(60)
-        except KeyboardInterrupt:
-            shutdown_handler(None, None)
-
-    except Exception as e:
-        logger.error(f"CRITICAL ERROR starting WebSocket server: {e}", exc_info=True)
-        sys.exit(1)
 
 if __name__ == "__main__":
     main()

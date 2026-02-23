@@ -81,9 +81,9 @@ class WebSocketManager:
         self.tenant_event_history: Dict[str, List[Dict[str, Any]]] = {}
         self.max_history = 100
         # Backend URL for fetching agent registry
-        # In Azure Container Apps, use internal service discovery or full URL
-        self.backend_host = os.getenv("BACKEND_HOST", "localhost")
-        self.backend_port = int(os.getenv("BACKEND_PORT", "12000"))
+        # BACKEND_API_URL is set in production (Azure Container Apps)
+        # Falls back to localhost for local development
+        self.backend_api_url = os.getenv("BACKEND_API_URL", "http://localhost:12000")
         # Session ID generated at server startup - used to detect backend restarts
         # Frontend clears file history when session_id changes
         import uuid
@@ -97,12 +97,8 @@ class WebSocketManager:
         
         for attempt in range(max_retries + 1):
             try:
-                # Try to get agents from the backend's agent registry
-                # Use https for port 443 (Azure Container Apps public endpoint)
-                if self.backend_port == 443:
-                    backend_url = f"https://{self.backend_host}/agents"
-                else:
-                    backend_url = f"http://{self.backend_host}:{self.backend_port}/agents"
+                # Fetch agents from the backend's agent registry
+                backend_url = f"{self.backend_api_url}/api/agents"
                 
                 logger.debug(f"Fetching agent registry from: {backend_url}")
                 # Disable SSL verification for Azure Container Apps internal communication
@@ -870,6 +866,33 @@ class WebSocketManager:
             "max_history": self.max_history
         }
 
+    async def sync_agent_registry(self):
+        """Sync agent registry to all connected clients (runs in the server event loop)."""
+        sync_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+        try:
+            # get_agent_registry() is synchronous (uses requests), run in executor
+            loop = asyncio.get_running_loop()
+            agents = await loop.run_in_executor(None, self.get_agent_registry)
+
+            registry_event = {
+                'eventType': 'agent_registry_sync',
+                'data': {'agents': agents},
+                'timestamp': sync_time
+            }
+            client_count = await self.broadcast_event(registry_event)
+            logger.info(f"Synced {len(agents)} agents to {client_count} clients")
+        except Exception as e:
+            logger.warning(f"Agent registry sync failed: {e}")
+
+    def trigger_immediate_sync(self):
+        """Trigger an immediate agent registry sync (non-blocking, safe from any thread)."""
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(self.sync_agent_registry())
+        except RuntimeError:
+            # No running event loop (called from a non-async context) — skip gracefully
+            logger.debug("trigger_immediate_sync called outside event loop, skipping")
+
 
 # Global WebSocket manager
 websocket_manager = WebSocketManager()
@@ -880,7 +903,29 @@ collaborative_session_manager = get_session_manager()
 
 def create_websocket_app() -> FastAPI:
     """Create FastAPI app with WebSocket support."""
-    app = FastAPI(title="A2A WebSocket Server", version="1.0.0")
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        """Start periodic agent registry sync as an asyncio background task."""
+        sync_interval = int(os.getenv("AGENT_SYNC_INTERVAL", "15"))
+
+        async def _periodic_sync():
+            while True:
+                await asyncio.sleep(sync_interval)
+                await websocket_manager.sync_agent_registry()
+
+        sync_task = asyncio.create_task(_periodic_sync())
+        logger.info(f"Periodic agent sync started (every {sync_interval}s)")
+        yield
+        sync_task.cancel()
+        try:
+            await sync_task
+        except asyncio.CancelledError:
+            pass
+        logger.info("Periodic agent sync stopped")
+
+    app = FastAPI(title="A2A WebSocket Server", version="1.0.0", lifespan=lifespan)
     
     @app.websocket("/events")
     async def websocket_endpoint(
@@ -1861,10 +1906,10 @@ def create_websocket_app() -> FastAPI:
     async def refresh_agents():
         """HTTP endpoint to trigger immediate agent registry refresh."""
         try:
-            websocket_manager.trigger_immediate_sync()
+            await websocket_manager.sync_agent_registry()
             return JSONResponse({
                 "success": True,
-                "message": "Agent registry refresh triggered"
+                "message": "Agent registry refresh completed"
             })
         except Exception as e:
             logger.error(f"Error triggering agent refresh: {e}")
