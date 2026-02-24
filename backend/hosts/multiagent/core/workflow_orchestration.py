@@ -1589,14 +1589,15 @@ Do NOT skip steps. Do NOT mark goal as completed until ALL workflow steps are do
 - **STEP COUNTING**: Count your completed tasks carefully!{branching_note}
 - **VERIFICATION CHECKLIST**:
   1. Count the number of workflow steps above
-  2. Count the number of successfully completed tasks in your plan
+  2. Count the number of completed tasks in your plan (use the Workflow Progress section)
   3. Match each workflow step to a completed task
   4. If required steps are not yet completed, goal_status MUST be "incomplete"
 - **COMPLETION CRITERIA** - Mark goal_status="completed" ONLY when:
-  1. All required workflow steps have been addressed by completed tasks, AND
-  2. All completed tasks succeeded (or agents are waiting for user input)
-- **WARNING**: Do NOT mark as completed prematurely!
-- If ANY required workflow step is missing or incomplete, goal_status MUST be "incomplete" and you must create the next task"""
+  1. All required workflow steps have been addressed by completed tasks (each step attempted once), AND
+  2. There are no remaining unattempted workflow steps
+- **RATE LIMITS / EXTERNAL FAILURES**: If an agent responds but could not fetch data due to API rate limits or external service issues, that step is STILL CONSIDERED COMPLETED. Do NOT retry it — move on to the next workflow step.
+- **STRICT WORKFLOW ADHERENCE**: In workflow mode, ONLY propose tasks that correspond to a step in the workflow above. Do NOT invent extra steps, retries, or follow-up tasks beyond what the workflow defines. Once every workflow step has been attempted, mark goal_status="completed".
+- If ANY required workflow step has not been attempted yet, goal_status MUST be "incomplete" and you must create the next task"""
         else:
             system_prompt += """
 
@@ -1644,6 +1645,24 @@ Do NOT skip steps. Do NOT mark goal as completed until ALL workflow steps are do
                 )
                 await self._emit_plan_update(plan, context_id, reasoning=f"Redirected: {interrupt_instruction[:100]}")
                 log_info(f"[INTERRUPT] Goal updated, re-planning with {len(completed_tasks)} completed tasks preserved")
+
+            # =========================================================
+            # WORKFLOW COMPLETION GUARD: If all workflow steps have been
+            # attempted, stop — don't let the LLM invent extra steps.
+            # Count by full label (1a, 1b, 2, 3) not just step number.
+            # =========================================================
+            if workflow and workflow.strip() and workflow_step_count > 0:
+                attempted_labels = set()
+                for t in plan.tasks:
+                    step_match = re.search(r'\[Step\s+(\d+[a-z]?)\]', t.task_description)
+                    if step_match:
+                        attempted_labels.add(step_match.group(1))
+                if len(attempted_labels) >= workflow_step_count:
+                    log_info(f"[Workflow Guard] All {workflow_step_count} workflow steps attempted (labels: {sorted(attempted_labels)}), forcing completion")
+                    plan.goal_status = "completed"
+                    plan.updated_at = datetime.now(timezone.utc)
+                    await self._emit_plan_update(plan, context_id, reasoning="All workflow steps completed")
+                    break
 
             # Single typed event replaces old untyped _emit_status_event + typed double-emit
             await self._emit_granular_agent_event(
