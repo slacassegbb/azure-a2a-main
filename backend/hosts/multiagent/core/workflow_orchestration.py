@@ -1589,7 +1589,9 @@ Do NOT skip steps. Do NOT mark goal as completed until ALL workflow steps are do
   - Wait for ALL parallel tasks to complete before moving to the next sequential step
 - Only mark goal_status="completed" after ALL required workflow steps are finished
 - Skipped branch steps do NOT count toward the completion requirement
-- If a step fails, you may retry or adapt, but you must complete all steps
+- **DEPENDENCY-AWARE FAILURE HANDLING**: If a step fails and a subsequent step DEPENDS on its output (e.g., Step 2 needs data produced by Step 1), mark the dependent step as failed immediately with error_message explaining the missing upstream data — do NOT dispatch it to an agent. Agents cannot fulfill tasks when required input data is unavailable.
+- If a step fails but subsequent steps are INDEPENDENT (do not need its output), continue executing them normally
+- You may retry a failed step itself, but never send a dependent step to an agent with missing data — that wastes time and produces misleading "completed" results
 """
             system_prompt += workflow_section
             log_debug(f"[Agent Mode] Injected workflow into planner prompt ({len(workflow)} chars)")
