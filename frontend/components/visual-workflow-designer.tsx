@@ -3383,8 +3383,8 @@ export function VisualWorkflowDesigner({
   const selectedStep = workflowSteps.find(s => s.id === selectedStepId)
 
   return (
-    <div className="flex flex-col h-full gap-4">
-      <div className="flex gap-4 h-full">
+    <div className="flex flex-col h-full gap-4 overflow-hidden">
+      <div className="flex gap-4 flex-1 min-h-0">
         {/* Agent Palette */}
         <div className="w-64 flex flex-col gap-2 bg-slate-800/50 rounded-lg p-4 border border-slate-700/50">
           <h3 className="text-sm font-semibold text-slate-200 mb-2">Available Agents</h3>
@@ -3462,7 +3462,7 @@ export function VisualWorkflowDesigner({
         </div>
 
         {/* Canvas */}
-        <div className="flex-1 flex flex-col gap-2">
+        <div className="flex-1 flex flex-col gap-2 min-h-0">
           <div 
             className="flex-1 relative bg-slate-900 rounded-lg border-2 border-dashed border-slate-800 overflow-hidden"
             onDragOver={(e) => {
@@ -4019,7 +4019,7 @@ export function VisualWorkflowDesigner({
 
         {/* Workflow Catalog Sidebar */}
         {showCatalog && (
-          <div className="w-96 flex flex-col">
+          <div className="w-96 flex flex-col min-h-0 overflow-hidden">
             <div className="bg-slate-800/50 rounded-lg border border-slate-700/50 overflow-hidden h-full flex flex-col">
               <div className="p-3 border-b border-slate-700/50 bg-slate-800/50 flex items-center justify-between">
                 <h3 className="text-sm font-semibold text-slate-200">Workflows</h3>

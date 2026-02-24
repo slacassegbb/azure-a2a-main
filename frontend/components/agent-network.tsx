@@ -1031,7 +1031,7 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
                         Workflows
                       </Button>
                     </DialogTrigger>
-                        <DialogContent className="max-w-[95vw] max-h-[95vh] flex flex-col">
+                        <DialogContent className="max-w-[95vw] h-[95vh] flex flex-col overflow-hidden">
                             <DialogHeader>
                               <DialogTitle>Workflow Designer</DialogTitle>
                               <DialogDescription>
