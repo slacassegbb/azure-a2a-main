@@ -33,11 +33,12 @@ export function useEventSubscription(eventName: string, handler: EventCallback):
 
 /**
  * Subscribe to multiple WebSocket events at once. Automatically
- * unsubscribes on unmount or when the factory function changes.
+ * unsubscribes on unmount or when deps change.
  *
  * The `factory` callback returns a map of event name → handler.
- * It is called inside a useEffect so handlers may safely reference
- * the latest component state via refs.
+ * Handlers always see the latest component state because the factory
+ * is called on every render and stored in a ref (same pattern as
+ * useEventSubscription above).
  *
  * @example
  * useEventSubscriptions(() => ({
@@ -51,18 +52,27 @@ export function useEventSubscriptions(
   deps: React.DependencyList = []
 ): void {
   const { subscribe, unsubscribe } = useEventHub()
+  const handlersRef = useRef<Record<string, EventCallback>>({})
+
+  // Always keep the latest handlers in the ref (called every render)
+  handlersRef.current = factory()
 
   useEffect(() => {
-    const subscriptions = factory()
-    const entries = Object.entries(subscriptions)
+    const eventNames = Object.keys(handlersRef.current)
 
-    for (const [eventName, handler] of entries) {
-      subscribe(eventName, handler)
+    // Create stable wrapper callbacks that delegate to the ref
+    const wrappers: [string, EventCallback][] = eventNames.map(name => [
+      name,
+      (data: any) => handlersRef.current[name]?.(data)
+    ])
+
+    for (const [name, cb] of wrappers) {
+      subscribe(name, cb)
     }
 
     return () => {
-      for (const [eventName, handler] of entries) {
-        unsubscribe(eventName, handler)
+      for (const [name, cb] of wrappers) {
+        unsubscribe(name, cb)
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
