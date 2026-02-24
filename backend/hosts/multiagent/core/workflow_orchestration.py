@@ -1705,14 +1705,48 @@ Do NOT skip steps. Do NOT mark goal as completed until ALL workflow steps are do
                     event_type="info", metadata={"agents_count": len(available_agents), "agent_names": agent_names[:5]}
                 )
             
+            # Build a compact version of the plan for the LLM prompt.
+            # Full task outputs can be huge (agent responses) — truncate them
+            # so the LLM can still reason about what happened without blowing
+            # up the context window or degrading decision quality.
+            compact_plan = plan.model_dump()
+            for task_entry in compact_plan.get("tasks", []):
+                output = task_entry.get("output")
+                if output and isinstance(output, dict):
+                    # Keep result field but truncate if too long
+                    result_val = output.get("result")
+                    if isinstance(result_val, str) and len(result_val) > 500:
+                        output["result"] = result_val[:500] + "... [truncated]"
+                    # Drop bulky nested fields the planner doesn't need
+                    for drop_key in ("artifacts", "task_id"):
+                        output.pop(drop_key, None)
+
+            # In workflow mode, add an explicit step-completion map so the
+            # LLM doesn't have to parse [Step X] prefixes from descriptions.
+            workflow_progress = ""
+            if workflow and workflow.strip():
+                completed_steps = []
+                pending_steps = []
+                for task_entry in compact_plan.get("tasks", []):
+                    step_match = re.search(r'\[Step\s+(\d+[a-z]?)\]', task_entry.get("task_description", ""))
+                    if step_match:
+                        label = step_match.group(1)
+                        state = task_entry.get("state", "pending")
+                        if state == "completed":
+                            completed_steps.append(label)
+                        else:
+                            pending_steps.append(f"{label} ({state})")
+                if completed_steps or pending_steps:
+                    workflow_progress = f"\n\nWorkflow Progress:\n- Completed steps: {', '.join(completed_steps) if completed_steps else 'none'}\n- Pending/in-progress: {', '.join(pending_steps) if pending_steps else 'none'}"
+
             user_prompt = f"""Goal:
 {plan.goal}
 
 Current Plan (JSON):
-{json.dumps(plan.model_dump(), indent=2, default=str)}
+{json.dumps(compact_plan, indent=2, default=str)}
 
 Available Agents (JSON):
-{json.dumps(available_agents, indent=2)}
+{json.dumps(available_agents, indent=2)}{workflow_progress}
 
 Analyze the plan and determine the next step."""
             
