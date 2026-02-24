@@ -15,6 +15,7 @@ import { useSearchParams } from "next/navigation"
 import { createContextId, getOrCreateSessionId } from "@/lib/session"
 import { getAgentHexColor } from "@/lib/agent-colors"
 import { logDebug } from '@/lib/debug'
+import { fetchRegistryAgents, checkAgentHealthWithFallback } from '@/lib/agent-registry'
 
 interface WorkflowStep {
   id: string
@@ -203,35 +204,16 @@ export function VisualWorkflowDesigner({
   // Fetch all online agents from registry (not just session-enabled ones)
   const [allAvailableAgents, setAllAvailableAgents] = useState<Agent[] | null>(null)
   useEffect(() => {
-    const baseUrl = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
     const fetchAllAgents = async () => {
       try {
-        const response = await fetch(`${baseUrl}/api/agents`)
-        if (!response.ok) return
-        const data = await response.json()
-        const agents = (data.agents || data).map((agent: any) => ({
-          id: agent.name.toLowerCase().replace(/\s+/g, '-'),
-          name: agent.name,
-          description: agent.description,
-          color: agent.color,
-          skills: agent.skills,
-          endpoint: agent.url,
-        }))
+        const agents = await fetchRegistryAgents()
         // Show all agents immediately while health checks run
-        setAllAvailableAgents(agents)
+        setAllAvailableAgents(agents as Agent[])
         logDebug("[VisualWorkflowDesigner] Loaded", agents.length, "agents from registry, checking health...")
-        // Health check in background, then filter to online only
-        const results = await Promise.all(agents.map(async (agent: any) => {
-          try {
-            const urlParts = (agent.endpoint || '').replace('http://', '').replace('https://', '')
-            const healthRes = await fetch(`${baseUrl}/api/agents/health/${urlParts}`)
-            if (healthRes.ok) {
-              const healthData = await healthRes.json()
-              return healthData.success && healthData.online ? agent : null
-            }
-          } catch { /* offline */ }
-          return null
-        }))
+        // Health check with local→production fallback
+        const results = await Promise.all(
+          agents.map((agent) => checkAgentHealthWithFallback(agent))
+        )
         const onlineAgents = results.filter(Boolean) as Agent[]
         setAllAvailableAgents(onlineAgents)
         logDebug("[VisualWorkflowDesigner] Health check done:", onlineAgents.length, "online agents")

@@ -59,6 +59,7 @@ import {
 import { getAgentTextClass, getAgentBgClass } from "@/lib/agent-colors"
 import { deriveCategory, getAllCategories, CATEGORY_ICONS } from "@/lib/agent-categories"
 import { warnDebug } from '@/lib/debug'
+import { fetchRegistryAgents, checkAgentHealth, checkAgentHealthWithFallback } from '@/lib/agent-registry'
 
 export function AgentCatalog() {
   const { toast } = useToast()
@@ -105,32 +106,15 @@ export function AgentCatalog() {
     return lower.includes('localhost') || lower.includes('127.0.0.1')
   }
 
-  // Function to check agent health status via backend proxy
-  const checkAgentHealth = async (url: string): Promise<boolean> => {
-    try {
-      const urlParts = url.replace('http://', '').replace('https://', '')
-      const baseUrl = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
-      const healthCheckUrl = `${baseUrl}/api/agents/health/${urlParts}`
-
-      const response = await fetch(healthCheckUrl)
-
-      if (!response.ok) return false
-
-      const data = await response.json()
-      if (data.success && typeof data.online === 'boolean') {
-        return data.online
-      }
-      return false
-    } catch {
-      return false
-    }
-  }
-
-  // Function to check health status for all agents
+  // Check health status for all agents using shared utility
+  // Tries local URL first, falls back to production URL if local is offline
   const checkAllAgentsHealth = async (agents: any[]) => {
     const healthChecks = agents.map(async (agent) => {
-      const isOnline = await checkAgentHealth(agent.endpoint)
-      return { ...agent, status: isOnline ? "Online" : "Offline" }
+      const result = await checkAgentHealthWithFallback(agent)
+      if (result) {
+        return { ...result, status: "Online" }
+      }
+      return { ...agent, status: "Offline" }
     })
     return Promise.all(healthChecks)
   }
@@ -173,37 +157,27 @@ export function AgentCatalog() {
     return Bot
   }
 
-  // Function to fetch agents from registry
+  // Function to fetch agents from registry (uses shared utility)
   const fetchAgents = async () => {
     try {
       setLoading(true)
       setError(null)
-      const baseUrl = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
-      const response = await fetch(`${baseUrl}/api/agents`)
 
-      if (!response.ok) {
-        throw new Error(`Failed to fetch agents: ${response.status}`)
-      }
+      const baseAgents = await fetchRegistryAgents()
 
-      const data = await response.json()
-      const agents = data.agents || data
-
-      const transformedAgents = agents.map((agent: any) => ({
-        id: agent.name.toLowerCase().replace(/\s+/g, '-'),
-        name: agent.name,
-        description: agent.description,
+      // Extend with catalog-specific display fields
+      const transformedAgents = baseAgents.map((agent) => ({
+        ...agent,
         status: "Checking...",
-        version: agent.version,
-        endpoint: agent.url,
+        version: agent._raw.version,
         organization: "Registry Agent",
-        icon: getIconForAgent(agent.name, agent),
+        icon: getIconForAgent(agent.name, agent._raw),
         rawColor: agent.color,
         color: getAgentTextClass(agent.name, agent.color),
         bgColor: getAgentBgClass(agent.name, agent.color),
-        capabilities: agent.capabilities,
-        skills: agent.skills,
-        defaultInputModes: agent.defaultInputModes,
-        defaultOutputModes: agent.defaultOutputModes
+        capabilities: agent._raw.capabilities,
+        defaultInputModes: agent._raw.defaultInputModes,
+        defaultOutputModes: agent._raw.defaultOutputModes,
       }))
 
       setCatalogAgents(transformedAgents)
