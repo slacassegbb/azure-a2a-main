@@ -2115,20 +2115,7 @@ export function VisualWorkflowDesigner({
       const baseCardWidth = 260
       const connCardHeight = 70
       
-      // Helper to calculate dynamic card width (accounts for expanded editing state)
-      const getCardWidth = (step: typeof workflowSteps[0]) => {
-        if (editingStepId === step.id) {
-          // Calculate expanded width like in the card drawing code
-          ctx.font = "12px -apple-system, system-ui, sans-serif"
-          const descText = editingDescription || ""
-          const textWidth = ctx.measureText(descText + '|').width
-          const minTextArea = baseCardWidth - 36 - 12 * 3 - 20 // iconSize - padding*3 - extra
-          return textWidth > minTextArea 
-            ? Math.min(baseCardWidth + (textWidth - minTextArea) + 20, 600)
-            : baseCardWidth
-        }
-        return baseCardWidth
-      }
+      const getCardWidth = () => baseCardWidth
       
       // Store connection endpoints to draw on top of cards later
       const connectionEndpoints: Array<{
@@ -2148,8 +2135,8 @@ export function VisualWorkflowDesigner({
         const toCenterY = centerY + to.y
         
         // Get dynamic card widths for each step
-        const fromCardWidth = getCardWidth(from)
-        const toCardWidth = getCardWidth(to)
+        const fromCardWidth = getCardWidth()
+        const toCardWidth = getCardWidth()
         
         // Calculate angle between agents
         const angle = Math.atan2(to.y - from.y, to.x - from.x)
@@ -2255,16 +2242,8 @@ export function VisualWorkflowDesigner({
         const iconRadius = 8
         const padding = 12
         
-        // Calculate dynamic card width when editing to fit full description
-        ctx.font = "12px -apple-system, system-ui, sans-serif"
-        const descText = isEditing ? (editingDescription || "") : (step.description || "")
-        const textWidth = ctx.measureText(descText + (isEditing ? '|' : '')).width
-        const minTextArea = baseCardWidth - iconSize - padding * 3 - 20
-        
-        // Expand card width only when editing and text is longer
-        const cardWidth = isEditing && textWidth > minTextArea 
-          ? Math.min(baseCardWidth + (textWidth - minTextArea) + 20, 600)
-          : baseCardWidth
+        // Card width is fixed — editing uses an HTML textarea overlay
+        const cardWidth = baseCardWidth
         
         // Parse agent color for dark icon background
         const r = parseInt(step.agentColor.slice(1, 3), 16) || 100
@@ -2404,27 +2383,19 @@ export function VisualWorkflowDesigner({
         ctx.fillStyle = "#22c55e"
         ctx.fill()
         
-        // Description (gray, editable) - below agent name
-        const desc = isEditing ? (editingDescription || "") : (step.description || "Add instructions...")
-        
-        ctx.fillStyle = isEditing ? "#818cf8" : "#6b7280" // indigo-400 or gray-500
+        // Description (gray, truncated) - below agent name. Double-click opens edit panel.
+        const desc = step.description || "Add instructions..."
+        ctx.fillStyle = isEditing ? "#818cf8" : "#6b7280" // indigo-400 highlight when editing, else gray-500
         ctx.font = "12px -apple-system, system-ui, sans-serif"
-        
-        // Truncate description only when NOT editing - show full text while editing
         let descDisplay = desc
         const maxDescW = cardWidth - iconSize - padding * 3 - 20
-        if (!isEditing && ctx.measureText(descDisplay).width > maxDescW) {
+        if (ctx.measureText(descDisplay).width > maxDescW) {
           while (ctx.measureText(descDisplay + '…').width > maxDescW && descDisplay.length > 1) {
             descDisplay = descDisplay.slice(0, -1)
           }
           descDisplay += '…'
         }
-        
-        if (isEditing) {
-          ctx.fillText(descDisplay + (showCursor ? '|' : ''), textLeft, y + 10)
-        } else {
-          ctx.fillText(descDisplay, textLeft, y + 10)
-        }
+        ctx.fillText(descDisplay, textLeft, y + 10)
         
         // === STEP NUMBER BADGE (small circle on top-left corner of card) ===
         if (workflowOrder !== undefined) {
@@ -2891,7 +2862,7 @@ export function VisualWorkflowDesigner({
           const fromCenterY = centerY + startStep.y
           
           // Get dynamic card width for source (in case it's being edited)
-          const startCardWidth = getCardWidth(startStep)
+          const startCardWidth = getCardWidth()
           
           // Start from right edge of source card
           const fromX = fromCenterX + startCardWidth/2
@@ -2904,7 +2875,7 @@ export function VisualWorkflowDesigner({
           if (connectionHoverTarget) {
             const targetStep = workflowSteps.find(s => s.id === connectionHoverTarget)
             if (targetStep) {
-              const targetCardWidth = getCardWidth(targetStep)
+              const targetCardWidth = getCardWidth()
               toX = centerX + targetStep.x - targetCardWidth/2
               toY = centerY + targetStep.y
             } else {
@@ -3387,57 +3358,8 @@ export function VisualWorkflowDesigner({
   // Keyboard shortcuts and text input
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Handle editing mode
+      // When editing, the HTML textarea overlay handles all input — skip canvas shortcuts
       if (editingStepId) {
-        if (e.key === 'Enter' && !e.shiftKey) {
-          // Save on Enter
-          e.preventDefault()
-          updateStepDescription(editingDescription, editingStepId)
-          setEditingStepId(null)
-          setCursorPosition(0)
-        } else if (e.key === 'Escape') {
-          // Cancel on Escape
-          e.preventDefault()
-          setEditingStepId(null)
-          setCursorPosition(0)
-        } else if (e.key === 'Backspace') {
-          // Handle backspace
-          e.preventDefault()
-          if (cursorPosition > 0) {
-            const newText = editingDescription.slice(0, cursorPosition - 1) + editingDescription.slice(cursorPosition)
-            setEditingDescription(newText)
-            setCursorPosition(cursorPosition - 1)
-          }
-        } else if (e.key === 'Delete') {
-          // Handle delete
-          e.preventDefault()
-          if (cursorPosition < editingDescription.length) {
-            const newText = editingDescription.slice(0, cursorPosition) + editingDescription.slice(cursorPosition + 1)
-            setEditingDescription(newText)
-          }
-        } else if (e.key === 'ArrowLeft') {
-          // Move cursor left
-          e.preventDefault()
-          setCursorPosition(Math.max(0, cursorPosition - 1))
-        } else if (e.key === 'ArrowRight') {
-          // Move cursor right
-          e.preventDefault()
-          setCursorPosition(Math.min(editingDescription.length, cursorPosition + 1))
-        } else if (e.key === 'Home') {
-          // Move to start
-          e.preventDefault()
-          setCursorPosition(0)
-        } else if (e.key === 'End') {
-          // Move to end
-          e.preventDefault()
-          setCursorPosition(editingDescription.length)
-        } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) {
-          // Regular character input
-          e.preventDefault()
-          const newText = editingDescription.slice(0, cursorPosition) + e.key + editingDescription.slice(cursorPosition)
-          setEditingDescription(newText)
-          setCursorPosition(cursorPosition + 1)
-        }
         return
       }
       
@@ -3559,40 +3481,56 @@ export function VisualWorkflowDesigner({
               }}
             />
             
-            {/* Hidden input for text editing */}
-            <input
-              ref={hiddenInputRef}
-              type="text"
-              value={editingDescription}
-              onChange={(e) => {
-                setEditingDescription(e.target.value)
-                setCursorPosition(e.target.selectionStart || e.target.value.length)
-              }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault()
-                  if (editingStepId) {
-                    updateStepDescription(editingDescription, editingStepId)
-                  }
-                  setEditingStepId(null)
-                  setCursorPosition(0)
-                } else if (e.key === 'Escape') {
-                  e.preventDefault()
-                  setEditingStepId(null)
-                  setCursorPosition(0)
-                }
-              }}
-              onBlur={() => {
-                if (editingStepId) {
-                  updateStepDescription(editingDescription, editingStepId)
-                  setEditingStepId(null)
-                  setCursorPosition(0)
-                }
-              }}
-              className="absolute opacity-0 pointer-events-none"
-              style={{ top: -9999, left: -9999 }}
-              tabIndex={-1}
-            />
+            {/* Floating edit panel for step description */}
+            {editingStepId && (() => {
+              const step = workflowSteps.find(s => s.id === editingStepId)
+              if (!step) return null
+              const agentName = step.agentName.replace(/ Agent$/i, '')
+              return (
+                <div className="absolute top-3 left-1/2 -translate-x-1/2 z-50 w-[500px] rounded-lg border border-slate-600 bg-slate-800 shadow-2xl p-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm font-medium text-gray-300">Edit step — {agentName}</span>
+                    <div className="flex gap-2">
+                      <button
+                        className="px-3 py-1 text-xs rounded bg-slate-700 text-gray-300 hover:bg-slate-600"
+                        onMouseDown={(e) => {
+                          e.preventDefault()
+                          setEditingStepId(null)
+                        }}
+                      >Cancel</button>
+                      <button
+                        className="px-3 py-1 text-xs rounded bg-indigo-600 text-white hover:bg-indigo-500"
+                        onMouseDown={(e) => {
+                          e.preventDefault()
+                          updateStepDescription(editingDescription, editingStepId)
+                          setEditingStepId(null)
+                        }}
+                      >Save</button>
+                    </div>
+                  </div>
+                  <textarea
+                    autoFocus
+                    value={editingDescription}
+                    onChange={(e) => setEditingDescription(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && e.metaKey) {
+                        e.preventDefault()
+                        updateStepDescription(editingDescription, editingStepId)
+                        setEditingStepId(null)
+                      } else if (e.key === 'Escape') {
+                        e.preventDefault()
+                        setEditingStepId(null)
+                      }
+                      e.stopPropagation()
+                    }}
+                    className="w-full rounded border border-slate-600 bg-slate-900 text-gray-200 px-3 py-2 text-sm resize-y focus:outline-none focus:ring-1 focus:ring-indigo-400 focus:border-indigo-400"
+                    style={{ minHeight: 80, fontFamily: '-apple-system, system-ui, sans-serif' }}
+                    placeholder="Enter step instructions..."
+                  />
+                  <p className="text-xs text-gray-500 mt-1">⌘+Enter to save · Esc to cancel</p>
+                </div>
+              )
+            })()}
             
             {/* Workflow Name - Top Left */}
             <div className="absolute top-3 left-3 z-10 flex items-center gap-3">
@@ -3678,8 +3616,8 @@ export function VisualWorkflowDesigner({
               </div>
             )}
             
-            {/* Canvas Action Buttons - Bottom Right */}
-            <div className="absolute bottom-3 right-3 flex gap-2">
+            {/* Canvas Action Buttons - Top Right */}
+            <div className="absolute top-3 right-3 z-10 flex gap-2">
               {/* Edit Workflow Text Button - only show if workflow loaded */}
               {workflowSteps.length > 0 && (
                 <Button

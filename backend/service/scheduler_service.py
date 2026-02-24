@@ -895,6 +895,10 @@ class WorkflowScheduler:
 
             except Exception as e:
                 logger.error(f"Error querying run history from database: {e}")
+                try:
+                    self.db_conn.rollback()
+                except Exception:
+                    pass
                 return []
         else:
             # Fallback to in-memory list

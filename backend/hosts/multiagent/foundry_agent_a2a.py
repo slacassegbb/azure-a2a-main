@@ -4937,12 +4937,22 @@ RULES:
 WORKFLOW STEPS AND OUTPUTS:
 {raw_outputs}"""
                             
+                            # Chain to conversation so follow-up messages have workflow context
+                            synth_prev_response_id = self._response_ids.get(context_id)
                             synthesis_response = await self.openai_client.responses.create(
                                 input=synthesis_prompt,
                                 instructions="You are a professional executive assistant summarizing completed multi-agent workflow results. Be clear, concise, and action-oriented. Always credit which agent performed each action. Never use triple-backtick code blocks — use **bold** or inline `code` for IDs and numbers.",
                                 model=self.model_name,
+                                previous_response_id=synth_prev_response_id,
                             )
-                            
+
+                            # Store synthesis response ID so follow-up messages chain to it
+                            # This is critical: without it, post-workflow messages lose all workflow context
+                            synth_response_id = getattr(synthesis_response, 'id', None)
+                            if synth_response_id:
+                                self._response_ids[context_id] = synth_response_id
+                                log_debug(f"[Workflow Mode] Stored synthesis response_id for follow-up context")
+
                             # Extract text from the synthesis response
                             combined_response = ""
                             if hasattr(synthesis_response, 'output'):
@@ -4951,7 +4961,7 @@ WORKFLOW STEPS AND OUTPUTS:
                                         for content in item.content:
                                             if hasattr(content, 'text'):
                                                 combined_response += content.text
-                            
+
                             if not combined_response.strip():
                                 # Fallback if synthesis returned empty
                                 combined_response = "\n\n".join(orchestration_outputs)

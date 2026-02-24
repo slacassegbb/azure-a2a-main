@@ -541,17 +541,13 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
   // Note: Workflow persistence is now handled by parent ChatLayout component
   // No need to load from localStorage here since parent manages it
 
-  // Fetch run history when there are active workflows or scheduled workflows
+  // Fetch run history and scheduled workflows on mount + poll every 30s
+  // NOTE: scheduledWorkflows is NOT in deps — it's an OUTPUT of this effect.
+  // Including it would cause an infinite loop (fetch → setState → effect re-fires → fetch → ...).
   useEffect(() => {
     const fetchRunHistory = async () => {
-      // Fetch history if there are any active workflows or scheduled workflows
-      if (activeWorkflows.length === 0 && scheduledWorkflows.length === 0) {
-        setRunHistory([])
-        return
-      }
       setIsLoadingHistory(true)
       try {
-        // Fetch run history without session filter to get all scheduled workflow runs
         const history = await getRunHistory(undefined, undefined, 50)
         setRunHistory(history)
       } catch (error) {
@@ -560,17 +556,17 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
         setIsLoadingHistory(false)
       }
     }
-    
+
     fetchRunHistory()
     fetchScheduledWorkflows()
-    
+
     // Refresh history and schedules every 30 seconds
     const interval = setInterval(() => {
       fetchRunHistory()
       fetchScheduledWorkflows()
     }, 30000)
     return () => clearInterval(interval)
-  }, [activeWorkflows, scheduledWorkflows, fetchScheduledWorkflows])
+  }, [activeWorkflows, fetchScheduledWorkflows])
 
   // Subscribe to WebSocket events - STABLE subscriptions (no churn)
   useEffect(() => {

@@ -474,10 +474,15 @@ Evaluate the condition and return your result."""
 
         # Add previous task outputs (more generous than EVALUATE since queries need more context)
         if previous_task_outputs:
-            for output in previous_task_outputs[-5:]:
+            log_info(f"[QUERY] Received {len(previous_task_outputs)} previous outputs")
+            for i, output in enumerate(previous_task_outputs[-5:]):
+                log_info(f"[QUERY] Output {i}: {len(output)} chars, preview: {output[:100]}...")
                 context_parts.append(output)
+        else:
+            log_warning(f"[QUERY] No previous_task_outputs received!")
 
         context_text = "\n\n".join(context_parts)
+        log_info(f"[QUERY] Total context: {len(context_text)} chars, parts: {len(context_parts)}")
         if len(context_text) > 8000:
             context_text = context_text[:8000] + "... [truncated]"
 

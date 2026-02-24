@@ -142,36 +142,43 @@ export async function listSchedules(workflowId?: string, sessionId?: string): Pr
   const params = new URLSearchParams();
   if (workflowId) params.append('workflow_id', workflowId);
   if (sessionId) params.append('session_id', sessionId);
-  
+
   const queryString = params.toString();
-  const url = queryString 
+  const url = queryString
     ? `${API_BASE}/api/schedules?${queryString}`
     : `${API_BASE}/api/schedules`;
-  
-  const response = await fetch(url, {
-    headers: getAuthHeaders()
-  });
-  if (!response.ok) {
-    throw new Error(`Failed to list schedules: ${response.statusText}`);
+
+  try {
+    const response = await fetch(url, {
+      headers: getAuthHeaders()
+    });
+    if (!response.ok) {
+      console.warn(`[Scheduler] listSchedules returned ${response.status}`);
+      return [];
+    }
+
+    const data = await response.json();
+    return data.schedules;
+  } catch {
+    // Network error (backend unreachable) — return empty silently
+    return [];
   }
-  
-  const data = await response.json();
-  return data.schedules;
 }
 
 /**
  * Get upcoming scheduled runs
  */
 export async function getUpcomingRuns(limit: number = 10): Promise<UpcomingRun[]> {
-  const response = await fetch(`${API_BASE}/api/schedules/upcoming?limit=${limit}`, {
-    headers: getAuthHeaders()
-  });
-  if (!response.ok) {
-    throw new Error(`Failed to get upcoming runs: ${response.statusText}`);
+  try {
+    const response = await fetch(`${API_BASE}/api/schedules/upcoming?limit=${limit}`, {
+      headers: getAuthHeaders()
+    });
+    if (!response.ok) return [];
+    const data = await response.json();
+    return data.upcoming;
+  } catch {
+    return [];
   }
-  
-  const data = await response.json();
-  return data.upcoming;
 }
 
 /**
@@ -293,18 +300,19 @@ export async function getScheduleHistory(scheduleId?: string, sessionId?: string
   if (scheduleId) params.append('schedule_id', scheduleId);
   if (sessionId) params.append('session_id', sessionId);
   params.append('limit', limit.toString());
-  
+
   const url = `${API_BASE}/api/schedules/history?${params.toString()}`;
-  
-  const response = await fetch(url, {
-    headers: getAuthHeaders()
-  });
-  if (!response.ok) {
-    throw new Error(`Failed to get history: ${response.statusText}`);
+
+  try {
+    const response = await fetch(url, {
+      headers: getAuthHeaders()
+    });
+    if (!response.ok) return [];
+    const data = await response.json();
+    return data.history;
+  } catch {
+    return [];
   }
-  
-  const data = await response.json();
-  return data.history;
 }
 
 /**
@@ -391,18 +399,19 @@ export async function getRunHistory(scheduleId?: string, sessionId?: string, lim
   if (scheduleId) params.append('schedule_id', scheduleId);
   if (sessionId) params.append('session_id', sessionId);
   params.append('limit', limit.toString());
-  
+
   const url = `${API_BASE}/api/schedules/history?${params.toString()}`;
-  
-  const response = await fetch(url, {
-    headers: getAuthHeaders()
-  });
-  if (!response.ok) {
-    throw new Error(`Failed to get run history: ${response.statusText}`);
+
+  try {
+    const response = await fetch(url, {
+      headers: getAuthHeaders()
+    });
+    if (!response.ok) return [];
+    const data = await response.json();
+    return data.history || [];
+  } catch {
+    return [];
   }
-  
-  const data = await response.json();
-  return data.history || [];
 }
 
 /**
