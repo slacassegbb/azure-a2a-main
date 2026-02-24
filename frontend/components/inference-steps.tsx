@@ -448,6 +448,10 @@ function AgentCard({ agent, stepNumber, isLive }: { agent: AgentInfo; stepNumber
   const isError = status === "error"
   const isWaiting = status === "waiting"
   const isCancelled = status === "cancelled"
+
+  // Detect if a "completed" step actually hit a limitation (rate limit, service down, etc.)
+  const limitationPatterns = /rate limit|quota.*reached|api.*restrict|cannot retrieve|could not be processed|usage limitation|limit.*reset/i
+  const isLimited = isComplete && !!output && limitationPatterns.test(output)
   
   // Use agent's extracted step number (preserving letter suffix for parallel steps like 1a, 1b)
   const displayStepNumber = agent.stepNumber || String(stepNumber)
@@ -476,6 +480,7 @@ function AgentCard({ agent, stepNumber, isLive }: { agent: AgentInfo; stepNumber
     <div className="py-2">
       <div className="flex items-center gap-2 mb-1.5">
         <div className={`flex items-center justify-center h-5 w-5 rounded-full text-[10px] font-bold ${
+          isLimited ? "bg-amber-500/15 text-amber-600" :
           isComplete ? "bg-emerald-500/15 text-emerald-600" :
           isError ? "bg-red-500/15 text-red-600" :
           isCancelled ? "bg-gray-500/15 text-gray-600" :
@@ -485,7 +490,8 @@ function AgentCard({ agent, stepNumber, isLive }: { agent: AgentInfo; stepNumber
           {displayStepNumber}
         </div>
         <span className="text-xs font-semibold text-foreground">Step {displayStepNumber}</span>
-        {isComplete && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />}
+        {isComplete && !isLimited && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />}
+        {isLimited && <AlertCircle className="h-3.5 w-3.5 text-amber-500" />}
         {isError && <AlertCircle className="h-3.5 w-3.5 text-red-500" />}
         {isCancelled && <Square className="h-3.5 w-3.5 text-gray-500" />}
         {isWaiting && <MessageSquare className="h-3.5 w-3.5 text-amber-500" />}
@@ -498,6 +504,8 @@ function AgentCard({ agent, stepNumber, isLive }: { agent: AgentInfo; stepNumber
             <div className="relative flex items-center justify-center h-4 w-4">
               <div className="h-2 w-2 rounded-full animate-pulse" style={{ backgroundColor: color }} />
             </div>
+          ) : isLimited ? (
+            <AlertCircle className="h-4 w-4 text-amber-500" />
           ) : isComplete ? (
             <CheckCircle2 className="h-4 w-4 text-emerald-500" />
           ) : isError ? (
@@ -512,7 +520,8 @@ function AgentCard({ agent, stepNumber, isLive }: { agent: AgentInfo; stepNumber
           <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={{ backgroundColor: `${color}15`, color }}>
             {displayName}
           </span>
-          {isComplete && <span className="text-[10px] text-emerald-600">Done</span>}
+          {isComplete && !isLimited && <span className="text-[10px] text-emerald-600">Done</span>}
+          {isLimited && <span className="text-[10px] text-amber-600">Limited</span>}
           {isError && <span className="text-[10px] text-red-600">Failed</span>}
           {isCancelled && <span className="text-[10px] text-gray-600">Cancelled</span>}
           {isWaiting && <span className="text-[10px] text-amber-600">Awaiting response</span>}

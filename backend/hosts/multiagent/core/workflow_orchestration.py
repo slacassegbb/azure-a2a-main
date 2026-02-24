@@ -2064,14 +2064,18 @@ Analyze the plan and determine the next step."""
                                     )
                             elif result.get("output"):
                                 all_task_outputs.append(result["output"])
-                            # Emit agent_complete for successfully finished tasks
-                            # Skip EVALUATE/QUERY tasks — they emit their own events
+                            # Emit agent_complete for finished tasks so the frontend
+                            # card shows "Done". Set parallel_call_id so the event
+                            # matches the right card (we're outside the parallel
+                            # coroutine context here, so the contextvar is unset).
                             is_eval = task.recommended_agent and task.recommended_agent.upper() in ("EVALUATE", "QUERY", "WEB_SEARCH")
-                            if task.state == "completed" and task.recommended_agent and not result.get("hitl_pause") and not is_eval:
+                            if task.recommended_agent and not result.get("hitl_pause") and not is_eval:
+                                _current_parallel_call_id.set(task.task_id)
                                 await self._emit_granular_agent_event(
                                     task.recommended_agent, f"{task.recommended_agent} completed", context_id,
                                     event_type="agent_complete"
                                 )
+                                _current_parallel_call_id.set(None)
                         task.updated_at = datetime.now(timezone.utc)
                     
                     # If any task triggered HITL pause, save plan and return
