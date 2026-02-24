@@ -1826,6 +1826,13 @@ Analyze the plan and determine the next step."""
                 #    → expand to include the missing siblings
                 # =========================================================
                 if workflow and workflow.strip():
+                    _has_next_task = bool(next_step.next_task)
+                    _has_next_tasks = bool(next_step.next_tasks) and len(next_step.next_tasks) > 1
+                    log_info(
+                        f"[Parallel Expansion] next_task={_has_next_task}, "
+                        f"next_tasks={len(next_step.next_tasks) if next_step.next_tasks else 0}, "
+                        f"→ Case {'A' if _has_next_task and not _has_next_tasks else 'B' if _has_next_tasks else 'NONE'}"
+                    )
                     if (next_step.next_task
                             and not (next_step.next_tasks and len(next_step.next_tasks) > 1)):
                         # Case A: single task → expand to full parallel group
@@ -1886,7 +1893,68 @@ Analyze the plan and determine the next step."""
                 if not tasks_to_execute:
                     log_warning("[Agent Mode] No tasks to execute, breaking loop")
                     break
-                
+
+                # =========================================================
+                # WORKFLOW DESCRIPTION ENFORCEMENT: Ensure agents receive
+                # the FULL workflow step text, not LLM-truncated summaries.
+                # Parse the workflow text and replace any task description
+                # that is shorter than the authoritative workflow step.
+                # =========================================================
+                if workflow and workflow.strip():
+                    # Parse all workflow steps: label -> {agent, description}
+                    _wf_steps = {}
+                    for _wf_line in workflow.strip().split('\n'):
+                        _wf_line = _wf_line.strip()
+                        if not _wf_line:
+                            continue
+                        # Match parallel (1a.) or sequential (1.)
+                        _wf_m = re.match(r'^(\d+[a-z]?)\.\s*\[(.+?)\]\s*(.+)', _wf_line)
+                        if _wf_m:
+                            _wf_steps[_wf_m.group(1)] = {
+                                "agent": _wf_m.group(2),
+                                "description": _wf_m.group(3),
+                                "matched": False,
+                            }
+
+                    for task_dict in tasks_to_execute:
+                        task_agent = (task_dict.get("recommended_agent") or "").strip().lower()
+                        task_desc = (task_dict.get("task_description") or "").strip()
+                        if not task_agent or not task_desc:
+                            continue
+
+                        # Strip "Use the X Agent" prefix that the LLM sometimes adds
+                        clean_desc = re.sub(
+                            r'^use\s+the\s+.+?\s+agent\s*', '', task_desc, flags=re.IGNORECASE
+                        ).strip() or task_desc
+
+                        # Find the best matching workflow step
+                        best_label = None
+                        best_desc = None
+                        for label, ws in _wf_steps.items():
+                            if ws["matched"]:
+                                continue
+                            ws_agent = ws["agent"].lower()
+                            # Agent name match (fuzzy)
+                            if ws_agent not in task_agent and task_agent not in ws_agent:
+                                continue
+                            # Check if the task desc is a prefix/substring of the workflow desc
+                            if clean_desc.lower() in ws["description"].lower():
+                                if best_desc is None or len(ws["description"]) > len(best_desc):
+                                    best_label = label
+                                    best_desc = ws["description"]
+
+                        if best_desc and len(best_desc) > len(task_desc):
+                            log_info(
+                                f"[Workflow Enforcement] Replacing truncated description "
+                                f"'{task_desc[:60]}' → '{best_desc[:80]}'"
+                            )
+                            task_dict["task_description"] = best_desc
+                            _wf_steps[best_label]["matched"] = True
+
+                # Log final task descriptions for debugging
+                for _ti, _td in enumerate(tasks_to_execute):
+                    log_info(f"[Task Descriptions] #{_ti}: agent={_td.get('recommended_agent')}, desc='{_td.get('task_description', '')[:100]}'")
+
                 # Validate all tasks have descriptions
                 for task_dict in tasks_to_execute:
                     if not task_dict.get("task_description"):
