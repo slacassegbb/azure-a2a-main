@@ -1142,6 +1142,49 @@ Analyze this request and decide the best approach."""
                 reasoning=f"Fallback to multi_agent due to selection error: {str(e)}"
             )
 
+    @staticmethod
+    def _parse_workflow_steps(workflow: str) -> List[Dict[str, str]]:
+        """Parse ALL steps from workflow text, handling multi-line descriptions.
+
+        Returns a list of dicts with keys: label, agent, description.
+        Multi-line descriptions (continuation lines that don't start a new step)
+        are joined with spaces into a single description string.
+        """
+        # Step header patterns
+        # Parallel: 1a. [Agent] description
+        # Sequential: 1. [Agent] description
+        step_pattern = re.compile(r'^(\d+[a-z]?)\.\s*\[(.+?)\]\s*(.+)')
+        # Lines that start a new structural element (step, branch, blank)
+        new_element_pattern = re.compile(r'^(\d+[a-z]?)\.\s*\[|^IF-|^\s*$', re.IGNORECASE)
+
+        steps: List[Dict[str, str]] = []
+        lines = workflow.strip().split('\n')
+        i = 0
+        while i < len(lines):
+            line = lines[i].strip()
+            if not line:
+                i += 1
+                continue
+            match = step_pattern.match(line)
+            if match:
+                label = match.group(1)
+                agent = match.group(2)
+                description = match.group(3)
+                # Consume continuation lines
+                while i + 1 < len(lines):
+                    next_line = lines[i + 1].strip()
+                    if not next_line or new_element_pattern.match(next_line):
+                        break
+                    description += ' ' + next_line
+                    i += 1
+                steps.append({
+                    "label": label,
+                    "agent": agent,
+                    "description": description,
+                })
+            i += 1
+        return steps
+
     def _expand_parallel_from_workflow(
         self,
         workflow: str,
@@ -1157,26 +1200,19 @@ Analyze this request and decide the best approach."""
         Returns a list of task dicts (for ``next_tasks``) if expansion applies,
         or ``None`` if no expansion is needed.
         """
-        # Parse parallel groups from workflow text
+        # Parse parallel groups from workflow text (handles multi-line descriptions)
         # Map: step_number -> [{"label": "1a", "agent": "...", "description": "..."}]
         parallel_groups: Dict[int, List[Dict[str, str]]] = {}
-        for line in workflow.strip().split('\n'):
-            line = line.strip()
-            if not line:
+        for step in self._parse_workflow_steps(workflow):
+            label = step["label"]
+            # Only parallel steps (with letter suffix)
+            m = re.match(r'^(\d+)([a-z])$', label)
+            if not m:
                 continue
-            match = re.match(r'^(\d+)([a-z])\.\s*\[(.+?)\]\s*(.+)', line)
-            if match:
-                step_num = int(match.group(1))
-                sub_letter = match.group(2)
-                agent = match.group(3)
-                description = match.group(4)
-                if step_num not in parallel_groups:
-                    parallel_groups[step_num] = []
-                parallel_groups[step_num].append({
-                    "label": f"{step_num}{sub_letter}",
-                    "agent": agent,
-                    "description": description,
-                })
+            step_num = int(m.group(1))
+            if step_num not in parallel_groups:
+                parallel_groups[step_num] = []
+            parallel_groups[step_num].append(step)
 
         if not parallel_groups:
             return None
@@ -1901,20 +1937,14 @@ Analyze the plan and determine the next step."""
                 # that is shorter than the authoritative workflow step.
                 # =========================================================
                 if workflow and workflow.strip():
-                    # Parse all workflow steps: label -> {agent, description}
+                    # Parse all workflow steps using shared parser (handles multi-line descriptions)
                     _wf_steps = {}
-                    for _wf_line in workflow.strip().split('\n'):
-                        _wf_line = _wf_line.strip()
-                        if not _wf_line:
-                            continue
-                        # Match parallel (1a.) or sequential (1.)
-                        _wf_m = re.match(r'^(\d+[a-z]?)\.\s*\[(.+?)\]\s*(.+)', _wf_line)
-                        if _wf_m:
-                            _wf_steps[_wf_m.group(1)] = {
-                                "agent": _wf_m.group(2),
-                                "description": _wf_m.group(3),
-                                "matched": False,
-                            }
+                    for _ws in self._parse_workflow_steps(workflow):
+                        _wf_steps[_ws["label"]] = {
+                            "agent": _ws["agent"],
+                            "description": _ws["description"],
+                            "matched": False,
+                        }
 
                     for task_dict in tasks_to_execute:
                         task_agent = (task_dict.get("recommended_agent") or "").strip().lower()
