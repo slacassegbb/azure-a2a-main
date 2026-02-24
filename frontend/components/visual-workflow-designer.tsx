@@ -199,7 +199,49 @@ export function VisualWorkflowDesigner({
   const waitingStepIdRef = useRef<string | null>(null)
   // Keep ref in sync with state
   useEffect(() => { waitingStepIdRef.current = waitingStepId }, [waitingStepId])
-  
+
+  // Fetch all online agents from registry (not just session-enabled ones)
+  const [allAvailableAgents, setAllAvailableAgents] = useState<Agent[] | null>(null)
+  useEffect(() => {
+    const baseUrl = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
+    const fetchAllAgents = async () => {
+      try {
+        const response = await fetch(`${baseUrl}/api/agents`)
+        if (!response.ok) return
+        const data = await response.json()
+        const agents = (data.agents || data).map((agent: any) => ({
+          id: agent.name.toLowerCase().replace(/\s+/g, '-'),
+          name: agent.name,
+          description: agent.description,
+          color: agent.color,
+          skills: agent.skills,
+          endpoint: agent.url,
+        }))
+        // Show all agents immediately while health checks run
+        setAllAvailableAgents(agents)
+        logDebug("[VisualWorkflowDesigner] Loaded", agents.length, "agents from registry, checking health...")
+        // Health check in background, then filter to online only
+        const results = await Promise.all(agents.map(async (agent: any) => {
+          try {
+            const urlParts = (agent.endpoint || '').replace('http://', '').replace('https://', '')
+            const healthRes = await fetch(`${baseUrl}/api/agents/health/${urlParts}`)
+            if (healthRes.ok) {
+              const healthData = await healthRes.json()
+              return healthData.success && healthData.online ? agent : null
+            }
+          } catch { /* offline */ }
+          return null
+        }))
+        const onlineAgents = results.filter(Boolean) as Agent[]
+        setAllAvailableAgents(onlineAgents)
+        logDebug("[VisualWorkflowDesigner] Health check done:", onlineAgents.length, "online agents")
+      } catch (err) {
+        console.error('[VisualWorkflowDesigner] Error fetching agents:', err)
+      }
+    }
+    fetchAllAgents()
+  }, [])
+
   // Auto-save workflow when steps or connections change (debounced)
   useEffect(() => {
     // Skip auto-save if:
@@ -3435,10 +3477,10 @@ export function VisualWorkflowDesigner({
                 <div className="text-xs text-slate-400 mt-1">Live web data via Bing</div>
               </div>
 
-              {registeredAgents.length === 0 ? (
-                <p className="text-xs text-slate-500">No agents registered</p>
+              {((allAvailableAgents ?? []).length > 0 ? allAvailableAgents! : registeredAgents).length === 0 ? (
+                <p className="text-xs text-slate-500">No agents available</p>
               ) : (
-                registeredAgents.map((agent, index) => (
+                ((allAvailableAgents ?? []).length > 0 ? allAvailableAgents! : registeredAgents).map((agent, index) => (
                   <div
                     key={agent.id || agent.name}
                     draggable
