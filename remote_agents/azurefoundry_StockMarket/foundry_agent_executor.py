@@ -141,8 +141,16 @@ class FoundryAgentExecutor(AgentExecutor):
                     )
                     return
 
-                # If we reach here, the stream completed without yielding an
-                # "Error:" prefix — this is a genuine successful response.
+                # Check final response for "Error:" prefix (belt-and-suspenders:
+                # the streaming loop at line 109 should catch this first, but
+                # if the text was accumulated across multiple chunks it may
+                # only be visible here).
+                if final_response.lstrip().startswith("Error:"):
+                    await task_updater.failed(
+                        message=new_agent_text_message(final_response, context_id=context_id)
+                    )
+                    return
+
                 parts_out = [TextPart(text=final_response)]
                 if hasattr(agent, 'last_token_usage') and agent.last_token_usage:
                     parts_out.append(DataPart(data={'type': 'token_usage', **agent.last_token_usage}))

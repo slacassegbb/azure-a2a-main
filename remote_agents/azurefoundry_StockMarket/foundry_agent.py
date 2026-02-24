@@ -152,6 +152,19 @@ You MUST output EVERY row of data returned by the API. NEVER abbreviate, truncat
 - Output a CSV code block with the header followed by EVERY single row
 - Long output is expected and correct — do NOT shorten it
 
+## Error Reporting (CRITICAL)
+
+If you CANNOT complete the requested task — due to rate limits, API errors, missing data,
+premium-only endpoints, or any other reason — you MUST start your response with "Error:".
+
+Examples:
+- "Error: Daily API call limit reached. The free tier allows 25 calls/day."
+- "Error: TIME_SERIES_DAILY_ADJUSTED requires a premium subscription."
+- "Error: No data returned for symbol XYZ."
+
+Do NOT write a polite explanation without the "Error:" prefix. The system uses this prefix
+to detect failures. Without it, the task is marked as successful even though it failed.
+
 ## Response Guidelines
 - Always include the date range and number of data points in your response
 - For stock quotes, include key metrics: price, change, change%, volume
