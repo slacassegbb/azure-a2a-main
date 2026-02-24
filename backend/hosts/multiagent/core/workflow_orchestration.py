@@ -1847,16 +1847,19 @@ Analyze the plan and determine the next step."""
                         # Check if we're making progress (different task types)
                         recent_tasks = same_agent_tasks[-max_same_agent_attempts:]
                         recent_descs = [t.task_description.lower() for t in recent_tasks]
-                        
+
                         # If recent tasks all have retry keywords, we're looping
                         retry_count = sum(1 for d in recent_descs if any(kw in d for kw in similar_keywords))
-                        
+
                         if retry_count >= 2 or is_retry_task:
                             log_error(f"[LOOP DETECTION] Agent '{agent_name}' has been called {len(same_agent_tasks)} times with repeated retry tasks. Breaking loop.")
-                            log_debug(f"[LOOP DETECTION] Breaking loop - '{agent_name}' called too many times with retry tasks")
+                            # Emit as orchestrator event so it shows in the orchestrator section,
+                            # NOT as a separate step card (which would confuse the user)
                             await self._emit_granular_agent_event(
-                                agent_name, f"⚠️ {agent_name} connection issue - cannot complete automatically. Please re-authenticate manually.", context_id,
-                                event_type="agent_error", metadata={"loop_detection": True}
+                                "foundry-host-agent",
+                                f"⚠️ Stopping retries for {agent_name} — the agent could not complete after {len(same_agent_tasks)} attempts (likely rate-limited or unavailable).",
+                                context_id,
+                                event_type="phase", metadata={"phase": "loop_detection", "agent": agent_name}
                             )
                             
                             # Remove this task from execution
@@ -1899,27 +1902,28 @@ Analyze the plan and determine the next step."""
                         # 2. Agent completed but LLM calls again with different input (also a retry)
                         # Only check tasks from BEFORE this batch — tasks within the same
                         # parallel batch are siblings (1a, 1b, 1c), not retries of each other.
+                        retry_keywords = ["retry", "re-", "again", "fix", "correct", "update", "with the"]
+                        desc_has_retry_keywords = any(kw in original_description.lower() for kw in retry_keywords)
+
                         for prev_task in reversed(plan.tasks[:batch_start_idx][-10:]):
                             if prev_task.recommended_agent == recommended_agent:
                                 prev_step_match = re.search(r'\[Step\s+(\d+[a-z]?)\]', prev_task.task_description)
                                 if prev_step_match:
                                     prev_step_label = prev_step_match.group(1)
                                     prev_step_num = int(re.sub(r'[a-z]', '', prev_step_label))
-                                    
-                                    # If the previous task for this agent was in the current step range,
-                                    # this is a retry (not a new workflow step)
+
+                                    # Same step range = immediate retry
                                     if prev_step_num >= current_step_number:
                                         is_retry = True
                                         retry_step_label = prev_step_label
-                                        log_info(f"[Agent Mode] Detected retry of step {retry_step_label} (same agent {recommended_agent})")
+                                        log_info(f"[Agent Mode] Detected retry of step {retry_step_label} (same step range)")
                                         break
-                                    
-                                    # Also check for explicit retry keywords
-                                    retry_keywords = ["retry", "re-", "again", "fix", "correct", "update", "with the"]
-                                    if any(kw in original_description.lower() for kw in retry_keywords):
+
+                                    # Earlier step + retry keywords = delayed retry (e.g., retrying step 1b after step 3)
+                                    if desc_has_retry_keywords:
                                         is_retry = True
                                         retry_step_label = prev_step_label
-                                        log_info(f"[Agent Mode] Detected retry of step {retry_step_label} (retry keywords)")
+                                        log_info(f"[Agent Mode] Detected delayed retry of step {retry_step_label} (retry keywords)")
                                         break
                     
                     # Determine the step label for this task
