@@ -1768,21 +1768,40 @@ Analyze the plan and determine the next step."""
                 # =========================================================
 
                 # =========================================================
-                # PARALLEL EXPANSION: If LLM proposed a single next_task that
-                # matches a parallel group in the workflow text (e.g., 1a/1b),
-                # expand it to all sibling tasks for parallel execution.
-                # The LLM almost never uses next_tasks — it always picks one
-                # task at a time. This deterministic expansion fixes that.
+                # PARALLEL EXPANSION: Ensure ALL siblings from a parallel
+                # group in the workflow text execute together in one batch.
+                #
+                # Two cases:
+                # A) LLM sends single next_task → expand to all siblings
+                # B) LLM sends next_tasks with partial group (e.g., 3 of 5)
+                #    → expand to include the missing siblings
                 # =========================================================
-                if (workflow and workflow.strip() and next_step.next_task
-                        and not (next_step.next_tasks and len(next_step.next_tasks) > 1)):
-                    expanded = self._expand_parallel_from_workflow(
-                        workflow, next_step.next_task, plan.tasks
-                    )
-                    if expanded:
-                        log_info(f"[Parallel Expansion] Expanded single next_task into {len(expanded)} parallel tasks")
-                        next_step.next_tasks = expanded
-                        next_step.next_task = None
+                if workflow and workflow.strip():
+                    if (next_step.next_task
+                            and not (next_step.next_tasks and len(next_step.next_tasks) > 1)):
+                        # Case A: single task → expand to full parallel group
+                        expanded = self._expand_parallel_from_workflow(
+                            workflow, next_step.next_task, plan.tasks
+                        )
+                        if expanded:
+                            log_info(f"[Parallel Expansion] Expanded single next_task into {len(expanded)} parallel tasks")
+                            next_step.next_tasks = expanded
+                            next_step.next_task = None
+                    elif next_step.next_tasks and len(next_step.next_tasks) > 1:
+                        # Case B: LLM sent multiple tasks — check if they're a
+                        # partial parallel group and fill in any missing siblings.
+                        # Try each proposed task until one matches a group.
+                        for proposed_task in next_step.next_tasks:
+                            expanded = self._expand_parallel_from_workflow(
+                                workflow, proposed_task, plan.tasks
+                            )
+                            if expanded and len(expanded) > len(next_step.next_tasks):
+                                log_info(
+                                    f"[Parallel Expansion] LLM proposed {len(next_step.next_tasks)} "
+                                    f"tasks but parallel group has {len(expanded)} — expanding to full group"
+                                )
+                                next_step.next_tasks = expanded
+                                break
 
                 # Determine which tasks to execute
                 tasks_to_execute = []
