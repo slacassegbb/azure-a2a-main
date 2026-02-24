@@ -1628,7 +1628,8 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
                     "required": ["query"],
                 },
             },
-            # Note: Bing web search is now handled by native BingGroundingTool (added in _initialize_function_tools)
+            # Bing web search via native Responses API tool
+            {"type": "web_search_preview"},
         ]
 
     def root_instruction(self, current_agent: str, agent_mode: bool = False) -> str:
@@ -2829,7 +2830,7 @@ Answer with just JSON:
                 ),
             )
             
-            log_info(f"[A2A] -> {agent_name} (context: {contextId[:12]}..., task: {taskId[:12]}...)")
+            log_info(f"[A2A] -> {agent_name} (context: {contextId[:12]}..., task: {taskId[:12] if taskId else 'new'}...)")
             log_debug(f"[SEND_MESSAGE] taskId={taskId}, last_task_id={last_task_id}, last_task_state={last_task_state}")
             
             # Track start time for processing duration

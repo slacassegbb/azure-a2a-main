@@ -107,10 +107,21 @@ class AzureClients:
             log_foundry_debug("AIProjectClient initialized")
         
         # Initialize OpenAI client for Responses API
+        # Use direct Foundry endpoint (not project path) to avoid 403 on project-scoped route
         if not hasattr(self, 'openai_client') or self.openai_client is None:
-            log_foundry_debug("Getting OpenAI client from project...")
-            self.openai_client = self.project_client.get_openai_client()
-            log_foundry_debug("OpenAI client ready for Responses API")
+            from openai import AsyncOpenAI
+
+            # Extract resource name from project endpoint
+            # e.g. https://simonfoundry.services.ai.azure.com/api/projects/proj-default
+            resource_name = self.endpoint.split("//")[1].split(".")[0]
+            direct_endpoint = f"https://{resource_name}.services.ai.azure.com/openai/v1"
+
+            token = await self.credential.get_token("https://ai.azure.com/.default")
+            self.openai_client = AsyncOpenAI(
+                base_url=direct_endpoint,
+                api_key=token.token,
+            )
+            log_foundry_debug(f"OpenAI client ready at {direct_endpoint}")
 
     def _init_azure_blob_client(self):
         """Initialize Azure Blob Storage client if environment variables are configured."""

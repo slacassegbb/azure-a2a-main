@@ -600,20 +600,8 @@ Analyze the context and return your structured result."""
             if not bing_conn_id:
                 raise ValueError("BING_CONNECTION_ID not configured — web search is unavailable")
 
-            # Pass Bing tool as a plain dict — Azure SDK model objects (BingGroundingAgentTool)
-            # are not JSON-serializable by the OpenAI client. The Azure AI Foundry Responses API
-            # accepts bing_grounding as a dict tool type.
-            bing_tool = {
-                "type": "bing_grounding",
-                "bing_grounding": {
-                    "search_configurations": [
-                        {
-                            "project_connection_id": bing_conn_id,
-                            "count": 5
-                        }
-                    ]
-                }
-            }
+            # Use native web_search_preview tool (works on direct Foundry endpoint)
+            bing_tool = {"type": "web_search_preview"}
 
             # Build the search prompt
             search_input = f"Search the web for: {user_query}"
