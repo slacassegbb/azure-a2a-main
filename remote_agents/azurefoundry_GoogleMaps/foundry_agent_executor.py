@@ -141,6 +141,12 @@ class FoundryAgentExecutor(AgentExecutor):
                     )
                     return
 
+                if final_response.lstrip().startswith("Error:"):
+                    await task_updater.failed(
+                        message=new_agent_text_message(final_response, context_id=context_id)
+                    )
+                    return
+
                 parts_out = [TextPart(text=final_response)]
                 if hasattr(agent, 'last_token_usage') and agent.last_token_usage:
                     parts_out.append(DataPart(data={'type': 'token_usage', **agent.last_token_usage}))
@@ -148,7 +154,7 @@ class FoundryAgentExecutor(AgentExecutor):
                     message=Message(role="agent", messageId=str(uuid.uuid4()), parts=parts_out, contextId=context_id)
                 )
             else:
-                await task_updater.complete(
+                await task_updater.failed(
                     message=Message(role="agent", messageId=str(uuid.uuid4()), parts=[TextPart(text="No response generated")], contextId=context_id)
                 )
         except Exception as e:

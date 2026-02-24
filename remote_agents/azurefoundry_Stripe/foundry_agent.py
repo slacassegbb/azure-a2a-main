@@ -199,6 +199,19 @@ create_full_invoice with: {
 **After the invoice is created, ALWAYS write a summary like:**
 "✅ Created invoice [invoice_id] for [customer_name] with [X] line items totaling $[amount]"
 
+## Error Reporting (CRITICAL)
+
+If you CANNOT complete the requested task — due to rate limits, API errors, missing data,
+authentication failures, or any other reason — you MUST start your response with "Error:".
+
+Examples:
+- "Error: Rate limit exceeded. Please try again later."
+- "Error: Authentication failed — invalid credentials."
+- "Error: Could not complete the request due to a service outage."
+
+Do NOT write a polite explanation without the "Error:" prefix. The system uses this prefix
+to detect failures. Without it, the task is marked as successful even though it failed.
+
 ## ASKING FOR INPUT:
 
 Only if information is genuinely MISSING:
@@ -382,7 +395,7 @@ NEEDS_INPUT: Your specific question here
                         continue
                     else:
                         logger.error(f"❌ Max retries ({max_retries}) exceeded for rate limit")
-                        yield f"❌ Rate limit exceeded after {max_retries} retries - please wait and try again later"
+                        yield f"Error: Rate limit exceeded after {max_retries} retries - please wait and try again later"
                         return
                 else:
                     logger.error(f"❌ Error in conversation stream: {e}")

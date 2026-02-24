@@ -261,6 +261,12 @@ Please process this human response and continue the workflow accordingly."""
                     }))
                     logger.info(f"💰 Including token usage in response: {agent.last_token_usage}")
                 
+                if final_response.lstrip().startswith("Error:"):
+                    await task_updater.failed(
+                        message=new_agent_text_message(final_response, context_id=context_id)
+                    )
+                    return
+
                 await task_updater.complete(
                     message=Message(
                         role="agent",
@@ -284,7 +290,7 @@ Please process this human response and continue the workflow accordingly."""
                     }))
                     logger.info(f"💰 Including token usage in response: {agent.last_token_usage}")
                 
-                await task_updater.complete(
+                await task_updater.failed(
                     message=Message(
                         role="agent",
                         messageId=str(uuid.uuid4()),
@@ -292,7 +298,7 @@ Please process this human response and continue the workflow accordingly."""
                         contextId=context_id
                     )
                 )
-                    
+
         except Exception as e:
             await task_updater.failed(
                 message=new_agent_text_message(f"Error: {e}", context_id=context_id)

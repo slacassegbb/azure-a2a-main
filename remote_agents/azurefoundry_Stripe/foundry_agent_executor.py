@@ -205,16 +205,23 @@ class FoundryAgentExecutor(AgentExecutor):
                     logger.info(f"📱 Returning input_required state - waiting for user response")
                     return
                 
+                # Check if response starts with "Error:"
+                if response.lstrip().startswith("Error:"):
+                    await task_updater.failed(
+                        message=new_agent_text_message(response, context_id=context_id)
+                    )
+                    return
+
                 # Normal completion
                 message_parts = [TextPart(text=response)]
-                
+
                 # Add token usage if available
                 if hasattr(agent, 'last_token_usage') and agent.last_token_usage:
                     message_parts.append(DataPart(data={
                         'type': 'token_usage',
                         **agent.last_token_usage
                     }))
-                
+
                 await task_updater.complete(
                     message=Message(
                         role="agent",
@@ -226,7 +233,7 @@ class FoundryAgentExecutor(AgentExecutor):
             else:
                 logger.warning("⚠️ No response from Stripe agent")
                 import uuid
-                await task_updater.complete(
+                await task_updater.failed(
                     message=Message(
                         role="agent",
                         messageId=str(uuid.uuid4()),

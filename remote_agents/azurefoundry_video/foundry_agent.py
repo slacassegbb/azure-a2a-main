@@ -1610,11 +1610,24 @@ Before calling generate_video, enhance basic prompts with:
 - Spatial reasoning (left/right) can be challenging
 - Very specific text or logos are difficult
 
+## Error Reporting (CRITICAL)
+
+If you CANNOT complete the requested task — due to rate limits, API errors, missing data,
+authentication failures, or any other reason — you MUST start your response with "Error:".
+
+Examples:
+- "Error: Rate limit exceeded. Please try again later."
+- "Error: Authentication failed — invalid credentials."
+- "Error: Could not complete the request due to a service outage."
+
+Do NOT write a polite explanation without the "Error:" prefix. The system uses this prefix
+to detect failures. Without it, the task is marked as successful even though it failed.
+
 Current date and time: {datetime.datetime.now().isoformat()}
 """
-    
 
-    
+
+
 
 
     async def create_thread(self, thread_id: Optional[str] = None) -> AgentThread:

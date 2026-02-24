@@ -273,6 +273,12 @@ class FoundryImageGeneratorAgentExecutor(AgentExecutor):
                             })))
                             logger.info(f"💰 Including token usage in response: {agent.last_token_usage}")
                         
+                        if final_text_response.lstrip().startswith("Error:"):
+                            await task_updater.failed(
+                                message=new_agent_text_message(final_text_response, context_id=context_id)
+                            )
+                            return
+
                         await task_updater.complete(
                             message=new_agent_parts_message(parts=final_parts, context_id=context_id)
                         )
@@ -310,7 +316,7 @@ class FoundryImageGeneratorAgentExecutor(AgentExecutor):
                                 }))
                                 logger.info(f"💰 Including token usage in response: {agent.last_token_usage}")
                             
-                            await task_updater.complete(
+                            await task_updater.failed(
                                 message=Message(
                                     role="agent",
                                     messageId=str(uuid.uuid4()),

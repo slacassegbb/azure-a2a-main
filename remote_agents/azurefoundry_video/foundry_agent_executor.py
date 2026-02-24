@@ -273,6 +273,12 @@ class FoundryTemplateAgentExecutor(AgentExecutor):
                 if artifact_parts:
                     final_parts.extend(artifact_parts)
                 
+                if final_response.lstrip().startswith("Error:"):
+                    await task_updater.failed(
+                        message=new_agent_text_message(final_response, context_id=context_id)
+                    )
+                    return
+
                 # Create completion message with all parts
                 completion_message = new_agent_parts_message(parts=final_parts, context_id=context_id)
                 await task_updater.complete(message=completion_message)
@@ -291,7 +297,7 @@ class FoundryTemplateAgentExecutor(AgentExecutor):
                 else:
                     # No text and no artifacts - this is an error case
                     logger.error("❌ No content generated - neither text nor artifacts")
-                    await task_updater.complete(
+                    await task_updater.failed(
                         message=new_agent_text_message("No content generated", context_id=context_id)
                     )
                     

@@ -171,7 +171,20 @@ To minimize API costs and response times, ALWAYS use filters when possible:
 ## Error Handling
 - If a search returns no results, suggest alternative search terms
 - If an operation fails, explain what went wrong
-- Offer to try alternative approaches when appropriate"""
+- Offer to try alternative approaches when appropriate
+
+## Error Reporting (CRITICAL)
+
+If you CANNOT complete the requested task — due to rate limits, API errors, missing data,
+authentication failures, or any other reason — you MUST start your response with "Error:".
+
+Examples:
+- "Error: Rate limit exceeded. Please try again later."
+- "Error: Authentication failed — invalid credentials."
+- "Error: Could not complete the request due to a service outage."
+
+Do NOT write a polite explanation without the "Error:" prefix. The system uses this prefix
+to detect failures. Without it, the task is marked as successful even though it failed."""
 
     async def create_thread(self) -> str:
         """Create a new thread for conversation."""
@@ -328,9 +341,9 @@ To minimize API costs and response times, ALWAYS use filters when possible:
                             continue  # Continue the while loop with the new run
                         else:
                             logger.error(f"❌ Max retries ({max_retries}) exceeded for rate limit")
-                            yield f"❌ Rate limit exceeded after {max_retries} retries - please wait and try again later"
+                            yield f"Error: Rate limit exceeded after {max_retries} retries"
                             return
-                
+
                 yield f"❌ Run Failed: {run.last_error}"
                 return
 
@@ -516,9 +529,9 @@ To minimize API costs and response times, ALWAYS use filters when possible:
                             iterations = 0
                             continue
                         else:
-                            yield f"❌ Rate limit exceeded after {max_retries} retries - please wait and try again later"
+                            yield f"Error: Rate limit exceeded after {max_retries} retries"
                             return
-                
+
                 yield f"Run Failed: {run.last_error}"
                 return
 

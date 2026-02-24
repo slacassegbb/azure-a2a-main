@@ -279,6 +279,12 @@ class FoundryTemplateAgentExecutor(AgentExecutor):
                     })))
                     logger.info(f"💰 Including token usage in response: {agent.last_token_usage}")
                 
+                if final_response.lstrip().startswith("Error:"):
+                    await task_updater.failed(
+                        message=new_agent_text_message(final_response, context_id=context_id)
+                    )
+                    return
+
                 await task_updater.complete(
                     message=new_agent_parts_message(parts=final_parts, context_id=context_id)
                 )
@@ -315,7 +321,7 @@ class FoundryTemplateAgentExecutor(AgentExecutor):
                     }))
                     logger.info(f"💰 Including token usage in response: {agent.last_token_usage}")
                 
-                await task_updater.complete(
+                await task_updater.failed(
                     message=Message(
                         role="agent",
                         messageId=str(uuid.uuid4()),
@@ -323,7 +329,7 @@ class FoundryTemplateAgentExecutor(AgentExecutor):
                         contextId=context_id
                     )
                 )
-                    
+
         except Exception as e:
             await task_updater.failed(
                 message=new_agent_text_message(f"Error: {e}", context_id=context_id)

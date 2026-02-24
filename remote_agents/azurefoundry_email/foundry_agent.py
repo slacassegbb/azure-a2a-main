@@ -327,6 +327,19 @@ BODY:
 </html>
 ```END_EMAIL"
 
+## Error Reporting (CRITICAL)
+
+If you CANNOT complete the requested task — due to rate limits, API errors, missing data,
+authentication failures, or any other reason — you MUST start your response with "Error:".
+
+Examples:
+- "Error: Rate limit exceeded. Please try again later."
+- "Error: Authentication failed — invalid credentials."
+- "Error: Could not complete the request due to a service outage."
+
+Do NOT write a polite explanation without the "Error:" prefix. The system uses this prefix
+to detect failures. Without it, the task is marked as successful even though it failed.
+
 Current date: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}
 """
     

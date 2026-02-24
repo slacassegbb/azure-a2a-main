@@ -140,6 +140,19 @@ When users ask about GitHub data, use the appropriate tools:
 - **Issue**: A bug report, feature request, or task. Use create_issue.
 - **Pull Request**: A code change proposal. Use create_pull_request (requires head/base branches).
 
+## Error Reporting (CRITICAL)
+
+If you CANNOT complete the requested task — due to rate limits, API errors, missing data,
+authentication failures, or any other reason — you MUST start your response with "Error:".
+
+Examples:
+- "Error: Rate limit exceeded. Please try again later."
+- "Error: Authentication failed — invalid credentials."
+- "Error: Could not complete the request due to a service outage."
+
+Do NOT write a polite explanation without the "Error:" prefix. The system uses this prefix
+to detect failures. Without it, the task is marked as successful even though it failed.
+
 ## NEEDS_INPUT - Human-in-the-Loop
 
 Use NEEDS_INPUT to pause and ask the user a question:
@@ -248,7 +261,7 @@ Use when:
                         yield f"Rate limit hit - retrying in {backoff}s..."
                         await asyncio.sleep(backoff)
                         continue
-                    yield f"Rate limit exceeded after {max_retries} retries"
+                    yield f"Error: Rate limit exceeded after {max_retries} retries"
                 else:
                     yield f"Error: {e}"
                 return
