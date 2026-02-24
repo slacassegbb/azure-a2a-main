@@ -3237,9 +3237,23 @@ Answer with just JSON:
                     return response_parts
                     
                 elif task.status.state == TaskState.failed:
-                    log_debug(f"Task failed for {agent_name}")
-                    # Emit failed status for remote agent
+                    log_info(f"[A2A] Agent {agent_name} returned TaskState.failed")
+                    # Emit failed status for remote agent (both sidebar + granular event)
+                    error_msg = ""
+                    if task.status.message and task.status.message.parts:
+                        for _p in task.status.message.parts:
+                            _root = getattr(_p, 'root', _p)
+                            if hasattr(_root, 'text'):
+                                error_msg = _root.text[:500]
+                                break
                     asyncio.create_task(self._emit_simple_task_status(agent_name, "failed", contextId, taskId))
+                    asyncio.create_task(self._emit_granular_agent_event(
+                        agent_name,
+                        f"Agent {agent_name} failed: {error_msg[:200]}" if error_msg else f"Agent {agent_name} failed",
+                        contextId,
+                        event_type="agent_error",
+                        metadata={"error": error_msg or "Unknown error"}
+                    ))
                     retry_after = self._parse_retry_after_from_task(task)
                     max_rate_limit_retries = 3
                     retry_attempt = 0
@@ -3337,16 +3351,23 @@ Answer with just JSON:
                     return [f"Agent {agent_name} failed to complete the task"]
 
                 elif task.status.state == TaskState.input_required:
-                    log_warning(f"[HITL] Agent {agent_name} requires input - SETTING pending_input_agent!")
-                    log_debug(f"[STREAMING] Agent {agent_name} requires input")
-                    
+                    log_info(f"[HITL] Agent {agent_name} requires input - SETTING pending_input_agent!")
+
+                    # Emit event so frontend shows "Awaiting response" status
+                    asyncio.create_task(self._emit_granular_agent_event(
+                        agent_name,
+                        f"Waiting for human input...",
+                        contextId,
+                        event_type="info",
+                        metadata={"hitl": True, "input_required": True}
+                    ))
+
                     # CRITICAL: Set pending_input_agent so the human response gets routed correctly
                     # The streaming callback also sets this, but we need it here as a fallback
                     # in case the response comes directly without a streaming status-update event
                     current_task_id = session_context.agent_task_ids.get(agent_name)
                     session_context.pending_input_agent = agent_name
                     session_context.pending_input_task_id = current_task_id
-                    log_debug(f"[HITL] Task response input_required from '{agent_name}', setting pending_input_agent='{agent_name}'(task_id: {current_task_id})")
                     log_info(f"[HITL] Task response input_required from '{agent_name}', setting pending_input_agent (task_id: {current_task_id})")
                     
                     if task.status.message:
