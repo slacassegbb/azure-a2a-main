@@ -462,6 +462,19 @@ Common pandas frequency aliases:
 - 'MS' = month start, 'ME' = month end, 'QS' = quarter start
 - 'H' = hourly, 'min' = minutely, 'YS' = year start
 
+## Error Reporting (CRITICAL)
+
+If you CANNOT complete the requested task — due to rate limits, API errors, missing data,
+invalid input, or any other reason — you MUST start your response with "Error:".
+
+Examples:
+- "Error: No data provided. Please include CSV or time series data in your message."
+- "Error: Rate limit exceeded. Please try again later."
+- "Error: Could not parse the provided data — missing required column 'date'."
+
+Do NOT write a polite explanation without the "Error:" prefix. The system uses this prefix
+to detect failures. Without it, the task is marked as successful even though it failed.
+
 ## Response guidelines
 
 After getting tool results:
@@ -635,7 +648,7 @@ Your question here
                         yield f"Rate limit hit - retrying in {backoff}s..."
                         await asyncio.sleep(backoff)
                         continue
-                    yield f"Rate limit exceeded after {max_retries} retries"
+                    yield f"Error: Rate limit exceeded after {max_retries} retries"
                 else:
                     yield f"Error: {e}"
                 return
