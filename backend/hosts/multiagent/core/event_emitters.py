@@ -375,8 +375,11 @@ class EventEmitters:
                         event_data["metadata"] = {}
                     event_data["metadata"]["parallel_call_id"] = parallel_call_id
 
-                # DEBUG: Log what we're sending
-                log_debug(f"[WS_EMIT] Sending remote_agent_activity: agent={agent_name}, type={event_type}, convId={conversation_id}")
+                # Log event details — use info level for agent_complete/agent_error to trace status issues
+                if event_type in ("agent_complete", "agent_error", "agent_start"):
+                    log_info(f"[WS_EMIT] {event_type}: agent={agent_name}, parallel_call_id={parallel_call_id}, convId={conversation_id}")
+                else:
+                    log_debug(f"[WS_EMIT] Sending remote_agent_activity: agent={agent_name}, type={event_type}, convId={conversation_id}")
                 
                 success = await streamer._send_event("remote_agent_activity", event_data, routing_context_id)
                 if not success:

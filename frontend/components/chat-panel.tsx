@@ -2118,9 +2118,13 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
         
         setInferenceSteps(prev => {
           // Check last 8 entries for duplicates (wider window for busy workflows)
+          // Include parallel_call_id in comparison — events for different parallel tasks
+          // of the same agent are NOT duplicates even if agent+content match.
           const recentStartIdx = Math.max(0, prev.length - 8)
+          const thisCallId = data.metadata?.parallel_call_id
           const duplicateIdx = prev.findIndex(
             (entry, idx) => idx >= recentStartIdx && entry.agent === data.agentName && entry.status === content
+              && entry.metadata?.parallel_call_id === thisCallId
           )
           
           // If a typed version arrives and an untyped duplicate exists, REPLACE the old one
