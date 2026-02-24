@@ -1544,6 +1544,12 @@ Do NOT skip steps. Do NOT mark goal as completed until ALL workflow steps are do
 - Steps in the skipped branch must NOT be proposed or executed
 - After the branch step completes, continue to the next sequential step (the merge point)
 
+**TASK DESCRIPTIONS** (CRITICAL):
+- The `task_description` field MUST contain the COMPLETE text from the workflow step — copy it VERBATIM
+- Do NOT summarize, shorten, or paraphrase workflow step instructions
+- Include ALL details: entity names, parameters, time ranges, specific values, analysis requirements
+- Example: if the step says "Get RSI (14-day) for GHRS over the last 100 days. Summarize signals.", the task_description must include ALL of that text
+
 **EXECUTION RULES**:
 - Execute sequential steps (1, 2, 3) one after another
 - **PARALLEL STEPS** (e.g., 2a, 2b, 2c): When you see steps with letter suffixes, these can run SIMULTANEOUSLY
@@ -1832,17 +1838,24 @@ Analyze the plan and determine the next step."""
                             next_step.next_task = None
                     elif next_step.next_tasks and len(next_step.next_tasks) > 1:
                         # Case B: LLM sent multiple tasks — check if they're a
-                        # partial parallel group and fill in any missing siblings.
-                        # Try each proposed task until one matches a group.
+                        # parallel group and replace with full workflow-text descriptions.
+                        # The LLM often truncates/summarizes descriptions; the workflow
+                        # text is the authoritative source.
                         for proposed_task in next_step.next_tasks:
                             expanded = self._expand_parallel_from_workflow(
                                 workflow, proposed_task, plan.tasks
                             )
-                            if expanded and len(expanded) > len(next_step.next_tasks):
-                                log_info(
-                                    f"[Parallel Expansion] LLM proposed {len(next_step.next_tasks)} "
-                                    f"tasks but parallel group has {len(expanded)} — expanding to full group"
-                                )
+                            if expanded and len(expanded) >= len(next_step.next_tasks):
+                                if len(expanded) > len(next_step.next_tasks):
+                                    log_info(
+                                        f"[Parallel Expansion] LLM proposed {len(next_step.next_tasks)} "
+                                        f"tasks but parallel group has {len(expanded)} — expanding to full group"
+                                    )
+                                else:
+                                    log_info(
+                                        f"[Parallel Expansion] Replacing LLM descriptions with full "
+                                        f"workflow-text descriptions for {len(expanded)} parallel tasks"
+                                    )
                                 next_step.next_tasks = expanded
                                 break
 
