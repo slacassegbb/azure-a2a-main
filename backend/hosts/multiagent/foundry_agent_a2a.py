@@ -3097,13 +3097,15 @@ Answer with just JSON:
                     log_debug(f"After: agent_task_states={dict(session_context.agent_task_states)}")
                     log_debug(f"Cleared completed task state for {agent_name} to allow new tasks")
                     
-                    # Emit completed status for remote agent - the streaming callback doesn't always
-                    # receive a final status-update event with state=completed from remote agents
-                    asyncio.create_task(self._emit_simple_task_status(agent_name, "completed", contextId, taskId))
-                    asyncio.create_task(self._emit_granular_agent_event(
-                        agent_name, f"{agent_name} has completed the task successfully", contextId,
-                        event_type="agent_complete"
-                    ))
+                    # Emit final state events only for direct calls (not workflow mode).
+                    # In workflow mode (suppress_streaming=True), the orchestration layer
+                    # is the single authoritative emitter of agent_complete/agent_error.
+                    if not suppress_streaming:
+                        asyncio.create_task(self._emit_simple_task_status(agent_name, "completed", contextId, taskId))
+                        asyncio.create_task(self._emit_granular_agent_event(
+                            agent_name, f"{agent_name} has completed the task successfully", contextId,
+                            event_type="agent_complete"
+                        ))
                     
                     response_parts = []
                     
@@ -3246,14 +3248,15 @@ Answer with just JSON:
                             if hasattr(_root, 'text'):
                                 error_msg = _root.text[:500]
                                 break
-                    asyncio.create_task(self._emit_simple_task_status(agent_name, "failed", contextId, taskId))
-                    asyncio.create_task(self._emit_granular_agent_event(
-                        agent_name,
-                        f"Agent {agent_name} failed: {error_msg[:200]}" if error_msg else f"Agent {agent_name} failed",
-                        contextId,
-                        event_type="agent_error",
-                        metadata={"error": error_msg or "Unknown error"}
-                    ))
+                    if not suppress_streaming:
+                        asyncio.create_task(self._emit_simple_task_status(agent_name, "failed", contextId, taskId))
+                        asyncio.create_task(self._emit_granular_agent_event(
+                            agent_name,
+                            f"Agent {agent_name} failed: {error_msg[:200]}" if error_msg else f"Agent {agent_name} failed",
+                            contextId,
+                            event_type="agent_error",
+                            metadata={"error": error_msg or "Unknown error"}
+                        ))
                     retry_after = self._parse_retry_after_from_task(task)
                     max_rate_limit_retries = 3
                     retry_attempt = 0
@@ -3348,7 +3351,10 @@ Answer with just JSON:
                     if contextId in self._active_agent_tasks:
                         self._active_agent_tasks[contextId].pop(agent_name, None)
                     log_warning(f"[A2A] <- {agent_name} FAILED after retries")
-                    return [f"Agent {agent_name} failed to complete the task"]
+                    raise RuntimeError(
+                        f"Agent {agent_name} failed: {error_msg}" if error_msg
+                        else f"Agent {agent_name} failed to complete the task"
+                    )
 
                 elif task.status.state == TaskState.input_required:
                     log_info(f"[HITL] Agent {agent_name} requires input - SETTING pending_input_agent!")

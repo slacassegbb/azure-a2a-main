@@ -266,7 +266,7 @@ Your question here
                         yield f"Rate limit hit - retrying in {backoff}s..."
                         await asyncio.sleep(backoff)
                         continue
-                    yield f"Rate limit exceeded after {max_retries} retries"
+                    yield f"Error: Rate limit exceeded after {max_retries} retries"
                 else:
                     yield f"Error: {e}"
                 return

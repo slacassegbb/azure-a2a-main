@@ -26,38 +26,6 @@ from a2a.utils.message import new_agent_text_message
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-# ---------------------------------------------------------------------------
-# Response classification: map LLM text output → proper A2A TaskState
-# ---------------------------------------------------------------------------
-_FAILURE_PATTERNS = re.compile(
-    r'rate.?limit|quota.?\s*reached|api.?\s*(error|restrict)|'
-    r'service.?\s*unavailable|unauthorized|authentication.?\s*fail|'
-    r'timed?\s*out|server.?\s*error|403\s*forbidden|429\s*too.?\s*many|'
-    r'500\s*internal|exceeded.?\s*(the\s+)?limit|'
-    r'free.?\s*tier.?\s*(rate\s+)?limit|'
-    r'not\s+successful\s+due\s+to',
-    re.IGNORECASE,
-)
-
-_INPUT_PATTERNS = re.compile(
-    r'could\s+you\s+provide|please\s+provide|'
-    r'what\s+is\s+the\s+(stock\s+)?(symbol|ticker)|'
-    r'which\s+(stock|symbol|ticker)|'
-    r'please\s+specify|need\s+the\s+following\s+parameters|'
-    r'required\s+fields\s+are|'
-    r'can\s+you\s+(provide|specify|share)',
-    re.IGNORECASE,
-)
-
-
-def _classify_response(text: str) -> TaskState:
-    """Classify an LLM response into the appropriate A2A task state."""
-    if _FAILURE_PATTERNS.search(text):
-        return TaskState.failed
-    if _INPUT_PATTERNS.search(text):
-        return TaskState.input_required
-    return TaskState.completed
-
 
 class FoundryAgentExecutor(AgentExecutor):
     _shared_foundry_agent: Optional[FoundryStockMarketAgent] = None
@@ -173,21 +141,14 @@ class FoundryAgentExecutor(AgentExecutor):
                     )
                     return
 
-                # Classify the response into the correct A2A state
-                state = _classify_response(final_response)
-
+                # If we reach here, the stream completed without yielding an
+                # "Error:" prefix — this is a genuine successful response.
                 parts_out = [TextPart(text=final_response)]
                 if hasattr(agent, 'last_token_usage') and agent.last_token_usage:
                     parts_out.append(DataPart(data={'type': 'token_usage', **agent.last_token_usage}))
-                msg = Message(role="agent", messageId=str(uuid.uuid4()), parts=parts_out, contextId=context_id)
-
-                if state == TaskState.failed:
-                    await task_updater.failed(message=msg)
-                elif state == TaskState.input_required:
-                    self._waiting_for_input[context_id] = {"question": final_response, "session_id": session_id}
-                    await task_updater.update_status(TaskState.input_required, message=msg, final=True)
-                else:
-                    await task_updater.complete(message=msg)
+                await task_updater.complete(
+                    message=Message(role="agent", messageId=str(uuid.uuid4()), parts=parts_out, contextId=context_id)
+                )
             else:
                 await task_updater.failed(
                     message=Message(role="agent", messageId=str(uuid.uuid4()), parts=[TextPart(text="No response generated")], contextId=context_id)

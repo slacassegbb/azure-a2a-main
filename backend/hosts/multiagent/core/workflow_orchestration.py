@@ -761,10 +761,6 @@ Analyze the context and return your structured result."""
             task.updated_at = datetime.now(timezone.utc)
             log_error(f"[Agent Mode] Agent not found: {recommended_agent}. Available: {available_agent_names}")
             log_debug(f"[AGENT NOT FOUND] Requested: '{recommended_agent}', Available: {available_agent_names}")
-            await self._emit_granular_agent_event(
-                recommended_agent, f"⚠️ Agent '{recommended_agent}' not found", context_id,
-                event_type="agent_error", metadata={"error": task.error_message}
-            )
             return {"error": task.error_message, "output": None}
         
         log_debug(f"[Agent Mode] Calling agent: {recommended_agent}")
@@ -961,21 +957,21 @@ Use the above output from the previous workflow step to complete your task."""
             
             return {"output": output_text, "hitl_pause": False}
         else:
-            # Simple string response (legacy format)
+            # Simple string response (from send_message — list of strings).
+            # If we reach here, send_message() returned successfully (failures raise).
             task.state = "completed"
             output_text = extract_text_fn(response_obj)
             task.output = {"result": output_text}
             task.updated_at = datetime.now(timezone.utc)
-            
+
             # Emit agent output to workflow panel
-            # Use a higher limit (2000 chars) to avoid cutting off important info
             if output_text and recommended_agent:
                 display_output = output_text[:2000] + "…" if len(output_text) > 2000 else output_text
                 await self._emit_granular_agent_event(
                     recommended_agent, display_output, context_id,
                     event_type="agent_output", metadata={"output_length": len(output_text)}
                 )
-            
+
             return {"output": output_text, "hitl_pause": False}
 
     async def _intelligent_route_selection(

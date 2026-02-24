@@ -288,19 +288,11 @@ function parseEventsToAgents(steps: StepEvent[], agentColors?: Record<string, st
         continue  // These events go to orchestrator section, not agent cards
       }
       
-      // Check for HITL waiting state
-      if (step.metadata?.hitl || content.includes("Waiting for") || content.includes("input_required")) {
+      // HITL waiting state — only from structured metadata, not content guessing
+      if (step.metadata?.hitl) {
         agent.status = "waiting"
-        if (content && content.length > 10 && !agent.progressMessages.includes(content)) {
-          agent.progressMessages.push(content)
-        }
-      // Check for failure/error in info events
-      } else if (content.includes("failed") || content.includes("error") || content.includes("Error")) {
-        agent.status = "error"
-        if (content && !agent.output?.includes(content)) {
-          agent.output = agent.output ? `${agent.output}\n\n${content}` : content
-        }
-      } else if (content && content.length > 5 && !agent.progressMessages.includes(content)) {
+      }
+      if (content && content.length > 5 && !agent.progressMessages.includes(content)) {
         agent.progressMessages.push(content)
       }
     } else if (eventType === "tool_call") {
@@ -310,32 +302,13 @@ function parseEventsToAgents(steps: StepEvent[], agentColors?: Record<string, st
         agent.progressMessages.push(`Using ${toolName}`)
       }
     } else if (!eventType && content) {
-      // UNTYPED EVENTS: These are likely agent outputs or progress updates
-      // Check for status indicators in content
-      if (content.includes("⏸️") || content.includes("Waiting for human") || content.includes("📱 Waiting") || content.includes("input_required")) {
-        agent.status = "waiting"
-        // Also store the content as output if it's substantial
-        if (content.length > 50 && (!agent.output || agent.output.length < content.length)) {
-          agent.output = content
-        }
-      } else if (content.includes("failed") || content.includes("error") || content.includes("Error")) {
-        // Capture failure/error content
-        agent.status = "error"
-        if (!agent.output?.includes(content)) {
-          agent.output = agent.output ? `${agent.output}\n\n${content}` : content
-        }
-      } else if (content.includes("completed") || content.includes("Done") || content.includes("✅")) {
-        agent.status = "complete"
-        if (content.length > 20 && (!agent.output || agent.output.length < content.length)) {
-          agent.output = content
-        }
-      } else if (content.length > 100) {
-        // Long content is likely the actual output
+      // Untyped events — treat as output or progress, never override status.
+      // Status comes exclusively from typed events (agent_complete, agent_error, etc.)
+      if (content.length > 100) {
         if (!agent.output || agent.output.length < content.length) {
           agent.output = content
         }
       } else if (content.length > 10) {
-        // Shorter content is progress
         if (!agent.progressMessages.includes(content)) {
           agent.progressMessages.push(content)
         }
