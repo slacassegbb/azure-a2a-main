@@ -20,7 +20,8 @@ from service.server.application_manager import ApplicationManager
 from service.types import Conversation, Event
 from utils.agent_card import get_agent_card
 from utils.file_parts import extract_uri, convert_artifact_dict_to_file_part, create_file_part
-from service.agent_registry import get_session_registry
+import re
+from service.agent_registry import get_session_registry, get_registry
 from service import chat_history_service
 
 # Tenant separator used in contextId format: sessionId::conversationId
@@ -393,6 +394,76 @@ class FoundryHostManager(ApplicationManager):
             log_debug(f"[HITL RESUME] Error checking for pending plan: {e}")
         
         log_debug(f"process_message: Agent Mode = {effective_agent_mode} (explicit={agent_mode}), Inter-Agent Memory = {enable_inter_agent_memory}, Workflow = {workflow[:50] if workflow else None}")
+
+        # =========================================================
+        # WORKFLOW PRE-FLIGHT: Auto-enable agents & health check
+        # Parse required agents from workflow, look up in global
+        # registry, health-check each, auto-enable for session.
+        # If any required agent is offline, fail fast with error.
+        # =========================================================
+        if workflow and workflow.strip():
+            builtin_agents = {"EVALUATE", "QUERY", "WEB_SEARCH"}
+            required_agents = set()
+            for line in workflow.strip().split('\n'):
+                match = re.match(r'^\s*\d+[a-z]?\.\s*\[([^\]]+)\]', line.strip())
+                if match:
+                    agent_name = match.group(1).strip()
+                    if agent_name.upper() not in builtin_agents:
+                        required_agents.add(agent_name)
+
+            if required_agents:
+                registry = get_registry()
+                session_id = parse_session_from_context(context_id)
+                session_registry = get_session_registry()
+                offline_agents = []
+
+                for agent_name in required_agents:
+                    # Look up in global registry (DB)
+                    agent_config = registry.get_agent(agent_name)
+                    if not agent_config:
+                        # Try fuzzy match
+                        all_agents = registry.get_all_agents()
+                        agent_config = next(
+                            (a for a in all_agents
+                             if agent_name.lower() in a.get('name', '').lower()
+                             or a.get('name', '').lower() in agent_name.lower()),
+                            None
+                        )
+
+                    if not agent_config:
+                        offline_agents.append(f"{agent_name} (not in registry)")
+                        continue
+
+                    # Health check
+                    agent_url = agent_config.get('production_url') or agent_config.get('local_url') or agent_config.get('url', '')
+                    if agent_url:
+                        try:
+                            async with httpx.AsyncClient(timeout=5.0) as client:
+                                health_url = f"{agent_url.rstrip('/')}/health"
+                                resp = await client.get(health_url)
+                                if resp.status_code != 200:
+                                    offline_agents.append(agent_name)
+                                    continue
+                        except Exception:
+                            offline_agents.append(agent_name)
+                            continue
+
+                    # Agent is online — auto-enable for session
+                    session_registry.enable_agent(session_id, agent_config)
+                    log_info(f"[Workflow Pre-flight] Auto-enabled '{agent_name}' for session {session_id[:8]}...")
+
+                if offline_agents:
+                    error_msg = f"Cannot run workflow — these agents are offline or not registered: {', '.join(offline_agents)}"
+                    log_error(f"[Workflow Pre-flight] {error_msg}")
+                    # Emit error via WebSocket so the frontend shows it
+                    await self._host_agent._emit_granular_agent_event(
+                        "foundry-host-agent", error_msg, context_id,
+                        event_type="agent_error", metadata={"phase": "preflight_check"}
+                    )
+                    return  # Don't start orchestration
+
+                log_info(f"[Workflow Pre-flight] All {len(required_agents)} agents online and enabled")
+
         conversation = self.get_conversation(context_id)
         if not conversation:
             conversation = Conversation(conversation_id=context_id, is_active=True)

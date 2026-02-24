@@ -11,7 +11,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Switch } from "@/components/ui/switch"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Label } from "@/components/ui/label"
-import { PanelRightClose, PanelRightOpen, ShieldCheck, ChevronDown, ChevronRight, Globe, Hash, Zap, FileText, ExternalLink, Settings, Clock, CheckCircle, XCircle, AlertCircle, AlertTriangle, Pause, Brain, Search, MessageSquare, Database, Shield, BarChart3, Gavel, Users, Bot, Trash2, User, ListOrdered, Network, RotateCcw, Play, Calendar, Square, Workflow, History, X } from "lucide-react"
+import { PanelRightClose, PanelRightOpen, ShieldCheck, ChevronDown, ChevronRight, Globe, Hash, Zap, FileText, ExternalLink, Settings, Clock, CheckCircle, XCircle, AlertCircle, Pause, Brain, Search, MessageSquare, Database, Shield, BarChart3, Gavel, Users, Bot, Trash2, User, ListOrdered, Network, RotateCcw, Play, Calendar, Square, Workflow, History, X } from "lucide-react"
 import { SimulateAgentRegistration } from "./simulate-agent-registration"
 import { ConnectedUsers } from "./connected-users"
 import { SessionInvitationNotification } from "./session-invite"
@@ -123,34 +123,9 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
   const searchParams = useSearchParams()
   const currentConversationId = searchParams.get('conversationId') || undefined
   
-  // Helper function to check if workflow's required agents are available in the session
-  const getWorkflowAgentStatus = (workflowText: string) => {
-    // Parse workflow text to extract agent names (format: "1. [Agent Name]: description")
-    const lines = workflowText.split('\n').filter(l => l.trim())
-    const requiredAgents: string[] = []
-    for (const line of lines) {
-      const match = line.match(/^\d+\.\s*\[([^\]]+)\]/) || line.match(/^\d+\.\s*(?:Use the\s+)?([^:]+?)(?:\s+agent)?:/i)
-      if (match) {
-        requiredAgents.push(match[1].trim())
-      }
-    }
-    
-    const missingAgents = requiredAgents.filter(agentName =>
-      agentName.toUpperCase() !== 'EVALUATE' &&
-      agentName.toUpperCase() !== 'QUERY' &&
-      agentName.toUpperCase() !== 'WEB_SEARCH' &&
-      !registeredAgents.some(registered =>
-        registered.name.toLowerCase().includes(agentName.toLowerCase()) ||
-        agentName.toLowerCase().includes(registered.name.toLowerCase())
-      )
-    )
-    
-    return {
-      allAvailable: missingAgents.length === 0,
-      missingAgents,
-      requiredAgents
-    }
-  }
+  // Agent availability is now checked by the backend at workflow launch time.
+  // The backend auto-enables agents from the global registry and health-checks
+  // them, returning an error if any required agent is offline.
   
   const [expandedAgents, setExpandedAgents] = useState<Set<string>>(new Set())
   const [isSystemPromptDialogOpen, setIsSystemPromptDialogOpen] = useState(false)
@@ -1156,30 +1131,16 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
                             {/* Workflow Cards */}
                             <div className="space-y-2">
                               {activeWorkflows.map((wf, index) => {
-                                const agentStatus = getWorkflowAgentStatus(wf.workflow)
-                                const canRun = agentStatus.allAvailable
-                                
                                 return (
                                 <div key={wf.id} className="group">
-                                  {/* Warning banner for missing agents */}
-                                  {!agentStatus.allAvailable && (
-                                    <div className="mb-1 px-2 py-1 bg-yellow-500/10 border border-yellow-500/30 rounded text-[10px] text-yellow-400 flex items-center gap-1">
-                                      <AlertTriangle className="h-3 w-3 flex-shrink-0" />
-                                      <span className="line-clamp-1">Missing: {agentStatus.missingAgents.join(', ')}</span>
-                                    </div>
-                                  )}
                                   {/* Workflow Header with name and actions - Clickable to expand */}
                                   <div
                                     onClick={() => setExpandedWorkflowId(expandedWorkflowId === wf.id ? null : wf.id)}
-                                    className={`flex items-center justify-between rounded-lg p-2 border transition-colors cursor-pointer ${
-                                      canRun 
-                                        ? 'bg-gradient-to-r from-purple-500/10 to-blue-500/10 border-purple-500/20 hover:border-purple-400/40'
-                                        : 'bg-gradient-to-r from-yellow-500/10 to-orange-500/10 border-yellow-500/30 hover:border-yellow-400/40'
-                                    }`}
+                                    className="flex items-center justify-between rounded-lg p-2 border transition-colors cursor-pointer bg-gradient-to-r from-purple-500/10 to-blue-500/10 border-purple-500/20 hover:border-purple-400/40"
                                   >
                                     <div className="flex items-center gap-2 flex-1 min-w-0">
-                                      <div className={`p-1.5 rounded-md ${canRun ? 'bg-purple-500/20' : 'bg-yellow-500/20'}`}>
-                                        <Workflow className={`h-3.5 w-3.5 ${canRun ? 'text-purple-400' : 'text-yellow-400'}`} />
+                                      <div className="p-1.5 rounded-md bg-purple-500/20">
+                                        <Workflow className="h-3.5 w-3.5 text-purple-400" />
                                       </div>
                                       <div className="flex-1 min-w-0 text-left">
                                         <p className="text-xs font-semibold text-slate-200 truncate">
@@ -1202,16 +1163,9 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
                                             <Button
                                               variant="ghost"
                                               size="icon"
-                                              disabled={!canRun}
-                                              className={`h-6 w-6 ${
-                                                canRun 
-                                                  ? 'text-blue-500 hover:text-blue-400 hover:bg-blue-500/10' 
-                                                  : 'text-slate-600 cursor-not-allowed opacity-50'
-                                              }`}
+                                              className="h-6 w-6 text-blue-500 hover:text-blue-400 hover:bg-blue-500/10"
                                               onClick={(e) => {
                                                 e.stopPropagation()
-                                                if (!canRun) return
-                                                // Set this workflow as the active one and run it
                                                 if (onWorkflowChange) {
                                                   onWorkflowChange(wf.workflow)
                                                 }
@@ -1228,7 +1182,7 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
                                             </Button>
                                           </TooltipTrigger>
                                           <TooltipContent>
-                                            <p>{canRun ? 'Run Workflow' : `Missing agents: ${agentStatus.missingAgents.join(', ')}`}</p>
+                                            <p>Run Workflow</p>
                                           </TooltipContent>
                                         </Tooltip>
                                       </TooltipProvider>
