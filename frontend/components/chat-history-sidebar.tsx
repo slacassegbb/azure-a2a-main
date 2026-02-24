@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils"
 import { listConversations, createConversation, deleteConversation, deleteAllConversations, listMessages, notifyConversationCreated, type Conversation } from "@/lib/conversation-api"
 import { LoginDialog } from "@/components/login-dialog"
 import { useEventHub } from "@/hooks/use-event-hub"
+import { useEventSubscriptions } from "@/hooks/use-event-subscription"
 import { getOrCreateSessionId, leaveCollaborativeSession, isInCollaborativeSession } from "@/lib/session"
 import { clearActiveWorkflow } from "@/lib/active-workflow-api"
 import { logDebug } from '@/lib/debug'
@@ -134,50 +135,41 @@ export function ChatHistorySidebar({ isCollapsed, onToggle }: Props) {
     }
   }, [])
 
-  // Use Event Hub to listen for WebSocket events
-  const { subscribe, unsubscribe } = useEventHub()
-
-  // Handle backend session changes - clear conversation list when backend restarts
-  useEffect(() => {
+  // All WebSocket event subscriptions (auto-cleanup)
+  // All WebSocket event subscriptions (auto-cleanup)
+  useEventSubscriptions(() => {
     const BACKEND_SESSION_KEY = 'a2a_backend_session_id'
-    
+
     const handleSessionStarted = (data: any) => {
       const newSessionId = data?.data?.sessionId || data?.sessionId
       if (!newSessionId) {
         logDebug('[ChatHistorySidebar] session_started event but no sessionId found')
         return
       }
-      
+
       const storedSessionId = localStorage.getItem(BACKEND_SESSION_KEY)
-      
+
       if (storedSessionId && storedSessionId !== newSessionId) {
-        // Backend restarted - clear conversation list and reload from server
         logDebug('[ChatHistorySidebar] Backend restarted (session changed), clearing conversations')
         logDebug('[ChatHistorySidebar] Old session:', storedSessionId?.slice(0, 8), '-> New session:', newSessionId.slice(0, 8))
         setConversations([])
-        // Reload conversations from the (new) backend
         loadConversations()
-        // If we're currently viewing a conversation, navigate away since it may not exist
         if (currentConversationId) {
           logDebug('[ChatHistorySidebar] Navigating away from stale conversation')
           router.push('/')
         }
       }
-      
-      // Store the new session ID
+
       localStorage.setItem(BACKEND_SESSION_KEY, newSessionId)
       logDebug('[ChatHistorySidebar] Backend session ID stored:', newSessionId.slice(0, 8))
     }
 
-    // Handle session members updated - fires when we join a collaborative session
     const handleSessionMembersUpdated = (data: any) => {
       logDebug('[ChatHistorySidebar] Session members updated:', data)
-      // Check if our session ID changed
       const newSessionId = getOrCreateSessionId()
       setCurrentSessionId(prev => {
         if (prev !== newSessionId) {
           logDebug('[ChatHistorySidebar] Session ID changed after members update:', prev, '->', newSessionId)
-          // Small delay to let session storage settle
           setTimeout(() => loadConversations(), 100)
           return newSessionId
         }
@@ -185,40 +177,26 @@ export function ChatHistorySidebar({ isCollapsed, onToggle }: Props) {
       })
     }
 
-    subscribe('session_started', handleSessionStarted)
-    subscribe('session_members_updated', handleSessionMembersUpdated)
-    
-    return () => {
-      unsubscribe('session_started', handleSessionStarted)
-      unsubscribe('session_members_updated', handleSessionMembersUpdated)
-    }
-  }, [subscribe, unsubscribe, loadConversations, currentConversationId, router])
-
-  // Listen for conversation title updates from collaborative session members via WebSocket
-  useEffect(() => {
     const handleWebSocketTitleUpdate = (data: any) => {
       const conversationId = data?.data?.conversationId || data?.conversationId
       const title = data?.data?.title || data?.title
-      
+
       if (!conversationId || !title) {
         logDebug('[ChatHistorySidebar] conversation_title_update event missing data:', data)
         return
       }
-      
+
       logDebug('[ChatHistorySidebar] Received WebSocket title update:', { conversationId, title })
-      
+
       setConversations(prev => {
         const exists = prev.some(conv => conv.conversation_id === conversationId)
         if (exists) {
-          // Update existing conversation's title
-          return prev.map(conv => 
-            conv.conversation_id === conversationId 
+          return prev.map(conv =>
+            conv.conversation_id === conversationId
               ? { ...conv, name: title }
               : conv
           )
         } else {
-          // Conversation doesn't exist yet - add it with the title
-          // This handles the case where title_update arrives before/without conversation_created
           logDebug('[ChatHistorySidebar] Adding new conversation from title update:', conversationId)
           return [{
             conversation_id: conversationId,
@@ -231,20 +209,21 @@ export function ChatHistorySidebar({ isCollapsed, onToggle }: Props) {
       })
     }
 
-    subscribe('conversation_title_update', handleWebSocketTitleUpdate)
-    
-    // Reload conversations after subscribing to catch any updates we missed during mount
-    // Small delay to ensure subscriptions are fully set up
+    return {
+      session_started: handleSessionStarted,
+      session_members_updated: handleSessionMembersUpdated,
+      conversation_title_update: handleWebSocketTitleUpdate,
+    }
+  })
+
+  // Reload conversations after mount to catch updates missed during setup
+  useEffect(() => {
     const reloadTimeout = setTimeout(() => {
       logDebug('[ChatHistorySidebar] Reloading conversations after subscriptions ready')
       loadConversations()
     }, 500)
-    
-    return () => {
-      unsubscribe('conversation_title_update', handleWebSocketTitleUpdate)
-      clearTimeout(reloadTimeout)
-    }
-  }, [subscribe, unsubscribe, loadConversations])
+    return () => clearTimeout(reloadTimeout)
+  }, [loadConversations])
 
   useEffect(() => {
     logDebug('[ChatHistorySidebar] Setting up event listeners...')

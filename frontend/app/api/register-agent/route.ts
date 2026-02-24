@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { API_BASE_URL } from '@/lib/api-config'
 
 export async function POST(request: NextRequest) {
   try {
@@ -13,7 +14,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Forward the request to the backend server
-    const backendUrl = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
+    const backendUrl = API_BASE_URL
     const response = await fetch(`${backendUrl}/agent/register-by-address`, {
       method: 'POST',
       headers: {

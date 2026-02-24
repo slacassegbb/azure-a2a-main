@@ -23,10 +23,12 @@ import { getRunHistory, listSchedules, deleteSchedule, RunHistoryItem, Scheduled
 import { generateWorkflowId } from "@/lib/active-workflow-api"
 import { ScheduleWorkflowDialog } from "./schedule-workflow-dialog"
 import { useState, useEffect, useCallback, useRef } from "react"
-import { useEventHub } from "@/contexts/event-hub-context"
+import { useEventHub } from "@/hooks/use-event-hub"
+import { useEventSubscriptions } from "@/hooks/use-event-subscription"
 import { useSearchParams } from "next/navigation"
 import { getOrCreateSessionId } from "@/lib/session"
 import { logDebug, warnDebug, errorDebug, logInfo } from '@/lib/debug'
+import { API_BASE_URL } from '@/lib/api-config'
 
 type Agent = {
   name: string
@@ -193,7 +195,7 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
   const MIN_WORKING_DISPLAY_TIME = 800
   
   // Use existing EventHub context instead of creating new WebSocket client
-  const { subscribe, unsubscribe, isConnected, emit } = useEventHub()
+  const { emit } = useEventHub()
   
   // Use ref for registeredAgents to avoid recreating callback on every agent list update
   const registeredAgentsRef = useRef<Agent[]>(registeredAgents)
@@ -426,7 +428,7 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
 
   // Fetch current host agent model on mount
   useEffect(() => {
-    const baseUrl = process.env.NEXT_PUBLIC_A2A_API_URL || "http://localhost:12000"
+    const baseUrl = API_BASE_URL
     fetch(`${baseUrl}/api/host-agent/model`)
       .then(r => r.json())
       .then(data => { if (data.success) setHostModel(data.model) })
@@ -434,7 +436,7 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
   }, [])
 
   const handleModelChange = useCallback((model: string) => {
-    const baseUrl = process.env.NEXT_PUBLIC_A2A_API_URL || "http://localhost:12000"
+    const baseUrl = API_BASE_URL
     setHostModel(model)
     fetch(`${baseUrl}/api/host-agent/model`, {
       method: "PUT",
@@ -543,38 +545,19 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
     return () => clearInterval(interval)
   }, [activeWorkflows, fetchScheduledWorkflows])
 
-  // Subscribe to WebSocket events - STABLE subscriptions (no churn)
-  useEffect(() => {
-    if (!isConnected) {
-      return
-    }
-    
-    // SINGLE SOURCE OF TRUTH: task_updated contains all agent status info
-    subscribe('task_updated', handleTaskUpdate)
-    subscribe('agent_status_updated', handleAgentStatusUpdate)
-    
-    // Track host agent inference state
-    const handleInferenceStarted = () => {
+  // Subscribe to WebSocket events (auto-cleanup)
+  useEventSubscriptions(() => ({
+    task_updated: handleTaskUpdate,
+    agent_status_updated: handleAgentStatusUpdate,
+    shared_inference_started: () => {
       logDebug('[AgentNetwork] Host inference started')
       setIsHostInferencing(true)
-    }
-    const handleInferenceEnded = () => {
+    },
+    shared_inference_ended: () => {
       logDebug('[AgentNetwork] Host inference ended')
       setIsHostInferencing(false)
-    }
-    
-    subscribe('shared_inference_started', handleInferenceStarted)
-    subscribe('shared_inference_ended', handleInferenceEnded)
-    
-    logDebug('[AgentNetwork] ✅ Subscribed to task_updated, agent_status_updated, shared_inference_*')
-
-    return () => {
-      unsubscribe('task_updated', handleTaskUpdate)
-      unsubscribe('agent_status_updated', handleAgentStatusUpdate)
-      unsubscribe('shared_inference_started', handleInferenceStarted)
-      unsubscribe('shared_inference_ended', handleInferenceEnded)
-    }
-  }, [isConnected, subscribe, unsubscribe, handleTaskUpdate, handleAgentStatusUpdate])
+    },
+  }))
 
   // Get status indicator for an agent
   const getStatusIndicator = (agentName: string) => {
@@ -664,7 +647,7 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
   const loadCurrentInstruction = async () => {
     try {
       setIsLoading(true)
-      const baseUrl = process.env.NEXT_PUBLIC_A2A_API_URL || "http://localhost:12000"
+      const baseUrl = API_BASE_URL
       const response = await fetch(`${baseUrl}/agent/root-instruction`)
       const data = await response.json()
       
@@ -684,7 +667,7 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
   const updateInstruction = async () => {
     try {
       setIsLoading(true)
-      const baseUrl = process.env.NEXT_PUBLIC_A2A_API_URL || "http://localhost:12000"
+      const baseUrl = API_BASE_URL
       const response = await fetch(`${baseUrl}/agent/root-instruction`, {
         method: 'PUT',
         headers: {
@@ -715,7 +698,7 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
   const resetToDefault = async () => {
     try {
       setIsLoading(true)
-      const baseUrl = process.env.NEXT_PUBLIC_A2A_API_URL || "http://localhost:12000"
+      const baseUrl = API_BASE_URL
       const response = await fetch(`${baseUrl}/agent/root-instruction/reset`, {
         method: 'POST',
       })
@@ -742,7 +725,7 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
     setIsClearingMemory(true)
     try {
       const sessionId = getOrCreateSessionId()
-      const baseUrl = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
+      const baseUrl = API_BASE_URL
       const response = await fetch(`${baseUrl}/clear-memory`, {
         method: 'POST',
         headers: {
@@ -782,7 +765,7 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
 
     try {
       const sessionId = getOrCreateSessionId()
-      const baseUrl = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
+      const baseUrl = API_BASE_URL
       
       const response = await fetch(`${baseUrl}/agents/session/disable`, {
         method: 'POST',

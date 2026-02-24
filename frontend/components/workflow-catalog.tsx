@@ -9,6 +9,7 @@ import { Sparkles, Download, Trash2, Save, Search, Clock, Plus, X, Pencil, Play,
 import { useState, useEffect, useRef } from "react"
 import { ScheduleWorkflowDialog } from "./schedule-workflow-dialog"
 import { logDebug, warnDebug, errorDebug, logInfo } from '@/lib/debug'
+import { API_BASE_URL } from '@/lib/api-config'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
@@ -244,7 +245,6 @@ export function WorkflowCatalog({ onLoadWorkflow, onSaveWorkflow, onNewWorkflow,
     }
     
     try {
-      const API_BASE_URL = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
       const response = await fetch(`${API_BASE_URL}/api/schedules/${scheduleId}`, {
         method: 'DELETE'
       })
@@ -265,7 +265,6 @@ export function WorkflowCatalog({ onLoadWorkflow, onSaveWorkflow, onNewWorkflow,
   // Function to toggle (pause/resume) a scheduled workflow
   const handleToggleScheduledWorkflow = async (scheduleId: string, currentlyEnabled: boolean) => {
     try {
-      const API_BASE_URL = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
       const response = await fetch(`${API_BASE_URL}/api/schedules/${scheduleId}/toggle?enabled=${!currentlyEnabled}`, {
         method: 'POST'
       })
@@ -369,8 +368,7 @@ export function WorkflowCatalog({ onLoadWorkflow, onSaveWorkflow, onNewWorkflow,
         
         logDebug('[WorkflowCatalog] User authenticated, fetching scheduled workflows...')
 
-        const API_BASE_URL = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
-        
+          
         // Fetch both schedules and run history
         const [schedulesResponse, historyResponse] = await Promise.all([
           fetch(`${API_BASE_URL}/api/schedules`),

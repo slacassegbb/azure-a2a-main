@@ -5,10 +5,12 @@ import { AgentNetwork } from "@/components/agent-network"
 import { ChatPanel } from "@/components/chat-panel"
 import { FileHistory } from "@/components/file-history"
 import { useEventHub } from "@/hooks/use-event-hub"
+import { useEventSubscriptions } from "@/hooks/use-event-subscription"
 import { ChatHistorySidebar } from "./chat-history-sidebar"
 import { ScheduleWorkflowDialog } from "@/components/schedule-workflow-dialog"
 import { Panel, PanelGroup, PanelResizeHandle, ImperativePanelHandle } from "react-resizable-panels"
 import { getOrCreateSessionId } from "@/lib/session"
+import { API_BASE_URL } from '@/lib/api-config'
 import { 
   getActiveWorkflows, 
   addActiveWorkflow, 
@@ -38,7 +40,7 @@ export function ChatLayout() {
   const { toast } = useToast()
   
   // Use the Event Hub hook early for proper client-side initialization
-  const { subscribe, unsubscribe, emit } = useEventHub()
+  const { emit } = useEventHub()
   
   const [isLeftSidebarCollapsed, setLeftSidebarCollapsed] = useState(false)
   const [isRightSidebarCollapsed, setRightSidebarCollapsed] = useState(false)
@@ -209,36 +211,7 @@ export function ChatLayout() {
     // No need to sync here - that was causing infinite loops
   }, [activeWorkflows, workflowsLoaded])
 
-  // Listen for active_workflows_changed events from WebSocket (collaborative sync)
-  useEffect(() => {
-    // Handle new multi-workflow events
-    const handleActiveWorkflowsChanged = (data: { workflows?: ActiveWorkflow[], contextId?: string }) => {
-      logDebug('[ChatLayout] Received active_workflows_changed event:', data)
-      
-      // Session isolation: only process events for our session
-      // This prevents cross-session data leakage if backend routes incorrectly
-      const mySessionId = getOrCreateSessionId()
-      const eventSessionId = data.contextId
-      if (eventSessionId && mySessionId && eventSessionId !== mySessionId) {
-        logDebug('[ChatLayout] Ignoring active_workflows_changed from different session:', eventSessionId, 'my session:', mySessionId)
-        return
-      }
-      
-      if (data.workflows) {
-        setActiveWorkflows(data.workflows)
-      }
-    }
-    
-    // NOTE: Legacy single workflow event handler removed to prevent infinite loops
-    // The legacy API (active_workflow_changed) was causing:
-    // state change → save effect → API call → WebSocket → state change → ...
-    // We now only use the new multi-workflow API which doesn't have this issue
-    
-    subscribe('active_workflows_changed', handleActiveWorkflowsChanged)
-    return () => {
-      unsubscribe('active_workflows_changed', handleActiveWorkflowsChanged)
-    }
-  }, [subscribe, unsubscribe])
+  // NOTE: active_workflows_changed subscription is in the useEventSubscriptions block below
   
   // Workflow action handlers (to be implemented)
   const handleRunWorkflow = useCallback(() => {
@@ -369,7 +342,7 @@ export function ChatLayout() {
   const fetchSessionAgents = async () => {
     try {
       const sessionId = getOrCreateSessionId()
-      const baseUrl = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
+      const baseUrl = API_BASE_URL
       const response = await fetch(`${baseUrl}/agents/session?session_id=${sessionId}`)
       
       if (response.ok) {
@@ -399,12 +372,13 @@ export function ChatLayout() {
     }
   }
 
-  // This useEffect hook represents the "Host Agent" listening to the Event Hub.
+  // Load session agents on mount
   useEffect(() => {
-    // Load session agents on mount
     fetchSessionAgents()
+  }, [])
 
-    // Handle connected users list updates
+  // All WebSocket event subscriptions (auto-cleanup)
+  useEventSubscriptions(() => {
     const handleUserListUpdate = (eventData: any) => {
       logDebug("[ChatLayout] Received user list update")
       if (eventData.data?.active_users) {
@@ -524,41 +498,38 @@ export function ChatLayout() {
       }
     }
 
-    // Subscribe to Event Hub events
-    logDebug("[ChatLayout] Subscribing to session_agent_enabled/disabled events")
-    subscribe("session_agent_enabled", handleAgentEnabled)
-    subscribe("session_agent_disabled", handleAgentDisabled)
-    subscribe("message", handleMessage)
-    subscribe("conversation_created", handleConversationCreated)
-    subscribe("task_updated", handleTaskUpdated)
-    subscribe("file_uploaded", handleFileUploaded)
-    subscribe("form_submitted", handleFormSubmitted)
-    subscribe("user_list_update", handleUserListUpdate)
-    subscribe("session_cleared", handleSessionCleared)
-    subscribe("session_invalid", handleSessionInvalid)
-    subscribe("session_members_updated", handleSessionMembersUpdated)
+    // Handle active workflows changed (collaborative sync)
+    const handleActiveWorkflowsChanged = (data: { workflows?: ActiveWorkflow[], contextId?: string }) => {
+      logDebug('[ChatLayout] Received active_workflows_changed event:', data)
 
-    logDebug("[ChatLayout] Subscribed to Event Hub events")
+      // Session isolation: only process events for our session
+      const mySessionId = getOrCreateSessionId()
+      const eventSessionId = data.contextId
+      if (eventSessionId && mySessionId && eventSessionId !== mySessionId) {
+        logDebug('[ChatLayout] Ignoring active_workflows_changed from different session:', eventSessionId, 'my session:', mySessionId)
+        return
+      }
 
-    // Component initialization complete
-    logDebug("[ChatLayout] Event Hub subscriptions ready")
-
-    // Clean up the subscriptions when the component unmounts.
-    return () => {
-      unsubscribe("session_agent_enabled", handleAgentEnabled)
-      unsubscribe("session_agent_disabled", handleAgentDisabled)
-      unsubscribe("message", handleMessage)
-      unsubscribe("conversation_created", handleConversationCreated)
-      unsubscribe("task_updated", handleTaskUpdated)
-      unsubscribe("file_uploaded", handleFileUploaded)
-      unsubscribe("form_submitted", handleFormSubmitted)
-      unsubscribe("user_list_update", handleUserListUpdate)
-      unsubscribe("session_cleared", handleSessionCleared)
-      unsubscribe("session_invalid", handleSessionInvalid)
-      unsubscribe("session_members_updated", handleSessionMembersUpdated)
-      logDebug("[ChatLayout] Unsubscribed from Event Hub events")
+      if (data.workflows) {
+        setActiveWorkflows(data.workflows)
+      }
     }
-  }, [subscribe, unsubscribe, emit, toast, currentSessionId])
+
+    return {
+      active_workflows_changed: handleActiveWorkflowsChanged,
+      session_agent_enabled: handleAgentEnabled,
+      session_agent_disabled: handleAgentDisabled,
+      message: handleMessage,
+      conversation_created: handleConversationCreated,
+      task_updated: handleTaskUpdated,
+      file_uploaded: handleFileUploaded,
+      form_submitted: handleFormSubmitted,
+      user_list_update: handleUserListUpdate,
+      session_cleared: handleSessionCleared,
+      session_invalid: handleSessionInvalid,
+      session_members_updated: handleSessionMembersUpdated,
+    }
+  })
 
   return (
     <div className="h-full w-full bg-background">

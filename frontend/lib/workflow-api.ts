@@ -6,8 +6,8 @@
  */
 
 import { logDebug } from '@/lib/debug'
-
-const API_BASE_URL = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
+import { API_BASE_URL } from '@/lib/api-config'
+import { getAuthToken, getAuthHeaders } from '@/lib/auth'
 
 export interface WorkflowStep {
   id: string
@@ -60,27 +60,6 @@ export interface WorkflowUpdateRequest {
   goal?: string
 }
 
-/**
- * Get auth token from storage
- */
-function getAuthToken(): string | null {
-  if (typeof window === 'undefined') return null
-  return sessionStorage.getItem('auth_token') || localStorage.getItem('auth_token')
-}
-
-/**
- * Get authorization headers
- */
-function getAuthHeaders(): HeadersInit {
-  const token = getAuthToken()
-  const headers: HeadersInit = {
-    'Content-Type': 'application/json',
-  }
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`
-  }
-  return headers
-}
 
 /**
  * Get all workflows for the current user (requires authentication)

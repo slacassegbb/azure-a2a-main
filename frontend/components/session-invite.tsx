@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
+import { useState, useCallback } from "react"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -13,6 +13,7 @@ import {
 import { Badge } from "@/components/ui/badge"
 import { User, UserPlus, Check, X, Loader2 } from "lucide-react"
 import { useEventHub } from "@/hooks/use-event-hub"
+import { useEventSubscriptions } from "@/hooks/use-event-subscription"
 import { useToast } from "@/hooks/use-toast"
 import { getOrCreateSessionId, joinCollaborativeSession } from "@/lib/session"
 import { logDebug, warnDebug, errorDebug, logInfo } from '@/lib/debug'
@@ -36,75 +37,55 @@ export function SessionInviteButton() {
   const [onlineUsers, setOnlineUsers] = useState<OnlineUser[]>([])
   const [loading, setLoading] = useState(false)
   const [invitingUserId, setInvitingUserId] = useState<string | null>(null)
-  const { sendMessage, subscribe, unsubscribe, isConnected } = useEventHub()
+  const { sendMessage } = useEventHub()
   const { toast } = useToast()
 
-  // Handle receiving online users list
-  const handleOnlineUsers = useCallback((eventData: any) => {
-    logDebug("[SessionInvite] Received online users:", eventData)
-    if (eventData.users) {
-      setOnlineUsers(eventData.users)
-    }
-    setLoading(false)
-  }, [])
-
-  // Handle invitation sent confirmation
-  const handleInviteSent = useCallback((eventData: any) => {
-    logDebug("[SessionInvite] Invitation sent:", eventData)
-    setInvitingUserId(null)
-    toast({
-      title: "Invitation Sent",
-      description: "Waiting for the user to accept...",
-    })
-  }, [toast])
-
-  // Handle invitation error
-  const handleInviteError = useCallback((eventData: any) => {
-    logDebug("[SessionInvite] Invitation error:", eventData)
-    setInvitingUserId(null)
-    toast({
-      title: "Error",
-      description: eventData.error || "Failed to send invitation",
-      variant: "destructive",
-    })
-  }, [toast])
-
-  // Handle invitation response
-  const handleInviteResponse = useCallback((eventData: any) => {
-    logDebug("[SessionInvite] Invitation response:", eventData)
-    setInvitingUserId(null)  // Stop the spinner
-    setIsOpen(false)  // Close the dialog
-    if (eventData.accepted) {
-      // When someone accepts our invite, WE (the session owner) are now in a collaborative session
-      // Set the sessionStorage so isInCollaborativeSession becomes true
-      const mySessionId = getOrCreateSessionId()
-      sessionStorage.setItem('a2a_collaborative_session', mySessionId)
-      logDebug("[SessionInvite] Set collaborative session for owner:", mySessionId)
+  // All WebSocket event subscriptions (auto-cleanup)
+  useEventSubscriptions(() => ({
+    online_users: (eventData: any) => {
+      logDebug("[SessionInvite] Received online users:", eventData)
+      if (eventData.users) {
+        setOnlineUsers(eventData.users)
+      }
+      setLoading(false)
+    },
+    session_invite_sent: (eventData: any) => {
+      logDebug("[SessionInvite] Invitation sent:", eventData)
+      setInvitingUserId(null)
       toast({
-        title: "Invitation Accepted!",
-        description: `${eventData.from_username} has joined your session`,
+        title: "Invitation Sent",
+        description: "Waiting for the user to accept...",
       })
-    } else {
+    },
+    session_invite_error: (eventData: any) => {
+      logDebug("[SessionInvite] Invitation error:", eventData)
+      setInvitingUserId(null)
       toast({
-        title: "Invitation Declined",
-        description: `${eventData.from_username} declined your invitation`,
+        title: "Error",
+        description: eventData.error || "Failed to send invitation",
+        variant: "destructive",
       })
-    }
-  }, [toast])
-
-  useEffect(() => {
-    subscribe("online_users", handleOnlineUsers)
-    subscribe("session_invite_sent", handleInviteSent)
-    subscribe("session_invite_error", handleInviteError)
-    subscribe("session_invite_response_received", handleInviteResponse)
-
-    return () => {
-      unsubscribe("online_users", handleOnlineUsers)
-      unsubscribe("session_invite_sent", handleInviteSent)
-      unsubscribe("session_invite_error", handleInviteError)
-      unsubscribe("session_invite_response_received", handleInviteResponse)
-    }
-  }, [subscribe, unsubscribe, handleOnlineUsers, handleInviteSent, handleInviteError, handleInviteResponse])
+    },
+    session_invite_response_received: (eventData: any) => {
+      logDebug("[SessionInvite] Invitation response:", eventData)
+      setInvitingUserId(null)
+      setIsOpen(false)
+      if (eventData.accepted) {
+        const mySessionId = getOrCreateSessionId()
+        sessionStorage.setItem('a2a_collaborative_session', mySessionId)
+        logDebug("[SessionInvite] Set collaborative session for owner:", mySessionId)
+        toast({
+          title: "Invitation Accepted!",
+          description: `${eventData.from_username} has joined your session`,
+        })
+      } else {
+        toast({
+          title: "Invitation Declined",
+          description: `${eventData.from_username} declined your invitation`,
+        })
+      }
+    },
+  }))
 
   const fetchOnlineUsers = useCallback(() => {
     setLoading(true)
@@ -240,60 +221,43 @@ export function SessionInvitationNotification() {
   const [pendingInvitations, setPendingInvitations] = useState<SessionInvitation[]>([])
   // Track which invitations are waiting for backend confirmation before reload
   const [pendingJoin, setPendingJoin] = useState<{sessionId: string, invitationId: string} | null>(null)
-  const { sendMessage, subscribe, unsubscribe } = useEventHub()
+  const { sendMessage } = useEventHub()
   const { toast } = useToast()
 
-  // Handle receiving an invitation
-  const handleInviteReceived = useCallback((eventData: any) => {
-    logDebug("[SessionInvite] Received invitation:", eventData)
-    setPendingInvitations(prev => [...prev, {
-      invitation_id: eventData.invitation_id,
-      from_user_id: eventData.from_user_id,
-      from_username: eventData.from_username,
-      session_id: eventData.session_id,
-      timestamp: eventData.timestamp
-    }])
-    
-    toast({
-      title: "Session Invitation",
-      description: `${eventData.from_username} invited you to collaborate`,
-    })
-  }, [toast])
+  // All WebSocket event subscriptions (auto-cleanup)
+  useEventSubscriptions(() => ({
+    session_invite_received: (eventData: any) => {
+      logDebug("[SessionInvite] Received invitation:", eventData)
+      setPendingInvitations(prev => [...prev, {
+        invitation_id: eventData.invitation_id,
+        from_user_id: eventData.from_user_id,
+        from_username: eventData.from_username,
+        session_id: eventData.session_id,
+        timestamp: eventData.timestamp
+      }])
 
-  // Handle response error
-  const handleResponseError = useCallback((eventData: any) => {
-    toast({
-      title: "Error",
-      description: eventData.error || "Failed to respond to invitation",
-      variant: "destructive",
-    })
-  }, [toast])
-
-  // Handle session members updated - this confirms the backend processed our acceptance
-  const handleMembersUpdated = useCallback((eventData: any) => {
-    logDebug("[SessionInvite] Session members updated:", eventData)
-    // Check if this is confirmation for our pending join
-    if (pendingJoin && eventData.session_id === pendingJoin.sessionId) {
-      logDebug("[SessionInvite] Backend confirmed membership, now joining session:", pendingJoin.sessionId)
-      // Get the current conversation from the event data for auto-navigation
-      const currentConversation = eventData.current_conversation_id
-      logDebug("[SessionInvite] Current conversation for auto-navigation:", currentConversation)
-      // Backend has confirmed we're added - now safe to reload
-      joinCollaborativeSession(pendingJoin.sessionId, currentConversation)
-    }
-  }, [pendingJoin])
-
-  useEffect(() => {
-    subscribe("session_invite_received", handleInviteReceived)
-    subscribe("session_invite_response_error", handleResponseError)
-    subscribe("session_members_updated", handleMembersUpdated)
-
-    return () => {
-      unsubscribe("session_invite_received", handleInviteReceived)
-      unsubscribe("session_invite_response_error", handleResponseError)
-      unsubscribe("session_members_updated", handleMembersUpdated)
-    }
-  }, [subscribe, unsubscribe, handleInviteReceived, handleResponseError, handleMembersUpdated])
+      toast({
+        title: "Session Invitation",
+        description: `${eventData.from_username} invited you to collaborate`,
+      })
+    },
+    session_invite_response_error: (eventData: any) => {
+      toast({
+        title: "Error",
+        description: eventData.error || "Failed to respond to invitation",
+        variant: "destructive",
+      })
+    },
+    session_members_updated: (eventData: any) => {
+      logDebug("[SessionInvite] Session members updated:", eventData)
+      if (pendingJoin && eventData.session_id === pendingJoin.sessionId) {
+        logDebug("[SessionInvite] Backend confirmed membership, now joining session:", pendingJoin.sessionId)
+        const currentConversation = eventData.current_conversation_id
+        logDebug("[SessionInvite] Current conversation for auto-navigation:", currentConversation)
+        joinCollaborativeSession(pendingJoin.sessionId, currentConversation)
+      }
+    },
+  }))
 
   const respondToInvitation = (invitation: SessionInvitation, accepted: boolean) => {
     sendMessage({

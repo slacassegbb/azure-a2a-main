@@ -6,8 +6,7 @@
 
 import { getOrCreateSessionId } from './session'
 import { logDebug } from '@/lib/debug'
-
-const API_BASE_URL = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
+import { API_BASE_URL } from '@/lib/api-config'
 
 export interface Conversation {
   conversation_id: string
@@ -189,7 +188,7 @@ export async function listMessages(conversationId: string): Promise<Message[]> {
  */
 export async function deleteConversation(conversationId: string): Promise<boolean> {
   try {
-    const baseUrl = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
+    const baseUrl = API_BASE_URL
     const sessionId = getOrCreateSessionId()
     
     const response = await fetch(`${baseUrl}/conversation/delete`, {
@@ -278,7 +277,7 @@ export function notifyConversationCreated(conversation: Conversation): void {
  */
 export async function deleteAllConversations(): Promise<boolean> {
   try {
-    const baseUrl = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
+    const baseUrl = API_BASE_URL
     const sessionId = getOrCreateSessionId()
     
     logDebug('[ConversationAPI] Deleting all conversations for session:', sessionId)

@@ -7,8 +7,7 @@ import { Phone, PhoneOff, Mic, MicOff, AlertTriangle, Volume2, Loader2, X, Maxim
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
-// Get API URL for voice
-const API_BASE_URL = process.env.NEXT_PUBLIC_A2A_API_URL || "http://localhost:12000";
+import { API_BASE_URL } from '@/lib/api-config';
 
 // Message type for conversation history
 export interface VoiceMessage {

@@ -11,6 +11,7 @@ import { Paperclip, Mic, MicOff, Send, Bot, User, Paintbrush, Copy, ThumbsUp, Th
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { useEventHub } from "@/hooks/use-event-hub"
+import { useEventSubscriptions } from "@/hooks/use-event-subscription"
 import { useVoiceRecording } from "@/hooks/use-voice-recording"
 import { VoiceButton } from "@/components/voice-button"
 import { InferenceSteps } from "./inference-steps"
@@ -21,6 +22,7 @@ import { useSearchParams, useRouter } from "next/navigation"
 import { getConversation, updateConversationTitle, createConversation, notifyConversationCreated, type Message as APIMessage } from "@/lib/conversation-api"
 import { createContextId, getOrCreateSessionId } from "@/lib/session"
 import { logDebug, warnDebug, errorDebug, logInfo, DEBUG } from '@/lib/debug'
+import { API_BASE_URL } from '@/lib/api-config'
 
 // Helper function to generate conversation title from first message
 const generateTitleFromMessage = (message: string): string => {
@@ -507,7 +509,7 @@ type ChatPanelProps = {
 
 export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow, workflowGoal, activeWorkflows = [], registeredAgents = [], connectedUsers = [], activeNode: externalActiveNode, setActiveNode: externalSetActiveNode }: ChatPanelProps) {
   // Use the shared Event Hub hook so we subscribe to the same client as the rest of the app
-  const { subscribe, unsubscribe, emit, sendMessage, isConnected } = useEventHub()
+  const { emit, sendMessage, isConnected } = useEventHub()
 
   // Build agent name -> hex color map from registered agents for InferenceSteps
   const agentColors = useMemo(() => {
@@ -810,9 +812,9 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
     : mentionSuggestions
 
   // Handle backend session changes - clear messages when backend restarts
-  useEffect(() => {
+  useEventSubscriptions(() => {
     const BACKEND_SESSION_KEY = 'a2a_backend_session_id'
-    
+
     const handleSessionStarted = (data: any) => {
       const newSessionId = data?.data?.sessionId || data?.sessionId
       if (!newSessionId) {
@@ -859,14 +861,11 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       setIsInCollaborativeSession(!!collab)
     }
 
-    subscribe('session_started', handleSessionStarted)
-    subscribe('session_members_updated', handleSessionMembersUpdated)
-    
-    return () => {
-      unsubscribe('session_started', handleSessionStarted)
-      unsubscribe('session_members_updated', handleSessionMembersUpdated)
+    return {
+      session_started: handleSessionStarted,
+      session_members_updated: handleSessionMembersUpdated,
     }
-  }, [subscribe, unsubscribe, conversationId, router])
+  })
 
   // Clear uploaded files when connection is lost (backend restart)
   useEffect(() => {
@@ -929,7 +928,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
           // Fetch all users for color lookup (connectedUsers may not have all users)
           let allUsers: any[] = []
           try {
-            const baseUrl = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
+            const baseUrl = API_BASE_URL
             const usersResponse = await fetch(`${baseUrl}/api/auth/users`)
             const usersData = await usersResponse.json()
             allUsers = usersData.users || []
@@ -1328,8 +1327,8 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [conversationId]) // Only depend on conversationId - isInferencing checked inside
 
-  // Real Event Hub listener for backend events - moved inside component
-  useEffect(() => {
+  // Real Event Hub listener for backend events (auto-cleanup)
+  useEventSubscriptions(() => {
     // Handle real status updates from A2A backend
     // CONSOLIDATED: task_updated is now ONLY for sidebar status (agent-network.tsx)
     // Workflow display uses remote_agent_activity instead
@@ -2531,7 +2530,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       
       // Send the workflow execution request to backend
       try {
-        const baseUrl = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
+        const baseUrl = API_BASE_URL
         const response = await fetch(`${baseUrl}/message/send`, {
           method: 'POST',
           headers: {
@@ -2563,62 +2562,33 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       }
     }
 
-    // Subscribe to real Event Hub events from A2A backend
-    subscribe("run_workflow", handleRunWorkflow)
-    subscribe("task_updated", handleTaskUpdate)
-    subscribe("task_created", handleTaskCreated)
-    subscribe("system_event", handleSystemEvent)
-    subscribe("message_sent", handleMessageSent)
-    subscribe("message_received", handleMessageReceived)
-    subscribe("message", handleMessage)
-    subscribe("message_chunk", handleMessageChunk)  // Real-time streaming
-    subscribe("shared_message", handleSharedMessage)
-    subscribe("shared_inference_started", handleSharedInferenceStarted)
-    subscribe("shared_inference_ended", handleSharedInferenceEnded)
-    subscribe("conversation_created", handleConversationCreated)
-    subscribe("agent_registered", handleAgentRegistered)
-    subscribe("inference_step", handleInferenceStep)
-    subscribe("tool_call", handleToolCall)
-    subscribe("tool_response", handleToolResponse)
-    subscribe("remote_agent_activity", handleRemoteAgentActivity)
-    subscribe("plan_update", handlePlanUpdate)
-    subscribe("workflow_cancelled", handleWorkflowCancelled)
-    subscribe("workflow_interrupted", handleWorkflowInterrupted)
-    subscribe("file_uploaded", handleFileUploaded)
-    subscribe("shared_file_uploaded", handleSharedFileUploaded)
-    subscribe("typing_indicator", handleTypingIndicator)
-    subscribe("message_reaction", handleMessageReaction)
-
-    return () => {
-      unsubscribe("run_workflow", handleRunWorkflow)
-      unsubscribe("task_updated", handleTaskUpdate)
-      unsubscribe("task_created", handleTaskCreated)
-      unsubscribe("system_event", handleSystemEvent)
-      unsubscribe("message_sent", handleMessageSent)
-      unsubscribe("message_received", handleMessageReceived)
-      unsubscribe("message", handleMessage)
-      unsubscribe("message_chunk", handleMessageChunk)  // Real-time streaming
-      unsubscribe("shared_message", handleSharedMessage)
-      unsubscribe("shared_inference_started", handleSharedInferenceStarted)
-      unsubscribe("shared_inference_ended", handleSharedInferenceEnded)
-      unsubscribe("conversation_created", handleConversationCreated)
-      unsubscribe("agent_registered", handleAgentRegistered)
-      unsubscribe("inference_step", handleInferenceStep)
-      unsubscribe("tool_call", handleToolCall)
-      unsubscribe("tool_response", handleToolResponse)
-      unsubscribe("remote_agent_activity", handleRemoteAgentActivity)
-      unsubscribe("plan_update", handlePlanUpdate)
-      unsubscribe("workflow_cancelled", handleWorkflowCancelled)
-      unsubscribe("workflow_interrupted", handleWorkflowInterrupted)
-      unsubscribe("file_uploaded", handleFileUploaded)
-      unsubscribe("shared_file_uploaded", handleSharedFileUploaded)
-      unsubscribe("typing_indicator", handleTypingIndicator)
-      unsubscribe("message_reaction", handleMessageReaction)
+    return {
+      run_workflow: handleRunWorkflow,
+      task_updated: handleTaskUpdate,
+      task_created: handleTaskCreated,
+      system_event: handleSystemEvent,
+      message_sent: handleMessageSent,
+      message_received: handleMessageReceived,
+      message: handleMessage,
+      message_chunk: handleMessageChunk,
+      shared_message: handleSharedMessage,
+      shared_inference_started: handleSharedInferenceStarted,
+      shared_inference_ended: handleSharedInferenceEnded,
+      conversation_created: handleConversationCreated,
+      agent_registered: handleAgentRegistered,
+      inference_step: handleInferenceStep,
+      tool_call: handleToolCall,
+      tool_response: handleToolResponse,
+      remote_agent_activity: handleRemoteAgentActivity,
+      plan_update: handlePlanUpdate,
+      workflow_cancelled: handleWorkflowCancelled,
+      workflow_interrupted: handleWorkflowInterrupted,
+      file_uploaded: handleFileUploaded,
+      shared_file_uploaded: handleSharedFileUploaded,
+      typing_indicator: handleTypingIndicator,
+      message_reaction: handleMessageReaction,
     }
-  }, [subscribe, unsubscribe, emit, sendMessage, conversationId, isLoadingMessages])
-  // NOTE: Removed shouldFilterByConversationId from deps - using ref instead to prevent
-  // effect re-runs when isInCollaborativeSession changes (which was resetting workflow bar state)
-  // NOTE: Removed processedMessageIds from deps to prevent constant re-subscription
+  })
 
   // Check authentication status and show welcome message only when logged in
   useEffect(() => {
@@ -2650,7 +2620,8 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
     }
   }, [conversationId])
 
-  useEffect(() => {
+  // Status update + final response subscriptions (auto-cleanup)
+  useEventSubscriptions(() => {
     const handleStatusUpdate = (data: { inferenceId: string; agent: string; status: string }) => {
       logDebug("[ChatPanel] Status update:", data)
       
@@ -2901,15 +2872,11 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       setActiveNode(null)
     }
 
-    subscribe("status_update", handleStatusUpdate)
-    subscribe("final_response", handleFinalResponse)
-
-    return () => {
-      unsubscribe("status_update", handleStatusUpdate)
-      unsubscribe("final_response", handleFinalResponse)
+    return {
+      status_update: handleStatusUpdate,
+      final_response: handleFinalResponse,
     }
-  }, [inferenceSteps, processedMessageIds, subscribe, unsubscribe, conversationId]) // Include conversationId for filtering
-  // NOTE: Removed shouldFilterByConversationId - using ref instead
+  })
 
   const uploadFiles = async (files: FileList | File[]) => {
     if (!files || files.length === 0) return
@@ -2924,7 +2891,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
         const formData = new FormData()
         formData.append('file', file)
 
-        const baseUrl = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
+        const baseUrl = API_BASE_URL
         const response = await fetch(`${baseUrl}/upload`, {
           method: 'POST',
           headers: {
@@ -3499,7 +3466,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
         existingUris.add(maskAttachment.uri)
       }
 
-      const baseUrl = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
+      const baseUrl = API_BASE_URL
       const response = await fetch(`${baseUrl}/message/send`, {
         method: 'POST',
         headers: {
@@ -4605,7 +4572,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
               const maskFile = new File([blob], filename, { type: "image/png" })
               formData.append('file', maskFile)
 
-              const baseUrl = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
+              const baseUrl = API_BASE_URL
               const response = await fetch(`${baseUrl}/upload`, {
                 method: 'POST',
                 headers: {

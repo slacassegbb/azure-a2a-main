@@ -2,7 +2,7 @@
 
 import type React from "react"
 import { useEffect, useRef, useState, memo } from "react"
-import { useEventHub } from "@/hooks/use-event-hub"
+import { useEventSubscriptions } from "@/hooks/use-event-subscription"
 import { getAgentHexColor } from "@/lib/agent-colors"
 import { logDebug, warnDebug, errorDebug, logInfo } from '@/lib/debug'
 
@@ -75,9 +75,6 @@ const AgentNetworkDagComponent = ({ nodes, links, activeNodeId }: AgentNetworkDa
   // Fullscreen state
   const [isFullscreen, setIsFullscreen] = useState(false)
   
-  // WebSocket connection for real-time updates
-  const { subscribe, unsubscribe } = useEventHub()
-
   // Keep agents ref in sync
   useEffect(() => {
     agentsRef.current = agents
@@ -215,11 +212,8 @@ const AgentNetworkDagComponent = ({ nodes, links, activeNodeId }: AgentNetworkDa
     })
   }, [agents.length])
 
-  // WebSocket event listeners for task states
-  useEffect(() => {
-    // Log all events for debugging
-    logDebug("[AgentNetworkDag] Setting up WebSocket listeners")
-    
+  // WebSocket event listeners for task states (auto-cleanup)
+  useEventSubscriptions(() => {
     const handleStatusUpdate = (data: any) => {
       logDebug("[AgentNetworkDag] ✅ Status update:", data)
       const { agent: agentName, status, inferenceId } = data
@@ -734,38 +728,21 @@ const AgentNetworkDagComponent = ({ nodes, links, activeNodeId }: AgentNetworkDa
       }
     }
 
-    subscribe("status_update", handleStatusUpdate)
-    subscribe("task_updated", handleTaskUpdate)
-    subscribe("agent_message", handleAgentMessage)
-    subscribe("message", handleMessage)
-    subscribe("final_response", handleFinalResponse)
-    subscribe("tool_call", handleToolCall)
-    subscribe("tool_response", handleToolResponse)
-    subscribe("agent_activity", handleAgentActivity)
-    subscribe("remote_agent_activity", handleRemoteAgentActivity)
-    subscribe("inference_step", handleInferenceStep)
-    subscribe("file", handleFileUploaded)
-    subscribe("outgoing_agent_message", handleOutgoingMessage)
-
-    logDebug("[AgentNetworkDag] ✅ All WebSocket listeners registered")
-
-    return () => {
-      logDebug("[AgentNetworkDag] 🔌 Unsubscribing from WebSocket events")
-      unsubscribe("status_update", handleStatusUpdate)
-      unsubscribe("task_updated", handleTaskUpdate)
-      unsubscribe("agent_message", handleAgentMessage)
-      unsubscribe("message", handleMessage)
-      unsubscribe("final_response", handleFinalResponse)
-      unsubscribe("tool_call", handleToolCall)
-      unsubscribe("tool_response", handleToolResponse)
-      unsubscribe("agent_activity", handleAgentActivity)
-      unsubscribe("remote_agent_activity", handleRemoteAgentActivity)
-      unsubscribe("inference_step", handleInferenceStep)
-      unsubscribe("file", handleFileUploaded)
-      unsubscribe("outgoing_agent_message", handleOutgoingMessage)
+    return {
+      status_update: handleStatusUpdate,
+      task_updated: handleTaskUpdate,
+      agent_message: handleAgentMessage,
+      message: handleMessage,
+      final_response: handleFinalResponse,
+      tool_call: handleToolCall,
+      tool_response: handleToolResponse,
+      agent_activity: handleAgentActivity,
+      remote_agent_activity: handleRemoteAgentActivity,
+      inference_step: handleInferenceStep,
+      file: handleFileUploaded,
+      outgoing_agent_message: handleOutgoingMessage,
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [subscribe, unsubscribe])
+  })
 
   // Highlight active node
   useEffect(() => {

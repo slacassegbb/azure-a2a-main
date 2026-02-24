@@ -4,9 +4,11 @@ import { useState, useEffect, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Trash2, Plus, Loader2, Database, AlertCircle, FileSearch } from "lucide-react"
 import { useEventHub } from "@/hooks/use-event-hub"
+import { useEventSubscriptions } from "@/hooks/use-event-subscription"
 import { getOrCreateSessionId } from "@/lib/session"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { logDebug, warnDebug, logInfo } from '@/lib/debug'
+import { API_BASE_URL } from '@/lib/api-config'
 
 // Processing status for files
 type FileStatus = 'uploading' | 'processing' | 'analyzed' | 'uploaded' | 'error' | undefined
@@ -34,7 +36,7 @@ const SESSION_ID_KEY = 'backendSessionId'
 
 export function FileHistory({ className, onFileSelect, onFilesLoaded, conversationId }: FileHistoryProps) {
   const [files, setFiles] = useState<FileRecord[]>([])
-  const { subscribe, unsubscribe, sendMessage } = useEventHub()
+  const { sendMessage } = useEventHub()
   const fileInputRef = useRef<HTMLInputElement>(null)
   
   // Track current session ID for collaborative session support
@@ -45,28 +47,24 @@ export function FileHistory({ className, onFileSelect, onFilesLoaded, conversati
     return ''
   })
 
-  // Handle backend session changes - clear file history when backend restarts
-  useEffect(() => {
+  // All WebSocket event subscriptions (auto-cleanup)
+  useEventSubscriptions(() => {
     const handleSessionStarted = (data: any) => {
       const newSessionId = data?.sessionId
       if (!newSessionId) return
-      
+
       const storedSessionId = localStorage.getItem(SESSION_ID_KEY)
-      
+
       if (storedSessionId && storedSessionId !== newSessionId) {
-        // Backend restarted - clear file history for old session
         logInfo('[FileHistory] Backend restarted (session changed), clearing file history')
         logDebug('[FileHistory] Old session:', storedSessionId?.slice(0, 8), '-> New session:', newSessionId.slice(0, 8))
         setFiles([])
-        // Note: We no longer clear localStorage here since each session has its own key
       }
-      
-      // Store the new session ID
+
       localStorage.setItem(SESSION_ID_KEY, newSessionId)
       logDebug('[FileHistory] Session ID stored:', newSessionId.slice(0, 8))
     }
 
-    // Handle session members updated - fires when we join a collaborative session
     const handleSessionMembersUpdated = (data: any) => {
       logDebug('[FileHistory] Session members updated:', data)
       const newSessionId = getOrCreateSessionId()
@@ -79,27 +77,14 @@ export function FileHistory({ className, onFileSelect, onFilesLoaded, conversati
       })
     }
 
-    subscribe('session_started', handleSessionStarted)
-    subscribe('session_members_updated', handleSessionMembersUpdated)
-    
-    return () => {
-      unsubscribe('session_started', handleSessionStarted)
-      unsubscribe('session_members_updated', handleSessionMembersUpdated)
-    }
-  }, [subscribe, unsubscribe])
-
-  // Handle shared file uploads from collaborative session members
-  useEffect(() => {
     const handleSharedFileUploaded = (data: any) => {
       logDebug('[FileHistory] Shared file uploaded from session member:', data)
       const fileInfo = data?.fileInfo
       if (!fileInfo) return
 
-      // Add to files list if not already present
       setFiles(prev => {
         const exists = prev.some(f => f.id === fileInfo.id)
         if (exists) {
-          // Update existing file
           return prev.map(f => f.id === fileInfo.id ? {
             ...f,
             ...fileInfo,
@@ -107,7 +92,6 @@ export function FileHistory({ className, onFileSelect, onFilesLoaded, conversati
             status: fileInfo.status || f.status
           } : f)
         }
-        // Add new file
         const newFile: FileRecord = {
           id: fileInfo.id,
           filename: fileInfo.filename,
@@ -116,7 +100,7 @@ export function FileHistory({ className, onFileSelect, onFilesLoaded, conversati
           contentType: fileInfo.contentType || 'application/octet-stream',
           uploadedAt: fileInfo.uploadedAt ? new Date(fileInfo.uploadedAt) : new Date(),
           uri: fileInfo.uri || '',
-          status: (fileInfo.status as FileStatus) || 'uploaded'  // Use provided status or default to 'uploaded'
+          status: (fileInfo.status as FileStatus) || 'uploaded'
         }
         return [newFile, ...prev]
       })
@@ -128,8 +112,6 @@ export function FileHistory({ className, onFileSelect, onFilesLoaded, conversati
       if (!fileId && !filename) return
 
       setFiles(prev => prev.map(f => {
-        // Match by fileId first, fall back to filename for agent-generated files
-        // where the IDs may differ between file_uploaded and file_processing_completed
         if (f.id === fileId || (filename && f.filename === filename)) {
           return { ...f, status: status as FileStatus }
         }
@@ -137,7 +119,6 @@ export function FileHistory({ className, onFileSelect, onFilesLoaded, conversati
       }))
     }
 
-    // Handle agent-generated file events (emitted by WebSocket client as 'file_uploaded')
     const handleAgentFileUploaded = (data: any) => {
       logDebug('[FileHistory] Agent file uploaded:', data)
       const fileInfo = data?.fileInfo
@@ -162,23 +143,21 @@ export function FileHistory({ className, onFileSelect, onFilesLoaded, conversati
       })
     }
 
-    subscribe('shared_file_uploaded', handleSharedFileUploaded)
-    subscribe('file_uploaded', handleAgentFileUploaded)
-    subscribe('file_processing_completed', handleFileProcessingCompleted)
-
-    return () => {
-      unsubscribe('shared_file_uploaded', handleSharedFileUploaded)
-      unsubscribe('file_uploaded', handleAgentFileUploaded)
-      unsubscribe('file_processing_completed', handleFileProcessingCompleted)
+    return {
+      session_started: handleSessionStarted,
+      session_members_updated: handleSessionMembersUpdated,
+      shared_file_uploaded: handleSharedFileUploaded,
+      file_uploaded: handleAgentFileUploaded,
+      file_processing_completed: handleFileProcessingCompleted,
     }
-  }, [subscribe, unsubscribe])
+  })
 
   // Load files from backend API on mount
   useEffect(() => {
     const loadFilesFromBackend = async () => {
       try {
         const sessionId = getOrCreateSessionId()
-        const backendUrl = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
+        const backendUrl = API_BASE_URL
         
         logDebug('[FileHistory] Loading files from backend for session:', sessionId.slice(0, 8), 'URL:', backendUrl)
         
@@ -238,7 +217,7 @@ export function FileHistory({ className, onFileSelect, onFilesLoaded, conversati
     // Try to delete from backend (blob storage + local filesystem + memory index)
     try {
       const sessionId = getOrCreateSessionId()
-      const backendUrl = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
+      const backendUrl = API_BASE_URL
       
       // Include filename in query params to also delete from memory index
       const url = filename 
@@ -269,7 +248,7 @@ export function FileHistory({ className, onFileSelect, onFilesLoaded, conversati
   // Process an existing file (analyze and add to memory)
   const processFile = async (file: FileRecord) => {
     const sessionId = getOrCreateSessionId()
-    const backendUrl = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
+    const backendUrl = API_BASE_URL
     
     // Update status to processing
     setFiles(prev => prev.map(f => 
@@ -343,7 +322,7 @@ export function FileHistory({ className, onFileSelect, onFilesLoaded, conversati
     // Try to delete all files from backend (including memory index)
     try {
       const sessionId = getOrCreateSessionId()
-      const backendUrl = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
+      const backendUrl = API_BASE_URL
       
       // Delete all files in parallel (include filename for memory cleanup)
       const deletePromises = filesToDelete.map(file => {
@@ -378,7 +357,7 @@ export function FileHistory({ className, onFileSelect, onFilesLoaded, conversati
     if (!fileList || fileList.length === 0) return
 
     const sessionId = getOrCreateSessionId()
-    const backendUrl = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
+    const backendUrl = API_BASE_URL
 
     for (let i = 0; i < fileList.length; i++) {
       const file = fileList[i]

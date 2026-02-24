@@ -6,8 +6,7 @@
  * local→production URL fallback.
  */
 
-const getBaseUrl = () =>
-  process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
+import { API_BASE_URL } from '@/lib/api-config'
 
 /** Raw agent shape returned by GET /api/agents */
 export interface RegistryAgent {
@@ -47,7 +46,7 @@ export interface BaseAgent {
 export async function checkAgentHealth(url: string): Promise<boolean> {
   try {
     const urlParts = url.replace('http://', '').replace('https://', '')
-    const res = await fetch(`${getBaseUrl()}/api/agents/health/${urlParts}`)
+    const res = await fetch(`${API_BASE_URL}/api/agents/health/${urlParts}`)
     if (res.ok) {
       const data = await res.json()
       return data.success && data.online === true
@@ -91,7 +90,7 @@ export async function checkAgentHealthWithFallback<T extends { endpoint: string;
  * entry (or use `fetchOnlineAgents`) for that.
  */
 export async function fetchRegistryAgents(): Promise<BaseAgent[]> {
-  const response = await fetch(`${getBaseUrl()}/api/agents`)
+  const response = await fetch(`${API_BASE_URL}/api/agents`)
   if (!response.ok) throw new Error(`Failed to fetch agents: ${response.status}`)
 
   const data = await response.json()

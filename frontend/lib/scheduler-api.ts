@@ -111,29 +111,9 @@ export interface RunHistoryItem {
   result: string | null;  // The actual workflow output/result
 }
 
-const API_BASE = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000';
-
-/**
- * Get auth token from storage
- */
-function getAuthToken(): string | null {
-  if (typeof window === 'undefined') return null;
-  return sessionStorage.getItem('auth_token') || localStorage.getItem('auth_token');
-}
-
-/**
- * Get authorization headers
- */
-function getAuthHeaders(): HeadersInit {
-  const token = getAuthToken();
-  const headers: HeadersInit = {
-    'Content-Type': 'application/json',
-  };
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
-  }
-  return headers;
-}
+import { API_BASE_URL } from '@/lib/api-config';
+import { getAuthHeaders } from '@/lib/auth';
+const API_BASE = API_BASE_URL;
 
 /**
  * List all scheduled workflows, optionally filtered by session

@@ -7,10 +7,12 @@ import { Button } from "@/components/ui/button"
 import { User, Clock, Phone, MessageCircle, UserPlus, UserMinus, LogOut } from "lucide-react"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { useEventHub } from "@/hooks/use-event-hub"
+import { useEventSubscriptions } from "@/hooks/use-event-subscription"
 import { useToast } from "@/hooks/use-toast"
 import { SessionInviteButton } from "@/components/session-invite"
 import { leaveCollaborativeSession, isInCollaborativeSession, getOrCreateSessionId } from "@/lib/session"
 import { logDebug, warnDebug, errorDebug, logInfo } from '@/lib/debug'
+import { API_BASE_URL } from '@/lib/api-config'
 
 type ConnectedUser = {
   user_id: string
@@ -32,7 +34,7 @@ export function ConnectedUsers() {
   const [currentUserId, setCurrentUserId] = useState<string | null>(null)
   const [isSessionOwner, setIsSessionOwner] = useState(false)
   const [mounted, setMounted] = useState(false)  // Track if component is mounted (client-side)
-  const { subscribe, unsubscribe, sendMessage, isConnected } = useEventHub()
+  const { sendMessage, isConnected } = useEventHub()
   const { toast } = useToast()
 
   // Mark as mounted on client-side
@@ -59,7 +61,7 @@ export function ConnectedUsers() {
 
   const fetchActiveUsers = useCallback(async () => {
     try {
-      const baseUrl = process.env.NEXT_PUBLIC_A2A_API_URL || "http://localhost:12000"
+      const baseUrl = API_BASE_URL
       const token = sessionStorage.getItem('auth_token')
       
       // If no token, user is not logged in - show empty
@@ -145,22 +147,12 @@ export function ConnectedUsers() {
     }
   }, [toast])
 
-  useEffect(() => {
-    // Subscribe to real-time user list updates (source of truth)
-    subscribe("user_list_update", handleUserListUpdate)
-
-    // Subscribe to session ended events (owner left/logged out/kicked)
-    subscribe("session_ended", handleSessionEnded)
-
-    // Subscribe to kick result events (feedback for session owner)
-    subscribe("kick_result", handleKickResult)
-
-    return () => {
-      unsubscribe("user_list_update", handleUserListUpdate)
-      unsubscribe("session_ended", handleSessionEnded)
-      unsubscribe("kick_result", handleKickResult)
-    }
-  }, []) // Only subscribe once on mount, unsubscribe on unmount - don't re-subscribe!
+  // Subscribe to WebSocket events (mount-only, auto-cleanup)
+  useEventSubscriptions(() => ({
+    user_list_update: handleUserListUpdate,
+    session_ended: handleSessionEnded,
+    kick_result: handleKickResult,
+  }))
 
   // Request session users when WebSocket connects (or is already connected)
   // This is separate from subscriptions so it re-runs when isConnected changes

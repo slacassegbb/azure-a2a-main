@@ -60,6 +60,7 @@ import { getAgentTextClass, getAgentBgClass } from "@/lib/agent-colors"
 import { deriveCategory, getAllCategories, CATEGORY_ICONS } from "@/lib/agent-categories"
 import { warnDebug } from '@/lib/debug'
 import { fetchRegistryAgents, checkAgentHealth, checkAgentHealthWithFallback } from '@/lib/agent-registry'
+import { API_BASE_URL } from '@/lib/api-config'
 
 export function AgentCatalog() {
   const { toast } = useToast()
@@ -210,7 +211,7 @@ export function AgentCatalog() {
   const fetchEnabledAgents = async () => {
     try {
       const sessionId = getOrCreateSessionId()
-      const baseUrl = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
+      const baseUrl = API_BASE_URL
       const response = await fetch(`${baseUrl}/agents/session?session_id=${sessionId}`)
 
       if (response.ok) {
@@ -227,7 +228,7 @@ export function AgentCatalog() {
   const handleEnableAgent = async (agent: any) => {
     try {
       const sessionId = getOrCreateSessionId()
-      const baseUrl = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
+      const baseUrl = API_BASE_URL
 
       const agentData = {
         name: agent.name,
@@ -269,7 +270,7 @@ export function AgentCatalog() {
   const handleDisableAgent = async (agent: any) => {
     try {
       const sessionId = getOrCreateSessionId()
-      const baseUrl = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
+      const baseUrl = API_BASE_URL
 
       const response = await fetch(`${baseUrl}/agents/session/disable`, {
         method: 'POST',

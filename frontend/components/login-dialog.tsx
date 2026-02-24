@@ -16,6 +16,7 @@ import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { User } from "lucide-react"
+import { API_BASE_URL } from '@/lib/api-config'
 
 interface LoginDialogProps {
   onLogin?: (username: string, password: string) => void
@@ -92,7 +93,7 @@ export function LoginDialog({ onLogin }: LoginDialogProps) {
     setError("")
 
     try {
-      const baseUrl = process.env.NEXT_PUBLIC_A2A_API_URL || "http://localhost:12000"
+      const baseUrl = API_BASE_URL
       let endpoint = `${baseUrl}/api/auth/login`
       let requestBody: any = {
         email: email.trim(),

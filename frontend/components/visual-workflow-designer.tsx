@@ -10,12 +10,14 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { useEventHub } from "@/hooks/use-event-hub"
+import { useEventSubscriptions } from "@/hooks/use-event-subscription"
 import { VoiceButton } from "@/components/voice-button"
 import { useSearchParams } from "next/navigation"
 import { createContextId, getOrCreateSessionId } from "@/lib/session"
 import { getAgentHexColor } from "@/lib/agent-colors"
 import { logDebug } from '@/lib/debug'
 import { fetchRegistryAgents, checkAgentHealthWithFallback } from '@/lib/agent-registry'
+import { API_BASE_URL } from '@/lib/api-config'
 
 interface WorkflowStep {
   id: string
@@ -290,8 +292,8 @@ export function VisualWorkflowDesigner({
           // Decide whether to CREATE (POST) or UPDATE (PUT)
           const isNewWorkflow = !isWorkflowSavedToBackend
           const url = isNewWorkflow 
-            ? `${process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'}/api/workflows`
-            : `${process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'}/api/workflows/${selectedWorkflowId}`
+            ? `${API_BASE_URL}/api/workflows`
+            : `${API_BASE_URL}/api/workflows/${selectedWorkflowId}`
           const method = isNewWorkflow ? 'POST' : 'PUT'
           
           logDebug(`[AutoSave] ${isNewWorkflow ? 'Creating' : 'Updating'} workflow:`, selectedWorkflowId)
@@ -385,7 +387,7 @@ export function VisualWorkflowDesigner({
   }
   
   // Event Hub for live updates
-  const { subscribe, unsubscribe, emit } = useEventHub()
+  const { emit } = useEventHub()
   
   // Helper function to generate workflow text from current refs
   // Supports parallel branches with sub-lettered steps (2a, 2b, etc.)
@@ -762,9 +764,8 @@ export function VisualWorkflowDesigner({
     onWorkflowGeneratedRef.current(workflowText)
   }, [workflowSteps, connections])
   
-  // Subscribe to event hub for live workflow testing
-  // CLEAN IMPLEMENTATION: Simple, direct event handling
-  useEffect(() => {
+  // Subscribe to event hub for live workflow testing (auto-cleanup)
+  useEventSubscriptions(() => {
     
     // SIMPLE: Find the correct step for this agent
     // Track the CURRENT ACTIVE step per agent
@@ -1264,41 +1265,22 @@ export function VisualWorkflowDesigner({
       }
     }
     
-    // Subscribe to events
-    subscribe("status_update", handleStatusUpdate)
-    subscribe("task_updated", handleTaskUpdate)
-    subscribe("agent_message", handleAgentMessage)
-    subscribe("message", handleMessage)
-    subscribe("final_response", handleFinalResponse)
-    subscribe("tool_call", handleToolCall)
-    subscribe("tool_response", handleToolResponse)
-    subscribe("agent_activity", handleAgentActivity)
-    subscribe("remote_agent_activity", handleRemoteAgentActivity)
-    subscribe("inference_step", handleInferenceStep)
-    subscribe("file_uploaded", handleFileUploaded)
-    subscribe("outgoing_agent_message", handleOutgoingMessage)
-    subscribe("host_token_usage", handleHostTokenUsage)
-    
-    return () => {
-      unsubscribe("status_update", handleStatusUpdate)
-      unsubscribe("task_updated", handleTaskUpdate)
-      unsubscribe("agent_message", handleAgentMessage)
-      unsubscribe("message", handleMessage)
-      unsubscribe("final_response", handleFinalResponse)
-      unsubscribe("tool_call", handleToolCall)
-      unsubscribe("tool_response", handleToolResponse)
-      unsubscribe("agent_activity", handleAgentActivity)
-      unsubscribe("remote_agent_activity", handleRemoteAgentActivity)
-      unsubscribe("inference_step", handleInferenceStep)
-      unsubscribe("file_uploaded", handleFileUploaded)
-      unsubscribe("outgoing_agent_message", handleOutgoingMessage)
-      unsubscribe("host_token_usage", handleHostTokenUsage)
+    return {
+      status_update: handleStatusUpdate,
+      task_updated: handleTaskUpdate,
+      agent_message: handleAgentMessage,
+      message: handleMessage,
+      final_response: handleFinalResponse,
+      tool_call: handleToolCall,
+      tool_response: handleToolResponse,
+      agent_activity: handleAgentActivity,
+      remote_agent_activity: handleRemoteAgentActivity,
+      inference_step: handleInferenceStep,
+      file_uploaded: handleFileUploaded,
+      outgoing_agent_message: handleOutgoingMessage,
+      host_token_usage: handleHostTokenUsage,
     }
-    // FIXED: Subscribe on mount, not when isTesting changes
-    // This ensures we don't miss events due to race condition between setIsTesting and event arrival
-    // Handlers check isTesting internally if needed
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  })
 
   // Handle canvas drop
   const handleCanvasDrop = (e: React.DragEvent) => {
@@ -1445,7 +1427,7 @@ export function VisualWorkflowDesigner({
     logDebug("[WorkflowTest] 🚀 Starting test with workflow:", currentWorkflowText)
     
     try {
-      const baseUrl = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
+      const baseUrl = API_BASE_URL
       const messageId = `test_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
       
       // Build message parts in proper A2A format
@@ -1593,7 +1575,7 @@ export function VisualWorkflowDesigner({
     
     // Send the response via API (same format as handleTestSubmit)
     try {
-      const baseUrl = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
+      const baseUrl = API_BASE_URL
       const messageId = `reply_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
       
       const parts: any[] = [
@@ -1668,7 +1650,7 @@ export function VisualWorkflowDesigner({
     try {
       const token = sessionStorage.getItem('auth_token') || localStorage.getItem('auth_token')
       if (token && template.id) {
-        const response = await fetch(`${process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'}/api/workflows/${template.id}`, {
+        const response = await fetch(`${API_BASE_URL}/api/workflows/${template.id}`, {
           headers: {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${token}`
@@ -1893,7 +1875,7 @@ export function VisualWorkflowDesigner({
       
       if (token && selectedWorkflowId) {
         // Update existing workflow in backend
-        const response = await fetch(`${process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'}/api/workflows/${selectedWorkflowId}`, {
+        const response = await fetch(`${API_BASE_URL}/api/workflows/${selectedWorkflowId}`, {
           method: 'PUT',
           headers: {
             'Content-Type': 'application/json',
@@ -1913,7 +1895,7 @@ export function VisualWorkflowDesigner({
       } else if (token && !selectedWorkflowId) {
         // No selected workflow - create new one
         const newId = `workflow_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`
-        const response = await fetch(`${process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'}/api/workflows`, {
+        const response = await fetch(`${API_BASE_URL}/api/workflows`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -4099,7 +4081,7 @@ export function VisualWorkflowDesigner({
                       
                       if (token) {
                         // Save to backend
-                        const response = await fetch(`${process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'}/api/workflows`, {
+                        const response = await fetch(`${API_BASE_URL}/api/workflows`, {
                           method: 'POST',
                           headers: {
                             'Content-Type': 'application/json',

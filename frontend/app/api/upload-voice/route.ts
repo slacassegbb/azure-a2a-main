@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { API_BASE_URL } from '@/lib/api-config'
 
 export async function POST(request: NextRequest) {
   try {
@@ -9,7 +10,7 @@ export async function POST(request: NextRequest) {
     const sessionId = request.headers.get('X-Session-ID')
     
     // Get the backend URL from environment or default
-    const backendUrl = process.env.NEXT_PUBLIC_A2A_API_URL || 'http://localhost:12000'
+    const backendUrl = API_BASE_URL
     
     // Build headers to forward to backend
     const headers: Record<string, string> = {}
