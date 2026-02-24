@@ -483,7 +483,7 @@ Evaluate the condition and return your result."""
 
         system_prompt = """You are analyzing data as part of a multi-agent workflow.
 Based on the context from previous workflow steps, answer the query with structured results.
-Set "ok" to false if the available context is insufficient. Include a confidence score and brief reasoning."""
+IMPORTANT: Always provide your best analysis using whatever data IS available. Set "ok" to true and put your full answer in the "result" field as a JSON string. Only set "ok" to false if there is literally zero relevant context. Lower your confidence score if data is partial, but still give a concrete answer."""
 
         user_prompt = f"""### QUERY
 {user_query}
