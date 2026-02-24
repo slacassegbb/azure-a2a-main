@@ -451,7 +451,7 @@ function AgentCard({ agent, stepNumber, isLive }: { agent: AgentInfo; stepNumber
 
   // Detect if a "completed" step actually failed (rate limit, auth error, service down, etc.)
   // The A2A agent responded but couldn't do the task — treat as error.
-  const failurePatterns = /rate limit|quota.*reached|api.*restrict|cannot retrieve|could not be processed|usage limitation|limit.*reset|did not succeed|unable to|unauthorized|authentication.*fail|service.*unavailable|timed?\s*out|error occurred/i
+  const failurePatterns = /rate limit|quota.*reached|api.*restrict|cannot retrieve|could not be processed|usage limitation|limit.*reset|did not succeed|unable to|unauthorized|authentication.*fail|service.*unavailable|timed?\s*out|error occurred|failed to complete/i
   const isLimited = isComplete && !!output && failurePatterns.test(output)
   
   // Use agent's extracted step number (preserving letter suffix for parallel steps like 1a, 1b)
