@@ -206,45 +206,23 @@ function parseEventsToAgents(steps: StepEvent[], agentColors?: Record<string, st
       mapKey = `${agentName}::${parallelCallId}`
     } else {
       // Sequential execution: track by completion state
-      // First, check if this event has a step label that matches an existing card.
-      // If so, it's a retry of that step — reuse the card instead of creating a new one.
-      const incomingStepMatch = content.match(/\[Step\s*(\d+[a-z]?)\]/i)
-      const incomingStepLabel = incomingStepMatch ? incomingStepMatch[1] : null
-      let retryTarget: string | null = null
-
-      if (incomingStepLabel) {
-        // Look for an existing completed card with this same step label
-        for (const [key, entry] of agentMap.entries()) {
-          if (entry.name === agentName && entry.stepNumber === incomingStepLabel && entry.status === "complete") {
-            retryTarget = key
-            break
+      mapKey = currentAgentKey.get(agentName) || agentName
+      if (agentMap.has(mapKey)) {
+        const existing = agentMap.get(mapKey)!
+        // If the agent already completed and we see a new dispatch event, it's a new invocation
+        const isNewDispatchEvent = eventType === "agent_start" || eventType === "agent_progress"
+        if (existing.status === "complete" && isNewDispatchEvent) {
+          let invocation = 2
+          while (agentMap.has(`${agentName}::${invocation}`)) {
+            const prev = agentMap.get(`${agentName}::${invocation}`)!
+            if (prev.status !== "complete") break
+            invocation++
           }
-        }
-      }
-
-      if (retryTarget) {
-        // Retry of an existing step — reuse the card
-        mapKey = retryTarget
-        currentAgentKey.set(agentName, mapKey)
-      } else {
-        mapKey = currentAgentKey.get(agentName) || agentName
-        if (agentMap.has(mapKey)) {
-          const existing = agentMap.get(mapKey)!
-          // If the agent already completed and we see a new dispatch event, it's a new invocation
-          const isNewDispatchEvent = eventType === "agent_start" || eventType === "agent_progress"
-          if (existing.status === "complete" && isNewDispatchEvent) {
-            let invocation = 2
-            while (agentMap.has(`${agentName}::${invocation}`)) {
-              const prev = agentMap.get(`${agentName}::${invocation}`)!
-              if (prev.status !== "complete") break
-              invocation++
-            }
-            mapKey = `${agentName}::${invocation}`
-            currentAgentKey.set(agentName, mapKey)
-          }
-        } else {
+          mapKey = `${agentName}::${invocation}`
           currentAgentKey.set(agentName, mapKey)
         }
+      } else {
+        currentAgentKey.set(agentName, mapKey)
       }
     }
 
@@ -287,18 +265,11 @@ function parseEventsToAgents(steps: StepEvent[], agentColors?: Record<string, st
     }
     
     if (eventType === "agent_start") {
-      // If the card was already complete, this is a retry — preserve previous output
-      if (agent.status === "complete" && agent.output) {
-        agent.output = agent.output + "\n\n🔄 Retrying..."
-      }
       agent.taskDescription = step.metadata?.task_description || content
       agent.status = "running"
     } else if (eventType === "agent_output") {
-      // If this is a retry (output contains the retry marker), append the new result
-      // after the original output so both are visible.
-      if (agent.output?.includes("🔄 Retrying...")) {
-        agent.output = agent.output.replace("\n\n🔄 Retrying...", "") + "\n\n🔄 **Retry result:**\n" + content
-      } else if (!agent.output || agent.output !== content) {
+      // Set agent output (extraction content is now shown in orchestrator section)
+      if (!agent.output || agent.output !== content) {
         agent.output = content
       }
     } else if (eventType === "agent_complete") {

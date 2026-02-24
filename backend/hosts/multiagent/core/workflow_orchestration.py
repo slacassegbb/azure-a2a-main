@@ -1428,6 +1428,14 @@ If an agent's response asks for more information (e.g., "I need customer details
 - The user will see the agent's question and can provide the needed info in their next message
 - This prevents infinite loops of calling the same agent repeatedly
 
+### 🚫 DO NOT RETRY FAILED STEPS
+If an agent responds but could not complete its task due to API rate limits, service unavailability, or other external issues:
+- The step is DONE — do NOT call the same agent again for the same step
+- Move on to the next workflow step immediately
+- Rate limits do not resolve with immediate retries — retrying wastes time
+- Include the limitation in your final reasoning so the user knows what happened
+- The user can re-run the workflow later when limits reset
+
 ### 🔀 PARALLEL EXECUTION SUPPORT
 When the workflow contains parallel steps (indicated by letter suffixes like 2a., 2b., 2c.):
 - These steps can be executed SIMULTANEOUSLY - they do not depend on each other
@@ -1593,10 +1601,11 @@ Do NOT skip steps. Do NOT mark goal as completed until ALL workflow steps are do
   3. Match each workflow step to a completed task
   4. If required steps are not yet completed, goal_status MUST be "incomplete"
 - **COMPLETION CRITERIA** - Mark goal_status="completed" ONLY when:
-  1. All required workflow steps have been addressed by completed tasks, AND
-  2. All completed tasks succeeded (or agents are waiting for user input)
+  1. All required workflow steps have been attempted (each step dispatched to its agent once), AND
+  2. There are no remaining unattempted workflow steps
+- A step counts as "attempted" even if the agent hit rate limits or returned an error — do NOT retry it
 - **WARNING**: Do NOT mark as completed prematurely!
-- If ANY required workflow step is missing or incomplete, goal_status MUST be "incomplete" and you must create the next task"""
+- If ANY required workflow step has not been attempted yet, goal_status MUST be "incomplete" and you must create the next task"""
         else:
             system_prompt += """
 
@@ -1935,56 +1944,12 @@ Analyze the plan and determine the next step."""
                 if is_parallel and workflow and workflow.strip():
                     current_step_number += 1
 
-                # Track where this batch starts so retry detection doesn't match
-                # tasks within the SAME parallel batch (they're siblings, not retries)
-                batch_start_idx = len(plan.tasks)
-
                 for task_idx, task_dict in enumerate(tasks_to_execute):
                     original_description = task_dict["task_description"]
-
-                    # Check if this is a retry of an existing step (same agent, similar description)
-                    # If so, DON'T increment step number - it's a retry, not a new step
-                    is_retry = False
-                    retry_step_label = None
                     recommended_agent = task_dict.get("recommended_agent", "")
 
-                    if workflow and workflow.strip() and recommended_agent:
-                        # Check recent tasks for same agent to detect retry
-                        # This handles cases where:
-                        # 1. Agent failed and LLM retries (explicit retry)
-                        # 2. Agent completed but LLM calls again with different input (also a retry)
-                        # Only check tasks from BEFORE this batch — tasks within the same
-                        # parallel batch are siblings (1a, 1b, 1c), not retries of each other.
-                        retry_keywords = ["retry", "re-", "again", "fix", "correct", "update", "with the"]
-                        desc_has_retry_keywords = any(kw in original_description.lower() for kw in retry_keywords)
-
-                        for prev_task in reversed(plan.tasks[:batch_start_idx][-10:]):
-                            if prev_task.recommended_agent == recommended_agent:
-                                prev_step_match = re.search(r'\[Step\s+(\d+[a-z]?)\]', prev_task.task_description)
-                                if prev_step_match:
-                                    prev_step_label = prev_step_match.group(1)
-                                    prev_step_num = int(re.sub(r'[a-z]', '', prev_step_label))
-
-                                    # Same step range = immediate retry
-                                    if prev_step_num >= current_step_number:
-                                        is_retry = True
-                                        retry_step_label = prev_step_label
-                                        log_info(f"[Agent Mode] Detected retry of step {retry_step_label} (same step range)")
-                                        break
-
-                                    # Earlier step + retry keywords = delayed retry (e.g., retrying step 1b after step 3)
-                                    if desc_has_retry_keywords:
-                                        is_retry = True
-                                        retry_step_label = prev_step_label
-                                        log_info(f"[Agent Mode] Detected delayed retry of step {retry_step_label} (retry keywords)")
-                                        break
-                    
                     # Determine the step label for this task
-                    if is_retry and retry_step_label:
-                        # Retry - use the same step label
-                        step_label = retry_step_label
-                    elif workflow and workflow.strip():
-                        # New step in workflow mode
+                    if workflow and workflow.strip():
                         if is_parallel:
                             # Parallel tasks get letter suffixes (e.g., 2a, 2b, 2c)
                             # current_step_number was already incremented above
