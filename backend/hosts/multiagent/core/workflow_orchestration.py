@@ -1874,26 +1874,32 @@ Analyze the plan and determine the next step."""
                 # Create AgentModeTask objects for all tasks
                 # In workflow mode, prepend step labels for proper UI rendering
                 pydantic_tasks = []
-                
+
                 # For parallel tasks, increment step number ONCE, then use letter suffixes
                 if is_parallel and workflow and workflow.strip():
                     current_step_number += 1
-                    
+
+                # Track where this batch starts so retry detection doesn't match
+                # tasks within the SAME parallel batch (they're siblings, not retries)
+                batch_start_idx = len(plan.tasks)
+
                 for task_idx, task_dict in enumerate(tasks_to_execute):
                     original_description = task_dict["task_description"]
-                    
+
                     # Check if this is a retry of an existing step (same agent, similar description)
                     # If so, DON'T increment step number - it's a retry, not a new step
                     is_retry = False
                     retry_step_label = None
                     recommended_agent = task_dict.get("recommended_agent", "")
-                    
+
                     if workflow and workflow.strip() and recommended_agent:
                         # Check recent tasks for same agent to detect retry
                         # This handles cases where:
                         # 1. Agent failed and LLM retries (explicit retry)
                         # 2. Agent completed but LLM calls again with different input (also a retry)
-                        for prev_task in reversed(plan.tasks[-10:]):  # Check last 10 tasks
+                        # Only check tasks from BEFORE this batch — tasks within the same
+                        # parallel batch are siblings (1a, 1b, 1c), not retries of each other.
+                        for prev_task in reversed(plan.tasks[:batch_start_idx][-10:]):
                             if prev_task.recommended_agent == recommended_agent:
                                 prev_step_match = re.search(r'\[Step\s+(\d+[a-z]?)\]', prev_task.task_description)
                                 if prev_step_match:
