@@ -352,6 +352,32 @@ class FoundryHostManager(ApplicationManager):
         parts.append(Part(root=TextPart(text=str(resp))))
         return _build_message()
 
+    async def _emit_final_response(self, context_id: str, error_msg: str = ""):
+        """Emit a final_response event so the frontend clears loading/inferencing state.
+
+        Called when process_message exits early (e.g. pre-flight failure) without
+        going through the normal orchestration completion path.
+        """
+        try:
+            from service.websocket_streamer import get_websocket_streamer
+            from utils.tenant import get_conversation_from_context
+            streamer = await get_websocket_streamer()
+            if streamer:
+                conversation_id = get_conversation_from_context(context_id)
+                await streamer._send_event(
+                    "final_response",
+                    {
+                        "contextId": context_id,
+                        "conversationId": conversation_id,
+                        "result": error_msg,
+                        "isComplete": True,
+                    },
+                    context_id
+                )
+                log_debug(f"[Pre-flight] Emitted final_response to clear UI for {conversation_id}")
+        except Exception as e:
+            log_debug(f"[Pre-flight] Failed to emit final_response: {e}")
+
     async def process_message(self, message: Message, agent_mode: bool = None, enable_inter_agent_memory: bool = False, workflow: str = None, workflow_goal: str = None, available_workflows: list = None):
         await self.ensure_host_agent_initialized()
         message_id = get_message_id(message)
@@ -442,11 +468,16 @@ class FoundryHostManager(ApplicationManager):
                         "foundry-host-agent", error_msg, context_id,
                         event_type="agent_error", metadata={"phase": "preflight_check"}
                     )
+                    # Emit final_response so frontend clears the loading/inferencing state
+                    await self._emit_final_response(context_id, error_msg)
                     return
 
                 # Concurrent health checks with retries (handles cold starts / scale-to-zero)
-                MAX_RETRIES = 3
-                TIMEOUT_PER_ATTEMPT = 10.0  # seconds — cold starts can take 10-30s
+                # Azure Container Apps cold starts can take 30-60s. The first request
+                # wakes the container, so we give generous time after the initial attempt.
+                MAX_RETRIES = 4
+                TIMEOUT_PER_ATTEMPT = 15.0  # seconds per HTTP request
+                BACKOFF_SECONDS = 5  # wait between retries for container to start
 
                 async def check_agent_health(name: str, config: dict) -> tuple:
                     """Returns (agent_name, config, is_healthy)"""
@@ -454,17 +485,18 @@ class FoundryHostManager(ApplicationManager):
                     if not agent_url:
                         return (name, config, True)  # No URL to check — assume healthy
                     health_url = f"{agent_url.rstrip('/')}/health"
-                    for attempt in range(MAX_RETRIES):
-                        try:
-                            async with httpx.AsyncClient(timeout=TIMEOUT_PER_ATTEMPT) as client:
+                    # Reuse a single httpx client to avoid per-request SSL overhead
+                    async with httpx.AsyncClient(timeout=TIMEOUT_PER_ATTEMPT) as client:
+                        for attempt in range(MAX_RETRIES):
+                            try:
                                 resp = await client.get(health_url)
                                 if resp.status_code == 200:
                                     return (name, config, True)
-                                log_debug(f"[Workflow Pre-flight] {name} health check {attempt+1}/{MAX_RETRIES}: HTTP {resp.status_code}")
-                        except Exception as e:
-                            log_debug(f"[Workflow Pre-flight] {name} health check {attempt+1}/{MAX_RETRIES}: {e}")
-                        if attempt < MAX_RETRIES - 1:
-                            await asyncio.sleep(3)  # Wait for cold start
+                                log_debug(f"[Workflow Pre-flight] {name} attempt {attempt+1}/{MAX_RETRIES}: HTTP {resp.status_code}")
+                            except Exception as e:
+                                log_debug(f"[Workflow Pre-flight] {name} attempt {attempt+1}/{MAX_RETRIES}: {type(e).__name__}: {e}")
+                            if attempt < MAX_RETRIES - 1:
+                                await asyncio.sleep(BACKOFF_SECONDS)
                     return (name, config, False)
 
                 # Emit status so UI shows the orchestrator is working
@@ -495,6 +527,8 @@ class FoundryHostManager(ApplicationManager):
                         "foundry-host-agent", error_msg, context_id,
                         event_type="agent_error", metadata={"phase": "preflight_check"}
                     )
+                    # Emit final_response so frontend clears the loading/inferencing state
+                    await self._emit_final_response(context_id, error_msg)
                     return  # Don't start orchestration
 
                 log_info(f"[Workflow Pre-flight] All {len(required_agents)} agents online and enabled")
