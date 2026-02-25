@@ -14,7 +14,8 @@ azure-search-documents>=11.5.2
 azure-identity>=1.23.0
 azure-eventhub>=5.11.7
 # Responses API requires the preview version of azure-ai-projects (2.x)
-azure-ai-projects>=1.0.0b8
+# BingGroundingAgentTool and PromptAgentDefinition require >=2.0.0b3
+azure-ai-projects>=2.0.0b3
 openai>=1.90.0
 python-dotenv>=1.1.0
 pymupdf>=1.26.1

@@ -1022,12 +1022,20 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
             
             # Import Azure AI Projects models for agent creation
             from azure.ai.projects.models import (
-                BingGroundingAgentTool,
-                BingGroundingSearchToolParameters,
-                BingGroundingSearchConfiguration,
                 PromptAgentDefinition,
                 FunctionTool,
             )
+            # Bing grounding imports are optional — degrade gracefully if unavailable
+            try:
+                from azure.ai.projects.models import (
+                    BingGroundingAgentTool,
+                    BingGroundingSearchToolParameters,
+                    BingGroundingSearchConfiguration,
+                )
+                _bing_available = True
+            except ImportError:
+                log_warning("BingGroundingAgentTool not available in installed azure-ai-projects — web search disabled")
+                _bing_available = False
             
             # Configuration — use live model if already set, else env var
             model_name = self.model_name or os.environ["AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME"]
@@ -1066,8 +1074,8 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
             
             log_debug(f"Added {len(tools_list)} function tools")
             
-            # Add Bing Grounding Tool if connection ID is available
-            if self.bing_connection_id:
+            # Add Bing Grounding Tool if connection ID is available and SDK supports it
+            if self.bing_connection_id and _bing_available:
                 bing_tool = BingGroundingAgentTool(
                     bing_grounding=BingGroundingSearchToolParameters(
                         search_configurations=[
