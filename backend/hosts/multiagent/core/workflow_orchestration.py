@@ -126,7 +126,8 @@ class WorkflowOrchestration:
                         skills.append(AgentSkill(
                             id=skill.get('id', skill.get('name', '')),
                             name=skill.get('name', ''),
-                            description=skill.get('description', '')
+                            description=skill.get('description', ''),
+                            tags=skill.get('tags', [])
                         ))
             
             caps_data = agent_config.get('capabilities', {})
@@ -148,10 +149,12 @@ class WorkflowOrchestration:
                 name=agent_config['name'],
                 url=agent_config['url'],
                 description=agent_config.get('description', ''),
-                version=agent_config.get('version', '1.0.0'),
-                skills=skills if skills else None,
+                version=agent_config.get('version') or '1.0.0',
+                skills=skills if skills else [],
                 capabilities=capabilities,
-                provider=provider
+                provider=provider,
+                defaultInputModes=agent_config.get('defaultInputModes') or ['text'],
+                defaultOutputModes=agent_config.get('defaultOutputModes') or ['text']
             )
             
             # Register the agent card (this adds to self.cards and self.remote_agent_connections)
