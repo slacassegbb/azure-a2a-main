@@ -4295,13 +4295,13 @@ Answer with just JSON:
                 try:
                     if file_count == 1:
                         await self._emit_granular_agent_event(
-                            "foundry-host-agent", "processing uploaded file", context_id,
-                            event_type="info", metadata={"files": 1}
+                            "foundry-host-agent", "Received 1 file for processing", context_id,
+                            event_type="info", metadata={"files": 1, "phase": "document_indexing"}
                         )
                     else:
                         await self._emit_granular_agent_event(
-                            "foundry-host-agent", f"processing {file_count} uploaded files", context_id,
-                            event_type="info", metadata={"files": file_count}
+                            "foundry-host-agent", f"Received {file_count} files for processing", context_id,
+                            event_type="info", metadata={"files": file_count, "phase": "document_indexing"}
                         )
                     log_foundry_debug(f"File processing status emitted successfully")
                 except Exception as e:
@@ -4415,13 +4415,13 @@ Answer with just JSON:
             if file_count > 0 and (file_info or file_contents):
                 if file_count == 1:
                     await self._emit_granular_agent_event(
-                        "foundry-host-agent", "file processing completed", context_id,
-                        event_type="info", metadata={"files": 1, "action": "complete"}
+                        "foundry-host-agent", "Document processing completed", context_id,
+                        event_type="info", metadata={"files": 1, "phase": "document_extraction_complete"}
                     )
                 else:
                     await self._emit_granular_agent_event(
-                        "foundry-host-agent", f"all {file_count} files processed successfully", context_id,
-                        event_type="info", metadata={"files": file_count, "action": "complete"}
+                        "foundry-host-agent", f"All {file_count} documents processed successfully", context_id,
+                        event_type="info", metadata={"files": file_count, "phase": "document_extraction_complete"}
                     )
             
             # Enhance user message with file information and content
@@ -6142,8 +6142,8 @@ Workflow completed with result:
                 try:
                     if context_id:
                         await self._emit_granular_agent_event(
-                            "foundry-host-agent", f"processing file: {file_id}", context_id,
-                            event_type="info", metadata={"file": file_id, "action": "processing"}
+                            "foundry-host-agent", f"Extracting content from: {file_id}", context_id,
+                            event_type="info", metadata={"file": file_id, "phase": "document_extraction"}
                         )
                     # Build artifact_info with file bytes for local paths
                     artifact_info = {'file_name': file_id, 'artifact_uri': file_uri_str}
@@ -6166,9 +6166,10 @@ Workflow completed with result:
                         extracted_content = processing_result.get("content", "")
                         log_warning(f"[FILE_PROCESSING] Extracted {len(extracted_content)} chars from {file_id}")
                         if context_id:
+                            content_preview = extracted_content[:200] + "..." if len(extracted_content) > 200 else extracted_content
                             await self._emit_granular_agent_event(
-                                "foundry-host-agent", f"file processed successfully: {file_id}", context_id,
-                                event_type="info", metadata={"file": file_id, "action": "complete", "type": "document"}
+                                "foundry-host-agent", f"Extracted {len(extracted_content)} characters from {file_id}", context_id,
+                                event_type="info", metadata={"file": file_id, "phase": "document_extraction_complete", "content_preview": content_preview}
                             )
                 except Exception as e:
                     import traceback as _tb

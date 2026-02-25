@@ -76,21 +76,22 @@ def extract_filename(part: Any) -> Optional[str]:
 
 
 def extract_mime_type(part: Any) -> str:
-    """Extract MIME type from any A2A Part type, defaults to image/png."""
+    """Extract MIME type from any A2A Part type, defaults to application/octet-stream."""
     if part is None:
-        return 'image/png'
-    
+        return 'application/octet-stream'
+
     target = getattr(part, 'root', part)
-    
+
     if isinstance(target, FilePart):
         file_obj = getattr(target, 'file', None)
         if file_obj:
-            return getattr(file_obj, 'mimeType', 'image/png') or 'image/png'
-    
+            # A2A SDK uses snake_case attribute 'mime_type', not camelCase 'mimeType'
+            return getattr(file_obj, 'mime_type', None) or 'application/octet-stream'
+
     if isinstance(target, DataPart) and isinstance(target.data, dict):
-        return target.data.get('media-type') or target.data.get('mimeType') or 'image/png'
-    
-    return 'image/png'
+        return target.data.get('media-type') or target.data.get('mimeType') or target.data.get('mime_type') or 'application/octet-stream'
+
+    return 'application/octet-stream'
 
 
 def create_file_part(uri: str, name: str = 'artifact', mime_type: str = 'image/png') -> Part:
