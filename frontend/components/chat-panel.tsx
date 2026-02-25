@@ -2506,6 +2506,24 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
       
       // Send the workflow execution request to backend
       try {
+        // Build parts array — include any uploaded files so they get processed
+        const workflowParts: any[] = [{ root: { kind: 'text', text: initialMessage } }]
+        if (uploadedFiles.length > 0) {
+          uploadedFiles.forEach(file => {
+            workflowParts.push({
+              root: {
+                kind: 'file',
+                file: {
+                  name: file.filename,
+                  uri: file.uri,
+                  mime_type: file.content_type,
+                  role: 'overlay',
+                }
+              }
+            })
+          })
+        }
+
         const baseUrl = API_BASE_URL
         const response = await fetch(`${baseUrl}/message/send`, {
           method: 'POST',
@@ -2517,7 +2535,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
               messageId: userMessage.id,
               contextId: createContextId(actualConversationId),
               role: 'user',
-              parts: [{ root: { kind: 'text', text: initialMessage } }],
+              parts: workflowParts,
               enableInterAgentMemory: enableInterAgentMemory,
               workflow: workflowText.trim(),
               workflowGoal: workflowGoal || '',
@@ -2531,6 +2549,10 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
           setIsInferencing(false)
         } else {
           logDebug('[ChatPanel] Workflow execution started successfully')
+          // Clear uploaded files after successful send (same as handleSend)
+          if (uploadedFiles.length > 0) {
+            setUploadedFiles([])
+          }
         }
       } catch (error) {
         console.error('[ChatPanel] Error executing workflow:', error)
