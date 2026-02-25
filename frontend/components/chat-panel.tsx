@@ -520,30 +520,6 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
     return map
   }, [registeredAgents])
   
-  // Helper function to check if workflow's required agents are available in the session
-  const isWorkflowRunnable = (workflowText: string): boolean => {
-    // Parse workflow text to extract agent names
-    const lines = workflowText.split('\n').filter(l => l.trim())
-    const requiredAgents: string[] = []
-    for (const line of lines) {
-      const match = line.match(/^\d+\.\s*\[([^\]]+)\]/) || line.match(/^\d+\.\s*(?:Use the\s+)?([^:]+?)(?:\s+agent)?:/i)
-      if (match) {
-        requiredAgents.push(match[1].trim())
-      }
-    }
-    
-    // Check if all required agents are registered (EVALUATE and QUERY are handled locally, not remote agents)
-    return requiredAgents.every(agentName =>
-      agentName.toUpperCase() === 'EVALUATE' ||
-      agentName.toUpperCase() === 'QUERY' ||
-      agentName.toUpperCase() === 'WEB_SEARCH' ||
-      registeredAgents.some(registered =>
-        registered.name?.toLowerCase().includes(agentName.toLowerCase()) ||
-        agentName.toLowerCase().includes(registered.name?.toLowerCase() || '')
-      )
-    )
-  }
-  
   // Get conversation ID from URL parameters (needed for hooks)
   const searchParams = useSearchParams()
   const router = useRouter()
@@ -3481,9 +3457,9 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
             enableInterAgentMemory: enableInterAgentMemory,  // Include inter-agent memory flag
             workflow: workflow ? workflow.trim() : undefined,  // Backend auto-detects mode from workflow presence
             workflowGoal: workflowGoal ? workflowGoal.trim() : undefined,  // Goal from workflow designer for completion evaluation
-            // Send only active workflows where all required agents are available (for intelligent routing)
+            // Send all active workflows for intelligent routing — the backend handles
+            // missing agents gracefully (errors on that step, continues the rest)
             availableWorkflows: activeWorkflows.length > 0 ? activeWorkflows
-              .filter(w => isWorkflowRunnable(w.workflow))
               .map(w => ({
                 id: w.id,
                 name: w.name,
