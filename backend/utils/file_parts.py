@@ -210,5 +210,6 @@ def convert_artifact_dict_to_file_part(artifact: Any) -> Optional[Part]:
             # Since FileWithUri doesn't have metadata, we'll wrap in Part with DataPart sibling
             # Actually, let's just return a pair or use a different approach
     
-    return Part(root=file_part)
+    # create_file_part() already returns Part(root=FilePart(...))
+    return file_part
 
