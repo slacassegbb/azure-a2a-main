@@ -155,7 +155,7 @@ class QuickbooksClient {
 
       // Also try to save to .env file (works locally, but not in Docker)
       const tokenPath = path.join(__dirname, "..", "..", ".env");
-      
+
       if (fs.existsSync(tokenPath)) {
         let envContent = fs.readFileSync(tokenPath, "utf-8");
         const envLines = envContent.split("\n");
@@ -178,29 +178,95 @@ class QuickbooksClient {
         fs.writeFileSync(tokenPath, envLines.join("\n"));
         console.error("✓ Tokens saved to local .env file");
       }
-      
-      // Log the new refresh token for Azure update
-      console.error("");
-      console.error("=".repeat(80));
-      console.error("🔄 REFRESH TOKEN ROTATED - ACTION REQUIRED");
-      console.error("=".repeat(80));
-      console.error("");
-      console.error("QuickBooks issued a new refresh token. To persist this in Azure:");
-      console.error("");
-      console.error("Run this command:");
-      console.error("");
-      console.error(`az containerapp update \\`);
-      console.error(`  --name mcp-quickbooks \\`);
-      console.error(`  --resource-group rg-a2a-prod \\`);
-      console.error(`  --set-env-vars "QUICKBOOKS_REFRESH_TOKEN=${this.refreshToken}"`);
-      console.error("");
-      console.error("Or redeploy with: ./deploy-mcp-quickbooks.sh");
-      console.error("");
-      console.error("=".repeat(80));
-      console.error("");
+
+      // Auto-persist rotated refresh token to Azure Container App env var
+      // so it survives container restarts. Uses managed identity (IMDS).
+      this.persistTokenToAzure().catch((err) => {
+        console.error("⚠ Azure token persistence failed (non-fatal):", err.message);
+      });
     } catch (error) {
       console.error("Error saving tokens:", error);
     }
+  }
+
+  /**
+   * Persist the rotated refresh token to the Azure Container App's env vars
+   * using managed identity via IMDS. This ensures the token survives container
+   * restarts without manual intervention.
+   */
+  private async persistTokenToAzure(): Promise<void> {
+    const subscriptionId = process.env.AZURE_SUBSCRIPTION_ID;
+    const resourceGroup = process.env.AZURE_RESOURCE_GROUP || "rg-a2a-prod";
+    const containerAppName = process.env.AZURE_CONTAINER_APP_NAME || "mcp-quickbooks";
+    const clientId = process.env.AZURE_CLIENT_ID;
+
+    if (!subscriptionId) {
+      console.error("⚠ AZURE_SUBSCRIPTION_ID not set — skipping Azure token persistence");
+      return;
+    }
+
+    // Step 1: Get an access token from IMDS using managed identity
+    const imdsUrl = new URL("http://169.254.169.254/metadata/identity/oauth2/token");
+    imdsUrl.searchParams.set("api-version", "2018-02-01");
+    imdsUrl.searchParams.set("resource", "https://management.azure.com/");
+    if (clientId) {
+      imdsUrl.searchParams.set("client_id", clientId);
+    }
+
+    const tokenResp = await fetch(imdsUrl.toString(), {
+      headers: { Metadata: "true" },
+    });
+    if (!tokenResp.ok) {
+      throw new Error(`IMDS token request failed: ${tokenResp.status} ${await tokenResp.text()}`);
+    }
+    const { access_token: azureToken } = await tokenResp.json() as any;
+
+    // Step 2: GET the current container app config
+    const armBase = `https://management.azure.com/subscriptions/${subscriptionId}/resourceGroups/${resourceGroup}/providers/Microsoft.App/containerApps/${containerAppName}`;
+    const apiVersion = "2024-03-01";
+
+    const appResp = await fetch(`${armBase}?api-version=${apiVersion}`, {
+      headers: { Authorization: `Bearer ${azureToken}` },
+    });
+    if (!appResp.ok) {
+      throw new Error(`Failed to GET container app: ${appResp.status}`);
+    }
+    const appConfig = await appResp.json() as any;
+
+    // Step 3: Update the QUICKBOOKS_REFRESH_TOKEN env var in the template
+    const containers = appConfig.properties?.template?.containers;
+    if (!containers || containers.length === 0) {
+      throw new Error("No containers found in app config");
+    }
+
+    const envVars: Array<{ name: string; value?: string; secretRef?: string }> = containers[0].env || [];
+    const idx = envVars.findIndex((e: any) => e.name === "QUICKBOOKS_REFRESH_TOKEN");
+    if (idx !== -1) {
+      envVars[idx].value = this.refreshToken!;
+    } else {
+      envVars.push({ name: "QUICKBOOKS_REFRESH_TOKEN", value: this.refreshToken! });
+    }
+    containers[0].env = envVars;
+
+    // Step 4: PATCH the container app with the updated config
+    const patchResp = await fetch(`${armBase}?api-version=${apiVersion}`, {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${azureToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        properties: {
+          template: appConfig.properties.template,
+        },
+      }),
+    });
+
+    if (!patchResp.ok) {
+      throw new Error(`Failed to PATCH container app: ${patchResp.status} ${await patchResp.text()}`);
+    }
+
+    console.error("✓ Refresh token auto-persisted to Azure Container App env var");
   }
 
   async refreshAccessToken() {
