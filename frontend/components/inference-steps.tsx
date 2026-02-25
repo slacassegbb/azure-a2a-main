@@ -128,6 +128,21 @@ function parseEventsToAgents(steps: StepEvent[], agentColors?: Record<string, st
             timestamp: activityIndex,
           }
           orchestratorStatus = "dispatching"
+        } else if (phase === "preflight_check") {
+          activityIndex++
+          activity = {
+            type: "info",
+            label: content || "Preparing agents...",
+            timestamp: activityIndex,
+          }
+        } else if (phase === "workflow_planning") {
+          activityIndex++
+          activity = {
+            type: "planning",
+            label: content || "Planning workflow steps...",
+            timestamp: activityIndex,
+          }
+          orchestratorStatus = "planning"
         } else if (phase === "document_indexing") {
           // Orchestrator received files from agent
           activityIndex++

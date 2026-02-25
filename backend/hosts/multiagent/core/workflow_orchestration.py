@@ -1694,6 +1694,14 @@ Do NOT skip steps. Do NOT mark goal as completed until ALL workflow steps are do
                 await self._emit_plan_update(plan, context_id, reasoning=f"Redirected: {interrupt_instruction[:100]}")
                 log_info(f"[INTERRUPT] Goal updated, re-planning with {len(completed_tasks)} completed tasks preserved")
 
+            # Emit a user-visible "planning" event on the first iteration so the
+            # frontend shows activity instead of a blank "Starting workflow..." screen
+            if iteration == 1:
+                await self._emit_granular_agent_event(
+                    "foundry-host-agent", "Planning workflow steps...", context_id,
+                    event_type="phase", metadata={"phase": "workflow_planning"}
+                )
+
             # Single typed event replaces old untyped _emit_status_event + typed double-emit
             await self._emit_granular_agent_event(
                 "foundry-host-agent", f"Planning step {iteration}...", context_id,
