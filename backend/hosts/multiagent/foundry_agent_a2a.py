@@ -4282,12 +4282,11 @@ Answer with just JSON:
             log_foundry_debug(f"processed_parts list initialized")
             
             # Count files to show appropriate status
-            log_foundry_debug(f"Counting files in message parts...")
             file_count = 0
             for part in message_parts:
                 if hasattr(part, 'root') and hasattr(part.root, 'kind') and part.root.kind == 'file':
                     file_count += 1
-            log_foundry_debug(f"Found {file_count} files in {len(message_parts)} parts")
+            log_debug(f"[FILE_PROCESSING] Found {file_count} file(s) in {len(message_parts)} message parts")
             
             if file_count > 0:
                 log_foundry_debug(f"Emitting file processing status...")
@@ -4425,6 +4424,7 @@ Answer with just JSON:
             
             # Enhance user message with file information and content
             # EXPLICIT FILE ROUTING: Include URIs so GPT-4 can pass them to agents via file_uris
+            log_debug(f"[FILE_PROCESSING] Building enhanced_message: file_uris={len(file_uris_for_gpt4)}, file_contents={len(file_contents)}, file_info={len(file_info)}")
             enhanced_message = user_message
             if file_uris_for_gpt4:
                 # Format file URIs in a way GPT-4 can easily extract and use
@@ -6123,12 +6123,13 @@ Workflow completed with result:
 
             # Check if file already has an HTTP URI (uploaded to blob by frontend or agent)
             file_uri = getattr(part.root.file, 'uri', None)
+            log_debug(f"[FILE_PROCESSING] convert_part FILE: name={file_id}, uri={str(file_uri)[:80] if file_uri else 'None'}")
             if file_uri and str(file_uri).startswith(('http://', 'https://')):
                 # File already in blob storage — skip save_artifact() but STILL run
                 # document processing so text is extracted and stored in Azure Search memory.
                 # Without this, user-uploaded files are never indexed and workflows can't
                 # access their content.
-                log_debug(f"FilePart already has HTTP URI, running document processing only: {file_id}")
+                log_debug(f"[FILE_PROCESSING] Running document processing for pre-uploaded file: {file_id}")
                 session_id = get_tenant_from_context(context_id) if context_id else None
                 extracted_content = ""
                 try:
