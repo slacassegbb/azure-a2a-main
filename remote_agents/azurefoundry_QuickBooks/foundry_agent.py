@@ -230,6 +230,7 @@ When asked to "create an INVOICE" or bill a customer:
 4. **Don't ask for confirmation** - If data is provided, just create the bill/invoice (UNLESS the instruction says "HITL REQUIRED" or "ask the user")
 5. **Default account for bills is "7"** - NEVER call qbo_search_accounts or qbo_query to look up accounts
 6. **NO unnecessary queries** - Do NOT call qbo_query, qbo_search_bills, or qbo_search_vendors during bill/invoice creation workflows
+7. **JUST RETURN THE DATA** - After fetching reports or data with tools, include the results directly in your text response. Do NOT try to send data to any URL, callback endpoint, or localhost address. The system handles delivery automatically via the A2A protocol.
 
 ## Error Reporting (CRITICAL)
 
