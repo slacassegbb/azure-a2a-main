@@ -6188,16 +6188,6 @@ Workflow completed with result:
                     result_data['content_preview'] = extracted_content[:500] + "..." if len(extracted_content) > 500 else extracted_content
                 data_part = DataPart(data=result_data)
 
-                # Also create a FilePart for agent delegation
-                file_part_for_remote = FilePart(
-                    kind='file',
-                    file=FileWithUri(
-                        name=file_id,
-                        mimeType=file_mime,
-                        uri=str(file_uri),
-                    ),
-                )
-                self._store_parts_in_session(tool_context, data_part, Part(root=file_part_for_remote))
                 return data_part
             
             # Emit status for file processing
