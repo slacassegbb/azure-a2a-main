@@ -1186,13 +1186,17 @@ class FoundryHostManager(ApplicationManager):
             task.status.message = msg
             self.update_task(task)
             
-            # Stream task status update to WebSocket
-            log_debug(f"Streaming task status update to WebSocket: {state}")
-            try:
-                asyncio.create_task(stream_task_status_update(status_agent_name, state))
-                completed_agents.add(status_agent_name)
-            except Exception as e:
-                log_debug(f"Error scheduling task status update: {e}")
+            # Stream task status update to WebSocket — only on the LAST response
+            # to avoid duplicate completion bars when multiple responses exist
+            # (e.g., extracted file content + LLM response)
+            is_last_response = resp_index == len(responses) - 1
+            if is_last_response:
+                log_debug(f"Streaming task status update to WebSocket: {state}")
+                try:
+                    asyncio.create_task(stream_task_status_update(status_agent_name, state))
+                    completed_agents.add(status_agent_name)
+                except Exception as e:
+                    log_debug(f"Error scheduling task status update: {e}")
             
             if task.status.message and (not conversation.messages or conversation.messages[-1] != task.status.message):
                 conversation.messages.append(task.status.message)

@@ -6141,6 +6141,7 @@ Workflow completed with result:
                 extracted_content = ""
                 try:
                     if context_id:
+                        log_warning(f"[FILE_PROCESSING] Emitting document_extraction event for {file_id}")
                         await self._emit_granular_agent_event(
                             "foundry-host-agent", f"Extracting content from: {file_id}", context_id,
                             event_type="info", metadata={"file": file_id, "phase": "document_extraction"}
@@ -6167,10 +6168,36 @@ Workflow completed with result:
                         log_warning(f"[FILE_PROCESSING] Extracted {len(extracted_content)} chars from {file_id}")
                         if context_id:
                             content_preview = extracted_content[:200] + "..." if len(extracted_content) > 200 else extracted_content
+                            log_warning(f"[FILE_PROCESSING] Emitting document_extraction_complete event for {file_id}")
                             await self._emit_granular_agent_event(
                                 "foundry-host-agent", f"Extracted {len(extracted_content)} characters from {file_id}", context_id,
                                 event_type="info", metadata={"file": file_id, "phase": "document_extraction_complete", "content_preview": content_preview}
                             )
+                            # Emit file_uploaded event so shared files panel updates in real-time
+                            try:
+                                from service.websocket_streamer import get_websocket_streamer
+                                from utils.tenant import get_conversation_from_context
+                                streamer = await get_websocket_streamer()
+                                if streamer:
+                                    conversation_id = get_conversation_from_context(context_id)
+                                    file_event = {
+                                        "fileInfo": {
+                                            "id": file_id,
+                                            "filename": file_id,
+                                            "originalName": file_id,
+                                            "size": len(extracted_content),
+                                            "content_type": getattr(part.root.file, 'mime_type', None) or 'application/octet-stream',
+                                            "uri": file_uri_str,
+                                            "uploadedAt": __import__('datetime').datetime.utcnow().isoformat(),
+                                            "status": "analyzed"
+                                        },
+                                        "conversationId": conversation_id,
+                                        "contextId": context_id
+                                    }
+                                    await streamer._send_event("file_uploaded", file_event, context_id)
+                                    log_warning(f"[FILE_PROCESSING] Emitted file_uploaded event for {file_id}")
+                            except Exception as fe:
+                                log_warning(f"[FILE_PROCESSING] Failed to emit file_uploaded event: {fe}")
                 except Exception as e:
                     import traceback as _tb
                     log_error(f"[FILE_PROCESSING] Document processing FAILED for {file_id}: {e}")
