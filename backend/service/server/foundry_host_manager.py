@@ -472,31 +472,27 @@ class FoundryHostManager(ApplicationManager):
                     await self._emit_final_response(context_id, error_msg)
                     return
 
-                # Concurrent health checks with retries (handles cold starts / scale-to-zero)
-                # Azure Container Apps cold starts can take 30-60s. The first request
-                # wakes the container, so we give generous time after the initial attempt.
-                MAX_RETRIES = 4
-                TIMEOUT_PER_ATTEMPT = 15.0  # seconds per HTTP request
-                BACKOFF_SECONDS = 5  # wait between retries for container to start
+                # Quick concurrent health checks — wake containers and enable agents.
+                # Azure container-to-container networking can be flaky (ReadTimeout
+                # even when agent is online from outside), so we keep this fast and
+                # non-blocking: warn on unreachable agents but proceed anyway.
+                # The actual A2A dispatch will surface real failures gracefully.
+                TIMEOUT_SECONDS = 5.0
 
                 async def check_agent_health(name: str, config: dict) -> tuple:
                     """Returns (agent_name, config, is_healthy)"""
                     agent_url = config.get('production_url') or config.get('local_url') or config.get('url', '')
                     if not agent_url:
-                        return (name, config, True)  # No URL to check — assume healthy
+                        return (name, config, True)
                     health_url = f"{agent_url.rstrip('/')}/health"
-                    # Reuse a single httpx client to avoid per-request SSL overhead
-                    async with httpx.AsyncClient(timeout=TIMEOUT_PER_ATTEMPT) as client:
-                        for attempt in range(MAX_RETRIES):
-                            try:
-                                resp = await client.get(health_url)
-                                if resp.status_code == 200:
-                                    return (name, config, True)
-                                log_debug(f"[Workflow Pre-flight] {name} attempt {attempt+1}/{MAX_RETRIES}: HTTP {resp.status_code}")
-                            except Exception as e:
-                                log_debug(f"[Workflow Pre-flight] {name} attempt {attempt+1}/{MAX_RETRIES}: {type(e).__name__}: {e}")
-                            if attempt < MAX_RETRIES - 1:
-                                await asyncio.sleep(BACKOFF_SECONDS)
+                    try:
+                        async with httpx.AsyncClient(timeout=TIMEOUT_SECONDS) as client:
+                            resp = await client.get(health_url)
+                            if resp.status_code == 200:
+                                return (name, config, True)
+                            log_debug(f"[Workflow Pre-flight] {name}: HTTP {resp.status_code}")
+                    except Exception as e:
+                        log_debug(f"[Workflow Pre-flight] {name}: {type(e).__name__}: {e}")
                     return (name, config, False)
 
                 # Emit status so UI shows the orchestrator is working
@@ -507,31 +503,28 @@ class FoundryHostManager(ApplicationManager):
                     event_type="phase", metadata={"phase": "preflight_check"}
                 )
 
-                # Run all health checks concurrently
+                # Run all health checks concurrently (single attempt, 5s timeout)
                 results = await asyncio.gather(
                     *(check_agent_health(name, config) for name, config in agent_configs.items())
                 )
 
-                offline_agents = []
+                unreachable_agents = []
                 for name, config, is_healthy in results:
+                    session_registry.enable_agent(session_id, config)
                     if is_healthy:
-                        session_registry.enable_agent(session_id, config)
                         log_info(f"[Workflow Pre-flight] Auto-enabled '{name}' for session {session_id[:8]}...")
                     else:
-                        offline_agents.append(name)
+                        unreachable_agents.append(name)
+                        log_info(f"[Workflow Pre-flight] Auto-enabled '{name}' (health check failed, proceeding anyway)")
 
-                if offline_agents:
-                    error_msg = f"Cannot run workflow — these agents are offline after {MAX_RETRIES} retries: {', '.join(offline_agents)}"
-                    log_error(f"[Workflow Pre-flight] {error_msg}")
+                if unreachable_agents:
+                    warn_msg = f"Note: {', '.join(unreachable_agents)} did not respond to health check but will be attempted anyway"
                     await self._host_agent._emit_granular_agent_event(
-                        "foundry-host-agent", error_msg, context_id,
-                        event_type="agent_error", metadata={"phase": "preflight_check"}
+                        "foundry-host-agent", warn_msg, context_id,
+                        event_type="phase", metadata={"phase": "preflight_check"}
                     )
-                    # Emit final_response so frontend clears the loading/inferencing state
-                    await self._emit_final_response(context_id, error_msg)
-                    return  # Don't start orchestration
 
-                log_info(f"[Workflow Pre-flight] All {len(required_agents)} agents online and enabled")
+                log_info(f"[Workflow Pre-flight] All {len(required_agents)} agents enabled ({len(unreachable_agents)} unreachable)")
 
         conversation = self.get_conversation(context_id)
         if not conversation:
