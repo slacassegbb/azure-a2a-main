@@ -472,21 +472,21 @@ class FoundryHostManager(ApplicationManager):
                     await self._emit_final_response(context_id, error_msg)
                     return
 
-                # Quick concurrent health checks — wake containers and enable agents.
-                # Azure container-to-container networking can be flaky (ReadTimeout
-                # even when agent is online from outside), so we keep this fast and
-                # non-blocking: warn on unreachable agents but proceed anyway.
-                # The actual A2A dispatch will surface real failures gracefully.
-                TIMEOUT_SECONDS = 5.0
+                # Concurrent health checks with two rounds:
+                #  Round 1: fast 5s timeout — catches all online agents quickly
+                #  Round 2: 20s timeout for failures only — handles cold starts
+                # This avoids the 75s worst case while still blocking on truly offline agents.
+                FAST_TIMEOUT = 5.0
+                SLOW_TIMEOUT = 20.0
 
-                async def check_agent_health(name: str, config: dict) -> tuple:
+                async def check_agent_health(name: str, config: dict, timeout: float) -> tuple:
                     """Returns (agent_name, config, is_healthy)"""
                     agent_url = config.get('production_url') or config.get('local_url') or config.get('url', '')
                     if not agent_url:
                         return (name, config, True)
                     health_url = f"{agent_url.rstrip('/')}/health"
                     try:
-                        async with httpx.AsyncClient(timeout=TIMEOUT_SECONDS) as client:
+                        async with httpx.AsyncClient(timeout=timeout) as client:
                             resp = await client.get(health_url)
                             if resp.status_code == 200:
                                 return (name, config, True)
@@ -503,28 +503,46 @@ class FoundryHostManager(ApplicationManager):
                     event_type="phase", metadata={"phase": "preflight_check"}
                 )
 
-                # Run all health checks concurrently (single attempt, 5s timeout)
+                # Round 1: fast check (5s) — most online agents respond in <1s
                 results = await asyncio.gather(
-                    *(check_agent_health(name, config) for name, config in agent_configs.items())
+                    *(check_agent_health(name, config, FAST_TIMEOUT) for name, config in agent_configs.items())
                 )
 
-                unreachable_agents = []
+                failed_agents = {}  # name -> config for agents that failed round 1
                 for name, config, is_healthy in results:
-                    session_registry.enable_agent(session_id, config)
                     if is_healthy:
+                        session_registry.enable_agent(session_id, config)
                         log_info(f"[Workflow Pre-flight] Auto-enabled '{name}' for session {session_id[:8]}...")
                     else:
-                        unreachable_agents.append(name)
-                        log_info(f"[Workflow Pre-flight] Auto-enabled '{name}' (health check failed, proceeding anyway)")
+                        failed_agents[name] = config
 
-                if unreachable_agents:
-                    warn_msg = f"Note: {', '.join(unreachable_agents)} did not respond to health check but will be attempted anyway"
-                    await self._host_agent._emit_granular_agent_event(
-                        "foundry-host-agent", warn_msg, context_id,
-                        event_type="phase", metadata={"phase": "preflight_check"}
+                # Round 2: slower retry for failures only (cold start / networking flake)
+                if failed_agents:
+                    log_info(f"[Workflow Pre-flight] Retrying {len(failed_agents)} agents with longer timeout...")
+                    retry_results = await asyncio.gather(
+                        *(check_agent_health(name, config, SLOW_TIMEOUT) for name, config in failed_agents.items())
                     )
+                    offline_agents = []
+                    for name, config, is_healthy in retry_results:
+                        if is_healthy:
+                            session_registry.enable_agent(session_id, config)
+                            log_info(f"[Workflow Pre-flight] Auto-enabled '{name}' on retry for session {session_id[:8]}...")
+                        else:
+                            offline_agents.append(name)
+                else:
+                    offline_agents = []
 
-                log_info(f"[Workflow Pre-flight] All {len(required_agents)} agents enabled ({len(unreachable_agents)} unreachable)")
+                if offline_agents:
+                    error_msg = f"Cannot run workflow — these agents are offline: {', '.join(offline_agents)}"
+                    log_error(f"[Workflow Pre-flight] {error_msg}")
+                    await self._host_agent._emit_granular_agent_event(
+                        "foundry-host-agent", error_msg, context_id,
+                        event_type="agent_error", metadata={"phase": "preflight_check"}
+                    )
+                    await self._emit_final_response(context_id, error_msg)
+                    return
+
+                log_info(f"[Workflow Pre-flight] All {len(required_agents)} agents online and enabled")
 
         conversation = self.get_conversation(context_id)
         if not conversation:
