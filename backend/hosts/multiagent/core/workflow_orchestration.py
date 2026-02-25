@@ -957,12 +957,23 @@ Use the above output from the previous workflow step to complete your task."""
             
             return {"output": output_text, "hitl_pause": False}
         else:
-            # Simple string response (from send_message — list of strings).
+            # Simple string response (from send_message — list of Part objects).
             # If we reach here, send_message() returned successfully (failures raise).
             task.state = "completed"
             output_text = extract_text_fn(response_obj)
             task.output = {"result": output_text}
             task.updated_at = datetime.now(timezone.utc)
+
+            # Collect any FileParts from the response list so downstream steps
+            # can access file URIs (e.g., Excel/PowerPoint → Email).
+            if isinstance(responses, list):
+                if not hasattr(session_context, '_latest_processed_parts'):
+                    session_context._latest_processed_parts = []
+                for part in responses:
+                    inner = getattr(part, 'root', part)
+                    if hasattr(inner, 'file') and hasattr(inner.file, 'uri') and inner.file.uri:
+                        session_context._latest_processed_parts.append(part)
+                        log_debug(f"[Agent Mode] Collected FilePart from {recommended_agent}: {inner.file.uri[:80]}...")
 
             # Emit agent output to workflow panel
             if output_text and recommended_agent:
