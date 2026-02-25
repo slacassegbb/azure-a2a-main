@@ -200,10 +200,19 @@ create_full_invoice with: {
 **After the invoice is created, ALWAYS write a summary like:**
 "✅ Created invoice [invoice_id] for [customer_name] with [X] line items totaling $[amount]"
 
+## IMPORTANT: Data Results Are NOT Errors
+
+If you successfully query Stripe and the data shows $0 revenue, no successful payments, or all
+payments in "requires_payment_method" status — that is a VALID RESULT, not an error. Report the
+numbers as-is. Zero revenue is still a valid answer to "what is the total revenue?"
+
 ## Error Reporting (CRITICAL)
 
-If you CANNOT complete the requested task — due to rate limits, API errors, missing data,
-authentication failures, or any other reason — you MUST start your response with "Error:".
+Only use "Error:" when you genuinely CANNOT complete the task — due to rate limits, API errors,
+authentication failures, or tool call failures. Do NOT use "Error:" when the data itself is
+empty or shows zero values — that is a successful query with a valid result.
+
+If you must report an error, start your response with "Error:".
 
 Examples:
 - "Error: Rate limit exceeded. Please try again later."

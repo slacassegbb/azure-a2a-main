@@ -473,11 +473,13 @@ class FoundryHostManager(ApplicationManager):
                     return
 
                 # Concurrent health checks with two rounds:
-                #  Round 1: fast 5s timeout — catches all online agents quickly
-                #  Round 2: 20s timeout for failures only — handles cold starts
-                # This avoids the 75s worst case while still blocking on truly offline agents.
+                #  Round 1: fast 5s timeout — catches all warm agents quickly
+                #  Round 2: polling loop for failures — handles cold starts
+                #    (minReplicas=0 agents can take 30-90s to cold start)
+                #    Polls every 10s up to 90s total, exits early once all respond.
                 FAST_TIMEOUT = 5.0
-                SLOW_TIMEOUT = 20.0
+                POLL_INTERVAL = 10.0
+                POLL_MAX_SECONDS = 90.0
 
                 async def check_agent_health(name: str, config: dict, timeout: float) -> tuple:
                     """Returns (agent_name, config, is_healthy)"""
@@ -503,7 +505,7 @@ class FoundryHostManager(ApplicationManager):
                     event_type="phase", metadata={"phase": "preflight_check"}
                 )
 
-                # Round 1: fast check (5s) — most online agents respond in <1s
+                # Round 1: fast check (5s) — most warm agents respond in <1s
                 results = await asyncio.gather(
                     *(check_agent_health(name, config, FAST_TIMEOUT) for name, config in agent_configs.items())
                 )
@@ -516,24 +518,42 @@ class FoundryHostManager(ApplicationManager):
                     else:
                         failed_agents[name] = config
 
-                # Round 2: slower retry for failures only (cold start / networking flake)
+                # Round 2: polling loop for cold-starting agents
+                # Round 1 already woke the containers. Now poll every 10s until
+                # they respond or we hit 90s.
                 if failed_agents:
-                    log_info(f"[Workflow Pre-flight] Retrying {len(failed_agents)} agents with longer timeout...")
-                    retry_results = await asyncio.gather(
-                        *(check_agent_health(name, config, SLOW_TIMEOUT) for name, config in failed_agents.items())
+                    log_info(f"[Workflow Pre-flight] Waiting for {len(failed_agents)} agents to cold-start...")
+                    await self._host_agent._emit_granular_agent_event(
+                        "foundry-host-agent",
+                        f"Waiting for {len(failed_agents)} agents to start ({', '.join(failed_agents.keys())})...",
+                        context_id,
+                        event_type="phase", metadata={"phase": "preflight_check"}
                     )
-                    offline_agents = []
-                    for name, config, is_healthy in retry_results:
-                        if is_healthy:
-                            session_registry.enable_agent(session_id, config)
-                            log_info(f"[Workflow Pre-flight] Auto-enabled '{name}' on retry for session {session_id[:8]}...")
-                        else:
-                            offline_agents.append(name)
+                    elapsed = 0.0
+                    still_pending = dict(failed_agents)
+                    while still_pending and elapsed < POLL_MAX_SECONDS:
+                        await asyncio.sleep(POLL_INTERVAL)
+                        elapsed += POLL_INTERVAL
+                        poll_results = await asyncio.gather(
+                            *(check_agent_health(name, config, FAST_TIMEOUT) for name, config in still_pending.items())
+                        )
+                        newly_online = []
+                        for name, config, is_healthy in poll_results:
+                            if is_healthy:
+                                session_registry.enable_agent(session_id, config)
+                                log_info(f"[Workflow Pre-flight] Auto-enabled '{name}' after {elapsed:.0f}s for session {session_id[:8]}...")
+                                newly_online.append(name)
+                        for name in newly_online:
+                            del still_pending[name]
+                        if still_pending:
+                            log_debug(f"[Workflow Pre-flight] Still waiting ({elapsed:.0f}s/{POLL_MAX_SECONDS:.0f}s): {', '.join(still_pending.keys())}")
+
+                    offline_agents = list(still_pending.keys())
                 else:
                     offline_agents = []
 
                 if offline_agents:
-                    error_msg = f"Cannot run workflow — these agents are offline: {', '.join(offline_agents)}"
+                    error_msg = f"Cannot run workflow — these agents are offline after {POLL_MAX_SECONDS:.0f}s: {', '.join(offline_agents)}"
                     log_error(f"[Workflow Pre-flight] {error_msg}")
                     await self._host_agent._emit_granular_agent_event(
                         "foundry-host-agent", error_msg, context_id,
