@@ -135,7 +135,7 @@ backend_dir = Path(__file__).resolve().parents[2]
 if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
-from log_config import log_debug, log_info, log_success, log_warning, log_error, log_foundry_debug
+from log_config import log_debug, log_info, log_success, log_warning, log_error, log_foundry_debug, log_memory_debug
 
 logger = logging.getLogger(__name__)
 
@@ -586,8 +586,8 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
                         try:
                             stream = await self.openai_client.responses.create(
                                 input=user_message,
+                                model=self.model_name,
                                 previous_response_id=previous_response_id,
-                                extra_body={"agent": {"name": self.agent.name, "type": "agent_reference"}},
                                 stream=True,
                             )
                             # Reset state for new stream
@@ -719,11 +719,11 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
                                 "output": output["output"]
                             })
                         
-                        # Continue conversation with agent reference
+                        # Continue conversation with tool outputs
                         continue_stream = await self.openai_client.responses.create(
                             input=function_call_outputs,  # Pass tool outputs as input
+                            model=self.model_name,
                             previous_response_id=response_id,  # Chain to previous response
-                            extra_body={"agent": {"name": self.agent.name, "type": "agent_reference"}},
                             stream=True,
                         )
                         
@@ -1611,7 +1611,7 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
             {
                 "type": "function",
                 "name": "search_memory",
-                "description": "Search uploaded documents and past conversations for relevant information. Use this when the user asks about previously uploaded documents (PDFs, Word docs, etc.) or past interactions. Returns relevant excerpts from memory that can help answer the user's question.",
+                "description": "Search user-uploaded files (PDFs, Word docs, etc.) and past conversation history. ONLY use this when the user explicitly references a document they uploaded or asks about a past conversation. Do NOT use this if an available agent's skills match the user's request — delegate to the agent instead.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -2816,6 +2816,14 @@ Answer with just JSON:
                     "video_id": video_id
                 })
                 prepared_parts.append(Part(root=remix_data_part))
+
+            # Pass backend callback URL so HITL agents (Teams, Twilio, etc.) can forward
+            # human responses back to the correct backend instance (local or Azure)
+            backend_callback_url = os.environ.get("BACKEND_CALLBACK_URL") or f"http://localhost:{os.environ.get('A2A_UI_PORT', '12000')}"
+            prepared_parts.append(Part(root=DataPart(data={
+                "type": "backend_callback",
+                "callback_url": backend_callback_url
+            })))
 
             request = MessageSendParams(
                 message=Message(
@@ -4319,10 +4327,13 @@ Answer with just JSON:
             for processed in processed_parts:
                 prepared_parts_for_agents.extend(self._wrap_item_for_agent(processed))
 
-            # NOTE: No longer storing parts in _latest_processed_parts (EXPLICIT FILE ROUTING)
-            # GPT-4 now routes files explicitly via file_uris parameter in send_message calls
+            # Store uploaded file parts so the FIRST workflow step can forward them to agents.
+            # workflow_orchestration._execute_orchestrated_task reads _latest_processed_parts
+            # to extract file URIs before calling send_message.  Without this, user uploads
+            # are never passed to the first agent in a workflow.
+            session_context._latest_processed_parts = list(prepared_parts_for_agents)
             session_context._agent_generated_artifacts = []
-            log_debug(f"Prepared {len(prepared_parts_for_agents)} parts (explicit routing via file_uris)")
+            log_debug(f"Prepared {len(prepared_parts_for_agents)} parts stored in _latest_processed_parts for first workflow step")
             
             # If files were processed, include information about them in the message
             # EXPLICIT FILE ROUTING: Include URIs so GPT-4 can pass them to agents
