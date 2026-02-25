@@ -369,7 +369,7 @@ Evaluate the condition and return your result."""
             # resume path can safely iterate previous outputs as strings.
             task.state = "completed"
             task.output = {
-                "result": json.dumps({"result": eval_result.result, "reasoning": eval_result.reasoning}),
+                "result": f"{'TRUE' if eval_result.result else 'FALSE'}: {eval_result.reasoning}",
                 "reasoning": eval_result.reasoning,
                 "evaluation": True
             }
