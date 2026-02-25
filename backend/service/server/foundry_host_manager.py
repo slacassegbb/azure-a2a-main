@@ -415,10 +415,11 @@ class FoundryHostManager(ApplicationManager):
                 registry = get_registry()
                 session_id = parse_session_from_context(context_id)
                 session_registry = get_session_registry()
-                offline_agents = []
 
+                # Resolve agent configs from registry
+                agent_configs = {}  # {agent_name: config}
+                not_in_registry = []
                 for agent_name in required_agents:
-                    # Look up in global registry (DB)
                     agent_config = registry.get_agent(agent_name)
                     if not agent_config:
                         # Try fuzzy match
@@ -429,33 +430,67 @@ class FoundryHostManager(ApplicationManager):
                              or a.get('name', '').lower() in agent_name.lower()),
                             None
                         )
-
                     if not agent_config:
-                        offline_agents.append(f"{agent_name} (not in registry)")
-                        continue
+                        not_in_registry.append(agent_name)
+                    else:
+                        agent_configs[agent_name] = agent_config
 
-                    # Health check
-                    agent_url = agent_config.get('production_url') or agent_config.get('local_url') or agent_config.get('url', '')
-                    if agent_url:
+                if not_in_registry:
+                    error_msg = f"Cannot run workflow — these agents are not registered: {', '.join(not_in_registry)}"
+                    log_error(f"[Workflow Pre-flight] {error_msg}")
+                    await self._host_agent._emit_granular_agent_event(
+                        "foundry-host-agent", error_msg, context_id,
+                        event_type="agent_error", metadata={"phase": "preflight_check"}
+                    )
+                    return
+
+                # Concurrent health checks with retries (handles cold starts / scale-to-zero)
+                MAX_RETRIES = 3
+                TIMEOUT_PER_ATTEMPT = 10.0  # seconds — cold starts can take 10-30s
+
+                async def check_agent_health(name: str, config: dict) -> tuple:
+                    """Returns (agent_name, config, is_healthy)"""
+                    agent_url = config.get('production_url') or config.get('local_url') or config.get('url', '')
+                    if not agent_url:
+                        return (name, config, True)  # No URL to check — assume healthy
+                    health_url = f"{agent_url.rstrip('/')}/health"
+                    for attempt in range(MAX_RETRIES):
                         try:
-                            async with httpx.AsyncClient(timeout=5.0) as client:
-                                health_url = f"{agent_url.rstrip('/')}/health"
+                            async with httpx.AsyncClient(timeout=TIMEOUT_PER_ATTEMPT) as client:
                                 resp = await client.get(health_url)
-                                if resp.status_code != 200:
-                                    offline_agents.append(agent_name)
-                                    continue
-                        except Exception:
-                            offline_agents.append(agent_name)
-                            continue
+                                if resp.status_code == 200:
+                                    return (name, config, True)
+                                log_debug(f"[Workflow Pre-flight] {name} health check {attempt+1}/{MAX_RETRIES}: HTTP {resp.status_code}")
+                        except Exception as e:
+                            log_debug(f"[Workflow Pre-flight] {name} health check {attempt+1}/{MAX_RETRIES}: {e}")
+                        if attempt < MAX_RETRIES - 1:
+                            await asyncio.sleep(3)  # Wait for cold start
+                    return (name, config, False)
 
-                    # Agent is online — auto-enable for session
-                    session_registry.enable_agent(session_id, agent_config)
-                    log_info(f"[Workflow Pre-flight] Auto-enabled '{agent_name}' for session {session_id[:8]}...")
+                # Emit status so UI shows the orchestrator is working
+                await self._host_agent._emit_granular_agent_event(
+                    "foundry-host-agent",
+                    f"Checking {len(agent_configs)} agents are online...",
+                    context_id,
+                    event_type="phase", metadata={"phase": "preflight_check"}
+                )
+
+                # Run all health checks concurrently
+                results = await asyncio.gather(
+                    *(check_agent_health(name, config) for name, config in agent_configs.items())
+                )
+
+                offline_agents = []
+                for name, config, is_healthy in results:
+                    if is_healthy:
+                        session_registry.enable_agent(session_id, config)
+                        log_info(f"[Workflow Pre-flight] Auto-enabled '{name}' for session {session_id[:8]}...")
+                    else:
+                        offline_agents.append(name)
 
                 if offline_agents:
-                    error_msg = f"Cannot run workflow — these agents are offline or not registered: {', '.join(offline_agents)}"
+                    error_msg = f"Cannot run workflow — these agents are offline after {MAX_RETRIES} retries: {', '.join(offline_agents)}"
                     log_error(f"[Workflow Pre-flight] {error_msg}")
-                    # Emit error via WebSocket so the frontend shows it
                     await self._host_agent._emit_granular_agent_event(
                         "foundry-host-agent", error_msg, context_id,
                         event_type="agent_error", metadata={"phase": "preflight_check"}
