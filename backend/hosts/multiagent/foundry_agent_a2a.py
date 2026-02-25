@@ -4286,7 +4286,7 @@ Answer with just JSON:
             for part in message_parts:
                 if hasattr(part, 'root') and hasattr(part.root, 'kind') and part.root.kind == 'file':
                     file_count += 1
-            log_debug(f"[FILE_PROCESSING] Found {file_count} file(s) in {len(message_parts)} message parts")
+            log_warning(f"[FILE_PROCESSING] Found {file_count} file(s) in {len(message_parts)} message parts")
             
             if file_count > 0:
                 log_foundry_debug(f"Emitting file processing status...")
@@ -6124,7 +6124,7 @@ Workflow completed with result:
             # Check if file already has a URI (HTTP blob URL or local /uploads/ path)
             file_uri = getattr(part.root.file, 'uri', None)
             file_uri_str = str(file_uri) if file_uri else ''
-            log_debug(f"[FILE_PROCESSING] convert_part FILE: name={file_id}, uri={file_uri_str[:80]}")
+            log_warning(f"[FILE_PROCESSING] convert_part FILE: name={file_id}, uri={file_uri_str[:80]}")
             is_pre_uploaded = (
                 file_uri_str.startswith(('http://', 'https://'))
                 or file_uri_str.startswith('/uploads/')
@@ -6134,7 +6134,7 @@ Workflow completed with result:
                 # document processing so text is extracted and stored in Azure Search memory.
                 # Without this, user-uploaded files are never indexed and workflows can't
                 # access their content.
-                log_debug(f"[FILE_PROCESSING] Running document processing for pre-uploaded file: {file_id}")
+                log_warning(f"[FILE_PROCESSING] Running document processing for pre-uploaded file: {file_id}")
                 session_id = get_tenant_from_context(context_id) if context_id else None
                 extracted_content = ""
                 try:
@@ -6151,24 +6151,27 @@ Workflow completed with result:
                         local_path = Path(__file__).resolve().parent.parent.parent / ".runtime" / file_uri_str.lstrip('/')
                         if local_path.exists():
                             artifact_info['file_bytes'] = local_path.read_bytes()
-                            log_debug(f"[FILE_PROCESSING] Read {len(artifact_info['file_bytes'])} bytes from local: {local_path}")
+                            log_warning(f"[FILE_PROCESSING] Read {len(artifact_info['file_bytes'])} bytes from local: {local_path}")
                         else:
-                            log_debug(f"[FILE_PROCESSING] Local file not found: {local_path}")
+                            log_warning(f"[FILE_PROCESSING] Local file NOT found: {local_path}")
                     processing_result = await a2a_document_processor.process_file_part(
                         part.root.file,
                         artifact_info,
                         session_id=session_id
                     )
+                    log_warning(f"[FILE_PROCESSING] process_file_part result: {processing_result}")
                     if processing_result and isinstance(processing_result, dict) and processing_result.get("success"):
                         extracted_content = processing_result.get("content", "")
-                        log_debug(f"Extracted {len(extracted_content)} chars from pre-uploaded file {file_id}")
+                        log_warning(f"[FILE_PROCESSING] Extracted {len(extracted_content)} chars from {file_id}")
                         if context_id:
                             await self._emit_granular_agent_event(
                                 "foundry-host-agent", f"file processed successfully: {file_id}", context_id,
                                 event_type="info", metadata={"file": file_id, "action": "complete", "type": "document"}
                             )
                 except Exception as e:
-                    log_debug(f"Document processing error for pre-uploaded {file_id}: {e}")
+                    import traceback as _tb
+                    log_error(f"[FILE_PROCESSING] Document processing FAILED for {file_id}: {e}")
+                    log_error(f"[FILE_PROCESSING] Traceback: {_tb.format_exc()}")
 
                 # Return a DataPart with artifact metadata + extracted content so
                 # run_conversation_with_parts can include it in enhanced_message

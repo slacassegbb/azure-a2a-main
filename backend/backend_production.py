@@ -2098,13 +2098,12 @@ def main():
                         expiry=datetime.now(UTC) + timedelta(hours=24),
                         version="2023-11-03"
                     )
-                    from log_config import log_debug
                     blob_url = f"{blob_client.url}?{sas_token}"
-                    log_debug(f"File uploaded to Azure Blob: {blob_url[:100]}...")
+                    log_warning(f"[BLOB_UPLOAD] SUCCESS (connection string + SAS): {blob_url[:100]}...")
                     return blob_url
             
             # For managed identity, return blob URL directly (container must be public or use user delegation SAS)
-            log_debug(f"File uploaded to Azure Blob (managed identity): {blob_client.url}")
+            log_warning(f"[BLOB_UPLOAD] SUCCESS (managed identity): {blob_client.url}")
             return blob_client.url
 
         except Exception as e:
