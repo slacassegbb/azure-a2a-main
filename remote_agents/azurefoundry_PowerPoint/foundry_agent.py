@@ -324,6 +324,7 @@ Supported slide types:
 - `table` — title + data table (headers + rows)
 - `chart` — title + chart (column, bar, line, pie, doughnut, area)
 - `image` — title + image (from url or file path)
+- `video` — title + embedded video (from url or file path; use video_source + source_type)
 - `blank` — empty slide
 
 ## Editing / Reading Existing Presentations

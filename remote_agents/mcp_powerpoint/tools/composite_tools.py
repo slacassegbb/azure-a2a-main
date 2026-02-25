@@ -86,6 +86,7 @@ def register_composite_tools(app: FastMCP, presentations: Dict, get_current_pres
                 - ``{"type": "table", "title": "...", "headers": [...], "rows": [[...]]}``
                 - ``{"type": "chart", "title": "...", "chart_type": "column", "categories": [...], "series": [{"name": "...", "values": [...]}]}``
                 - ``{"type": "image", "title": "...", "image_source": "...", "source_type": "url|file"}``
+                - ``{"type": "video", "title": "...", "video_source": "...", "source_type": "url|file"}``
                 - ``{"type": "blank"}``
 
             title: Optional presentation metadata title.
@@ -128,6 +129,8 @@ def register_composite_tools(app: FastMCP, presentations: Dict, get_current_pres
                         _add_chart_slide(pres, slide_spec, scheme)
                     elif slide_type == "image":
                         _add_image_slide(pres, slide_spec, scheme)
+                    elif slide_type in ("video", "video_slide"):
+                        _add_video_slide(pres, slide_spec, scheme)
                     elif slide_type == "blank":
                         _add_blank_slide(pres)
                     else:
@@ -392,6 +395,79 @@ def _add_image_slide(pres, spec, scheme):
     finally:
         if temp_path and os.path.exists(temp_path):
             os.unlink(temp_path)
+
+
+def _add_video_slide(pres, spec, scheme):
+    """Add a slide with an embedded video."""
+    import tempfile
+    import urllib.request
+
+    _MIME_MAP = {
+        ".mp4": "video/mp4",
+        ".mov": "video/quicktime",
+        ".avi": "video/x-msvideo",
+        ".wmv": "video/x-ms-wmv",
+        ".webm": "video/webm",
+    }
+
+    layout = _get_blank_layout(pres)
+    slide = pres.slides.add_slide(layout)
+
+    _add_slide_title(slide, spec.get("title", ""), scheme)
+
+    video_source = spec.get("video_source", "")
+    source_type = spec.get("source_type", "file")
+    temp_video = None
+    temp_poster = None
+
+    try:
+        # Resolve video path
+        if source_type == "url" or video_source.startswith(("http://", "https://")):
+            url_path = video_source.split("?")[0]
+            ext = os.path.splitext(url_path)[1] or ".mp4"
+            with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
+                temp_video = tmp.name
+            urllib.request.urlretrieve(video_source, temp_video)
+            video_path = temp_video
+        else:
+            video_path = os.path.abspath(video_source)
+            ext = os.path.splitext(video_path)[1] or ".mp4"
+            if not os.path.exists(video_path):
+                return
+
+        mime_type = _MIME_MAP.get(ext.lower(), "video/mp4")
+
+        # Optional poster frame
+        poster_path = None
+        poster_source = spec.get("poster_source", "")
+        if poster_source:
+            poster_type = spec.get("poster_type", "file")
+            if poster_type == "url" or poster_source.startswith(("http://", "https://")):
+                p_ext = os.path.splitext(poster_source.split("?")[0])[1] or ".png"
+                with tempfile.NamedTemporaryFile(delete=False, suffix=p_ext) as tmp:
+                    temp_poster = tmp.name
+                urllib.request.urlretrieve(poster_source, temp_poster)
+                poster_path = temp_poster
+            else:
+                p = os.path.abspath(poster_source)
+                if os.path.exists(p):
+                    poster_path = p
+
+        vid_width = Inches(float(spec.get("width", 7.0)))
+        vid_height = Inches(float(spec.get("height", 4.0)))
+        left, top = Inches(1.5), Inches(1.8)
+
+        slide.shapes.add_movie(
+            video_path,
+            left, top, vid_width, vid_height,
+            poster_frame_image=poster_path,
+            mime_type=mime_type,
+        )
+    finally:
+        if temp_video and os.path.exists(temp_video):
+            os.unlink(temp_video)
+        if temp_poster and os.path.exists(temp_poster):
+            os.unlink(temp_poster)
 
 
 def _add_blank_slide(pres):
