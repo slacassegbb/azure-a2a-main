@@ -365,9 +365,11 @@ Evaluate the condition and return your result."""
             log_info(f"[EVALUATE] Result: {result_str} — {eval_result.reasoning}")
 
             # Update task state
+            # IMPORTANT: task.output["result"] must be a string so that the HITL
+            # resume path can safely iterate previous outputs as strings.
             task.state = "completed"
             task.output = {
-                "result": eval_result.result,
+                "result": json.dumps({"result": eval_result.result, "reasoning": eval_result.reasoning}),
                 "reasoning": eval_result.reasoning,
                 "evaluation": True
             }
@@ -528,9 +530,16 @@ Analyze the context and return your structured result."""
                 "refs": parsed_refs,
             }
 
+            # Serialize to JSON text FIRST — this is the canonical string representation
+            # used for both task.output["result"] and the return value.
+            # IMPORTANT: task.output["result"] must always be a string so that the
+            # HITL resume path (which reads task.output.get("result")) can safely
+            # iterate over previous outputs as strings (e.g., call .lower()).
+            output_text = json.dumps(result_dict)
+
             # Update task state
             task.state = "completed"
-            task.output = {**result_dict, "query": True}
+            task.output = {"result": output_text, "query": True}
             task.updated_at = datetime.now(timezone.utc)
 
             # Emit result to frontend as agent output
@@ -547,8 +556,6 @@ Analyze the context and return your structured result."""
                 event_type="agent_complete"
             )
 
-            # Return output as JSON text so downstream steps can read it
-            output_text = json.dumps(result_dict)
             return {"output": output_text, "hitl_pause": False}
 
         except Exception as e:
@@ -921,7 +928,7 @@ Use the above output from the previous workflow step to complete your task."""
             task.output = {
                 "task_id": response_obj.id,
                 "state": response_obj.status.state,
-                "result": response_obj.result if hasattr(response_obj, 'result') else None,
+                "result": str(response_obj.result) if hasattr(response_obj, 'result') and response_obj.result else None,
                 "artifacts": [a.model_dump() for a in response_obj.artifacts] if response_obj.artifacts else []
             }
             task.updated_at = datetime.now(timezone.utc)
