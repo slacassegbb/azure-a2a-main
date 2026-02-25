@@ -2791,7 +2791,9 @@ Answer with just JSON:
                         stored_meta = uri_metadata.get(lookup_key, {})
 
                         # Use stored name if available, otherwise extract from URI path
-                        file_name = stored_meta.get('name') or (uri.split('/')[-1].split('?')[0] if '/' in uri else 'file')
+                        # Must use urlparse — SAS signatures can contain unencoded '/' chars
+                        from urllib.parse import urlparse, unquote
+                        file_name = stored_meta.get('name') or unquote(urlparse(uri).path.split('/')[-1]) or 'file'
                         stored_role = stored_meta.get('role')
 
                         # Guess mime type from extension
@@ -2799,7 +2801,10 @@ Answer with just JSON:
                         mime_map = {
                             'png': 'image/png', 'jpg': 'image/jpeg', 'jpeg': 'image/jpeg',
                             'gif': 'image/gif', 'webp': 'image/webp', 'mp4': 'video/mp4',
-                            'pdf': 'application/pdf', 'mp3': 'audio/mpeg', 'wav': 'audio/wav'
+                            'pdf': 'application/pdf', 'mp3': 'audio/mpeg', 'wav': 'audio/wav',
+                            'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                            'pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+                            'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
                         }
                         mime_type = mime_map.get(ext, 'application/octet-stream')
 
@@ -5991,6 +5996,20 @@ Workflow completed with result:
             file_parts_only = [p for p in flattened_parts if isinstance(p, FilePart)]
             if file_parts_only:
                 session_context._latest_processed_parts.extend(file_parts_only)
+                # Also store URI→metadata so send_message can restore names when
+                # constructing FileParts from bare URI strings for downstream agents
+                if not hasattr(session_context, '_file_uri_metadata'):
+                    session_context._file_uri_metadata = {}
+                for fp in file_parts_only:
+                    fp_uri = getattr(fp.file, 'uri', '') or getattr(fp.file, 'url', '')
+                    fp_name = getattr(fp.file, 'name', None)
+                    if fp_uri and fp_name:
+                        lookup_key = fp_uri.split('?')[0]
+                        fp_role = (fp.metadata or {}).get('role') if getattr(fp, 'metadata', None) else None
+                        session_context._file_uri_metadata[lookup_key] = {
+                            "name": fp_name,
+                            "role": fp_role,
+                        }
 
         if refine_payload:
             refine_part = DataPart(data=refine_payload)

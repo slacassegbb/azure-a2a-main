@@ -964,16 +964,9 @@ Use the above output from the previous workflow step to complete your task."""
             task.output = {"result": output_text}
             task.updated_at = datetime.now(timezone.utc)
 
-            # Collect any FileParts from the response list so downstream steps
-            # can access file URIs (e.g., Excel/PowerPoint → Email).
-            if isinstance(responses, list):
-                if not hasattr(session_context, '_latest_processed_parts'):
-                    session_context._latest_processed_parts = []
-                for part in responses:
-                    inner = getattr(part, 'root', part)
-                    if hasattr(inner, 'file') and hasattr(inner.file, 'uri') and inner.file.uri:
-                        session_context._latest_processed_parts.append(part)
-                        log_debug(f"[Agent Mode] Collected FilePart from {recommended_agent}: {inner.file.uri[:80]}...")
+            # NOTE: FileParts are already stored in _latest_processed_parts by convert_parts()
+            # inside send_message(). No need to collect them again here — doing so creates
+            # duplicates that cause dedup to drop files.
 
             # Emit agent output to workflow panel
             if output_text and recommended_agent:
