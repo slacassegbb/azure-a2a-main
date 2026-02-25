@@ -178,11 +178,14 @@ class FoundryTemplateAgentExecutor(AgentExecutor):
             # Reuse thread for same context_id to maintain conversation history
             thread_id = await self._get_or_create_thread(context_id, agent, force_new=False)
             
+            # Pass received file references to the agent so _try_send_email can attach them
+            agent._received_files = received_files if received_files else []
+
             # Use streaming to show tool calls in real-time
             responses = []
             tools_called = []
             seen_tools = set()
-            
+
             # Pass context_id so agent can use unified blob storage path
             async for event in agent.run_conversation_stream(thread_id, user_message, context_id=context_id):
                 # Check if this is a tool call event from remote agent

@@ -799,78 +799,57 @@ Current date: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}
         body_clean = html.unescape(body_clean)  # Decode HTML entities
         body_clean = re.sub(r' +', ' ', body_clean)  # Normalize spaces
         body_clean = re.sub(r'\n\s*\n', '\n\n', body_clean.strip())  # Clean up newlines
-        
-        # Check if this looks like a report (for PDF generation)
-        is_report = any(keyword in body.lower() or keyword in subject.lower() 
-                       for keyword in ['report', 'summary', 'analysis', 'findings', 'recommendations'])
-        
-        # Try to generate PDF if it's a report
-        pdf_path = None
-        pdf_generated = False
-        email_body = body  # Default to full body
-        
-        if is_report:
-            try:
-                from pdf_generator import generate_report_pdf, is_pdf_available
-                if is_pdf_available():
-                    # Extract recipient name from email or body
-                    recipient_name = ""
-                    name_match = re.search(r'Dear\s+(\w+)', body, re.IGNORECASE)
-                    if name_match:
-                        recipient_name = name_match.group(1)
-                    
-                    # Generate PDF from FULL body content
-                    pdf_path = generate_report_pdf(
-                        report_content=body,
-                        recipient_name=recipient_name,
-                        recipient_email=to,
-                    )
-                    pdf_generated = True
-                    logger.info(f"Generated PDF report: {pdf_path}")
-                    
-                    # Create a SHORT email body since full report is in PDF
-                    greeting = f"Dear {recipient_name}," if recipient_name else "Hello,"
-                    email_body = f"""<html>
-<p>{greeting}</p>
-<p>Thank you for your time during our consultation.</p>
-<p><strong>Please find your personalized report attached as a PDF.</strong></p>
-<p>The attached document contains our detailed analysis and recommendations tailored to your needs.</p>
-<p>If you have any questions, please don't hesitate to reach out.</p>
-<p>Best regards,<br><strong>Cay Digital Team</strong></p>
-</html>"""
-            except ImportError as e:
-                logger.warning(f"PDF generation not available: {e}")
-            except Exception as e:
-                logger.warning(f"Failed to generate PDF: {e}")
-        
+
+        # Download and prepare received files (Excel, PowerPoint, etc.) from blob URIs
+        received_file_paths = []
+        received_files = getattr(self, '_received_files', [])
+        if received_files:
+            import tempfile
+            import httpx
+            for file_meta in received_files:
+                file_uri = file_meta.get('uri', '')
+                file_name = file_meta.get('name', 'attachment')
+                if file_uri and file_uri.startswith(('http://', 'https://')):
+                    try:
+                        resp = httpx.get(file_uri, timeout=30)
+                        if resp.status_code == 200:
+                            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=f"_{file_name}")
+                            tmp.write(resp.content)
+                            tmp.close()
+                            received_file_paths.append({"path": tmp.name, "name": file_name})
+                            logger.info(f"📎 Downloaded attachment for email: {file_name} ({len(resp.content)} bytes)")
+                        else:
+                            logger.warning(f"⚠️ Failed to download {file_name}: HTTP {resp.status_code}")
+                    except Exception as dl_err:
+                        logger.warning(f"⚠️ Failed to download {file_name}: {dl_err}")
+
         # Build clean summary
         clean_summary = f"📧 **Email Sent**\n\n**To:** {to}\n**Subject:** {subject}"
         if cc and cc.lower() != "body:" and "@" in cc:
             clean_summary += f"\n**CC:** {cc}"
-        if pdf_generated:
-            clean_summary += f"\n**📎 Attachment:** Cay Digital Report (PDF)"
+        if received_file_paths:
+            clean_summary += f"\n\n**Attachments:**"
+            for i, f in enumerate(received_file_paths, 1):
+                clean_summary += f"\n{i}. {f['name']}"
         clean_summary += f"\n\n{body_clean}"
-        
+
         # Send the email
         try:
             from email_config import send_email, send_email_with_cc
-            
-            # Prepare attachments if PDF was generated
-            attachments = None
-            if pdf_path:
-                attachments = [{"path": pdf_path, "name": f"Cay_Digital_Report_{subject[:30].replace(' ', '_')}.pdf"}]
-            
+
+            attachments = received_file_paths if received_file_paths else None
+
             if cc and "@" in cc:
                 cc_list = [e.strip() for e in cc.split(",") if "@" in e]
-                result = send_email_with_cc(to=to, subject=subject, body=email_body, cc=cc_list, attachments=attachments)
+                result = send_email_with_cc(to=to, subject=subject, body=body, cc=cc_list, attachments=attachments)
             else:
-                result = send_email(to=to, subject=subject, body=email_body, attachments=attachments)
-            
-            # Clean up temp PDF file
-            if pdf_path:
+                result = send_email(to=to, subject=subject, body=body, attachments=attachments)
+
+            # Clean up temp files
+            import os
+            for f in received_file_paths:
                 try:
-                    import os
-                    os.remove(pdf_path)
+                    os.remove(f["path"])
                 except:
                     pass
             
