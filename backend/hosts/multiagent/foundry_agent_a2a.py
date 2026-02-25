@@ -6120,12 +6120,65 @@ Workflow completed with result:
         # --- FilePart ---
         elif kind == 'file':
             file_id = part.root.file.name
-            
-            # KEY FIX: Pass through FileParts that already have HTTP URIs (blob storage)
-            # These come from agents that uploaded files - no need to re-process
+
+            # Check if file already has an HTTP URI (uploaded to blob by frontend or agent)
             file_uri = getattr(part.root.file, 'uri', None)
             if file_uri and str(file_uri).startswith(('http://', 'https://')):
-                return part.root  # Return FilePart directly
+                # File already in blob storage — skip save_artifact() but STILL run
+                # document processing so text is extracted and stored in Azure Search memory.
+                # Without this, user-uploaded files are never indexed and workflows can't
+                # access their content.
+                log_debug(f"FilePart already has HTTP URI, running document processing only: {file_id}")
+                session_id = get_tenant_from_context(context_id) if context_id else None
+                extracted_content = ""
+                try:
+                    if context_id:
+                        await self._emit_granular_agent_event(
+                            "foundry-host-agent", f"processing file: {file_id}", context_id,
+                            event_type="info", metadata={"file": file_id, "action": "processing"}
+                        )
+                    processing_result = await a2a_document_processor.process_file_part(
+                        part.root.file,
+                        {'file_name': file_id, 'artifact_uri': str(file_uri)},
+                        session_id=session_id
+                    )
+                    if processing_result and isinstance(processing_result, dict) and processing_result.get("success"):
+                        extracted_content = processing_result.get("content", "")
+                        log_debug(f"Extracted {len(extracted_content)} chars from pre-uploaded file {file_id}")
+                        if context_id:
+                            await self._emit_granular_agent_event(
+                                "foundry-host-agent", f"file processed successfully: {file_id}", context_id,
+                                event_type="info", metadata={"file": file_id, "action": "complete", "type": "document"}
+                            )
+                except Exception as e:
+                    log_debug(f"Document processing error for pre-uploaded {file_id}: {e}")
+
+                # Return a DataPart with artifact metadata + extracted content so
+                # run_conversation_with_parts can include it in enhanced_message
+                file_mime = getattr(part.root.file, 'mimeType', 'application/octet-stream')
+                result_data = {
+                    'artifact-id': file_id,
+                    'artifact-uri': str(file_uri),
+                    'file-name': file_id,
+                    'media-type': file_mime,
+                    'storage-type': 'azure_blob',
+                }
+                if extracted_content:
+                    result_data['extracted_content'] = extracted_content
+                    result_data['content_preview'] = extracted_content[:500] + "..." if len(extracted_content) > 500 else extracted_content
+                data_part = DataPart(data=result_data)
+
+                # Also create a FilePart for agent delegation
+                file_part_for_remote = FilePart(
+                    kind='file',
+                    file=FileWithUri(
+                        name=file_id,
+                        mimeType=file_mime,
+                        uri=str(file_uri),
+                    ),
+                )
+                self._store_parts_in_session(tool_context, data_part, Part(root=file_part_for_remote))
+                return data_part
             
             # Emit status for file processing
             if context_id:
