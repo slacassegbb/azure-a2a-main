@@ -2267,7 +2267,8 @@ Answer with just JSON:
                 if uri:
                     file_part = convert_artifact_dict_to_file_part(item)
                     if file_part:
-                        wrapped.append(Part(root=file_part))
+                        # convert_artifact_dict_to_file_part already returns a Part
+                        wrapped.append(file_part)
                 if item.data.get("extracted_content"):
                     wrapped.append(Part(root=TextPart(text=str(item.data["extracted_content"]))))
         elif isinstance(item, FilePart):
@@ -2281,7 +2282,8 @@ Answer with just JSON:
             if uri:
                 file_part = convert_artifact_dict_to_file_part(item)
                 if file_part:
-                    wrapped.append(Part(root=file_part))
+                    # convert_artifact_dict_to_file_part already returns a Part
+                    wrapped.append(file_part)
             else:
                 wrapped.append(Part(root=DataPart(data=item)))
         elif item is not None:
