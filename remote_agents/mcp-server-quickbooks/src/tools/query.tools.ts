@@ -112,23 +112,40 @@ export const ReportTool: ToolDefinition<typeof reportSchema> = {
         content: [{ type: "text" as const, text: `Error running report: ${response.error}` }],
       };
     }
-    // Reports can be large - return a summary with key totals
+    // Flatten the QuickBooks report into a readable table for the LLM
     const report = response.result;
-    const summary = {
-      ReportName: report.Header?.ReportName,
-      DateRange: `${report.Header?.StartPeriod || ''} to ${report.Header?.EndPeriod || ''}`,
-      Currency: report.Header?.Currency,
-      // Include column headers and first few rows as a preview
-      Columns: report.Columns?.Column?.map((c: any) => c.ColTitle),
-      RowCount: report.Rows?.Row?.length || 0,
-      // Include totals if available
-      ...(report.Rows?.Row?.find((r: any) => r.Summary) && { 
-        Totals: report.Rows.Row.find((r: any) => r.Summary)?.Summary 
-      }),
-    };
+    const columns = report.Columns?.Column?.map((c: any) => c.ColTitle) || [];
+
+    // Recursively extract all rows (QuickBooks nests sections)
+    const flatRows: string[] = [];
+    function extractRows(rows: any[], indent = 0) {
+      if (!rows) return;
+      for (const row of rows) {
+        if (row.Header?.ColData) {
+          const vals = row.Header.ColData.map((c: any) => c.value || '');
+          flatRows.push('  '.repeat(indent) + vals.join(' | '));
+        }
+        if (row.ColData) {
+          const vals = row.ColData.map((c: any) => c.value || '');
+          flatRows.push('  '.repeat(indent) + vals.join(' | '));
+        }
+        if (row.Rows?.Row) {
+          extractRows(row.Rows.Row, indent + 1);
+        }
+        if (row.Summary?.ColData) {
+          const vals = row.Summary.ColData.map((c: any) => c.value || '');
+          flatRows.push('  '.repeat(indent) + '**' + vals.join(' | ') + '**');
+        }
+      }
+    }
+    extractRows(report.Rows?.Row);
+
+    const header = `${report.Header?.ReportName || reportType} (${report.Header?.StartPeriod || ''} to ${report.Header?.EndPeriod || ''}, ${report.Header?.Currency || 'USD'})`;
+    const table = `${columns.join(' | ')}\n${flatRows.join('\n')}`;
+
     return {
       content: [
-        { type: "text" as const, text: `${reportType} Report Summary: ${JSON.stringify(summary)}` },
+        { type: "text" as const, text: `${header}\n\n${table}` },
       ],
     };
   },
