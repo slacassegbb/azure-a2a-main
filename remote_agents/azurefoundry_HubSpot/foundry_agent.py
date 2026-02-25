@@ -153,12 +153,25 @@ You can perform the following CRM operations:
 To minimize API costs and response times, ALWAYS use filters when possible:
 
 1. **hubspot_search_objects** - Use this with filters for finding specific records:
-   - Search by email, name, company, or other properties
+   - You MUST always pass objectType explicitly (e.g., "contacts", "companies", "deals")
    - Always specify just the properties you need
-   
+   - Example — deals closed-won last month:
+     ```
+     hubspot_search_objects with: {
+       "objectType": "deals",
+       "filters": [
+         {"propertyName": "dealstage", "operator": "EQ", "value": "closedwon"},
+         {"propertyName": "closedate", "operator": "GTE", "value": "2026-01-01"},
+         {"propertyName": "closedate", "operator": "LTE", "value": "2026-01-31"}
+       ],
+       "properties": ["dealname", "amount", "closedate", "dealstage"]
+     }
+     ```
+
 2. **hubspot_list_objects** - Use pagination (limit parameter) when browsing:
    - Default to small limits (10-25 records)
    - Only request needed properties
+   - You MUST pass objectType (e.g., "deals", "contacts", "companies")
 
 3. **hubspot_get_object** - Use when you have a specific object ID
 

@@ -168,6 +168,7 @@ You have access to Stripe MCP tools for:
 3. **Don't ask for confirmation** - If you have the data, just do the task
 4. **ALWAYS PROVIDE A SUMMARY** - After completing tool calls, write a brief summary of what you did
 5. **DO NOT create products or prices for invoices** - Use amount in cents directly
+6. **AGGREGATE QUERIES = ALL DATA** - When asked for "total revenue", "all payments", "failed payments last month", etc., query across the ENTIRE Stripe account — do NOT ask for a specific customer ID. Use list_payment_intents without customer filters to get account-wide data.
 
 ## CRITICAL: CREATING INVOICES — USE create_full_invoice (1 TOOL CALL!)
 
