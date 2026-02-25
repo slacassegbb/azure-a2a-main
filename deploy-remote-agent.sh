@@ -110,8 +110,15 @@ if [ -f "$AGENT_PATH/.env" ]; then
     OPENAI_API_KEY=$(grep "^OPENAI_API_KEY" "$AGENT_PATH/.env" | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
     # Read AZURE_OPENAI_ENDPOINT for agents that use Azure OpenAI (e.g., video generator)
     AZURE_OPENAI_ENDPOINT=$(grep "^AZURE_OPENAI_ENDPOINT" "$AGENT_PATH/.env" | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
-    # Read blob storage configuration for image generator
+    # Read blob storage configuration
+    FORCE_AZURE_BLOB=$(grep "^FORCE_AZURE_BLOB" "$AGENT_PATH/.env" | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
     AZURE_STORAGE_CONNECTION_STRING=$(grep "^AZURE_STORAGE_CONNECTION_STRING" "$AGENT_PATH/.env" | cut -d '=' -f2- | tr -d '"')
+    AZURE_BLOB_CONTAINER=$(grep "^AZURE_BLOB_CONTAINER" "$AGENT_PATH/.env" | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
+    # Read any *_MCP_URL vars generically (Word, Excel, PowerPoint, Stripe, HubSpot, QuickBooks, etc.)
+    MCP_URL_VARS=()
+    while IFS= read -r line; do
+        [ -n "$line" ] && MCP_URL_VARS+=("$line")
+    done < <(grep "^[A-Z_]*_MCP_URL=" "$AGENT_PATH/.env" 2>/dev/null | tr -d '"' | tr -d ' ')
     # Read Twilio credentials for Twilio agents
     TWILIO_ACCOUNT_SID=$(grep "^TWILIO_ACCOUNT_SID" "$AGENT_PATH/.env" | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
     TWILIO_AUTH_TOKEN=$(grep "^TWILIO_AUTH_TOKEN" "$AGENT_PATH/.env" | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
@@ -127,7 +134,14 @@ elif [ -f ".env" ]; then
     # Read AZURE_OPENAI_ENDPOINT from root .env
     AZURE_OPENAI_ENDPOINT=$(grep "^AZURE_OPENAI_ENDPOINT" .env | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
     # Read blob storage configuration from root .env
+    FORCE_AZURE_BLOB=$(grep "^FORCE_AZURE_BLOB" .env | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
     AZURE_STORAGE_CONNECTION_STRING=$(grep "^AZURE_STORAGE_CONNECTION_STRING" .env | cut -d '=' -f2- | tr -d '"')
+    AZURE_BLOB_CONTAINER=$(grep "^AZURE_BLOB_CONTAINER" .env | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
+    # Read any *_MCP_URL vars generically
+    MCP_URL_VARS=()
+    while IFS= read -r line; do
+        [ -n "$line" ] && MCP_URL_VARS+=("$line")
+    done < <(grep "^[A-Z_]*_MCP_URL=" .env 2>/dev/null | tr -d '"' | tr -d ' ')
     # Read Twilio credentials from root .env
     TWILIO_ACCOUNT_SID=$(grep "^TWILIO_ACCOUNT_SID" .env | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
     TWILIO_AUTH_TOKEN=$(grep "^TWILIO_AUTH_TOKEN" .env | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
@@ -266,14 +280,21 @@ if [ -n "$AGENT_EXISTS" ]; then
         ENV_VARS+=("AZURE_OPENAI_ENDPOINT=$AZURE_OPENAI_ENDPOINT")
     fi
     
-    # Add blob storage env vars for image and video generator agents
-    if ([[ "$AGENT_NAME" == *"image_generator"* ]] || [[ "$AGENT_NAME" == *"video"* ]]) && [ -n "$AZURE_STORAGE_CONNECTION_STRING" ]; then
+    # Add blob storage env vars if FORCE_AZURE_BLOB is set in .env
+    if [ "$FORCE_AZURE_BLOB" = "true" ] && [ -n "$AZURE_STORAGE_CONNECTION_STRING" ]; then
         ENV_VARS+=("FORCE_AZURE_BLOB=true")
         ENV_VARS+=("AZURE_STORAGE_CONNECTION_STRING=$AZURE_STORAGE_CONNECTION_STRING")
-        ENV_VARS+=("AZURE_BLOB_CONTAINER=a2a-files")
+        ENV_VARS+=("AZURE_BLOB_CONTAINER=${AZURE_BLOB_CONTAINER:-a2a-files}")
         echo -e "${GREEN}✅ Blob storage configuration added${NC}"
     fi
-    
+
+    # Add any *_MCP_URL env vars found in .env
+    for mcp_var in "${MCP_URL_VARS[@]}"; do
+        ENV_VARS+=("$mcp_var")
+        mcp_name=$(echo "$mcp_var" | cut -d '=' -f1)
+        echo -e "${GREEN}✅ $mcp_name configuration added${NC}"
+    done
+
     # Add Twilio env vars for twilio agents
     if [[ "$AGENT_NAME" == *"twilio"* ]]; then
         if [ -n "$TWILIO_ACCOUNT_SID" ] && [ -n "$TWILIO_AUTH_TOKEN" ] && [ -n "$TWILIO_FROM_NUMBER" ]; then
@@ -313,42 +334,6 @@ if [ -n "$AGENT_EXISTS" ]; then
         fi
     fi
     
-    # Add Stripe MCP URL for Stripe agents
-    if [[ "$AGENT_NAME" == *"Stripe"* ]] || [[ "$AGENT_NAME" == *"stripe"* ]]; then
-        # Read from agent's .env file
-        STRIPE_MCP_URL=$(grep "^STRIPE_MCP_URL" "$AGENT_PATH/.env" 2>/dev/null | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
-        if [ -n "$STRIPE_MCP_URL" ]; then
-            ENV_VARS+=("STRIPE_MCP_URL=$STRIPE_MCP_URL")
-            echo -e "${GREEN}✅ Stripe MCP URL configuration added${NC}"
-        else
-            echo -e "${YELLOW}⚠️  Stripe agent detected but STRIPE_MCP_URL not found in .env${NC}"
-        fi
-    fi
-    
-    # Add HubSpot MCP URL for HubSpot agents
-    if [[ "$AGENT_NAME" == *"HubSpot"* ]] || [[ "$AGENT_NAME" == *"hubspot"* ]]; then
-        # Read from agent's .env file
-        HUBSPOT_MCP_URL=$(grep "^HUBSPOT_MCP_URL" "$AGENT_PATH/.env" 2>/dev/null | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
-        if [ -n "$HUBSPOT_MCP_URL" ]; then
-            ENV_VARS+=("HUBSPOT_MCP_URL=$HUBSPOT_MCP_URL")
-            echo -e "${GREEN}✅ HubSpot MCP URL configuration added${NC}"
-        else
-            echo -e "${YELLOW}⚠️  HubSpot agent detected but HUBSPOT_MCP_URL not found in .env${NC}"
-        fi
-    fi
-    
-    # Add QuickBooks MCP URL for QuickBooks agents
-    if [[ "$AGENT_NAME" == *"QuickBooks"* ]] || [[ "$AGENT_NAME" == *"quickbooks"* ]]; then
-        # Read from agent's .env file
-        QUICKBOOKS_MCP_URL=$(grep "^QUICKBOOKS_MCP_URL" "$AGENT_PATH/.env" 2>/dev/null | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
-        if [ -n "$QUICKBOOKS_MCP_URL" ]; then
-            ENV_VARS+=("QUICKBOOKS_MCP_URL=$QUICKBOOKS_MCP_URL")
-            echo -e "${GREEN}✅ QuickBooks MCP URL configuration added${NC}"
-        else
-            echo -e "${YELLOW}⚠️  QuickBooks agent detected but QUICKBOOKS_MCP_URL not found in .env${NC}"
-        fi
-    fi
-    
     # Update target port to ensure it matches the A2A_PORT
     echo -e "${CYAN}  Updating ingress target port to $PORT...${NC}"
     az containerapp ingress update \
@@ -379,12 +364,19 @@ else
         ENV_VARS_CREATE="$ENV_VARS_CREATE AZURE_OPENAI_ENDPOINT=$AZURE_OPENAI_ENDPOINT"
     fi
     
-    # Add blob storage env vars for image and video generator agents
-    if ([[ "$AGENT_NAME" == *"image_generator"* ]] || [[ "$AGENT_NAME" == *"video"* ]]) && [ -n "$AZURE_STORAGE_CONNECTION_STRING" ]; then
-        ENV_VARS_CREATE="$ENV_VARS_CREATE FORCE_AZURE_BLOB=true AZURE_STORAGE_CONNECTION_STRING=\"$AZURE_STORAGE_CONNECTION_STRING\" AZURE_BLOB_CONTAINER=a2a-files"
+    # Add blob storage env vars if FORCE_AZURE_BLOB is set in .env
+    if [ "$FORCE_AZURE_BLOB" = "true" ] && [ -n "$AZURE_STORAGE_CONNECTION_STRING" ]; then
+        ENV_VARS_CREATE="$ENV_VARS_CREATE FORCE_AZURE_BLOB=true AZURE_STORAGE_CONNECTION_STRING=\"$AZURE_STORAGE_CONNECTION_STRING\" AZURE_BLOB_CONTAINER=${AZURE_BLOB_CONTAINER:-a2a-files}"
         echo -e "${GREEN}✅ Blob storage configuration added${NC}"
     fi
-    
+
+    # Add any *_MCP_URL env vars found in .env
+    for mcp_var in "${MCP_URL_VARS[@]}"; do
+        ENV_VARS_CREATE="$ENV_VARS_CREATE $mcp_var"
+        mcp_name=$(echo "$mcp_var" | cut -d '=' -f1)
+        echo -e "${GREEN}✅ $mcp_name configuration added${NC}"
+    done
+
     # Add Twilio env vars for twilio agents
     if [[ "$AGENT_NAME" == *"twilio"* ]]; then
         if [ -n "$TWILIO_ACCOUNT_SID" ] && [ -n "$TWILIO_AUTH_TOKEN" ] && [ -n "$TWILIO_FROM_NUMBER" ]; then
@@ -415,42 +407,6 @@ else
             echo -e "${GREEN}✅ Microsoft Graph Email configuration added${NC}"
         else
             echo -e "${YELLOW}⚠️  Email agent detected but credentials not found in environment${NC}"
-        fi
-    fi
-    
-    # Add Stripe MCP URL for Stripe agents
-    if [[ "$AGENT_NAME" == *"Stripe"* ]] || [[ "$AGENT_NAME" == *"stripe"* ]]; then
-        # Read from agent's .env file
-        STRIPE_MCP_URL=$(grep "^STRIPE_MCP_URL" "$AGENT_PATH/.env" 2>/dev/null | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
-        if [ -n "$STRIPE_MCP_URL" ]; then
-            ENV_VARS_CREATE="$ENV_VARS_CREATE STRIPE_MCP_URL=$STRIPE_MCP_URL"
-            echo -e "${GREEN}✅ Stripe MCP URL configuration added${NC}"
-        else
-            echo -e "${YELLOW}⚠️  Stripe agent detected but STRIPE_MCP_URL not found in .env${NC}"
-        fi
-    fi
-    
-    # Add HubSpot MCP URL for HubSpot agents
-    if [[ "$AGENT_NAME" == *"HubSpot"* ]] || [[ "$AGENT_NAME" == *"hubspot"* ]]; then
-        # Read from agent's .env file
-        HUBSPOT_MCP_URL=$(grep "^HUBSPOT_MCP_URL" "$AGENT_PATH/.env" 2>/dev/null | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
-        if [ -n "$HUBSPOT_MCP_URL" ]; then
-            ENV_VARS_CREATE="$ENV_VARS_CREATE HUBSPOT_MCP_URL=$HUBSPOT_MCP_URL"
-            echo -e "${GREEN}✅ HubSpot MCP URL configuration added${NC}"
-        else
-            echo -e "${YELLOW}⚠️  HubSpot agent detected but HUBSPOT_MCP_URL not found in .env${NC}"
-        fi
-    fi
-    
-    # Add QuickBooks MCP URL for QuickBooks agents
-    if [[ "$AGENT_NAME" == *"QuickBooks"* ]] || [[ "$AGENT_NAME" == *"quickbooks"* ]]; then
-        # Read from agent's .env file
-        QUICKBOOKS_MCP_URL=$(grep "^QUICKBOOKS_MCP_URL" "$AGENT_PATH/.env" 2>/dev/null | cut -d '=' -f2- | tr -d '"' | tr -d ' ')
-        if [ -n "$QUICKBOOKS_MCP_URL" ]; then
-            ENV_VARS_CREATE="$ENV_VARS_CREATE QUICKBOOKS_MCP_URL=$QUICKBOOKS_MCP_URL"
-            echo -e "${GREEN}✅ QuickBooks MCP URL configuration added${NC}"
-        else
-            echo -e "${YELLOW}⚠️  QuickBooks agent detected but QUICKBOOKS_MCP_URL not found in .env${NC}"
         fi
     fi
     

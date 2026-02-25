@@ -60,14 +60,14 @@ function formatAgentName(name: string): string {
 interface ParsedData {
   agents: AgentInfo[]
   orchestratorActivities: OrchestratorActivity[]
-  orchestratorStatus: "idle" | "planning" | "dispatching" | "complete"
+  orchestratorStatus: "idle" | "planning" | "dispatching" | "complete" | "error"
 }
 
 function parseEventsToAgents(steps: StepEvent[], agentColors?: Record<string, string>): ParsedData {
   const agentMap = new Map<string, AgentInfo>()
   const orchestratorActivities: OrchestratorActivity[] = []
   const seenOrchestratorLabels = new Set<string>()
-  let orchestratorStatus: "idle" | "planning" | "dispatching" | "complete" = "idle"
+  let orchestratorStatus: "idle" | "planning" | "dispatching" | "complete" | "error" = "idle"
   let activityIndex = 0
   // Track the current map key for each agent name to support multiple invocations
   // When an agent completes and new events arrive, a new key (e.g., "AgentName::2") is created
@@ -173,13 +173,14 @@ function parseEventsToAgents(steps: StepEvent[], agentColors?: Record<string, st
           label: "Resuming workflow with your input",
           timestamp: activityIndex,
         }
-      } else if (content.includes("Error in orchestration")) {
+      } else if (eventType === "agent_error" || content.includes("Error in orchestration") || content.includes("Cannot run workflow")) {
         activityIndex++
         activity = {
           type: "info",
           label: content,
           timestamp: activityIndex,
         }
+        orchestratorStatus = "error"
       }
       // Skip noise: "Planning step X...", "X agents available", "Initializing orchestration..."
       
@@ -365,7 +366,7 @@ function OrchestratorSection({ activities, status, isLive }: { activities: Orche
   // Check if an activity is a detailed extraction (has multi-line content)
   const isDetailedExtraction = (label: string) => label.includes("**Extracted from") && label.includes("\n")
   
-  const isWorking = isLive && status !== "complete"
+  const isWorking = isLive && status !== "complete" && status !== "error"
   
   return (
     <div className="mb-3 pb-3 border-b border-border/30">

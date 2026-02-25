@@ -103,6 +103,7 @@ class WebSocketStreamer:
         self.websocket_url = websocket_url
         self.events_endpoint = f"{websocket_url}/events"
         self.http_client = None
+        self._client_loop = None  # Track which event loop the httpx client was created on
         self.is_initialized = False
         # Track emitted files per conversation to prevent duplicates within same conversation only
         self._emitted_file_uris: Dict[str, Set[str]] = {}  # {conversation_id: {file_uri, ...}}
@@ -119,6 +120,7 @@ class WebSocketStreamer:
             # Create HTTP client for sending events
             # Increased timeout to 30s to handle message events that may take longer to broadcast
             self.http_client = httpx.AsyncClient(timeout=30.0)
+            self._client_loop = asyncio.get_running_loop()
             
             # Test connection to WebSocket server with retries
             health_url = f"{self.websocket_url}/health"
@@ -180,11 +182,35 @@ class WebSocketStreamer:
         Returns:
             bool: True if event sent successfully, False otherwise
         """
-        if not self.is_initialized or not self.http_client:
+        if not self.is_initialized:
             logger.error(f"WebSocket streamer not initialized, cannot send {event_type} event")
             log_debug(f"WebSocket streamer not available for {event_type}")
             return False
-        
+
+        # Ensure httpx client is bound to the current event loop.
+        # The streamer is a global singleton, but process_message may run on
+        # a different loop (main_loop) than the one that first initialized it
+        # (FastAPI/uvicorn loop). Recreate the client when loops don't match.
+        try:
+            current_loop = asyncio.get_running_loop()
+            if self._client_loop is not None and self._client_loop is not current_loop:
+                logger.debug("Recreating httpx client — current event loop differs from init loop")
+                old_client = self.http_client
+                self.http_client = httpx.AsyncClient(timeout=30.0)
+                self._client_loop = current_loop
+                if old_client:
+                    try:
+                        await old_client.aclose()
+                    except Exception:
+                        pass  # Old client may not be closeable on this loop
+            elif self.http_client is None:
+                self.http_client = httpx.AsyncClient(timeout=30.0)
+                self._client_loop = current_loop
+        except RuntimeError:
+            # No running event loop — create client anyway
+            if self.http_client is None:
+                self.http_client = httpx.AsyncClient(timeout=30.0)
+
         max_retries = 3
         retry_delay = 0.5  # Start with 0.5s delay
         
