@@ -2108,7 +2108,10 @@ def main():
             return blob_client.url
 
         except Exception as e:
-            log_error(f"Azure Blob upload failed: {e}, falling back to local storage")
+            import traceback
+            log_error(f"[BLOB_UPLOAD] Azure Blob upload FAILED: {e}")
+            log_error(f"[BLOB_UPLOAD] Traceback: {traceback.format_exc()}")
+            log_error(f"[BLOB_UPLOAD] Falling back to local path: {local_fallback}")
             return local_fallback
 
     # Add file upload endpoint

@@ -6121,10 +6121,15 @@ Workflow completed with result:
         elif kind == 'file':
             file_id = part.root.file.name
 
-            # Check if file already has an HTTP URI (uploaded to blob by frontend or agent)
+            # Check if file already has a URI (HTTP blob URL or local /uploads/ path)
             file_uri = getattr(part.root.file, 'uri', None)
-            log_debug(f"[FILE_PROCESSING] convert_part FILE: name={file_id}, uri={str(file_uri)[:80] if file_uri else 'None'}")
-            if file_uri and str(file_uri).startswith(('http://', 'https://')):
+            file_uri_str = str(file_uri) if file_uri else ''
+            log_debug(f"[FILE_PROCESSING] convert_part FILE: name={file_id}, uri={file_uri_str[:80]}")
+            is_pre_uploaded = (
+                file_uri_str.startswith(('http://', 'https://'))
+                or file_uri_str.startswith('/uploads/')
+            )
+            if is_pre_uploaded:
                 # File already in blob storage — skip save_artifact() but STILL run
                 # document processing so text is extracted and stored in Azure Search memory.
                 # Without this, user-uploaded files are never indexed and workflows can't
@@ -6138,9 +6143,20 @@ Workflow completed with result:
                             "foundry-host-agent", f"processing file: {file_id}", context_id,
                             event_type="info", metadata={"file": file_id, "action": "processing"}
                         )
+                    # Build artifact_info with file bytes for local paths
+                    artifact_info = {'file_name': file_id, 'artifact_uri': file_uri_str}
+                    if file_uri_str.startswith('/uploads/'):
+                        # Local fallback path — read bytes from container filesystem
+                        from pathlib import Path
+                        local_path = Path(__file__).resolve().parent.parent.parent / ".runtime" / file_uri_str.lstrip('/')
+                        if local_path.exists():
+                            artifact_info['file_bytes'] = local_path.read_bytes()
+                            log_debug(f"[FILE_PROCESSING] Read {len(artifact_info['file_bytes'])} bytes from local: {local_path}")
+                        else:
+                            log_debug(f"[FILE_PROCESSING] Local file not found: {local_path}")
                     processing_result = await a2a_document_processor.process_file_part(
                         part.root.file,
-                        {'file_name': file_id, 'artifact_uri': str(file_uri)},
+                        artifact_info,
                         session_id=session_id
                     )
                     if processing_result and isinstance(processing_result, dict) and processing_result.get("success"):
