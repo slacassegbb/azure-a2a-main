@@ -155,14 +155,15 @@ To minimize API costs and response times, ALWAYS use filters when possible:
 1. **hubspot_search_objects** - Use this with filters for finding specific records:
    - You MUST always pass objectType explicitly (e.g., "contacts", "companies", "deals")
    - Always specify just the properties you need
-   - Example — deals closed-won last month:
+   - Use ISO date strings (YYYY-MM-DD) for date filters — calculate the correct dates based on the current date
+   - Example — searching deals by stage and date range:
      ```
      hubspot_search_objects with: {
        "objectType": "deals",
        "filters": [
          {"propertyName": "dealstage", "operator": "EQ", "value": "closedwon"},
-         {"propertyName": "closedate", "operator": "GTE", "value": "2026-01-01"},
-         {"propertyName": "closedate", "operator": "LTE", "value": "2026-01-31"}
+         {"propertyName": "closedate", "operator": "GTE", "value": "<start_date>"},
+         {"propertyName": "closedate", "operator": "LTE", "value": "<end_date>"}
        ],
        "properties": ["dealname", "amount", "closedate", "dealstage"]
      }
