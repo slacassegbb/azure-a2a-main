@@ -827,9 +827,11 @@ Analyze the context and return your structured result."""
 
             for idx, output in enumerate(previous_task_outputs):
                 output_len = len(output) if output else 0
-                # Prefer outputs that are substantial (>200 chars) and contain data indicators
+                # Prefer outputs that are substantial (>200 chars) or contain data indicators
                 is_data_output = output_len > 200 or any(keyword in output.lower() for keyword in
-                    ['invoice', 'amount', 'total', 'bill', 'customer', 'vendor', '$', 'usd'])
+                    ['invoice', 'amount', 'total', 'bill', 'customer', 'vendor', '$', 'usd',
+                     'project', 'proposal', 'rfp', 'requirement', 'scope', 'budget', 'schedule',
+                     'deliverable', 'milestone', 'phase', 'resource', 'cost', 'timeline'])
 
                 if output_len > best_output_len and is_data_output:
                     best_output = output
@@ -840,25 +842,42 @@ Analyze the context and return your structured result."""
                 log_debug(f"[Agent Mode] Preferring DocumentProcessor content ({len(document_content)} chars) over workflow output ({best_output_len} chars)")
                 best_output = document_content
                 best_output_len = len(document_content)
-            
+
             # If no substantial output found, fall back to the first one
             if not best_output:
                 best_output = previous_task_outputs[0]
                 best_output_len = len(best_output) if best_output else 0
-            
+
             # Cap at 50K chars — gpt-4o has 128K context so this is plenty
             max_context_chars = 50000
             if best_output_len > max_context_chars:
                 best_output = best_output[:max_context_chars]
-            
+
             log_debug(f"[Agent Mode] Selected best context ({len(best_output)} chars)")
-            
+
             enhanced_task_message = f"""{task_desc}
 
 ## Context from Previous Steps:
 {best_output}
 
 Use the above output from the previous workflow step to complete your task."""
+
+        elif document_content:
+            # No previous task outputs but we found document content in memory
+            # This happens for the first parallel tasks in a workflow where no sequential
+            # steps ran before them, but the user uploaded documents that were processed
+            max_context_chars = 50000
+            if len(document_content) > max_context_chars:
+                document_content = document_content[:max_context_chars]
+
+            log_debug(f"[Agent Mode] No previous outputs, using DocumentProcessor content from memory ({len(document_content)} chars)")
+
+            enhanced_task_message = f"""{task_desc}
+
+## Document Content (from uploaded files):
+{document_content}
+
+Use the above document content to complete your task."""
         
         # File deduplication for multi-step workflows
         self._deduplicate_workflow_files(session_context)
