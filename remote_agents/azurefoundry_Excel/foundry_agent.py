@@ -542,13 +542,7 @@ Your question here
 
                 if text_chunks:
                     full_text = "".join(text_chunks)
-                    # Post-process: strip local/sandbox paths from LLM output
-                    import re
-                    full_text = re.sub(r'\[([^\]]*)\]\(sandbox:/download/[^)]*\)', r'\1', full_text)
-                    full_text = re.sub(r'sandbox:/download/\S+', '', full_text)
-                    full_text = re.sub(r'/tmp/xlsx_downloads/\S+', '', full_text)
-                    full_text = re.sub(r'/tmp/xlsx_agent/\S+', '', full_text)
-                    # Append blob URI if we have one so downstream agents get the real file reference
+                    # Append blob URI so downstream agents get the real file reference
                     if self._latest_artifacts:
                         blob_uri = self._latest_artifacts[-1].get("artifact-uri", "")
                         file_name = self._latest_artifacts[-1].get("file-name", "spreadsheet.xlsx")
