@@ -322,33 +322,40 @@ class WorkflowOrchestration:
         if not hasattr(session_context, '_latest_processed_parts'):
             return
         for part in session_context._latest_processed_parts:
-            if not hasattr(part, 'root'):
-                continue
-            if hasattr(part.root, 'file'):
+            file_obj = None
+            # Bare FilePart — convert_parts() unwraps Part(root=FilePart) to FilePart
+            if hasattr(part, 'file'):
+                file_obj = part.file
+            # Part wrapper — just in case parts are stored wrapped
+            elif hasattr(part, 'root') and hasattr(part.root, 'file'):
                 file_obj = part.root.file
-                file_uri = getattr(file_obj, 'uri', None) or getattr(file_obj, 'url', None)
-                file_name = getattr(file_obj, 'name', 'artifact')
-                content_type = getattr(file_obj, 'mimeType', None)
-                if file_uri and str(file_uri).startswith(('http://', 'https://')):
-                    if not content_type:
-                        ext = file_name.rsplit('.', 1)[-1].lower() if '.' in file_name else ''
-                        video_exts = {'mp4', 'webm', 'mov', 'avi'}
-                        image_exts = {'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp'}
-                        if ext in video_exts:
-                            content_type = f'video/{ext}'
-                        elif ext in image_exts:
-                            content_type = f'image/{"jpeg" if ext == "jpg" else ext}'
-                        else:
-                            continue  # Skip non-media files
-                    if not content_type.startswith(('image/', 'video/')):
-                        continue  # Only emit events for media files
-                    await self._emit_file_artifact_event(
-                        filename=file_name,
-                        uri=str(file_uri),
-                        context_id=context_id,
-                        agent_name=agent_name,
-                        content_type=content_type,
-                    )
+
+            if file_obj is None:
+                continue
+
+            file_uri = getattr(file_obj, 'uri', None) or getattr(file_obj, 'url', None)
+            file_name = getattr(file_obj, 'name', 'artifact')
+            content_type = getattr(file_obj, 'mimeType', None)
+            if file_uri and str(file_uri).startswith(('http://', 'https://')):
+                if not content_type:
+                    ext = file_name.rsplit('.', 1)[-1].lower() if '.' in file_name else ''
+                    video_exts = {'mp4', 'webm', 'mov', 'avi'}
+                    image_exts = {'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp'}
+                    if ext in video_exts:
+                        content_type = f'video/{ext}'
+                    elif ext in image_exts:
+                        content_type = f'image/{"jpeg" if ext == "jpg" else ext}'
+                    else:
+                        continue  # Skip non-media files
+                if not content_type.startswith(('image/', 'video/')):
+                    continue  # Only emit events for media files
+                await self._emit_file_artifact_event(
+                    filename=file_name,
+                    uri=str(file_uri),
+                    context_id=context_id,
+                    agent_name=agent_name,
+                    content_type=content_type,
+                )
 
     async def _execute_evaluation_step(
         self,
