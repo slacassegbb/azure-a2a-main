@@ -3160,11 +3160,23 @@ Answer with just JSON:
                             )
 
                     # Add file artifacts from this response to _agent_generated_artifacts for UI display
-                    # AND emit WebSocket events so the frontend/test can receive them
+                    # AND emit WebSocket events so the frontend/test can receive them.
+                    # NOTE: Only collect FileParts and special metadata DataParts (video_metadata,
+                    # image_metadata). Artifact DataParts (with artifact-uri) are metadata —
+                    # they always have a corresponding FilePart, so collecting both causes
+                    # duplicate images in the UI.
                     for item in response_parts:
                         is_file = isinstance(item, FilePart) or (hasattr(item, 'root') and isinstance(item.root, FilePart))
-                        is_data = isinstance(item, DataPart) or (hasattr(item, 'root') and isinstance(item.root, DataPart))
-                        if is_file or is_data:
+                        is_metadata = False
+                        if not is_file:
+                            target = item.root if hasattr(item, 'root') and isinstance(getattr(item, 'root', None), DataPart) else item
+                            if isinstance(target, DataPart) and isinstance(getattr(target, 'data', None), dict):
+                                # Collect metadata DataParts (video_metadata, image_metadata)
+                                # but NOT artifact DataParts (with artifact-uri) — those are
+                                # redundant with the corresponding FilePart
+                                if target.data.get('type') in ('video_metadata', 'image_metadata'):
+                                    is_metadata = True
+                        if is_file or is_metadata:
                             if not hasattr(session_context, '_agent_generated_artifacts'):
                                 session_context._agent_generated_artifacts = []
                             session_context._agent_generated_artifacts.append(item)
@@ -5197,10 +5209,13 @@ Workflow completed with result:
                                 # Use utility to extract URI from any part type
                                 uri = extract_uri(part)
                                 if uri:
-                                    # Convert to FilePart format for consistency
-                                    file_part = convert_artifact_dict_to_file_part(part)
-                                    if file_part:
-                                        artifact_dicts.append(file_part)
+                                    if is_file_part(part):
+                                        actual = part.root if hasattr(part, 'root') and is_file_part(part.root) else part
+                                        artifact_dicts.append(actual)
+                                    else:
+                                        file_part = convert_artifact_dict_to_file_part(part)
+                                        if file_part:
+                                            artifact_dicts.append(file_part)
                             
                             if artifact_dicts:
                                 log_debug(f"[Agent Mode] Including {len(artifact_dicts)} agent-generated artifact(s) in fallback response")
