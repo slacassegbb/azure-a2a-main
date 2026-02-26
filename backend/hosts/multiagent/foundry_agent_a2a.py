@@ -6219,6 +6219,19 @@ Workflow completed with result:
                 if extracted_content:
                     result_data['extracted_content'] = extracted_content
                     result_data['content_preview'] = extracted_content[:500] + "..." if len(extracted_content) > 500 else extracted_content
+
+                # Preserve role (base/mask/overlay) so GPT-4 can route files with roles
+                file_role = (part.root.metadata or {}).get('role') if getattr(part.root, 'metadata', None) else None
+                if not file_role:
+                    # Infer role from filename convention (e.g., _base.png, _mask.png)
+                    name_lower = (file_id or '').lower()
+                    if '_mask.' in name_lower or name_lower.endswith('_mask'):
+                        file_role = 'mask'
+                    elif '_base.' in name_lower or name_lower.endswith('_base'):
+                        file_role = 'base'
+                if file_role:
+                    result_data['role'] = file_role
+
                 data_part = DataPart(data=result_data)
 
                 return data_part
