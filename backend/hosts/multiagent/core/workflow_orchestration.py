@@ -821,48 +821,38 @@ Analyze the context and return your structured result."""
         if previous_task_outputs and len(previous_task_outputs) > 0:
             log_info(f"[Agent Mode] SMART CONTEXT for '{recommended_agent}': {len(previous_task_outputs)} previous outputs, memory doc={'found ' + str(len(document_content)) + ' chars' if document_content else 'none'}")
 
-            # Strategy: Prefer DocumentProcessor content if available, otherwise find the longest output
-            best_output = None
-            best_output_len = 0
-
-            for idx, output in enumerate(previous_task_outputs):
-                output_len = len(output) if output else 0
-                # Prefer outputs that are substantial (>200 chars) or contain data indicators
-                is_data_output = output_len > 200 or any(keyword in output.lower() for keyword in
-                    ['invoice', 'amount', 'total', 'bill', 'customer', 'vendor', '$', 'usd',
-                     'project', 'proposal', 'rfp', 'requirement', 'scope', 'budget', 'schedule',
-                     'deliverable', 'milestone', 'phase', 'resource', 'cost', 'timeline'])
-
-                if output_len > best_output_len and is_data_output:
-                    best_output = output
-                    best_output_len = output_len
-
-            # If we have DocumentProcessor content and it's more substantial, prefer it
-            if document_content and len(document_content) > best_output_len:
-                log_debug(f"[Agent Mode] Preferring DocumentProcessor content ({len(document_content)} chars) over workflow output ({best_output_len} chars)")
-                best_output = document_content
-                best_output_len = len(document_content)
-
-            # If no substantial output found, fall back to the first one
-            if not best_output:
-                best_output = previous_task_outputs[0]
-                best_output_len = len(best_output) if best_output else 0
-
-            # Cap at 50K chars — gpt-4o has 128K context so this is plenty
+            # Include ALL previous outputs so the agent has complete context
+            # (e.g., RFP extraction + web research + strategy — not just the longest one)
             max_context_chars = 50000
-            if best_output_len > max_context_chars:
-                best_output = best_output[:max_context_chars]
+            context_parts = []
+            total_chars = 0
 
-            log_info(f"[Agent Mode] SMART CONTEXT for '{recommended_agent}': selected {len(best_output)} chars")
+            # If we have DocumentProcessor content, include it first (original document data)
+            if document_content:
+                context_parts.append(f"### Extracted Document Content:\n{document_content}")
+                total_chars += len(document_content)
+
+            # Add all previous step outputs, newest first (most recent context is most relevant)
+            for idx, output in enumerate(reversed(previous_task_outputs)):
+                if not output or len(output) < 20:
+                    continue  # Skip trivial outputs
+                if total_chars + len(output) > max_context_chars:
+                    remaining = max_context_chars - total_chars
+                    if remaining > 200:
+                        context_parts.append(f"### Step Output {len(previous_task_outputs) - idx}:\n{output[:remaining]}")
+                    break
+                context_parts.append(f"### Step Output {len(previous_task_outputs) - idx}:\n{output}")
+                total_chars += len(output)
+
+            combined_context = "\n\n".join(context_parts)
+            log_info(f"[Agent Mode] SMART CONTEXT for '{recommended_agent}': selected {len(combined_context)} chars from {len(context_parts)} sources")
 
             enhanced_task_message = f"""{task_desc}
 
 ## Context from Previous Steps:
-{best_output}
+{combined_context}
 
-IMPORTANT: Use the text context above to complete your task. All required data has been
-extracted and is included in this message. Do NOT attempt to open or parse attached files
-that are not in your native format — use the text content provided instead."""
+Use the above context from previous workflow steps to complete your task."""
 
         elif document_content:
             # No previous task outputs but we found document content in memory
