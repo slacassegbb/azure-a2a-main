@@ -832,17 +832,29 @@ Analyze the context and return your structured result."""
                 context_parts.append(f"### Extracted Document Content:\n{document_content}")
                 total_chars += len(document_content)
 
+            # Strip blob URLs and local paths from previous outputs before passing as context.
+            # Agents see these URLs and try to download/open files they can't process
+            # (e.g., Excel agent trying to open a .docx blob URL from Word agent output).
+            import re
+            _url_pattern = re.compile(r'\n*File:.*?\(https?://[^\)]+\)\s*$', re.MULTILINE)
+            _path_pattern = re.compile(r'(?:/tmp/\S+|sandbox:/\S+)')
+
             # Add all previous step outputs, newest first (most recent context is most relevant)
             for idx, output in enumerate(reversed(previous_task_outputs)):
                 if not output or len(output) < 20:
                     continue  # Skip trivial outputs
-                if total_chars + len(output) > max_context_chars:
+                # Remove blob URLs and local paths so agents use text data, not file downloads
+                cleaned = _url_pattern.sub('', output)
+                cleaned = _path_pattern.sub('[file]', cleaned).strip()
+                if len(cleaned) < 20:
+                    continue
+                if total_chars + len(cleaned) > max_context_chars:
                     remaining = max_context_chars - total_chars
                     if remaining > 200:
-                        context_parts.append(f"### Step Output {len(previous_task_outputs) - idx}:\n{output[:remaining]}")
+                        context_parts.append(f"### Step Output {len(previous_task_outputs) - idx}:\n{cleaned[:remaining]}")
                     break
-                context_parts.append(f"### Step Output {len(previous_task_outputs) - idx}:\n{output}")
-                total_chars += len(output)
+                context_parts.append(f"### Step Output {len(previous_task_outputs) - idx}:\n{cleaned}")
+                total_chars += len(cleaned)
 
             combined_context = "\n\n".join(context_parts)
             log_info(f"[Agent Mode] SMART CONTEXT for '{recommended_agent}': selected {len(combined_context)} chars from {len(context_parts)} sources")
@@ -852,7 +864,8 @@ Analyze the context and return your structured result."""
 ## Context from Previous Steps:
 {combined_context}
 
-Use the above context from previous workflow steps to complete your task."""
+IMPORTANT: All data you need is provided as text above. Create your output using this text data.
+Do NOT attempt to download, open, or parse files from other agents — use the text content provided."""
 
         elif document_content:
             # No previous task outputs but we found document content in memory
@@ -2127,6 +2140,12 @@ Analyze the plan and determine the next step."""
                     # PARALLEL EXECUTION via asyncio.gather()
                     # ============================================
                     import asyncio as async_lib  # Import locally to avoid any scoping issues
+
+                    # Snapshot file parts BEFORE parallel execution starts.
+                    # This prevents parallel sibling agents from seeing each other's
+                    # output files (e.g., Word agent's .docx leaking to Excel agent).
+                    _pre_parallel_parts = list(getattr(session_context, '_latest_processed_parts', []))
+
                     log_info(f"[Agent Mode] Executing {len(pydantic_tasks)} tasks IN PARALLEL")
                     await self._emit_granular_agent_event(
                         "foundry-host-agent", f"Executing {len(pydantic_tasks)} tasks simultaneously...", context_id,
@@ -2141,11 +2160,13 @@ Analyze the plan and determine the next step."""
                         task.updated_at = datetime.now(timezone.utc)
 
                         try:
-                            # Pass ALL accumulated outputs - smart context selection will pick the best one
-                            # This is critical for HITL workflows where step N-1 may return a short response
-                            # like "approved", but step N-2 has the actual data (e.g., invoice details)
+                            # Restore pre-parallel file snapshot so this agent only sees
+                            # files from PRIOR steps, not from sibling parallel agents
+                            session_context._latest_processed_parts = list(_pre_parallel_parts)
+
+                            # Pass ALL accumulated outputs as text context
                             previous_output = list(all_task_outputs) if all_task_outputs else None
-                            
+
                             result = await self._execute_orchestrated_task(
                                 task=task,
                                 session_context=session_context,
