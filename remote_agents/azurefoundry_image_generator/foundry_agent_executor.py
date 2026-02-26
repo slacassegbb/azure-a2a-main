@@ -374,6 +374,12 @@ class FoundryImageGeneratorAgentExecutor(AgentExecutor):
                     texts.append(p.text)
             elif isinstance(p, DataPart):
                 if isinstance(p.data, dict):
+                    # Skip non-file metadata parts (e.g., backend_callback, video_metadata)
+                    # These are orchestration data, not file attachments for image generation
+                    part_type = p.data.get("type", "")
+                    if part_type in ("backend_callback", "video_metadata", "token_usage"):
+                        continue
+
                     uri = p.data.get("artifact-uri")
                     mime = p.data.get("mime") or p.data.get("media-type")
                     file_name = p.data.get("file-name") or p.data.get("artifact-id")
@@ -393,8 +399,6 @@ class FoundryImageGeneratorAgentExecutor(AgentExecutor):
                                 **({"role": role} if role else {}),
                             },
                         })
-                    else:
-                        encoded_parts.append({"kind": "data", "data": p.data})
                 else:
                     encoded_parts.append({"kind": "data", "data": p.data})
             elif isinstance(p.file, FileWithUri):
