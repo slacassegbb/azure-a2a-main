@@ -551,17 +551,29 @@ function AgentCard({ agent, stepNumber, isLive }: { agent: AgentInfo; stepNumber
                       <span className="text-foreground/80 break-all">{file.name}</span>
                     )}
                   </div>
-                  {/* Show image thumbnail - only for actual images, not PDFs */}
+                  {/* Show image thumbnail */}
                   {isImage && file.url && (
                     <div className="ml-5">
                       <a href={file.url} target="_blank" rel="noopener noreferrer">
-                        <img 
-                          src={file.url} 
+                        <img
+                          src={file.url}
                           alt={file.name}
                           className="max-w-[200px] max-h-[150px] rounded border border-border/50 hover:border-primary transition-colors"
                           onError={(e) => { e.currentTarget.style.display = 'none' }}
                         />
                       </a>
+                    </div>
+                  )}
+                  {/* Show video preview */}
+                  {isVideo && file.url && (
+                    <div className="ml-5">
+                      <video
+                        src={file.url}
+                        controls
+                        muted
+                        className="max-w-[250px] max-h-[180px] rounded border border-border/50"
+                        onError={(e) => { e.currentTarget.style.display = 'none' }}
+                      />
                     </div>
                   )}
                 </div>

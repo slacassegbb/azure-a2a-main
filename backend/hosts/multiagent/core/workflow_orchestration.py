@@ -264,6 +264,92 @@ class WorkflowOrchestration:
         
         return artifact_descriptions
 
+    async def _emit_file_events_from_artifacts(self, artifacts: list, agent_name: str, context_id: str):
+        """Emit file_uploaded WebSocket events for media artifacts (images/videos) only.
+
+        Document files (.docx, .xlsx, .pptx) already get their events emitted through
+        the SSE streaming callback during intermediate 'working' status updates.
+        Image/video files are only present in the final 'completed' artifacts, which
+        the streaming callback skips — so we emit them here.
+        """
+        _video_exts = {'mp4', 'webm', 'mov', 'avi'}
+        _image_exts = {'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp'}
+
+        for artifact in artifacts:
+            if not hasattr(artifact, 'parts'):
+                continue
+            for part in artifact.parts:
+                if not hasattr(part, 'root'):
+                    continue
+                file_uri = None
+                file_name = None
+                content_type = None
+                # DataPart with artifact-uri (image generator style)
+                if hasattr(part.root, 'data') and isinstance(part.root.data, dict):
+                    file_uri = part.root.data.get('artifact-uri')
+                    file_name = part.root.data.get('file-name', 'artifact')
+                    content_type = part.root.data.get('media-type') or part.root.data.get('mime')
+                # FilePart with uri (standard A2A file)
+                elif hasattr(part.root, 'file'):
+                    file_obj = part.root.file
+                    file_uri = getattr(file_obj, 'uri', None) or getattr(file_obj, 'url', None)
+                    file_name = getattr(file_obj, 'name', 'artifact')
+                    content_type = getattr(file_obj, 'mimeType', None)
+
+                if not file_uri or not str(file_uri).startswith(('http://', 'https://')):
+                    continue
+
+                # Determine content type from extension if not set
+                if not content_type:
+                    ext = file_name.rsplit('.', 1)[-1].lower() if '.' in file_name else ''
+                    if ext in _video_exts:
+                        content_type = f'video/{ext}'
+                    elif ext in _image_exts:
+                        content_type = f'image/{"jpeg" if ext == "jpg" else ext}'
+
+                # Only emit for media files — documents are already handled by streaming callback
+                if content_type and (content_type.startswith('image/') or content_type.startswith('video/')):
+                    await self._emit_file_artifact_event(
+                        filename=file_name,
+                        uri=str(file_uri),
+                        context_id=context_id,
+                        agent_name=agent_name,
+                        content_type=content_type,
+                    )
+
+    async def _emit_file_events_from_parts(self, session_context, agent_name: str, context_id: str):
+        """Emit file_uploaded events from _latest_processed_parts for the current agent."""
+        if not hasattr(session_context, '_latest_processed_parts'):
+            return
+        for part in session_context._latest_processed_parts:
+            if not hasattr(part, 'root'):
+                continue
+            if hasattr(part.root, 'file'):
+                file_obj = part.root.file
+                file_uri = getattr(file_obj, 'uri', None) or getattr(file_obj, 'url', None)
+                file_name = getattr(file_obj, 'name', 'artifact')
+                content_type = getattr(file_obj, 'mimeType', None)
+                if file_uri and str(file_uri).startswith(('http://', 'https://')):
+                    if not content_type:
+                        ext = file_name.rsplit('.', 1)[-1].lower() if '.' in file_name else ''
+                        video_exts = {'mp4', 'webm', 'mov', 'avi'}
+                        image_exts = {'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp'}
+                        if ext in video_exts:
+                            content_type = f'video/{ext}'
+                        elif ext in image_exts:
+                            content_type = f'image/{"jpeg" if ext == "jpg" else ext}'
+                        else:
+                            continue  # Skip non-media files
+                    if not content_type.startswith(('image/', 'video/')):
+                        continue  # Only emit events for media files
+                    await self._emit_file_artifact_event(
+                        filename=file_name,
+                        uri=str(file_uri),
+                        context_id=context_id,
+                        agent_name=agent_name,
+                        content_type=content_type,
+                    )
+
     async def _execute_evaluation_step(
         self,
         task: AgentModeTask,
@@ -975,13 +1061,20 @@ that are not in your native format — use the text content provided instead."""
                 if artifact_texts:
                     output_text = f"{output_text}\n\nArtifacts:\n" + "\n".join(artifact_texts)
 
+                # Emit file artifact events for the frontend (image/video previews in inference steps).
+                # In workflow mode, suppress_streaming=True skips the SSE streaming path where these
+                # events normally fire, so we emit them here after collecting artifacts.
+                await self._emit_file_events_from_artifacts(
+                    response_obj.artifacts, recommended_agent, context_id
+                )
+
             # Strip markdown image references from output text — images are displayed
             # separately as FilePart artifacts in the frontend, so including them in text
             # causes duplicate rendering.
             import re
             output_text = re.sub(r'!\[[^\]]*\]\([^)]+\)', '', output_text)
             output_text = re.sub(r'\n{3,}', '\n\n', output_text).strip()
-            
+
             # Emit agent output to workflow panel so users can see what the agent returned
             # Use a higher limit (2000 chars) to avoid cutting off important info
             if output_text and recommended_agent:
@@ -990,7 +1083,7 @@ that are not in your native format — use the text content provided instead."""
                     recommended_agent, display_output, context_id,
                     event_type="agent_output", metadata={"output_length": len(output_text)}
                 )
-            
+
             return {"output": output_text, "hitl_pause": False}
         else:
             # Simple string response (from send_message — list of Part objects).
@@ -1003,6 +1096,12 @@ that are not in your native format — use the text content provided instead."""
             # NOTE: FileParts are already stored in _latest_processed_parts by convert_parts()
             # inside send_message(). No need to collect them again here — doing so creates
             # duplicates that cause dedup to drop files.
+
+            # Emit file events from _latest_processed_parts for this agent's output
+            # This covers agents that return FileParts directly (not wrapped in Task artifacts)
+            await self._emit_file_events_from_parts(
+                session_context, recommended_agent, context_id
+            )
 
             # Emit agent output to workflow panel
             if output_text and recommended_agent:
