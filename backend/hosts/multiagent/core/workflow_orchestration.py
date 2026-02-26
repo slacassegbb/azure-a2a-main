@@ -819,7 +819,7 @@ Analyze the context and return your structured result."""
             log_error(f"[Agent Mode] Error searching memory for document content: {e}")
 
         if previous_task_outputs and len(previous_task_outputs) > 0:
-            log_debug(f"[Agent Mode] Searching {len(previous_task_outputs)} outputs for best context")
+            log_info(f"[Agent Mode] SMART CONTEXT for '{recommended_agent}': {len(previous_task_outputs)} previous outputs, memory doc={'found ' + str(len(document_content)) + ' chars' if document_content else 'none'}")
 
             # Strategy: Prefer DocumentProcessor content if available, otherwise find the longest output
             best_output = None
@@ -853,14 +853,16 @@ Analyze the context and return your structured result."""
             if best_output_len > max_context_chars:
                 best_output = best_output[:max_context_chars]
 
-            log_debug(f"[Agent Mode] Selected best context ({len(best_output)} chars)")
+            log_info(f"[Agent Mode] SMART CONTEXT for '{recommended_agent}': selected {len(best_output)} chars")
 
             enhanced_task_message = f"""{task_desc}
 
 ## Context from Previous Steps:
 {best_output}
 
-Use the above output from the previous workflow step to complete your task."""
+IMPORTANT: Use the text context above to complete your task. All required data has been
+extracted and is included in this message. Do NOT attempt to open or parse attached files
+that are not in your native format — use the text content provided instead."""
 
         elif document_content:
             # No previous task outputs but we found document content in memory
@@ -870,14 +872,16 @@ Use the above output from the previous workflow step to complete your task."""
             if len(document_content) > max_context_chars:
                 document_content = document_content[:max_context_chars]
 
-            log_debug(f"[Agent Mode] No previous outputs, using DocumentProcessor content from memory ({len(document_content)} chars)")
+            log_info(f"[Agent Mode] SMART CONTEXT for '{recommended_agent}': no previous outputs, using DocumentProcessor memory ({len(document_content)} chars)")
 
             enhanced_task_message = f"""{task_desc}
 
 ## Document Content (from uploaded files):
 {document_content}
 
-Use the above document content to complete your task."""
+IMPORTANT: Use the text content above to complete your task. All required data has been
+extracted and is included in this message. Do NOT attempt to open or parse attached files
+that are not in your native format — use the text content provided instead."""
         
         # File deduplication for multi-step workflows
         self._deduplicate_workflow_files(session_context)
