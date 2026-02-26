@@ -599,7 +599,10 @@ class A2AMemoryService:
             # Filter by minimum relevance score to avoid injecting unrelated content
             # Azure AI Search vector scores are typically 0-1, with higher being more relevant
             # Note: text-embedding-3-large produces scores typically in 0.5-0.8 range for relevant content
-            MIN_RELEVANCE_SCORE = 0.58  # Only include results with >= 58% similarity (filters out truly unrelated)
+            # Tested: DocumentProcessor entries score 0.56-0.63 for workflow task queries,
+            # while unrelated host_agent entries score ~0.53. Threshold of 0.55 keeps
+            # document content accessible to all agents while filtering noise.
+            MIN_RELEVANCE_SCORE = 0.55
             
             # Dedupe and reassemble chunked documents
             # For chunked documents: collect all chunks and reassemble the full content
