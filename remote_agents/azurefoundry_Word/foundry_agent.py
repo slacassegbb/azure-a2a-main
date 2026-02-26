@@ -384,6 +384,20 @@ Do NOT pass URLs directly to edit tools — always use `open_document` first.
 
 Current date: {datetime.datetime.now().isoformat()}
 
+## File References in Output (CRITICAL)
+
+NEVER mention local file paths (e.g. `/tmp/docx_downloads/...`), sandbox download links
+(e.g. `sandbox:/download/...`), or MCP server URLs in your text response. These are
+internal implementation details that confuse downstream agents and users.
+
+Instead, simply state that the document has been created and describe its contents.
+The system automatically handles file delivery via Azure Blob Storage URIs — you do
+NOT need to provide download links or file paths.
+
+BAD:  "Download the document at sandbox:/download/proposal.docx"
+BAD:  "The file is saved at /tmp/docx_downloads/proposal.docx"
+GOOD: "I've created the proposal document with the following sections: ..."
+
 ## Error Reporting (CRITICAL)
 
 If you CANNOT complete the requested task — due to rate limits, API errors, missing data,
@@ -550,6 +564,19 @@ Your question here
 
                 if text_chunks:
                     full_text = "".join(text_chunks)
+                    # Post-process: strip local/sandbox paths from LLM output
+                    # These confuse downstream agents and should be replaced with blob URIs
+                    import re
+                    full_text = re.sub(r'\[([^\]]*)\]\(sandbox:/download/[^)]*\)', r'\1', full_text)
+                    full_text = re.sub(r'sandbox:/download/\S+', '', full_text)
+                    full_text = re.sub(r'/tmp/docx_downloads/\S+', '', full_text)
+                    full_text = re.sub(r'/tmp/docx_agent/\S+', '', full_text)
+                    # Append blob URI if we have one so downstream agents get the real file reference
+                    if self._latest_artifacts:
+                        blob_uri = self._latest_artifacts[-1].get("artifact-uri", "")
+                        file_name = self._latest_artifacts[-1].get("file-name", "document.docx")
+                        if blob_uri:
+                            full_text = full_text.rstrip() + f"\n\nFile: {file_name} ({blob_uri})"
                     if mcp_failures:
                         yield f"Error: MCP tool(s) failed ({', '.join(mcp_failures)}). {full_text}"
                     else:
