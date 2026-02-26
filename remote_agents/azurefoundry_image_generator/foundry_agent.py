@@ -351,9 +351,15 @@ Your mission is to generate images based on the prompts you receive. You work as
    - Handles all file I/O behind the scenes
 
 9. **IMAGE EDITING WITH MASK**: If the request mentions editing/refining an image with a mask:
-   - Call `generate_image` with a prompt describing the desired changes
-   - The tool automatically uses the base image and mask that were attached
-   - No need to ask for anything - just describe what to change
+   - The mask defines WHICH REGION of the image to edit. The tool handles this automatically.
+   - Your prompt must describe WHAT THE RESULT SHOULD LOOK LIKE — write a natural scene description, NOT instructions about the mask.
+   - **CRITICAL**: Do NOT write prompts like "fill the mask region with blue" or "apply changes within the transparent area." DALL-E doesn't understand mask mechanics — it only understands scene descriptions.
+   - Instead, infer what the user wants based on their request + what's in the masked region, then describe the desired outcome naturally.
+   - Examples:
+     * User says "make this blue" with mask over eyes → prompt: "a bulldog with vivid bright blue eyes, sitting on green grass"
+     * User says "remove the hat" with mask over hat → prompt: "a person with natural hair, no hat, outdoor setting"
+     * User says "change to sunset" with mask over sky → prompt: "a dramatic sunset sky with orange and purple clouds"
+   - Always describe the FULL scene context (not just the edit) so DALL-E maintains visual coherence.
 
 10. Return a summary of the generated image concept and tool output.
 
@@ -1282,7 +1288,9 @@ Always validate the prompt for safety before invoking the tool.
             logger.info("Unable to capture OpenAI payload diagnostics")
 
         if mask_image_url:
-            prompt = f"{prompt}\n\nApply the requested changes ONLY within the provided mask region."
+            # Don't append mask instructions — the mask file already defines the edit
+            # region. The prompt should be a natural scene description, not mask mechanics.
+            pass
         elif not has_mask:
             prompt = (
                 f"{prompt}\n\nPreserve the original photographic realism, lighting, surface textures, and any existing text. "
