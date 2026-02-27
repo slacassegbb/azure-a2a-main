@@ -107,21 +107,24 @@ class AzureClients:
             log_foundry_debug("AIProjectClient initialized")
         
         # Initialize OpenAI client for Responses API
-        # Use direct Foundry endpoint (not project path) to avoid 403 on project-scoped route
+        # Use AsyncAzureOpenAI with azure_ad_token_provider for automatic token refresh
         if not hasattr(self, 'openai_client') or self.openai_client is None:
-            from openai import AsyncOpenAI
+            from openai import AsyncAzureOpenAI
+            from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 
-            # Extract resource name from project endpoint
-            # e.g. https://simonfoundry.services.ai.azure.com/api/projects/proj-default
             resource_name = self.endpoint.split("//")[1].split(".")[0]
-            direct_endpoint = f"https://{resource_name}.services.ai.azure.com/openai/v1"
+            azure_endpoint = f"https://{resource_name}.services.ai.azure.com"
 
-            token = await self.credential.get_token("https://ai.azure.com/.default")
-            self.openai_client = AsyncOpenAI(
-                base_url=direct_endpoint,
-                api_key=token.token,
+            sync_credential = DefaultAzureCredential()
+            token_provider = get_bearer_token_provider(
+                sync_credential, "https://cognitiveservices.azure.com/.default"
             )
-            log_foundry_debug(f"OpenAI client ready at {direct_endpoint}")
+            self.openai_client = AsyncAzureOpenAI(
+                azure_endpoint=azure_endpoint,
+                azure_ad_token_provider=token_provider,
+                api_version="2025-03-01-preview",
+            )
+            log_foundry_debug(f"OpenAI client ready at {azure_endpoint} (auto-refreshing token)")
 
     def _init_azure_blob_client(self):
         """Initialize Azure Blob Storage client if environment variables are configured."""
