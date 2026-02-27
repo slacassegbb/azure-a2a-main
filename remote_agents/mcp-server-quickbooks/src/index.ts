@@ -1886,13 +1886,33 @@ async function runServer() {
                     FiscalYearStartMonth: rawData.FiscalYearStartMonth,
                   };
                 } else if (toolName === "qbo_report" && rawData) {
-                  summarizedResult = {
-                    ReportName: rawData.Header?.ReportName,
-                    DateRange: `${rawData.Header?.StartPeriod || ''} to ${rawData.Header?.EndPeriod || ''}`,
-                    Currency: rawData.Header?.Currency,
-                    Columns: rawData.Columns?.Column?.map((c: any) => c.ColTitle),
-                    RowCount: rawData.Rows?.Row?.length || 0,
-                  };
+                  // Flatten the QuickBooks report into a readable table
+                  const columns = rawData.Columns?.Column?.map((c: any) => c.ColTitle) || [];
+                  const flatRows: string[] = [];
+                  function extractRows(rows: any[], indent = 0) {
+                    if (!rows) return;
+                    for (const row of rows) {
+                      if (row.Header?.ColData) {
+                        const vals = row.Header.ColData.map((c: any) => c.value || '');
+                        flatRows.push('  '.repeat(indent) + vals.join(' | '));
+                      }
+                      if (row.ColData) {
+                        const vals = row.ColData.map((c: any) => c.value || '');
+                        flatRows.push('  '.repeat(indent) + vals.join(' | '));
+                      }
+                      if (row.Rows?.Row) {
+                        extractRows(row.Rows.Row, indent + 1);
+                      }
+                      if (row.Summary?.ColData) {
+                        const vals = row.Summary.ColData.map((c: any) => c.value || '');
+                        flatRows.push('  '.repeat(indent) + '**' + vals.join(' | ') + '**');
+                      }
+                    }
+                  }
+                  extractRows(rawData.Rows?.Row);
+                  const header = `${rawData.Header?.ReportName || 'Report'} (${rawData.Header?.StartPeriod || ''} to ${rawData.Header?.EndPeriod || ''}, ${rawData.Header?.Currency || 'USD'})`;
+                  const table = `${columns.join(' | ')}\n${flatRows.join('\n')}`;
+                  summarizedResult = `${header}\n\n${table}`;
                 } else if (toolName?.includes("delete")) {
                   // Delete operations return simple confirmations
                   summarizedResult = { success: true, message: `${toolName.replace('qbo_delete_', '')} deleted successfully` };
@@ -1915,6 +1935,8 @@ async function runServer() {
                   } else {
                     responseText = `Found ${totalCount} results: ${JSON.stringify(summarizedResult)}`;
                   }
+                } else if (typeof summarizedResult === 'string') {
+                  responseText = summarizedResult;
                 } else {
                   responseText = JSON.stringify(summarizedResult);
                 }

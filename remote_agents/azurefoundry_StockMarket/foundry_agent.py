@@ -232,6 +232,8 @@ Your question here
                         pass
                     elif event_type == "response.mcp_call.failed":
                         tool_name = getattr(event, 'name', None) or getattr(event, 'item_id', 'mcp_tool')
+                        error_msg = getattr(event, 'error', None) or getattr(event, 'message', None)
+                        logger.error(f"MCP call failed — tool: {tool_name}, error: {error_msg}, event attrs: {vars(event) if hasattr(event, '__dict__') else event}")
                         mcp_failures.append(tool_name)
                     elif event_type == "response.failed":
                         resp = getattr(event, 'response', None)

@@ -233,9 +233,11 @@ async def handle_teams_webhook(request: Request) -> JSONResponse:
                             logger.info(f"📤 Forwarding human response to backend for context {context_id}")
                             
                             # Store the thread_id before clearing so the executor can use it
-                            # We need to pass this through somehow...
                             thread_id = request_info.get("thread_id")
                             wait_info = request_info.get("wait_info", "")
+                            # Use per-request callback URL from the originating backend
+                            # Falls back to env var for backwards compatibility
+                            request_callback_url = request_info.get("callback_url") or backend_url
                             
                             # Clear the pending request NOW - we're about to forward it
                             # The executor will receive the context_id and can look up the thread
@@ -268,9 +270,9 @@ async def handle_teams_webhook(request: Request) -> JSONResponse:
                                             ]
                                         }
                                     }
-                                    logger.info(f"📤 Sending to backend: {payload}")
+                                    logger.info(f"📤 Sending to backend ({request_callback_url}): {payload}")
                                     async with session.post(
-                                        f"{backend_url}/message/send",
+                                        f"{request_callback_url}/message/send",
                                         json=payload,
                                         timeout=aiohttp.ClientTimeout(total=30)
                                     ) as resp:

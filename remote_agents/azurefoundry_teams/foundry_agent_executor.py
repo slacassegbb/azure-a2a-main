@@ -120,6 +120,15 @@ class FoundryTeamsAgentExecutor(AgentExecutor):
         logger.info(f"🟢 [_process_request ENTRY] context_id={context_id}, parts_count={len(message_parts)}")
         
         try:
+            # Extract backend callback URL from DataParts (for HITL webhook forwarding)
+            callback_url = None
+            for part in message_parts:
+                p = part.root
+                if isinstance(p, DataPart) and isinstance(p.data, dict) and p.data.get("type") == "backend_callback":
+                    callback_url = p.data.get("callback_url")
+                    logger.info(f"🔗 [CALLBACK] Extracted backend callback URL: {callback_url}")
+                    break
+
             user_message = self._convert_parts_to_text(message_parts)
             if user_message:
                 preview = user_message if len(user_message) <= 2000 else user_message[:2000] + "..."
@@ -131,7 +140,7 @@ class FoundryTeamsAgentExecutor(AgentExecutor):
                 )
             else:
                 logger.info("🧾 Received empty A2A conversation payload for context %s", context_id)
-            
+
             agent = await self._get_or_create_agent()
             
             # ========================================================================
@@ -222,9 +231,11 @@ Based on the user's response, take the appropriate action. Use TEAMS_SEND to ack
                     logger.info(f"📱 Agent waiting for Teams response: {wait_info}")
                     
                     # Store context for resume - will be handled by a follow-up A2A message
+                    # Include callback_url so the webhook forwards to the correct backend
                     self._waiting_for_input[context_id] = {
                         "wait_info": wait_info,
                         "thread_id": thread_id,
+                        "callback_url": callback_url,
                     }
                     
                     # Set task to input_required state and RETURN immediately
