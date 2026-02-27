@@ -200,6 +200,17 @@ def run_a2a_server_in_thread(host: str, port: int):
     uvicorn.run(app, host=host, port=port, log_level="info")
 
 
+EMAIL_CONFIG_SCHEMA = [
+    {
+        "key": "to_email",
+        "label": "Your Email Address",
+        "type": "email",
+        "required": True,
+        "description": "The email address where you want to receive emails (e.g. john@company.com)"
+    }
+]
+
+
 async def register_agent_with_host(agent_card):
     """Register this agent with the host agent after startup."""
     if SELF_REGISTRATION_AVAILABLE:
@@ -210,7 +221,11 @@ async def register_agent_with_host(agent_card):
                 return
 
             logger.info(f"🤝 Attempting to register '{agent_card.name}' with host agent at {HOST_AGENT_URL}...")
-            registration_success = await register_with_host_agent(agent_card, host_url=HOST_AGENT_URL)
+            registration_success = await register_with_host_agent(
+                agent_card,
+                host_url=HOST_AGENT_URL,
+                config_schema=EMAIL_CONFIG_SCHEMA
+            )
             if registration_success:
                 logger.info(f"🎉 '{agent_card.name}' successfully registered with host agent!")
             else:

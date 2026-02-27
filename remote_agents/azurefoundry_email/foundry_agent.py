@@ -23,6 +23,12 @@ from azure.identity import DefaultAzureCredential
 from azure.storage.blob import BlobServiceClient, generate_blob_sas, BlobSasPermissions
 import glob
 
+try:
+    from shared.credential_helper import get_user_credentials
+except ImportError:
+    async def get_user_credentials(context_id, agent_name):
+        return None
+
 logger = logging.getLogger(__name__)
 
 
@@ -260,6 +266,16 @@ BODY:
 </html>
 ```END_EMAIL
 
+## Recipient Resolution
+
+The `TO` field is OPTIONAL. If the user does not specify a recipient email address, simply OMIT the TO line or leave it blank — the system will automatically resolve the recipient from the user's saved configuration.
+NEVER ask the user for an email address. Just send the email without TO and let the system handle it.
+
+Examples:
+- "Send me a summary email" → TO: (leave blank, system resolves)
+- "Email john@company.com about the project" → TO: john@company.com (explicit)
+- "Send an email with the report" → TO: (leave blank, system resolves)
+
 ## CRITICAL RULES
 
 **For Reading Emails:**
@@ -271,6 +287,7 @@ BODY:
 
 **For Sending Emails:**
 - **NEVER** ask "Would you like me to send this?" or wait for confirmation
+- **NEVER** ask the user for a recipient email address — omit TO and the system resolves it automatically
 - **ALWAYS** output the EMAIL_TO_SEND block immediately when you have recipient + subject + content
 - Include the FULL report content in the BODY - the system will generate a PDF if appropriate
 - Use HTML formatting for professional appearance
@@ -447,7 +464,7 @@ Current date: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}
                             break
                         
                         # Check if there's an email to send
-                        email_result, clean_content = self._try_send_email(text_content)
+                        email_result, clean_content = await self._try_send_email(text_content)
                         if email_result:
                             # Show clean summary instead of raw EMAIL_TO_SEND block
                             yield f"{clean_content}\n\n{email_result}"
@@ -764,31 +781,59 @@ Current date: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}
         self._latest_artifacts = []
         return artifacts
     
-    def _try_send_email(self, response_text: str) -> tuple[Optional[str], str]:
+    async def _resolve_to_email(self) -> Optional[str]:
+        """Resolve the recipient email from user credentials.
+
+        Uses the context_id (set per-request) to look up user-specific config.
+        Returns None if no user config is found.
+        """
+        context_id = getattr(self, '_current_context_id', None)
+        if context_id:
+            try:
+                user_creds = await get_user_credentials(context_id, "Email Agent")
+                if user_creds:
+                    user_email = user_creds.get("to_email")
+                    if user_email:
+                        logger.info(f"📧 Resolved user email from credentials for context={context_id}")
+                        return user_email
+            except Exception as e:
+                logger.warning(f"Failed to resolve user credentials: {e}")
+        return None
+
+    async def _try_send_email(self, response_text: str) -> tuple[Optional[str], str]:
         """Check if the response contains an email to send and send it.
         Returns: (result_message, cleaned_content)
         """
         import re
-        
+
         # Look for the EMAIL_TO_SEND block
         pattern = r'```EMAIL_TO_SEND\s*\n(.*?)\n```END_EMAIL'
         match = re.search(pattern, response_text, re.DOTALL)
-        
+
         if not match:
             return None, response_text
-        
+
         email_block = match.group(1)
-        
+
         # Parse the email fields
         to_match = re.search(r'^TO:\s*(.+)$', email_block, re.MULTILINE)
         subject_match = re.search(r'^SUBJECT:\s*(.+)$', email_block, re.MULTILINE)
         cc_match = re.search(r'^CC:\s*(.*)$', email_block, re.MULTILINE)
         body_match = re.search(r'^BODY:\s*\n(.+)', email_block, re.DOTALL | re.MULTILINE)
-        
-        if not to_match or not subject_match or not body_match:
+
+        if not subject_match or not body_match:
             return "⚠️ Could not parse email format", response_text
-        
-        to = to_match.group(1).strip()
+
+        to = to_match.group(1).strip() if to_match else ""
+
+        # If TO is empty or a placeholder, resolve from user credentials
+        if not to or "@" not in to:
+            resolved_email = await self._resolve_to_email()
+            if resolved_email:
+                to = resolved_email
+                logger.info(f"📧 Using user-configured email: {to}")
+            else:
+                return "⚠️ No recipient email specified and no user email configured", response_text
         subject = subject_match.group(1).strip()
         cc = cc_match.group(1).strip() if cc_match else ""
         body = body_match.group(1).strip()
