@@ -1594,7 +1594,7 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
             {
                 "type": "function",
                 "name": "send_message",
-                "description": "Send a message to a remote agent. When an agent returns files, include their URIs from the response in file_uris to pass them to the next agent. For video remix operations, include video_metadata with the video_id.",
+                "description": "HIGHEST PRIORITY TOOL — Always use this BEFORE web_search_preview when any available agent's skills match the user's request. Send a message to a remote agent to delegate the task. When an agent returns files, include their URIs from the response in file_uris to pass them to the next agent. For video remix operations, include video_metadata with the video_id.",
                 "parameters": {
                     "type": "object",
                     "properties": {
