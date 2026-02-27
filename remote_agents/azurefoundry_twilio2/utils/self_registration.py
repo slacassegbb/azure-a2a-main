@@ -22,19 +22,21 @@ logger = logging.getLogger(__name__)
 
 
 async def register_with_host_agent(
-    agent_card: AgentCard, 
+    agent_card: AgentCard,
     host_url: Optional[str] = None,
     max_retries: int = 3,
-    retry_delay: float = 2.0
+    retry_delay: float = 2.0,
+    config_schema: Optional[list] = None
 ) -> bool:
     """Register this agent with the host agent for automatic discovery.
-    
+
     Args:
         agent_card: The agent card to register
         host_url: URL of the host agent (defaults to localhost:12000)
         max_retries: Maximum number of registration attempts
         retry_delay: Delay between retry attempts in seconds
-        
+        config_schema: Optional list of user-configurable field definitions
+
     Returns:
         bool: True if registration successful, False otherwise
     """
@@ -46,7 +48,7 @@ async def register_with_host_agent(
         return False
 
     registration_url = f"{host_url.rstrip('/')}/agent/self-register"
-    
+
     for attempt in range(max_retries):
         try:
             if attempt > 0:
@@ -54,13 +56,15 @@ async def register_with_host_agent(
                 await asyncio.sleep(retry_delay)
             else:
                 logger.info(f"🤝 Attempting self-registration with host agent at: {registration_url}")
-            
+
             async with httpx.AsyncClient(timeout=10.0) as client:
                 # Prepare registration payload
                 payload = {
                     "agent_address": agent_card.url,
                     "agent_card": agent_card.model_dump()
                 }
+                if config_schema is not None:
+                    payload["config_schema"] = config_schema
                 
                 response = await client.post(registration_url, json=payload)
                 

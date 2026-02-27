@@ -564,6 +564,30 @@ class FoundryHostManager(ApplicationManager):
 
                 log_info(f"[Workflow Pre-flight] All {len(required_agents)} agents online and enabled")
 
+                # --- Per-user credential check ---
+                # Verify user has configured any agents that require user-specific credentials
+                try:
+                    from service.user_agent_config_service import get_user_agent_config_service
+                    config_service = get_user_agent_config_service()
+                    preflight_user_id = parse_session_from_context(context_id) or ""
+                    config_status = config_service.check_agents_configured(preflight_user_id, required_agents)
+                    unconfigured = [
+                        name for name, status in config_status.items()
+                        if status["needs_config"] and not status["is_configured"]
+                    ]
+                    if unconfigured:
+                        error_msg = f"These agents need configuration before use: {', '.join(unconfigured)}. Configure them in the Agent Catalog."
+                        log_error(f"[Workflow Pre-flight] {error_msg}")
+                        await self._host_agent._emit_granular_agent_event(
+                            "foundry-host-agent", error_msg, context_id,
+                            event_type="agent_error", metadata={"phase": "preflight_config_check"}
+                        )
+                        await self._emit_final_response(context_id, error_msg)
+                        return
+                    log_info(f"[Workflow Pre-flight] All agents configured for user {preflight_user_id}")
+                except Exception as e:
+                    log_warning(f"[Workflow Pre-flight] Config check warning (non-blocking): {e}")
+
         conversation = self.get_conversation(context_id)
         if not conversation:
             conversation = Conversation(conversation_id=context_id, is_active=True)
@@ -1352,15 +1376,16 @@ class FoundryHostManager(ApplicationManager):
             if hasattr(self._host_agent, 'update_instructions_with_agents'):
                 self._host_agent.update_instructions_with_agents()
 
-    async def handle_self_registration(self, agent_address: str, agent_card: Optional[AgentCard] = None) -> bool:
+    async def handle_self_registration(self, agent_address: str, agent_card: Optional[AgentCard] = None, config_schema=None) -> bool:
         """Handle self-registration requests from remote agents.
-        
+
         This method is called when remote agents register themselves on startup.
-        
+
         Args:
             agent_address: The URL/address of the remote agent
             agent_card: Optional pre-built agent card
-            
+            config_schema: Optional list of user-configurable field definitions
+
         Returns:
             bool: True if registration successful, False otherwise
         """
@@ -1397,10 +1422,14 @@ class FoundryHostManager(ApplicationManager):
                 try:
                     from service.agent_registry import get_registry
                     registry = get_registry()
-                    
+
                     # Convert agent card to dict format for registry
                     agent_dict = agent_card.model_dump()
-                    
+
+                    # Include config_schema if provided by the agent
+                    if config_schema is not None:
+                        agent_dict['config_schema'] = config_schema
+
                     # Check if agent already exists in registry (by name or URL)
                     existing_agent = registry.get_agent(agent_card.name)
                     if existing_agent:

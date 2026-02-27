@@ -11,6 +11,7 @@ HITL (Human-in-the-Loop) Support:
 - Responses are forwarded to host orchestrator via A2A input_required state
 """
 import os
+import sys
 import time
 import datetime
 import asyncio
@@ -21,7 +22,7 @@ from dataclasses import dataclass
 
 from azure.ai.agents import AgentsClient
 from azure.ai.agents.models import (
-    Agent, ThreadMessage, ThreadRun, AgentThread, ToolOutput, 
+    Agent, ThreadMessage, ThreadRun, AgentThread, ToolOutput,
     ListSortOrder, FunctionTool, ToolSet
 )
 from azure.ai.projects import AIProjectClient
@@ -30,6 +31,10 @@ from azure.identity import DefaultAzureCredential
 # Twilio imports
 from twilio.rest import Client as TwilioClient
 from twilio.base.exceptions import TwilioRestException
+
+# Add shared module to path for credential helper
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from shared.credential_helper import get_user_credentials
 
 logger = logging.getLogger(__name__)
 
@@ -111,11 +116,30 @@ class FoundryTwilioAgent:
             missing.append("TWILIO_AUTH_TOKEN")
         if not self.twilio_from_number:
             missing.append("TWILIO_FROM_NUMBER")
-        
+
         if missing:
             logger.error(f"Missing Twilio configuration: {', '.join(missing)}")
             return False
         return True
+
+    async def _resolve_to_number(self) -> Optional[str]:
+        """Resolve the recipient phone number from user credentials or env var fallback.
+
+        Uses the context_id (set per-request) to look up user-specific config.
+        Falls back to TWILIO_DEFAULT_TO_NUMBER env var.
+        """
+        context_id = getattr(self, '_current_context_id', None)
+        if context_id:
+            try:
+                user_creds = await get_user_credentials(context_id, "Twilio SMS Agent")
+                if user_creds:
+                    user_phone = user_creds.get("to_phone_number")
+                    if user_phone:
+                        logger.info(f"Resolved user phone number from credentials for context={context_id}")
+                        return user_phone
+            except Exception as e:
+                logger.warning(f"Failed to resolve user credentials: {e}")
+        return self.twilio_default_to_number
     
     def send_sms(self, message: str, to_number: Optional[str] = None) -> Dict:
         """
@@ -498,23 +522,31 @@ When you receive a request:
 2. **Is it a statement/notification?** → Use `send_sms` to deliver it
 3. **Is it asking about history?** → Use `receive_sms` to check inbox
 
-Default phone number: {self.twilio_default_to_number or "+15147715943"}
+## Phone Number Resolution
+
+The `to_number` parameter is OPTIONAL. If the user does not specify a phone number, simply OMIT `to_number` from the tool call — the system will automatically resolve the recipient from the user's saved configuration.
+NEVER ask the user for a phone number. Just call the tool without `to_number` and let the system handle it.
 
 ## Examples
 
+✅ Request: "Send hello via SMS"
+→ Action: `send_sms(message="Hello!")`
+→ Reason: No phone number specified — system resolves it automatically
+
 ✅ Request: "What is your favorite food?"
-→ Action: `twilio_ask(question="What is your favorite food?", to_number="+15147715943")`
+→ Action: `twilio_ask(question="What is your favorite food?")`
 → Reason: This is a question that needs an SMS reply from the user
 
-✅ Request: "Your balance is $100"
-→ Action: `send_sms(message="Your balance is $100", to_number="+15147715943")`
-→ Reason: This is informational, no reply needed
+✅ Request: "Send 'Your balance is $100' to +15551234567"
+→ Action: `send_sms(message="Your balance is $100", to_number="+15551234567")`
+→ Reason: Explicit phone number provided
 
 ✅ Request: "Check for replies"
 → Action: `receive_sms()`
 → Reason: Checking message history
 
 ❌ WRONG: Responding with "I can help you send an SMS..." - Just DO IT, don't explain!
+❌ WRONG: Asking "What phone number should I send to?" - Just OMIT to_number and the system resolves it!
 
 ## IMPORTANT RULES
 
@@ -522,6 +554,7 @@ Default phone number: {self.twilio_default_to_number or "+15147715943"}
 2. **ALWAYS use a tool - don't respond with conversational text**
 3. **If you're unsure whether something is a question, assume it is and use twilio_ask**
 4. **Your default action is to EXECUTE, not to EXPLAIN**
+5. **NEVER ask the user for a phone number - omit `to_number` and the system resolves it automatically**
 
 ## Message Formatting Guidelines
 
@@ -640,7 +673,7 @@ Remember: You can both SEND and RECEIVE SMS messages. Always call the appropriat
             if function_name == "send_sms":
                 # Get the message from args
                 sms_message = function_args.get("message", "")
-                
+
                 # Guard against empty messages
                 if not sms_message or not sms_message.strip():
                     logger.error(f"❌ Empty message received from AI model. Full args: {function_args}")
@@ -649,10 +682,11 @@ Remember: You can both SEND and RECEIVE SMS messages. Always call the appropriat
                         "error": "Message body is empty. The AI model did not extract the message content properly."
                     }
                 else:
-                    # Execute the send_sms function
+                    # Resolve recipient: explicit arg > user credentials > env var default
+                    to_number = function_args.get("to_number") or await self._resolve_to_number()
                     result = self.send_sms(
                         message=sms_message,
-                        to_number=function_args.get("to_number")
+                        to_number=to_number
                     )
                 tool_outputs.append(ToolOutput(
                     tool_call_id=tool_call.id,
@@ -693,7 +727,7 @@ Remember: You can both SEND and RECEIVE SMS messages. Always call the appropriat
             elif function_name == "twilio_ask":
                 # HITL: Send SMS and wait for response
                 question = function_args.get("question", "")
-                
+
                 if not question or not question.strip():
                     logger.error(f"❌ Empty question received for twilio_ask. Full args: {function_args}")
                     result = {
@@ -704,12 +738,15 @@ Remember: You can both SEND and RECEIVE SMS messages. Always call the appropriat
                 else:
                     # Get context_id from thread tracking (will be passed via executor)
                     context_id = getattr(self, '_current_context_id', f"sms_{thread_id}")
-                    
+
+                    # Resolve recipient: explicit arg > user credentials > env var default
+                    to_number = function_args.get("to_number") or await self._resolve_to_number()
+
                     # Execute twilio_ask which sends SMS and stores pending request
                     result = self.twilio_ask(
                         question=question,
                         context_id=context_id,
-                        to_number=function_args.get("to_number"),
+                        to_number=to_number,
                         thread_id=thread_id
                     )
                     

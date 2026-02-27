@@ -68,6 +68,22 @@ class AgentRegistry:
         in production and the ALTER TABLE takes an ACCESS EXCLUSIVE lock that blocks
         when other container revisions hold open transactions.
         """
+        # Migration: add config_schema column if it doesn't exist
+        try:
+            cur = self.db_conn.cursor()
+            cur.execute("""
+                SELECT column_name FROM information_schema.columns
+                WHERE table_name = 'agents' AND column_name = 'config_schema'
+            """)
+            if not cur.fetchone():
+                cur.execute("ALTER TABLE agents ADD COLUMN config_schema JSONB DEFAULT NULL")
+                self.db_conn.commit()
+                log_info("[AgentRegistry] Added config_schema column to agents table")
+            cur.close()
+        except Exception as e:
+            log_warning(f"[AgentRegistry] config_schema migration warning: {e}")
+            self.db_conn.rollback()
+
         # One-time migration: assign curated distinct colors to known agents.
         # Uses a flag row check so it only runs once.
         try:
@@ -130,6 +146,7 @@ class AgentRegistry:
                     local_url, production_url,
                     default_input_modes, default_output_modes,
                     capabilities, skills, color,
+                    config_schema,
                     created_at, updated_at
                 FROM agents
                 ORDER BY name
@@ -251,18 +268,22 @@ class AgentRegistry:
             log_debug(f"[AgentRegistry]   color: {color}")
             log_debug(f"[AgentRegistry]   skills: {[s.get('id') for s in agent.get('skills', [])]}")
 
+            # config_schema: None means no user config needed, list means fields required
+            config_schema = agent.get('config_schema')
+            config_schema_json = json.dumps(config_schema) if config_schema is not None else None
+
             cur = self.db_conn.cursor()
             cur.execute("""
                 INSERT INTO agents (
                     name, description, version,
                     local_url, production_url,
                     default_input_modes, default_output_modes,
-                    capabilities, skills, color
+                    capabilities, skills, color, config_schema
                 ) VALUES (
                     %s, %s, %s,
                     %s, %s,
                     %s::jsonb, %s::jsonb,
-                    %s::jsonb, %s::jsonb, %s
+                    %s::jsonb, %s::jsonb, %s, %s::jsonb
                 )
                 ON CONFLICT (name) DO UPDATE SET
                     description = EXCLUDED.description,
@@ -274,6 +295,7 @@ class AgentRegistry:
                     capabilities = EXCLUDED.capabilities,
                     skills = EXCLUDED.skills,
                     color = COALESCE(EXCLUDED.color, agents.color),
+                    config_schema = COALESCE(EXCLUDED.config_schema, agents.config_schema),
                     updated_at = CURRENT_TIMESTAMP
             """, (
                 agent.get('name'),
@@ -285,7 +307,8 @@ class AgentRegistry:
                 json.dumps(agent.get('defaultOutputModes', [])),
                 json.dumps(agent.get('capabilities', {})),
                 json.dumps(agent.get('skills', [])),
-                color
+                color,
+                config_schema_json
             ))
             self.db_conn.commit()
             cur.close()

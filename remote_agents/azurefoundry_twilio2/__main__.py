@@ -362,13 +362,28 @@ def create_a2a_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
     return app, agent_card
 
 
+TWILIO_CONFIG_SCHEMA = [
+    {
+        "key": "to_phone_number",
+        "label": "Your Phone Number",
+        "type": "tel",
+        "required": True,
+        "description": "The phone number where you want to receive SMS messages (e.g. +15147715943)"
+    }
+]
+
+
 async def register_agent_with_host(agent_card):
     """Register this agent with the host agent after startup."""
     if SELF_REGISTRATION_AVAILABLE:
         await asyncio.sleep(2)
         try:
             logger.info(f"🤝 Attempting to register '{agent_card.name}' with host agent...")
-            registration_success = await register_with_host_agent(agent_card, host_url=HOST_AGENT_URL or None)
+            registration_success = await register_with_host_agent(
+                agent_card,
+                host_url=HOST_AGENT_URL or None,
+                config_schema=TWILIO_CONFIG_SCHEMA
+            )
             if registration_success:
                 logger.info(f"🎉 '{agent_card.name}' successfully registered with host agent!")
             else:

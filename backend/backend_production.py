@@ -88,6 +88,9 @@ from service.auth_service import AuthService, User, SECRET_KEY, ALGORITHM
 # Import ActiveWorkflowService for persisted workflow state
 from service import active_workflow_service
 
+# Import UserAgentConfigService for per-user agent credentials
+from service.user_agent_config_service import get_user_agent_config_service
+
 
 def generate_workflow_text(steps: List[Dict[str, Any]], connections: List[Dict[str, Any]]) -> str:
     """
@@ -1084,6 +1087,90 @@ def main():
                 success=False,
                 message="Registration failed due to server error"
             )
+
+    # ==========================================================================
+    # User Agent Configuration Endpoints
+    # ==========================================================================
+
+    CREDENTIAL_SERVICE_API_KEY = os.environ.get("CREDENTIAL_SERVICE_API_KEY", "dev-internal-key")
+
+    @app.get("/api/user-agent-config")
+    async def get_user_agent_configs(current_user: dict = Depends(get_current_user)):
+        """Get config status for all agents the current user has configured (no secrets)."""
+        try:
+            config_service = get_user_agent_config_service()
+            configs = config_service.get_all_configs(current_user["user_id"])
+            return {"success": True, "configs": configs}
+        except Exception as e:
+            log_error(f"Error getting user agent configs: {e}")
+            return {"success": False, "error": str(e)}
+
+    @app.get("/api/user-agent-config/{agent_name:path}")
+    async def get_user_agent_config(agent_name: str, current_user: dict = Depends(get_current_user)):
+        """Get decrypted config for a specific agent (for form pre-fill)."""
+        try:
+            config_service = get_user_agent_config_service()
+            config = config_service.get_config(current_user["user_id"], agent_name)
+            if config:
+                return {"success": True, **config}
+            return {"success": True, "config_data": None, "is_configured": False}
+        except Exception as e:
+            log_error(f"Error getting user agent config: {e}")
+            return {"success": False, "error": str(e)}
+
+    @app.put("/api/user-agent-config/{agent_name:path}")
+    async def save_user_agent_config(agent_name: str, request: Request, current_user: dict = Depends(get_current_user)):
+        """Save or update config for an agent."""
+        try:
+            body = await request.json()
+            config_data = body.get("config_data", {})
+            config_service = get_user_agent_config_service()
+            success = config_service.save_config(current_user["user_id"], agent_name, config_data)
+            if success:
+                return {"success": True, "message": "Configuration saved"}
+            return {"success": False, "error": "Failed to save configuration"}
+        except Exception as e:
+            log_error(f"Error saving user agent config: {e}")
+            return {"success": False, "error": str(e)}
+
+    @app.delete("/api/user-agent-config/{agent_name:path}")
+    async def delete_user_agent_config(agent_name: str, current_user: dict = Depends(get_current_user)):
+        """Delete config for an agent."""
+        try:
+            config_service = get_user_agent_config_service()
+            deleted = config_service.delete_config(current_user["user_id"], agent_name)
+            if deleted:
+                return {"success": True, "message": "Configuration deleted"}
+            return {"success": False, "error": "Configuration not found"}
+        except Exception as e:
+            log_error(f"Error deleting user agent config: {e}")
+            return {"success": False, "error": str(e)}
+
+    @app.post("/api/credentials/resolve")
+    async def resolve_credentials(request: Request):
+        """Resolve user credentials for an agent at request time.
+
+        Called by remote agents (not by frontend). Secured with internal API key.
+        """
+        # Verify internal API key
+        api_key = request.headers.get("X-Internal-API-Key", "")
+        if api_key != CREDENTIAL_SERVICE_API_KEY:
+            raise HTTPException(status_code=403, detail="Invalid internal API key")
+
+        try:
+            body = await request.json()
+            context_id = body.get("context_id", "")
+            agent_name = body.get("agent_name", "")
+
+            if not context_id or not agent_name:
+                return {"credentials": None, "error": "context_id and agent_name required"}
+
+            config_service = get_user_agent_config_service()
+            credentials = config_service.resolve_credentials(context_id, agent_name)
+            return {"credentials": credentials}
+        except Exception as e:
+            log_error(f"Error resolving credentials: {e}")
+            return {"credentials": None, "error": str(e)}
 
     # ==========================================================================
     # Workflow API Endpoints

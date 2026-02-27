@@ -61,6 +61,9 @@ import { deriveCategory, getAllCategories, CATEGORY_ICONS } from "@/lib/agent-ca
 import { warnDebug } from '@/lib/debug'
 import { fetchRegistryAgents, checkAgentHealth, checkAgentHealthWithFallback } from '@/lib/agent-registry'
 import { API_BASE_URL } from '@/lib/api-config'
+import { getUserAgentConfigs, getAgentConfig, saveAgentConfig, type ConfigSchemaField } from '@/lib/user-agent-config-api'
+import { Label } from "@/components/ui/label"
+import { Settings, Check } from "lucide-react"
 
 export function AgentCatalog() {
   const { toast } = useToast()
@@ -73,6 +76,12 @@ export function AgentCatalog() {
   const [enabledAgentUrls, setEnabledAgentUrls] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+
+  // Per-user agent configuration state
+  const [userConfigStatuses, setUserConfigStatuses] = useState<Map<string, boolean>>(new Map())
+  const [configDialogAgent, setConfigDialogAgent] = useState<any>(null)
+  const [configFormData, setConfigFormData] = useState<Record<string, string>>({})
+  const [configSaving, setConfigSaving] = useState(false)
 
   // Derived categories from agents
   const categories = useMemo(() => getAllCategories(catalogAgents), [catalogAgents])
@@ -201,10 +210,70 @@ export function AgentCatalog() {
     }
   }
 
+  // Fetch user's config statuses for all agents
+  const fetchUserConfigStatuses = async () => {
+    try {
+      const configs = await getUserAgentConfigs()
+      const statusMap = new Map<string, boolean>()
+      configs.forEach(c => statusMap.set(c.agent_name, c.is_configured))
+      setUserConfigStatuses(statusMap)
+    } catch (err) {
+      warnDebug('Error fetching user config statuses:', err)
+    }
+  }
+
+  // Open config dialog for an agent
+  const handleOpenConfigDialog = async (agent: any) => {
+    const schema = agent._raw?.config_schema as ConfigSchemaField[] | null
+    if (!schema) return
+
+    // Pre-fill with existing config if available
+    const existing = await getAgentConfig(agent.name)
+    const formData: Record<string, string> = {}
+    schema.forEach(field => {
+      formData[field.key] = existing?.config_data?.[field.key] || ''
+    })
+    setConfigFormData(formData)
+    setConfigDialogAgent(agent)
+  }
+
+  // Save config from dialog
+  const handleSaveConfig = async () => {
+    if (!configDialogAgent) return
+    setConfigSaving(true)
+    try {
+      const success = await saveAgentConfig(configDialogAgent.name, configFormData)
+      if (success) {
+        toast({ title: "Configuration Saved", description: `${configDialogAgent.name} is now configured` })
+        setConfigDialogAgent(null)
+        await fetchUserConfigStatuses()
+      } else {
+        toast({ title: "Error", description: "Failed to save configuration", variant: "destructive" })
+      }
+    } catch {
+      toast({ title: "Error", description: "Failed to save configuration", variant: "destructive" })
+    } finally {
+      setConfigSaving(false)
+    }
+  }
+
+  // Helper: does this agent need user config?
+  const agentNeedsConfig = (agent: any): boolean => {
+    const schema = agent._raw?.config_schema
+    return Array.isArray(schema) && schema.length > 0
+  }
+
+  // Helper: has user configured this agent?
+  const agentIsConfigured = (agent: any): boolean => {
+    if (!agentNeedsConfig(agent)) return true
+    return userConfigStatuses.get(agent.name) === true
+  }
+
   // Load agents on component mount
   useEffect(() => {
     fetchAgents()
     fetchEnabledAgents()
+    fetchUserConfigStatuses()
   }, [])
 
   // Fetch which agents are enabled for this session
@@ -495,6 +564,14 @@ export function AgentCatalog() {
                         In Team
                       </Badge>
                     )}
+                    {agentNeedsConfig(agent) && !agentIsConfigured(agent) && (
+                      <Badge className="text-[9px] px-1.5 py-0 h-4 bg-yellow-500/15 text-yellow-400 border-yellow-500/30 hover:bg-yellow-500/15 flex-shrink-0">
+                        Setup Required
+                      </Badge>
+                    )}
+                    {agentNeedsConfig(agent) && agentIsConfigured(agent) && !isEnabled && (
+                      <Check className="h-3.5 w-3.5 text-green-400 flex-shrink-0" />
+                    )}
                   </div>
 
                   {/* Category */}
@@ -538,17 +615,46 @@ export function AgentCatalog() {
 
                       {agent.status === "Online" && (
                         isEnabled ? (
+                          <>
+                            {agentNeedsConfig(agent) && (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button
+                                    onClick={() => handleOpenConfigDialog(agent)}
+                                    size="icon"
+                                    className="h-7 w-7 rounded-full bg-slate-600/90 hover:bg-slate-500 text-white"
+                                  >
+                                    <Settings className="h-3.5 w-3.5" />
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent side="bottom"><p>Reconfigure</p></TooltipContent>
+                              </Tooltip>
+                            )}
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  onClick={() => handleDisableAgent(agent)}
+                                  size="icon"
+                                  className="h-7 w-7 rounded-full bg-red-500/90 hover:bg-red-500 text-white"
+                                >
+                                  <Minus className="h-3.5 w-3.5" />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent side="bottom"><p>Remove from team</p></TooltipContent>
+                            </Tooltip>
+                          </>
+                        ) : agentNeedsConfig(agent) && !agentIsConfigured(agent) ? (
                           <Tooltip>
                             <TooltipTrigger asChild>
                               <Button
-                                onClick={() => handleDisableAgent(agent)}
+                                onClick={() => handleOpenConfigDialog(agent)}
                                 size="icon"
-                                className="h-7 w-7 rounded-full bg-red-500/90 hover:bg-red-500 text-white"
+                                className="h-7 w-7 rounded-full bg-yellow-500/90 hover:bg-yellow-500 text-white"
                               >
-                                <Minus className="h-3.5 w-3.5" />
+                                <Settings className="h-3.5 w-3.5" />
                               </Button>
                             </TooltipTrigger>
-                            <TooltipContent side="bottom"><p>Remove from team</p></TooltipContent>
+                            <TooltipContent side="bottom"><p>Configure to enable</p></TooltipContent>
                           </Tooltip>
                         ) : (
                           <Tooltip>
@@ -588,6 +694,56 @@ export function AgentCatalog() {
           </div>
         )}
       </ScrollArea>
+
+      {/* Agent Configuration Dialog */}
+      <Dialog open={!!configDialogAgent} onOpenChange={(open) => { if (!open) setConfigDialogAgent(null) }}>
+        <DialogContent className="max-w-md">
+          {configDialogAgent && (
+            <>
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                  <Settings className="h-5 w-5 text-yellow-400" />
+                  Configure {configDialogAgent.name}
+                </DialogTitle>
+                <DialogDescription>
+                  Provide your credentials to use this agent. Your data is encrypted at rest.
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="space-y-4 py-2">
+                {(configDialogAgent._raw?.config_schema as ConfigSchemaField[] || []).map((field: ConfigSchemaField) => (
+                  <div key={field.key} className="space-y-1.5">
+                    <Label htmlFor={field.key} className="text-sm font-medium text-slate-200">
+                      {field.label}
+                      {field.required && <span className="text-red-400 ml-1">*</span>}
+                    </Label>
+                    {field.description && (
+                      <p className="text-xs text-slate-500">{field.description}</p>
+                    )}
+                    <Input
+                      id={field.key}
+                      type={field.type === 'password' ? 'password' : field.type === 'tel' ? 'tel' : 'text'}
+                      placeholder={field.placeholder || ''}
+                      value={configFormData[field.key] || ''}
+                      onChange={(e) => setConfigFormData(prev => ({ ...prev, [field.key]: e.target.value }))}
+                      className="bg-slate-800 border-slate-700 text-slate-200"
+                    />
+                  </div>
+                ))}
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <Button variant="outline" onClick={() => setConfigDialogAgent(null)} className="border-slate-700">
+                  Cancel
+                </Button>
+                <Button onClick={handleSaveConfig} disabled={configSaving}>
+                  {configSaving ? "Saving..." : "Save Configuration"}
+                </Button>
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Shared detail dialog */}
       <Dialog open={!!selectedAgent} onOpenChange={(open) => { if (!open) setSelectedAgent(null) }}>

@@ -831,6 +831,9 @@ class ConversationServer:
                 log_debug("No agent address provided in self-registration request")
                 return {"success": False, "error": "agent_address required"}
             
+            # Extract config_schema if provided (per-user agent config)
+            config_schema = message_data.get('config_schema')
+
             # Handle self-registration based on manager type
             if isinstance(self.manager, FoundryHostManager):
                 # Parse agent card if provided
@@ -838,9 +841,9 @@ class ConversationServer:
                 if agent_card_data:
                     from a2a.types import AgentCard
                     agent_card = AgentCard(**agent_card_data)
-                
+
                 # Use the manager's self-registration handler
-                success = await self.manager.handle_self_registration(agent_address, agent_card)
+                success = await self.manager.handle_self_registration(agent_address, agent_card, config_schema=config_schema)
                 
                 if success:
                     log_info(f"Self-registration successful for: {agent_address}")

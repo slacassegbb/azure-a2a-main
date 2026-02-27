@@ -195,13 +195,27 @@ echo -e "${CYAN}🔨 Building Docker image for linux/amd64...${NC}"
 IMAGE_NAME="$ACR_NAME.azurecr.io/a2a-$AGENT_NAME_LOWER:$TIMESTAMP"
 IMAGE_LATEST="$ACR_NAME.azurecr.io/a2a-$AGENT_NAME_LOWER:latest"
 
+# Copy shared module into build context if it exists
+SHARED_COPIED=false
+if [ -d "remote_agents/shared" ]; then
+    cp -r remote_agents/shared "$AGENT_PATH/shared"
+    SHARED_COPIED=true
+fi
+
 docker buildx build --platform linux/amd64 \
     -f "$AGENT_PATH/Dockerfile" \
     -t "$IMAGE_NAME" \
     -t "$IMAGE_LATEST" \
     --load "$AGENT_PATH"
 
-if [ $? -ne 0 ]; then
+BUILD_RESULT=$?
+
+# Clean up copied shared module
+if [ "$SHARED_COPIED" = "true" ]; then
+    rm -rf "$AGENT_PATH/shared"
+fi
+
+if [ $BUILD_RESULT -ne 0 ]; then
     echo -e "${RED}❌ Docker build failed${NC}"
     exit 1
 fi
