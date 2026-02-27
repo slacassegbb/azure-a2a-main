@@ -33,7 +33,7 @@ class AgentRegistry:
         self.database_url = os.environ.get('DATABASE_URL')
         self.use_database = False
         self.db_conn = None
-        
+
         if self.database_url:
             try:
                 self.db_conn = psycopg2.connect(self.database_url)
@@ -61,6 +61,22 @@ class AgentRegistry:
             self.registry_file.parent.mkdir(parents=True, exist_ok=True)
             self._ensure_registry_file()
     
+    def _ensure_db_connection(self):
+        """Reconnect to PostgreSQL if the connection was dropped."""
+        if not self.database_url or not self.use_database:
+            return
+        try:
+            # Check if connection is still alive
+            self.db_conn.cursor().execute("SELECT 1")
+        except Exception:
+            try:
+                log_info("[AgentRegistry] Reconnecting to PostgreSQL...")
+                self.db_conn = psycopg2.connect(self.database_url)
+                self.db_conn.autocommit = True
+            except Exception as e:
+                log_error(f"[AgentRegistry] Reconnect failed: {e}")
+                raise
+
     def _run_migrations(self):
         """Ensure database schema is up to date. Safe to run repeatedly (idempotent).
 
@@ -70,6 +86,7 @@ class AgentRegistry:
         """
         # Migration: add config_schema column if it doesn't exist
         try:
+            self._ensure_db_connection()
             cur = self.db_conn.cursor()
             cur.execute("""
                 SELECT column_name FROM information_schema.columns
@@ -134,11 +151,12 @@ class AgentRegistry:
     
     def _load_agents_from_database(self) -> List[Dict[str, Any]]:
         """Load agent data from PostgreSQL database.
-        
+
         Returns:
             List of agent configuration dictionaries
         """
         try:
+            self._ensure_db_connection()
             cur = self.db_conn.cursor(cursor_factory=RealDictCursor)
             cur.execute("""
                 SELECT
@@ -272,6 +290,7 @@ class AgentRegistry:
             config_schema = agent.get('config_schema')
             config_schema_json = json.dumps(config_schema) if config_schema is not None else None
 
+            self._ensure_db_connection()
             cur = self.db_conn.cursor()
             cur.execute("""
                 INSERT INTO agents (
@@ -483,6 +502,7 @@ class AgentRegistry:
         """
         if self.use_database:
             try:
+                self._ensure_db_connection()
                 cur = self.db_conn.cursor()
                 cur.execute("DELETE FROM agents WHERE name = %s", (name,))
                 rows_deleted = cur.rowcount

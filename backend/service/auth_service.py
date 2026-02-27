@@ -78,15 +78,31 @@ class AuthService:
             # Load users from database into memory cache
             self._load_users_from_database()
     
+    def _ensure_db_connection(self):
+        """Reconnect to PostgreSQL if the connection was dropped."""
+        if not self.database_url or not self.use_database:
+            return
+        try:
+            self.db_conn.cursor().execute("SELECT 1")
+        except Exception:
+            try:
+                import psycopg2
+                print(f"[AuthService] Reconnecting to PostgreSQL...")
+                self.db_conn = psycopg2.connect(self.database_url)
+            except Exception as e:
+                print(f"[AuthService] Reconnect failed: {e}")
+                raise
+
     def _load_users_from_database(self):
         """Load users from PostgreSQL database."""
         if not self.use_database:
             return
-        
+
         try:
+            self._ensure_db_connection()
             cursor = self.db_conn.cursor()
             cursor.execute("""
-                SELECT user_id, email, password_hash, name, role, description, 
+                SELECT user_id, email, password_hash, name, role, description,
                        skills, color, created_at, last_login
                 FROM users
                 ORDER BY created_at
@@ -258,8 +274,9 @@ class AuthService:
         """Save a single user to PostgreSQL database."""
         if not self.use_database:
             return
-        
+
         try:
+            self._ensure_db_connection()
             cursor = self.db_conn.cursor()
             cursor.execute("""
                 INSERT INTO users (

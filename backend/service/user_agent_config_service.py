@@ -41,6 +41,22 @@ class UserAgentConfigService:
         else:
             log_warning("[UserAgentConfigService] No DATABASE_URL — service unavailable")
 
+    def _ensure_db_connection(self):
+        """Reconnect to PostgreSQL if the connection was dropped."""
+        if not self.database_url or not self.db_conn:
+            return
+        try:
+            self.db_conn.cursor().execute("SELECT 1")
+        except Exception:
+            try:
+                log_info("[UserAgentConfigService] Reconnecting to PostgreSQL...")
+                self.db_conn = psycopg2.connect(self.database_url)
+                self.db_conn.autocommit = True
+            except Exception as e:
+                log_error(f"[UserAgentConfigService] Reconnect failed: {e}")
+                self.db_conn = None
+                raise
+
     def _ensure_table(self):
         """Verify the user_agent_configs table exists."""
         try:
@@ -60,6 +76,7 @@ class UserAgentConfigService:
     def _get_agent_config_schema(self, agent_name: str) -> Optional[List[Dict]]:
         """Get the config_schema for an agent from the agents table."""
         try:
+            self._ensure_db_connection()
             cur = self.db_conn.cursor(cursor_factory=RealDictCursor)
             cur.execute("SELECT config_schema FROM agents WHERE name = %s", (agent_name,))
             row = cur.fetchone()
@@ -89,6 +106,7 @@ class UserAgentConfigService:
             return False
 
         try:
+            self._ensure_db_connection()
             config_schema = self._get_agent_config_schema(agent_name)
             is_configured = self._compute_is_configured(config_data, config_schema)
             config_json = json.dumps(config_data)
@@ -120,6 +138,7 @@ class UserAgentConfigService:
             return None
 
         try:
+            self._ensure_db_connection()
             cur = self.db_conn.cursor(cursor_factory=RealDictCursor)
             cur.execute("""
                 SELECT pgp_sym_decrypt(config_data, %s) as config_json, is_configured
@@ -145,6 +164,7 @@ class UserAgentConfigService:
             return []
 
         try:
+            self._ensure_db_connection()
             cur = self.db_conn.cursor(cursor_factory=RealDictCursor)
             cur.execute("""
                 SELECT agent_name, is_configured, created_at, updated_at
@@ -165,6 +185,7 @@ class UserAgentConfigService:
             return False
 
         try:
+            self._ensure_db_connection()
             cur = self.db_conn.cursor()
             cur.execute(
                 "DELETE FROM user_agent_configs WHERE user_id = %s AND agent_name = %s",
@@ -212,6 +233,7 @@ class UserAgentConfigService:
 
         result = {}
         try:
+            self._ensure_db_connection()
             cur = self.db_conn.cursor(cursor_factory=RealDictCursor)
 
             for agent_name in agent_names:
