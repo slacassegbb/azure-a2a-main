@@ -1517,21 +1517,31 @@ Analyze this request and decide the best approach."""
                 from zoneinfo import ZoneInfo
                 tz = ZoneInfo(user_timezone)
                 now_local = datetime.now(tz)
-                if plan.time_of_day:
+                if plan.interval_minutes:
+                    # Relative time (e.g., "in 5 minutes") — always use interval
+                    run_dt = now_local + timedelta(minutes=plan.interval_minutes)
+                elif plan.time_of_day:
                     # Specific time given (e.g., "at 3pm")
-                    hour, minute = map(int, plan.time_of_day.split(":"))
+                    # Handle both "HH:MM" and full ISO datetime strings
+                    tod = plan.time_of_day
+                    if "T" in tod:
+                        # LLM returned full ISO datetime — extract HH:MM
+                        tod = tod.split("T")[1][:5]
+                    hour, minute = map(int, tod.split(":")[:2])
                     run_dt = now_local.replace(hour=hour, minute=minute, second=0, microsecond=0)
                     if run_dt <= now_local:
                         run_dt += timedelta(days=1)
-                elif plan.interval_minutes:
-                    # Relative time given (e.g., "in 5 minutes")
-                    run_dt = now_local + timedelta(minutes=plan.interval_minutes)
                 else:
                     run_dt = now_local + timedelta(minutes=5)  # fallback
                 schedule_kwargs["run_at"] = run_dt.isoformat()
                 log_info(f"[Scheduled Task] 'once' schedule: run_at={run_dt.isoformat()}")
             except Exception as e:
                 log_error(f"[Scheduled Task] Error computing run_at for 'once' schedule: {e}")
+                # Last resort: schedule for now + 5 minutes
+                from zoneinfo import ZoneInfo
+                fallback_dt = datetime.now(ZoneInfo(user_timezone)) + timedelta(minutes=5)
+                schedule_kwargs["run_at"] = fallback_dt.isoformat()
+                log_info(f"[Scheduled Task] Fallback run_at={fallback_dt.isoformat()}")
         if plan.interval_minutes:
             schedule_kwargs["interval_minutes"] = plan.interval_minutes
         if plan.days_of_week:
