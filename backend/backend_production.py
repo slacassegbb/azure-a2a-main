@@ -479,8 +479,8 @@ async def execute_scheduled_workflow(workflow_name: str, session_id: str, timeou
     
     # Scale timeout by step count: 60s per step, minimum 120s, capped at timeout param
     num_steps = len(workflow.steps or [])
-    effective_timeout = min(timeout, max(120, num_steps * 60))
-    log_debug(f"[SCHEDULER] Timeout set to {effective_timeout}s")
+    effective_timeout = max(120, min(timeout, max(120, num_steps * 60)))
+    log_debug(f"[SCHEDULER] Timeout set to {effective_timeout}s (timeout param={timeout}, steps={num_steps})")
     
     try:
         start_time = time.time()
