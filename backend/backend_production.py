@@ -399,16 +399,28 @@ async def execute_scheduled_workflow(workflow_name: str, session_id: str, timeou
                 missing_agents.append(agent_name)
                 log_warning(f"[SCHEDULER] Agent '{agent_name}' has localhost URL in production, skipping")
                 continue
-            try:
-                async with httpx.AsyncClient(timeout=5.0) as client:
-                    resp = await client.get(f"{url}/health")
-                    if resp.status_code != 200:
-                        missing_agents.append(agent_name)
-                        log_warning(f"[SCHEDULER] Agent '{agent_name}' health check failed (status {resp.status_code})")
-                        continue
-            except Exception as e:
+            # Two-pass health check: first ping wakes sleeping containers, retry if needed
+            agent_online = False
+            for attempt in range(2):
+                try:
+                    timeout = 5.0 if attempt == 0 else 20.0
+                    async with httpx.AsyncClient(timeout=timeout) as client:
+                        resp = await client.get(f"{url}/health")
+                        if resp.status_code == 200:
+                            agent_online = True
+                            break
+                        elif attempt == 0:
+                            log_debug(f"[SCHEDULER] Agent '{agent_name}' returned {resp.status_code}, retrying after wake-up wait...")
+                            await asyncio.sleep(12)
+                except Exception as e:
+                    if attempt == 0:
+                        log_debug(f"[SCHEDULER] Agent '{agent_name}' not responding, waiting for cold start...")
+                        await asyncio.sleep(12)
+                    else:
+                        log_warning(f"[SCHEDULER] Agent '{agent_name}' unreachable after retry: {e}")
+            if not agent_online:
                 missing_agents.append(agent_name)
-                log_warning(f"[SCHEDULER] Agent '{agent_name}' unreachable: {e}")
+                log_warning(f"[SCHEDULER] Agent '{agent_name}' health check failed after 2 attempts")
                 continue
 
             # Enable this agent for the scheduler session (use isolated scheduler_session_id)
