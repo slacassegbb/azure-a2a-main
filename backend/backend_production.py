@@ -445,8 +445,9 @@ async def execute_scheduled_workflow(workflow_name: str, session_id: str, timeou
     
     log_debug(f"[SCHEDULER] Message created: {initial_message}")
     
-    # Use a shorter timeout for testing (60 seconds instead of 300)
-    effective_timeout = min(timeout, 120)
+    # Scale timeout by step count: 60s per step, minimum 120s, capped at timeout param
+    num_steps = len(workflow.steps or [])
+    effective_timeout = min(timeout, max(120, num_steps * 60))
     log_debug(f"[SCHEDULER] Timeout set to {effective_timeout}s")
     
     try:
