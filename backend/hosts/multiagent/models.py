@@ -168,7 +168,7 @@ class ScheduledTaskPlan(BaseModel):
     # Schedule parameters
     schedule_type: Literal["once", "interval", "daily", "weekly", "monthly", "cron"] = Field(..., description="Type of schedule")
     time_of_day: Optional[str] = Field(None, description="HH:MM 24h format")
-    interval_minutes: Optional[int] = Field(None, description="Interval in minutes (for 'interval' type)")
+    interval_minutes: Optional[int] = Field(None, description="Delay in minutes. For 'interval' type: recurring interval. For 'once' type with relative delays like 'in 5 minutes': set to 5.")
     days_of_week: Optional[List[int]] = Field(None, description="0=Mon..6=Sun (for 'weekly' type)")
     day_of_month: Optional[int] = Field(None, description="1-31 (for 'monthly' type)")
     cron_expression: Optional[str] = Field(None, description="Cron expression (for 'cron' type)")

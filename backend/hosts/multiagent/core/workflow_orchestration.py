@@ -1333,14 +1333,15 @@ Analyze this request and decide the best approach."""
 ### INSTRUCTIONS
 
 1. **Schedule**: Parse the temporal language and fill in schedule parameters.
-   - "in 5 minutes" / "in 30 minutes" → schedule_type="once", compute time_of_day as current time + N minutes
+   - "in 5 minutes" / "in 30 minutes" → schedule_type="once", interval_minutes=5 (or 30). Do NOT set time_of_day for relative delays.
+   - "in 2 hours" → schedule_type="once", interval_minutes=120. Do NOT set time_of_day for relative delays.
    - "at 3pm" / "at 15:00" → schedule_type="once", time_of_day="15:00"
    - "every day at 3pm" → schedule_type="daily", time_of_day="15:00"
    - "every 10 minutes" → schedule_type="interval", interval_minutes=10
    - "every Monday and Wednesday" → schedule_type="weekly", days_of_week=[0,2]
    - "on the 1st of every month" → schedule_type="monthly", day_of_month=1
    - "weekdays at 9:30am" → schedule_type="cron", cron_expression="30 9 * * 1-5"
-   - IMPORTANT: "in X minutes" means ONE TIME after X minutes, NOT recurring. Use schedule_type="once".
+   - IMPORTANT: "in X minutes/hours" means a RELATIVE delay — use interval_minutes, NOT time_of_day. Only use time_of_day for absolute clock times like "at 3pm".
    - Interpret times in the user's timezone shown above.
 
 2. **Notification**: Detect how the user wants results delivered.
@@ -1530,7 +1531,15 @@ Analyze this request and decide the best approach."""
                     hour, minute = map(int, tod.split(":")[:2])
                     run_dt = now_local.replace(hour=hour, minute=minute, second=0, microsecond=0)
                     if run_dt <= now_local:
-                        run_dt += timedelta(days=1)
+                        # Time already passed — for "once" schedules, if it was within
+                        # the last 60 min, it's likely a "in X minutes" request where the
+                        # LLM computed the target time. Schedule from now instead of tomorrow.
+                        minutes_ago = (now_local - run_dt).total_seconds() / 60
+                        if minutes_ago <= 60:
+                            run_dt = now_local + timedelta(minutes=1)
+                            log_info(f"[Scheduled Task] time_of_day {tod} just passed ({minutes_ago:.0f}m ago) — scheduling for now+1m instead of tomorrow")
+                        else:
+                            run_dt += timedelta(days=1)
                 else:
                     run_dt = now_local + timedelta(minutes=5)  # fallback
                 schedule_kwargs["run_at"] = run_dt.isoformat()
