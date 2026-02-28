@@ -17,7 +17,7 @@ import json
 import os
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Optional
 
 # Import logging utilities
@@ -1500,6 +1500,21 @@ Analyze this request and decide the best approach."""
         }
         if plan.time_of_day:
             schedule_kwargs["time_of_day"] = plan.time_of_day
+        # For "once" schedules, compute run_at as full ISO datetime from time_of_day + today + timezone
+        if plan.schedule_type == "once" and plan.time_of_day:
+            try:
+                from zoneinfo import ZoneInfo
+                tz = ZoneInfo(user_timezone)
+                now_local = datetime.now(tz)
+                hour, minute = map(int, plan.time_of_day.split(":"))
+                run_dt = now_local.replace(hour=hour, minute=minute, second=0, microsecond=0)
+                # If the time has already passed today, schedule for tomorrow
+                if run_dt <= now_local:
+                    run_dt += timedelta(days=1)
+                schedule_kwargs["run_at"] = run_dt.isoformat()
+                log_info(f"[Scheduled Task] 'once' schedule: run_at={run_dt.isoformat()}")
+            except Exception as e:
+                log_error(f"[Scheduled Task] Error computing run_at for 'once' schedule: {e}")
         if plan.interval_minutes:
             schedule_kwargs["interval_minutes"] = plan.interval_minutes
         if plan.days_of_week:
