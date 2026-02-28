@@ -378,7 +378,7 @@ class FoundryHostManager(ApplicationManager):
         except Exception as e:
             log_debug(f"[Pre-flight] Failed to emit final_response: {e}")
 
-    async def process_message(self, message: Message, agent_mode: bool = None, enable_inter_agent_memory: bool = False, workflow: str = None, workflow_goal: str = None, available_workflows: list = None):
+    async def process_message(self, message: Message, agent_mode: bool = None, enable_inter_agent_memory: bool = False, workflow: str = None, workflow_goal: str = None, available_workflows: list = None, user_id: str = None, user_timezone: str = "UTC", sms_reply_to: str = None):
         await self.ensure_host_agent_initialized()
         message_id = get_message_id(message)
         if message_id:
@@ -1243,7 +1243,85 @@ class FoundryHostManager(ApplicationManager):
         # in this workflow. The A2A protocol handles completion events properly.
         # Do NOT emit "completed" for all registered agents - that's wrong!
 
+        # --- SMS Reply: deliver orchestrator response back via SMS ---
+        if sms_reply_to and responses:
+            try:
+                # Collect all text from responses
+                response_texts = []
+                for resp in responses:
+                    if isinstance(resp, str):
+                        response_texts.append(resp)
+                    elif isinstance(resp, dict):
+                        # Extract text from dict responses
+                        text = resp.get("text", "")
+                        if not text and "parts" in resp:
+                            for p in resp["parts"]:
+                                if isinstance(p, dict) and p.get("text"):
+                                    text += p["text"] + "\n"
+                        if text:
+                            response_texts.append(text)
+                    elif hasattr(resp, "parts"):
+                        for part in resp.parts:
+                            root = part.root if hasattr(part, "root") else part
+                            if hasattr(root, "text") and root.text:
+                                response_texts.append(root.text)
+
+                final_text = "\n\n".join(response_texts).strip()
+                if final_text:
+                    await self._send_sms_reply(sms_reply_to, final_text, context_id)
+                else:
+                    log_warning(f"[SMS Reply] No text extracted from responses for {sms_reply_to}")
+            except Exception as e:
+                log_error(f"[SMS Reply] Failed to send SMS reply: {e}")
+
         return responses
+
+    async def _send_sms_reply(self, to_number: str, message: str, context_id: str):
+        """Deliver orchestrator response back to user via SMS.
+
+        Looks up the Twilio agent URL from the global registry and POSTs
+        to its /internal/send-sms endpoint.
+        """
+        import os
+        registry = get_registry()
+
+        # Find Twilio agent in registry
+        twilio_config = registry.get_agent("Twilio SMS Agent")
+        if not twilio_config:
+            # Try fuzzy match
+            all_agents = registry.get_all_agents()
+            twilio_config = next(
+                (a for a in all_agents if "twilio" in a.get("name", "").lower()),
+                None
+            )
+
+        if not twilio_config:
+            log_error("[SMS Reply] Twilio agent not found in registry — cannot deliver SMS")
+            return
+
+        twilio_url = twilio_config.get("production_url") or twilio_config.get("url", "")
+        if not twilio_url:
+            log_error("[SMS Reply] Twilio agent has no URL in registry")
+            return
+
+        # Truncate to SMS-friendly length
+        if len(message) > 1500:
+            message = message[:1497] + "..."
+
+        api_key = os.environ.get("CREDENTIAL_SERVICE_API_KEY", "dev-internal-key")
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.post(
+                    f"{twilio_url.rstrip('/')}/internal/send-sms",
+                    json={"to_number": to_number, "message": message},
+                    headers={"X-Internal-API-Key": api_key},
+                )
+                if resp.status_code == 200:
+                    log_info(f"[SMS Reply] Delivered {len(message)} chars to ...{to_number[-4:]}")
+                else:
+                    log_error(f"[SMS Reply] Twilio agent returned {resp.status_code}: {resp.text}")
+        except Exception as e:
+            log_error(f"[SMS Reply] HTTP error sending to Twilio agent: {e}")
 
     def add_task(self, task: Task):
         self._tasks.append(task)

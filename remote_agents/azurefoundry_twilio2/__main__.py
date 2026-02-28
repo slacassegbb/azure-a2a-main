@@ -145,6 +145,42 @@ async def forward_sms_to_backend(
         logger.error(f"❌ Error forwarding SMS to backend: {e}", exc_info=True)
 
 
+async def _forward_to_orchestrator(backend_url: str, from_phone: str, message_body: str):
+    """Forward an incoming SMS to the backend's /api/sms/incoming endpoint.
+
+    The backend handles phone→user lookup, agent enabling, and orchestration.
+    If the phone is unrecognized, we send an error SMS back.
+    """
+    api_key = os.environ.get("CREDENTIAL_SERVICE_API_KEY", "dev-internal-key")
+    url = f"{backend_url.rstrip('/')}/api/sms/incoming"
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                url,
+                json={"from_phone": from_phone, "message_body": message_body},
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Internal-API-Key": api_key,
+                },
+            )
+            data = resp.json() if resp.status_code == 200 else {}
+            if data.get("error") == "unknown_phone":
+                logger.warning(f"Phone ...{from_phone[-4:]} not registered — notifying user")
+                agent = await FoundryTwilioAgentExecutor.get_shared_agent()
+                if agent:
+                    agent.send_sms(
+                        "Your phone number is not associated with any account. "
+                        "Please configure your Twilio settings in the web portal first.",
+                        from_phone,
+                    )
+            elif data.get("error"):
+                logger.error(f"Backend /api/sms/incoming error: {data['error']}")
+            else:
+                logger.info(f"SMS forwarded to orchestrator for user={data.get('user_id')}")
+    except Exception as e:
+        logger.error(f"Error forwarding SMS to orchestrator: {e}", exc_info=True)
+
+
 def create_a2a_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
     """Create A2A server application for Twilio SMS agent."""
     global agent_executor_instance
@@ -306,18 +342,20 @@ def create_a2a_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
                 # Also clear from agent's pending requests
                 FoundryTwilioAgent.clear_pending_request(from_number)
             else:
-                logger.info(f"📭 No pending HITL request for {from_number} - message logged only")
-                # Still log to pending requests in agent for polling-based retrieval
-            
-            # Send acknowledgment SMS back to user (optional)
-            # Uncomment if you want to confirm receipt:
-            # agent = await FoundryTwilioAgentExecutor.get_shared_agent()
-            # if agent:
-            #     agent.send_sms("Got it! Processing your response...", from_number)
-            
-            # Return TwiML response (empty to not send any SMS back by default)
-            twiml_response = '<?xml version="1.0" encoding="UTF-8"?><Response></Response>'
-            return Response(content=twiml_response, media_type="application/xml")
+                # No HITL pending — forward to orchestrator as a new query
+                logger.info(f"📨 No pending HITL for {from_number} — routing to orchestrator")
+                backend_url = os.environ.get("BACKEND_SERVER_URL") or os.environ.get("BACKEND_URL", "")
+                if backend_url and body.strip():
+                    asyncio.create_task(_forward_to_orchestrator(backend_url, from_number, body))
+                elif not backend_url:
+                    logger.warning("BACKEND_URL not set — cannot forward SMS to orchestrator")
+
+                # Acknowledge receipt via TwiML
+                twiml_response = (
+                    '<?xml version="1.0" encoding="UTF-8"?>'
+                    '<Response><Message>Got it! Processing your request...</Message></Response>'
+                )
+                return Response(content=twiml_response, media_type="application/xml")
             
         except Exception as e:
             logger.error(f"❌ SMS Webhook error: {e}", exc_info=True)
@@ -353,6 +391,60 @@ def create_a2a_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
             path='/debug/hitl',
             methods=['GET'],
             endpoint=debug_pending_hitl
+        )
+    )
+
+    # Internal endpoint for backend to deliver SMS responses
+    async def internal_send_sms(request: Request) -> Response:
+        """Send an SMS on behalf of the backend (orchestrator response delivery).
+
+        Secured with X-Internal-API-Key. Called by foundry_host_manager
+        after orchestration completes for an SMS-originated query.
+        """
+        api_key = request.headers.get("X-Internal-API-Key", "")
+        expected_key = os.environ.get("CREDENTIAL_SERVICE_API_KEY", "dev-internal-key")
+        if api_key != expected_key:
+            return Response(content='{"error":"forbidden"}', status_code=403, media_type="application/json")
+
+        try:
+            body = await request.json()
+            to_number = body.get("to_number", "")
+            message = body.get("message", "")
+
+            if not to_number or not message:
+                return Response(
+                    content='{"error":"to_number and message required"}',
+                    status_code=400,
+                    media_type="application/json",
+                )
+
+            agent = await FoundryTwilioAgentExecutor.get_shared_agent()
+            if not agent:
+                return Response(
+                    content='{"error":"Twilio agent not initialized"}',
+                    status_code=503,
+                    media_type="application/json",
+                )
+
+            result = agent.send_sms(message, to_number)
+            logger.info(f"SMS delivered to ...{to_number[-4:]} ({len(message)} chars)")
+            return Response(
+                content=json.dumps({"success": True, "sid": result.get("sid", "")}),
+                media_type="application/json",
+            )
+        except Exception as e:
+            logger.error(f"Error in /internal/send-sms: {e}", exc_info=True)
+            return Response(
+                content=json.dumps({"error": str(e)}),
+                status_code=500,
+                media_type="application/json",
+            )
+
+    routes.append(
+        Route(
+            path='/internal/send-sms',
+            methods=['POST'],
+            endpoint=internal_send_sms
         )
     )
 

@@ -202,6 +202,50 @@ class UserAgentConfigService:
             self.db_conn.rollback()
             return False
 
+    def lookup_user_by_phone(self, phone_number: str, agent_name: str = "Twilio SMS Agent") -> Optional[str]:
+        """Reverse lookup: find user_id by phone number.
+
+        Scans all configured rows for the given agent, decrypts config_data,
+        and matches the 'to_phone_number' field against the incoming phone.
+        Returns user_id or None.
+        """
+        if not self.db_conn:
+            return None
+
+        # Normalize: strip whitespace, ensure '+' prefix
+        normalized = phone_number.strip().replace(" ", "").replace("-", "")
+        if normalized and not normalized.startswith("+"):
+            normalized = "+" + normalized
+
+        try:
+            self._ensure_db_connection()
+            cur = self.db_conn.cursor(cursor_factory=RealDictCursor)
+            cur.execute("""
+                SELECT user_id, pgp_sym_decrypt(config_data, %s) as config_json
+                FROM user_agent_configs
+                WHERE agent_name = %s AND is_configured = true
+            """, (CREDENTIAL_ENCRYPTION_KEY, agent_name))
+            rows = cur.fetchall()
+            cur.close()
+
+            for row in rows:
+                try:
+                    config = json.loads(row["config_json"])
+                    stored_phone = config.get("to_phone_number", "").strip().replace(" ", "").replace("-", "")
+                    if stored_phone and not stored_phone.startswith("+"):
+                        stored_phone = "+" + stored_phone
+                    if stored_phone == normalized:
+                        log_info(f"[UserAgentConfigService] Phone lookup matched user_id={row['user_id']} for phone={normalized[-4:]}")
+                        return row["user_id"]
+                except (json.JSONDecodeError, KeyError):
+                    continue
+
+            log_info(f"[UserAgentConfigService] Phone lookup: no match for phone=...{normalized[-4:]}")
+            return None
+        except Exception as e:
+            log_error(f"[UserAgentConfigService] Error in phone lookup: {e}")
+            return None
+
     def resolve_credentials(self, context_id: str, agent_name: str) -> Optional[Dict[str, str]]:
         """Resolve user credentials from a context_id.
 

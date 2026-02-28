@@ -1173,9 +1173,96 @@ def main():
             return {"credentials": None, "error": str(e)}
 
     # ==========================================================================
+    # SMS-to-Orchestrator Endpoint
+    # ==========================================================================
+
+    @app.post("/api/sms/incoming")
+    async def sms_incoming(request: Request):
+        """Process an incoming SMS as a new orchestrator query.
+
+        Called by the Twilio agent when an SMS arrives that is NOT a HITL reply.
+        Looks up the user by phone number, enables agents, and runs process_message.
+        The orchestrator response is delivered back via /internal/send-sms on the Twilio agent.
+        """
+        api_key = request.headers.get("X-Internal-API-Key", "")
+        if api_key != CREDENTIAL_SERVICE_API_KEY:
+            raise HTTPException(status_code=403, detail="Invalid internal API key")
+
+        try:
+            body = await request.json()
+            from_phone = body.get("from_phone", "")
+            message_body = body.get("message_body", "")
+
+            if not from_phone or not message_body:
+                return {"error": "from_phone and message_body required"}
+
+            # 1) Phone → user_id lookup
+            config_service = get_user_agent_config_service()
+            user_id = config_service.lookup_user_by_phone(from_phone)
+            if not user_id:
+                log_warning(f"[SMS Incoming] No user found for phone ...{from_phone[-4:]}")
+                return {"error": "unknown_phone"}
+
+            log_info(f"[SMS Incoming] Matched phone ...{from_phone[-4:]} → user_id={user_id}")
+
+            # 2) Fetch user's available workflows
+            from service.workflow_service import get_workflow_service
+            wf_service = get_workflow_service()
+            user_workflows = wf_service.get_user_workflows(user_id)
+            available_workflows = [wf_service.workflow_to_dict(w) for w in user_workflows] if user_workflows else []
+
+            # 3) Build context & message
+            context_id = f"{user_id}::sms"
+
+            from a2a.types import Message, Part, TextPart, Role
+            message = Message(
+                messageId=f"sms_{uuid.uuid4().hex[:8]}",
+                contextId=context_id,
+                role=Role.user,
+                parts=[Part(root=TextPart(text=message_body))]
+            )
+
+            # 4) Enable ALL global registry agents for this SMS session
+            from service.agent_registry import get_registry, get_session_registry
+            global_registry = get_registry()
+            session_registry = get_session_registry()
+            all_agents = global_registry.get_all_agents()
+            enabled_count = 0
+            for agent_config in all_agents:
+                if 'production_url' in agent_config and agent_config['production_url']:
+                    agent_config = agent_config.copy()
+                    agent_config['url'] = agent_config['production_url']
+                was_enabled = session_registry.enable_agent(user_id, agent_config)
+                if was_enabled:
+                    enabled_count += 1
+            log_info(f"[SMS Incoming] Enabled {enabled_count} agents for SMS session (user={user_id})")
+
+            # 5) Fire-and-forget: process_message with sms_reply_to
+            if not agent_server or not hasattr(agent_server, 'manager'):
+                return {"error": "Backend agent server not ready"}
+
+            asyncio.create_task(
+                agent_server.manager.process_message(
+                    message,
+                    agent_mode=None,
+                    enable_inter_agent_memory=True,
+                    available_workflows=available_workflows,
+                    user_id=user_id,
+                    user_timezone="America/New_York",
+                    sms_reply_to=from_phone,
+                )
+            )
+
+            return {"status": "processing", "user_id": user_id, "context_id": context_id}
+
+        except Exception as e:
+            log_error(f"[SMS Incoming] Error: {e}", exc_info=True)
+            return {"error": str(e)}
+
+    # ==========================================================================
     # Workflow API Endpoints
     # ==========================================================================
-    
+
     from service.workflow_service import get_workflow_service
     workflow_service = get_workflow_service()
     
