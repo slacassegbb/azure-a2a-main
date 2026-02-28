@@ -587,7 +587,8 @@ Evaluate the condition and return your result."""
 
         system_prompt = """You are analyzing data as part of a multi-agent workflow.
 Based on the context from previous workflow steps, answer the query with structured results.
-IMPORTANT: Always provide your best analysis using whatever data IS available. Set "ok" to true and put your full answer in the "result" field as a JSON string. Only set "ok" to false if there is literally zero relevant context. Lower your confidence score if data is partial, but still give a concrete answer."""
+IMPORTANT: Always provide your best analysis using whatever data IS available. Set "ok" to true and put your full answer in the "result" field as a JSON string. Only set "ok" to false if there is literally zero relevant context. Lower your confidence score if data is partial, but still give a concrete answer.
+IMPORTANT: Be thorough and detailed. If the query asks for a report or summary, include ALL relevant data points from the context — prices, percentages, key headlines, analysis, recommendations. Do NOT compress everything into one sentence. The result may be delivered via email or SMS, so make it comprehensive and readable."""
 
         user_prompt = f"""### QUERY
 {user_query}
@@ -1351,6 +1352,10 @@ Analyze this request and decide the best approach."""
    - Do NOT include a notification/delivery step — that is appended separately.
    - Keep steps focused and actionable.
    - Use exact agent names from the available agents list above.
+   - **IMPORTANT for QUERY steps**: Write detailed, specific descriptions that specify EXACTLY what analysis to perform and what format/depth to produce. The description IS the prompt the LLM receives at runtime.
+     - BAD: "Summarize the AMD news"
+     - GOOD: "Compile a detailed briefing from the previous steps: include current price with % change, key news headlines with sources, analyst sentiment breakdown (bullish/bearish/neutral), notable catalysts or risks, and a 1-paragraph outlook. Format as a readable report, not a single sentence."
+   - The final QUERY step before delivery should always produce a comprehensive, well-formatted report — not a one-line summary.
 
 4. **Workflow name**: Generate a short, descriptive name (e.g., "Daily AMD News Report").
 """
