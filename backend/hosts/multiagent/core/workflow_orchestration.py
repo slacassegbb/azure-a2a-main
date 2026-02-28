@@ -587,8 +587,7 @@ Evaluate the condition and return your result."""
 
         system_prompt = """You are analyzing data as part of a multi-agent workflow.
 Based on the context from previous workflow steps, answer the query with structured results.
-IMPORTANT: Always provide your best analysis using whatever data IS available. Set "ok" to true and put your full answer in the "result" field as a JSON string. Only set "ok" to false if there is literally zero relevant context. Lower your confidence score if data is partial, but still give a concrete answer.
-IMPORTANT: Be thorough and detailed. If the query asks for a report or summary, include ALL relevant data points from the context — prices, percentages, key headlines, analysis, recommendations. Do NOT compress everything into one sentence. The result may be delivered via email or SMS, so make it comprehensive and readable."""
+IMPORTANT: Always provide your best analysis using whatever data IS available. Set "ok" to true and put your full answer in the "result" field as a JSON string. Only set "ok" to false if there is literally zero relevant context. Lower your confidence score if data is partial, but still give a concrete answer."""
 
         user_prompt = f"""### QUERY
 {user_query}
@@ -1431,7 +1430,7 @@ Analyze this request and decide the best approach."""
                     "agentId": email_agent_name.lower().replace(" ", "-"),
                     "agentName": email_agent_name,
                     "agentColor": assign_color_for_agent(email_agent_name),
-                    "description": "Send the results summary to the user via email",
+                    "description": "Compose and send a detailed email report from ALL previous workflow step outputs. Include every specific data point: prices, percentages, headlines, analysis, and recommendations. Write a comprehensive multi-paragraph message — do not compress into a short summary.",
                     "x": 100,
                     "y": 100 + (len(db_steps) * 120),
                     "order": len(db_steps),
@@ -1452,7 +1451,7 @@ Analyze this request and decide the best approach."""
                     "agentId": sms_agent_name.lower().replace(" ", "-"),
                     "agentName": sms_agent_name,
                     "agentColor": assign_color_for_agent(sms_agent_name),
-                    "description": "Send a results summary to the user via SMS",
+                    "description": "Compose and send a detailed SMS report from ALL previous workflow step outputs. Include every specific data point: prices, percentages, headlines, analysis, and recommendations. Write a comprehensive message — do not compress into a short summary.",
                     "x": 100,
                     "y": 100 + (len(db_steps) * 120),
                     "order": len(db_steps),
