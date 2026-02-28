@@ -1,0 +1,1721 @@
+[
+  {
+    "name": "AI Foundry Stock Market Agent",
+    "description": "Stock market data agent powered by Alpha Vantage. Access stock prices, forex, crypto, commodities, economic indicators, technical analysis, news sentiment, and company fundamentals.",
+    "version": "1.0.0",
+    "url": "http://localhost:9040/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "stockmarket_price_lookup",
+        "name": "Stock Price Lookup",
+        "description": "Get current and historical stock prices, quotes, and OHLCV data for any publicly traded company.",
+        "examples": null,
+        "tags": [
+          "stockmarket",
+          "stocks",
+          "prices",
+          "quotes",
+          "ohlcv"
+        ]
+      },
+      {
+        "id": "stockmarket_historical_data",
+        "name": "Historical Market Data",
+        "description": "Retrieve historical price data for stocks, forex, crypto, and commodities with daily/weekly/monthly/intraday frequency.",
+        "examples": null,
+        "tags": [
+          "stockmarket",
+          "historical",
+          "timeseries",
+          "forex",
+          "crypto",
+          "commodities"
+        ]
+      },
+      {
+        "id": "stockmarket_technical_analysis",
+        "name": "Technical Analysis",
+        "description": "Calculate technical indicators including SMA, EMA, RSI, MACD, Bollinger Bands, Stochastic, ADX, and 40+ more.",
+        "examples": null,
+        "tags": [
+          "stockmarket",
+          "technical",
+          "indicators",
+          "sma",
+          "rsi",
+          "macd"
+        ]
+      },
+      {
+        "id": "stockmarket_intelligence",
+        "name": "Market Intelligence",
+        "description": "Access news sentiment analysis, earnings call transcripts, insider transactions, and top market movers.",
+        "examples": null,
+        "tags": [
+          "stockmarket",
+          "news",
+          "sentiment",
+          "earnings",
+          "insider"
+        ]
+      },
+      {
+        "id": "stockmarket_economic_data",
+        "name": "Economic & Commodity Data",
+        "description": "Retrieve economic indicators (GDP, CPI, inflation, unemployment, treasury yields) and commodity prices (oil, gold, wheat, etc.).",
+        "examples": null,
+        "tags": [
+          "stockmarket",
+          "economic",
+          "gdp",
+          "cpi",
+          "commodities",
+          "oil",
+          "gold"
+        ]
+      },
+      {
+        "id": "human_interaction",
+        "name": "Human Expert Escalation",
+        "description": "Escalate complex issues to human experts when needed.",
+        "examples": null,
+        "tags": [
+          "human-interaction",
+          "escalation",
+          "expert",
+          "human-capable"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "AI Foundry Time Series Agent",
+    "description": "Time series intelligence agent powered by Nixtla TimeGEN-1. Forecasting, anomaly detection, backtesting, and cross-validation for any time series data.",
+    "version": "1.0.0",
+    "url": "http://localhost:9039/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "timeseries_forecast",
+        "name": "Time Series Forecasting",
+        "description": "Predict future values for any time series data using Nixtla TimeGEN-1. Supports single and multi-series with exogenous variables.",
+        "examples": null,
+        "tags": [
+          "timeseries",
+          "forecast",
+          "prediction",
+          "nixtla",
+          "timegen"
+        ]
+      },
+      {
+        "id": "timeseries_anomaly_detection",
+        "name": "Time Series Anomaly Detection",
+        "description": "Detect anomalies, outliers, and unusual patterns in time series data. Use for fraud detection, system monitoring, quality control.",
+        "examples": null,
+        "tags": [
+          "timeseries",
+          "anomaly",
+          "detection",
+          "fraud",
+          "outlier"
+        ]
+      },
+      {
+        "id": "timeseries_historic_forecast",
+        "name": "Historic Forecast (Backtest)",
+        "description": "Backtest predictions on historical data to evaluate model accuracy on known outcomes.",
+        "examples": null,
+        "tags": [
+          "timeseries",
+          "backtest",
+          "historic",
+          "validation"
+        ]
+      },
+      {
+        "id": "timeseries_cross_validation",
+        "name": "Cross-Validation",
+        "description": "Evaluate forecast reliability using rolling-window cross-validation across multiple time periods.",
+        "examples": null,
+        "tags": [
+          "timeseries",
+          "cross-validation",
+          "accuracy",
+          "evaluation"
+        ]
+      },
+      {
+        "id": "human_interaction",
+        "name": "Human Expert Escalation",
+        "description": "Escalate complex issues to human experts when needed.",
+        "examples": null,
+        "tags": [
+          "human-interaction",
+          "escalation",
+          "expert",
+          "human-capable"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "AI Foundry Branding & Content Agent",
+    "description": "An intelligent branding partner powered by Azure AI Foundry. Provides on-brand messaging, visual direction, and creative prompts grounded in the Company Branding Guide.",
+    "version": "1.0.0",
+    "url": "https://azurefoundry-branding.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "brand_strategy_alignment",
+        "name": "Brand Strategy Alignment",
+        "description": "Map campaign goals, audiences, and messaging pillars to the Company Branding Guide, ensuring voice, tone, and terminology remain on-brand.",
+        "examples": null,
+        "tags": [
+          "branding",
+          "strategy",
+          "messaging",
+          "tone"
+        ]
+      },
+      {
+        "id": "visual_identity_direction",
+        "name": "Visual Identity Direction",
+        "description": "Provide art direction, mood, and composition notes anchored in brand colors, lighting, and imagery guidelines from `company_branding.md`.",
+        "examples": null,
+        "tags": [
+          "visual",
+          "design",
+          "palette",
+          "composition"
+        ]
+      },
+      {
+        "id": "brand_voice_copywriting",
+        "name": "Brand Voice Copywriting",
+        "description": "Draft or refine copy so it reflects the confident, professional, forward-looking voice defined in the branding guide.",
+        "examples": null,
+        "tags": [
+          "copywriting",
+          "voice",
+          "tone",
+          "editing"
+        ]
+      },
+      {
+        "id": "generative_prompt_engineering",
+        "name": "Generative Prompt Engineering",
+        "description": "Create positive and negative prompts for image/video generation that encode brand palette, lighting, typography, and prohibited elements.",
+        "examples": null,
+        "tags": [
+          "prompt",
+          "imaging",
+          "ai-art",
+          "guidelines"
+        ]
+      },
+      {
+        "id": "brand_review_feedback",
+        "name": "Brand Review & QA",
+        "description": "Evaluate supplied copy, prompts, or visuals and document brand compliance gaps with actionable corrections.",
+        "examples": null,
+        "tags": [
+          "review",
+          "qa",
+          "compliance",
+          "feedback"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "AI Foundry Classification Triage Agent",
+    "description": "An intelligent incident classification and triage agent powered by Azure AI Foundry. Specializes in analyzing customer issues, classifying incidents into proper categories, assessing priority levels, and routing cases to appropriate teams using ServiceNow standards.",
+    "version": "1.0.0",
+    "url": "https://azurefoundry-classification.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "incident_classification",
+        "name": "Incident Classification",
+        "description": "Classify customer incidents into categories such as Fraud, Technical Issues, Payment Issues, Card Issues, Account Services, Security, and Inquiries",
+        "examples": null,
+        "tags": [
+          "classification",
+          "incident",
+          "triage",
+          "categorization"
+        ]
+      },
+      {
+        "id": "priority_assessment",
+        "name": "Priority Assessment",
+        "description": "Determine urgency, impact, and priority levels for incidents using ServiceNow standard mapping",
+        "examples": null,
+        "tags": [
+          "priority",
+          "urgency",
+          "impact",
+          "assessment",
+          "servicenow"
+        ]
+      },
+      {
+        "id": "routing_triage",
+        "name": "Routing & Triage",
+        "description": "Route incidents to appropriate teams and provide triage recommendations based on classification",
+        "examples": null,
+        "tags": [
+          "routing",
+          "triage",
+          "escalation",
+          "team-assignment"
+        ]
+      },
+      {
+        "id": "field_mapping",
+        "name": "ServiceNow Field Mapping",
+        "description": "Map incident details to proper ServiceNow fields including category, subcategory, description, and metadata",
+        "examples": null,
+        "tags": [
+          "servicenow",
+          "mapping",
+          "fields",
+          "metadata"
+        ]
+      },
+      {
+        "id": "keyword_analysis",
+        "name": "Keyword Analysis",
+        "description": "Analyze customer messages for classification keywords and context cues to determine incident type",
+        "examples": null,
+        "tags": [
+          "keywords",
+          "analysis",
+          "context",
+          "nlp"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "AI Foundry Image Generator Agent",
+    "description": "An Azure AI Foundry agent that can generate and edit images.",
+    "version": "1.0.0",
+    "url": "https://azurefoundry-image-generator.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "generate_image",
+        "name": "Generate Image",
+        "description": "Create new images from text prompts with various styles, subjects, and compositions.",
+        "examples": null,
+        "tags": [
+          "image-generation",
+          "text-to-image",
+          "creative"
+        ]
+      },
+      {
+        "id": "edit_image",
+        "name": "Edit Image",
+        "description": "Modify existing images through inpainting, outpainting, style transfer, or targeted edits.",
+        "examples": null,
+        "tags": [
+          "image-editing",
+          "modification",
+          "refinement"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Email Agent",
+    "description": "Full email management: READ emails from inbox (search by sender, subject, date), DOWNLOAD email attachments (invoices, documents, PDFs), and COMPOSE & SEND professional emails via Microsoft Graph API.",
+    "version": "1.0.0",
+    "url": "https://azurefoundry-email.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "email_read",
+        "name": "Email Reading & Search",
+        "description": "Read, search, and retrieve emails from the inbox. Can filter by sender, subject, date, and unread status.",
+        "examples": null,
+        "tags": [
+          "email",
+          "inbox",
+          "read",
+          "search",
+          "retrieve",
+          "messages"
+        ]
+      },
+      {
+        "id": "email_attachments",
+        "name": "Email Attachment Download",
+        "description": "Download and extract file attachments from emails. Retrieves PDFs, documents, invoices, images, spreadsheets and other files attached to emails.",
+        "examples": null,
+        "tags": [
+          "attachments",
+          "download",
+          "files",
+          "documents",
+          "invoice",
+          "pdf",
+          "extract"
+        ]
+      },
+      {
+        "id": "email_send",
+        "name": "Email Composition & Sending",
+        "description": "Compose and send professional emails via Microsoft Graph API. Can include CC recipients and format emails with HTML.",
+        "examples": null,
+        "tags": [
+          "email",
+          "send",
+          "compose",
+          "write",
+          "communication"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Teams Agent",
+    "description": "Human-in-the-loop agent via Microsoft Teams. Can SEND messages to users, WAIT for human responses, and ESCALATE decisions requiring human judgment. Uses A2A input_required state for pause/resume workflows.",
+    "version": "1.0.0",
+    "url": "https://azurefoundry-teams.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "teams_send_message",
+        "name": "Send Teams Message",
+        "description": "Send a message to a user via Microsoft Teams. Use this to communicate with humans, ask questions, or provide updates.",
+        "examples": null,
+        "tags": [
+          "teams",
+          "message",
+          "send",
+          "communicate",
+          "notify",
+          "human"
+        ]
+      },
+      {
+        "id": "teams_wait_response",
+        "name": "Wait for Human Response",
+        "description": "Wait for a human to respond via Microsoft Teams. Use this for approval workflows, getting feedback, or any scenario requiring human input. The workflow will pause until the human responds.",
+        "examples": null,
+        "tags": [
+          "teams",
+          "wait",
+          "response",
+          "human-in-the-loop",
+          "approval",
+          "input",
+          "feedback"
+        ]
+      },
+      {
+        "id": "teams_human_escalation",
+        "name": "Human Escalation",
+        "description": "Escalate a task to a human via Teams when the AI cannot proceed autonomously. The human can provide guidance, make decisions, or take over the task.",
+        "examples": null,
+        "tags": [
+          "escalation",
+          "human",
+          "help",
+          "assistance",
+          "decision",
+          "override"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "AI Foundry PowerPoint Agent",
+    "description": "An Azure AI Foundry agent that creates, reads, and edits PowerPoint presentations. Can create new .pptx files and read, extract, or edit existing presentations via URL.",
+    "version": "1.0.0",
+    "url": "https://azurefoundry-powerpoint.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "create_presentation",
+        "name": "Create Presentation",
+        "description": "Create new PowerPoint presentations with slides, text, bullet points, tables, charts, shapes, and professional design themes.",
+        "examples": null,
+        "tags": [
+          "powerpoint",
+          "presentation",
+          "slides",
+          "pptx"
+        ]
+      },
+      {
+        "id": "read_presentation",
+        "name": "Read Presentation",
+        "description": "Read and extract content from existing PowerPoint presentations via URL or file path.",
+        "examples": null,
+        "tags": [
+          "powerpoint",
+          "read",
+          "extract",
+          "pptx"
+        ]
+      },
+      {
+        "id": "edit_presentation",
+        "name": "Edit Presentation",
+        "description": "Edit existing PowerPoint presentations — update slides, add content, insert images, and reformat.",
+        "examples": null,
+        "tags": [
+          "powerpoint",
+          "edit",
+          "update",
+          "modify"
+        ]
+      },
+      {
+        "id": "human_interaction",
+        "name": "Human Expert Escalation",
+        "description": "Escalate complex issues to human experts when needed.",
+        "examples": null,
+        "tags": [
+          "human-interaction",
+          "escalation",
+          "expert",
+          "human-capable"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Sora 2 Video Generator",
+    "description": "Generate stunning AI videos from text prompts using Azure OpenAI's Sora 2 model. Create cinematic scenes, product demos, animations, and creative visual content with natural language descriptions. Supports 4-12 second videos in landscape or portrait format.",
+    "version": "1.0.0",
+    "url": "https://azurefoundry-video.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "video_generation",
+        "name": "AI Video Generation",
+        "description": "Generate high-quality AI videos from text prompts using Azure OpenAI's Sora 2 model. Create cinematic scenes, animations, and visual content with natural language descriptions.",
+        "examples": null,
+        "tags": [
+          "video",
+          "sora",
+          "generation",
+          "ai",
+          "creative",
+          "multimedia"
+        ]
+      },
+      {
+        "id": "video_from_image",
+        "name": "Image-to-Video Generation",
+        "description": "Transform static images into dynamic videos. Provide a reference image and describe the motion or animation you want to create.",
+        "examples": null,
+        "tags": [
+          "video",
+          "image",
+          "animation",
+          "transform",
+          "sora"
+        ]
+      },
+      {
+        "id": "video_to_video",
+        "name": "Video-to-Video Generation",
+        "description": "Transform existing videos using AI. Upload a reference video and describe the transformation you want - change styles, atmospheres, or subjects while maintaining motion and structure.",
+        "examples": null,
+        "tags": [
+          "video",
+          "transform",
+          "sora",
+          "style-transfer",
+          "reference"
+        ]
+      },
+      {
+        "id": "video_remix",
+        "name": "Video Remix",
+        "description": "Modify specific aspects of previously generated Sora 2 videos while preserving core elements like scene transitions and visual layout. Make targeted adjustments to color palettes, lighting, or style.",
+        "examples": null,
+        "tags": [
+          "video",
+          "remix",
+          "edit",
+          "modify",
+          "sora"
+        ]
+      },
+      {
+        "id": "video_prompt_assistance",
+        "name": "Video Prompt Crafting",
+        "description": "Help craft effective prompts for video generation. Get advice on describing scenes, camera movements, lighting, and style for optimal results.",
+        "examples": null,
+        "tags": [
+          "prompt",
+          "assistance",
+          "help",
+          "creative",
+          "writing"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Twilio SMS Agent",
+    "description": "A two-way SMS communication agent powered by Azure AI Foundry and Twilio. Supports Human-in-the-Loop (HITL) for interactive SMS conversations. Send SMS messages, receive replies, and ask users questions that pause the workflow until they respond. Perfect for notifications, approvals, confirmations, and two-way SMS workflows.",
+    "version": "1.1.0",
+    "url": "http://localhost:8016/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "send_sms",
+        "name": "Send SMS Message",
+        "description": "Send an SMS text message to a phone number via Twilio. Can receive message content from previous workflow steps and deliver it via SMS notification.",
+        "examples": null,
+        "tags": [
+          "sms",
+          "text",
+          "message",
+          "notification",
+          "twilio",
+          "phone",
+          "send"
+        ]
+      },
+      {
+        "id": "receive_sms",
+        "name": "Receive SMS Messages",
+        "description": "Retrieve and read recent SMS messages received by this Twilio number. Check for user replies, monitor incoming messages, and retrieve conversation history.",
+        "examples": null,
+        "tags": [
+          "sms",
+          "text",
+          "message",
+          "receive",
+          "inbox",
+          "twilio",
+          "phone",
+          "read"
+        ]
+      },
+      {
+        "id": "twilio_ask",
+        "name": "Ask User via SMS (HITL)",
+        "description": "Send a question via SMS and wait for the user's response. Human-in-the-Loop (HITL) capability for interactive SMS conversations. The workflow will pause until the user replies via SMS.",
+        "examples": null,
+        "tags": [
+          "sms",
+          "hitl",
+          "human-in-the-loop",
+          "interactive",
+          "question",
+          "ask",
+          "input",
+          "approval"
+        ]
+      },
+      {
+        "id": "notify_user",
+        "name": "User Notification",
+        "description": "Notify a user via SMS with workflow results, alerts, or important updates. Ideal as the final step in a workflow to deliver results to users' phones.",
+        "examples": null,
+        "tags": [
+          "notify",
+          "alert",
+          "update",
+          "result",
+          "delivery",
+          "workflow"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "AI Foundry Assessment & Estimation Agent",
+    "description": "An intelligent assessment specialist powered by Azure AI Foundry. Performs multi-line damage evaluations, cost estimations, and structured reporting for auto, property, travel, and health scenarios.",
+    "version": "1.0.0",
+    "url": "http://localhost:9043/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "auto_damage_assessment",
+        "name": "Auto Damage Assessment",
+        "description": "Analyze collision/comprehensive losses, estimate labor/materials, and recommend severity using auto_estimation.md tables.",
+        "examples": null,
+        "tags": [
+          "auto",
+          "damage",
+          "estimation",
+          "labor-hours"
+        ]
+      },
+      {
+        "id": "property_damage_estimation",
+        "name": "Property Damage Estimation",
+        "description": "Assess dwelling and contents losses, apply depreciation, and flag mitigation steps per property_estimation.md.",
+        "examples": null,
+        "tags": [
+          "property",
+          "dwelling",
+          "contents",
+          "depreciation"
+        ]
+      },
+      {
+        "id": "travel_loss_estimation",
+        "name": "Travel Loss Estimation",
+        "description": "Estimate trip interruption, baggage loss, and medical evacuation costs using travel_estimation.md benchmarks.",
+        "examples": null,
+        "tags": [
+          "travel",
+          "trip",
+          "baggage",
+          "medical"
+        ]
+      },
+      {
+        "id": "health_cost_estimation",
+        "name": "Health Cost Estimation",
+        "description": "Estimate medical service costs, bundled treatments, and specialist visits using health_estimation.md guidance.",
+        "examples": null,
+        "tags": [
+          "health",
+          "medical",
+          "cost-estimation"
+        ]
+      },
+      {
+        "id": "estimation_quality_assurance",
+        "name": "Estimation Quality & QA",
+        "description": "Apply universal estimation workflow, depreciation rules, and QA checklists from universal_estimation.md and procedures_faq.md.",
+        "examples": null,
+        "tags": [
+          "workflow",
+          "qa",
+          "depreciation",
+          "reporting"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "AI Foundry Claims Specialist Agent",
+    "description": "An intelligent multi-line claims specialist powered by Azure AI Foundry. Provides coverage validation, settlement calculations, documentation checklists, and compliance guidance across auto, property, travel, and health insurance claims.",
+    "version": "1.0.0",
+    "url": "http://localhost:9001/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "auto_claims_assessment",
+        "name": "Auto Claims Assessment",
+        "description": "Evaluate auto insurance losses, apply deductibles, total loss thresholds, and rental allowances using auto_claims.md guidance.",
+        "examples": null,
+        "tags": [
+          "auto",
+          "claims",
+          "settlement",
+          "deductible"
+        ]
+      },
+      {
+        "id": "property_claims_management",
+        "name": "Property Claims Management",
+        "description": "Guide homeowners and property claims: covered perils, mitigation steps, documentation, and settlement math from home_claims.md.",
+        "examples": null,
+        "tags": [
+          "home",
+          "property",
+          "water-damage",
+          "perils"
+        ]
+      },
+      {
+        "id": "travel_claim_support",
+        "name": "Travel Claim Support",
+        "description": "Assess trip cancellation, baggage, and emergency medical claims using travel_claims.md coverage and exclusions.",
+        "examples": null,
+        "tags": [
+          "travel",
+          "cancellation",
+          "baggage",
+          "medical"
+        ]
+      },
+      {
+        "id": "health_claim_guidance",
+        "name": "Health Claim Guidance",
+        "description": "Explain deductibles, coinsurance, and documentation needs for medical claims per health_claims.md.",
+        "examples": null,
+        "tags": [
+          "health",
+          "medical",
+          "coinsurance",
+          "documentation"
+        ]
+      },
+      {
+        "id": "claims_documentation_compliance",
+        "name": "Documentation & Compliance",
+        "description": "Provide required forms, fraud checks, and regulatory timelines using universal_claims.md, procedures_faq.md, and regulatory_compliance.md.",
+        "examples": null,
+        "tags": [
+          "documentation",
+          "compliance",
+          "fraud",
+          "regulation"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "AI Foundry Deep Search Knowledge Agent",
+    "description": "An intelligent customer support agent powered by Azure AI Foundry with deep search capabilities through comprehensive support documentation covering account management, billing, payments, fraud protection, and technical support.",
+    "version": "1.0.0",
+    "url": "http://localhost:8002/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "document_search",
+        "name": "Document Search",
+        "description": "Deep search through customer support documents including account management, billing, payments, complaints, and technical support",
+        "examples": null,
+        "tags": [
+          "search",
+          "documents",
+          "knowledge-base",
+          "customer-support"
+        ]
+      },
+      {
+        "id": "account_support",
+        "name": "Account Support",
+        "description": "Comprehensive support for account opening, closure, and management procedures",
+        "examples": null,
+        "tags": [
+          "account",
+          "opening",
+          "closure",
+          "management"
+        ]
+      },
+      {
+        "id": "billing_payments",
+        "name": "Billing & Payments",
+        "description": "Information about billing, payments, fees, and charges",
+        "examples": null,
+        "tags": [
+          "billing",
+          "payments",
+          "fees",
+          "charges"
+        ]
+      },
+      {
+        "id": "fraud_security",
+        "name": "Fraud & Security",
+        "description": "Guidance on fraud prevention, unauthorized transactions, and security measures",
+        "examples": null,
+        "tags": [
+          "fraud",
+          "security",
+          "unauthorized",
+          "protection"
+        ]
+      },
+      {
+        "id": "technical_support",
+        "name": "Technical Support",
+        "description": "Online banking, mobile app, and technical assistance",
+        "examples": null,
+        "tags": [
+          "technical",
+          "online-banking",
+          "mobile",
+          "troubleshooting"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "AI Foundry Excel Agent",
+    "description": "An Azure AI Foundry agent that creates, reads, and edits Excel spreadsheets. Can create new .xlsx files and read, extract, or edit existing spreadsheets via URL.",
+    "version": "1.0.0",
+    "url": "https://azurefoundry-excel.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "create_spreadsheet",
+        "name": "Create Spreadsheet",
+        "description": "Create new Excel spreadsheets with data, formulas, tables, and formatting.",
+        "examples": null,
+        "tags": [
+          "excel",
+          "spreadsheet",
+          "xlsx",
+          "data"
+        ]
+      },
+      {
+        "id": "read_spreadsheet",
+        "name": "Read Spreadsheet",
+        "description": "Read and extract data from existing Excel spreadsheets via URL or file path.",
+        "examples": null,
+        "tags": [
+          "excel",
+          "read",
+          "extract",
+          "xlsx"
+        ]
+      },
+      {
+        "id": "edit_spreadsheet",
+        "name": "Edit Spreadsheet",
+        "description": "Edit existing Excel spreadsheets — add rows, update values, insert formulas, and reformat.",
+        "examples": null,
+        "tags": [
+          "excel",
+          "edit",
+          "update",
+          "modify"
+        ]
+      },
+      {
+        "id": "human_interaction",
+        "name": "Human Expert Escalation",
+        "description": "Escalate complex issues to human experts when needed.",
+        "examples": null,
+        "tags": [
+          "human-interaction",
+          "escalation",
+          "expert",
+          "human-capable"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "AI Foundry Fraud Intelligence Agent",
+    "description": "An intelligent fraud specialist powered by Azure AI Foundry. Evaluates claims for red flags, organizes evidence, and recommends SIU escalation across auto, property, travel, and health domains.",
+    "version": "1.0.0",
+    "url": "http://localhost:9004/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "auto_fraud_detection",
+        "name": "Auto Fraud Detection",
+        "description": "Identify staged collisions, inflated injuries, and documentation anomalies using fraud_auto.md guidance.",
+        "examples": null,
+        "tags": [
+          "auto",
+          "fraud",
+          "siu",
+          "red-flags"
+        ]
+      },
+      {
+        "id": "property_fraud_detection",
+        "name": "Property Fraud Detection",
+        "description": "Spot intentional fire, inflated contents, and contractor fraud patterns per fraud_property.md.",
+        "examples": null,
+        "tags": [
+          "property",
+          "fire",
+          "contents",
+          "fraud"
+        ]
+      },
+      {
+        "id": "travel_fraud_detection",
+        "name": "Travel Fraud Detection",
+        "description": "Detect forged medical notes, baggage padding, and duplicate cancellations using fraud_travel.md.",
+        "examples": null,
+        "tags": [
+          "travel",
+          "cancellation",
+          "baggage",
+          "fraud"
+        ]
+      },
+      {
+        "id": "health_fraud_screening",
+        "name": "Health Fraud Screening",
+        "description": "Analyze phantom billing, upcoding, and prescription anomalies per fraud_health.md.",
+        "examples": null,
+        "tags": [
+          "health",
+          "billing",
+          "provider",
+          "fraud"
+        ]
+      },
+      {
+        "id": "fraud_workflow_and_escalation",
+        "name": "Fraud Workflow & Escalation",
+        "description": "Apply universal fraud red flags, anomaly patterns, and SIU referral rules from fraud_universal.md and fraud_procedures_faq.md.",
+        "examples": null,
+        "tags": [
+          "workflow",
+          "siu",
+          "red-flags",
+          "compliance"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "AI Foundry Google Maps Agent",
+    "description": "An intelligent Google Maps agent that searches for places, provides weather forecasts, and computes travel routes using Google Maps MCP tools.",
+    "version": "1.0.0",
+    "url": "http://localhost:9041/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "googlemaps_search_places",
+        "name": "Google Maps Place Search",
+        "description": "Search for places, businesses, addresses, landmarks, and points of interest using Google Maps.",
+        "examples": null,
+        "tags": [
+          "googlemaps",
+          "places",
+          "search",
+          "location",
+          "restaurants",
+          "businesses"
+        ]
+      },
+      {
+        "id": "googlemaps_weather",
+        "name": "Google Maps Weather Lookup",
+        "description": "Get current weather conditions, hourly forecasts, and daily forecasts for any location worldwide.",
+        "examples": null,
+        "tags": [
+          "googlemaps",
+          "weather",
+          "forecast",
+          "temperature",
+          "conditions"
+        ]
+      },
+      {
+        "id": "googlemaps_routes",
+        "name": "Google Maps Route Computing",
+        "description": "Compute driving or walking routes between two locations with distance and estimated travel time.",
+        "examples": null,
+        "tags": [
+          "googlemaps",
+          "routes",
+          "directions",
+          "navigation",
+          "driving",
+          "walking"
+        ]
+      },
+      {
+        "id": "human_interaction",
+        "name": "Human Expert Escalation",
+        "description": "Escalate complex issues to human experts when needed.",
+        "examples": null,
+        "tags": [
+          "human-interaction",
+          "escalation",
+          "expert",
+          "human-capable"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "AI Foundry HubSpot Agent",
+    "description": "Intelligent agent for HubSpot payment processing - customers, payments, subscriptions, invoices, and balance.",
+    "version": "1.0.0",
+    "url": "https://azurefoundry-hubspot.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "hubspot_customers",
+        "name": "HubSpot Customer Management",
+        "description": "Create, search, update, and manage customer records in HubSpot.",
+        "examples": null,
+        "tags": [
+          "hubspot",
+          "customers",
+          "payments"
+        ]
+      },
+      {
+        "id": "hubspot_payments",
+        "name": "HubSpot Payment Processing",
+        "description": "Create payment intents, process charges, and handle refunds.",
+        "examples": null,
+        "tags": [
+          "hubspot",
+          "payments",
+          "charges"
+        ]
+      },
+      {
+        "id": "hubspot_balance",
+        "name": "HubSpot Balance",
+        "description": "Check balance and view available funds.",
+        "examples": null,
+        "tags": [
+          "hubspot",
+          "balance"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "AI Foundry Image Analysis Agent",
+    "description": "Analyzes images using Azure AI Foundry with GPT-4o vision.",
+    "version": "1.0.0",
+    "url": "http://localhost:9066/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "image_analysis",
+        "name": "Image Analysis",
+        "description": "Analyze images using GPT-4o vision capabilities.",
+        "examples": null,
+        "tags": [
+          "vision",
+          "analysis",
+          "ai"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "AI Foundry QuickBooks Agent",
+    "description": "An intelligent QuickBooks Online agent for accounting and financial management. Manage customers, invoices, bills, vendors, employees, and generate financial reports.",
+    "version": "1.0.0",
+    "url": "https://azurefoundry-quickbooks.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "quickbooks_customers",
+        "name": "QuickBooks Customer Management",
+        "description": "Search, create, update, and manage customer records in QuickBooks Online. Access customer details, contact information, and transaction history.",
+        "examples": null,
+        "tags": [
+          "quickbooks",
+          "customers",
+          "crm",
+          "contacts"
+        ]
+      },
+      {
+        "id": "quickbooks_invoices",
+        "name": "QuickBooks Invoice Management",
+        "description": "Create, search, and manage invoices in QuickBooks Online. Track payments, view invoice details, and manage accounts receivable.",
+        "examples": null,
+        "tags": [
+          "quickbooks",
+          "invoices",
+          "billing",
+          "accounts receivable"
+        ]
+      },
+      {
+        "id": "quickbooks_bills",
+        "name": "QuickBooks Bills & Expenses",
+        "description": "Manage bills, purchases, and expenses in QuickBooks Online. Track vendor payments, record expenses, and manage accounts payable.",
+        "examples": null,
+        "tags": [
+          "quickbooks",
+          "bills",
+          "expenses",
+          "accounts payable",
+          "vendors"
+        ]
+      },
+      {
+        "id": "quickbooks_reports",
+        "name": "QuickBooks Financial Reports",
+        "description": "Generate financial reports including Profit & Loss, Balance Sheet, and custom queries. Access company information and financial summaries.",
+        "examples": null,
+        "tags": [
+          "quickbooks",
+          "reports",
+          "financial",
+          "accounting",
+          "P&L"
+        ]
+      },
+      {
+        "id": "human_interaction",
+        "name": "Human Expert Escalation",
+        "description": "Escalate complex issues to human experts or facilitate human-in-the-loop interactions when automated responses are insufficient.",
+        "examples": null,
+        "tags": [
+          "human-interaction",
+          "escalation",
+          "expert",
+          "human-capable"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "AI Foundry Reporter Agent",
+    "description": "A professional report creation agent powered by Azure AI Foundry. Creates executive summaries, technical analyses, project status reports, and custom reports with structured templates.",
+    "version": "1.0.0",
+    "url": "http://localhost:9032/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "executive_summary_report",
+        "name": "Executive Summary Report",
+        "description": "Creates high-level executive summary reports for leadership and stakeholders with key findings, recommendations, and next steps.",
+        "examples": null,
+        "tags": [
+          "report",
+          "executive",
+          "summary",
+          "leadership",
+          "stakeholder"
+        ]
+      },
+      {
+        "id": "technical_analysis_report",
+        "name": "Technical Analysis Report",
+        "description": "Creates detailed technical analysis reports with metrics, data, risk assessments, and technical recommendations.",
+        "examples": null,
+        "tags": [
+          "report",
+          "technical",
+          "analysis",
+          "metrics",
+          "engineering"
+        ]
+      },
+      {
+        "id": "project_status_report",
+        "name": "Project Status Report",
+        "description": "Creates project status reports with progress updates, milestones, issues, blockers, and outlook.",
+        "examples": null,
+        "tags": [
+          "report",
+          "project",
+          "status",
+          "progress",
+          "milestone"
+        ]
+      },
+      {
+        "id": "custom_report",
+        "name": "Custom Report",
+        "description": "Creates custom reports with user-defined sections and structure for any topic or purpose.",
+        "examples": null,
+        "tags": [
+          "report",
+          "custom",
+          "flexible",
+          "document"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "AI Foundry Stripe Agent",
+    "description": "Intelligent agent for Stripe payment processing - customers, payments, subscriptions, invoices, and balance.",
+    "version": "1.0.0",
+    "url": "https://azurefoundry-stripe.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "stripe_customers",
+        "name": "Stripe Customer Management",
+        "description": "Create, search, update, and manage customer records in Stripe.",
+        "examples": null,
+        "tags": [
+          "stripe",
+          "customers",
+          "payments"
+        ]
+      },
+      {
+        "id": "stripe_payments",
+        "name": "Stripe Payment Processing",
+        "description": "Create payment intents, process charges, and handle refunds.",
+        "examples": null,
+        "tags": [
+          "stripe",
+          "payments",
+          "charges"
+        ]
+      },
+      {
+        "id": "stripe_balance",
+        "name": "Stripe Balance",
+        "description": "Check balance and view available funds.",
+        "examples": null,
+        "tags": [
+          "stripe",
+          "balance"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "AI Foundry Word Agent",
+    "description": "An Azure AI Foundry agent that creates, reads, and edits Word documents. Can create new .docx files and read, extract, or edit existing documents via URL.",
+    "version": "1.0.0",
+    "url": "https://azurefoundry-word.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "create_document",
+        "name": "Create Document",
+        "description": "Create new Word documents with headings, paragraphs, tables, images, footnotes, formatting, and styles.",
+        "examples": null,
+        "tags": [
+          "word",
+          "document",
+          "docx",
+          "report"
+        ]
+      },
+      {
+        "id": "read_document",
+        "name": "Read Document",
+        "description": "Read and extract content from existing Word documents via URL or file path.",
+        "examples": null,
+        "tags": [
+          "word",
+          "read",
+          "extract",
+          "docx"
+        ]
+      },
+      {
+        "id": "edit_document",
+        "name": "Edit Document",
+        "description": "Edit existing Word documents — update text, add sections, insert tables, and reformat.",
+        "examples": null,
+        "tags": [
+          "word",
+          "edit",
+          "update",
+          "modify"
+        ]
+      },
+      {
+        "id": "human_interaction",
+        "name": "Human Expert Escalation",
+        "description": "Escalate complex issues to human experts when needed.",
+        "examples": null,
+        "tags": [
+          "human-interaction",
+          "escalation",
+          "expert",
+          "human-capable"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Legal Compliance & Regulatory Agent",
+    "description": "An intelligent legal and compliance agent specialized in regulatory analysis, risk assessment, document analysis, and incident response. Can analyze compliance requirements for GDPR, SOX, CCPA and other regulations, assess legal risks, research regulatory requirements, analyze legal documents, handle incident reporting, search the web for current legal information, and search through uploaded legal documents and compliance materials, all with professional legal guidance.",
+    "version": "1.0.0",
+    "url": "http://localhost:8006/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "legal_compliance",
+        "name": "Legal Compliance",
+        "description": "Analyze compliance requirements for specific regulations (GDPR, SOX, CCPA, etc.) and provide regulatory guidance.",
+        "examples": null,
+        "tags": [
+          "legal",
+          "compliance",
+          "gdpr",
+          "sox",
+          "ccpa",
+          "regulatory"
+        ]
+      },
+      {
+        "id": "risk_assessment",
+        "name": "Risk Assessment",
+        "description": "Assess legal and compliance risks for business activities and provide mitigation strategies.",
+        "examples": null,
+        "tags": [
+          "risk",
+          "assessment",
+          "legal",
+          "compliance",
+          "mitigation"
+        ]
+      },
+      {
+        "id": "regulatory_research",
+        "name": "Regulatory Research",
+        "description": "Research specific regulations and their requirements using legal databases and web search.",
+        "examples": null,
+        "tags": [
+          "research",
+          "regulatory",
+          "legal",
+          "compliance",
+          "gdpr",
+          "sox"
+        ]
+      },
+      {
+        "id": "document_analysis",
+        "name": "Document Analysis",
+        "description": "Analyze legal documents, contracts, and compliance materials for regulatory requirements.",
+        "examples": null,
+        "tags": [
+          "document",
+          "analysis",
+          "legal",
+          "contract",
+          "compliance"
+        ]
+      },
+      {
+        "id": "incident_response",
+        "name": "Incident Response",
+        "description": "Handle data breach and compliance incident reporting with proper procedures.",
+        "examples": null,
+        "tags": [
+          "incident",
+          "response",
+          "breach",
+          "compliance",
+          "reporting"
+        ]
+      },
+      {
+        "id": "web_search",
+        "name": "Web Search",
+        "description": "Search the web for current legal and regulatory information using Bing or other integrated search tools.",
+        "examples": null,
+        "tags": [
+          "web",
+          "search",
+          "bing",
+          "internet",
+          "legal",
+          "regulatory"
+        ]
+      },
+      {
+        "id": "file_knowledge_search",
+        "name": "File & Knowledge Search",
+        "description": "Search through uploaded legal documents, compliance materials, and knowledge bases for specific information.",
+        "examples": null,
+        "tags": [
+          "file",
+          "document",
+          "knowledge",
+          "search",
+          "legal",
+          "compliance"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Salesforce CRM Agent",
+    "description": "An intelligent Salesforce agent with full CRM data access, metadata management, and Apex development capabilities.",
+    "version": "1.0.0",
+    "url": "http://localhost:8004/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "salesforce_data_query",
+        "name": "Salesforce Data Query & Search",
+        "description": "Query and search Salesforce data using SOQL and SOSL. Execute aggregate queries (COUNT, SUM, AVG), search across multiple objects, and retrieve detailed records.",
+        "examples": null,
+        "tags": [
+          "salesforce",
+          "soql",
+          "sosl",
+          "query",
+          "search",
+          "data"
+        ]
+      },
+      {
+        "id": "salesforce_data_management",
+        "name": "Salesforce Data Management",
+        "description": "Create, update, and delete Salesforce records including Accounts, Contacts, Leads, Opportunities, and Cases using DML operations.",
+        "examples": null,
+        "tags": [
+          "salesforce",
+          "crm",
+          "create",
+          "update",
+          "delete",
+          "dml"
+        ]
+      },
+      {
+        "id": "salesforce_metadata",
+        "name": "Salesforce Metadata Management",
+        "description": "Describe Salesforce objects, create custom objects and fields, manage field-level security permissions.",
+        "examples": null,
+        "tags": [
+          "salesforce",
+          "metadata",
+          "fields",
+          "objects",
+          "permissions"
+        ]
+      },
+      {
+        "id": "salesforce_development",
+        "name": "Salesforce Apex Development",
+        "description": "Read and write Apex classes and triggers, execute anonymous Apex code, manage debug logs.",
+        "examples": null,
+        "tags": [
+          "salesforce",
+          "apex",
+          "code",
+          "triggers",
+          "development"
+        ]
+      },
+      {
+        "id": "human_interaction",
+        "name": "Human Expert Escalation",
+        "description": "Escalate complex issues to human experts when needed.",
+        "examples": null,
+        "tags": [
+          "human-interaction",
+          "escalation",
+          "expert",
+          "human-capable"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Sentiment Analysis Agent",
+    "description": "This agent determines the sentiment of a customer given context, and personalizes the experience based on sentiment and context.",
+    "version": "1.0.0",
+    "url": "http://localhost:8003/",
+    "defaultInputModes": [
+      "text"
+    ],
+    "defaultOutputModes": [
+      "text"
+    ],
+    "capabilities": {
+      "streaming": true
+    },
+    "skills": [
+      {
+        "id": "sentiment_analysis",
+        "name": "Sentiment Analysis Tool",
+        "description": "Analyzes the sentiment of a customer given context and personalizes the experience based on sentiment and context.",
+        "examples": null,
+        "tags": [
+          "sentiment",
+          "analysis",
+          "personalization"
+        ]
+      }
+    ]
+  }
+]

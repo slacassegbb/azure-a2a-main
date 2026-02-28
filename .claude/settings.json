@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(# Check conversation API with correct path curl -s http://localhost:12000/api/conversations)",
+      "Bash(# Test agent health check proxy \\(uses API_BASE_URL path\\) curl -s http://localhost:3000/api/register-agent -X POST -H \"\"Content-Type: application/json\"\" -d ''{\"\"url\"\":\"\"http://localhost:9043/\"\"}'')",
+      "Bash(# Test that the frontend page loads and renders \\(check for key React components\\) curl -s http://localhost:3000/)",
+      "Bash(# Test a direct agent health check \\(the shared agent-registry.ts function\\) curl -s http://localhost:9043/.well-known/agent.json)",
+      "Read(//private/tmp/**)"
+    ]
+  }
+}

@@ -364,10 +364,12 @@ async def execute_scheduled_workflow(workflow_name: str, session_id: str, timeou
     session_registry = get_session_registry()
     
     # Extract unique agent names from workflow steps
+    # Skip built-in pseudo-agents handled by the orchestrator (not remote agents)
+    BUILTIN_AGENTS = {"WEB_SEARCH", "QUERY", "EVALUATE", "Evaluate"}
     agent_names_needed = []
     for step in (workflow.steps or []):
         name = step.get('agentName') or step.get('agent')
-        if name and name not in agent_names_needed:
+        if name and name not in agent_names_needed and name not in BUILTIN_AGENTS:
             agent_names_needed.append(name)
     
     log_debug(f"[SCHEDULER] Workflow '{workflow_name}' needs agents: {agent_names_needed}")
@@ -463,8 +465,9 @@ async def execute_scheduled_workflow(workflow_name: str, session_id: str, timeou
     
     log_debug(f"[SCHEDULER] Message created: {initial_message}")
     
-    # Use a shorter timeout for testing (60 seconds instead of 300)
-    effective_timeout = min(timeout, 120)
+    # Scale timeout by step count: 60s per step, minimum 120s, capped at timeout param
+    num_steps = len(workflow.steps or [])
+    effective_timeout = min(timeout, max(120, num_steps * 60))
     log_debug(f"[SCHEDULER] Timeout set to {effective_timeout}s")
     
     try:

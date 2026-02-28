@@ -4153,7 +4153,7 @@ Answer with just JSON:
                 
         return cleaned_parts
 
-    async def run_conversation_with_parts(self, message_parts: List[Part], context_id: Optional[str] = None, event_logger=None, agent_mode: bool = False, enable_inter_agent_memory: bool = False, workflow: Optional[str] = None, workflow_goal: Optional[str] = None, available_workflows: Optional[List[Dict[str, Any]]] = None, auto_reply_channel: Optional[str] = None) -> Any:
+    async def run_conversation_with_parts(self, message_parts: List[Part], context_id: Optional[str] = None, event_logger=None, agent_mode: bool = False, enable_inter_agent_memory: bool = False, workflow: Optional[str] = None, workflow_goal: Optional[str] = None, available_workflows: Optional[List[Dict[str, Any]]] = None, auto_reply_channel: Optional[str] = None, user_id: Optional[str] = None, user_timezone: str = "UTC") -> Any:
         """
         Process a user message that may include files, images, or multimodal content.
         
@@ -4193,7 +4193,10 @@ Answer with just JSON:
             List of response strings from the host agent
         """
         """Run conversation with A2A message parts (including files)."""
-        log_debug(f"[ENTRY DEBUG] run_conversation_with_parts: workflow={workflow}, available_workflows={available_workflows}")
+        # Store user context for scheduled task handler access
+        self._current_user_id = user_id
+        self._current_user_timezone = user_timezone
+        log_debug(f"[ENTRY DEBUG] run_conversation_with_parts: workflow={workflow}, available_workflows={available_workflows}, user_id={user_id}, timezone={user_timezone}")
         log_debug(f"ENTRY: run_conversation_with_parts called with {len(message_parts) if message_parts else 0} parts")
         try:
             log_debug(f"Step: About to create tracer span...")
@@ -4607,18 +4610,22 @@ Answer with just JSON:
             selected_workflow_metadata = None
             
             log_debug(f"[DEBUG] available_workflows = {available_workflows}, workflow = {workflow}")
-            if available_workflows and len(available_workflows) > 0 and not workflow:
-                log_debug(f"[Multi-Workflow] {len(available_workflows)} workflows available, invoking intelligent routing")
-                log_debug(f"[Multi-Workflow] {len(available_workflows)} workflows available, invoking intelligent routing")
+            # Trigger intelligent routing when there are workflows or session agents.
+            # Routing selects the best approach: workflow, single_agent, multi_agent, scheduled_task, direct.
+            has_workflows = available_workflows and len(available_workflows) > 0
+            has_agents = bool(self.cards)
+            if (has_workflows or has_agents) and not workflow:
+                wf_count = len(available_workflows) if available_workflows else 0
+                log_debug(f"[Routing] {wf_count} workflows, {len(self.cards)} agents — invoking intelligent routing")
                 await self._emit_granular_agent_event(
-                    "foundry-host-agent", f"Analyzing request against {len(available_workflows)} available workflows...", context_id,
-                    event_type="phase", metadata={"phase": "routing", "workflow_count": len(available_workflows)}
+                    "foundry-host-agent", f"Analyzing request...", context_id,
+                    event_type="phase", metadata={"phase": "routing", "workflow_count": wf_count}
                 )
                 
                 try:
                     route_selection = await self._intelligent_route_selection(
                         user_message=enhanced_message,
-                        available_workflows=available_workflows,
+                        available_workflows=available_workflows or [],
                         context_id=context_id
                     )
                     
@@ -4824,7 +4831,42 @@ Answer with just JSON:
                             "foundry-host-agent", "🔄 Route Decision: Direct response (no agents needed)", context_id,
                             event_type="info", metadata={"route": "direct"}
                         )
-                        
+
+                    elif route_selection.approach == "scheduled_task":
+                        # Create a scheduled workflow from natural language
+                        log_debug(f"[Route Selection] Using scheduled_task creation")
+                        await self._emit_granular_agent_event(
+                            "foundry-host-agent", "🔄 Route Decision: Creating scheduled task", context_id,
+                            event_type="info", metadata={"route": "scheduled_task"}
+                        )
+                        try:
+                            user_tz = getattr(self, '_current_user_timezone', 'UTC')
+                            uid = getattr(self, '_current_user_id', None)
+                            scheduled_outputs = await self._handle_scheduled_task(
+                                user_message=enhanced_message,
+                                context_id=context_id,
+                                session_context=session_context,
+                                user_timezone=user_tz,
+                                user_id=uid,
+                            )
+                            await self._store_user_host_interaction_safe(
+                                user_message_parts=message_parts,
+                                user_message_text=enhanced_message,
+                                host_response=scheduled_outputs,
+                                context_id=context_id,
+                                span=span,
+                                session_context=session_context
+                            )
+                            return scheduled_outputs
+                        except Exception as sched_err:
+                            log_error(f"[Scheduled Task] Error: {sched_err}")
+                            error_msg = f"Sorry, I couldn't create the scheduled task: {str(sched_err)}"
+                            await self._emit_granular_agent_event(
+                                "foundry-host-agent", error_msg, context_id,
+                                event_type="agent_error", metadata={"error": str(sched_err)}
+                            )
+                            return [error_msg]
+
                 except Exception as e:
                     log_error(f"[Multi-Workflow] Routing error: {e}, falling back to agent mode")
                     agent_mode = True

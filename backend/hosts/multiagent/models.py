@@ -106,7 +106,7 @@ class NextStep(BaseModel):
 
 
 # Multi-Workflow Routing Models
-RouteApproach = Literal["workflow", "workflows_parallel", "single_agent", "multi_agent", "direct"]
+RouteApproach = Literal["workflow", "workflows_parallel", "single_agent", "multi_agent", "direct", "scheduled_task"]
 
 
 class RouteSelection(BaseModel):
@@ -143,9 +143,47 @@ class RouteSelection(BaseModel):
         le=1.0
     )
     reasoning: str = Field(
-        ..., 
+        ...,
         description="Brief explanation of why this approach/workflow was selected"
     )
+    schedule_hint: Optional[str] = Field(
+        None,
+        description="If approach='scheduled_task', brief schedule description. null otherwise."
+    )
+
+
+# Scheduled Task Models
+NotificationChannel = Literal["email", "sms", "chat", "unknown"]
+
+
+class ScheduledTaskStep(BaseModel):
+    """A single step in a dynamically generated workflow."""
+    agent_name: str = Field(..., description="Exact agent name from available agents, or built-in: 'WEB_SEARCH', 'QUERY', 'EVALUATE'.")
+    description: str = Field(..., description="Clear, actionable instruction for this step.")
+    order: int = Field(..., description="Execution order, 0-indexed.")
+
+
+class ScheduledTaskPlan(BaseModel):
+    """Combined schedule extraction + workflow generation — single LLM call."""
+    # Schedule parameters
+    schedule_type: Literal["once", "interval", "daily", "weekly", "monthly", "cron"] = Field(..., description="Type of schedule")
+    time_of_day: Optional[str] = Field(None, description="HH:MM 24h format")
+    interval_minutes: Optional[int] = Field(None, description="Interval in minutes (for 'interval' type)")
+    days_of_week: Optional[List[int]] = Field(None, description="0=Mon..6=Sun (for 'weekly' type)")
+    day_of_month: Optional[int] = Field(None, description="1-31 (for 'monthly' type)")
+    cron_expression: Optional[str] = Field(None, description="Cron expression (for 'cron' type)")
+    max_runs: Optional[int] = Field(None, description="Maximum number of runs, null=unlimited")
+
+    # Notification
+    notification_channel: NotificationChannel = Field(..., description="'email' if user says email/send email, 'sms' if text/send text, 'chat' if show here, 'unknown' if not mentioned")
+
+    # Generated workflow
+    workflow_name: str = Field(..., description="Short descriptive name for the workflow")
+    workflow_description: str = Field(..., description="One-sentence description")
+    workflow_goal: str = Field(..., description="High-level goal")
+    steps: List[ScheduledTaskStep] = Field(..., description="Workflow steps. Do NOT include notification step — appended separately based on notification_channel.")
+
+    reasoning: str = Field(..., description="Brief explanation of decisions made")
 
 
 class WorkflowStepType(str, Enum):
