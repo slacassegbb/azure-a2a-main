@@ -22,6 +22,7 @@ from typing import Any, Optional
 
 from a2a.types import AgentCard, Task
 
+from service.types import Event as ServiceEvent
 from ..utils import get_context_id, get_task_id
 from ..remote_agent_connection import TaskCallbackArg
 
@@ -571,12 +572,12 @@ class EventEmitters:
         
         # Create Event object and stream to WebSocket
         if content:
-            event_obj = type('Event', (), {
-                'id': str(uuid.uuid4()),
-                'actor': agent_card.name,
-                'content': content,
-                'timestamp': datetime.now(timezone.utc).timestamp(),
-            })()
+            event_obj = ServiceEvent(
+                id=str(uuid.uuid4()),
+                actor=agent_card.name,
+                content=content,
+                timestamp=datetime.now(timezone.utc).timestamp(),
+            )
             
             if hasattr(self, '_host_manager') and self._host_manager:
                 self._host_manager.add_event(event_obj)
