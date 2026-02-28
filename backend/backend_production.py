@@ -374,8 +374,10 @@ async def execute_scheduled_workflow(workflow_name: str, session_id: str, timeou
     
     # Look up each agent in global registry and enable for scheduler session
     # For scheduled workflows, always use production_url if available
+    # Health-check each agent before enabling to avoid routing to offline agents
     missing_agents = []
     enabled_count = 0
+    is_production = os.environ.get("A2A_HOST") == "FOUNDRY"
     for agent_name in agent_names_needed:
         agent_config = global_registry.get_agent(agent_name)
         if agent_config:
@@ -388,7 +390,25 @@ async def execute_scheduled_workflow(workflow_name: str, session_id: str, timeou
                 log_debug(f"[SCHEDULER] Using URL for '{agent_name}': {agent_config['url']}")
             else:
                 log_warning(f"[SCHEDULER] No URL found for '{agent_name}'")
-            
+
+            # Health check: skip agents that aren't reachable
+            url = agent_config.get('url', '').rstrip('/')
+            if is_production and ('localhost' in url or '127.0.0.1' in url):
+                missing_agents.append(agent_name)
+                log_warning(f"[SCHEDULER] Agent '{agent_name}' has localhost URL in production, skipping")
+                continue
+            try:
+                async with httpx.AsyncClient(timeout=5.0) as client:
+                    resp = await client.get(f"{url}/health")
+                    if resp.status_code != 200:
+                        missing_agents.append(agent_name)
+                        log_warning(f"[SCHEDULER] Agent '{agent_name}' health check failed (status {resp.status_code})")
+                        continue
+            except Exception as e:
+                missing_agents.append(agent_name)
+                log_warning(f"[SCHEDULER] Agent '{agent_name}' unreachable: {e}")
+                continue
+
             # Enable this agent for the scheduler session (use isolated scheduler_session_id)
             was_enabled = session_registry.enable_agent(scheduler_session_id, agent_config)
             if was_enabled:
@@ -498,9 +518,52 @@ async def execute_scheduled_workflow(workflow_name: str, session_id: str, timeou
         return {"success": False, "error": str(e)}
 
 
+async def get_online_agents(timeout: float = 5.0) -> list:
+    """Return only agents from the global registry that respond to a health check.
+
+    Filters out localhost agents in production (A2A_HOST=FOUNDRY),
+    then pings remaining agents' /health endpoints in parallel.
+    Used by SMS and scheduler flows to avoid routing to offline agents.
+    """
+    from service.agent_registry import get_registry
+
+    registry = get_registry()
+    all_agents = registry.get_all_agents()
+
+    is_production = os.environ.get("A2A_HOST") == "FOUNDRY"
+    candidates = []
+    for agent in all_agents:
+        config = agent.copy()
+        # Use production_url if available
+        if config.get('production_url'):
+            config['url'] = config['production_url']
+        url = config.get('url', '')
+        # Skip localhost agents in production
+        if is_production and ('localhost' in url or '127.0.0.1' in url):
+            continue
+        candidates.append(config)
+
+    log_info(f"[HealthFilter] Checking {len(candidates)} agents (filtered from {len(all_agents)} total)")
+
+    # Ping all candidates in parallel
+    async def check(agent_config):
+        url = agent_config.get('url', '').rstrip('/')
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                resp = await client.get(f"{url}/health")
+                return (agent_config, resp.status_code == 200)
+        except Exception:
+            return (agent_config, False)
+
+    results = await asyncio.gather(*[check(a) for a in candidates])
+    online = [agent for agent, is_online in results if is_online]
+    log_info(f"[HealthFilter] {len(online)}/{len(candidates)} agents online")
+    return online
+
+
 async def wake_up_remote_agents():
     """Wake up all remote agents with public URLs on backend startup.
-    
+
     This is useful when agents are running on scale-to-zero containers (like Azure Container Apps).
     Sending a health check request will wake them up so they're ready when users make queries.
     This runs asynchronously in the background without blocking startup.
@@ -1232,16 +1295,12 @@ def main():
                 parts=[Part(root=TextPart(text=message_body))]
             )
 
-            # 4) Enable ALL global registry agents for this SMS session
-            from service.agent_registry import get_registry, get_session_registry
-            global_registry = get_registry()
+            # 4) Enable only ONLINE agents for this SMS session
+            from service.agent_registry import get_session_registry
             session_registry = get_session_registry()
-            all_agents = global_registry.get_all_agents()
+            online_agents = await get_online_agents()
             enabled_count = 0
-            for agent_config in all_agents:
-                if 'production_url' in agent_config and agent_config['production_url']:
-                    agent_config = agent_config.copy()
-                    agent_config['url'] = agent_config['production_url']
+            for agent_config in online_agents:
                 was_enabled = session_registry.enable_agent(user_id, agent_config)
                 if was_enabled:
                     enabled_count += 1
