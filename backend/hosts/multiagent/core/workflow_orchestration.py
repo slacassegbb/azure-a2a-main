@@ -1999,16 +1999,26 @@ Analyze the plan and determine the next step."""
                         "foundry-host-agent", "Goal achieved! Generating final response...", context_id,
                         event_type="phase", metadata={"phase": "complete", "tasks_completed": completed_tasks_count, "iterations": iteration}
                     )
-                    
+
                     # Emit final plan state
                     await self._emit_plan_update(plan, context_id, reasoning="Goal completed")
-                    
+
+                    # =========================================================
+                    # NO-TASK FALLBACK: If goal completed with 0 tasks, include
+                    # the planner's reasoning so the user gets a useful response
+                    # instead of the generic "Workflow completed successfully."
+                    # This happens when no suitable agent is available.
+                    # =========================================================
+                    if completed_tasks_count == 0 and not input_required_tasks and next_step.reasoning:
+                        log_info(f"[Agent Mode] No tasks executed — including planner reasoning as output")
+                        all_task_outputs.append(next_step.reasoning)
+
                     # =========================================================
                     # PLAN PERSISTENCE: Save plan if agent needs user input
                     # =========================================================
                     # If any task has state="input_required", save the plan so
-                    # the next turn can resume. This handles the HITL case where 
-                    # an agent asks for more info - we save the plan so we can 
+                    # the next turn can resume. This handles the HITL case where
+                    # an agent asks for more info - we save the plan so we can
                     # resume when user provides the requested information.
                     # =========================================================
                     if input_required_tasks:
@@ -2016,7 +2026,7 @@ Analyze the plan and determine the next step."""
                         for t in input_required_tasks:
                             log_info(f"   Task '{t.task_id}': {t.task_description[:50]}...")
                         session_context.current_plan = plan
-                    
+
                     break
                 
                 # =========================================================
