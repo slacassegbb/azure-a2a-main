@@ -4622,9 +4622,8 @@ Answer with just JSON:
                         context_id=context_id
                     )
                     
-                    log_debug(f"[Route] Decision: approach={route_selection.approach}, workflow={route_selection.selected_workflow}, workflows={route_selection.selected_workflows}, agent={getattr(route_selection, 'selected_agent', None)}, confidence={route_selection.confidence:.2f}")
-                    log_debug(f"[Route] Reasoning: {route_selection.reasoning}")
-                    log_debug(f"[Route] Decision: {route_selection.approach} (confidence: {route_selection.confidence})")
+                    log_info(f"[Route] Decision: approach={route_selection.approach}, workflow={route_selection.selected_workflow}, agent={getattr(route_selection, 'selected_agent', None)}, confidence={route_selection.confidence:.2f}")
+                    log_info(f"[Route] Reasoning: {route_selection.reasoning}")
                     
                     if route_selection.approach == "workflow" and route_selection.selected_workflow:
                         # Find the selected workflow from available_workflows (case-insensitive match)

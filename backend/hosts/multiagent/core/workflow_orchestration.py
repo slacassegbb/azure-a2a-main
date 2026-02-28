@@ -1942,7 +1942,7 @@ Do NOT skip steps. Do NOT mark goal as completed until ALL workflow steps are do
             # Build conversation history context from prior turns in this session
             conversation_context = ""
             history = getattr(session_context, "host_turn_history", [])
-            if history and not workflow:
+            if history:
                 recent = history[-3:]  # Last 3 exchanges
                 lines = []
                 for turn in recent:
@@ -1957,7 +1957,8 @@ Do NOT skip steps. Do NOT mark goal as completed until ALL workflow steps are do
                 auto_reply_note = (
                     f"\n\nIMPORTANT: This request was received via {auto_reply_channel}. "
                     f"Your response will be automatically delivered back to the user via {auto_reply_channel}. "
-                    f"Do NOT plan any task to send, text, or notify the user — just answer the question."
+                    f"Do NOT include ANY task to send messages, texts, SMS, or notifications to the user. "
+                    f"Do NOT use communication agents (e.g., Twilio, Email). Just answer the question directly."
                 )
 
             user_prompt = f"""Goal:
