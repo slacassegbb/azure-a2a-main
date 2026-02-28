@@ -1205,11 +1205,21 @@ def main():
 
             log_info(f"[SMS Incoming] Matched phone ...{from_phone[-4:]} → user_id={user_id}")
 
-            # 2) Fetch user's available workflows
+            # 2) Fetch user's available workflows (with text format for orchestrator)
             from service.workflow_service import get_workflow_service
             wf_service = get_workflow_service()
             user_workflows = wf_service.get_user_workflows(user_id)
-            available_workflows = [wf_service.workflow_to_dict(w) for w in user_workflows] if user_workflows else []
+            available_workflows = []
+            for w in (user_workflows or []):
+                if w.steps:
+                    workflow_text = generate_workflow_text(w.steps, w.connections or [])
+                    available_workflows.append({
+                        "id": w.id,
+                        "name": w.name,
+                        "goal": w.goal or "",
+                        "workflow": workflow_text,
+                        "agents": [s.get('agentName', '') for s in w.steps if s.get('agentName')]
+                    })
 
             # 3) Build context & message
             context_id = f"{user_id}::sms"
