@@ -4848,6 +4848,7 @@ Answer with just JSON:
                                 session_context=session_context,
                                 user_timezone=user_tz,
                                 user_id=uid,
+                                auto_reply_channel=auto_reply_channel,
                             )
                             await self._store_user_host_interaction_safe(
                                 user_message_parts=message_parts,

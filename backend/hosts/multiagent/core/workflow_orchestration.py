@@ -1333,11 +1333,14 @@ Analyze this request and decide the best approach."""
 ### INSTRUCTIONS
 
 1. **Schedule**: Parse the temporal language and fill in schedule parameters.
+   - "in 5 minutes" / "in 30 minutes" → schedule_type="once", compute time_of_day as current time + N minutes
+   - "at 3pm" / "at 15:00" → schedule_type="once", time_of_day="15:00"
    - "every day at 3pm" → schedule_type="daily", time_of_day="15:00"
    - "every 10 minutes" → schedule_type="interval", interval_minutes=10
    - "every Monday and Wednesday" → schedule_type="weekly", days_of_week=[0,2]
    - "on the 1st of every month" → schedule_type="monthly", day_of_month=1
    - "weekdays at 9:30am" → schedule_type="cron", cron_expression="30 9 * * 1-5"
+   - IMPORTANT: "in X minutes" means ONE TIME after X minutes, NOT recurring. Use schedule_type="once".
    - Interpret times in the user's timezone shown above.
 
 2. **Notification**: Detect how the user wants results delivered.
@@ -1375,7 +1378,8 @@ Analyze this request and decide the best approach."""
     async def _handle_scheduled_task(
         self, user_message: str, context_id: str,
         session_context: "SessionContext",
-        user_timezone: str = "UTC", user_id: str = None
+        user_timezone: str = "UTC", user_id: str = None,
+        auto_reply_channel: Optional[str] = None
     ) -> List[str]:
         """Create a workflow and schedule from natural language. Returns confirmation messages."""
         from service.workflow_service import get_workflow_service
@@ -1383,7 +1387,7 @@ Analyze this request and decide the best approach."""
         from service.agent_colors import assign_color_for_agent
         from backend_production import generate_workflow_text
 
-        log_info(f"[Scheduled Task] Handling scheduled task request from user={user_id}, tz={user_timezone}")
+        log_info(f"[Scheduled Task] Handling scheduled task request from user={user_id}, tz={user_timezone}, channel={auto_reply_channel}")
 
         await self._emit_granular_agent_event(
             "foundry-host-agent", "Planning your scheduled task...", context_id,
@@ -1393,8 +1397,11 @@ Analyze this request and decide the best approach."""
         # 1. LLM planning call
         plan = await self._plan_scheduled_task(user_message, user_timezone, context_id)
 
-        # 2. Resolve notification channel: unknown → default to "chat"
-        channel = plan.notification_channel if plan.notification_channel != "unknown" else "chat"
+        # 2. Resolve notification channel: if request came via SMS, default to SMS
+        if auto_reply_channel == "SMS" and plan.notification_channel == "unknown":
+            channel = "sms"
+        else:
+            channel = plan.notification_channel if plan.notification_channel != "unknown" else "chat"
 
         # 3. Build workflow steps in DB format
         db_steps = []
@@ -1504,17 +1511,23 @@ Analyze this request and decide the best approach."""
         }
         if plan.time_of_day:
             schedule_kwargs["time_of_day"] = plan.time_of_day
-        # For "once" schedules, compute run_at as full ISO datetime from time_of_day + today + timezone
-        if plan.schedule_type == "once" and plan.time_of_day:
+        # For "once" schedules, compute run_at
+        if plan.schedule_type == "once":
             try:
                 from zoneinfo import ZoneInfo
                 tz = ZoneInfo(user_timezone)
                 now_local = datetime.now(tz)
-                hour, minute = map(int, plan.time_of_day.split(":"))
-                run_dt = now_local.replace(hour=hour, minute=minute, second=0, microsecond=0)
-                # If the time has already passed today, schedule for tomorrow
-                if run_dt <= now_local:
-                    run_dt += timedelta(days=1)
+                if plan.time_of_day:
+                    # Specific time given (e.g., "at 3pm")
+                    hour, minute = map(int, plan.time_of_day.split(":"))
+                    run_dt = now_local.replace(hour=hour, minute=minute, second=0, microsecond=0)
+                    if run_dt <= now_local:
+                        run_dt += timedelta(days=1)
+                elif plan.interval_minutes:
+                    # Relative time given (e.g., "in 5 minutes")
+                    run_dt = now_local + timedelta(minutes=plan.interval_minutes)
+                else:
+                    run_dt = now_local + timedelta(minutes=5)  # fallback
                 schedule_kwargs["run_at"] = run_dt.isoformat()
                 log_info(f"[Scheduled Task] 'once' schedule: run_at={run_dt.isoformat()}")
             except Exception as e:
@@ -1591,6 +1604,8 @@ Analyze this request and decide the best approach."""
             return f"Cron: {plan.cron_expression} ({timezone_str})"
         elif stype == "once" and plan.time_of_day:
             return f"Once at {plan.time_of_day} ({timezone_str})"
+        elif stype == "once" and plan.interval_minutes:
+            return f"Once in {plan.interval_minutes} minutes"
         return f"{stype} ({timezone_str})"
 
     @staticmethod
