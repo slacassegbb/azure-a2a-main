@@ -518,12 +518,18 @@ async def execute_scheduled_workflow(workflow_name: str, session_id: str, timeou
         return {"success": False, "error": str(e)}
 
 
-async def get_online_agents(timeout: float = 5.0) -> list:
+async def get_online_agents(timeout: float = 20.0) -> list:
     """Return only agents from the global registry that respond to a health check.
 
     Filters out localhost agents in production (A2A_HOST=FOUNDRY),
     then pings remaining agents' /health endpoints in parallel.
     Used by SMS and scheduler flows to avoid routing to offline agents.
+
+    Uses a two-pass approach for Azure Container Apps scale-to-zero:
+      1. Quick ping to wake sleeping containers (3s timeout, results ignored)
+      2. Wait for cold-starting containers to become ready
+      3. Health-check all agents with full timeout
+    This ensures agents that were sleeping are available for routing.
     """
     from service.agent_registry import get_registry
 
@@ -545,7 +551,28 @@ async def get_online_agents(timeout: float = 5.0) -> list:
 
     log_info(f"[HealthFilter] Checking {len(candidates)} agents (filtered from {len(all_agents)} total)")
 
-    # Ping all candidates in parallel
+    # Pass 1: Quick wake-up ping (fire-and-forget, just triggers container start)
+    async def wake(agent_config):
+        url = agent_config.get('url', '').rstrip('/')
+        try:
+            async with httpx.AsyncClient(timeout=3.0) as client:
+                resp = await client.get(f"{url}/health")
+                return resp.status_code == 200
+        except Exception:
+            return False
+
+    wake_results = await asyncio.gather(*[wake(a) for a in candidates])
+    already_online = sum(1 for ok in wake_results if ok)
+
+    # If all agents responded to the quick ping, skip the wait
+    if already_online < len(candidates):
+        cold_count = len(candidates) - already_online
+        log_info(f"[HealthFilter] {already_online} agents already warm, {cold_count} cold — waiting for cold start...")
+        await asyncio.sleep(12)
+    else:
+        log_info(f"[HealthFilter] All {already_online} agents already warm")
+
+    # Pass 2: Actual health check with full timeout
     async def check(agent_config):
         url = agent_config.get('url', '').rstrip('/')
         try:
