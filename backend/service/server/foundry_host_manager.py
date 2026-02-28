@@ -872,7 +872,8 @@ class FoundryHostManager(ApplicationManager):
         # Pass the entire message with all parts (including files) to the host agent
         user_text = message.parts[0].root.text if message.parts and message.parts[0].root.kind == 'text' else ""
         log_debug(f"About to call run_conversation_with_parts with message parts: {len(message.parts)} parts, agent_mode: {effective_agent_mode}, enable_inter_agent_memory: {enable_inter_agent_memory}, workflow: {workflow[:50] if workflow else None}, workflow_goal: {workflow_goal[:50] if workflow_goal else None}, available_workflows: {len(available_workflows) if available_workflows else 0}")
-        responses = await self._host_agent.run_conversation_with_parts(message.parts, context_id, event_logger=event_logger, agent_mode=effective_agent_mode, enable_inter_agent_memory=enable_inter_agent_memory, workflow=workflow, workflow_goal=workflow_goal, available_workflows=available_workflows)
+        auto_reply_channel = "SMS" if sms_reply_to else None
+        responses = await self._host_agent.run_conversation_with_parts(message.parts, context_id, event_logger=event_logger, agent_mode=effective_agent_mode, enable_inter_agent_memory=enable_inter_agent_memory, workflow=workflow, workflow_goal=workflow_goal, available_workflows=available_workflows, auto_reply_channel=auto_reply_channel)
         log_debug(f"FoundryHostAgent responses count: {len(responses) if responses else 'None'}")
         log_debug(f"FoundryHostAgent responses: {responses}")
         

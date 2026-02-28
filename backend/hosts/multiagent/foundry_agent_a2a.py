@@ -4153,7 +4153,7 @@ Answer with just JSON:
                 
         return cleaned_parts
 
-    async def run_conversation_with_parts(self, message_parts: List[Part], context_id: Optional[str] = None, event_logger=None, agent_mode: bool = False, enable_inter_agent_memory: bool = False, workflow: Optional[str] = None, workflow_goal: Optional[str] = None, available_workflows: Optional[List[Dict[str, Any]]] = None) -> Any:
+    async def run_conversation_with_parts(self, message_parts: List[Part], context_id: Optional[str] = None, event_logger=None, agent_mode: bool = False, enable_inter_agent_memory: bool = False, workflow: Optional[str] = None, workflow_goal: Optional[str] = None, available_workflows: Optional[List[Dict[str, Any]]] = None, auto_reply_channel: Optional[str] = None) -> Any:
         """
         Process a user message that may include files, images, or multimodal content.
         
@@ -4493,6 +4493,14 @@ Answer with just JSON:
                     enhanced_message = f"{enhanced_message}\n\n{''.join(image_descriptions)}"
 
             log_debug(f"Enhanced message prepared")
+
+            # Store user message in host_turn_history so the orchestrator has
+            # conversation context on follow-up calls (e.g., SMS conversations)
+            history = list(getattr(session_context, "host_turn_history", []))
+            history.append({"agent": "User", "text": enhanced_message[:500]})
+            if len(history) > (self.last_host_turns * 2):  # Allow room for Q+A pairs
+                history = history[-(self.last_host_turns * 2):]
+            session_context.host_turn_history = history
 
             # =====================================================================
             # HITL RESUME CHECK: Skip routing if an agent is waiting for user input
@@ -4852,7 +4860,8 @@ Answer with just JSON:
                         session_context=session_context,
                         event_logger=event_logger,
                         workflow=workflow,
-                        workflow_goal=workflow_goal
+                        workflow_goal=workflow_goal,
+                        auto_reply_channel=auto_reply_channel
                     )
                     
                     # =========================================================

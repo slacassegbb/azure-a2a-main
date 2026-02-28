@@ -1413,7 +1413,8 @@ Analyze this request and decide the best approach."""
         session_context: SessionContext,
         event_logger=None,
         workflow: Optional[str] = None,
-        workflow_goal: Optional[str] = None
+        workflow_goal: Optional[str] = None,
+        auto_reply_channel: Optional[str] = None
     ) -> List[str]:
         """
         Execute agent-mode orchestration: AI-driven task decomposition and multi-agent coordination.
@@ -1545,19 +1546,15 @@ Analyze this request and decide the best approach."""
             # orchestrator LLM decides which agents to call and in what order.
             # =====================================================================
             
-            # Handle conversation continuity - distinguish new goals from follow-up clarifications
-            if context_id in self._active_conversations and not workflow:
-                original_goal = self._active_conversations[context_id]
-                goal_text = f"{original_goal}\n\n[Additional Information Provided]: {user_message}"
+            # Use workflow_goal from the designer if provided, otherwise fall back to user_message
+            if workflow_goal and workflow_goal.strip():
+                goal_text = workflow_goal
+                log_debug(f"[Workflow Mode] Using workflow designer goal: {goal_text[:100]}...")
             else:
-                # Use workflow_goal from the designer if provided, otherwise fall back to user_message
-                if workflow_goal and workflow_goal.strip():
-                    goal_text = workflow_goal
-                    log_debug(f"[Workflow Mode] Using workflow designer goal: {goal_text[:100]}...")
-                else:
-                    goal_text = user_message
-                if context_id not in self._active_conversations:
-                    self._active_conversations[context_id] = goal_text
+                goal_text = user_message
+
+            # Track the current goal for HITL resume (original purpose of _active_conversations)
+            self._active_conversations[context_id] = goal_text
             
             # Use the class method for extracting clean text from A2A response objects
             extract_text_from_response = self._extract_text_from_response
@@ -1942,8 +1939,29 @@ Do NOT skip steps. Do NOT mark goal as completed until ALL workflow steps are do
                 if completed_steps or pending_steps:
                     workflow_progress = f"\n\nWorkflow Progress:\n- Completed steps: {', '.join(completed_steps) if completed_steps else 'none'}\n- Pending/in-progress: {', '.join(pending_steps) if pending_steps else 'none'}"
 
+            # Build conversation history context from prior turns in this session
+            conversation_context = ""
+            history = getattr(session_context, "host_turn_history", [])
+            if history and not workflow:
+                recent = history[-3:]  # Last 3 exchanges
+                lines = []
+                for turn in recent:
+                    agent = turn.get("agent", "Agent")
+                    text = turn.get("text", "")[:300]
+                    lines.append(f"- {agent}: {text}")
+                conversation_context = f"\n\nRecent conversation history (for context):\n" + "\n".join(lines)
+
+            # Inform the orchestrator when responses are auto-delivered
+            auto_reply_note = ""
+            if auto_reply_channel:
+                auto_reply_note = (
+                    f"\n\nIMPORTANT: This request was received via {auto_reply_channel}. "
+                    f"Your response will be automatically delivered back to the user via {auto_reply_channel}. "
+                    f"Do NOT plan any task to send, text, or notify the user — just answer the question."
+                )
+
             user_prompt = f"""Goal:
-{plan.goal}
+{plan.goal}{conversation_context}{auto_reply_note}
 
 Current Plan (JSON):
 {json.dumps(compact_plan, indent=2, default=str)}
