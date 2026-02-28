@@ -44,6 +44,7 @@ from ..models import (
     RouteSelection,
     EvaluationResult,
     QueryResult,
+    ScheduledTaskPlan,
 )
 from ..tool_context import DummyToolContext
 from ..foundry_agent_a2a import _current_parallel_call_id
@@ -1171,7 +1172,7 @@ that are not in your native format — use the text content provided instead."""
             workflow_descriptions.append(desc)
         
         workflows_text = "\n\n".join(workflow_descriptions)
-        
+
         # Build available agents summary
         agent_descriptions = []
         for card in self.cards.values():
@@ -1237,18 +1238,29 @@ Specialized agents that can handle specific tasks independently.
 - Example: "Hello" → direct
 - Example: "What can you do?" → direct
 
+**6. Choose "scheduled_task"** when:
+- User wants something done ON A RECURRING SCHEDULE or at a SPECIFIC FUTURE TIME
+- Temporal patterns: "every day", "every morning", "at 3pm", "weekly", "hourly", "every 10 minutes", "remind me"
+- User is setting up an automation, not running something immediately
+- Example: "Send me AMD news every day at 3pm" → scheduled_task
+- Example: "Email me a report every Monday" → scheduled_task
+- Example: "Run invoice workflow every 10 minutes" → scheduled_task
+- NOT: "What is the AMD stock price?" (immediate, no schedule) → other approaches
+
 ### ⚠️ PRIORITY RULES
-1. Workflow name mentioned → prefer "workflow" (even if agent also mentioned)
+0. Scheduling/temporal language ("every", "daily", "at X pm", "recurring", "remind me") → prefer "scheduled_task"
+1. Workflow name mentioned (without scheduling language) → prefer "workflow" (even if agent also mentioned)
 2. Single agent + simple task → use "single_agent" (skip orchestration overhead)
 3. Complex multi-step task with no workflow → use "multi_agent"
 4. When in doubt between single_agent and multi_agent → choose single_agent
 
 ### 📤 OUTPUT FORMAT
 Return a JSON object with:
-- approach: "workflow" | "workflows_parallel" | "single_agent" | "multi_agent" | "direct"
+- approach: "workflow" | "workflows_parallel" | "single_agent" | "multi_agent" | "direct" | "scheduled_task"
 - selected_workflow: Name of workflow (if approach="workflow") or null
-- selected_workflows: List of workflow names (if approach="workflows_parallel") or null  
+- selected_workflows: List of workflow names (if approach="workflows_parallel") or null
 - selected_agent: Name of agent (if approach="single_agent") or null
+- schedule_hint: Brief schedule description (if approach="scheduled_task") or null
 - confidence: 0.0 to 1.0 (how confident you are in this choice)
 - reasoning: Brief explanation of your decision"""
 
@@ -1283,6 +1295,284 @@ Analyze this request and decide the best approach."""
                 confidence=0.5,
                 reasoning=f"Fallback to multi_agent due to selection error: {str(e)}"
             )
+
+    # =====================================================================
+    # SCHEDULED TASK: LLM planning + workflow creation + schedule activation
+    # =====================================================================
+
+    async def _plan_scheduled_task(
+        self, user_message: str, user_timezone: str, context_id: str
+    ) -> ScheduledTaskPlan:
+        """Single LLM call to extract schedule parameters and generate workflow steps."""
+        log_debug(f"[Scheduled Task] Planning scheduled task for: {user_message[:100]}")
+
+        # Build available agents summary
+        agent_descriptions = []
+        for card in self.cards.values():
+            agent_info = f"- **{card.name}**: {card.description[:150]}"
+            if hasattr(card, 'skills') and card.skills:
+                skill_names = [s.name for s in card.skills[:3]]
+                agent_info += f" (Skills: {', '.join(skill_names)})"
+            agent_descriptions.append(agent_info)
+
+        agents_text = "\n".join(agent_descriptions) if agent_descriptions else "No remote agents available"
+
+        system_prompt = f"""You are a scheduling assistant. Extract schedule parameters from the user's request and generate a workflow to accomplish their goal.
+
+### USER'S TIMEZONE
+{user_timezone}
+
+### AVAILABLE REMOTE AGENTS
+{agents_text}
+
+### BUILT-IN TOOLS (handled by host orchestrator, not remote agents)
+- **WEB_SEARCH**: Search the web for current information, news, prices, data
+- **QUERY**: Analyze, summarize, or transform data from previous steps
+- **EVALUATE**: Boolean condition check (true/false) for branching logic
+
+### INSTRUCTIONS
+
+1. **Schedule**: Parse the temporal language and fill in schedule parameters.
+   - "every day at 3pm" → schedule_type="daily", time_of_day="15:00"
+   - "every 10 minutes" → schedule_type="interval", interval_minutes=10
+   - "every Monday and Wednesday" → schedule_type="weekly", days_of_week=[0,2]
+   - "on the 1st of every month" → schedule_type="monthly", day_of_month=1
+   - "weekdays at 9:30am" → schedule_type="cron", cron_expression="30 9 * * 1-5"
+   - Interpret times in the user's timezone shown above.
+
+2. **Notification**: Detect how the user wants results delivered.
+   - "email me" / "send me an email" → "email"
+   - "text me" / "send me a text" / "SMS" → "sms"
+   - "show me" / "in this chat" → "chat"
+   - If not mentioned → "unknown"
+
+3. **Workflow steps**: Generate the steps needed to accomplish the goal.
+   - Use available remote agents and built-in tools.
+   - Do NOT include a notification/delivery step — that is appended separately.
+   - Keep steps focused and actionable.
+   - Use exact agent names from the available agents list above.
+
+4. **Workflow name**: Generate a short, descriptive name (e.g., "Daily AMD News Report").
+"""
+
+        user_prompt = f"User request: {user_message}"
+
+        plan = await self._call_azure_openai_structured(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            response_model=ScheduledTaskPlan,
+            context_id=context_id
+        )
+
+        log_debug(f"[Scheduled Task] Plan: type={plan.schedule_type}, time={plan.time_of_day}, "
+                   f"channel={plan.notification_channel}, steps={len(plan.steps)}, name='{plan.workflow_name}'")
+        return plan
+
+    async def _handle_scheduled_task(
+        self, user_message: str, context_id: str,
+        session_context: "SessionContext",
+        user_timezone: str = "UTC", user_id: str = None
+    ) -> List[str]:
+        """Create a workflow and schedule from natural language. Returns confirmation messages."""
+        from service.workflow_service import get_workflow_service
+        from service.scheduler_service import get_workflow_scheduler, ScheduleType
+        from service.agent_colors import assign_color_for_agent
+        from backend_production import generate_workflow_text
+
+        log_info(f"[Scheduled Task] Handling scheduled task request from user={user_id}, tz={user_timezone}")
+
+        await self._emit_granular_agent_event(
+            "foundry-host-agent", "Planning your scheduled task...", context_id,
+            event_type="phase", metadata={"phase": "scheduled_task_planning"}
+        )
+
+        # 1. LLM planning call
+        plan = await self._plan_scheduled_task(user_message, user_timezone, context_id)
+
+        # 2. Resolve notification channel: unknown → default to "chat"
+        channel = plan.notification_channel if plan.notification_channel != "unknown" else "chat"
+
+        # 3. Build workflow steps in DB format
+        db_steps = []
+        for i, step in enumerate(plan.steps):
+            step_id = str(uuid.uuid4())
+            db_steps.append({
+                "id": step_id,
+                "agentId": step.agent_name.lower().replace(" ", "-"),
+                "agentName": step.agent_name,
+                "agentColor": assign_color_for_agent(step.agent_name),
+                "description": step.description,
+                "x": 100,
+                "y": 100 + (i * 120),
+                "order": i,
+            })
+
+        # 4. Append notification step if email or sms — but only if LLM didn't already include one
+        existing_agent_names = {s.agent_name.lower() for s in plan.steps}
+        if channel == "email":
+            # Check if LLM already included an email agent step
+            has_email_step = any("email" in name for name in existing_agent_names)
+            if not has_email_step:
+                notif_id = str(uuid.uuid4())
+                email_agent_name = None
+                for card in self.cards.values():
+                    if "email" in card.name.lower():
+                        email_agent_name = card.name
+                        break
+                if not email_agent_name:
+                    email_agent_name = "Email Agent"
+                db_steps.append({
+                    "id": notif_id,
+                    "agentId": email_agent_name.lower().replace(" ", "-"),
+                    "agentName": email_agent_name,
+                    "agentColor": assign_color_for_agent(email_agent_name),
+                    "description": "Send the results summary to the user via email",
+                    "x": 100,
+                    "y": 100 + (len(db_steps) * 120),
+                    "order": len(db_steps),
+                })
+        elif channel == "sms":
+            has_sms_step = any("twilio" in name or "sms" in name for name in existing_agent_names)
+            if not has_sms_step:
+                notif_id = str(uuid.uuid4())
+                sms_agent_name = None
+                for card in self.cards.values():
+                    if "twilio" in card.name.lower() or "sms" in card.name.lower():
+                        sms_agent_name = card.name
+                        break
+                if not sms_agent_name:
+                    sms_agent_name = "Twilio SMS Agent"
+                db_steps.append({
+                    "id": notif_id,
+                    "agentId": sms_agent_name.lower().replace(" ", "-"),
+                    "agentName": sms_agent_name,
+                    "agentColor": assign_color_for_agent(sms_agent_name),
+                    "description": "Send a results summary to the user via SMS",
+                    "x": 100,
+                    "y": 100 + (len(db_steps) * 120),
+                    "order": len(db_steps),
+                })
+
+        # 5. Build sequential connections
+        db_connections = []
+        for i in range(len(db_steps) - 1):
+            db_connections.append({
+                "id": str(uuid.uuid4()),
+                "fromStepId": db_steps[i]["id"],
+                "toStepId": db_steps[i + 1]["id"],
+            })
+
+        # 6. Save workflow to DB
+        workflow_id = str(uuid.uuid4())
+        wf_service = get_workflow_service()
+        wf_service.create_workflow(
+            workflow_id=workflow_id,
+            name=plan.workflow_name,
+            user_id=user_id or "system",
+            steps=db_steps,
+            connections=db_connections,
+            description=plan.workflow_description,
+            category="Scheduled",
+            goal=plan.workflow_goal,
+        )
+        log_info(f"[Scheduled Task] Created workflow '{plan.workflow_name}' (id={workflow_id})")
+
+        # 7. Create schedule
+        schedule_type_map = {
+            "once": ScheduleType.ONCE,
+            "interval": ScheduleType.INTERVAL,
+            "daily": ScheduleType.DAILY,
+            "weekly": ScheduleType.WEEKLY,
+            "monthly": ScheduleType.MONTHLY,
+            "cron": ScheduleType.CRON,
+        }
+        sched_type = schedule_type_map.get(plan.schedule_type, ScheduleType.DAILY)
+
+        # Extract session_id from context_id (format: sessionId::conversationId)
+        session_id = context_id.split("::")[0] if "::" in context_id else context_id
+
+        scheduler = get_workflow_scheduler()
+        schedule_kwargs = {
+            "enabled": True,
+            "timezone": user_timezone,
+            "description": plan.workflow_description,
+            "workflow_goal": plan.workflow_goal,
+        }
+        if plan.time_of_day:
+            schedule_kwargs["time_of_day"] = plan.time_of_day
+        if plan.interval_minutes:
+            schedule_kwargs["interval_minutes"] = plan.interval_minutes
+        if plan.days_of_week:
+            schedule_kwargs["days_of_week"] = plan.days_of_week
+        if plan.day_of_month:
+            schedule_kwargs["day_of_month"] = plan.day_of_month
+        if plan.cron_expression:
+            schedule_kwargs["cron_expression"] = plan.cron_expression
+        if plan.max_runs:
+            schedule_kwargs["max_runs"] = plan.max_runs
+
+        schedule = scheduler.create_schedule(
+            workflow_id=workflow_id,
+            workflow_name=plan.workflow_name,
+            session_id=session_id,
+            schedule_type=sched_type,
+            **schedule_kwargs,
+        )
+        log_info(f"[Scheduled Task] Created schedule {schedule.id} for '{plan.workflow_name}' (enabled=True)")
+
+        # 8. Build confirmation message
+        schedule_desc = self._format_schedule_description(plan, user_timezone)
+        delivery_label = {"email": "Email", "sms": "SMS", "chat": "Chat"}.get(channel, "Chat")
+
+        # Generate workflow text for display
+        workflow_text = generate_workflow_text(db_steps, db_connections)
+
+        # Format steps for display
+        steps_display = ""
+        for line in workflow_text.strip().split("\n"):
+            if line.strip():
+                steps_display += f"  {line.strip()}\n"
+
+        confirmation = (
+            f"✅ **Schedule activated!**\n\n"
+            f"**Workflow:** {plan.workflow_name}\n"
+            f"**Schedule:** {schedule_desc}\n"
+            f"**Delivery:** {delivery_label}\n\n"
+            f"**Steps:**\n{steps_display}\n"
+            f"You can manage this from the Scheduler panel."
+        )
+
+        await self._emit_granular_agent_event(
+            "foundry-host-agent", confirmation, context_id,
+            event_type="info", metadata={"phase": "scheduled_task_created", "workflow_id": workflow_id, "schedule_id": schedule.id}
+        )
+
+        return [confirmation]
+
+    @staticmethod
+    def _format_schedule_description(plan: ScheduledTaskPlan, timezone_str: str) -> str:
+        """Format a human-readable schedule description."""
+        stype = plan.schedule_type
+        if stype == "daily" and plan.time_of_day:
+            return f"Every day at {plan.time_of_day} ({timezone_str})"
+        elif stype == "interval" and plan.interval_minutes:
+            if plan.interval_minutes >= 60:
+                hours = plan.interval_minutes // 60
+                return f"Every {hours} hour{'s' if hours > 1 else ''} ({timezone_str})"
+            return f"Every {plan.interval_minutes} minutes"
+        elif stype == "weekly" and plan.days_of_week:
+            day_names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+            days = ", ".join(day_names[d] for d in plan.days_of_week if 0 <= d <= 6)
+            time_part = f" at {plan.time_of_day}" if plan.time_of_day else ""
+            return f"Every {days}{time_part} ({timezone_str})"
+        elif stype == "monthly" and plan.day_of_month:
+            time_part = f" at {plan.time_of_day}" if plan.time_of_day else ""
+            return f"Monthly on day {plan.day_of_month}{time_part} ({timezone_str})"
+        elif stype == "cron" and plan.cron_expression:
+            return f"Cron: {plan.cron_expression} ({timezone_str})"
+        elif stype == "once" and plan.time_of_day:
+            return f"Once at {plan.time_of_day} ({timezone_str})"
+        return f"{stype} ({timezone_str})"
 
     @staticmethod
     def _parse_workflow_steps(workflow: str) -> List[Dict[str, str]]:

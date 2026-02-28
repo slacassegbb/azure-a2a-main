@@ -364,10 +364,12 @@ async def execute_scheduled_workflow(workflow_name: str, session_id: str, timeou
     session_registry = get_session_registry()
     
     # Extract unique agent names from workflow steps
+    # Skip built-in pseudo-agents handled by the orchestrator (not remote agents)
+    BUILTIN_AGENTS = {"WEB_SEARCH", "QUERY", "EVALUATE", "Evaluate"}
     agent_names_needed = []
     for step in (workflow.steps or []):
         name = step.get('agentName') or step.get('agent')
-        if name and name not in agent_names_needed:
+        if name and name not in agent_names_needed and name not in BUILTIN_AGENTS:
             agent_names_needed.append(name)
     
     log_debug(f"[SCHEDULER] Workflow '{workflow_name}' needs agents: {agent_names_needed}")

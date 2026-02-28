@@ -3490,6 +3490,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                 workflow: w.workflow
               })) : undefined,
             userId: currentUser?.user_id,  // Store userId for color lookup when loading messages
+            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,  // Browser timezone for scheduling
           }
         })
       })
