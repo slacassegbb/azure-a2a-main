@@ -162,14 +162,27 @@ async def _forward_to_orchestrator(backend_url: str, from_phone: str, message_bo
 
     The backend handles phone→user lookup, agent enabling, and orchestration.
     If the phone is unrecognized, we send an error SMS back.
+    Media attachments are sent as pre-built A2A parts so the backend stays generic.
     """
     api_key = os.environ.get("CREDENTIAL_SERVICE_API_KEY", "dev-internal-key")
     url = f"{backend_url.rstrip('/')}/api/sms/incoming"
     try:
-        payload = {"from_phone": from_phone, "message_body": message_body}
+        # Build A2A-formatted parts — backend uses these directly
+        parts = [{"root": {"kind": "text", "text": message_body or "(Media attachment)"}}]
+        for attachment in (media_attachments or []):
+            parts.append({
+                "root": {
+                    "kind": "file",
+                    "file": {
+                        "uri": attachment["blob_url"],
+                        "name": attachment["filename"],
+                        "mimeType": attachment["mime_type"],
+                    }
+                }
+            })
+        payload = {"from_phone": from_phone, "message_body": message_body, "parts": parts}
         if media_attachments:
-            payload["media_attachments"] = media_attachments
-            logger.info(f"[MMS] Forwarding {len(media_attachments)} media attachment(s) to orchestrator")
+            logger.info(f"[MMS] Forwarding {len(media_attachments)} media attachment(s) as A2A parts")
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(
                 url,

@@ -1297,10 +1297,10 @@ def main():
             body = await request.json()
             from_phone = body.get("from_phone", "")
             message_body = body.get("message_body", "")
-            media_attachments = body.get("media_attachments", [])
+            raw_parts = body.get("parts")  # Pre-built A2A parts from the calling agent
 
-            if not from_phone or (not message_body and not media_attachments):
-                return {"error": "from_phone and message_body (or media_attachments) required"}
+            if not from_phone or (not message_body and not raw_parts):
+                return {"error": "from_phone and (message_body or parts) required"}
 
             # 1) Phone → user_id lookup
             config_service = get_user_agent_config_service()
@@ -1331,16 +1331,23 @@ def main():
             context_id = f"{user_id}::sms"
 
             from a2a.types import Message, Part, TextPart, FilePart, FileWithUri, Role
-            parts = [Part(root=TextPart(text=message_body or "(Media attachment)"))]
-            for attachment in media_attachments:
-                file_with_uri = FileWithUri(
-                    uri=attachment["blob_url"],
-                    name=attachment.get("filename", "mms_media"),
-                    mimeType=attachment.get("mime_type", "application/octet-stream"),
-                )
-                parts.append(Part(root=FilePart(file=file_with_uri)))
-            if media_attachments:
-                log_info(f"[SMS Incoming] Message includes {len(media_attachments)} media attachment(s)")
+            # Use pre-built parts from the calling agent if available
+            parts = []
+            if raw_parts:
+                for p in raw_parts:
+                    root = p.get("root", p)
+                    kind = root.get("kind", "text")
+                    if kind == "text":
+                        parts.append(Part(root=TextPart(text=root.get("text", ""))))
+                    elif kind == "file":
+                        f = root.get("file", {})
+                        parts.append(Part(root=FilePart(file=FileWithUri(
+                            uri=f.get("uri", ""), name=f.get("name", "attachment"),
+                            mimeType=f.get("mimeType", "application/octet-stream"),
+                        ))))
+                log_info(f"[SMS Incoming] Message has {len(parts)} A2A part(s)")
+            else:
+                parts = [Part(root=TextPart(text=message_body))]
             message = Message(
                 messageId=f"sms_{uuid.uuid4().hex[:8]}",
                 contextId=context_id,
