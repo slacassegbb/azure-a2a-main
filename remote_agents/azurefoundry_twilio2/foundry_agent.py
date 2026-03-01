@@ -17,8 +17,12 @@ import datetime
 import asyncio
 import logging
 import json
+import uuid
+import tempfile
+from pathlib import Path
 from typing import Optional, Dict, List, Any
 from dataclasses import dataclass
+from datetime import timedelta
 
 from azure.ai.agents import AgentsClient
 from azure.ai.agents.models import (
@@ -31,6 +35,11 @@ from azure.identity import DefaultAzureCredential
 # Twilio imports
 from twilio.rest import Client as TwilioClient
 from twilio.base.exceptions import TwilioRestException
+
+# Azure Blob Storage imports
+from azure.storage.blob import BlobServiceClient, generate_blob_sas, BlobSasPermissions
+from azure.core.credentials import AzureNamedKeyCredential, AzureSasCredential
+import httpx
 
 # Add shared module to path for credential helper
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -73,8 +82,9 @@ class FoundryTwilioAgent:
         self._agents_client = None
         self._project_client = None
         self._twilio_client = None
+        self._blob_service_client: Optional[BlobServiceClient] = None
         self.last_token_usage: Optional[Dict[str, int]] = None
-        
+
         # Twilio configuration
         self.twilio_account_sid = os.environ.get("TWILIO_ACCOUNT_SID")
         self.twilio_auth_token = os.environ.get("TWILIO_AUTH_TOKEN")
@@ -107,6 +117,182 @@ class FoundryTwilioAgent:
             self._twilio_client = TwilioClient(self.twilio_account_sid, self.twilio_auth_token)
         return self._twilio_client
     
+    def _get_blob_service_client(self) -> Optional[BlobServiceClient]:
+        """Return a BlobServiceClient if Azure storage is configured."""
+        force_blob = os.getenv("FORCE_AZURE_BLOB", "false").lower() == "true"
+        if not force_blob:
+            return None
+        if self._blob_service_client is not None:
+            return self._blob_service_client
+
+        connection_string = os.getenv("AZURE_STORAGE_CONNECTION_STRING")
+        if not connection_string:
+            logger.error("AZURE_STORAGE_CONNECTION_STRING must be set when FORCE_AZURE_BLOB=true")
+            return None
+
+        try:
+            self._blob_service_client = BlobServiceClient.from_connection_string(
+                connection_string,
+                api_version="2023-11-03",
+            )
+            return self._blob_service_client
+        except Exception as e:
+            logger.error(f"Failed to create BlobServiceClient: {e}")
+            return None
+
+    def _upload_to_blob(self, file_path: Path) -> Optional[str]:
+        """Upload a file to Azure Blob Storage and return a SAS-signed URL."""
+        blob_client = self._get_blob_service_client()
+        if not blob_client:
+            return None
+
+        container_name = os.getenv("AZURE_BLOB_CONTAINER", "a2a-files")
+        file_id = uuid.uuid4().hex
+        context_id = getattr(self, '_current_context_id', None)
+        session_id = None
+        if context_id and '::' in context_id:
+            session_id = context_id.split('::')[0]
+
+        if session_id:
+            blob_name = f"uploads/{session_id}/{file_id}/{file_path.name}"
+        else:
+            blob_name = f"twilio-mms/{file_id}/{file_path.name}"
+
+        try:
+            container_client = blob_client.get_container_client(container_name)
+            if not container_client.exists():
+                container_client.create_container()
+            with open(file_path, "rb") as data:
+                container_client.upload_blob(name=blob_name, data=data, overwrite=True)
+
+            sas_duration_minutes = int(os.getenv("AZURE_BLOB_SAS_DURATION_MINUTES", str(24 * 60)))
+            sas_token: Optional[str] = None
+            service_client = self._blob_service_client
+
+            if service_client is not None:
+                credential = getattr(service_client, "credential", None)
+                account_key_value: Optional[str] = None
+
+                if isinstance(credential, AzureNamedKeyCredential):
+                    account_key_value = credential.key
+                elif isinstance(credential, AzureSasCredential):
+                    sas_token = credential.signature.lstrip("?")
+                elif hasattr(credential, "account_key"):
+                    account_key_value = getattr(credential, "account_key")
+                elif hasattr(credential, "key"):
+                    account_key_value = getattr(credential, "key")
+
+                if callable(account_key_value):
+                    account_key_value = account_key_value()
+                if isinstance(account_key_value, bytes):
+                    account_key_value = account_key_value.decode()
+
+                if account_key_value:
+                    try:
+                        sas_token = generate_blob_sas(
+                            account_name=service_client.account_name,
+                            container_name=container_name,
+                            blob_name=blob_name,
+                            account_key=account_key_value,
+                            permission=BlobSasPermissions(read=True),
+                            expiry=datetime.datetime.utcnow() + timedelta(minutes=sas_duration_minutes),
+                            protocol="https",
+                            version="2023-11-03",
+                        )
+                    except Exception as sas_error:
+                        logger.error(f"Failed to generate SAS URL with shared key: {sas_error}")
+
+            if sas_token is None and self._blob_service_client is not None:
+                try:
+                    delegation_key = self._blob_service_client.get_user_delegation_key(
+                        key_start_time=datetime.datetime.utcnow() - timedelta(minutes=5),
+                        key_expiry_time=datetime.datetime.utcnow() + timedelta(minutes=sas_duration_minutes),
+                    )
+                    sas_token = generate_blob_sas(
+                        account_name=self._blob_service_client.account_name,
+                        container_name=container_name,
+                        blob_name=blob_name,
+                        user_delegation_key=delegation_key,
+                        permission=BlobSasPermissions(read=True),
+                        expiry=datetime.datetime.utcnow() + timedelta(minutes=sas_duration_minutes),
+                        version="2023-11-03",
+                    )
+                except Exception as ude_err:
+                    logger.warning(f"Failed to generate user delegation SAS: {ude_err}")
+
+            if sas_token:
+                base_url = blob_client.get_blob_client(container=container_name, blob=blob_name).url
+                token = sas_token.lstrip("?")
+                separator = '&' if '?' in base_url else '?'
+                return f"{base_url}{separator}{token}"
+
+            logger.error("Unable to generate SAS token for blob upload")
+            return None
+        except Exception as e:
+            logger.error(f"Failed to upload {file_path} to blob storage: {e}")
+            return None
+
+    async def download_and_upload_media(self, media_url: str, media_content_type: str, context_id: str = "") -> Optional[Dict]:
+        """Download MMS media from Twilio and upload to Azure Blob Storage.
+
+        Returns dict with blob_url, mime_type, filename on success, None on failure.
+        """
+        try:
+            self._current_context_id = context_id
+
+            ext_map = {
+                'image/jpeg': '.jpg', 'image/png': '.png', 'image/gif': '.gif',
+                'image/webp': '.webp', 'image/heic': '.heic',
+                'video/mp4': '.mp4', 'video/3gpp': '.3gp',
+                'audio/mpeg': '.mp3', 'audio/ogg': '.ogg', 'audio/amr': '.amr',
+                'application/pdf': '.pdf',
+            }
+            ext = ext_map.get(media_content_type, '.bin')
+            filename = f"mms_{uuid.uuid4().hex[:8]}{ext}"
+
+            # Download from Twilio (requires basic auth)
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.get(
+                    media_url,
+                    auth=(self.twilio_account_sid, self.twilio_auth_token),
+                    follow_redirects=True,
+                )
+                if response.status_code != 200:
+                    logger.error(f"[MMS] Failed to download media: HTTP {response.status_code}")
+                    return None
+                media_bytes = response.content
+
+            if len(media_bytes) > 5 * 1024 * 1024:
+                logger.warning(f"[MMS] Media too large ({len(media_bytes)} bytes), skipping")
+                return None
+
+            # Save to temp file and upload to blob
+            tmp_path = Path(tempfile.gettempdir()) / filename
+            tmp_path.write_bytes(media_bytes)
+
+            blob_url = self._upload_to_blob(tmp_path)
+
+            try:
+                tmp_path.unlink()
+            except Exception:
+                pass
+
+            if blob_url:
+                logger.info(f"[MMS] Uploaded {filename} ({media_content_type}, {len(media_bytes)} bytes) to blob")
+                return {
+                    'blob_url': blob_url,
+                    'mime_type': media_content_type,
+                    'filename': filename,
+                    'size': len(media_bytes),
+                }
+            else:
+                logger.error("[MMS] Failed to upload media to blob storage")
+                return None
+
+        except Exception as e:
+            logger.error(f"[MMS] Error processing media: {e}", exc_info=True)
+            return None
+
     def _validate_twilio_config(self) -> bool:
         """Validate Twilio configuration."""
         missing = []
@@ -199,6 +385,48 @@ class FoundryTwilioAgent:
                 "error": str(e)
             }
     
+    def send_mms(self, message: str, to_number: Optional[str] = None,
+                 media_urls: Optional[List[str]] = None) -> Dict:
+        """Send an MMS message with media attachments via Twilio."""
+        try:
+            client = self._get_twilio_client()
+            recipient = to_number or self.twilio_default_to_number
+
+            if not recipient:
+                return {"success": False, "error": "No recipient phone number"}
+
+            if len(message) > 1600:
+                message = message[:1597] + "..."
+
+            create_kwargs = {
+                'body': message,
+                'from_': self.twilio_from_number,
+                'to': recipient,
+            }
+            if media_urls:
+                create_kwargs['media_url'] = media_urls[:10]
+
+            msg = client.messages.create(**create_kwargs)
+
+            result = {
+                "success": True,
+                "message_sid": msg.sid,
+                "from": self.twilio_from_number,
+                "to": recipient,
+                "status": msg.status,
+                "body_length": len(message),
+                "media_count": len(media_urls) if media_urls else 0,
+            }
+            logger.info(f"MMS sent: SID={msg.sid}, To={recipient}, media={len(media_urls or [])}")
+            return result
+
+        except TwilioRestException as e:
+            logger.error(f"Twilio MMS API error: {e}")
+            return {"success": False, "error": str(e)}
+        except Exception as e:
+            logger.error(f"Unexpected error sending MMS: {e}")
+            return {"success": False, "error": str(e)}
+
     def receive_sms(self, from_number: Optional[str] = None, limit: int = 10) -> Dict:
         """
         Retrieve recent SMS messages received by this Twilio number.
@@ -892,4 +1120,5 @@ Remember: You can both SEND and RECEIVE SMS messages. Always call the appropriat
         self._agents_client = None
         self._project_client = None
         self._twilio_client = None
+        self._blob_service_client = None
         self.threads = {}

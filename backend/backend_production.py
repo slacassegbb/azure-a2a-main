@@ -1297,9 +1297,10 @@ def main():
             body = await request.json()
             from_phone = body.get("from_phone", "")
             message_body = body.get("message_body", "")
+            media_attachments = body.get("media_attachments", [])
 
-            if not from_phone or not message_body:
-                return {"error": "from_phone and message_body required"}
+            if not from_phone or (not message_body and not media_attachments):
+                return {"error": "from_phone and message_body (or media_attachments) required"}
 
             # 1) Phone → user_id lookup
             config_service = get_user_agent_config_service()
@@ -1329,12 +1330,22 @@ def main():
             # 3) Build context & message
             context_id = f"{user_id}::sms"
 
-            from a2a.types import Message, Part, TextPart, Role
+            from a2a.types import Message, Part, TextPart, FilePart, FileWithUri, Role
+            parts = [Part(root=TextPart(text=message_body or "(Media attachment)"))]
+            for attachment in media_attachments:
+                file_with_uri = FileWithUri(
+                    uri=attachment["blob_url"],
+                    name=attachment.get("filename", "mms_media"),
+                    mimeType=attachment.get("mime_type", "application/octet-stream"),
+                )
+                parts.append(Part(root=FilePart(file=file_with_uri)))
+            if media_attachments:
+                log_info(f"[SMS Incoming] Message includes {len(media_attachments)} media attachment(s)")
             message = Message(
                 messageId=f"sms_{uuid.uuid4().hex[:8]}",
                 contextId=context_id,
                 role=Role.user,
-                parts=[Part(root=TextPart(text=message_body))]
+                parts=parts,
             )
 
             # 4) Enable only ONLINE agents for this SMS session

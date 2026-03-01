@@ -1247,18 +1247,20 @@ class FoundryHostManager(ApplicationManager):
         # --- SMS Reply: deliver orchestrator response back via SMS ---
         if sms_reply_to and responses:
             try:
-                # Collect all text from responses
+                # Collect text and file URIs from responses
                 response_texts = []
+                file_uris = []
                 for resp in responses:
                     if isinstance(resp, str):
                         response_texts.append(resp)
                     elif isinstance(resp, dict):
-                        # Extract text from dict responses
                         text = resp.get("text", "")
                         if not text and "parts" in resp:
                             for p in resp["parts"]:
                                 if isinstance(p, dict) and p.get("text"):
                                     text += p["text"] + "\n"
+                                elif isinstance(p, dict) and p.get("file", {}).get("uri"):
+                                    file_uris.append(p["file"]["uri"])
                         if text:
                             response_texts.append(text)
                     elif hasattr(resp, "parts"):
@@ -1266,22 +1268,29 @@ class FoundryHostManager(ApplicationManager):
                             root = part.root if hasattr(part, "root") else part
                             if hasattr(root, "text") and root.text:
                                 response_texts.append(root.text)
+                            elif hasattr(root, "file") and hasattr(root.file, "uri") and root.file.uri:
+                                file_uris.append(root.file.uri)
 
                 final_text = "\n\n".join(response_texts).strip()
-                if final_text:
-                    await self._send_sms_reply(sms_reply_to, final_text, context_id)
+                if final_text or file_uris:
+                    await self._send_sms_reply(
+                        sms_reply_to, final_text or "(See attached media)",
+                        context_id, media_urls=file_uris,
+                    )
                 else:
-                    log_warning(f"[SMS Reply] No text extracted from responses for {sms_reply_to}")
+                    log_warning(f"[SMS Reply] No text or media extracted from responses for {sms_reply_to}")
             except Exception as e:
                 log_error(f"[SMS Reply] Failed to send SMS reply: {e}")
 
         return responses
 
-    async def _send_sms_reply(self, to_number: str, message: str, context_id: str):
-        """Deliver orchestrator response back to user via SMS.
+    async def _send_sms_reply(self, to_number: str, message: str, context_id: str,
+                             media_urls: list = None):
+        """Deliver orchestrator response back to user via SMS/MMS.
 
         Looks up the Twilio agent URL from the global registry and POSTs
-        to its /internal/send-sms endpoint.
+        to its /internal/send-sms endpoint. If media_urls are provided,
+        the Twilio agent will send an MMS with the attached media.
         """
         import os
         registry = get_registry()
@@ -1289,7 +1298,6 @@ class FoundryHostManager(ApplicationManager):
         # Find Twilio agent in registry
         twilio_config = registry.get_agent("Twilio SMS Agent")
         if not twilio_config:
-            # Try fuzzy match
             all_agents = registry.get_all_agents()
             twilio_config = next(
                 (a for a in all_agents if "twilio" in a.get("name", "").lower()),
@@ -1305,20 +1313,27 @@ class FoundryHostManager(ApplicationManager):
             log_error("[SMS Reply] Twilio agent has no URL in registry")
             return
 
-        # Truncate to SMS-friendly length
         if len(message) > 1500:
             message = message[:1497] + "..."
+
+        payload = {"to_number": to_number, "message": message}
+        if media_urls:
+            valid_media = [u for u in media_urls if u.startswith("https://")][:10]
+            if valid_media:
+                payload["media_urls"] = valid_media
+                log_info(f"[SMS Reply] Including {len(valid_media)} media attachment(s) for MMS")
 
         api_key = os.environ.get("CREDENTIAL_SERVICE_API_KEY", "dev-internal-key")
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 resp = await client.post(
                     f"{twilio_url.rstrip('/')}/internal/send-sms",
-                    json={"to_number": to_number, "message": message},
+                    json=payload,
                     headers={"X-Internal-API-Key": api_key},
                 )
                 if resp.status_code == 200:
-                    log_info(f"[SMS Reply] Delivered {len(message)} chars to ...{to_number[-4:]}")
+                    media_note = f" + {len(payload.get('media_urls', []))} media" if payload.get("media_urls") else ""
+                    log_info(f"[SMS Reply] Delivered {len(message)} chars{media_note} to ...{to_number[-4:]}")
                 else:
                     log_error(f"[SMS Reply] Twilio agent returned {resp.status_code}: {resp.text}")
         except Exception as e:

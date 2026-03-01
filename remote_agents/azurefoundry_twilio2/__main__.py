@@ -102,22 +102,33 @@ async def forward_sms_to_backend(
     context_id: str,
     from_number: str,
     message: str,
-    original_question: str = ""
+    original_question: str = "",
+    media_attachments: list = None,
 ):
     """
-    Forward an SMS response to the host orchestrator via A2A message format.
-    
+    Forward an SMS/MMS response to the host orchestrator via A2A message format.
+
     This follows the same pattern as the Teams agent webhook handler.
     The backend expects the A2A Message format with params wrapper.
     """
     try:
         # Build the A2A message payload - same format as Teams webhook
+        parts = [{"root": {"kind": "text", "text": message}}]
+        for attachment in (media_attachments or []):
+            parts.append({
+                "root": {
+                    "kind": "file",
+                    "file": {
+                        "uri": attachment["blob_url"],
+                        "name": attachment["filename"],
+                        "mimeType": attachment["mime_type"],
+                    }
+                }
+            })
         payload = {
             "params": {
                 "contextId": context_id,
-                "parts": [
-                    {"root": {"kind": "text", "text": message}}
-                ]
+                "parts": parts,
             }
         }
         
@@ -145,8 +156,9 @@ async def forward_sms_to_backend(
         logger.error(f"❌ Error forwarding SMS to backend: {e}", exc_info=True)
 
 
-async def _forward_to_orchestrator(backend_url: str, from_phone: str, message_body: str):
-    """Forward an incoming SMS to the backend's /api/sms/incoming endpoint.
+async def _forward_to_orchestrator(backend_url: str, from_phone: str, message_body: str,
+                                   media_attachments: list = None):
+    """Forward an incoming SMS/MMS to the backend's /api/sms/incoming endpoint.
 
     The backend handles phone→user lookup, agent enabling, and orchestration.
     If the phone is unrecognized, we send an error SMS back.
@@ -154,10 +166,14 @@ async def _forward_to_orchestrator(backend_url: str, from_phone: str, message_bo
     api_key = os.environ.get("CREDENTIAL_SERVICE_API_KEY", "dev-internal-key")
     url = f"{backend_url.rstrip('/')}/api/sms/incoming"
     try:
+        payload = {"from_phone": from_phone, "message_body": message_body}
+        if media_attachments:
+            payload["media_attachments"] = media_attachments
+            logger.info(f"[MMS] Forwarding {len(media_attachments)} media attachment(s) to orchestrator")
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(
                 url,
-                json={"from_phone": from_phone, "message_body": message_body},
+                json=payload,
                 headers={
                     "Content-Type": "application/json",
                     "X-Internal-API-Key": api_key,
@@ -302,13 +318,39 @@ def create_a2a_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
             to_number = form_data.get("To", "")
             body = form_data.get("Body", "")
             message_sid = form_data.get("MessageSid", "")
-            
+            num_media = int(form_data.get("NumMedia", "0"))
+
             logger.info(f"📥 SMS Webhook received:")
             logger.info(f"   From: {from_number}")
             logger.info(f"   To: {to_number}")
             logger.info(f"   Body: {body}")
             logger.info(f"   SID: {message_sid}")
-            
+            logger.info(f"   NumMedia: {num_media}")
+
+            # Process MMS media attachments
+            media_attachments = []
+            if num_media > 0:
+                logger.info(f"[MMS] {num_media} media attachment(s) detected")
+                agent = await FoundryTwilioAgentExecutor.get_shared_agent()
+                if agent:
+                    for i in range(num_media):
+                        media_url = form_data.get(f"MediaUrl{i}", "")
+                        media_type = form_data.get(f"MediaContentType{i}", "application/octet-stream")
+                        if media_url:
+                            logger.info(f"[MMS] Media[{i}]: type={media_type}")
+                            result = await agent.download_and_upload_media(
+                                media_url=media_url,
+                                media_content_type=media_type,
+                                context_id=f"sms_{from_number}",
+                            )
+                            if result:
+                                media_attachments.append(result)
+                                logger.info(f"[MMS] Media[{i}]: uploaded to blob ({result['filename']})")
+                            else:
+                                logger.warning(f"[MMS] Media[{i}]: failed to download/upload")
+                else:
+                    logger.warning("[MMS] Agent not initialized — cannot process media")
+
             # Check if there's a pending HITL request for this phone number
             pending = FoundryTwilioAgentExecutor.get_pending_context_by_phone(from_number)
             
@@ -324,7 +366,8 @@ def create_a2a_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
                         context_id=context_id,
                         from_number=from_number,
                         message=body,
-                        original_question=wait_info.get("question", "")
+                        original_question=wait_info.get("question", ""),
+                        media_attachments=media_attachments,
                     )
                     
                     # Clear the pending request from executor
@@ -345,8 +388,12 @@ def create_a2a_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
                 # No HITL pending — forward to orchestrator as a new query
                 logger.info(f"📨 No pending HITL for {from_number} — routing to orchestrator")
                 backend_url = os.environ.get("BACKEND_SERVER_URL") or os.environ.get("BACKEND_URL", "")
-                if backend_url and body.strip():
-                    asyncio.create_task(_forward_to_orchestrator(backend_url, from_number, body))
+                if backend_url and (body.strip() or media_attachments):
+                    asyncio.create_task(_forward_to_orchestrator(
+                        backend_url, from_number,
+                        body or "(Media attachment)",
+                        media_attachments=media_attachments,
+                    ))
                 elif not backend_url:
                     logger.warning("BACKEND_URL not set — cannot forward SMS to orchestrator")
 
@@ -410,10 +457,11 @@ def create_a2a_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
             body = await request.json()
             to_number = body.get("to_number", "")
             message = body.get("message", "")
+            media_urls = body.get("media_urls", [])
 
-            if not to_number or not message:
+            if not to_number or (not message and not media_urls):
                 return Response(
-                    content='{"error":"to_number and message required"}',
+                    content='{"error":"to_number and message (or media_urls) required"}',
                     status_code=400,
                     media_type="application/json",
                 )
@@ -426,8 +474,12 @@ def create_a2a_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
                     media_type="application/json",
                 )
 
-            result = agent.send_sms(message, to_number)
-            logger.info(f"SMS delivered to ...{to_number[-4:]} ({len(message)} chars)")
+            if media_urls:
+                result = agent.send_mms(message or "(See attached media)", to_number, media_urls=media_urls)
+                logger.info(f"MMS delivered to ...{to_number[-4:]} ({len(message)} chars, {len(media_urls)} media)")
+            else:
+                result = agent.send_sms(message, to_number)
+                logger.info(f"SMS delivered to ...{to_number[-4:]} ({len(message)} chars)")
             return Response(
                 content=json.dumps({"success": True, "sid": result.get("sid", "")}),
                 media_type="application/json",
