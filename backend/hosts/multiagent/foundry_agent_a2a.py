@@ -4461,7 +4461,9 @@ Answer with just JSON:
                 enhanced_message = f"{image_guidance}\n\n{enhanced_message}" if enhanced_message else image_guidance
             
             # Collect image URIs for GPT-4o vision (multimodal input)
-            # Also process images through content understanding for memory storage
+            # NOTE: Content extraction + memory storage is already handled by
+            # convert_part() above (line ~6234) — no need to call process_file_part()
+            # again here.  We only collect URIs for the multimodal vision input.
             image_uris_for_vision = []
             for part in message_parts:
                 if is_image_part(part):
@@ -4470,30 +4472,6 @@ Answer with just JSON:
                         image_uris_for_vision.append(uri)
             if image_uris_for_vision:
                 log_debug(f"Collected {len(image_uris_for_vision)} image(s) for GPT-4o vision input")
-                # Process images through content understanding and store in memory
-                # This makes image content available to remote agents via search_memory
-                session_id = get_tenant_from_context(context_id) if context_id else None
-                image_descriptions = []
-                for part in message_parts:
-                    if is_image_part(part):
-                        img_uri = extract_uri(part)
-                        img_name = extract_filename(part) or 'pasted_image.png'
-                        if img_uri:
-                            try:
-                                processing_result = await a2a_document_processor.process_file_part(
-                                    part.root.file if hasattr(part, 'root') else part,
-                                    {'file_name': img_name, 'artifact_uri': img_uri},
-                                    session_id=session_id
-                                )
-                                if processing_result and processing_result.get("success"):
-                                    content = processing_result.get("content", "")
-                                    if content:
-                                        image_descriptions.append(f"\n\n--- Image description: {img_name} ---\n{content}\n--- End of {img_name} ---\n")
-                                        log_debug(f"Processed image for memory: {img_name} ({len(content)} chars)")
-                            except Exception as e:
-                                log_debug(f"Image content understanding failed for {img_name}: {e}")
-                if image_descriptions:
-                    enhanced_message = f"{enhanced_message}\n\n{''.join(image_descriptions)}"
 
             log_debug(f"Enhanced message prepared")
 
