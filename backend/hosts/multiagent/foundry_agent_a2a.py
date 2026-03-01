@@ -5038,11 +5038,15 @@ Answer with just JSON:
                             
                             raw_outputs = "\n\n".join(step_outputs)
                             
-                            synthesis_prompt = f"""Synthesize the following workflow step outputs into a clear, professional summary for the user.
+                            synthesis_prompt = f"""Synthesize the following workflow step outputs into a clear, professional response for the user.
+
+USER'S ORIGINAL REQUEST:
+{user_message}
 
 RULES:
+- DIRECTLY ANSWER the user's original request using the information from the step outputs
 - Write a cohesive narrative, NOT a raw dump of step outputs
-- Lead with the most important outcome/result
+- Lead with the most important outcome/result that answers the user's question
 - Include key details: amounts, IDs, names, dates, links
 - Use markdown formatting: **bold** for labels, bullet points for details
 - NEVER use triple-backtick code blocks (```) for IDs, invoice numbers, or amounts — use **bold** or inline `code` instead
@@ -5052,6 +5056,7 @@ RULES:
 - In the "Actions Completed" section, mention WHICH AGENT performed each action (e.g., "**Email Agent** retrieved the invoice PDF", "**QuickBooks Agent** recorded the bill", "**Stripe Agent** created and finalized the invoice")
 - Write as if YOU coordinated the work across the agents
 - Do NOT include image URLs, markdown image references (![...](url)), or raw blob storage links — images are displayed separately in the UI
+- Do NOT write a meta-summary like "the image was analyzed" — instead, include the ACTUAL content/answer
 
 WORKFLOW STEPS AND OUTPUTS:
 {raw_outputs}"""
