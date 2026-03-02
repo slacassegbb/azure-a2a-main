@@ -1,5 +1,5 @@
 """
-Azure AI Foundry Teams Agent - Main Entry Point
+Azure AI Foundry Microsoft Teams Agent - Main Entry Point
 ================================================
 
 An A2A agent that enables human-in-the-loop workflows via Microsoft Teams.
@@ -115,7 +115,7 @@ teams_bot_instance = None
 
 def _build_agent_skills() -> List[AgentSkill]:
     """
-    Teams Agent Skills - Human-in-the-loop via Microsoft Teams
+    Microsoft Teams Agent Skills - Human-in-the-loop via Microsoft Teams
     """
     return [
         AgentSkill(
@@ -159,7 +159,7 @@ def _build_agent_skills() -> List[AgentSkill]:
 
 def _create_agent_card(host: str, port: int) -> AgentCard:
     """
-    Teams Agent Card
+    Microsoft Teams Agent Card
     
     Defines the agent's identity for registration and discovery in the A2A ecosystem.
     """
@@ -167,7 +167,7 @@ def _create_agent_card(host: str, port: int) -> AgentCard:
     resolved_host_for_url = host if host != "0.0.0.0" else DEFAULT_HOST
     
     return AgentCard(
-        name='Teams Agent',
+        name='Microsoft Teams Agent',
         description="Human-in-the-loop agent via Microsoft Teams. Can SEND messages to users, WAIT for human responses, and ESCALATE decisions requiring human judgment. Uses A2A input_required state for pause/resume workflows.",
         url=resolve_agent_url(resolved_host_for_url, port),
         version='1.0.0',
@@ -308,7 +308,7 @@ async def handle_teams_webhook(request: Request) -> JSONResponse:
                     for member in turn_context.activity.members_added:
                         if member.id != turn_context.activity.recipient.id:
                             await turn_context.send_activity(
-                                "👋 Hello! I'm the Teams Agent for human-in-the-loop workflows. "
+                                "👋 Hello! I'm the Microsoft Teams Agent for human-in-the-loop workflows. "
                                 "When an AI agent needs your input, I'll send you a message here."
                             )
         
@@ -347,7 +347,7 @@ def create_combined_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
     # Health check endpoint
     async def health_check(_: Request) -> PlainTextResponse:
         bot_status = "configured" if os.getenv("MICROSOFT_APP_ID") else "not configured"
-        return PlainTextResponse(f'Teams Agent is running! Bot status: {bot_status}')
+        return PlainTextResponse(f'Microsoft Teams Agent is running! Bot status: {bot_status}')
     
     routes.append(Route(path='/health', methods=['GET'], endpoint=health_check))
     
@@ -392,7 +392,7 @@ def start_background_registration(agent_card):
 
 
 def main(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
-    """Launch A2A server mode for the Teams Agent with startup initialization."""
+    """Launch A2A server mode for the Microsoft Teams Agent with startup initialization."""
     required_env_vars = [
         'AZURE_AI_FOUNDRY_PROJECT_ENDPOINT',
         'AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME'
@@ -414,7 +414,7 @@ def main(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
             "Teams messaging features will be unavailable."
         )
 
-    print("🚀 Initializing Teams Agent at startup...")
+    print("🚀 Initializing Microsoft Teams Agent at startup...")
     try:
         asyncio.run(initialize_teams_agents_at_startup())
         print("✅ Agent initialization completed successfully!")
@@ -422,7 +422,7 @@ def main(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
         print(f"⚠️ Agent initialization warning: {e}")
         # Don't raise - allow server to start anyway
 
-    print(f"Starting Teams Agent on {host}:{port}...")
+    print(f"Starting Microsoft Teams Agent on {host}:{port}...")
     print(f"  - A2A endpoint: http://{host}:{port}/")
     print(f"  - Teams webhook: http://{host}:{port}/api/messages")
     print(f"  - Health check: http://{host}:{port}/health")
@@ -440,7 +440,7 @@ def main(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
 @click.option('--port', 'port', default=DEFAULT_PORT, help='Port for A2A + Teams Bot server')
 def cli(host: str, port: int):
     """
-    Teams Agent - Human-in-the-loop workflows via Microsoft Teams.
+    Microsoft Teams Agent - Human-in-the-loop workflows via Microsoft Teams.
     
     Runs combined A2A server + Teams Bot webhook on the same port.
     

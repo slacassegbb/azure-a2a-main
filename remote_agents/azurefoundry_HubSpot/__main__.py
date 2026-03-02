@@ -205,7 +205,7 @@ def create_a2a_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
 
     # Create agent card - HUBSPOT SPECIFIC
     agent_card = AgentCard(
-        name='AI Foundry HubSpot Agent',
+        name='HubSpot Agent',
         description="An intelligent agent specialized in HubSpot CRM management. Can manage contacts, companies, deals, tickets, notes, and associations. Also supports web search and document search capabilities.",
         url=resolve_agent_url(resolved_host_for_url, port),
         version='1.0.0',
@@ -235,7 +235,7 @@ def create_a2a_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
     
     # Add health check endpoint
     async def health_check(_request: Request) -> PlainTextResponse:
-        return PlainTextResponse('AI Foundry HubSpot Agent is running!')
+        return PlainTextResponse('HubSpot Agent is running!')
     
     routes.append(
         Route(
@@ -253,7 +253,7 @@ def create_a2a_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
 
 def run_a2a_server_in_thread(host: str, port: int):
     """Run A2A server in a separate thread."""
-    print(f"Starting AI Foundry HubSpot Agent A2A server on {host}:{port}...")
+    print(f"Starting HubSpot Agent A2A server on {host}:{port}...")
     app = create_a2a_server(host, port)
     uvicorn.run(app, host=host, port=port, log_level="info")
 
@@ -382,7 +382,7 @@ async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_p
 
     resolved_host_for_url = host if host != "0.0.0.0" else DEFAULT_HOST
     agent_card = AgentCard(
-        name='AI Foundry HubSpot Agent',
+        name='HubSpot Agent',
         description="An intelligent agent specialized in HubSpot payment processing. Manages customers, payments, subscriptions, invoices, and balance.",
         url=resolve_agent_url(resolved_host_for_url, a2a_port),
         version='1.0.0',
@@ -591,7 +591,7 @@ def main(host: str, port: int, ui: bool, ui_port: int):
             
             resolved_host = host if host != "0.0.0.0" else DEFAULT_HOST
             agent_card = AgentCard(
-                name='AI Foundry HubSpot Agent',
+                name='HubSpot Agent',
                 description="Intelligent agent for HubSpot payment processing - customers, payments, subscriptions, invoices, and balance.",
                 url=resolve_agent_url(resolved_host, port),
                 version='1.0.0',

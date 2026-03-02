@@ -176,7 +176,7 @@ def _build_skills():
 def _build_agent_card(host: str, port: int):
     resolved = host if host != "0.0.0.0" else DEFAULT_HOST
     return AgentCard(
-        name='AI Foundry Music Agent',
+        name='Music Generator Agent',
         description="An AI-powered music generation agent using the Suno API. Creates songs, lyrics, covers, mashups, separates vocals, generates MIDI, music videos, and more.",
         url=resolve_agent_url(resolved, port),
         version='1.0.0',
@@ -196,7 +196,7 @@ def create_a2a_server(host=DEFAULT_HOST, port=DEFAULT_PORT):
     routes = a2a_app.routes()
 
     async def health_check(_request: Request) -> PlainTextResponse:
-        return PlainTextResponse('AI Foundry Music Agent is running!')
+        return PlainTextResponse('Music Generator Agent is running!')
 
     routes.append(Route(path='/health', methods=['GET'], endpoint=health_check))
     return Starlette(routes=routes)
@@ -286,7 +286,7 @@ async def launch_ui(host="0.0.0.0", ui_port=DEFAULT_UI_PORT, a2a_port=DEFAULT_PO
     async def process_message(message, history):
         return "", await chat_response(message, history), get_pending_status()
 
-    with gr.Blocks(theme=gr.themes.Ocean(), title="AI Foundry Music Agent") as demo:
+    with gr.Blocks(theme=gr.themes.Ocean(), title="Music Generator Agent") as demo:
         gr.Markdown(f"**UI:** http://{ui_host}:{ui_port} | **A2A:** {resolve_agent_url(ui_host, a2a_port).rstrip('/')}")
         status = gr.Markdown(value=get_pending_status())
         gr.Button("Refresh", size="sm").click(get_pending_status, outputs=status, queue=False)
@@ -320,7 +320,7 @@ async def main_async(host=DEFAULT_HOST, port=DEFAULT_PORT):
 @click.option('--ui', is_flag=True, help='Launch Gradio UI')
 @click.option('--ui-port', default=DEFAULT_UI_PORT, type=int)
 def cli(host, port, ui, ui_port):
-    """AI Foundry Music Agent - A2A server or Gradio UI."""
+    """Music Generator Agent - A2A server or Gradio UI."""
     if ui:
         asyncio.run(launch_ui(host, ui_port, port))
     else:

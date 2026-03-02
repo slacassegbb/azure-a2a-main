@@ -161,7 +161,7 @@ def create_a2a_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
 
     # Create agent card
     agent_card = AgentCard(
-        name='AI Foundry Claims Specialist Agent',
+        name='Claims Agent',
         description="An intelligent multi-line claims specialist powered by Azure AI Foundry. Provides coverage validation, settlement calculations, documentation checklists, and compliance guidance across auto, property, travel, and health insurance claims.",
         #url=f'http://{host}:{port}/',
         #url=f'https://agent1.ngrok.app/agent2/',
@@ -193,7 +193,7 @@ def create_a2a_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
     
     # Add health check endpoint
     async def health_check(_: Request) -> PlainTextResponse:
-        return PlainTextResponse('AI Foundry Claims Specialist Agent is running!')
+        return PlainTextResponse('Claims Agent is running!')
     
     routes.append(
         Route(
@@ -211,7 +211,7 @@ def create_a2a_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
 
 def run_a2a_server_in_thread(host: str, port: int):
     """Run A2A server in a separate thread."""
-    print(f"Starting AI Foundry Claims Specialist Agent A2A server on {host}:{port}...")
+    print(f"Starting Claims Agent A2A server on {host}:{port}...")
     app = create_a2a_server(host, port)
     uvicorn.run(app, host=host, port=port, log_level="info")
 
@@ -315,7 +315,7 @@ async def get_foundry_response(
 
 async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_port: int = DEFAULT_PORT):
     """Launch Gradio UI and A2A server simultaneously for the claims specialist agent."""
-    print("Starting AI Foundry Claims Specialist Agent with both UI and A2A server...")
+    print("Starting Claims Agent with both UI and A2A server...")
     
     # Verify required environment variables
     required_env_vars = [
@@ -416,7 +416,7 @@ async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_p
     resolved_host_for_url = host if host != "0.0.0.0" else DEFAULT_HOST
 
     agent_card = AgentCard(
-        name='AI Foundry Claims Specialist Agent',
+        name='Claims Agent',
         description="An intelligent multi-line claims specialist powered by Azure AI Foundry. Provides coverage validation, settlement calculations, documentation checklists, and compliance guidance across auto, property, travel, and health insurance claims.",
         #url=f'http://{host if host != "0.0.0.0" else DEFAULT_HOST}:{a2a_port}/',
         #url=f'https://agent1.ngrok.app/agent2/',
@@ -439,7 +439,7 @@ async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_p
     ui_display_url = f"http://{display_host}:{ui_port}"
     a2a_display_url = resolve_agent_url(display_host, a2a_port).rstrip('/')
 
-    with gr.Blocks(theme=gr.themes.Ocean(), title="AI Foundry Claims Specialist Agent") as demo:
+    with gr.Blocks(theme=gr.themes.Ocean(), title="Claims Agent") as demo:
         gr.Image(
             "static/a2a.png",
             width=100,
@@ -451,7 +451,7 @@ async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_p
             show_fullscreen_button=False,
         )
         gr.Markdown(f"""
-        ## 🛡️ AI Foundry Claims Specialist Agent
+        ## 🛡️ Claims Agent
 
         **Direct UI Access:** {ui_display_url}  
         **A2A API Access:** {a2a_display_url}
@@ -519,12 +519,12 @@ async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_p
             ],
         )
 
-    print(f"Launching AI Foundry Claims Specialist Agent Gradio interface on {host}:{ui_port}...")
+    print(f"Launching Claims Agent Gradio interface on {host}:{ui_port}...")
     demo.queue().launch(
         server_name=host,
         server_port=ui_port,
     )
-    print("AI Foundry Claims Specialist Agent Gradio application has been shut down.")
+    print("Claims Agent Gradio application has been shut down.")
 
 
 def main(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
@@ -550,7 +550,7 @@ def main(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
         print(f"❌ Failed to initialize claims agents at startup: {e}")
         raise
 
-    print(f"Starting AI Foundry Claims Specialist Agent A2A server on {host}:{port}...")
+    print(f"Starting Claims Agent A2A server on {host}:{port}...")
     app = create_a2a_server(host, port)
     
     # Create agent card for registration
@@ -620,7 +620,7 @@ def main(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
     resolved_host_for_url = host if host != "0.0.0.0" else DEFAULT_HOST
 
     agent_card = AgentCard(
-        name='AI Foundry Claims Specialist Agent',
+        name='Claims Agent',
         description="An intelligent multi-line claims specialist powered by Azure AI Foundry. Provides coverage validation, settlement calculations, documentation checklists, and compliance guidance across auto, property, travel, and health insurance claims.",
         #url=f'http://{host}:{port}/',
         #url=f'https://agent1.ngrok.app/agent2/',
@@ -644,7 +644,7 @@ def main(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
 @click.option('--ui', is_flag=True, help='Launch Gradio UI (also runs A2A server)')
 @click.option('--ui-port', 'ui_port', default=DEFAULT_UI_PORT, help='Port for Gradio UI (only used with --ui flag)')
 def cli(host: str, port: int, ui: bool, ui_port: int):
-    """AI Foundry Claims Specialist Agent - run as an A2A server or with Gradio UI + A2A server."""
+    """Claims Agent - run as an A2A server or with Gradio UI + A2A server."""
     if ui:
         asyncio.run(launch_ui(host, ui_port, port))
     else:

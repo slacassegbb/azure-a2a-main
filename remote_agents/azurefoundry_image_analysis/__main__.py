@@ -113,7 +113,7 @@ def create_a2a_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
     resolved_host_for_url = host if host != "0.0.0.0" else DEFAULT_HOST
 
     agent_card = AgentCard(
-        name='AI Foundry Image Analysis Agent',
+        name='Image Analysis Agent',
         description="Analyzes images using Azure AI Foundry with GPT-4o vision.",
         url=resolve_agent_url(resolved_host_for_url, port),
         version='1.0.0',
@@ -142,7 +142,7 @@ def create_a2a_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
     
     # Add health check endpoint
     async def health_check(_: Request) -> PlainTextResponse:
-        return PlainTextResponse('AI Foundry Image Analysis Agent is running!')
+        return PlainTextResponse('Image Analysis Agent is running!')
     
     routes.append(
         Route(
@@ -160,7 +160,7 @@ def create_a2a_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
 
 def run_a2a_server_in_thread(host: str, port: int):
     """Run A2A server in a separate thread."""
-    print(f"Starting AI Foundry Image Analysis Agent A2A server on {host}:{port}...")
+    print(f"Starting Image Analysis Agent A2A server on {host}:{port}...")
     app = create_a2a_server(host, port)
     uvicorn.run(app, host=host, port=port, log_level="info")
 
@@ -264,7 +264,7 @@ async def get_foundry_response(
 
 async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_port: int = DEFAULT_PORT):
     """Launch Gradio UI and A2A server simultaneously for the image analysis agent."""
-    print("Starting AI Foundry Image Analysis Agent with both UI and A2A server...")
+    print("Starting Image Analysis Agent with both UI and A2A server...")
     
     # Verify required environment variables
     required_env_vars = [
@@ -318,7 +318,7 @@ async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_p
     resolved_host_for_url = host if host != "0.0.0.0" else DEFAULT_HOST
 
     agent_card = AgentCard(
-        name='AI Foundry Image Analysis Agent',
+        name='Image Analysis Agent',
         description="Analyzes images using Azure AI Foundry with GPT-4o vision.",
         url=resolve_agent_url(resolved_host_for_url, a2a_port),
         version='1.0.0',
@@ -339,7 +339,7 @@ async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_p
     ui_display_url = f"http://{display_host}:{ui_port}"
     a2a_display_url = resolve_agent_url(display_host, a2a_port).rstrip('/')
 
-    with gr.Blocks(theme=gr.themes.Ocean(), title="AI Foundry Image Analysis Agent") as demo:
+    with gr.Blocks(theme=gr.themes.Ocean(), title="Image Analysis Agent") as demo:
         gr.Image(
             "static/a2a.png",
             width=100,
@@ -351,7 +351,7 @@ async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_p
             show_fullscreen_button=False,
         )
         gr.Markdown(f"""
-        ## 🔍 AI Foundry Image Analysis Agent
+        ## 🔍 Image Analysis Agent
 
         **Direct UI Access:** {ui_display_url}  
         **A2A API Access:** {a2a_display_url}
@@ -431,12 +431,12 @@ async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_p
             ],
         )
 
-    print(f"Launching AI Foundry Image Analysis Agent Gradio interface on {host}:{ui_port}...")
+    print(f"Launching Image Analysis Agent Gradio interface on {host}:{ui_port}...")
     demo.queue().launch(
         server_name=host,
         server_port=ui_port,
     )
-    print("AI Foundry Image Analysis Agent Gradio application has been shut down.")
+    print("Image Analysis Agent Gradio application has been shut down.")
 
 
 def main(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
@@ -462,7 +462,7 @@ def main(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
         print(f"❌ Failed to initialize image analysis agents at startup: {e}")
         raise
 
-    print(f"Starting AI Foundry Image Analysis Agent A2A server on {host}:{port}...")
+    print(f"Starting Image Analysis Agent A2A server on {host}:{port}...")
     app = create_a2a_server(host, port)
     
     # Create agent card for registration
@@ -485,7 +485,7 @@ def main(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
     resolved_host_for_url = host if host != "0.0.0.0" else DEFAULT_HOST
 
     agent_card = AgentCard(
-        name='AI Foundry Image Analysis Agent',
+        name='Image Analysis Agent',
         description="Analyzes images using Azure AI Foundry with GPT-4o vision.",
         url=resolve_agent_url(resolved_host_for_url, port),
         version='1.0.0',
@@ -507,7 +507,7 @@ def main(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
 @click.option('--ui', is_flag=True, help='Launch Gradio UI (also runs A2A server)')
 @click.option('--ui-port', 'ui_port', default=DEFAULT_UI_PORT, help='Port for Gradio UI (only used with --ui flag)')
 def cli(host: str, port: int, ui: bool, ui_port: int):
-    """AI Foundry Image Analysis Agent - run as an A2A server or with Gradio UI + A2A server."""
+    """Image Analysis Agent - run as an A2A server or with Gradio UI + A2A server."""
     if ui:
         asyncio.run(launch_ui(host, ui_port, port))
     else:

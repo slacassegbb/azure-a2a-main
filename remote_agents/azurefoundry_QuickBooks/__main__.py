@@ -193,7 +193,7 @@ def create_a2a_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
 
     # Create agent card
     agent_card = AgentCard(
-        name='AI Foundry QuickBooks Agent',
+        name='QuickBooks Agent',
         description="An intelligent agent specialized in QuickBooks Online accounting. Can manage customers, invoices, bills, vendors, employees, and generate financial reports. Also supports web search and document search capabilities.",
         url=resolve_agent_url(resolved_host_for_url, port),
         version='1.0.0',
@@ -281,7 +281,7 @@ def start_background_registration(agent_card):
 
 async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_port: int = DEFAULT_PORT):
     """Launch a streamlined Gradio UI alongside the A2A server."""
-    print("Starting AI Foundry QuickBooks Agent UI and A2A server...")
+    print("Starting QuickBooks Agent UI and A2A server...")
 
     required_env_vars = [
         'AZURE_AI_FOUNDRY_PROJECT_ENDPOINT',
@@ -368,7 +368,7 @@ async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_p
 
     resolved_host_for_ui_card = host if host != "0.0.0.0" else DEFAULT_HOST
     agent_card = AgentCard(
-        name='AI Foundry QuickBooks Agent',
+        name='QuickBooks Agent',
         description="An intelligent QuickBooks Online agent for accounting and financial management.",
         url=resolve_agent_url(resolved_host_for_ui_card, a2a_port),
         version='1.0.0',
@@ -466,7 +466,7 @@ async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_p
     def refresh_status():
         return get_pending_status()
 
-    with gr.Blocks(theme=gr.themes.Ocean(), title="AI Foundry QuickBooks Agent Chat") as demo:
+    with gr.Blocks(theme=gr.themes.Ocean(), title="QuickBooks Agent Chat") as demo:
         gr.Markdown(f"**Direct UI Access:** {ui_display_url} | **A2A API Access:** {a2a_display_url}")
         status_display = gr.Markdown(value=get_pending_status())
         refresh_btn = gr.Button("🔄 Refresh Status", size="sm")
@@ -483,9 +483,9 @@ async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_p
         agent_input.submit(process_message, inputs=[agent_input, chatbot_interface], outputs=[agent_input, chatbot_interface, status_display])
         reset_btn.click(reset_conversation, outputs=chatbot_interface, queue=False)
 
-    print(f"Launching AI Foundry QuickBooks Agent Gradio interface on {host}:{ui_port}...")
+    print(f"Launching QuickBooks Agent Gradio interface on {host}:{ui_port}...")
     demo.queue().launch(server_name=host, server_port=ui_port)
-    print("AI Foundry QuickBooks Agent Gradio application has been shut down.")
+    print("QuickBooks Agent Gradio application has been shut down.")
 
 
 async def main_async(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
@@ -581,7 +581,7 @@ async def main_async(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
     resolved_host_for_url = host if host != "0.0.0.0" else DEFAULT_HOST
 
     agent_card = AgentCard(
-        name='AI Foundry QuickBooks Agent',
+        name='QuickBooks Agent',
         description="An intelligent QuickBooks Online agent for accounting and financial management. Manage customers, invoices, bills, vendors, employees, and generate financial reports.",
         url=resolve_agent_url(resolved_host_for_url, port),
         version='1.0.0',

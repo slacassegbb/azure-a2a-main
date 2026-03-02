@@ -93,7 +93,7 @@ agent_executor_instance = None
 
 def _build_agent_skills() -> List[AgentSkill]:
     """
-    Email Agent Skills
+    Microsoft Outlook Agent Skills
     """
     return [
         AgentSkill(
@@ -139,7 +139,7 @@ def _build_agent_skills() -> List[AgentSkill]:
 
 def _create_agent_card(host: str, port: int) -> AgentCard:
     """
-    Email Agent Card
+    Microsoft Outlook Agent Card
     
     Defines the agent's identity for registration and discovery in the A2A ecosystem.
     """
@@ -147,7 +147,7 @@ def _create_agent_card(host: str, port: int) -> AgentCard:
     resolved_host_for_url = host if host != "0.0.0.0" else DEFAULT_HOST
     
     return AgentCard(
-        name='Email Agent',
+        name='Microsoft Outlook Agent',
         description="Full email management: READ emails from inbox (search by sender, subject, date), DOWNLOAD email attachments (invoices, documents, PDFs), and COMPOSE & SEND professional emails via Microsoft Graph API.",
         url=resolve_agent_url(resolved_host_for_url, port),
         version='1.0.0',
@@ -178,7 +178,7 @@ def create_a2a_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
     routes = a2a_app.routes()
     
     async def health_check(_: Request) -> PlainTextResponse:
-        return PlainTextResponse('Email Agent is running!')
+        return PlainTextResponse('Microsoft Outlook Agent is running!')
     
     routes.append(
         Route(
@@ -195,7 +195,7 @@ def create_a2a_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
 
 def run_a2a_server_in_thread(host: str, port: int):
     """Run A2A server in a separate thread."""
-    print(f"Starting Email Agent A2A server on {host}:{port}...")
+    print(f"Starting Microsoft Outlook Agent A2A server on {host}:{port}...")
     app = create_a2a_server(host, port)
     uvicorn.run(app, host=host, port=port, log_level="info")
 
@@ -302,7 +302,7 @@ async def get_foundry_response(
 
 async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_port: int = DEFAULT_PORT):
     """Launch Gradio UI and A2A server simultaneously for the email agent."""
-    print("Starting Email Agent with both UI and A2A server...")
+    print("Starting Microsoft Outlook Agent with both UI and A2A server...")
     
     required_env_vars = [
         'AZURE_AI_FOUNDRY_PROJECT_ENDPOINT',
@@ -315,7 +315,7 @@ async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_p
             f"Missing required environment variables: {', '.join(missing_vars)}"
         )
 
-    print("🚀 Initializing Email Agent at startup...")
+    print("🚀 Initializing Microsoft Outlook Agent at startup...")
     try:
         await initialize_foundry_template_agents_at_startup()
         print("✅ Agent initialization completed successfully!")
@@ -337,13 +337,13 @@ async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_p
 
     def check_system_status():
         """Check system status for the agent."""
-        return "✅ **Status:** Email Agent Ready!"
+        return "✅ **Status:** Microsoft Outlook Agent Ready!"
 
     resolved_host_for_url = host if host != "0.0.0.0" else DEFAULT_HOST
     ui_display_url = f"http://{resolved_host_for_url}:{ui_port}"
     a2a_display_url = resolve_agent_url(resolved_host_for_url, a2a_port).rstrip('/')
 
-    with gr.Blocks(theme=gr.themes.Ocean(), title="Email Agent") as demo:
+    with gr.Blocks(theme=gr.themes.Ocean(), title="Microsoft Outlook Agent") as demo:
         gr.Image(
             "static/a2a.png",
             width=100,
@@ -355,7 +355,7 @@ async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_p
             show_fullscreen_button=False,
         )
         gr.Markdown(f"""
-        ## 📧 Email Agent
+        ## 📧 Microsoft Outlook Agent
 
         **Direct UI Access:** {ui_display_url}  
         **A2A API Access:** {a2a_display_url}
@@ -428,16 +428,16 @@ async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_p
             description="Tell me who you want to email and what you want to say. I'll compose and send it for you.",
         )
 
-    print(f"Launching Email Agent Gradio interface on {host}:{ui_port}...")
+    print(f"Launching Microsoft Outlook Agent Gradio interface on {host}:{ui_port}...")
     demo.queue().launch(
         server_name=host,
         server_port=ui_port,
     )
-    print("Email Agent Gradio application has been shut down.")
+    print("Microsoft Outlook Agent Gradio application has been shut down.")
 
 
 def main(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
-    """Launch A2A server mode for the Email Agent with startup initialization."""
+    """Launch A2A server mode for the Microsoft Outlook Agent with startup initialization."""
     required_env_vars = [
         'AZURE_AI_FOUNDRY_PROJECT_ENDPOINT',
         'AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME'
@@ -449,7 +449,7 @@ def main(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
             f"Missing required environment variables: {', '.join(missing_vars)}"
         )
 
-    print("🚀 Initializing Email Agent at startup...")
+    print("🚀 Initializing Microsoft Outlook Agent at startup...")
     try:
         asyncio.run(initialize_foundry_template_agents_at_startup())
         print("✅ Agent initialization completed successfully!")
@@ -457,7 +457,7 @@ def main(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
         print(f"❌ Failed to initialize agent at startup: {e}")
         raise
 
-    print(f"Starting Email Agent A2A server on {host}:{port}...")
+    print(f"Starting Microsoft Outlook Agent A2A server on {host}:{port}...")
     app = create_a2a_server(host, port)
     
     agent_card = _create_agent_card(host, port)
@@ -473,7 +473,7 @@ def main(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
 @click.option('--ui-port', 'ui_port', default=DEFAULT_UI_PORT, help='Port for Gradio UI (only used with --ui flag)')
 def cli(host: str, port: int, ui: bool, ui_port: int):
     """
-    Email Agent - Send emails using Microsoft Graph API.
+    Microsoft Outlook Agent - Send emails using Microsoft Graph API.
     
     Run as an A2A server or with Gradio UI + A2A server.
     """

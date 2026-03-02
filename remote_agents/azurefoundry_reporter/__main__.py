@@ -155,7 +155,7 @@ def _create_agent_card(host: str, port: int) -> AgentCard:
     resolved_host_for_url = host if host != "0.0.0.0" else DEFAULT_HOST
     
     return AgentCard(
-        name='AI Foundry Reporter Agent',
+        name='Report Generator Agent',
         description="A professional report creation agent powered by Azure AI Foundry. Creates executive summaries, technical analyses, project status reports, and custom reports with structured templates.",
         url=resolve_agent_url(resolved_host_for_url, port),
         version='1.0.0',
@@ -192,7 +192,7 @@ def create_a2a_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
     
     # Add health check endpoint
     async def health_check(_: Request) -> PlainTextResponse:
-        return PlainTextResponse('AI Foundry Reporter Agent is running!')
+        return PlainTextResponse('Report Generator Agent is running!')
     
     routes.append(
         Route(
@@ -210,7 +210,7 @@ def create_a2a_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
 
 def run_a2a_server_in_thread(host: str, port: int):
     """Run A2A server in a separate thread."""
-    print(f"Starting AI Foundry Reporter Agent A2A server on {host}:{port}...")
+    print(f"Starting Report Generator Agent A2A server on {host}:{port}...")
     app = create_a2a_server(host, port)
     uvicorn.run(app, host=host, port=port, log_level="info")
 
@@ -314,7 +314,7 @@ async def get_foundry_response(
 
 async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_port: int = DEFAULT_PORT):
     """Launch Gradio UI and A2A server simultaneously for the Reporter agent."""
-    print("Starting AI Foundry Reporter Agent with both UI and A2A server...")
+    print("Starting Report Generator Agent with both UI and A2A server...")
     
     # Verify required environment variables
     required_env_vars = [
@@ -361,7 +361,7 @@ async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_p
     ui_display_url = f"http://{display_host}:{ui_port}"
     a2a_display_url = resolve_agent_url(display_host, a2a_port).rstrip('/')
 
-    with gr.Blocks(theme=gr.themes.Ocean(), title="AI Foundry Reporter Agent") as demo:
+    with gr.Blocks(theme=gr.themes.Ocean(), title="Report Generator Agent") as demo:
         gr.Image(
             "static/a2a.png",
             width=100,
@@ -373,7 +373,7 @@ async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_p
             show_fullscreen_button=False,
         )
         gr.Markdown(f"""
-        ## 📝 AI Foundry Reporter Agent
+        ## 📝 Report Generator Agent
 
         **Direct UI Access:** {ui_display_url}  
         **A2A API Access:** {a2a_display_url}
@@ -440,12 +440,12 @@ async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_p
             description="Request any type of report - executive summaries, technical analyses, project status updates, or custom reports.",
         )
 
-    print(f"Launching AI Foundry Reporter Agent Gradio interface on {host}:{ui_port}...")
+    print(f"Launching Report Generator Agent Gradio interface on {host}:{ui_port}...")
     demo.queue().launch(
         server_name=host,
         server_port=ui_port,
     )
-    print("AI Foundry Reporter Agent Gradio application has been shut down.")
+    print("Report Generator Agent Gradio application has been shut down.")
 
 
 def main(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
@@ -471,7 +471,7 @@ def main(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
         print(f"❌ Failed to initialize Reporter agent at startup: {e}")
         raise
 
-    print(f"Starting AI Foundry Reporter Agent A2A server on {host}:{port}...")
+    print(f"Starting Report Generator Agent A2A server on {host}:{port}...")
     app = create_a2a_server(host, port)
     
     # Get agent card and start background registration
@@ -488,7 +488,7 @@ def main(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
 @click.option('--ui-port', 'ui_port', default=DEFAULT_UI_PORT, help='Port for Gradio UI (only used with --ui flag)')
 def cli(host: str, port: int, ui: bool, ui_port: int):
     """
-    AI Foundry Reporter Agent - Professional report creation agent.
+    Report Generator Agent - Professional report creation agent.
     
     Creates executive summaries, technical analyses, project status reports,
     and custom reports using structured templates.

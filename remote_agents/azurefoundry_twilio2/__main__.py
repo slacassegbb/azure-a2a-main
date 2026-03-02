@@ -1,5 +1,5 @@
 """
-Twilio SMS Agent - A2A Remote Agent for sending SMS messages via Azure AI Foundry.
+Text Message Agent - A2A Remote Agent for sending SMS messages via Azure AI Foundry.
 
 HITL (Human-in-the-Loop) Support:
 - Supports interactive SMS conversations with users
@@ -270,7 +270,7 @@ def create_a2a_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
 
     # Create agent card
     agent_card = AgentCard(
-        name='Twilio SMS Agent',
+        name='Text Message Agent',
         description="A two-way SMS communication agent powered by Azure AI Foundry and Twilio. Supports Human-in-the-Loop (HITL) for interactive SMS conversations. Send SMS messages, receive replies, and ask users questions that pause the workflow until they respond. Perfect for notifications, approvals, confirmations, and two-way SMS workflows.",
         url=resolve_agent_url(host, port),
         version='1.1.0',
@@ -300,7 +300,7 @@ def create_a2a_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
     
     # Add health check endpoint
     async def health_check(_: Request) -> PlainTextResponse:
-        return PlainTextResponse('Twilio SMS Agent is running!')
+        return PlainTextResponse('Text Message Agent is running!')
     
     routes.append(
         Route(
@@ -588,7 +588,7 @@ def main(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
         print(f"❌ Failed to initialize Twilio agent at startup: {e}")
         raise
 
-    print(f"Starting Twilio SMS Agent A2A server on {host}:{port}...")
+    print(f"Starting Text Message Agent A2A server on {host}:{port}...")
     app, agent_card = create_a2a_server(host, port)
     
     # Start background registration
@@ -601,7 +601,7 @@ def main(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
 @click.option('--host', 'host', default=DEFAULT_HOST, help='Host to bind to')
 @click.option('--port', 'port', default=DEFAULT_PORT, help='Port for A2A server')
 def cli(host: str, port: int):
-    """Twilio SMS Agent - A2A server for sending SMS notifications via Azure AI Foundry."""
+    """Text Message Agent - A2A server for sending SMS notifications via Azure AI Foundry."""
     main(host, port)
 
 

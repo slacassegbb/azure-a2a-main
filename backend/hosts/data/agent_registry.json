@@ -1,6 +1,6 @@
 [
   {
-    "name": "AI Foundry Stock Market Agent",
+    "name": "Stock Market Analysis Agent",
     "description": "Stock market data agent powered by Alpha Vantage. Access stock prices, forex, crypto, commodities, economic indicators, technical analysis, news sentiment, and company fundamentals.",
     "version": "1.0.0",
     "url": "http://localhost:9040/",
@@ -98,7 +98,7 @@
     ]
   },
   {
-    "name": "AI Foundry Time Series Agent",
+    "name": "Forecasting and Anomaly Detection Agent",
     "description": "Time series intelligence agent powered by Nixtla TimeGEN-1. Forecasting, anomaly detection, backtesting, and cross-validation for any time series data.",
     "version": "1.0.0",
     "url": "http://localhost:9039/",
@@ -177,7 +177,7 @@
     ]
   },
   {
-    "name": "AI Foundry Branding & Content Agent",
+    "name": "Branding Agent",
     "description": "An intelligent branding partner powered by Azure AI Foundry. Provides on-brand messaging, visual direction, and creative prompts grounded in the Company Branding Guide.",
     "version": "1.0.0",
     "url": "https://azurefoundry-branding.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
@@ -254,7 +254,7 @@
     ]
   },
   {
-    "name": "AI Foundry Classification Triage Agent",
+    "name": "Classification and Triage Agent",
     "description": "An intelligent incident classification and triage agent powered by Azure AI Foundry. Specializes in analyzing customer issues, classifying incidents into proper categories, assessing priority levels, and routing cases to appropriate teams using ServiceNow standards.",
     "version": "1.0.0",
     "url": "https://azurefoundry-classification.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
@@ -332,7 +332,7 @@
     ]
   },
   {
-    "name": "AI Foundry Image Generator Agent",
+    "name": "Image Generator Agent",
     "description": "An Azure AI Foundry agent that can generate and edit images.",
     "version": "1.0.0",
     "url": "https://azurefoundry-image-generator.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
@@ -371,7 +371,7 @@
     ]
   },
   {
-    "name": "Email Agent",
+    "name": "Microsoft Outlook Agent",
     "description": "Full email management: READ emails from inbox (search by sender, subject, date), DOWNLOAD email attachments (invoices, documents, PDFs), and COMPOSE & SEND professional emails via Microsoft Graph API.",
     "version": "1.0.0",
     "url": "https://azurefoundry-email.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
@@ -430,7 +430,7 @@
     ]
   },
   {
-    "name": "Teams Agent",
+    "name": "Microsoft Teams Agent",
     "description": "Human-in-the-loop agent via Microsoft Teams. Can SEND messages to users, WAIT for human responses, and ESCALATE decisions requiring human judgment. Uses A2A input_required state for pause/resume workflows.",
     "version": "1.0.0",
     "url": "https://azurefoundry-teams.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
@@ -490,7 +490,7 @@
     ]
   },
   {
-    "name": "AI Foundry PowerPoint Agent",
+    "name": "Microsoft PowerPoint Agent",
     "description": "An Azure AI Foundry agent that creates, reads, and edits PowerPoint presentations. Can create new .pptx files and read, extract, or edit existing presentations via URL.",
     "version": "1.0.0",
     "url": "https://azurefoundry-powerpoint.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
@@ -555,7 +555,7 @@
     ]
   },
   {
-    "name": "Sora 2 Video Generator",
+    "name": "Video Generator Agent",
     "description": "Generate stunning AI videos from text prompts using Azure OpenAI's Sora 2 model. Create cinematic scenes, product demos, animations, and creative visual content with natural language descriptions. Supports 4-12 second videos in landscape or portrait format.",
     "version": "1.0.0",
     "url": "https://azurefoundry-video.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
@@ -638,7 +638,7 @@
     ]
   },
   {
-    "name": "Twilio SMS Agent",
+    "name": "Text Message Agent",
     "description": "A two-way SMS communication agent powered by Azure AI Foundry and Twilio. Supports Human-in-the-Loop (HITL) for interactive SMS conversations. Send SMS messages, receive replies, and ask users questions that pause the workflow until they respond. Perfect for notifications, approvals, confirmations, and two-way SMS workflows.",
     "version": "1.1.0",
     "url": "http://localhost:8016/",
@@ -716,7 +716,7 @@
     ]
   },
   {
-    "name": "AI Foundry Assessment & Estimation Agent",
+    "name": "Assessment and Estimation Agent",
     "description": "An intelligent assessment specialist powered by Azure AI Foundry. Performs multi-line damage evaluations, cost estimations, and structured reporting for auto, property, travel, and health scenarios.",
     "version": "1.0.0",
     "url": "http://localhost:9043/",
@@ -792,7 +792,7 @@
     ]
   },
   {
-    "name": "AI Foundry Claims Specialist Agent",
+    "name": "Claims Agent",
     "description": "An intelligent multi-line claims specialist powered by Azure AI Foundry. Provides coverage validation, settlement calculations, documentation checklists, and compliance guidance across auto, property, travel, and health insurance claims.",
     "version": "1.0.0",
     "url": "http://localhost:9001/",
@@ -869,7 +869,7 @@
     ]
   },
   {
-    "name": "AI Foundry Deep Search Knowledge Agent",
+    "name": "Deep Search Agent",
     "description": "An intelligent customer support agent powered by Azure AI Foundry with deep search capabilities through comprehensive support documentation covering account management, billing, payments, fraud protection, and technical support.",
     "version": "1.0.0",
     "url": "http://localhost:8002/",
@@ -946,7 +946,7 @@
     ]
   },
   {
-    "name": "AI Foundry Excel Agent",
+    "name": "Microsoft Excel Agent",
     "description": "An Azure AI Foundry agent that creates, reads, and edits Excel spreadsheets. Can create new .xlsx files and read, extract, or edit existing spreadsheets via URL.",
     "version": "1.0.0",
     "url": "https://azurefoundry-excel.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
@@ -1011,7 +1011,7 @@
     ]
   },
   {
-    "name": "AI Foundry Fraud Intelligence Agent",
+    "name": "Fraud Intelligence Agent",
     "description": "An intelligent fraud specialist powered by Azure AI Foundry. Evaluates claims for red flags, organizes evidence, and recommends SIU escalation across auto, property, travel, and health domains.",
     "version": "1.0.0",
     "url": "http://localhost:9004/",
@@ -1088,7 +1088,7 @@
     ]
   },
   {
-    "name": "AI Foundry Google Maps Agent",
+    "name": "Google Maps Agent",
     "description": "An intelligent Google Maps agent that searches for places, provides weather forecasts, and computes travel routes using Google Maps MCP tools.",
     "version": "1.0.0",
     "url": "http://localhost:9041/",
@@ -1158,7 +1158,7 @@
     ]
   },
   {
-    "name": "AI Foundry HubSpot Agent",
+    "name": "HubSpot Agent",
     "description": "Intelligent agent for HubSpot payment processing - customers, payments, subscriptions, invoices, and balance.",
     "version": "1.0.0",
     "url": "https://azurefoundry-hubspot.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
@@ -1207,7 +1207,7 @@
     ]
   },
   {
-    "name": "AI Foundry Image Analysis Agent",
+    "name": "Image Analysis Agent",
     "description": "Analyzes images using Azure AI Foundry with GPT-4o vision.",
     "version": "1.0.0",
     "url": "http://localhost:9066/",
@@ -1235,7 +1235,7 @@
     ]
   },
   {
-    "name": "AI Foundry QuickBooks Agent",
+    "name": "QuickBooks Agent",
     "description": "An intelligent QuickBooks Online agent for accounting and financial management. Manage customers, invoices, bills, vendors, employees, and generate financial reports.",
     "version": "1.0.0",
     "url": "https://azurefoundry-quickbooks.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
@@ -1314,7 +1314,7 @@
     ]
   },
   {
-    "name": "AI Foundry Reporter Agent",
+    "name": "Report Generator Agent",
     "description": "A professional report creation agent powered by Azure AI Foundry. Creates executive summaries, technical analyses, project status reports, and custom reports with structured templates.",
     "version": "1.0.0",
     "url": "http://localhost:9032/",
@@ -1382,7 +1382,7 @@
     ]
   },
   {
-    "name": "AI Foundry Stripe Agent",
+    "name": "Stripe Agent",
     "description": "Intelligent agent for Stripe payment processing - customers, payments, subscriptions, invoices, and balance.",
     "version": "1.0.0",
     "url": "https://azurefoundry-stripe.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
@@ -1431,7 +1431,7 @@
     ]
   },
   {
-    "name": "AI Foundry Word Agent",
+    "name": "Microsoft Word Agent",
     "description": "An Azure AI Foundry agent that creates, reads, and edits Word documents. Can create new .docx files and read, extract, or edit existing documents via URL.",
     "version": "1.0.0",
     "url": "https://azurefoundry-word.ambitioussky-6c709152.westus2.azurecontainerapps.io/",
@@ -1496,7 +1496,7 @@
     ]
   },
   {
-    "name": "Legal Compliance & Regulatory Agent",
+    "name": "Legal Agent",
     "description": "An intelligent legal and compliance agent specialized in regulatory analysis, risk assessment, document analysis, and incident response. Can analyze compliance requirements for GDPR, SOX, CCPA and other regulations, assess legal risks, research regulatory requirements, analyze legal documents, handle incident reporting, search the web for current legal information, and search through uploaded legal documents and compliance materials, all with professional legal guidance.",
     "version": "1.0.0",
     "url": "http://localhost:8006/",
@@ -1608,7 +1608,7 @@
     ]
   },
   {
-    "name": "Salesforce CRM Agent",
+    "name": "Salesforce Agent",
     "description": "An intelligent Salesforce agent with full CRM data access, metadata management, and Apex development capabilities.",
     "version": "1.0.0",
     "url": "http://localhost:8004/",
@@ -1719,7 +1719,7 @@
     ]
   },
   {
-    "name": "AI Foundry Music Agent",
+    "name": "Music Generator Agent",
     "description": "An AI-powered music generation agent using the Suno API. Creates songs, lyrics, covers, mashups, separates vocals, generates MIDI, music videos, and more.",
     "version": "1.0.0",
     "url": "http://localhost:9044/",
@@ -1841,7 +1841,7 @@
     ]
   },
   {
-    "name": "AI Foundry Video & Audio Agent",
+    "name": "Video and Audio Editing Agent",
     "description": "An Azure AI Foundry agent that edits, converts, and transforms video and audio files using FFmpeg. Can trim, resize, merge, add subtitles, extract audio, change formats, and more. Accepts files via URL and returns processed files as downloadable artifacts.",
     "version": "1.0.0",
     "url": "http://localhost:9045/",

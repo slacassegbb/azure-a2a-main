@@ -574,7 +574,7 @@ def create_a2a_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
 
     # Create agent card
     agent_card = AgentCard(
-        name='Legal Compliance & Regulatory Agent',
+        name='Legal Agent',
         description="An intelligent legal and compliance agent specialized in regulatory analysis, risk assessment, document analysis, and incident response. Can analyze compliance requirements for GDPR, SOX, CCPA and other regulations, assess legal risks, research regulatory requirements, analyze legal documents, handle incident reporting, search the web for current legal information, and search through uploaded legal documents and compliance materials, all with professional legal guidance.",
        # url=f'http://{host}:{port}/',
         #url=f'https://agent1.ngrok.app/agent5/',
@@ -789,7 +789,7 @@ async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_p
     resolved_host_for_url = host if host != "0.0.0.0" else DEFAULT_HOST
 
     agent_card = AgentCard(
-        name='Legal Compliance & Regulatory Agent',
+        name='Legal Agent',
         description="An intelligent legal and compliance agent specialized in regulatory analysis, risk assessment, document analysis, and incident response. Can analyze compliance requirements for GDPR, SOX, CCPA and other regulations, assess legal risks, research regulatory requirements, analyze legal documents, handle incident reporting, search the web for current legal information, and search through uploaded legal documents and compliance materials, all with professional legal guidance.",
         #url=f'http://{host if host != "0.0.0.0" else DEFAULT_HOST}:{a2a_port}/',
         #url=f'https://agent1.ngrok.app/agent5/',
@@ -1547,7 +1547,7 @@ async def main_async(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
     resolved_host_for_url = host if host != "0.0.0.0" else DEFAULT_HOST
 
     agent_card = AgentCard(
-        name='Legal Compliance & Regulatory Agent',
+        name='Legal Agent',
         description="An intelligent legal and compliance agent specialized in regulatory analysis, risk assessment, document analysis, and incident response. Can analyze compliance requirements for GDPR, SOX, CCPA and other regulations, assess legal risks, research regulatory requirements, analyze legal documents, handle incident reporting, search the web for current legal information, and search through uploaded legal documents and compliance materials, all with professional legal guidance.",
         #url=f'http://{host}:{port}/',
         #url=f'https://agent1.ngrok.app/agent5/',

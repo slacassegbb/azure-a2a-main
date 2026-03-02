@@ -164,7 +164,7 @@ def _create_agent_card(host: str, port: int) -> AgentCard:
     resolved_host_for_url = host if host != "0.0.0.0" else DEFAULT_HOST
     
     return AgentCard(
-        name='Sora 2 Video Generator',
+        name='Video Generator Agent',
         description="Generate stunning AI videos from text prompts using Azure OpenAI's Sora 2 model. Create cinematic scenes, product demos, animations, and creative visual content with natural language descriptions. Supports 4-12 second videos in landscape or portrait format.",
         url=resolve_agent_url(resolved_host_for_url, port),
         version='1.0.0',
@@ -201,7 +201,7 @@ def create_a2a_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
     
     # Add health check endpoint
     async def health_check(_: Request) -> PlainTextResponse:
-        return PlainTextResponse('Sora 2 Video Generator is running!')
+        return PlainTextResponse('Video Generator Agent is running!')
     
     routes.append(
         Route(
@@ -219,7 +219,7 @@ def create_a2a_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
 
 def run_a2a_server_in_thread(host: str, port: int):
     """Run A2A server in a separate thread."""
-    print(f"Starting Sora 2 Video Generator A2A server on {host}:{port}...")
+    print(f"Starting Video Generator Agent A2A server on {host}:{port}...")
     app = create_a2a_server(host, port)
     uvicorn.run(app, host=host, port=port, log_level="info")
 
@@ -322,8 +322,8 @@ async def get_foundry_response(
 
 
 async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_port: int = DEFAULT_PORT):
-    """Launch Gradio UI and A2A server simultaneously for the Sora 2 Video Generator."""
-    print("Starting Sora 2 Video Generator with both UI and A2A server...")
+    """Launch Gradio UI and A2A server simultaneously for the Video Generator Agent."""
+    print("Starting Video Generator Agent with both UI and A2A server...")
     
     # Verify required environment variables
     required_env_vars = [
@@ -338,7 +338,7 @@ async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_p
         )
 
     # Initialize agent at startup BEFORE starting servers
-    print("🚀 Initializing Sora 2 Video Generator at startup...")
+    print("🚀 Initializing Video Generator Agent at startup...")
     try:
         await initialize_foundry_template_agents_at_startup()
         print("✅ Agent initialization completed successfully!")
@@ -373,7 +373,7 @@ async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_p
     # Store for tracking the last generated video ID for remix
     last_video_id_store = {"video_id": None}
     
-    with gr.Blocks(theme=gr.themes.Ocean(), title="Sora 2 Video Generator") as demo:
+    with gr.Blocks(theme=gr.themes.Ocean(), title="Video Generator Agent") as demo:
         # Header
         with gr.Row():
             with gr.Column(scale=1):
@@ -390,7 +390,7 @@ async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_p
                     )
             with gr.Column(scale=10):
                 gr.Markdown(f"""
-                ## 🎬 Sora 2 Video Generator
+                ## 🎬 Video Generator Agent
                 **UI:** {ui_display_url} | **A2A API:** {a2a_display_url}
                 """)
         
@@ -696,16 +696,16 @@ async def launch_ui(host: str = "0.0.0.0", ui_port: int = DEFAULT_UI_PORT, a2a_p
             outputs=[remix_video_id]
         )
 
-    print(f"Launching Sora 2 Video Generator Gradio interface on {host}:{ui_port}...")
+    print(f"Launching Video Generator Agent Gradio interface on {host}:{ui_port}...")
     demo.queue().launch(
         server_name=host,
         server_port=ui_port,
     )
-    print("Sora 2 Video Generator Gradio application has been shut down.")
+    print("Video Generator Agent Gradio application has been shut down.")
 
 
 def main(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
-    """Launch A2A server mode for the Sora 2 Video Generator with startup initialization."""
+    """Launch A2A server mode for the Video Generator Agent with startup initialization."""
     # Verify required environment variables
     required_env_vars = [
         'AZURE_AI_FOUNDRY_PROJECT_ENDPOINT',
@@ -719,7 +719,7 @@ def main(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
         )
 
     # Initialize agent at startup BEFORE starting server
-    print("🚀 Initializing Sora 2 Video Generator at startup...")
+    print("🚀 Initializing Video Generator Agent at startup...")
     try:
         asyncio.run(initialize_foundry_template_agents_at_startup())
         print("✅ Agent initialization completed successfully!")
@@ -727,7 +727,7 @@ def main(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
         print(f"❌ Failed to initialize agent at startup: {e}")
         raise
 
-    print(f"Starting Sora 2 Video Generator A2A server on {host}:{port}...")
+    print(f"Starting Video Generator Agent A2A server on {host}:{port}...")
     app = create_a2a_server(host, port)
     
     # Get agent card and start background registration
@@ -744,7 +744,7 @@ def main(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
 @click.option('--ui-port', 'ui_port', default=DEFAULT_UI_PORT, help='Port for Gradio UI (only used with --ui flag)')
 def cli(host: str, port: int, ui: bool, ui_port: int):
     """
-    Sora 2 Video Generator - Generate AI videos from text prompts.
+    Video Generator Agent - Generate AI videos from text prompts.
     
     Run as an A2A server or with Gradio UI + A2A server.
     Uses Azure OpenAI's Sora 2 model for video generation.
