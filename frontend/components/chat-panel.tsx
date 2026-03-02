@@ -1089,6 +1089,8 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                     const ext = img.fileName?.split('.').pop()?.toLowerCase()
                     if (ext === 'mp4' || ext === 'mov' || ext === 'avi' || ext === 'mkv' || ext === 'webm') {
                       mediaType = `video/${ext === 'mov' ? 'quicktime' : ext}`
+                    } else if (ext === 'mp3' || ext === 'wav' || ext === 'aac' || ext === 'ogg' || ext === 'flac' || ext === 'm4a') {
+                      mediaType = `audio/${ext === 'mp3' ? 'mpeg' : ext === 'm4a' ? 'mp4' : ext}`
                     } else if (ext === 'jpg' || ext === 'jpeg') {
                       mediaType = 'image/jpeg'
                     } else if (ext === 'png' || ext === 'gif' || ext === 'webp') {
@@ -3631,11 +3633,13 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                             const urlWithoutParams = (attachment.uri || "").split('?')[0].toLowerCase()
                             const isVideoByExt = /\.(mp4|webm|mov|avi|mkv)$/.test(urlWithoutParams)
                             const isImageByExt = /\.(png|jpe?g|gif|webp|svg|bmp)$/.test(urlWithoutParams)
+                            const isAudioByExt = /\.(mp3|wav|aac|ogg|flac|m4a)$/.test(urlWithoutParams)
                             const isPdfByExt = /\.pdf$/.test(urlWithoutParams)
                             const isDocumentByExt = /\.(docx|pptx|xlsx|doc|ppt|xls|csv|tsv)$/.test(urlWithoutParams)
 
                             // Documents and PDFs should NEVER be treated as images, even if mediaType is wrong
-                            const isImage = !isPdfByExt && !isDocumentByExt && ((attachment.mediaType || "").startsWith("image/") || (!attachment.mediaType && isImageByExt))
+                            const isAudio = (attachment.mediaType || "").startsWith("audio/") || (!attachment.mediaType && isAudioByExt)
+                            const isImage = !isPdfByExt && !isDocumentByExt && !isAudio && ((attachment.mediaType || "").startsWith("image/") || (!attachment.mediaType && isImageByExt))
                             const isVideo = (attachment.mediaType || "").startsWith("video/") || (!attachment.mediaType && isVideoByExt) || isVideoByExt
                             
                             // Debug: Log full type detection for each attachment
@@ -3651,7 +3655,8 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                               isVideo,
                               isImage,
                               videoId: attachment.videoId,
-                              willRenderAs: isVideo ? 'VIDEO' : isImage ? 'IMAGE' : 'LINK'
+                              isAudio,
+                              willRenderAs: isVideo ? 'VIDEO' : isAudio ? 'AUDIO' : isImage ? 'IMAGE' : 'LINK'
                             })
                             
                             // Check video FIRST (so .mp4 URLs don't get treated as images)
@@ -3790,7 +3795,27 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                               )
                             }
 
-                            // Fallback: render as link (neither image nor video)
+                            // Audio files: render with <audio> player
+                            if (isAudio) {
+                              return (
+                                <div key={`${message.id}-attachment-${attachmentIndex}`} className="flex flex-col gap-2">
+                                  <div className="overflow-hidden rounded-lg border border-border bg-background">
+                                    <audio
+                                      src={attachment.uri}
+                                      controls
+                                      className="w-full"
+                                    >
+                                      Your browser does not support the audio tag.
+                                    </audio>
+                                    <div className="px-3 py-2 text-xs text-muted-foreground border-t border-border bg-muted/50">
+                                      <span>{attachment.fileName || "Audio attachment"}</span>
+                                    </div>
+                                  </div>
+                                </div>
+                              )
+                            }
+
+                            // Fallback: render as link (neither image, video, nor audio)
                             logDebug('[VideoRemix] Rendering as LINK (fallback):', {
                               fileName: attachment.fileName,
                               mediaType: attachment.mediaType,
@@ -3823,13 +3848,15 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                             return !isDocument
                           }).map((image, imageIndex) => {
                             const isVideo = image.mimeType?.startsWith('video/') || image.uri.match(/\.(mp4|webm|mov)(\?|$)/i)
+                            const isAudioHistory = image.mimeType?.startsWith('audio/') || image.uri.match(/\.(mp3|wav|aac|ogg|flac|m4a)(\?|$)/i)
                             logDebug('[VideoRemix] Rendering message.images item:', {
                               index: imageIndex,
                               fileName: image.fileName,
                               mimeType: image.mimeType,
                               uri: image.uri?.slice(-60),
                               isVideo,
-                              willRenderAs: isVideo ? 'VIDEO' : 'IMAGE'
+                              isAudioHistory,
+                              willRenderAs: isVideo ? 'VIDEO' : isAudioHistory ? 'AUDIO' : 'IMAGE'
                             })
                             return (
                               <div key={`${message.id}-image-${imageIndex}`} className="flex flex-col gap-2">
@@ -3842,6 +3869,19 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                                   >
                                     Your browser does not support the video tag.
                                   </video>
+                                ) : isAudioHistory ? (
+                                  <div className="overflow-hidden rounded-lg border border-border bg-background">
+                                    <audio
+                                      src={image.uri}
+                                      controls
+                                      className="w-full"
+                                    >
+                                      Your browser does not support the audio tag.
+                                    </audio>
+                                    <div className="px-3 py-2 text-xs text-muted-foreground border-t border-border bg-muted/50">
+                                      <span>{image.fileName || "Audio file"}</span>
+                                    </div>
+                                  </div>
                                 ) : (
                                   <a
                                     href={image.uri}

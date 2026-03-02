@@ -527,9 +527,11 @@ function AgentCard({ agent, stepNumber, isLive }: { agent: AgentInfo; stepNumber
               const ext = file.name.toLowerCase().split('.').pop() || ''
               const imageExtensions = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp']
               const videoExtensions = ['mp4', 'webm', 'mov', 'avi', 'mkv']
+              const audioExtensions = ['mp3', 'wav', 'aac', 'ogg', 'flac', 'm4a']
               const isImage = file.type?.startsWith('image/') || imageExtensions.includes(ext)
               const isVideo = file.type?.startsWith('video/') || videoExtensions.includes(ext)
-              const isMedia = isImage || isVideo
+              const isAudio = file.type?.startsWith('audio/') || audioExtensions.includes(ext)
+              const isMedia = isImage || isVideo || isAudio
               const label = isMedia ? "Generated" : "Attachment"
               
               return (
@@ -572,6 +574,17 @@ function AgentCard({ agent, stepNumber, isLive }: { agent: AgentInfo; stepNumber
                         controls
                         muted
                         className="max-w-[250px] max-h-[180px] rounded border border-border/50"
+                        onError={(e) => { e.currentTarget.style.display = 'none' }}
+                      />
+                    </div>
+                  )}
+                  {/* Show audio player */}
+                  {isAudio && file.url && (
+                    <div className="ml-5">
+                      <audio
+                        src={file.url}
+                        controls
+                        className="max-w-[300px] h-8"
                         onError={(e) => { e.currentTarget.style.display = 'none' }}
                       />
                     </div>
