@@ -557,6 +557,12 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
       logDebug('[AgentNetwork] Host inference ended')
       setIsHostInferencing(false)
     },
+    remote_agent_activity: (data: any) => {
+      if (data?.metadata?.phase === 'scheduled_task_created') {
+        logDebug('[AgentNetwork] Scheduled task created — refreshing schedules')
+        fetchScheduledWorkflows()
+      }
+    },
   }))
 
   // Get status indicator for an agent
