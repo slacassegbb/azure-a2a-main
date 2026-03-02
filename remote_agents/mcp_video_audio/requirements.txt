@@ -1,0 +1,5 @@
+fastmcp>=2.0.0
+ffmpeg-python>=0.2.0
+Pillow>=11.0.0
+uvicorn
+starlette

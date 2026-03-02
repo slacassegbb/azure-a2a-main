@@ -39,11 +39,13 @@ Existing agent port assignments. New agents must not conflict.
 | 9041 | Google Maps | No |
 | 9042 | HubSpot | Yes |
 | 9043 | Assessment & Estimation | No |
+| 9044 | Music (Suno API) | No |
+| 9045 | Video & Audio Editing | No |
 | 9066 | Image Analysis | No |
 
 ## Available Ranges
 - 8007-8008, 8010-8014, 8017-8019, 8022-8099 (legacy range)
-- 9044-9065, 9067-9099 (modern range)
+- 9046-9065, 9067-9099 (modern range)
 
 ## Gradio UI Ports
 Convention: A2A_PORT + 65 or use 8085 default.
