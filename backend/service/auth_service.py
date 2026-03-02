@@ -391,7 +391,7 @@ class AuthService:
         except jwt.ExpiredSignatureError:
             print(f"[AuthService] Token verification failed: TOKEN EXPIRED")
             return None
-        except jwt.JWTError as e:
+        except jwt.PyJWTError as e:
             print(f"[AuthService] Token verification failed: JWT Error - {e}")
             return None
     
