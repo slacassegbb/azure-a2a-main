@@ -2183,18 +2183,28 @@ def main():
             raise HTTPException(status_code=500, detail=f"Failed to update schedule: {str(e)}")
     
     @app.delete("/api/schedules/{schedule_id}")
-    async def delete_schedule(schedule_id: str):
+    async def delete_schedule(schedule_id: str, current_user: dict = Depends(get_current_user)):
         """
-        Delete a scheduled workflow.
-        
+        Delete a scheduled workflow. Requires authentication and ownership.
+
         Example curl:
-            curl -X DELETE http://localhost:12000/api/schedules/{schedule_id}
+            curl -X DELETE -H "Authorization: Bearer YOUR_TOKEN" http://localhost:12000/api/schedules/{schedule_id}
         """
         scheduler = get_workflow_scheduler()
+
+        # Verify schedule exists and belongs to the current user
+        schedule = scheduler.get_schedule(schedule_id)
+        if not schedule:
+            raise HTTPException(status_code=404, detail="Schedule not found")
+
+        user_id = current_user.get("user_id")
+        if schedule.session_id != user_id:
+            raise HTTPException(status_code=403, detail="Not authorized to delete this schedule")
+
         success = scheduler.delete_schedule(schedule_id)
         if not success:
-            raise HTTPException(status_code=404, detail="Schedule not found")
-        
+            raise HTTPException(status_code=500, detail="Failed to delete schedule")
+
         return {
             "success": True,
             "message": "Schedule deleted"

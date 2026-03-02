@@ -18,6 +18,7 @@ import jwt
 # Authentication constants
 SECRET_KEY = os.environ.get("SECRET_KEY", "change-me")
 ALGORITHM = os.environ.get("JWT_ALGORITHM", "HS256")
+TOKEN_EXPIRATION_HOURS = int(os.environ.get("JWT_EXPIRATION_HOURS", "24"))
 
 # Default data directory
 DEFAULT_DATA_DIR = Path(__file__).resolve().parent.parent / "data"
@@ -343,7 +344,7 @@ class AuthService:
         if expires_delta:
             expire = datetime.utcnow() + expires_delta
         else:
-            expire = datetime.utcnow() + timedelta(hours=24)
+            expire = datetime.utcnow() + timedelta(hours=TOKEN_EXPIRATION_HOURS)
             
         to_encode = {
             "sub": user.email,

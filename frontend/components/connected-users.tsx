@@ -13,6 +13,7 @@ import { SessionInviteButton } from "@/components/session-invite"
 import { leaveCollaborativeSession, isInCollaborativeSession, getOrCreateSessionId } from "@/lib/session"
 import { logDebug, warnDebug, errorDebug, logInfo } from '@/lib/debug'
 import { API_BASE_URL } from '@/lib/api-config'
+import { authFetch } from '@/lib/auth'
 
 type ConnectedUser = {
   user_id: string
@@ -63,21 +64,17 @@ export function ConnectedUsers() {
     try {
       const baseUrl = API_BASE_URL
       const token = sessionStorage.getItem('auth_token')
-      
+
       // If no token, user is not logged in - show empty
       if (!token) {
         setUsers([])
         return
       }
-      
-      const response = await fetch(`${baseUrl}/api/auth/active-users`, {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      })
-      
+
+      const response = await authFetch(`${baseUrl}/api/auth/active-users`)
+
       if (response.status === 401) {
-        // Token invalid/expired - user not logged in
+        // Token invalid/expired - handled by authFetch
         setUsers([])
         return
       }

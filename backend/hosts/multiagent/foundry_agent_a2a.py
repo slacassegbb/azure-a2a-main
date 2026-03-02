@@ -4812,7 +4812,8 @@ Answer with just JSON:
 
                     elif route_selection.approach == "scheduled_task":
                         # Create a scheduled workflow from natural language
-                        log_debug(f"[Route Selection] Using scheduled_task creation")
+                        # If route_selection identified an existing workflow, pass it so we reuse it
+                        log_debug(f"[Route Selection] Using scheduled_task creation (selected_workflow={route_selection.selected_workflow})")
                         await self._emit_granular_agent_event(
                             "foundry-host-agent", "🔄 Route Decision: Creating scheduled task", context_id,
                             event_type="info", metadata={"route": "scheduled_task"}
@@ -4827,6 +4828,8 @@ Answer with just JSON:
                                 user_timezone=user_tz,
                                 user_id=uid,
                                 auto_reply_channel=auto_reply_channel,
+                                available_workflows=available_workflows,
+                                selected_workflow_name=route_selection.selected_workflow,
                             )
                             await self._store_user_host_interaction_safe(
                                 user_message_parts=message_parts,

@@ -10,6 +10,7 @@ import { useState, useEffect, useRef } from "react"
 import { ScheduleWorkflowDialog } from "./schedule-workflow-dialog"
 import { logDebug, warnDebug, errorDebug, logInfo } from '@/lib/debug'
 import { API_BASE_URL } from '@/lib/api-config'
+import { authFetch } from '@/lib/auth'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
@@ -245,8 +246,8 @@ export function WorkflowCatalog({ onLoadWorkflow, onSaveWorkflow, onNewWorkflow,
     }
     
     try {
-      const response = await fetch(`${API_BASE_URL}/api/schedules/${scheduleId}`, {
-        method: 'DELETE'
+      const response = await authFetch(`${API_BASE_URL}/api/schedules/${scheduleId}`, {
+        method: 'DELETE',
       })
       
       if (response.ok) {
@@ -265,7 +266,7 @@ export function WorkflowCatalog({ onLoadWorkflow, onSaveWorkflow, onNewWorkflow,
   // Function to toggle (pause/resume) a scheduled workflow
   const handleToggleScheduledWorkflow = async (scheduleId: string, currentlyEnabled: boolean) => {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/schedules/${scheduleId}/toggle?enabled=${!currentlyEnabled}`, {
+      const response = await authFetch(`${API_BASE_URL}/api/schedules/${scheduleId}/toggle?enabled=${!currentlyEnabled}`, {
         method: 'POST'
       })
       

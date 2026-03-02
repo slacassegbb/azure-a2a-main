@@ -1242,9 +1242,9 @@ Specialized agents that can handle specific tasks independently.
 - User wants something done ON A RECURRING SCHEDULE or at a SPECIFIC FUTURE TIME
 - Temporal patterns: "every day", "every morning", "at 3pm", "weekly", "hourly", "every 10 minutes", "remind me"
 - User is setting up an automation, not running something immediately
-- Example: "Send me AMD news every day at 3pm" → scheduled_task
-- Example: "Email me a report every Monday" → scheduled_task
-- Example: "Run invoice workflow every 10 minutes" → scheduled_task
+- If the request matches an EXISTING workflow, set selected_workflow to that workflow's name so it is reused
+- Example: "Send me AMD news every day at 3pm" → scheduled_task (new workflow if none match)
+- Example: "Run invoice workflow every 10 minutes" → scheduled_task, selected_workflow="Invoice Workflow"
 - NOT: "What is the AMD stock price?" (immediate, no schedule) → other approaches
 
 ### ⚠️ PRIORITY RULES
@@ -1257,7 +1257,7 @@ Specialized agents that can handle specific tasks independently.
 ### 📤 OUTPUT FORMAT
 Return a JSON object with:
 - approach: "workflow" | "workflows_parallel" | "single_agent" | "multi_agent" | "direct" | "scheduled_task"
-- selected_workflow: Name of workflow (if approach="workflow") or null
+- selected_workflow: Name of workflow (if approach="workflow", OR if approach="scheduled_task" and an existing workflow matches) or null
 - selected_workflows: List of workflow names (if approach="workflows_parallel") or null
 - selected_agent: Name of agent (if approach="single_agent") or null
 - schedule_hint: Brief schedule description (if approach="scheduled_task") or null
@@ -1380,22 +1380,25 @@ Analyze this request and decide the best approach."""
         self, user_message: str, context_id: str,
         session_context: "SessionContext",
         user_timezone: str = "UTC", user_id: str = None,
-        auto_reply_channel: Optional[str] = None
+        auto_reply_channel: Optional[str] = None,
+        available_workflows: Optional[List[Dict[str, Any]]] = None,
+        selected_workflow_name: Optional[str] = None,
     ) -> List[str]:
-        """Create a workflow and schedule from natural language. Returns confirmation messages."""
+        """Create a schedule from natural language. Reuses an existing workflow if one matches,
+        otherwise creates a new workflow. Returns confirmation messages."""
         from service.workflow_service import get_workflow_service
         from service.scheduler_service import get_workflow_scheduler, ScheduleType
         from service.agent_colors import assign_color_for_agent
         from backend_production import generate_workflow_text
 
-        log_info(f"[Scheduled Task] Handling scheduled task request from user={user_id}, tz={user_timezone}, channel={auto_reply_channel}")
+        log_info(f"[Scheduled Task] Handling scheduled task request from user={user_id}, tz={user_timezone}, channel={auto_reply_channel}, selected_workflow={selected_workflow_name}")
 
         await self._emit_granular_agent_event(
             "foundry-host-agent", "Planning your scheduled task...", context_id,
             event_type="phase", metadata={"phase": "scheduled_task_planning"}
         )
 
-        # 1. LLM planning call
+        # 1. LLM planning call (extracts schedule params + generates workflow steps)
         plan = await self._plan_scheduled_task(user_message, user_timezone, context_id)
 
         # 2. Resolve notification channel: if request came via SMS, default to SMS
@@ -1404,90 +1407,122 @@ Analyze this request and decide the best approach."""
         else:
             channel = plan.notification_channel if plan.notification_channel != "unknown" else "chat"
 
-        # 3. Build workflow steps in DB format
-        db_steps = []
-        for i, step in enumerate(plan.steps):
-            step_id = str(uuid.uuid4())
-            db_steps.append({
-                "id": step_id,
-                "agentId": step.agent_name.lower().replace(" ", "-"),
-                "agentName": step.agent_name,
-                "agentColor": assign_color_for_agent(step.agent_name),
-                "description": step.description,
-                "x": 100,
-                "y": 100 + (i * 120),
-                "order": i,
-            })
-
-        # 4. Append notification step if email or sms — but only if LLM didn't already include one
-        existing_agent_names = {s.agent_name.lower() for s in plan.steps}
-        if channel == "email":
-            # Check if LLM already included an email agent step
-            has_email_step = any("email" in name for name in existing_agent_names)
-            if not has_email_step:
-                notif_id = str(uuid.uuid4())
-                email_agent_name = None
-                for card in self.cards.values():
-                    if "email" in card.name.lower():
-                        email_agent_name = card.name
-                        break
-                if not email_agent_name:
-                    email_agent_name = "Email Agent"
-                db_steps.append({
-                    "id": notif_id,
-                    "agentId": email_agent_name.lower().replace(" ", "-"),
-                    "agentName": email_agent_name,
-                    "agentColor": assign_color_for_agent(email_agent_name),
-                    "description": "Compose and send a detailed email report from ALL previous workflow step outputs. Include every specific data point: prices, percentages, headlines, analysis, and recommendations. Write a comprehensive multi-paragraph message — do not compress into a short summary.",
-                    "x": 100,
-                    "y": 100 + (len(db_steps) * 120),
-                    "order": len(db_steps),
-                })
-        elif channel == "sms":
-            has_sms_step = any("twilio" in name or "sms" in name for name in existing_agent_names)
-            if not has_sms_step:
-                notif_id = str(uuid.uuid4())
-                sms_agent_name = None
-                for card in self.cards.values():
-                    if "twilio" in card.name.lower() or "sms" in card.name.lower():
-                        sms_agent_name = card.name
-                        break
-                if not sms_agent_name:
-                    sms_agent_name = "Twilio SMS Agent"
-                db_steps.append({
-                    "id": notif_id,
-                    "agentId": sms_agent_name.lower().replace(" ", "-"),
-                    "agentName": sms_agent_name,
-                    "agentColor": assign_color_for_agent(sms_agent_name),
-                    "description": "Compose and send a detailed SMS report from ALL previous workflow step outputs. Include every specific data point: prices, percentages, headlines, analysis, and recommendations. Write a comprehensive message — do not compress into a short summary.",
-                    "x": 100,
-                    "y": 100 + (len(db_steps) * 120),
-                    "order": len(db_steps),
-                })
-
-        # 5. Build sequential connections
-        db_connections = []
-        for i in range(len(db_steps) - 1):
-            db_connections.append({
-                "id": str(uuid.uuid4()),
-                "fromStepId": db_steps[i]["id"],
-                "toStepId": db_steps[i + 1]["id"],
-            })
-
-        # 6. Save workflow to DB
-        workflow_id = str(uuid.uuid4())
+        # 3. Check if we should reuse an existing workflow
         wf_service = get_workflow_service()
-        wf_service.create_workflow(
-            workflow_id=workflow_id,
-            name=plan.workflow_name,
-            user_id=user_id or "system",
-            steps=db_steps,
-            connections=db_connections,
-            description=plan.workflow_description,
-            category="Scheduled",
-            goal=plan.workflow_goal,
-        )
-        log_info(f"[Scheduled Task] Created workflow '{plan.workflow_name}' (id={workflow_id})")
+        existing_workflow = None
+
+        # Try matching by selected_workflow_name from route selection
+        if selected_workflow_name and available_workflows:
+            selected_lower = selected_workflow_name.lower().strip()
+            for wf in available_workflows:
+                if wf.get('name', '').lower().strip() == selected_lower:
+                    existing_workflow = wf
+                    break
+
+        if existing_workflow:
+            # Reuse the existing workflow — no new workflow record needed
+            workflow_id = existing_workflow['id']
+            workflow_name = existing_workflow['name']
+            db_steps = None  # We'll read from the workflow for display
+            db_connections = None
+            log_info(f"[Scheduled Task] Reusing existing workflow '{workflow_name}' (id={workflow_id})")
+
+            # Load full workflow for display text
+            full_wf = wf_service.get_workflow(workflow_id)
+            if full_wf:
+                db_steps = full_wf.steps or []
+                db_connections = full_wf.connections or []
+                workflow_name = full_wf.name
+            else:
+                # Fallback: use workflow text from available_workflows
+                db_steps = []
+                db_connections = []
+        else:
+            # No existing workflow matches — create a new one
+
+            # 3a. Build workflow steps in DB format
+            db_steps = []
+            for i, step in enumerate(plan.steps):
+                step_id = str(uuid.uuid4())
+                db_steps.append({
+                    "id": step_id,
+                    "agentId": step.agent_name.lower().replace(" ", "-"),
+                    "agentName": step.agent_name,
+                    "agentColor": assign_color_for_agent(step.agent_name),
+                    "description": step.description,
+                    "x": 100,
+                    "y": 100 + (i * 120),
+                    "order": i,
+                })
+
+            # 3b. Append notification step if email or sms — but only if LLM didn't already include one
+            existing_agent_names = {s.agent_name.lower() for s in plan.steps}
+            if channel == "email":
+                has_email_step = any("email" in name for name in existing_agent_names)
+                if not has_email_step:
+                    notif_id = str(uuid.uuid4())
+                    email_agent_name = None
+                    for card in self.cards.values():
+                        if "email" in card.name.lower():
+                            email_agent_name = card.name
+                            break
+                    if not email_agent_name:
+                        email_agent_name = "Email Agent"
+                    db_steps.append({
+                        "id": notif_id,
+                        "agentId": email_agent_name.lower().replace(" ", "-"),
+                        "agentName": email_agent_name,
+                        "agentColor": assign_color_for_agent(email_agent_name),
+                        "description": "Compose and send a detailed email report from ALL previous workflow step outputs. Include every specific data point: prices, percentages, headlines, analysis, and recommendations. Write a comprehensive multi-paragraph message — do not compress into a short summary.",
+                        "x": 100,
+                        "y": 100 + (len(db_steps) * 120),
+                        "order": len(db_steps),
+                    })
+            elif channel == "sms":
+                has_sms_step = any("twilio" in name or "sms" in name for name in existing_agent_names)
+                if not has_sms_step:
+                    notif_id = str(uuid.uuid4())
+                    sms_agent_name = None
+                    for card in self.cards.values():
+                        if "twilio" in card.name.lower() or "sms" in card.name.lower():
+                            sms_agent_name = card.name
+                            break
+                    if not sms_agent_name:
+                        sms_agent_name = "Twilio SMS Agent"
+                    db_steps.append({
+                        "id": notif_id,
+                        "agentId": sms_agent_name.lower().replace(" ", "-"),
+                        "agentName": sms_agent_name,
+                        "agentColor": assign_color_for_agent(sms_agent_name),
+                        "description": "Compose and send a detailed SMS report from ALL previous workflow step outputs. Include every specific data point: prices, percentages, headlines, analysis, and recommendations. Write a comprehensive message — do not compress into a short summary.",
+                        "x": 100,
+                        "y": 100 + (len(db_steps) * 120),
+                        "order": len(db_steps),
+                    })
+
+            # 3c. Build sequential connections
+            db_connections = []
+            for i in range(len(db_steps) - 1):
+                db_connections.append({
+                    "id": str(uuid.uuid4()),
+                    "fromStepId": db_steps[i]["id"],
+                    "toStepId": db_steps[i + 1]["id"],
+                })
+
+            # 3d. Save new workflow to DB
+            workflow_id = str(uuid.uuid4())
+            workflow_name = plan.workflow_name
+            wf_service.create_workflow(
+                workflow_id=workflow_id,
+                name=workflow_name,
+                user_id=user_id or "system",
+                steps=db_steps,
+                connections=db_connections,
+                description=plan.workflow_description,
+                category="Scheduled",
+                goal=plan.workflow_goal,
+            )
+            log_info(f"[Scheduled Task] Created new workflow '{workflow_name}' (id={workflow_id})")
 
         # 7. Create schedule
         schedule_type_map = {
@@ -1564,19 +1599,19 @@ Analyze this request and decide the best approach."""
 
         schedule = scheduler.create_schedule(
             workflow_id=workflow_id,
-            workflow_name=plan.workflow_name,
+            workflow_name=workflow_name,
             session_id=session_id,
             schedule_type=sched_type,
             **schedule_kwargs,
         )
-        log_info(f"[Scheduled Task] Created schedule {schedule.id} for '{plan.workflow_name}' (enabled=True)")
+        log_info(f"[Scheduled Task] Created schedule {schedule.id} for '{workflow_name}' (enabled=True)")
 
         # 8. Build confirmation message
         schedule_desc = self._format_schedule_description(plan, user_timezone)
         delivery_label = {"email": "Email", "sms": "SMS", "chat": "Chat"}.get(channel, "Chat")
 
         # Generate workflow text for display
-        workflow_text = generate_workflow_text(db_steps, db_connections)
+        workflow_text = generate_workflow_text(db_steps or [], db_connections or [])
 
         # Format steps for display
         steps_display = ""
@@ -1584,9 +1619,10 @@ Analyze this request and decide the best approach."""
             if line.strip():
                 steps_display += f"  {line.strip()}\n"
 
+        reuse_note = " (existing workflow)" if existing_workflow else ""
         confirmation = (
             f"✅ **Schedule activated!**\n\n"
-            f"**Workflow:** {plan.workflow_name}\n"
+            f"**Workflow:** {workflow_name}{reuse_note}\n"
             f"**Schedule:** {schedule_desc}\n"
             f"**Delivery:** {delivery_label}\n\n"
             f"**Steps:**\n{steps_display}\n"

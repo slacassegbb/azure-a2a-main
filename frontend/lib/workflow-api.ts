@@ -7,7 +7,7 @@
 
 import { logDebug } from '@/lib/debug'
 import { API_BASE_URL } from '@/lib/api-config'
-import { getAuthToken, getAuthHeaders } from '@/lib/auth'
+import { getAuthToken, authFetch } from '@/lib/auth'
 
 export interface WorkflowStep {
   id: string
@@ -66,9 +66,8 @@ export interface WorkflowUpdateRequest {
  */
 export async function getUserWorkflows(): Promise<Workflow[]> {
   try {
-    const response = await fetch(`${API_BASE_URL}/api/workflows`, {
+    const response = await authFetch(`${API_BASE_URL}/api/workflows`, {
       method: 'GET',
-      headers: getAuthHeaders(),
     })
 
     if (!response.ok) {
@@ -98,9 +97,8 @@ export async function createWorkflow(workflow: WorkflowCreateRequest): Promise<W
       return null
     }
 
-    const response = await fetch(`${API_BASE_URL}/api/workflows`, {
+    const response = await authFetch(`${API_BASE_URL}/api/workflows`, {
       method: 'POST',
-      headers: getAuthHeaders(),
       body: JSON.stringify(workflow),
     })
 
@@ -129,9 +127,8 @@ export async function updateWorkflow(workflowId: string, updates: WorkflowUpdate
       return null
     }
 
-    const response = await fetch(`${API_BASE_URL}/api/workflows/${workflowId}`, {
+    const response = await authFetch(`${API_BASE_URL}/api/workflows/${workflowId}`, {
       method: 'PUT',
-      headers: getAuthHeaders(),
       body: JSON.stringify(updates),
     })
 
@@ -160,9 +157,8 @@ export async function deleteWorkflow(workflowId: string): Promise<boolean> {
       return false
     }
 
-    const response = await fetch(`${API_BASE_URL}/api/workflows/${workflowId}`, {
+    const response = await authFetch(`${API_BASE_URL}/api/workflows/${workflowId}`, {
       method: 'DELETE',
-      headers: getAuthHeaders(),
     })
 
     if (!response.ok) {
