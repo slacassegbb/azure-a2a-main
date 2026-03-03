@@ -348,6 +348,7 @@ export function AgentCatalog() {
         version: agent.version,
         url: agent.endpoint,
         color: agent.rawColor,
+        logo_url: agent._raw?.logo_url,
         capabilities: agent.capabilities,
         skills: agent.skills,
         defaultInputModes: agent.defaultInputModes,
