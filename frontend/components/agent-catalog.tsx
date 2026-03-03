@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useMemo } from "react"
+import { useState, useEffect, useMemo, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -63,7 +63,7 @@ import { fetchRegistryAgents, checkAgentHealth, checkAgentHealthWithFallback } f
 import { API_BASE_URL } from '@/lib/api-config'
 import { getUserAgentConfigs, getAgentConfig, saveAgentConfig, type ConfigSchemaField } from '@/lib/user-agent-config-api'
 import { Label } from "@/components/ui/label"
-import { Settings, Check } from "lucide-react"
+import { Settings, Check, Camera, X } from "lucide-react"
 
 export function AgentCatalog() {
   const { toast } = useToast()
@@ -82,6 +82,49 @@ export function AgentCatalog() {
   const [configDialogAgent, setConfigDialogAgent] = useState<any>(null)
   const [configFormData, setConfigFormData] = useState<Record<string, string>>({})
   const [configSaving, setConfigSaving] = useState(false)
+
+  // Logo upload state
+  const logoInputRef = useRef<HTMLInputElement>(null)
+  const [logoUploadAgent, setLogoUploadAgent] = useState<string | null>(null)
+
+  const handleLogoUpload = async (agentName: string, file: File) => {
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+      const res = await fetch(`${API_BASE_URL}/api/agents/${encodeURIComponent(agentName)}/logo`, {
+        method: 'POST',
+        body: formData,
+      })
+      const data = await res.json()
+      if (data.success) {
+        setCatalogAgents(prev => prev.map(a =>
+          a.name === agentName ? { ...a, _raw: { ...a._raw, logo_url: data.logo_url } } : a
+        ))
+        toast({ title: "Logo updated", description: `Logo set for ${agentName}` })
+      } else {
+        toast({ title: "Upload failed", description: data.error, variant: "destructive" })
+      }
+    } catch (e) {
+      toast({ title: "Upload failed", description: String(e), variant: "destructive" })
+    }
+  }
+
+  const handleLogoRemove = async (agentName: string) => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/agents/${encodeURIComponent(agentName)}/logo`, {
+        method: 'DELETE',
+      })
+      const data = await res.json()
+      if (data.success) {
+        setCatalogAgents(prev => prev.map(a =>
+          a.name === agentName ? { ...a, _raw: { ...a._raw, logo_url: null } } : a
+        ))
+        toast({ title: "Logo removed", description: `Reverted to default icon for ${agentName}` })
+      }
+    } catch (e) {
+      toast({ title: "Remove failed", description: String(e), variant: "destructive" })
+    }
+  }
 
   // Derived categories from agents
   const categories = useMemo(() => getAllCategories(catalogAgents), [catalogAgents])
@@ -539,10 +582,37 @@ export function AgentCatalog() {
                       : "border-slate-700/60 hover:border-indigo-500/60"
                   }`}
                 >
-                  {/* Header: icon + name + status on one line */}
+                  {/* Header: icon/logo + name + status on one line */}
                   <div className="flex items-center gap-2.5 px-3 pt-3">
-                    <div className={`p-2 rounded-lg ${agent.bgColor} flex-shrink-0`}>
-                      <AgentIcon className={`h-4 w-4 ${agent.color}`} />
+                    <div
+                      className={`relative p-2 rounded-lg ${agent.bgColor} flex-shrink-0 group/logo cursor-pointer`}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setLogoUploadAgent(agent.name)
+                        logoInputRef.current?.click()
+                      }}
+                      title="Click to upload logo"
+                    >
+                      {agent._raw?.logo_url ? (
+                        <img src={agent._raw.logo_url} alt="" className="h-4 w-4 object-contain" />
+                      ) : (
+                        <AgentIcon className={`h-4 w-4 ${agent.color}`} />
+                      )}
+                      <div className="absolute inset-0 rounded-lg bg-black/50 opacity-0 group-hover/logo:opacity-100 transition-opacity flex items-center justify-center">
+                        <Camera className="h-3 w-3 text-white" />
+                      </div>
+                      {agent._raw?.logo_url && (
+                        <button
+                          className="absolute -top-1 -right-1 h-3.5 w-3.5 rounded-full bg-red-500 text-white opacity-0 group-hover/logo:opacity-100 transition-opacity flex items-center justify-center"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            handleLogoRemove(agent.name)
+                          }}
+                          title="Remove logo"
+                        >
+                          <X className="h-2 w-2" />
+                        </button>
+                      )}
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-1.5">
@@ -752,7 +822,11 @@ export function AgentCatalog() {
             <>
               <DialogHeader>
                 <DialogTitle className="flex items-center gap-2">
-                  {(() => { const Icon = selectedAgent.icon; return <Icon className={`h-5 w-5 ${selectedAgent.color}`} /> })()}
+                  {selectedAgent._raw?.logo_url ? (
+                    <img src={selectedAgent._raw.logo_url} alt="" className="h-5 w-5 object-contain" />
+                  ) : (
+                    (() => { const Icon = selectedAgent.icon; return <Icon className={`h-5 w-5 ${selectedAgent.color}`} /> })()
+                  )}
                   {selectedAgent.name}
                 </DialogTitle>
                 <DialogDescription>
@@ -826,6 +900,22 @@ export function AgentCatalog() {
           )}
         </DialogContent>
       </Dialog>
+
+      {/* Hidden file input for logo upload */}
+      <input
+        ref={logoInputRef}
+        type="file"
+        accept="image/png,image/jpeg,image/svg+xml,image/webp"
+        className="hidden"
+        onChange={async (e) => {
+          const file = e.target.files?.[0]
+          if (file && logoUploadAgent) {
+            await handleLogoUpload(logoUploadAgent, file)
+            setLogoUploadAgent(null)
+          }
+          if (logoInputRef.current) logoInputRef.current.value = ''
+        }}
+      />
     </div>
   )
 }

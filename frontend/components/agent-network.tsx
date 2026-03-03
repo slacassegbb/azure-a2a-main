@@ -1611,7 +1611,11 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
                               className="p-2 rounded-lg flex items-center justify-center"
                               style={{ backgroundColor: bgColor }}
                             >
-                              <Bot className={cn("h-4 w-4", colors.color)} />
+                              {agent?.iconUrl && agent.iconUrl !== '/placeholder.svg' ? (
+                                <img src={agent.iconUrl} alt="" className="h-4 w-4 object-contain" />
+                              ) : (
+                                <Bot className={cn("h-4 w-4", colors.color)} />
+                              )}
                             </div>
                           )
                         })()}
@@ -1665,7 +1669,11 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
                                   className="p-2 rounded-lg flex items-center justify-center"
                                   style={{ backgroundColor: bgColor }}
                                 >
-                                  <Bot className={cn("h-4 w-4", colors.color)} />
+                                  {agent?.iconUrl && agent.iconUrl !== '/placeholder.svg' ? (
+                                    <img src={agent.iconUrl} alt="" className="h-4 w-4 object-contain" />
+                                  ) : (
+                                    <Bot className={cn("h-4 w-4", colors.color)} />
+                                  )}
                                 </div>
                               )
                             })()}

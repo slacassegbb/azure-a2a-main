@@ -101,6 +101,23 @@ class AgentRegistry:
             log_warning(f"[AgentRegistry] config_schema migration warning: {e}")
             self.db_conn.rollback()
 
+        # Migration: add logo_url column if it doesn't exist
+        try:
+            self._ensure_db_connection()
+            cur = self.db_conn.cursor()
+            cur.execute("""
+                SELECT column_name FROM information_schema.columns
+                WHERE table_name = 'agents' AND column_name = 'logo_url'
+            """)
+            if not cur.fetchone():
+                cur.execute("ALTER TABLE agents ADD COLUMN logo_url VARCHAR(500)")
+                self.db_conn.commit()
+                log_info("[AgentRegistry] Added logo_url column to agents table")
+            cur.close()
+        except Exception as e:
+            log_warning(f"[AgentRegistry] logo_url migration warning: {e}")
+            self.db_conn.rollback()
+
         # One-time migration: assign curated distinct colors to known agents.
         # Uses a flag row check so it only runs once.
         try:
@@ -164,7 +181,7 @@ class AgentRegistry:
                     local_url, production_url,
                     default_input_modes, default_output_modes,
                     capabilities, skills, color,
-                    config_schema,
+                    config_schema, logo_url,
                     created_at, updated_at
                 FROM agents
                 ORDER BY name
@@ -297,12 +314,12 @@ class AgentRegistry:
                     name, description, version,
                     local_url, production_url,
                     default_input_modes, default_output_modes,
-                    capabilities, skills, color, config_schema
+                    capabilities, skills, color, config_schema, logo_url
                 ) VALUES (
                     %s, %s, %s,
                     %s, %s,
                     %s::jsonb, %s::jsonb,
-                    %s::jsonb, %s::jsonb, %s, %s::jsonb
+                    %s::jsonb, %s::jsonb, %s, %s::jsonb, %s
                 )
                 ON CONFLICT (name) DO UPDATE SET
                     description = EXCLUDED.description,
@@ -315,6 +332,7 @@ class AgentRegistry:
                     skills = EXCLUDED.skills,
                     color = COALESCE(EXCLUDED.color, agents.color),
                     config_schema = COALESCE(EXCLUDED.config_schema, agents.config_schema),
+                    logo_url = COALESCE(EXCLUDED.logo_url, agents.logo_url),
                     updated_at = CURRENT_TIMESTAMP
             """, (
                 agent.get('name'),
@@ -327,7 +345,8 @@ class AgentRegistry:
                 json.dumps(agent.get('capabilities', {})),
                 json.dumps(agent.get('skills', [])),
                 color,
-                config_schema_json
+                config_schema_json,
+                agent.get('logo_url')
             ))
             self.db_conn.commit()
             cur.close()
@@ -337,12 +356,40 @@ class AgentRegistry:
             self.db_conn.rollback()
             return False
     
+    def update_agent_logo(self, agent_name: str, logo_url: str | None) -> bool:
+        """Update the logo_url for a specific agent.
+
+        Args:
+            agent_name: Name of the agent to update
+            logo_url: URL of the logo image, or None to remove
+
+        Returns:
+            True if updated successfully, False otherwise
+        """
+        if not self.use_database:
+            return False
+        try:
+            self._ensure_db_connection()
+            cur = self.db_conn.cursor()
+            cur.execute(
+                "UPDATE agents SET logo_url = %s WHERE name = %s",
+                (logo_url, agent_name)
+            )
+            updated = cur.rowcount > 0
+            self.db_conn.commit()
+            cur.close()
+            return updated
+        except Exception as e:
+            log_error(f"[AgentRegistry] Error updating logo for {agent_name}: {e}")
+            self.db_conn.rollback()
+            return False
+
     def add_agent(self, agent: Dict[str, Any]) -> bool:
         """Add a new agent to the registry.
-        
+
         Args:
             agent: Agent configuration dictionary
-            
+
         Returns:
             True if agent was added, False if agent with same name or URL already exists
         """

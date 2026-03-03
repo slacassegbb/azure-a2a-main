@@ -1162,7 +1162,8 @@ class ConversationServer:
                         'description': agent.get('description', ''),
                         'url': agent_url,
                         'version': agent.get('version', ''),
-                        'iconUrl': agent.get('iconUrl'),
+                        'iconUrl': agent.get('logo_url') or agent.get('iconUrl'),
+                        'logo_url': agent.get('logo_url'),
                         'provider': agent.get('provider'),
                         'documentationUrl': agent.get('documentationUrl'),
                         'capabilities': {
@@ -1174,6 +1175,7 @@ class ConversationServer:
                         'skills': agent.get('skills', []),
                         'defaultInputModes': agent.get('defaultInputModes', []),
                         'defaultOutputModes': agent.get('defaultOutputModes', []),
+                        'color': agent.get('color'),
                         'type': 'remote',  # Mark as remote agent
                         'status': 'online' if agent_status else 'offline'
                     }

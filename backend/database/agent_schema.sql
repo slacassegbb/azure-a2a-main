@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS agents (
     skills JSONB DEFAULT '[]'::jsonb,
     color VARCHAR(7),
     config_schema JSONB DEFAULT NULL,
+    logo_url VARCHAR(500),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
@@ -51,3 +52,4 @@ COMMENT ON COLUMN agents.skills IS 'JSONB array of agent skills and capabilities
 COMMENT ON COLUMN agents.capabilities IS 'JSONB object of agent capabilities (e.g., streaming)';
 COMMENT ON COLUMN agents.color IS 'Hex color code for agent display (e.g., #ec4899). Auto-assigned if not provided.';
 COMMENT ON COLUMN agents.config_schema IS 'JSONB array of user-configurable fields. NULL means no user config needed.';
+COMMENT ON COLUMN agents.logo_url IS 'URL to agent logo image in Azure Blob Storage. NULL means use default icon.';

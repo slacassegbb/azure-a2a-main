@@ -2497,6 +2497,67 @@ def main():
                 "error": str(e)
             }
 
+    # Agent logo upload/delete endpoints
+    @app.post("/api/agents/{agent_name}/logo")
+    async def upload_agent_logo(agent_name: str, file: UploadFile = File(...)):
+        """Upload a logo image for an agent. Stores in Azure Blob Storage and updates the DB."""
+        try:
+            # Validate image type
+            allowed_types = {'image/png', 'image/jpeg', 'image/jpg', 'image/svg+xml', 'image/webp'}
+            if file.content_type not in allowed_types:
+                return {"success": False, "error": f"Invalid file type: {file.content_type}. Allowed: png, jpg, svg, webp"}
+
+            content = await file.read()
+            if len(content) > 2 * 1024 * 1024:  # 2MB limit for logos
+                return {"success": False, "error": "Logo must be under 2MB"}
+
+            # Upload to blob storage under agent-logos/ prefix
+            file_id = str(uuid.uuid4())
+            safe_agent_name = agent_name.replace(' ', '_').replace('/', '_')
+            ext = file.filename.rsplit('.', 1)[-1] if file.filename and '.' in file.filename else 'png'
+            blob_filename = f"{safe_agent_name}_logo.{ext}"
+
+            logo_url = upload_to_azure_blob(
+                file_id=file_id,
+                file_name=blob_filename,
+                file_bytes=content,
+                mime_type=file.content_type or 'image/png',
+                session_id='agent-logos'
+            )
+
+            # Update the agent's logo_url in the database
+            from service.agent_registry import get_registry
+            registry = get_registry()
+            updated = registry.update_agent_logo(agent_name, logo_url)
+
+            if not updated:
+                return {"success": False, "error": f"Agent '{agent_name}' not found"}
+
+            log_info(f"[LOGO] Updated logo for '{agent_name}': {logo_url[:80]}...")
+            return {"success": True, "logo_url": logo_url}
+
+        except Exception as e:
+            log_error(f"[LOGO] Upload failed for '{agent_name}': {e}")
+            return {"success": False, "error": str(e)}
+
+    @app.delete("/api/agents/{agent_name}/logo")
+    async def delete_agent_logo(agent_name: str):
+        """Remove a logo from an agent, reverting to default icon."""
+        try:
+            from service.agent_registry import get_registry
+            registry = get_registry()
+            updated = registry.update_agent_logo(agent_name, None)
+
+            if not updated:
+                return {"success": False, "error": f"Agent '{agent_name}' not found"}
+
+            log_info(f"[LOGO] Removed logo for '{agent_name}'")
+            return {"success": True}
+
+        except Exception as e:
+            log_error(f"[LOGO] Delete failed for '{agent_name}': {e}")
+            return {"success": False, "error": str(e)}
+
     # Add endpoint to list user files
     @app.get("/api/files")
     async def list_user_files(request: Request):
