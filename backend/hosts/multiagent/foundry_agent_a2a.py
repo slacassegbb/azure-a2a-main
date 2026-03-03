@@ -451,7 +451,7 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
                     log_foundry_debug(f"[AZURE] Creating stream (attempt {attempt + 1}/{max_retries + 1})...")
                     log_foundry_debug(f"[AZURE] Agent: {self.agent.name if self.agent else 'None'}, Input length: {len(user_message)}")
                     log_foundry_debug(f"[AZURE] Instructions length: {len(instructions)} chars")
-                    log_foundry_debug(f"[AZURE] Checking if Email Agent is in instructions: {'Email Agent'in instructions}")
+                    log_foundry_debug(f"[AZURE] Checking if Outlook Agent is in instructions: {'Microsoft Outlook Agent'in instructions}")
                     log_foundry_debug(f"[AZURE] Tools count: {len(tools)}")
 
                     # Build multimodal input when images are present
@@ -3746,7 +3746,7 @@ Answer with just JSON:
         Process and index file artifacts returned by remote agents for memory search.
 
         This enables powerful cross-agent workflows:
-        - Email Agent downloads invoice PDF → indexed → search_memory can find it
+        - Microsoft Outlook Agent downloads invoice PDF → indexed → search_memory can find it
         - Document Agent analyzes contract → indexed → future queries can reference it
         - Image Agent generates image → indexed via Content Understanding → searchable
         - Any agent that produces files → automatically processed and searchable
@@ -4999,7 +4999,7 @@ Answer with just JSON:
                             workflow_agents = []
                             if workflow:
                                 import re
-                                # Parse workflow steps like "1. Email Agent: ..." or "2a. QuickBooks Agent: ..."
+                                # Parse workflow steps like "1. Microsoft Outlook Agent: ..." or "2a. Stripe Agent: ..."
                                 step_pattern = re.findall(r'\d+[a-z]?\.\s*(?:\*\*)?([^:*\n]+?)(?:\*\*)?:', workflow)
                                 workflow_agents = [a.strip() for a in step_pattern]
 
@@ -5034,7 +5034,7 @@ RULES:
 - Keep it concise — aim for 10-15 lines max
 - Do NOT include internal processing details, rate limit messages, or raw API responses
 - Do NOT include phrases like "Step 1 output:" or "The email agent said..."
-- In the "Actions Completed" section, mention WHICH AGENT performed each action (e.g., "**Email Agent** retrieved the invoice PDF", "**QuickBooks Agent** recorded the bill", "**Stripe Agent** created and finalized the invoice")
+- In the "Actions Completed" section, mention WHICH AGENT performed each action (e.g., "**Microsoft Outlook Agent** retrieved the invoice PDF", "**QuickBooks Agent** recorded the bill", "**Stripe Agent** created and finalized the invoice")
 - Write as if YOU coordinated the work across the agents
 - Do NOT include image URLs, markdown image references (![...](url)), or raw blob storage links — images are displayed separately in the UI
 - Do NOT write a meta-summary like "the image was analyzed" — instead, include the ACTUAL content/answer

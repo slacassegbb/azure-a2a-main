@@ -48,7 +48,7 @@ const PREDEFINED_WORKFLOWS: WorkflowTemplate[] = [
       {
         id: "step-img-gen-1",
         agentId: "ai-foundry-image-generator-agent",
-        agentName: "AI Foundry Image Generator Agent",
+        agentName: "Image Generator Agent",
         description: "Generate initial image concept",
         order: 0,
         x: -300,
@@ -57,7 +57,7 @@ const PREDEFINED_WORKFLOWS: WorkflowTemplate[] = [
       {
         id: "step-img-analysis-1",
         agentId: "ai-foundry-image-analysis-agent",
-        agentName: "AI Foundry Image Analysis Agent",
+        agentName: "Image Analysis Agent",
         description: "Analyze generated image for quality and composition",
         order: 1,
         x: -100,
@@ -66,7 +66,7 @@ const PREDEFINED_WORKFLOWS: WorkflowTemplate[] = [
       {
         id: "step-branding-1",
         agentId: "ai-foundry-branding-content-agent",
-        agentName: "AI Foundry Branding & Content Agent",
+        agentName: "Branding Agent",
         description: "Check brand compliance and get style guidelines",
         order: 2,
         x: 100,
@@ -75,7 +75,7 @@ const PREDEFINED_WORKFLOWS: WorkflowTemplate[] = [
       {
         id: "step-img-gen-2",
         agentId: "ai-foundry-image-generator-agent-2",
-        agentName: "AI Foundry Image Generator Agent",
+        agentName: "Image Generator Agent",
         description: "Refine image based on analysis and branding feedback",
         order: 3,
         x: 300,
@@ -97,7 +97,7 @@ const PREDEFINED_WORKFLOWS: WorkflowTemplate[] = [
       {
         id: "step-brand-1",
         agentId: "ai-foundry-branding-content-agent",
-        agentName: "AI Foundry Branding & Content Agent",
+        agentName: "Branding Agent",
         description: "Get brand guidelines and requirements",
         order: 0,
         x: -200,
@@ -106,7 +106,7 @@ const PREDEFINED_WORKFLOWS: WorkflowTemplate[] = [
       {
         id: "step-brand-gen-1",
         agentId: "ai-foundry-image-generator-agent",
-        agentName: "AI Foundry Image Generator Agent",
+        agentName: "Image Generator Agent",
         description: "Generate brand-compliant image",
         order: 1,
         x: 0,
@@ -115,7 +115,7 @@ const PREDEFINED_WORKFLOWS: WorkflowTemplate[] = [
       {
         id: "step-brand-analysis-1",
         agentId: "ai-foundry-image-analysis-agent",
-        agentName: "AI Foundry Image Analysis Agent",
+        agentName: "Image Analysis Agent",
         description: "Verify brand compliance and quality",
         order: 2,
         x: 200,
@@ -136,7 +136,7 @@ const PREDEFINED_WORKFLOWS: WorkflowTemplate[] = [
       {
         id: "step-iter-gen-1",
         agentId: "ai-foundry-image-generator-agent",
-        agentName: "AI Foundry Image Generator Agent",
+        agentName: "Image Generator Agent",
         description: "Create initial design concept",
         order: 0,
         x: -200,
@@ -145,7 +145,7 @@ const PREDEFINED_WORKFLOWS: WorkflowTemplate[] = [
       {
         id: "step-iter-analysis-1",
         agentId: "ai-foundry-image-analysis-agent",
-        agentName: "AI Foundry Image Analysis Agent",
+        agentName: "Image Analysis Agent",
         description: "Analyze design and identify improvements",
         order: 1,
         x: 0,
@@ -154,7 +154,7 @@ const PREDEFINED_WORKFLOWS: WorkflowTemplate[] = [
       {
         id: "step-iter-gen-2",
         agentId: "ai-foundry-image-generator-agent-2",
-        agentName: "AI Foundry Image Generator Agent",
+        agentName: "Image Generator Agent",
         description: "Generate improved version based on feedback",
         order: 2,
         x: 200,
@@ -175,7 +175,7 @@ const PREDEFINED_WORKFLOWS: WorkflowTemplate[] = [
       {
         id: "step-qa-gen-1",
         agentId: "ai-foundry-image-generator-agent",
-        agentName: "AI Foundry Image Generator Agent",
+        agentName: "Image Generator Agent",
         description: "Generate content",
         order: 0,
         x: -150,
@@ -184,7 +184,7 @@ const PREDEFINED_WORKFLOWS: WorkflowTemplate[] = [
       {
         id: "step-qa-analysis-1",
         agentId: "ai-foundry-image-analysis-agent",
-        agentName: "AI Foundry Image Analysis Agent",
+        agentName: "Image Analysis Agent",
         description: "Perform quality analysis and identify issues",
         order: 1,
         x: 150,

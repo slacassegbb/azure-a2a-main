@@ -105,33 +105,33 @@ class AgentRegistry:
         # Uses a flag row check so it only runs once.
         try:
             cur = self.db_conn.cursor()
-            # Check if we already ran this migration (Email Agent should be blue, not emerald)
-            cur.execute("SELECT color FROM agents WHERE name = 'Email Agent'")
+            # Check if we already ran this migration (Outlook Agent should be blue, not emerald)
+            cur.execute("SELECT color FROM agents WHERE name = 'Microsoft Outlook Agent'")
             row = cur.fetchone()
             if row and row[0] == '#3b82f6':
                 cur.close()
                 return  # Already migrated
 
             curated_colors = {
-                'Email Agent': '#3b82f6',
-                'Teams Agent': '#f97316',
-                'AI Foundry Stripe Agent': '#8b5cf6',
-                'AI Foundry QuickBooks Agent': '#10b981',
-                'AI Foundry Deep Search Knowledge Agent': '#06b6d4',
-                'AI Foundry HubSpot Agent': '#f59e0b',
-                'AI Foundry Image Generator Agent': '#ec4899',
-                'AI Foundry Image Analysis Agent': '#a855f7',
-                'Salesforce CRM Agent': '#ef4444',
-                'AI Foundry Reporter Agent': '#14b8a6',
-                'AI Foundry Branding & Content Agent': '#ec4899',
-                'AI Foundry Claims Specialist Agent': '#06b6d4',
-                'AI Foundry Classification Triage Agent': '#f59e0b',
-                'AI Foundry Assessment & Estimation Agent': '#8b5cf6',
-                'AI Foundry Fraud Intelligence Agent': '#ef4444',
-                'Legal Compliance & Regulatory Agent': '#14b8a6',
+                'Microsoft Outlook Agent': '#3b82f6',
+                'Microsoft Teams Agent': '#f97316',
+                'Stripe Agent': '#8b5cf6',
+                'QuickBooks Agent': '#10b981',
+                'Deep Search Agent': '#06b6d4',
+                'HubSpot Agent': '#f59e0b',
+                'Image Generator Agent': '#ec4899',
+                'Image Analysis Agent': '#a855f7',
+                'Salesforce Agent': '#ef4444',
+                'Report Generator Agent': '#14b8a6',
+                'Branding Agent': '#ec4899',
+                'Claims Agent': '#06b6d4',
+                'Classification and Triage Agent': '#f59e0b',
+                'Assessment and Estimation Agent': '#8b5cf6',
+                'Fraud Intelligence Agent': '#ef4444',
+                'Legal Agent': '#14b8a6',
                 'Sentiment Analysis Agent': '#a855f7',
-                'Twilio SMS Agent': '#3b82f6',
-                'Sora 2 Video Generator': '#f97316',
+                'Text Message Agent': '#3b82f6',
+                'Video Generator Agent': '#f97316',
             }
             for name, color in curated_colors.items():
                 cur.execute("UPDATE agents SET color = %s WHERE name = %s", (color, name))

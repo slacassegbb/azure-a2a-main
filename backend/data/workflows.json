@@ -10,8 +10,8 @@
         {
           "id": "step-1770074782600-htkpbr2bc",
           "agentId": "ai-foundry-stripe-agent",
-          "agentName": "AI Foundry Stripe Agent",
-          "description": "Use the AI Foundry Stripe Agent agent to check current balance",
+          "agentName": "Stripe Agent",
+          "description": "Use the Stripe Agent agent to check current balance",
           "order": 0,
           "x": -471.47890910770224,
           "y": 32.53546951469616
@@ -19,8 +19,8 @@
         {
           "id": "step-1770074784011-kv7fmzp2n",
           "agentId": "twilio-sms-agent",
-          "agentName": "Twilio SMS Agent",
-          "description": "Use the Twilio SMS Agent agent send the results",
+          "agentName": "Text Message Agent",
+          "description": "Use the Text Message Agent agent send the results",
           "order": 1,
           "x": -191.7880308234721,
           "y": 13.128347348035293

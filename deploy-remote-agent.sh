@@ -347,7 +347,46 @@ if [ -n "$AGENT_EXISTS" ]; then
             echo -e "${YELLOW}⚠️  Email agent detected but credentials not found in environment${NC}"
         fi
     fi
-    
+
+    # Catch-all: pick up ANY remaining env vars from .env that aren't already set.
+    # This ensures agent-specific vars (SUNO_API_KEY, AZURE_STORAGE_ACCOUNT_NAME,
+    # MICROSOFT_APP_TENANT_ID, etc.) are never missed.
+    ENV_FILE="${AGENT_PATH}/.env"
+    if [ ! -f "$ENV_FILE" ]; then
+        ENV_FILE=".env"
+    fi
+    if [ -f "$ENV_FILE" ]; then
+        # Build list of var names already in ENV_VARS
+        ALREADY_SET=" "
+        for ev in "${ENV_VARS[@]}"; do
+            ALREADY_SET="$ALREADY_SET${ev%%=*} "
+        done
+
+        EXTRA_COUNT=0
+        while IFS= read -r line; do
+            # Skip comments and empty lines
+            [[ "$line" =~ ^[[:space:]]*# ]] && continue
+            [[ -z "$line" ]] && continue
+            [[ "$line" != *"="* ]] && continue
+
+            key="${line%%=*}"
+            # Skip if already set dynamically
+            [[ "$ALREADY_SET" == *" $key "* ]] && continue
+
+            # Extract value, strip surrounding quotes
+            value="${line#*=}"
+            value="${value%\"}"
+            value="${value#\"}"
+
+            ENV_VARS+=("$key=$value")
+            EXTRA_COUNT=$((EXTRA_COUNT + 1))
+        done < "$ENV_FILE"
+
+        if [ $EXTRA_COUNT -gt 0 ]; then
+            echo -e "${GREEN}✅ $EXTRA_COUNT additional env vars loaded from .env${NC}"
+        fi
+    fi
+
     # Update target port to ensure it matches the A2A_PORT
     echo -e "${CYAN}  Updating ingress target port to $PORT...${NC}"
     az containerapp ingress update \
@@ -423,7 +462,36 @@ else
             echo -e "${YELLOW}⚠️  Email agent detected but credentials not found in environment${NC}"
         fi
     fi
-    
+
+    # Catch-all: pick up ANY remaining env vars from .env that aren't already set.
+    ENV_FILE_CREATE="${AGENT_PATH}/.env"
+    if [ ! -f "$ENV_FILE_CREATE" ]; then
+        ENV_FILE_CREATE=".env"
+    fi
+    if [ -f "$ENV_FILE_CREATE" ]; then
+        EXTRA_COUNT_CREATE=0
+        while IFS= read -r line; do
+            [[ "$line" =~ ^[[:space:]]*# ]] && continue
+            [[ -z "$line" ]] && continue
+            [[ "$line" != *"="* ]] && continue
+
+            key="${line%%=*}"
+            # Skip if already in ENV_VARS_CREATE
+            [[ "$ENV_VARS_CREATE" == *"$key="* ]] && continue
+
+            value="${line#*=}"
+            value="${value%\"}"
+            value="${value#\"}"
+
+            ENV_VARS_CREATE="$ENV_VARS_CREATE $key=$value"
+            EXTRA_COUNT_CREATE=$((EXTRA_COUNT_CREATE + 1))
+        done < "$ENV_FILE_CREATE"
+
+        if [ $EXTRA_COUNT_CREATE -gt 0 ]; then
+            echo -e "${GREEN}✅ $EXTRA_COUNT_CREATE additional env vars loaded from .env${NC}"
+        fi
+    fi
+
     az containerapp create \
         --name "$CONTAINER_NAME" \
         --resource-group "$RESOURCE_GROUP" \

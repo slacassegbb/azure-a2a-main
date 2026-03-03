@@ -1467,7 +1467,7 @@ Analyze this request and decide the best approach."""
                             email_agent_name = card.name
                             break
                     if not email_agent_name:
-                        email_agent_name = "Email Agent"
+                        email_agent_name = "Microsoft Outlook Agent"
                     db_steps.append({
                         "id": notif_id,
                         "agentId": email_agent_name.lower().replace(" ", "-"),

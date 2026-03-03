@@ -214,14 +214,14 @@ You have access to `web_search_preview` for real-time web search. This is a **la
 
 CORRECT (Single Agent):
 User: "use the classification agent to classify a transaction of $1250"
-You: [CALL send_message_sync("AI Foundry Classification Triage Agent", "Classify: $1250")]
+You: [CALL send_message_sync("Classification and Triage Agent", "Classify: $1250")]
 Tool Returns: "P3 - Low priority transaction"
 You: "The classification agent classified this as P3 - Low priority."
 
 CORRECT (Multiple Agents in Parallel):
 User: "use both the classification and branding agents on the guidelines"
-You: [CALL send_message_sync("AI Foundry Classification Triage Agent", "Classify guidelines")]
-     [CALL send_message_sync("AI Foundry Branding & Content Agent", "Analyze guidelines")]
+You: [CALL send_message_sync("Classification and Triage Agent", "Classify guidelines")]
+     [CALL send_message_sync("Branding Agent", "Analyze guidelines")]
 Tool Returns: [Both responses come back]
 You: "Here's what both agents found: [actual results from tools]"
 
