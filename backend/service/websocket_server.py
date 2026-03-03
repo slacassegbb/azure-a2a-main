@@ -115,7 +115,7 @@ class WebSocketManager:
                             'description': agent_data.get('description', ''),
                             'url': agent_data.get('url'),
                             'version': agent_data.get('version', ''),
-                            'iconUrl': agent_data.get('iconUrl'),
+                            'iconUrl': agent_data.get('logo_url') or agent_data.get('iconUrl'),
                             'provider': agent_data.get('provider'),
                             'documentationUrl': agent_data.get('documentationUrl'),
                             'capabilities': agent_data.get('capabilities', {}),
@@ -123,7 +123,7 @@ class WebSocketManager:
                             'defaultInputModes': agent_data.get('defaultInputModes', []),
                             'defaultOutputModes': agent_data.get('defaultOutputModes', []),
                             'status': agent_data.get('status', 'unknown'),  # Use actual status from backend
-                            'avatar': agent_data.get('iconUrl') or '/placeholder.svg?height=32&width=32',
+                            'avatar': agent_data.get('logo_url') or agent_data.get('iconUrl') or '/placeholder.svg?height=32&width=32',
                             'type': agent_data.get('type', 'remote')
                         }
                         agents.append(agent_info)
