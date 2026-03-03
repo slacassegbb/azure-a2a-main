@@ -31,6 +31,7 @@ export interface BaseAgent {
   endpoint: string
   productionUrl?: string
   color?: string
+  iconUrl?: string | null
   skills?: string[]
   /** The full raw payload, so consumers can map extra fields */
   _raw: RegistryAgent
@@ -103,6 +104,7 @@ export async function fetchRegistryAgents(): Promise<BaseAgent[]> {
     endpoint: agent.url,
     productionUrl: agent.production_url,
     color: agent.color,
+    iconUrl: agent.logo_url || null,
     skills: agent.skills,
     _raw: agent,
   }))

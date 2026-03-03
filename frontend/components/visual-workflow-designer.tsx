@@ -2348,7 +2348,6 @@ export function VisualWorkflowDesigner({
           let img = imageCache.current.get(step.agentIconUrl)
           if (!img) {
             img = new Image()
-            img.crossOrigin = "anonymous"
             const imgRef = img
             imgRef.onload = () => { imageCache.current.set(step.agentIconUrl!, imgRef) }
             imgRef.onerror = () => { imageCache.current.delete(step.agentIconUrl!) }
