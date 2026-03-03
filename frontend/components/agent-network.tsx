@@ -1619,12 +1619,6 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
                             </div>
                           )
                         })()}
-                        {/* Human interaction indicator in bottom-left corner */}
-                        {hasHumanInteraction && (
-                          <div className="absolute -bottom-1 -left-1 bg-green-500 border border-background rounded-full p-0.5">
-                            <User className="h-3 w-3 text-white" />
-                          </div>
-                        )}
                       </Button>
                     </TooltipTrigger>
                     <TooltipContent side="left">
@@ -1677,12 +1671,6 @@ export function AgentNetwork({ registeredAgents, isCollapsed, onToggle, enableIn
                                 </div>
                               )
                             })()}
-                            {/* Human interaction indicator in bottom-left corner */}
-                            {hasHumanInteractionSkill(agent) && (
-                              <div className="absolute -bottom-1 -left-1 bg-green-500 border border-background rounded-full p-0.5">
-                                <User className="h-3 w-3 text-white" />
-                              </div>
-                            )}
                           </div>
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2">

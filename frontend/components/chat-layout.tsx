@@ -355,12 +355,13 @@ export function ChatLayout() {
           version: agent.version,
           endpoint: agent.url,
           color: agent.color,
+          iconUrl: agent.logo_url || agent.iconUrl,
           organization: "Registry Agent",
           capabilities: agent.capabilities,
           skills: agent.skills,
           defaultInputModes: agent.defaultInputModes,
           defaultOutputModes: agent.defaultOutputModes,
-          avatar: '/placeholder.svg?height=32&width=32'
+          avatar: agent.logo_url || agent.iconUrl || '/placeholder.svg?height=32&width=32'
         }))
         
         setRegisteredAgents(agents)
@@ -398,12 +399,13 @@ export function ChatLayout() {
           version: data.agent.version,
           endpoint: data.agent.url,
           color: data.agent.color,
+          iconUrl: data.agent.logo_url || data.agent.iconUrl,
           organization: "Registry Agent",
           capabilities: data.agent.capabilities,
           skills: data.agent.skills,
           defaultInputModes: data.agent.defaultInputModes,
           defaultOutputModes: data.agent.defaultOutputModes,
-          avatar: '/placeholder.svg?height=32&width=32'
+          avatar: data.agent.logo_url || data.agent.iconUrl || '/placeholder.svg?height=32&width=32'
         }
         
         setRegisteredAgents(prev => {
