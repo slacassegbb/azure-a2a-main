@@ -2343,8 +2343,34 @@ export function VisualWorkflowDesigner({
           ctx.textAlign = "center"
           ctx.textBaseline = "middle"
           ctx.fillText("W", icx, icy + 1)
+        } else if (step.agentIconUrl && step.agentIconUrl !== '/placeholder.svg' && !step.agentIconUrl.includes('placeholder')) {
+          // Custom logo image for agent steps
+          let img = imageCache.current.get(step.agentIconUrl)
+          if (!img) {
+            img = new Image()
+            img.crossOrigin = "anonymous"
+            const imgRef = img
+            imgRef.onload = () => { imageCache.current.set(step.agentIconUrl!, imgRef) }
+            imgRef.onerror = () => { imageCache.current.delete(step.agentIconUrl!) }
+            imgRef.src = step.agentIconUrl
+            imageCache.current.set(step.agentIconUrl, imgRef)
+          }
+          if (img.complete && img.naturalWidth > 0) {
+            ctx.drawImage(img, icx - 10, icy - 10, 20, 20)
+          } else {
+            // Fallback: colored circle with first letter while loading
+            ctx.fillStyle = step.agentColor
+            ctx.beginPath()
+            ctx.arc(icx, icy, 10, 0, Math.PI * 2)
+            ctx.fill()
+            ctx.fillStyle = "#ffffff"
+            ctx.font = "bold 11px -apple-system, system-ui, sans-serif"
+            ctx.textAlign = "center"
+            ctx.textBaseline = "middle"
+            ctx.fillText(step.agentName.charAt(0), icx, icy + 1)
+          }
         } else {
-          // Bot icon for agent steps
+          // Default bot icon for agent steps
           ctx.fillStyle = step.agentColor
           // Head
           ctx.beginPath()
