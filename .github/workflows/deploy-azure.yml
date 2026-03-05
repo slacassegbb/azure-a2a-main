@@ -22,7 +22,7 @@ name: Deploy to Azure Container Apps
 
 on:
   push:
-    branches: [ main, feature/multi-tenancy, benjamin-highschool, feature/postgresql-migration, feature/evaluation-step, repo-clean-up ]
+    branches: [ main, feature/multi-tenancy, benjamin-highschool, feature/postgresql-migration, feature/evaluation-step, repo-clean-up, feature/sms-to-orchestrator ]
     paths:
       - 'frontend/**'
       - 'backend/**'
