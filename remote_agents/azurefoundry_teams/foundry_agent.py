@@ -12,9 +12,17 @@ import asyncio
 import logging
 import json
 import re
+import uuid
+import tempfile
+import mimetypes
 from typing import Optional, Dict, List, Any
 from dataclasses import dataclass
 from pathlib import Path
+from datetime import timedelta
+
+import httpx
+from azure.storage.blob import BlobServiceClient, generate_blob_sas, BlobSasPermissions
+from azure.core.credentials import AzureNamedKeyCredential, AzureSasCredential
 
 from azure.ai.agents import AgentsClient
 from azure.ai.agents.models import Agent, ThreadMessage, ThreadRun, AgentThread, BingGroundingTool, ListSortOrder, FilePurpose, FileSearchTool
@@ -103,7 +111,10 @@ class TeamsBot:
         
         # Store pending requests waiting for human response
         self.pending_requests: Dict[str, PendingTeamsRequest] = {}
-        
+
+        # Azure Blob Storage client (for file uploads)
+        self._blob_service_client: Optional[BlobServiceClient] = None
+
         logger.info(f"TeamsBot initialized with app_id: {self.app_id[:8]}...")
     
     def _load_conversation_references(self):
@@ -297,6 +308,192 @@ class TeamsBot:
             "pending_requests": len(self.pending_requests),
             "adapter_configured": self.adapter is not None
         }
+
+    # ------------------------------------------------------------------
+    # Azure Blob Storage helpers (for file uploads from Teams)
+    # ------------------------------------------------------------------
+
+    def _get_blob_service_client(self) -> Optional[BlobServiceClient]:
+        """Get or create a BlobServiceClient. Returns None if blob storage is not configured."""
+        force_blob = os.getenv("FORCE_AZURE_BLOB", "false").lower() == "true"
+        if not force_blob:
+            return None
+        if self._blob_service_client is not None:
+            return self._blob_service_client
+        connection_string = os.getenv("AZURE_STORAGE_CONNECTION_STRING")
+        if not connection_string:
+            logger.error("AZURE_STORAGE_CONNECTION_STRING must be set when FORCE_AZURE_BLOB=true")
+            return None
+        try:
+            self._blob_service_client = BlobServiceClient.from_connection_string(
+                connection_string, api_version="2023-11-03",
+            )
+            return self._blob_service_client
+        except Exception as e:
+            logger.error(f"Failed to create BlobServiceClient: {e}")
+            return None
+
+    def _upload_to_blob(self, file_path: Path, context_id: str = "") -> Optional[str]:
+        """Upload a file to Azure Blob Storage and return a SAS URL."""
+        blob_client = self._get_blob_service_client()
+        if not blob_client:
+            return None
+
+        container_name = os.getenv("AZURE_BLOB_CONTAINER", "a2a-files")
+        file_id = uuid.uuid4().hex
+        if context_id and "::" in context_id:
+            session_id = context_id.split("::")[0]
+        elif context_id:
+            session_id = context_id
+        else:
+            session_id = "teams-uploads"
+
+        blob_name = f"uploads/{session_id}/{file_id}/{file_path.name}"
+
+        try:
+            container_client = blob_client.get_container_client(container_name)
+            if not container_client.exists():
+                container_client.create_container()
+            with open(file_path, "rb") as data:
+                container_client.upload_blob(name=blob_name, data=data, overwrite=True)
+
+            sas_duration_minutes = int(os.getenv("AZURE_BLOB_SAS_DURATION_MINUTES", str(24 * 60)))
+            sas_token: Optional[str] = None
+            service_client = self._blob_service_client
+
+            if service_client is not None:
+                credential = getattr(service_client, "credential", None)
+                account_key_value: Optional[str] = None
+
+                if isinstance(credential, AzureNamedKeyCredential):
+                    account_key_value = credential.key
+                elif isinstance(credential, AzureSasCredential):
+                    sas_token = credential.signature.lstrip("?")
+                elif hasattr(credential, "account_key"):
+                    account_key_value = getattr(credential, "account_key")
+                elif hasattr(credential, "key"):
+                    account_key_value = getattr(credential, "key")
+
+                if callable(account_key_value):
+                    account_key_value = account_key_value()
+                if isinstance(account_key_value, bytes):
+                    account_key_value = account_key_value.decode()
+
+                if account_key_value:
+                    try:
+                        sas_token = generate_blob_sas(
+                            account_name=service_client.account_name,
+                            container_name=container_name,
+                            blob_name=blob_name,
+                            account_key=account_key_value,
+                            permission=BlobSasPermissions(read=True),
+                            expiry=datetime.datetime.utcnow() + timedelta(minutes=sas_duration_minutes),
+                            protocol="https",
+                            version="2023-11-03",
+                        )
+                    except Exception as sas_error:
+                        logger.error(f"Failed to generate SAS URL with shared key: {sas_error}")
+
+            if sas_token is None and self._blob_service_client is not None:
+                try:
+                    delegation_key = self._blob_service_client.get_user_delegation_key(
+                        key_start_time=datetime.datetime.utcnow() - timedelta(minutes=5),
+                        key_expiry_time=datetime.datetime.utcnow() + timedelta(minutes=sas_duration_minutes),
+                    )
+                    sas_token = generate_blob_sas(
+                        account_name=self._blob_service_client.account_name,
+                        container_name=container_name,
+                        blob_name=blob_name,
+                        user_delegation_key=delegation_key,
+                        permission=BlobSasPermissions(read=True),
+                        expiry=datetime.datetime.utcnow() + timedelta(minutes=sas_duration_minutes),
+                        version="2023-11-03",
+                    )
+                except Exception as ude_err:
+                    logger.warning(f"Failed to generate user delegation SAS: {ude_err}")
+
+            if sas_token:
+                base_url = blob_client.get_blob_client(container=container_name, blob=blob_name).url
+                token = sas_token.lstrip("?")
+                separator = "&" if "?" in base_url else "?"
+                return f"{base_url}{separator}{token}"
+
+            logger.error("Unable to generate SAS token; verify storage credentials")
+            return None
+        except Exception as e:
+            logger.error(f"Failed to upload {file_path} to blob storage: {e}")
+            return None
+
+    async def download_teams_attachment(self, attachment, context_id: str = "") -> Optional[Dict[str, Any]]:
+        """
+        Download a file attachment from Teams and upload to Azure Blob Storage.
+
+        Teams sends file attachments with:
+          contentType: "application/vnd.microsoft.teams.file.download.info"
+          content: {"downloadUrl": "https://...", "uniqueId": "...", "fileType": "..."}
+
+        Returns a dict with blob_url, file_name, mime_type, file_size on success,
+        or None on failure.
+        """
+        try:
+            content = attachment.content
+            if isinstance(content, str):
+                content = json.loads(content)
+
+            download_url = content.get("downloadUrl")
+            if not download_url:
+                logger.warning("Teams attachment missing downloadUrl")
+                return None
+
+            file_name = getattr(attachment, "name", None) or content.get("name") or "teams_upload"
+            file_type = content.get("fileType", "")
+
+            logger.info(f"📥 Downloading Teams file: {file_name} (type: {file_type})")
+
+            # Download file bytes
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                resp = await client.get(download_url)
+                resp.raise_for_status()
+                file_bytes = resp.content
+
+            # Save to temp file
+            tmp_dir = Path(tempfile.gettempdir()) / "teams_uploads"
+            tmp_dir.mkdir(parents=True, exist_ok=True)
+            local_path = tmp_dir / file_name
+            local_path.write_bytes(file_bytes)
+
+            logger.info(f"📥 Downloaded {file_name}: {len(file_bytes)} bytes")
+
+            # Upload to blob storage
+            blob_url = self._upload_to_blob(local_path, context_id)
+            if not blob_url:
+                logger.warning(f"⚠️ Blob upload failed for {file_name} — blob storage may not be configured")
+                # Clean up temp file
+                local_path.unlink(missing_ok=True)
+                return None
+
+            # Determine MIME type
+            mime_type, _ = mimetypes.guess_type(file_name)
+            if not mime_type:
+                mime_type = "application/octet-stream"
+
+            file_size = len(file_bytes)
+
+            # Clean up temp file
+            local_path.unlink(missing_ok=True)
+
+            logger.info(f"✅ Teams file uploaded to blob: {file_name} ({file_size} bytes) -> {blob_url[:80]}...")
+
+            return {
+                "blob_url": blob_url,
+                "file_name": file_name,
+                "mime_type": mime_type,
+                "file_size": file_size,
+            }
+
+        except Exception as e:
+            logger.error(f"❌ Failed to process Teams attachment: {e}", exc_info=True)
+            return None
 
 
 class FoundryTeamsAgent:

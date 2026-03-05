@@ -129,6 +129,15 @@ class FoundryTeamsAgentExecutor(AgentExecutor):
                     logger.info(f"🔗 [CALLBACK] Extracted backend callback URL: {callback_url}")
                     break
 
+            # Extract incoming file parts to forward in completion response
+            incoming_file_parts: List[Part] = []
+            for part in message_parts:
+                p = part.root
+                if isinstance(p, FilePart):
+                    incoming_file_parts.append(Part(root=p))
+            if incoming_file_parts:
+                logger.info(f"📎 Found {len(incoming_file_parts)} incoming file part(s) to forward")
+
             user_message = self._convert_parts_to_text(message_parts)
             if user_message:
                 preview = user_message if len(user_message) <= 2000 else user_message[:2000] + "..."
@@ -281,14 +290,19 @@ Based on the user's response, take the appropriate action. Use TEAMS_SEND to ack
                 logger.info(f"📤 Agent response ({len(final_response)} chars): {response_preview}")
                 
                 final_parts = [Part(root=TextPart(text=final_response))]
-                
+
+                # Include any file artifacts that came in with the request
+                if incoming_file_parts:
+                    final_parts.extend(incoming_file_parts)
+                    logger.info(f"📎 Appended {len(incoming_file_parts)} file part(s) to final response")
+
                 # Add token usage if available
                 if hasattr(agent, 'last_token_usage') and agent.last_token_usage:
                     final_parts.append(Part(root=DataPart(data={
                         'type': 'token_usage',
                         **agent.last_token_usage
                     })))
-                
+
                 if final_response.lstrip().startswith("Error:"):
                     await task_updater.failed(
                         message=new_agent_text_message(final_response, context_id=context_id)

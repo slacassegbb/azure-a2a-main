@@ -214,7 +214,23 @@ async def handle_teams_webhook(request: Request) -> JSONResponse:
             if turn_context.activity.type == "message":
                 user_message = turn_context.activity.text or ""
                 logger.info(f"📥 Received Teams message from {user_id}: {user_message[:100]}...")
-                
+
+                # ---- Handle file attachments from Teams ----
+                file_artifacts = []
+                if turn_context.activity.attachments:
+                    for attachment in turn_context.activity.attachments:
+                        ct = getattr(attachment, "content_type", "") or ""
+                        if ct == "application/vnd.microsoft.teams.file.download.info":
+                            # context_id will be set below if there's a pending request;
+                            # use empty string for now (will be updated before upload)
+                            logger.info(f"📎 File attachment detected: {getattr(attachment, 'name', 'unknown')}")
+                            file_artifacts.append(attachment)  # store raw; download later with context_id
+                        else:
+                            logger.info(f"📎 Skipping non-file attachment (type={ct})")
+
+                if file_artifacts:
+                    logger.info(f"📎 {len(file_artifacts)} file attachment(s) to process")
+
                 # Check if there's a pending request waiting for this response
                 if agent_executor_instance:
                     # DEBUG: Log what's in _waiting_for_input
@@ -257,31 +273,57 @@ async def handle_teams_webhook(request: Request) -> JSONResponse:
                             }
                             logger.info(f"💾 Stored HITL resume info for {context_id}: thread={thread_id}")
                             
+                            # ---- Download & upload any file attachments ----
+                            uploaded_files = []
+                            for raw_attachment in file_artifacts:
+                                result = await teams_bot_instance.download_teams_attachment(
+                                    raw_attachment, context_id
+                                )
+                                if result:
+                                    uploaded_files.append(result)
+
                             # Forward to backend's message API (A2A format)
                             try:
                                 import aiohttp
                                 async with aiohttp.ClientSession() as session:
-                                    # Backend expects A2A Message format with params wrapper
+                                    # Build parts: text + any file artifacts
+                                    parts = [
+                                        {"root": {"kind": "text", "text": user_message}}
+                                    ]
+                                    for uf in uploaded_files:
+                                        parts.append({
+                                            "root": {
+                                                "kind": "file",
+                                                "file": {
+                                                    "name": uf["file_name"],
+                                                    "uri": uf["blob_url"],
+                                                    "mimeType": uf["mime_type"],
+                                                }
+                                            }
+                                        })
+
                                     payload = {
                                         "params": {
                                             "contextId": context_id,
-                                            "parts": [
-                                                {"root": {"kind": "text", "text": user_message}}
-                                            ]
+                                            "parts": parts,
                                         }
                                     }
-                                    logger.info(f"📤 Sending to backend ({request_callback_url}): {payload}")
+                                    logger.info(f"📤 Sending to backend ({request_callback_url}): {len(parts)} part(s)")
                                     async with session.post(
                                         f"{request_callback_url}/message/send",
                                         json=payload,
-                                        timeout=aiohttp.ClientTimeout(total=30)
+                                        timeout=aiohttp.ClientTimeout(total=60)
                                     ) as resp:
                                         if resp.status == 200:
                                             logger.info(f"✅ Human response forwarded to backend successfully")
-                                            # Send acknowledgment
+                                            # Build acknowledgment
+                                            file_note = ""
+                                            if uploaded_files:
+                                                names = ", ".join(uf["file_name"] for uf in uploaded_files)
+                                                file_note = f"\n📎 Files uploaded: {names}"
                                             await turn_context.send_activity(
                                                 f"✅ **Response Received**\n\n"
-                                                f"Your response: _{user_message}_\n\n"
+                                                f"Your response: _{user_message}_{file_note}\n\n"
                                                 f"The workflow is continuing with your input. Thank you!"
                                             )
                                         else:
