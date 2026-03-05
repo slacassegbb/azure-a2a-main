@@ -2525,15 +2525,20 @@ def main():
                 session_id='agent-logos'
             )
 
+            # Store only the base blob URL (without SAS token) in the database.
+            # Fresh SAS tokens are generated on-the-fly when agents are loaded.
+            base_logo_url = logo_url.split('?')[0] if logo_url else logo_url
+
             # Update the agent's logo_url in the database
             from service.agent_registry import get_registry
             registry = get_registry()
-            updated = registry.update_agent_logo(agent_name, logo_url)
+            updated = registry.update_agent_logo(agent_name, base_logo_url)
 
             if not updated:
                 return {"success": False, "error": f"Agent '{agent_name}' not found"}
 
-            log_info(f"[LOGO] Updated logo for '{agent_name}': {logo_url[:80]}...")
+            log_info(f"[LOGO] Updated logo for '{agent_name}': {base_logo_url[:80]}...")
+            # Return the full SAS URL for immediate display
             return {"success": True, "logo_url": logo_url}
 
         except Exception as e:

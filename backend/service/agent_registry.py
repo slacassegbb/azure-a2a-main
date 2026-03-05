@@ -9,12 +9,71 @@ Falls back to JSON file storage if database is not available.
 
 import json
 import os
+from datetime import datetime, timedelta, UTC
 from typing import List, Dict, Any, Optional
 from pathlib import Path
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from service.agent_colors import assign_color_for_agent
 from log_config import log_debug, log_info, log_warning, log_error
+
+
+def _refresh_logo_sas(logo_url: str | None) -> str | None:
+    """Generate a fresh SAS-signed URL for an agent logo blob.
+
+    If the stored URL is an Azure Blob URL (with or without an expired SAS token),
+    strip the old query string and generate a new 7-day read-only SAS token.
+
+    Returns the original value unchanged when Azure Storage is not configured
+    or the URL is not a blob URL.
+    """
+    if not logo_url or '.blob.core.windows.net' not in logo_url:
+        return logo_url
+
+    try:
+        from azure.storage.blob import generate_blob_sas, BlobSasPermissions
+
+        connection_string = os.getenv('AZURE_STORAGE_CONNECTION_STRING', '')
+        if not connection_string:
+            return logo_url
+
+        # Parse account key from connection string
+        account_key = None
+        account_name = None
+        for part in connection_string.split(';'):
+            if part.startswith('AccountKey='):
+                account_key = part.split('=', 1)[1]
+            elif part.startswith('AccountName='):
+                account_name = part.split('=', 1)[1]
+        if not account_key or not account_name:
+            return logo_url
+
+        # Strip any existing SAS query string to get base URL
+        base_url = logo_url.split('?')[0]
+
+        # Extract container and blob name from URL
+        # Format: https://{account}.blob.core.windows.net/{container}/{blob_path}
+        from urllib.parse import urlparse
+        parsed = urlparse(base_url)
+        path_parts = parsed.path.lstrip('/').split('/', 1)
+        if len(path_parts) < 2:
+            return logo_url
+        container_name = path_parts[0]
+        blob_name = path_parts[1]
+
+        sas_token = generate_blob_sas(
+            account_name=account_name,
+            container_name=container_name,
+            blob_name=blob_name,
+            account_key=account_key,
+            permission=BlobSasPermissions(read=True),
+            expiry=datetime.now(UTC) + timedelta(days=7),
+            version="2023-11-03"
+        )
+        return f"{base_url}?{sas_token}"
+    except Exception as e:
+        log_warning(f"[AgentRegistry] Failed to refresh logo SAS: {e}")
+        return logo_url
 
 
 class AgentRegistry:
@@ -118,6 +177,24 @@ class AgentRegistry:
             log_warning(f"[AgentRegistry] logo_url migration warning: {e}")
             self.db_conn.rollback()
 
+        # Migration: strip expired SAS tokens from stored logo_urls.
+        # We now store only the base blob URL and generate fresh SAS on read.
+        try:
+            self._ensure_db_connection()
+            cur = self.db_conn.cursor()
+            cur.execute("""
+                UPDATE agents
+                SET logo_url = split_part(logo_url, '?', 1)
+                WHERE logo_url IS NOT NULL AND logo_url LIKE '%?s%'
+            """)
+            if cur.rowcount > 0:
+                log_info(f"[AgentRegistry] Stripped SAS tokens from {cur.rowcount} logo URL(s)")
+            self.db_conn.commit()
+            cur.close()
+        except Exception as e:
+            log_warning(f"[AgentRegistry] logo SAS migration warning: {e}")
+            self.db_conn.rollback()
+
         # One-time migration: assign curated distinct colors to known agents.
         # Uses a flag row check so it only runs once.
         try:
@@ -207,6 +284,9 @@ class AgentRegistry:
                     except Exception:
                         pass
                     agent['color'] = color
+                # Refresh logo SAS token so it's always valid
+                if agent.get('logo_url'):
+                    agent['logo_url'] = _refresh_logo_sas(agent['logo_url'])
                 agents.append(agent)
 
             cur.close()
