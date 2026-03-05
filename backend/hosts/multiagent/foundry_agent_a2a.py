@@ -4488,11 +4488,10 @@ Answer with just JSON:
             # =====================================================================
             # If there's a pending_input_agent, this message is a HITL response
             # Route directly to that agent instead of doing intelligent routing
-            hitl_direct_return = False  # Flag to skip orchestration for non-workflow HITL
+            hitl_resume_detected = False  # Flag to skip intelligent routing for HITL callbacks
             if session_context.pending_input_agent:
                 pending_agent = session_context.pending_input_agent
                 pending_task_id = session_context.pending_input_task_id
-                log_warning(f"[HITL RESUME] Detected pending_input_agent='{pending_agent}', skipping routing")
                 log_info(f"[HITL RESUME] Detected pending_input_agent='{pending_agent}', routing directly to agent")
                 await self._emit_granular_agent_event(
                     "foundry-host-agent", f"Resuming with your input...", context_id,
@@ -4530,7 +4529,7 @@ Answer with just JSON:
                     for task in session_context.current_plan.tasks:
                         if task.state == "input_required":
                             task.state = "completed"
-                            task.output = {"result": f"HITL Response: {enhanced_message[:200]}"}
+                            task.output = {"result": f"HITL Response: {enhanced_message[:200]}", "user_response": enhanced_message}
                             from datetime import datetime, timezone
                             task.updated_at = datetime.now(timezone.utc)
                             log_info(f"[HITL RESUME] Marked task '{task.task_description[:50]}...'as completed")
@@ -4550,15 +4549,21 @@ Answer with just JSON:
                             log_info(f"[HITL RESUME] Detected synthetic single-step workflow - treating as non-workflow HITL")
                             workflow = None  # Clear workflow so it uses non-workflow path
                 
-                # Check if we have a workflow - if not, just acknowledge the HITL response
-                if not workflow:
-                    log_warning(f"[HITL RESUME] No workflow - HITL completed, acknowledging response")
-                    log_info(f"[HITL RESUME] No workflow context - just acknowledging HITL response")
-                    
+                # Check if we have a workflow or an agent mode plan with HITL response
+                # (current_plan with a user_response means orchestration was in progress)
+                has_hitl_plan = session_context.current_plan and any(
+                    t.output and t.output.get("user_response")
+                    for t in session_context.current_plan.tasks
+                )
+
+                if not workflow and not has_hitl_plan:
+                    # Truly no workflow and no agent mode plan — just acknowledge
+                    log_warning(f"[HITL RESUME] No workflow and no active plan - acknowledging response")
+
                     # Clear the pending_input_agent
                     session_context.pending_input_agent = None
                     session_context.pending_input_task_id = None
-                    
+
                     # For non-workflow HITL, just acknowledge the response was received
                     # The Teams agent has already processed the response in its webhook
                     # We don't need to call it again - just tell the user we got it
@@ -4567,12 +4572,19 @@ Answer with just JSON:
                         "foundry-host-agent", ack_message, context_id,
                         event_type="info", metadata={"hitl_ack": True, "agent": pending_agent}
                     )
-                    
+
                     log_info(f"[HITL RESUME] Non-workflow HITL completed, acknowledged response")
                     return [ack_message]
+                elif not workflow and has_hitl_plan:
+                    # Agent mode: no predefined workflow but orchestration was in progress
+                    # Continue to orchestration loop where HITL gate will evaluate
+                    agent_mode = True
+                    hitl_resume_detected = True
+                    log_info(f"[HITL RESUME] Agent mode with active plan - continuing to orchestration (HITL gate will evaluate)")
                 else:
                     # We have a workflow - enable agent mode for orchestration
                     agent_mode = True
+                    hitl_resume_detected = True
                     log_info(f"[HITL RESUME] Using workflow with {len(workflow)} chars (continuing orchestration)")
                 
                 # Clear the pending_input_agent so subsequent requests don't loop
@@ -4592,7 +4604,7 @@ Answer with just JSON:
             # Routing selects the best approach: workflow, single_agent, multi_agent, scheduled_task, direct.
             has_workflows = available_workflows and len(available_workflows) > 0
             has_agents = bool(self.cards)
-            if (has_workflows or has_agents) and not workflow:
+            if (has_workflows or has_agents) and not workflow and not hitl_resume_detected and not session_context.current_plan:
                 wf_count = len(available_workflows) if available_workflows else 0
                 log_debug(f"[Routing] {wf_count} workflows, {len(self.cards)} agents — invoking intelligent routing")
                 await self._emit_granular_agent_event(
@@ -4859,8 +4871,14 @@ Answer with just JSON:
             # =====================================================================
             # Agent mode enables the LLM planner which can detect and execute
             # parallel tasks (e.g., "generate 3 images" becomes 3 parallel tasks)
+            # HITL SAFETY: If there's a saved plan (HITL resume), always use orchestration
+            # regardless of what routing decided — the plan must be resumed
+            if session_context.current_plan and not agent_mode:
+                log_info(f"[HITL SAFETY] current_plan exists but agent_mode=False — forcing orchestration")
+                agent_mode = True
             use_orchestration = (workflow and workflow.strip()) or agent_mode
-            
+            log_info(f"[MODE DETECT] use_orchestration={use_orchestration}, workflow={bool(workflow)}, agent_mode={agent_mode}, context_id={context_id}")
+
             if use_orchestration:
                 mode_type = "Workflow" if (workflow and workflow.strip()) else "Agent"
                 log_debug(f"[{mode_type} Mode] Using orchestration loop (workflow={bool(workflow)}, agent_mode={agent_mode}, workflow_goal={workflow_goal[:50] if workflow_goal else None})")

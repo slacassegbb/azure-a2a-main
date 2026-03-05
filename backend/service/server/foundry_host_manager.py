@@ -384,38 +384,27 @@ class FoundryHostManager(ApplicationManager):
         if message_id:
             self._pending_message_ids.append(message_id)
         
-        # DEBUG: Log what get_context_id returns
         extracted_context_id = get_context_id(message)
-        log_debug(f"[process_message] get_context_id returned: {extracted_context_id}")
-        
         context_id = extracted_context_id or str(uuid.uuid4())
-        log_debug(f"[process_message] Final context_id (after UUID fallback): {context_id}")
-        
+
         # Auto-detect agent_mode based on workflow presence (backward compatible)
         # If agent_mode is explicitly passed, use it; otherwise detect from workflow
         effective_agent_mode = agent_mode if agent_mode is not None else (workflow is not None and workflow.strip() != "")
-        
-        # CRITICAL FIX: Check if this is a HITL resume (human response after input_required)
+
+        # HITL RESUME: Check if this is a human response after input_required
         # If the session context has a pending workflow plan, force agent_mode to True
         # so the orchestrator can resume the workflow instead of treating it as a new request
         try:
             session_ctx = self._host_agent.get_session_context(context_id)
-            # DEBUG: Log the session context state
-            log_debug(f"[HITL CHECK] session_ctx.contextId: {session_ctx.contextId}")
-            log_debug(f"[HITL CHECK] session_ctx.current_plan is not None: {session_ctx.current_plan is not None}")
-            log_debug(f"[HITL CHECK] session_ctx.pending_input_agent: {session_ctx.pending_input_agent}")
             if session_ctx and session_ctx.current_plan:
-                log_debug(f"[HITL RESUME] Found pending workflow plan for context {context_id}, forcing agent_mode=True")
+                log_debug(f"[HITL RESUME] Found pending plan for context {context_id}, forcing agent_mode=True")
                 effective_agent_mode = True
-                # Restore workflow and workflow_goal from the saved plan
                 if session_ctx.current_plan.workflow:
                     workflow = session_ctx.current_plan.workflow
                     log_debug(f"[HITL RESUME] Restored workflow from plan ({len(workflow)} chars)")
                 if session_ctx.current_plan.workflow_goal:
                     workflow_goal = session_ctx.current_plan.workflow_goal
                     log_debug("[HITL RESUME] Restored workflow_goal from plan")
-            else:
-                log_debug("[HITL CHECK] No current_plan found - proceeding as new request")
         except Exception as e:
             log_debug(f"[HITL RESUME] Error checking for pending plan: {e}")
         

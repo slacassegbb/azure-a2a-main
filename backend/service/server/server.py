@@ -403,8 +403,6 @@ class ConversationServer:
             log_debug(f"Stored userId mapping: {msg_id} -> {user_id}, map now has {len(message_user_map)} entries")
             log_debug(f"_send_message: Stored userId mapping: {msg_id} -> {user_id}")
         
-        log_debug(f"_send_message: Processing message asynchronously for contextId: {get_context_id(message)}")
-        
         # Process message asynchronously (original pattern)
         if isinstance(self.manager, ADKHostManager):
             loop = asyncio.get_event_loop()
@@ -416,9 +414,7 @@ class ConversationServer:
                 target=lambda: asyncio.run_coroutine_threadsafe(self.manager.process_message(message, agent_mode, enable_inter_agent_memory, workflow, workflow_goal, available_workflows, user_id=user_id, user_timezone=user_timezone), main_loop)
             )
         t.start()
-        
-        log_debug("_send_message: Started background processing thread")
-        
+
         # Return immediately with message metadata (frontend expects this)
         return SendMessageResponse(
             result=MessageInfo(
