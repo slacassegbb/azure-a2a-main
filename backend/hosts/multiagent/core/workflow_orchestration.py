@@ -43,6 +43,7 @@ from ..models import (
     NextStep,
     RouteSelection,
     EvaluationResult,
+    HITLGateResult,
     QueryResult,
     ScheduledTaskPlan,
 )
@@ -503,6 +504,114 @@ Evaluate the condition and return your result."""
                 event_type="agent_error", metadata={"error": str(e)[:500]}
             )
             return {"error": task.error_message, "output": None}
+
+    async def _evaluate_hitl_gate(
+        self,
+        user_response: str,
+        hitl_task_description: str,
+        session_context: SessionContext,
+        context_id: str,
+        previous_task_outputs: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
+        """
+        Universal HITL gate: evaluate whether a workflow should continue or stop
+        based on the human's response to an input_required step.
+
+        Called automatically after any HITL agent (Teams, SMS, etc.) gets a human response.
+        Returns should_continue=True to proceed, False to halt the workflow.
+        """
+        log_info(f"[HITL Gate] Evaluating human response for step: {hitl_task_description[:100]}")
+        log_info(f"[HITL Gate] Human response: {user_response[:200]}")
+
+        gate_agent_name = "Evaluate"
+
+        await self._emit_granular_agent_event(
+            gate_agent_name, "Evaluating human response...", context_id,
+            event_type="agent_start", metadata={"hitl_gate": True, "task_description": hitl_task_description[:200]}
+        )
+
+        # Build context from previous task outputs (last 3)
+        context_parts = []
+        if previous_task_outputs:
+            for output in previous_task_outputs[-3:]:
+                context_parts.append(output)
+
+        context_text = "\n\n".join(context_parts)
+        if len(context_text) > 4000:
+            context_text = context_text[:4000] + "... [truncated]"
+
+        system_prompt = """You are evaluating a human's response to a workflow step that required human input.
+Based on the step's original purpose and the human's response, determine whether the workflow should CONTINUE or STOP.
+
+CONTINUE (should_continue=true) if:
+- The human approved, confirmed, or gave a positive response
+- The human provided requested information (answered a question, gave data, sent files)
+- The human gave actionable feedback that the workflow can use
+- The response satisfies what the step was asking for
+
+STOP (should_continue=false) if:
+- The human explicitly rejected, declined, or said no
+- The human expressed disapproval or asked to cancel
+- The human said they don't want to proceed
+- The response clearly indicates the workflow should not continue
+
+When in doubt, CONTINUE — only stop on clear rejection or disapproval."""
+
+        # Strip [Step X] prefix from task description
+        clean_task_desc = re.sub(r'^\[Step\s+\d+[a-z]?\]\s*', '', hitl_task_description)
+
+        user_prompt = f"""### WORKFLOW STEP THAT REQUESTED HUMAN INPUT
+{clean_task_desc}
+
+### HUMAN'S RESPONSE
+{user_response}
+
+### CONTEXT FROM PREVIOUS WORKFLOW STEPS
+{context_text if context_text else "(no previous output available)"}
+
+Based on the step's purpose and the human's response, should this workflow continue or stop?"""
+
+        try:
+            gate_result = await self._call_azure_openai_structured(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                response_model=HITLGateResult,
+                context_id=context_id
+            )
+
+            status = "CONTINUE" if gate_result.should_continue else "STOP"
+            log_info(f"[HITL Gate] Result: {status} — {gate_result.reasoning}")
+
+            # Emit result to frontend
+            display_text = f"HITL Gate: {status}\n{gate_result.reasoning}"
+            await self._emit_granular_agent_event(
+                gate_agent_name, display_text, context_id,
+                event_type="agent_output",
+                metadata={"hitl_gate": True, "should_continue": gate_result.should_continue}
+            )
+            await self._emit_granular_agent_event(
+                gate_agent_name, f"{gate_agent_name} completed", context_id,
+                event_type="agent_complete", metadata={"hitl_gate": True}
+            )
+
+            return {
+                "should_continue": gate_result.should_continue,
+                "reasoning": gate_result.reasoning,
+                "response_summary": gate_result.response_summary
+            }
+
+        except Exception as e:
+            log_error(f"[HITL Gate] Error during evaluation: {e}")
+            # Default to continue on error — don't block workflow due to gate failure
+            await self._emit_granular_agent_event(
+                gate_agent_name, f"Gate evaluation failed, continuing workflow", context_id,
+                event_type="agent_complete", metadata={"hitl_gate": True, "error": str(e)[:200]}
+            )
+            return {
+                "should_continue": True,
+                "reasoning": f"Gate evaluation failed ({str(e)[:100]}), defaulting to continue",
+                "response_summary": user_response[:200]
+            }
 
     async def _execute_query_step(
         self,
@@ -1914,6 +2023,50 @@ Analyze this request and decide the best approach."""
                     if step_num > current_step_number:
                         current_step_number = step_num
             log_info(f"[Agent Mode] Resuming from step {current_step_number}")
+
+            # =================================================================
+            # HITL GATE: Evaluate whether workflow should continue or stop
+            # based on the human's response to the input_required step.
+            # =================================================================
+            hitl_task_desc = ""
+            for task in plan.tasks:
+                if task.output and task.output.get("user_response"):
+                    hitl_task_desc = task.task_description
+                    break
+
+            if hitl_task_desc and user_message:
+                gate_result = await self._evaluate_hitl_gate(
+                    user_response=user_message,
+                    hitl_task_description=hitl_task_desc,
+                    session_context=session_context,
+                    context_id=context_id,
+                    previous_task_outputs=all_task_outputs
+                )
+
+                if not gate_result.get("should_continue", True):
+                    # Human rejected — stop the workflow
+                    stop_reason = gate_result.get("reasoning", "Human declined to continue")
+                    stop_msg = f"Workflow stopped: {stop_reason}"
+                    log_info(f"[HITL Gate] Stopping workflow: {stop_reason}")
+                    await self._emit_granular_agent_event(
+                        "foundry-host-agent", stop_msg, context_id,
+                        event_type="phase", metadata={"phase": "hitl_gate_stop"}
+                    )
+                    all_task_outputs.append(stop_msg)
+                    return all_task_outputs
+                else:
+                    # Gate passed — enrich context with response summary
+                    response_summary = gate_result.get("response_summary", "")
+                    log_info(f"[HITL Gate] Continuing workflow. Summary: {response_summary}")
+
+                    # For agent mode (no predefined workflow), re-plan with fresh context
+                    # instead of blindly resuming the old plan's remaining steps
+                    if not workflow or not workflow.strip():
+                        plan.tasks = [t for t in plan.tasks if t.state == "completed"]
+                        if response_summary:
+                            plan.goal = f"{plan.goal}\n\n[HITL Gate]: {response_summary}"
+                        log_info(f"[HITL Gate] Agent mode: cleared pending tasks for re-planning")
+
         else:
             # =====================================================================
             # LLM ORCHESTRATION PATH: All workflows go through the orchestrator

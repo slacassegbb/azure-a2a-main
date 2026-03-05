@@ -77,6 +77,13 @@ class EvaluationResult(BaseModel):
     reasoning: str = Field(..., description="Brief explanation of why the condition evaluated to this result.")
 
 
+class HITLGateResult(BaseModel):
+    """Result of the automatic HITL gate evaluation after a human responds."""
+    should_continue: bool = Field(..., description="True if the workflow should continue based on the human's response. False if the human rejected, declined, or the response indicates the workflow should stop.")
+    reasoning: str = Field(..., description="Brief explanation of why the workflow should continue or stop.")
+    response_summary: str = Field(..., description="A short summary of what the human provided (e.g., 'User approved the invoice', 'User declined to proceed', 'User provided color preference: blue').")
+
+
 class QueryResult(BaseModel):
     """Result of a host-orchestrator query step (structured JSON analysis)."""
     ok: bool = Field(..., description="Whether the query succeeded based on available context.")
