@@ -925,6 +925,14 @@ class FoundryHostManager(ApplicationManager):
         
         completed_agents: set[str] = set()
 
+        # Accumulate WebSocket content across ALL responses so we send ONE combined
+        # message event. This prevents artifacts (e.g. .pptx) from appearing as
+        # separate message bubbles when returned alongside synthesis text.
+        _ws_accumulated_content: list = []
+        _ws_file_history_items: list = []
+        _ws_message_id: str | None = None
+        _ws_agent_name: str = "foundry-host-agent"
+
         async def stream_task_status_update(target_agent: str, target_state: TaskState):
             try:
                 from service.websocket_streamer import get_websocket_streamer
@@ -985,229 +993,169 @@ class FoundryHostManager(ApplicationManager):
                 timestamp=__import__('datetime').datetime.utcnow().timestamp(),
             ))
             
-            # Stream message to WebSocket for frontend in expected format
-            log_debug("Streaming message to WebSocket...")
+            # Accumulate WebSocket content across all responses (sent as ONE event after loop)
+            # This prevents artifacts (e.g. .pptx files) from appearing as separate message bubbles
+            log_debug(f"Accumulating WS content for response {resp_index}...")
             try:
-                from service.websocket_streamer import get_websocket_streamer
-                
-                streamer = await get_websocket_streamer()
-                if streamer:
-                    # Send in A2A MessageEventData format with proper agent attribution
-                    # Use status_agent_name (actual remote agent) not actor_name (host)
-                    event_data = {
-                        "messageId": get_message_id(msg) or str(uuid.uuid4()),
-                        "conversationId": context_id,
-                        "contextId": context_id,
-                        "role": "assistant",
-                        "content": [],
-                        "direction": "incoming",
-                        "agentName": status_agent_name,
-                        "timestamp": __import__('datetime').datetime.utcnow().isoformat(),
-                    }
+                log_debug(f"WebSocket streaming - resp type: {type(resp)}, msg has parts: {hasattr(msg, 'parts')}")
+                if hasattr(msg, "parts"):
+                    log_debug(f"Processing message with {len(msg.parts)} parts")
 
-                    log_debug(f"WebSocket streaming - resp type: {type(resp)}, msg has parts: {hasattr(msg, 'parts')}")
-                    if hasattr(msg, "parts"):
-                        log_debug(f"Processing message with {len(msg.parts)} parts")
-                    
-                    if isinstance(resp, str):
-                        event_data["content"].append({
-                            "type": "text",
-                            "content": resp,
-                            "mediaType": "text/plain",
-                        })
-                    elif hasattr(msg, "parts"):
-                        text_parts = []
-                        image_parts = []
-                        
-                        # First pass: collect video_metadata from DataParts (for video_id tracking)
-                        video_metadata_by_uri = {}
-                        log_debug(f"[VideoRemix] Starting first pass over {len(msg.parts)} parts")
-                        for idx, part in enumerate(msg.parts):
-                            root = part.root if hasattr(part, 'root') else part
-                            log_debug(f"[VideoRemix] Part {idx}: type={type(root).__name__}")
-                            if isinstance(root, DataPart) and isinstance(root.data, dict):
-                                log_debug(f"[VideoRemix] Part {idx} is DataPart with keys: {list(root.data.keys())}")
-                                if root.data.get("type") == "video_metadata":
-                                    uri = root.data.get("uri")
-                                    log_debug(f"[VideoRemix] Found video_metadata! uri={uri}, video_id={root.data.get('video_id')}")
-                                    if uri:
-                                        video_metadata_by_uri[uri] = {
-                                            "video_id": root.data.get("video_id"),
-                                            "generation_id": root.data.get("generation_id"),
-                                            "original_video_id": root.data.get("original_video_id"),
-                                        }
-                                        log_debug(f"[VideoRemix] Collected video metadata for URI: video_id={root.data.get('video_id')}")
-                        
-                        log_debug(f"[VideoRemix] After first pass: {len(video_metadata_by_uri)} video metadata entries")
-                        
-                        # Second pass: process all parts
-                        for part in msg.parts:
-                            log_debug(f"Processing part: {type(part)}, has root: {hasattr(part, 'root')}")
-                            root = part.root if hasattr(part, 'root') else part
-                            if isinstance(root, TextPart):
-                                text_parts.append(root.text)
-                            elif isinstance(root, FilePart):
-                                # Handle FilePart with FileWithUri (from Image Generator, Video agents, etc.)
-                                file_obj = getattr(root, 'file', None)
-                                if file_obj:
-                                    file_uri = getattr(file_obj, 'uri', None)
-                                    if file_uri:
-                                        log_debug(f"[VideoRemix] Found FilePart with URI: {file_uri[-80:]}")
-                                        # Determine type based on mimeType or file extension
-                                        mime_type = getattr(file_obj, 'mimeType', '')
-                                        file_name = getattr(file_obj, 'name', 'agent-artifact')
-                                        log_debug(f"[VideoRemix] FilePart: mimeType={mime_type}, name={file_name}")
-                                        # Check mimeType first, then fall back to extension
-                                        if mime_type.startswith('video/'):
-                                            part_type = "video"
-                                            default_name = "video.mp4"
-                                            log_debug(f"[VideoRemix] Detected as VIDEO via mimeType")
-                                        elif any(ext in file_uri.lower() for ext in ['.mp4', '.webm', '.mov', '.avi']):
-                                            part_type = "video"
-                                            default_name = "video.mp4"
-                                            log_debug(f"[VideoRemix] Detected as VIDEO via extension")
-                                        elif mime_type.startswith('image/'):
-                                            part_type = "image"
-                                            default_name = "image.png"
-                                            log_debug(f"[VideoRemix] Detected as IMAGE via mimeType")
-                                        elif any(ext in file_uri.lower() for ext in ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp']):
-                                            part_type = "image"
-                                            default_name = "image.png"
-                                            log_debug(f"[VideoRemix] Detected as IMAGE via extension")
-                                        elif mime_type.startswith('audio/'):
-                                            part_type = "audio"
-                                            default_name = "audio.mp3"
-                                            log_debug(f"[VideoRemix] Detected as AUDIO via mimeType")
-                                        else:
-                                            part_type = "file"
-                                            default_name = file_name or "artifact"
-                                            log_debug(f"[VideoRemix] Detected as FILE (document/other)")
-                                        
-                                        # Look up video metadata by URI (for video_id)
-                                        metadata = video_metadata_by_uri.get(file_uri, {})
-                                        log_debug(f"[VideoRemix] Looking up metadata for URI, found: {metadata}")
-                                        
-                                        file_part_data = {
-                                            "type": part_type,
-                                            "uri": file_uri,
-                                            "fileName": file_name if file_name != 'agent-artifact' else default_name,
-                                            "fileSize": getattr(file_obj, 'size', 0),
-                                            "mediaType": mime_type or ("video/mp4" if part_type == "video" else "application/octet-stream"),
-                                            "storageType": "azure_blob",
-                                            "status": "completed",
-                                        }
-                                        
-                                        # Add video metadata if available (for remix functionality)
-                                        if metadata.get("video_id"):
-                                            file_part_data["videoId"] = metadata["video_id"]
-                                            log_debug(f"[VideoRemix] Added videoId to file part: {metadata['video_id']}")
-                                        if metadata.get("generation_id"):
-                                            file_part_data["generationId"] = metadata["generation_id"]
-                                        if metadata.get("original_video_id"):
-                                            file_part_data["originalVideoId"] = metadata["original_video_id"]
-                                        
-                                        log_debug(f"[VideoRemix] Final file_part_data: videoId={file_part_data.get('videoId')}, mediaType={file_part_data.get('mediaType')}")
-                                        image_parts.append(file_part_data)
-                                    else:
-                                        log_debug(f"FilePart has no URI, skipping: {file_obj}")
-                            elif isinstance(root, DataPart) and isinstance(root.data, dict):
-                                # Skip video_metadata DataParts (already processed in first pass)
-                                if root.data.get("type") == "video_metadata":
-                                    continue
-                                    
-                                artifact_uri = root.data.get("artifact-uri")
-                                log_debug(f"Found DataPart with dict, has artifact-uri: {bool(artifact_uri)}")
-                                if artifact_uri:
-                                    log_debug(f"Adding artifact to content: {root.data.get('file-name')}")
-                                    # Determine type based on mime or media-type
-                                    media_type = root.data.get("media-type") or root.data.get("mime", "")
-                                    file_name = root.data.get("file-name", "")
-                                    if media_type.startswith('video/') or any(ext in artifact_uri.lower() for ext in ['.mp4', '.webm', '.mov', '.avi']):
+                if isinstance(resp, str):
+                    _ws_accumulated_content.append({
+                        "type": "text",
+                        "content": resp,
+                        "mediaType": "text/plain",
+                    })
+                elif hasattr(msg, "parts"):
+                    text_parts = []
+                    image_parts = []
+
+                    # First pass: collect video_metadata from DataParts (for video_id tracking)
+                    video_metadata_by_uri = {}
+                    log_debug(f"[VideoRemix] Starting first pass over {len(msg.parts)} parts")
+                    for idx, part in enumerate(msg.parts):
+                        root = part.root if hasattr(part, 'root') else part
+                        log_debug(f"[VideoRemix] Part {idx}: type={type(root).__name__}")
+                        if isinstance(root, DataPart) and isinstance(root.data, dict):
+                            log_debug(f"[VideoRemix] Part {idx} is DataPart with keys: {list(root.data.keys())}")
+                            if root.data.get("type") == "video_metadata":
+                                uri = root.data.get("uri")
+                                log_debug(f"[VideoRemix] Found video_metadata! uri={uri}, video_id={root.data.get('video_id')}")
+                                if uri:
+                                    video_metadata_by_uri[uri] = {
+                                        "video_id": root.data.get("video_id"),
+                                        "generation_id": root.data.get("generation_id"),
+                                        "original_video_id": root.data.get("original_video_id"),
+                                    }
+                                    log_debug(f"[VideoRemix] Collected video metadata for URI: video_id={root.data.get('video_id')}")
+
+                    log_debug(f"[VideoRemix] After first pass: {len(video_metadata_by_uri)} video metadata entries")
+
+                    # Second pass: process all parts
+                    for part in msg.parts:
+                        log_debug(f"Processing part: {type(part)}, has root: {hasattr(part, 'root')}")
+                        root = part.root if hasattr(part, 'root') else part
+                        if isinstance(root, TextPart):
+                            text_parts.append(root.text)
+                        elif isinstance(root, FilePart):
+                            # Handle FilePart with FileWithUri (from Image Generator, Video agents, etc.)
+                            file_obj = getattr(root, 'file', None)
+                            if file_obj:
+                                file_uri = getattr(file_obj, 'uri', None)
+                                if file_uri:
+                                    log_debug(f"[VideoRemix] Found FilePart with URI: {file_uri[-80:]}")
+                                    # Determine type based on mimeType or file extension
+                                    mime_type = getattr(file_obj, 'mimeType', '')
+                                    file_name = getattr(file_obj, 'name', 'agent-artifact')
+                                    log_debug(f"[VideoRemix] FilePart: mimeType={mime_type}, name={file_name}")
+                                    # Check mimeType first, then fall back to extension
+                                    if mime_type.startswith('video/'):
                                         part_type = "video"
-                                        default_media = "video/mp4"
-                                    else:
+                                        default_name = "video.mp4"
+                                        log_debug(f"[VideoRemix] Detected as VIDEO via mimeType")
+                                    elif any(ext in file_uri.lower() for ext in ['.mp4', '.webm', '.mov', '.avi']):
+                                        part_type = "video"
+                                        default_name = "video.mp4"
+                                        log_debug(f"[VideoRemix] Detected as VIDEO via extension")
+                                    elif mime_type.startswith('image/'):
                                         part_type = "image"
-                                        default_media = "image/png"
-                                    image_parts.append({
+                                        default_name = "image.png"
+                                        log_debug(f"[VideoRemix] Detected as IMAGE via mimeType")
+                                    elif any(ext in file_uri.lower() for ext in ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp']):
+                                        part_type = "image"
+                                        default_name = "image.png"
+                                        log_debug(f"[VideoRemix] Detected as IMAGE via extension")
+                                    elif mime_type.startswith('audio/'):
+                                        part_type = "audio"
+                                        default_name = "audio.mp3"
+                                        log_debug(f"[VideoRemix] Detected as AUDIO via mimeType")
+                                    else:
+                                        part_type = "file"
+                                        default_name = file_name or "artifact"
+                                        log_debug(f"[VideoRemix] Detected as FILE (document/other)")
+
+                                    # Look up video metadata by URI (for video_id)
+                                    metadata = video_metadata_by_uri.get(file_uri, {})
+                                    log_debug(f"[VideoRemix] Looking up metadata for URI, found: {metadata}")
+
+                                    file_part_data = {
                                         "type": part_type,
-                                        "uri": artifact_uri,
-                                        "fileName": file_name,
-                                        "fileSize": root.data.get("file-size"),
-                                        "mediaType": media_type or default_media,
-                                        "storageType": root.data.get("storage-type", "azure_blob"),
-                                        "status": root.data.get("status"),
-                                        "sourceUrl": root.data.get("source-url"),
-                                    })
-                                elif root.data.get("type") not in ["token_usage", "video_metadata"]:
-                                    # Only add non-token_usage and non-video_metadata DataParts as text
-                                    text_parts.append(json.dumps(root.data))
-                        if text_parts:
-                            event_data["content"].append({
-                                "type": "text",
-                                "content": "\n\n".join(text_parts),
-                                "mediaType": "text/plain",
-                            })
-                        if image_parts:
-                            pending_list = self._pending_artifacts.setdefault(context_id, [])
-                            pending_list.extend(image_parts)
-                        for image_part in image_parts:
-                            event_data["content"].append(image_part)
-                    else:
-                        event_data["content"].append({
+                                        "uri": file_uri,
+                                        "fileName": file_name if file_name != 'agent-artifact' else default_name,
+                                        "fileSize": getattr(file_obj, 'size', 0),
+                                        "mediaType": mime_type or ("video/mp4" if part_type == "video" else "application/octet-stream"),
+                                        "storageType": "azure_blob",
+                                        "status": "completed",
+                                    }
+
+                                    # Add video metadata if available (for remix functionality)
+                                    if metadata.get("video_id"):
+                                        file_part_data["videoId"] = metadata["video_id"]
+                                        log_debug(f"[VideoRemix] Added videoId to file part: {metadata['video_id']}")
+                                    if metadata.get("generation_id"):
+                                        file_part_data["generationId"] = metadata["generation_id"]
+                                    if metadata.get("original_video_id"):
+                                        file_part_data["originalVideoId"] = metadata["original_video_id"]
+
+                                    log_debug(f"[VideoRemix] Final file_part_data: videoId={file_part_data.get('videoId')}, mediaType={file_part_data.get('mediaType')}")
+                                    image_parts.append(file_part_data)
+                                else:
+                                    log_debug(f"FilePart has no URI, skipping: {file_obj}")
+                        elif isinstance(root, DataPart) and isinstance(root.data, dict):
+                            # Skip video_metadata DataParts (already processed in first pass)
+                            if root.data.get("type") == "video_metadata":
+                                continue
+
+                            artifact_uri = root.data.get("artifact-uri")
+                            log_debug(f"Found DataPart with dict, has artifact-uri: {bool(artifact_uri)}")
+                            if artifact_uri:
+                                log_debug(f"Adding artifact to content: {root.data.get('file-name')}")
+                                # Determine type based on mime or media-type
+                                media_type = root.data.get("media-type") or root.data.get("mime", "")
+                                file_name = root.data.get("file-name", "")
+                                if media_type.startswith('video/') or any(ext in artifact_uri.lower() for ext in ['.mp4', '.webm', '.mov', '.avi']):
+                                    part_type = "video"
+                                    default_media = "video/mp4"
+                                else:
+                                    part_type = "image"
+                                    default_media = "image/png"
+                                image_parts.append({
+                                    "type": part_type,
+                                    "uri": artifact_uri,
+                                    "fileName": file_name,
+                                    "fileSize": root.data.get("file-size"),
+                                    "mediaType": media_type or default_media,
+                                    "storageType": root.data.get("storage-type", "azure_blob"),
+                                    "status": root.data.get("status"),
+                                    "sourceUrl": root.data.get("source-url"),
+                                })
+                            elif root.data.get("type") not in ["token_usage", "video_metadata"]:
+                                # Only add non-token_usage and non-video_metadata DataParts as text
+                                text_parts.append(json.dumps(root.data))
+                    if text_parts:
+                        _ws_accumulated_content.append({
                             "type": "text",
-                            "content": str(resp),
+                            "content": "\n\n".join(text_parts),
                             "mediaType": "text/plain",
                         })
-
-                    # Check if any image OR video content was already added
-                    if not any(item.get("type") in ("image", "video") for item in event_data["content"]):
-                        pending_images = self._pending_artifacts.pop(context_id, [])
-                        for image_part in pending_images:
-                            event_data["content"].append(image_part)
-                    else:
-                        self._pending_artifacts.pop(context_id, None)
-
-                    success = await streamer._send_event("message", event_data, context_id)
-                    log_debug(f"[FILE_HISTORY] Checking {len(event_data['content'])} content items for images...")
-                    for content_item in event_data["content"]:
-                        if content_item.get("type") == "image":
-                            log_debug(f"[FILE_HISTORY] Found image content with uri: {content_item.get('uri', 'no-uri')[:80]}...")
-                            log_debug(f"Found file content with uri: {content_item.get('uri')}")
-                        if content_item.get("type") == "image" and content_item.get("uri"):
-                            file_uri = content_item.get("uri")
-                            # Emit file_uploaded event so it appears in File History
-                            # Deduplication is handled by websocket streamer's per-conversation tracking
-                            # Use deterministic hash from blob path (sans SAS query params)
-                            # so it matches the file_processing_completed event
-                            import hashlib
-                            from urllib.parse import urlparse
-                            _parsed = urlparse(file_uri)
-                            _base_uri = f"{_parsed.scheme}://{_parsed.netloc}{_parsed.path}"
-                            file_id = hashlib.md5(_base_uri.encode()).hexdigest()[:16]
-                            file_info = {
-                                "file_id": file_id,
-                                "filename": content_item.get("fileName", "agent-artifact.png"),
-                                "uri": file_uri,
-                                "size": content_item.get("fileSize", 0),
-                                "content_type": content_item.get("mediaType", "image/png"),
-                                "source_agent": status_agent_name,
-                                "contextId": context_id
-                            }
-                            log_debug(f"[FILE_HISTORY] Emitting file_uploaded event for: {file_info['filename']}")
-                            await streamer.stream_file_uploaded(file_info, context_id)
-                            log_debug(f"File uploaded event sent for agent artifact: {file_info['filename']}")
-                            
-                            # File availability is already communicated via file_uploaded event
-                            # No need to send additional remote_agent_activity events
-                    if success:
-                        log_debug(f"Message streamed to WebSocket: {event_data}")
-                    else:
-                        log_debug("Failed to stream message to WebSocket")
+                    for image_part in image_parts:
+                        _ws_accumulated_content.append(image_part)
+                        _ws_file_history_items.append(image_part)
                 else:
-                    log_debug("WebSocket streamer not available")
-                
+                    _ws_accumulated_content.append({
+                        "type": "text",
+                        "content": str(resp),
+                        "mediaType": "text/plain",
+                    })
+
+                # Track first message ID and last agent name for the combined event
+                if _ws_message_id is None:
+                    _ws_message_id = get_message_id(msg) or str(uuid.uuid4())
+                _ws_agent_name = status_agent_name
+
             except Exception as e:
-                log_debug(f"Error streaming to WebSocket: {e}")
+                log_debug(f"Error accumulating WS content: {e}")
             
             # Determine task state from response
             # Priority: 1) A2A protocol status, 2) Session context (HITL), 3) Default to completed
@@ -1263,6 +1211,62 @@ class FoundryHostManager(ApplicationManager):
                 pass
             elif state == TaskState.failed:
                 pass
+        # --- Send ONE combined WebSocket message event with all accumulated content ---
+        # This ensures text + artifacts appear in a single bubble, not separate ones
+        if _ws_accumulated_content:
+            try:
+                from service.websocket_streamer import get_websocket_streamer
+                streamer = await get_websocket_streamer()
+                if streamer:
+                    # Also fold in any pending artifacts from previous calls
+                    pending_images = self._pending_artifacts.pop(context_id, [])
+                    # Deduplicate: only add pending artifacts not already in accumulated content
+                    existing_uris = {item.get("uri") for item in _ws_accumulated_content if item.get("uri")}
+                    for pending_item in pending_images:
+                        if pending_item.get("uri") not in existing_uris:
+                            _ws_accumulated_content.append(pending_item)
+                            _ws_file_history_items.append(pending_item)
+
+                    event_data = {
+                        "messageId": _ws_message_id or str(uuid.uuid4()),
+                        "conversationId": context_id,
+                        "contextId": context_id,
+                        "role": "assistant",
+                        "content": _ws_accumulated_content,
+                        "direction": "incoming",
+                        "agentName": _ws_agent_name,
+                        "timestamp": __import__('datetime').datetime.utcnow().isoformat(),
+                    }
+                    success = await streamer._send_event("message", event_data, context_id)
+                    log_debug(f"Combined message streamed to WebSocket: {len(_ws_accumulated_content)} content items, success={success}")
+
+                    # Emit file_uploaded events for file history panel
+                    for content_item in _ws_file_history_items:
+                        if content_item.get("type") == "image" and content_item.get("uri"):
+                            import hashlib
+                            from urllib.parse import urlparse
+                            _parsed = urlparse(content_item["uri"])
+                            _base_uri = f"{_parsed.scheme}://{_parsed.netloc}{_parsed.path}"
+                            file_id = hashlib.md5(_base_uri.encode()).hexdigest()[:16]
+                            file_info = {
+                                "file_id": file_id,
+                                "filename": content_item.get("fileName", "agent-artifact.png"),
+                                "uri": content_item["uri"],
+                                "size": content_item.get("fileSize", 0),
+                                "content_type": content_item.get("mediaType", "image/png"),
+                                "source_agent": _ws_agent_name,
+                                "contextId": context_id
+                            }
+                            log_debug(f"[FILE_HISTORY] Emitting file_uploaded event for: {file_info['filename']}")
+                            await streamer.stream_file_uploaded(file_info, context_id)
+                else:
+                    log_debug("WebSocket streamer not available for combined message")
+            except Exception as e:
+                log_debug(f"Error sending combined WS message: {e}")
+        else:
+            # No content accumulated — clear any stale pending artifacts
+            self._pending_artifacts.pop(context_id, None)
+
         if message_id in self._pending_message_ids:
             self._pending_message_ids.remove(message_id)
 
