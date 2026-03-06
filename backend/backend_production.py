@@ -1882,9 +1882,9 @@ def main():
         """
         body = await request.json()
         workflow = body
-        
+
         workflows = active_workflow_service.add_active_workflow(session_id, workflow)
-        
+
         # Broadcast update
         try:
             if websocket_streamer:
@@ -1895,7 +1895,7 @@ def main():
                 )
         except Exception as e:
             log_warning(f"[ActiveWorkflows] Failed to broadcast add: {e}")
-        
+
         return {"success": True, "workflows": workflows}
     
     @app.delete("/api/active-workflows/{workflow_id}")

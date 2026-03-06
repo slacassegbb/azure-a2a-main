@@ -525,8 +525,10 @@ Evaluate the condition and return your result."""
 
         gate_agent_name = "HITL Gate"
 
+        # hitl_task_description already contains [Step X] prefix, which the
+        # frontend extracts for timeline sorting.
         await self._emit_granular_agent_event(
-            gate_agent_name, "Evaluating human response...", context_id,
+            gate_agent_name, hitl_task_description[:200], context_id,
             event_type="agent_start", metadata={"hitl_gate": True, "task_description": hitl_task_description[:200]}
         )
 

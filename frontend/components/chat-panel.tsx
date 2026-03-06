@@ -2780,36 +2780,64 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
         }
       }
 
-      // Add final message AFTER the workflow summary
+      // Split attachments into documents (inline with text) vs media (separate message)
+      const docAttachments: typeof data.attachments = []
+      const mediaAttachments: typeof data.attachments = []
+      if (data.attachments && data.attachments.length > 0) {
+        for (const att of data.attachments) {
+          const url = (att.uri || "").split('?')[0].toLowerCase()
+          const isMedia = (att.mediaType || "").startsWith("video/") ||
+            (att.mediaType || "").startsWith("image/") ||
+            (att.mediaType || "").startsWith("audio/") ||
+            /\.(mp4|webm|mov|avi|mkv|png|jpe?g|gif|webp|svg|bmp|mp3|wav|aac|ogg|flac|m4a)$/.test(url)
+          if (isMedia) {
+            mediaAttachments.push(att)
+          } else {
+            docAttachments.push(att)
+          }
+        }
+      }
+
+      // Add final message AFTER the workflow summary (with document attachments inline)
       if (data.message.content && data.message.content.trim().length > 0) {
         const finalMessage: Message = {
           id: responseId,
           role: data.message.role === "user" ? "user" : "assistant",
           content: data.message.content,
           agent: data.message.agent,
+          ...(docAttachments.length > 0 ? { attachments: docAttachments } : {}),
         }
         messagesToAdd.push(finalMessage)
-        
+
         // Track that we've received a response for this conversation
         // This helps handleSharedInferenceEnded skip duplicate responses
         const responseReceivedKey = `response_received_${effectiveConversationId}`
         setProcessedMessageIds(prev => new Set([...prev, responseReceivedKey]))
-      }
-
-      // Add attachments AFTER the text message (so order is: workflow -> text -> video/images)
-      if (data.attachments && data.attachments.length > 0) {
+      } else if (docAttachments.length > 0) {
+        // No text content but has document attachments — show as standalone message
         const attachmentId = `${responseId}_attachments`
         const attachmentMessage: Message = {
           id: attachmentId,
           role: "assistant",
           agent: data.message.agent,
-          attachments: data.attachments,
+          attachments: docAttachments,
         }
         messagesToAdd.push(attachmentMessage)
-        logDebug("[ChatPanel] Adding attachment message after text:", attachmentMessage)
-        
-        // Broadcast attachment message to other users
-        // (done after adding to messagesToAdd so the order is preserved)
+        logDebug("[ChatPanel] Adding standalone document attachment message (no text):", attachmentMessage)
+      }
+
+      // Media attachments (images, videos, audio) stay as separate messages
+      // so they get full-width rendering with players/remix buttons
+      if (mediaAttachments.length > 0) {
+        const mediaId = `${responseId}_media`
+        const mediaMessage: Message = {
+          id: mediaId,
+          role: "assistant",
+          agent: data.message.agent,
+          attachments: mediaAttachments,
+        }
+        messagesToAdd.push(mediaMessage)
+        logDebug("[ChatPanel] Adding separate media attachment message:", mediaMessage)
       }
 
       // NOTE: We no longer add media from inference steps as separate messages here.

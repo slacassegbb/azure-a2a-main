@@ -1,5 +1,6 @@
 import uuid
 import asyncio
+import os
 import sys
 import time
 from pathlib import Path
@@ -26,6 +27,23 @@ from service import chat_history_service
 
 # Tenant separator used in contextId format: sessionId::conversationId
 TENANT_SEPARATOR = '::'
+
+async def _broadcast_agent_enabled(session_id: str, agent_config: Dict[str, Any]):
+    """Broadcast session_agent_enabled via WebSocket so the sidebar updates live."""
+    try:
+        websocket_url = os.environ.get("WEBSOCKET_SERVER_URL", "http://localhost:8080")
+        async with httpx.AsyncClient() as client:
+            await client.post(
+                f"{websocket_url}/events",
+                json={
+                    "eventType": "session_agent_enabled",
+                    "contextId": session_id,
+                    "agent": agent_config
+                },
+                timeout=5.0
+            )
+    except Exception as e:
+        log_debug(f"[Pre-flight] Failed to broadcast agent enabled: {e}")
 
 def parse_session_from_context(context_id: str) -> str:
     """Extract session_id from contextId (format: sessionId::conversationId)"""
@@ -502,7 +520,9 @@ class FoundryHostManager(ApplicationManager):
                 failed_agents = {}  # name -> config for agents that failed round 1
                 for name, config, is_healthy in results:
                     if is_healthy:
-                        session_registry.enable_agent(session_id, config)
+                        was_new = session_registry.enable_agent(session_id, config)
+                        if was_new:
+                            asyncio.create_task(_broadcast_agent_enabled(session_id, config))
                         log_info(f"[Workflow Pre-flight] Auto-enabled '{name}' for session {session_id[:8]}...")
                     else:
                         failed_agents[name] = config
@@ -529,7 +549,9 @@ class FoundryHostManager(ApplicationManager):
                         newly_online = []
                         for name, config, is_healthy in poll_results:
                             if is_healthy:
-                                session_registry.enable_agent(session_id, config)
+                                was_new = session_registry.enable_agent(session_id, config)
+                                if was_new:
+                                    asyncio.create_task(_broadcast_agent_enabled(session_id, config))
                                 log_info(f"[Workflow Pre-flight] Auto-enabled '{name}' after {elapsed:.0f}s for session {session_id[:8]}...")
                                 newly_online.append(name)
                         for name in newly_online:
