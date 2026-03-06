@@ -31,14 +31,17 @@ TENANT_SEPARATOR = '::'
 async def _broadcast_agent_enabled(session_id: str, agent_config: Dict[str, Any]):
     """Broadcast session_agent_enabled via WebSocket so the sidebar updates live."""
     try:
+        import json as _json
         websocket_url = os.environ.get("WEBSOCKET_SERVER_URL", "http://localhost:8080")
+        # Serialize via json.dumps first to handle datetime objects in agent_config
+        safe_config = _json.loads(_json.dumps(agent_config, default=str))
         async with httpx.AsyncClient() as client:
             await client.post(
                 f"{websocket_url}/events",
                 json={
                     "eventType": "session_agent_enabled",
                     "contextId": session_id,
-                    "agent": agent_config
+                    "agent": safe_config
                 },
                 timeout=5.0
             )
@@ -342,7 +345,7 @@ class FoundryHostManager(ApplicationManager):
                 file_part = create_file_part(
                     uri=uri,
                     name=resp.get('file-name', 'artifact'),
-                    mime_type=resp.get('media-type', 'image/png')
+                    mime_type=resp.get('media-type', 'application/octet-stream')
                 )
                 parts.append(Part(root=file_part))
             else:

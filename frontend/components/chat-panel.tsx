@@ -1083,7 +1083,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
                 // We only want to use attachments
                 attachments: images.length > 0 ? images.map(img => {
                   // Use the actual mimeType from the file, or infer from extension
-                  let mediaType = img.mimeType || 'image/png'
+                  let mediaType = img.mimeType || undefined
                   if (!img.mimeType) {
                     // Fallback: infer from file extension
                     const ext = img.fileName?.split('.').pop()?.toLowerCase()
@@ -1600,7 +1600,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
               fileName: img.fileName,
               fileSize: img.fileSize,
               storageType: img.storageType,
-              mediaType: img.mediaType || "image/png",
+              mediaType: img.mediaType || undefined,
               videoId: img.videoId,
               generationId: img.generationId,
               originalVideoId: img.originalVideoId,
@@ -2780,7 +2780,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
         }
       }
 
-      // Split attachments into documents (inline with text) vs media (separate message)
+      // Split attachments into documents vs media (images/videos/audio)
       const docAttachments: typeof data.attachments = []
       const mediaAttachments: typeof data.attachments = []
       if (data.attachments && data.attachments.length > 0) {
@@ -2798,6 +2798,15 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
         }
       }
 
+      // Suppress document attachments whose URI already appears in the text
+      // (the LLM often includes a download link in its response, making the attachment redundant)
+      const textContent = data.message.content || ""
+      const filteredDocAttachments = docAttachments.filter(att => {
+        if (!att.uri) return true
+        // Check if the URI (or a URL-decoded version) appears in the text
+        return !textContent.includes(att.uri) && !textContent.includes(decodeURIComponent(att.uri))
+      })
+
       // Add final message AFTER the workflow summary (with document attachments inline)
       if (data.message.content && data.message.content.trim().length > 0) {
         const finalMessage: Message = {
@@ -2805,7 +2814,7 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
           role: data.message.role === "user" ? "user" : "assistant",
           content: data.message.content,
           agent: data.message.agent,
-          ...(docAttachments.length > 0 ? { attachments: docAttachments } : {}),
+          ...(filteredDocAttachments.length > 0 ? { attachments: filteredDocAttachments } : {}),
         }
         messagesToAdd.push(finalMessage)
 

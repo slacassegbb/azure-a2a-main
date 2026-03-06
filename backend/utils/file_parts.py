@@ -94,7 +94,7 @@ def extract_mime_type(part: Any) -> str:
     return 'application/octet-stream'
 
 
-def create_file_part(uri: str, name: str = 'artifact', mime_type: str = 'image/png') -> Part:
+def create_file_part(uri: str, name: str = 'artifact', mime_type: str = 'application/octet-stream') -> Part:
     """
     Create a standard A2A FilePart with FileWithUri.
     
@@ -183,7 +183,7 @@ def convert_artifact_dict_to_file_part(artifact: Any) -> Optional[Part]:
         return None
     
     # Determine mime type - check for video types
-    mime_type = data.get('media-type') or data.get('mime', 'image/png')
+    mime_type = data.get('media-type') or data.get('mime', 'application/octet-stream')
     if data.get('type') == 'video_metadata' or uri.lower().endswith(('.mp4', '.webm', '.mov', '.avi')):
         mime_type = data.get('media-type') or data.get('mime', 'video/mp4')
     

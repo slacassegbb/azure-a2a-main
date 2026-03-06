@@ -2969,7 +2969,7 @@ Answer with just JSON:
                                                             log_debug(f"Found image artifact in streaming event (FilePart): {file_uri}")
                                                             # Capture values to avoid closure issues
                                                             file_name = file_obj.name
-                                                            mime_type = file_obj.mimeType if hasattr(file_obj, 'mimeType') else 'image/png'
+                                                            mime_type = file_obj.mimeType if hasattr(file_obj, 'mimeType') else 'application/octet-stream'
                                                             
                                                             # Determine if file will be auto-indexed via Content Understanding
                                                             from .a2a_document_processor import AUDIO_EXTENSIONS, VIDEO_EXTENSIONS, IMAGE_EXTENSIONS, DOCUMENT_EXTENSIONS, TEXT_EXTENSIONS, CU_TEXT_FORMATS
