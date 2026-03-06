@@ -22,7 +22,11 @@ import httpx
 
 # Add shared module to path for credential helper
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from shared.credential_helper import get_user_credentials
+try:
+    from shared.credential_helper import get_user_credentials
+except ImportError:
+    async def get_user_credentials(context_id, agent_name):
+        return None
 from openai import AsyncAzureOpenAI
 from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 from azure.storage.blob import BlobServiceClient, generate_blob_sas, BlobSasPermissions
