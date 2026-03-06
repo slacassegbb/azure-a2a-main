@@ -1066,10 +1066,22 @@ class FoundryHostManager(ApplicationManager):
                                             part_type = "video"
                                             default_name = "video.mp4"
                                             log_debug(f"[VideoRemix] Detected as VIDEO via extension")
-                                        else:
+                                        elif mime_type.startswith('image/'):
                                             part_type = "image"
                                             default_name = "image.png"
-                                            log_debug(f"[VideoRemix] Detected as IMAGE (fallback)")
+                                            log_debug(f"[VideoRemix] Detected as IMAGE via mimeType")
+                                        elif any(ext in file_uri.lower() for ext in ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp']):
+                                            part_type = "image"
+                                            default_name = "image.png"
+                                            log_debug(f"[VideoRemix] Detected as IMAGE via extension")
+                                        elif mime_type.startswith('audio/'):
+                                            part_type = "audio"
+                                            default_name = "audio.mp3"
+                                            log_debug(f"[VideoRemix] Detected as AUDIO via mimeType")
+                                        else:
+                                            part_type = "file"
+                                            default_name = file_name or "artifact"
+                                            log_debug(f"[VideoRemix] Detected as FILE (document/other)")
                                         
                                         # Look up video metadata by URI (for video_id)
                                         metadata = video_metadata_by_uri.get(file_uri, {})
@@ -1080,7 +1092,7 @@ class FoundryHostManager(ApplicationManager):
                                             "uri": file_uri,
                                             "fileName": file_name if file_name != 'agent-artifact' else default_name,
                                             "fileSize": getattr(file_obj, 'size', 0),
-                                            "mediaType": mime_type or ("video/mp4" if part_type == "video" else "image/png"),
+                                            "mediaType": mime_type or ("video/mp4" if part_type == "video" else "application/octet-stream"),
                                             "storageType": "azure_blob",
                                             "status": "completed",
                                         }

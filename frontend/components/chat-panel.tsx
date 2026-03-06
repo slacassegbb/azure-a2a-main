@@ -1538,8 +1538,17 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
             generationId: c.generationId,
             originalVideoId: c.originalVideoId,
           }))
+          // Get document/file parts (non-image, non-video files like .pptx, .pdf, etc.)
+          const fileContents = data.content.filter((c: any) =>
+            c.type === "file" && !c.mimeType?.startsWith("video/") && !c.mimeType?.startsWith("image/")
+          ).map((c: any) => ({
+            uri: c.uri,
+            fileName: c.name || c.fileName || "File attachment",
+            mediaType: c.mimeType || undefined,
+          }))
           logDebug("[ChatPanel] Image parts count:", imageContents.length)
           logDebug("[ChatPanel] Video parts count:", videoContents.length)
+          logDebug("[ChatPanel] File parts count:", fileContents.length)
           const derivedImageAttachments = [] as any[]
           let agentName = data.agentName || "System"
           
@@ -1554,8 +1563,8 @@ export function ChatPanel({ dagNodes, dagLinks, enableInterAgentMemory, workflow
           
           const existingUris = new Set(imageContents.map((img: any) => img.uri))
           const filteredDerived = derivedImageAttachments.filter(att => !existingUris.has(att.uri))
-          // Combine images and videos into all attachments
-          const allImageAttachments = [...imageContents, ...filteredDerived, ...videoContents]
+          // Combine images, videos, and document files into all attachments
+          const allImageAttachments = [...imageContents, ...filteredDerived, ...videoContents, ...fileContents]
           
           // NOTE: We no longer add attachmentMessage immediately here.
           // Instead, we pass attachments through final_response so they appear
