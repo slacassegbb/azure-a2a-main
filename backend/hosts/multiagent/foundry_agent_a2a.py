@@ -5047,34 +5047,40 @@ Answer with just JSON:
                             
                             raw_outputs = "\n\n".join(step_outputs)
                             
-                            synthesis_prompt = f"""Synthesize the following workflow step outputs into a clear, professional response for the user.
+                            synthesis_prompt = f"""Synthesize the following workflow step outputs into a brief, conversational response for the user.
 
 USER'S ORIGINAL REQUEST:
 {user_message}
 
-RULES:
-- DIRECTLY ANSWER the user's original request using the information from the step outputs
-- Write a cohesive narrative, NOT a raw dump of step outputs
-- Lead with the most important outcome/result that answers the user's question
-- Include key details: amounts, IDs, names, dates, links
-- Use markdown formatting: **bold** for labels, bullet points for details
-- NEVER use triple-backtick code blocks (```) for IDs, invoice numbers, or amounts — use **bold** or inline `code` instead
-- Keep it concise — aim for 10-15 lines max
-- Do NOT include internal processing details, rate limit messages, or raw API responses
-- Do NOT include phrases like "Step 1 output:" or "The email agent said..."
-- In the "Actions Completed" section, mention WHICH AGENT performed each action (e.g., "**Microsoft Outlook Agent** retrieved the invoice PDF", "**QuickBooks Agent** recorded the bill", "**Stripe Agent** created and finalized the invoice")
-- Write as if YOU coordinated the work across the agents
-- Do NOT include image URLs, markdown image references (![...](url)), or raw blob storage links — images are displayed separately in the UI
-- Do NOT write a meta-summary like "the image was analyzed" — instead, include the ACTUAL content/answer
+TONE & LENGTH:
+- Sound like a helpful assistant talking to a colleague — warm, direct, not robotic
+- Be BRIEF: 2-5 sentences is ideal. Only go longer if the workflow produced complex results the user must review
+- The user already watched each step execute in the UI, so don't rehash what each agent did step-by-step
+
+STRUCTURE:
+- Lead with the main outcome or deliverable (the file, the answer, the action taken)
+- Include ONLY the key details the user needs to act on: amounts, IDs, names, dates, download links
+- If files were generated, lead with the download link — don't bury it under a wall of text
+- If real-world side effects occurred (emails sent, records created, payments processed), briefly confirm what happened and which systems were touched
+- End with a short offer to help further (e.g., "Let me know if you'd like any changes!")
+
+AVOID:
+- Section headers like "Presentation Highlights", "Actions Completed", "Key Details"
+- Bullet-point dumps that restate every slide, field, or data point from the output
+- Internal details: rate limits, API responses, processing steps, raw agent output
+- Phrases like "Step 1 output:", "The email agent said...", "has been successfully created"
+- Image URLs, markdown image references (![...](url)), or raw blob storage links — media is displayed separately in the UI
+- Meta-summaries like "the image was analyzed" — include the ACTUAL content/answer instead
+- Triple-backtick code blocks (```) — use **bold** or inline `code` for IDs and numbers
 
 WORKFLOW STEPS AND OUTPUTS:
 {raw_outputs}"""
-                            
+
                             # Chain to conversation so follow-up messages have workflow context
                             synth_prev_response_id = self._response_ids.get(context_id)
                             synthesis_response = await self.openai_client.responses.create(
                                 input=synthesis_prompt,
-                                instructions="You are a professional executive assistant summarizing completed multi-agent workflow results. Be clear, concise, and action-oriented. Always credit which agent performed each action. Never use triple-backtick code blocks — use **bold** or inline `code` for IDs and numbers.",
+                                instructions="You are a helpful AI assistant that coordinates work across specialized agents. Respond naturally and concisely — like a smart colleague reporting back, not a system generating a report. Adapt your detail level to the complexity of the results. Never use triple-backtick code blocks.",
                                 model=self.model_name,
                                 previous_response_id=synth_prev_response_id,
                             )
