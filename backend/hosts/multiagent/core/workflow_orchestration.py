@@ -523,7 +523,7 @@ Evaluate the condition and return your result."""
         log_info(f"[HITL Gate] Evaluating human response for step: {hitl_task_description[:100]}")
         log_info(f"[HITL Gate] Human response: {user_response[:200]}")
 
-        gate_agent_name = "Evaluate"
+        gate_agent_name = "HITL Gate"
 
         await self._emit_granular_agent_event(
             gate_agent_name, "Evaluating human response...", context_id,
