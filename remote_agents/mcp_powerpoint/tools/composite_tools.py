@@ -246,6 +246,23 @@ def _remove_unused_placeholders(slide, keep_idxs=None):
         spTree.remove(sp)
 
 
+def _get_template_left_margin(layout):
+    """Get the left margin from a template layout's placeholder positions.
+
+    Templates define a design grid via their placeholder positions.  This
+    reads the left edge of the title (idx 0) or subtitle (idx 1) placeholder
+    so manually-added shapes can align with that grid.  Works with any .pptx.
+
+    Returns:
+        The left margin in EMUs, or Inches(0.5) as default.
+    """
+    ph_map = {ph.placeholder_format.idx: ph for ph in layout.placeholders}
+    for idx in [0, 1, 6, 7]:
+        if idx in ph_map:
+            return ph_map[idx].left
+    return Inches(0.5)
+
+
 def _find_template_layout(pres, need_body=False, skip_first=False, header_title=False):
     """Find a template layout that has usable placeholders.
 
@@ -427,11 +444,25 @@ def _add_two_column_slide(pres, spec, scheme, has_template=False):
 
     text_color = _textbox_color(layout, scheme) if has_template else scheme["text"]
 
+    # Determine content area — align with template's design grid when available
+    if has_template:
+        margin = _get_template_left_margin(layout)
+        content_top = Inches(1.3)
+        content_width = Inches(10) - margin * 2  # symmetric margins
+        col_gap = Inches(0.6)
+        col_width = int((content_width - col_gap) / 2)
+        left_col_left = margin
+        right_col_left = margin + col_width + col_gap
+        content_height = Inches(5.0)
+    else:
+        left_col_left, content_top = Inches(0.5), Inches(1.8)
+        col_width, content_height = Inches(4.2), Inches(4.5)
+        right_col_left = Inches(5.3)
+
     # Left column
     left_items = spec.get("left", [])
     if left_items:
-        left, top, width, height = Inches(0.5), Inches(1.8), Inches(4.2), Inches(4.5)
-        txBox = slide.shapes.add_textbox(left, top, width, height)
+        txBox = slide.shapes.add_textbox(left_col_left, content_top, col_width, content_height)
         tf = txBox.text_frame
         tf.word_wrap = True
         for i, item in enumerate(left_items):
@@ -444,8 +475,7 @@ def _add_two_column_slide(pres, spec, scheme, has_template=False):
     # Right column
     right_items = spec.get("right", [])
     if right_items:
-        left, top, width, height = Inches(5.3), Inches(1.8), Inches(4.2), Inches(4.5)
-        txBox = slide.shapes.add_textbox(left, top, width, height)
+        txBox = slide.shapes.add_textbox(right_col_left, content_top, col_width, content_height)
         tf = txBox.text_frame
         tf.word_wrap = True
         for i, item in enumerate(right_items):
@@ -471,7 +501,13 @@ def _add_table_slide(pres, spec, scheme, has_template=False):
     if total_rows == 0 or cols == 0:
         return
 
-    left, top, width, height = Inches(0.5), Inches(1.8), Inches(9.0), Inches(0.4 * total_rows)
+    # Align with template's design grid when available
+    if has_template:
+        margin = _get_template_left_margin(layout)
+        left, top, width = margin, Inches(1.3), Inches(10) - margin * 2
+    else:
+        left, top, width = Inches(0.5), Inches(1.8), Inches(9.0)
+    height = Inches(0.4 * total_rows)
     table = slide.shapes.add_table(total_rows, cols, left, top, width, height).table
 
     # Header row
@@ -532,7 +568,12 @@ def _add_chart_slide(pres, spec, scheme, has_template=False):
     for s in series_list:
         chart_data.add_series(s.get("name", "Series"), s.get("values", []))
 
-    left, top, width, height = Inches(0.8), Inches(1.8), Inches(8.4), Inches(4.5)
+    # Align with template's design grid when available
+    if has_template:
+        margin = _get_template_left_margin(layout)
+        left, top, width, height = margin, Inches(1.3), Inches(10) - margin * 2, Inches(5.0)
+    else:
+        left, top, width, height = Inches(0.8), Inches(1.8), Inches(8.4), Inches(4.5)
     slide.shapes.add_chart(xl_chart_type, left, top, width, height, chart_data)
 
 
@@ -564,7 +605,12 @@ def _add_image_slide(pres, spec, scheme, has_template=False):
                 return  # Skip if image not found
 
         img_width = spec.get("width")
-        left, top = Inches(1.5), Inches(1.8)
+        # Align with template's design grid when available
+        if has_template:
+            margin = _get_template_left_margin(layout)
+            left, top = margin, Inches(1.3)
+        else:
+            left, top = Inches(1.5), Inches(1.8)
         if img_width:
             slide.shapes.add_picture(abs_path, left, top, width=Inches(float(img_width)))
         else:
@@ -632,7 +678,12 @@ def _add_video_slide(pres, spec, scheme, has_template=False):
 
         vid_width = Inches(float(spec.get("width", 7.0)))
         vid_height = Inches(float(spec.get("height", 4.0)))
-        left, top = Inches(1.5), Inches(1.8)
+        # Align with template's design grid when available
+        if has_template:
+            margin = _get_template_left_margin(layout)
+            left, top = margin, Inches(1.3)
+        else:
+            left, top = Inches(1.5), Inches(1.8)
 
         slide.shapes.add_movie(
             video_path,
@@ -669,9 +720,11 @@ def _add_slide_title(slide, title_text, scheme, has_template=False):
         else:
             # Remove all placeholders (CENTER_TITLE, SUBTITLE, etc.)
             _remove_unused_placeholders(slide)
-            # Add a header textbox with background-aware color
+            # Read the left margin from the layout so the textbox aligns
+            # with the template's design grid.
             text_color = _textbox_color(slide.slide_layout, scheme)
-            txBox = slide.shapes.add_textbox(Inches(0.5), Inches(0.2), Inches(9.0), Inches(0.9))
+            margin = _get_template_left_margin(slide.slide_layout)
+            txBox = slide.shapes.add_textbox(margin, Inches(0.4), Inches(9.0), Inches(0.8))
             tf = txBox.text_frame
             tf.word_wrap = True
             p = tf.paragraphs[0]
