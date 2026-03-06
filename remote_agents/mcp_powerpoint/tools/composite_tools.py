@@ -6,6 +6,8 @@ Azure AI Foundry's MCP chained tool call limitations.
 """
 import os
 import json
+import tempfile
+import urllib.request
 from typing import Dict, List, Optional, Any
 from pptx import Presentation
 from pptx.util import Inches, Pt, Emu
@@ -68,6 +70,7 @@ def register_composite_tools(app: FastMCP, presentations: Dict, get_current_pres
         title: Optional[str] = None,
         author: Optional[str] = None,
         color_scheme: str = "modern_blue",
+        template_url: Optional[str] = None,
     ) -> Dict:
         """Create a complete PowerPoint presentation from a structured specification in a single call.
 
@@ -92,6 +95,9 @@ def register_composite_tools(app: FastMCP, presentations: Dict, get_current_pres
             title: Optional presentation metadata title.
             author: Optional presentation metadata author.
             color_scheme: Color theme - "modern_blue", "corporate_gray", "elegant_green", or "warm_red".
+            template_url: Optional URL to a .pptx template file. When provided, the
+                presentation inherits the template's theme, slide masters, fonts, and
+                colors. The template's existing slides are removed before adding new ones.
 
         Returns:
             JSON dict with status, filename, slide count, download_url, and any
@@ -103,8 +109,27 @@ def register_composite_tools(app: FastMCP, presentations: Dict, get_current_pres
 
         scheme = COLOR_SCHEMES.get(color_scheme, COLOR_SCHEMES["modern_blue"])
 
+        temp_template = None
         try:
-            pres = Presentation()
+            # Load from template URL if provided, otherwise create blank
+            if template_url:
+                try:
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".pptx") as tmp:
+                        temp_template = tmp.name
+                    urllib.request.urlretrieve(template_url, temp_template)
+                    pres = Presentation(temp_template)
+                    # Remove existing slides from the template (keep masters/theme only)
+                    while len(pres.slides) > 0:
+                        rId = pres.slides._sldIdLst[0].get('{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id')
+                        if rId:
+                            pres.part.drop_rel(rId)
+                        pres.slides._sldIdLst.remove(pres.slides._sldIdLst[0])
+                except Exception as e:
+                    # Fallback to blank presentation if template download fails
+                    pres = Presentation()
+                    print(f"Warning: Failed to load template from URL, using default: {e}")
+            else:
+                pres = Presentation()
 
             # Set metadata
             if title:
@@ -114,23 +139,27 @@ def register_composite_tools(app: FastMCP, presentations: Dict, get_current_pres
 
             results: List[Dict[str, Any]] = []
 
+            # When using a template, skip explicit color fills so the
+            # template's theme/backgrounds show through.
+            has_template = bool(template_url)
+
             for idx, slide_spec in enumerate(slides):
                 slide_type = slide_spec.get("type", "").lower()
                 try:
                     if slide_type == "title":
-                        _add_title_slide(pres, slide_spec, scheme)
+                        _add_title_slide(pres, slide_spec, scheme, has_template)
                     elif slide_type == "content":
-                        _add_content_slide(pres, slide_spec, scheme)
+                        _add_content_slide(pres, slide_spec, scheme, has_template)
                     elif slide_type == "two_column":
-                        _add_two_column_slide(pres, slide_spec, scheme)
+                        _add_two_column_slide(pres, slide_spec, scheme, has_template)
                     elif slide_type == "table":
-                        _add_table_slide(pres, slide_spec, scheme)
+                        _add_table_slide(pres, slide_spec, scheme, has_template)
                     elif slide_type == "chart":
-                        _add_chart_slide(pres, slide_spec, scheme)
+                        _add_chart_slide(pres, slide_spec, scheme, has_template)
                     elif slide_type == "image":
-                        _add_image_slide(pres, slide_spec, scheme)
+                        _add_image_slide(pres, slide_spec, scheme, has_template)
                     elif slide_type in ("video", "video_slide"):
-                        _add_video_slide(pres, slide_spec, scheme)
+                        _add_video_slide(pres, slide_spec, scheme, has_template)
                     elif slide_type == "blank":
                         _add_blank_slide(pres)
                     else:
@@ -168,34 +197,149 @@ def register_composite_tools(app: FastMCP, presentations: Dict, get_current_pres
 
         except Exception as e:
             return {"error": f"Failed to build presentation: {str(e)}"}
+        finally:
+            if temp_template and os.path.exists(temp_template):
+                os.unlink(temp_template)
 
 
 # ── Internal slide builders ──────────────────────────────────────────
 
 
 def _get_blank_layout(pres):
-    """Get the blank slide layout (index 6) or fall back to the last layout."""
+    """Get a blank slide layout for the default (non-template) theme."""
     try:
         return pres.slide_layouts[6]
     except IndexError:
         return pres.slide_layouts[-1]
 
 
-def _add_title_slide(pres, spec, scheme):
+def _textbox_color(layout, scheme):
+    """Pick a readable text color for manual textboxes on a template layout.
+
+    PICTURE fills (type 6) are typically dark branded backgrounds → use white.
+    Everything else → use the scheme's text color (dark).
+    """
+    fill_type = layout.background.fill.type
+    if fill_type is not None and fill_type == 6:  # PICTURE
+        return RGBColor(0xFF, 0xFF, 0xFF)
+    return scheme["text"]
+
+
+def _remove_unused_placeholders(slide, keep_idxs=None):
+    """Remove placeholder shapes from a slide so they don't show 'Click to add'.
+
+    Args:
+        slide: The slide object.
+        keep_idxs: Set of placeholder indices to keep.  All others are removed.
+    """
+    from pptx.oxml.ns import qn
+    keep = keep_idxs or set()
+    spTree = slide.shapes._spTree
+    to_remove = []
+    for sp in spTree.iterchildren(qn('p:sp')):
+        ph_elem = sp.find('.//' + qn('p:ph'))
+        if ph_elem is not None:
+            idx = int(ph_elem.get('idx', '0'))
+            if idx not in keep:
+                to_remove.append(sp)
+    for sp in to_remove:
+        spTree.remove(sp)
+
+
+def _find_template_layout(pres, need_body=False, skip_first=False, header_title=False):
+    """Find a template layout that has usable placeholders.
+
+    Scans all slide layouts to find ones with built-in placeholders that we
+    can populate instead of adding manual textboxes.  This is generic — it
+    works with any .pptx template regardless of layout names or ordering.
+
+    Args:
+        pres: The Presentation object.
+        need_body: If True, require both a title (idx 0) and body/subtitle
+            (idx 1) placeholder.  Use True for title slides and content slides.
+        skip_first: Skip the first matching layout.  Use True for content
+            slides so they don't reuse the same layout as the title slide.
+        header_title: If True, only match layouts whose title placeholder is
+            a regular TITLE (type 1) positioned as a header bar — not
+            CENTER_TITLE (type 3) which is a large centered title intended
+            for title slides.  Use this for slides that add their own
+            content via textboxes (two-column, table, chart, etc.).
+
+    Returns:
+        The best matching slide layout, or the first layout as fallback.
+    """
+    matches = []
+    for layout in pres.slide_layouts:
+        ph_dict = {ph.placeholder_format.idx: ph for ph in layout.placeholders}
+
+        if header_title and 0 in ph_dict:
+            # CENTER_TITLE (type 3) is for title slides — skip it
+            if ph_dict[0].placeholder_format.type == 3:
+                continue
+
+        idxs = set(ph_dict.keys())
+        if need_body:
+            if 0 in idxs and 1 in idxs:
+                matches.append(layout)
+        else:
+            if 0 in idxs:
+                matches.append(layout)
+
+    if matches:
+        if skip_first and len(matches) > 1:
+            return matches[1]
+        return matches[0]
+
+    return pres.slide_layouts[0]
+
+
+def _add_title_slide(pres, spec, scheme, has_template=False):
     """Add a title slide with large centered title and subtitle."""
+    title_text = spec.get("title", "")
+    subtitle_text = spec.get("subtitle", "")
+
+    if has_template:
+        # Template mode: find a layout with title + subtitle placeholders
+        # and populate them so the template's design shows through.
+        layout = _find_template_layout(pres, need_body=True)
+        slide = pres.slides.add_slide(layout)
+        ph_map = {ph.placeholder_format.idx: ph for ph in slide.placeholders}
+
+        if 0 in ph_map:
+            ph_map[0].text = title_text
+        else:
+            # Fallback textbox (no explicit color — defaults to black)
+            txBox = slide.shapes.add_textbox(Inches(0.5), Inches(2.0), Inches(9.0), Inches(1.5))
+            tf = txBox.text_frame
+            tf.word_wrap = True
+            p = tf.paragraphs[0]
+            p.text = title_text
+            p.font.size = Pt(36)
+            p.font.bold = True
+            p.alignment = PP_ALIGN.CENTER
+
+        if subtitle_text:
+            if 1 in ph_map:
+                ph_map[1].text = subtitle_text
+            else:
+                txBox = slide.shapes.add_textbox(Inches(1.0), Inches(3.8), Inches(8.0), Inches(1.0))
+                tf = txBox.text_frame
+                tf.word_wrap = True
+                p = tf.paragraphs[0]
+                p.text = subtitle_text
+                p.font.size = Pt(18)
+                p.alignment = PP_ALIGN.CENTER
+        return
+
+    # Default theme: solid-color background + white text
     layout = _get_blank_layout(pres)
     slide = pres.slides.add_slide(layout)
-
-    # Background
     bg = slide.background
     fill = bg.fill
     fill.solid()
     fill.fore_color.rgb = scheme["primary"]
 
-    # Title
-    title_text = spec.get("title", "")
-    left, top, width, height = Inches(0.5), Inches(2.0), Inches(9.0), Inches(1.5)
-    txBox = slide.shapes.add_textbox(left, top, width, height)
+    txBox = slide.shapes.add_textbox(Inches(0.5), Inches(2.0), Inches(9.0), Inches(1.5))
     tf = txBox.text_frame
     tf.word_wrap = True
     p = tf.paragraphs[0]
@@ -205,11 +349,8 @@ def _add_title_slide(pres, spec, scheme):
     p.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
     p.alignment = PP_ALIGN.CENTER
 
-    # Subtitle
-    subtitle_text = spec.get("subtitle", "")
     if subtitle_text:
-        left, top, width, height = Inches(1.0), Inches(3.8), Inches(8.0), Inches(1.0)
-        txBox = slide.shapes.add_textbox(left, top, width, height)
+        txBox = slide.shapes.add_textbox(Inches(1.0), Inches(3.8), Inches(8.0), Inches(1.0))
         tf = txBox.text_frame
         tf.word_wrap = True
         p = tf.paragraphs[0]
@@ -219,19 +360,53 @@ def _add_title_slide(pres, spec, scheme):
         p.alignment = PP_ALIGN.CENTER
 
 
-def _add_content_slide(pres, spec, scheme):
+def _add_content_slide(pres, spec, scheme, has_template=False):
     """Add a content slide with title and bullet points."""
+    title_text = spec.get("title", "")
+    bullets = spec.get("bullets", [])
+
+    if has_template:
+        # Template mode: use a layout with title + body placeholders.
+        # skip_first=True avoids reusing the title-slide layout.
+        layout = _find_template_layout(pres, need_body=True, skip_first=True)
+        slide = pres.slides.add_slide(layout)
+        ph_map = {ph.placeholder_format.idx: ph for ph in slide.placeholders}
+
+        # Title via placeholder
+        if title_text and 0 in ph_map:
+            ph_map[0].text = title_text
+        elif title_text:
+            _add_slide_title(slide, title_text, scheme, True)
+
+        # Bullets via body placeholder — template formatting applies
+        if bullets and 1 in ph_map:
+            tf = ph_map[1].text_frame
+            for i, bullet in enumerate(bullets):
+                p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
+                p.text = bullet
+                p.level = 0
+        elif bullets:
+            # Fallback to textbox with background-aware text color
+            text_color = _textbox_color(layout, scheme)
+            txBox = slide.shapes.add_textbox(Inches(0.8), Inches(1.8), Inches(8.4), Inches(4.5))
+            tf = txBox.text_frame
+            tf.word_wrap = True
+            for i, bullet in enumerate(bullets):
+                p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
+                p.text = bullet
+                p.font.size = Pt(16)
+                p.font.color.rgb = text_color
+                p.space_after = Pt(8)
+                p.level = 0
+        return
+
+    # Default theme
     layout = _get_blank_layout(pres)
     slide = pres.slides.add_slide(layout)
+    _add_slide_title(slide, title_text, scheme, False)
 
-    # Title bar
-    _add_slide_title(slide, spec.get("title", ""), scheme)
-
-    # Bullet points
-    bullets = spec.get("bullets", [])
     if bullets:
-        left, top, width, height = Inches(0.8), Inches(1.8), Inches(8.4), Inches(4.5)
-        txBox = slide.shapes.add_textbox(left, top, width, height)
+        txBox = slide.shapes.add_textbox(Inches(0.8), Inches(1.8), Inches(8.4), Inches(4.5))
         tf = txBox.text_frame
         tf.word_wrap = True
         for i, bullet in enumerate(bullets):
@@ -243,12 +418,14 @@ def _add_content_slide(pres, spec, scheme):
             p.level = 0
 
 
-def _add_two_column_slide(pres, spec, scheme):
+def _add_two_column_slide(pres, spec, scheme, has_template=False):
     """Add a two-column layout slide."""
-    layout = _get_blank_layout(pres)
+    layout = _find_template_layout(pres, skip_first=True) if has_template else _get_blank_layout(pres)
     slide = pres.slides.add_slide(layout)
 
-    _add_slide_title(slide, spec.get("title", ""), scheme)
+    _add_slide_title(slide, spec.get("title", ""), scheme, has_template)
+
+    text_color = _textbox_color(layout, scheme) if has_template else scheme["text"]
 
     # Left column
     left_items = spec.get("left", [])
@@ -261,7 +438,7 @@ def _add_two_column_slide(pres, spec, scheme):
             p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
             p.text = item
             p.font.size = Pt(14)
-            p.font.color.rgb = scheme["text"]
+            p.font.color.rgb = text_color
             p.space_after = Pt(6)
 
     # Right column
@@ -275,16 +452,16 @@ def _add_two_column_slide(pres, spec, scheme):
             p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
             p.text = item
             p.font.size = Pt(14)
-            p.font.color.rgb = scheme["text"]
+            p.font.color.rgb = text_color
             p.space_after = Pt(6)
 
 
-def _add_table_slide(pres, spec, scheme):
+def _add_table_slide(pres, spec, scheme, has_template=False):
     """Add a slide with a data table."""
-    layout = _get_blank_layout(pres)
+    layout = _find_template_layout(pres, skip_first=True) if has_template else _get_blank_layout(pres)
     slide = pres.slides.add_slide(layout)
 
-    _add_slide_title(slide, spec.get("title", ""), scheme)
+    _add_slide_title(slide, spec.get("title", ""), scheme, has_template)
 
     headers = spec.get("headers", [])
     rows_data = spec.get("rows", [])
@@ -322,15 +499,15 @@ def _add_table_slide(pres, spec, scheme):
                     paragraph.font.color.rgb = scheme["text"]
 
 
-def _add_chart_slide(pres, spec, scheme):
+def _add_chart_slide(pres, spec, scheme, has_template=False):
     """Add a slide with a chart."""
     from pptx.chart.data import CategoryChartData
     from pptx.enum.chart import XL_CHART_TYPE
 
-    layout = _get_blank_layout(pres)
+    layout = _find_template_layout(pres, skip_first=True) if has_template else _get_blank_layout(pres)
     slide = pres.slides.add_slide(layout)
 
-    _add_slide_title(slide, spec.get("title", ""), scheme)
+    _add_slide_title(slide, spec.get("title", ""), scheme, has_template)
 
     chart_type_str = spec.get("chart_type", "column").lower()
     chart_type_map = {
@@ -359,15 +536,15 @@ def _add_chart_slide(pres, spec, scheme):
     slide.shapes.add_chart(xl_chart_type, left, top, width, height, chart_data)
 
 
-def _add_image_slide(pres, spec, scheme):
+def _add_image_slide(pres, spec, scheme, has_template=False):
     """Add a slide with an image."""
     import tempfile
     import urllib.request
 
-    layout = _get_blank_layout(pres)
+    layout = _find_template_layout(pres, skip_first=True) if has_template else _get_blank_layout(pres)
     slide = pres.slides.add_slide(layout)
 
-    _add_slide_title(slide, spec.get("title", ""), scheme)
+    _add_slide_title(slide, spec.get("title", ""), scheme, has_template)
 
     image_source = spec.get("image_source", "")
     source_type = spec.get("source_type", "file")
@@ -397,7 +574,7 @@ def _add_image_slide(pres, spec, scheme):
             os.unlink(temp_path)
 
 
-def _add_video_slide(pres, spec, scheme):
+def _add_video_slide(pres, spec, scheme, has_template=False):
     """Add a slide with an embedded video."""
     import tempfile
     import urllib.request
@@ -410,10 +587,10 @@ def _add_video_slide(pres, spec, scheme):
         ".webm": "video/webm",
     }
 
-    layout = _get_blank_layout(pres)
+    layout = _find_template_layout(pres, skip_first=True) if has_template else _get_blank_layout(pres)
     slide = pres.slides.add_slide(layout)
 
-    _add_slide_title(slide, spec.get("title", ""), scheme)
+    _add_slide_title(slide, spec.get("title", ""), scheme, has_template)
 
     video_source = spec.get("video_source", "")
     source_type = spec.get("source_type", "file")
@@ -476,12 +653,36 @@ def _add_blank_slide(pres):
     pres.slides.add_slide(layout)
 
 
-def _add_slide_title(slide, title_text, scheme):
+def _add_slide_title(slide, title_text, scheme, has_template=False):
     """Add a styled title bar to a slide."""
     if not title_text:
         return
 
-    # Title background shape
+    if has_template:
+        # Template mode: populate the title placeholder if it's a regular
+        # TITLE (type 1) header.  If it's CENTER_TITLE (type 3) — a large
+        # centered title meant for title slides — remove all placeholders
+        # and use a textbox so the title sits at the top cleanly.
+        ph_map = {ph.placeholder_format.idx: ph for ph in slide.placeholders}
+        if 0 in ph_map and ph_map[0].placeholder_format.type != 3:
+            ph_map[0].text = title_text
+        else:
+            # Remove all placeholders (CENTER_TITLE, SUBTITLE, etc.)
+            _remove_unused_placeholders(slide)
+            # Add a header textbox with background-aware color
+            text_color = _textbox_color(slide.slide_layout, scheme)
+            txBox = slide.shapes.add_textbox(Inches(0.5), Inches(0.2), Inches(9.0), Inches(0.9))
+            tf = txBox.text_frame
+            tf.word_wrap = True
+            p = tf.paragraphs[0]
+            p.text = title_text
+            p.font.size = Pt(24)
+            p.font.bold = True
+            p.font.color.rgb = text_color
+            p.alignment = PP_ALIGN.LEFT
+        return
+
+    # Default theme: colored rectangle bar + white text
     from pptx.enum.shapes import MSO_SHAPE
     shape = slide.shapes.add_shape(
         MSO_SHAPE.RECTANGLE, Inches(0), Inches(0), Inches(10), Inches(1.3)
@@ -490,9 +691,7 @@ def _add_slide_title(slide, title_text, scheme):
     shape.fill.fore_color.rgb = scheme["primary"]
     shape.line.fill.background()
 
-    # Title text
-    left, top, width, height = Inches(0.5), Inches(0.2), Inches(9.0), Inches(0.9)
-    txBox = slide.shapes.add_textbox(left, top, width, height)
+    txBox = slide.shapes.add_textbox(Inches(0.5), Inches(0.2), Inches(9.0), Inches(0.9))
     tf = txBox.text_frame
     tf.word_wrap = True
     p = tf.paragraphs[0]

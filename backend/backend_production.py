@@ -1251,6 +1251,32 @@ def main():
             log_error(f"Error deleting user agent config: {e}")
             return {"success": False, "error": str(e)}
 
+    @app.post("/api/agent-config/upload")
+    async def upload_agent_config_file(file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
+        """Upload a file for agent configuration (e.g. a .pptx template).
+
+        Generic endpoint — any agent config field with type=file can use it.
+        Returns the blob URL to store as the config field value.
+        """
+        MAX_SIZE = 10 * 1024 * 1024  # 10 MB
+        try:
+            file_bytes = await file.read()
+            if len(file_bytes) > MAX_SIZE:
+                return {"success": False, "error": f"File too large ({len(file_bytes)} bytes). Max {MAX_SIZE // (1024*1024)} MB."}
+
+            file_id = str(uuid.uuid4())
+            file_name = file.filename or f"upload_{file_id}"
+            mime = file.content_type or "application/octet-stream"
+
+            url = upload_to_azure_blob(file_id, file_name, file_bytes, mime, session_id="agent-config")
+            if not url or url.startswith("/uploads"):
+                return {"success": False, "error": "File upload failed — blob storage not available"}
+
+            return {"success": True, "url": url, "filename": file_name, "size": len(file_bytes)}
+        except Exception as e:
+            log_error(f"Agent config file upload failed: {e}")
+            return {"success": False, "error": str(e)}
+
     @app.post("/api/credentials/resolve")
     async def resolve_credentials(request: Request):
         """Resolve user credentials for an agent at request time.

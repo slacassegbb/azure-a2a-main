@@ -6,6 +6,7 @@ calls download_presentation, and this agent fetches the resulting .pptx,
 uploads it to Azure Blob Storage, and exposes it as an A2A artifact.
 """
 import os
+import sys
 import time
 import datetime
 import asyncio
@@ -18,6 +19,10 @@ from typing import Optional, Dict, List, Any
 from datetime import timedelta
 
 import httpx
+
+# Add shared module to path for credential helper
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from shared.credential_helper import get_user_credentials
 from openai import AsyncAzureOpenAI
 from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 from azure.storage.blob import BlobServiceClient, generate_blob_sas, BlobSasPermissions
@@ -281,8 +286,23 @@ class FoundryPowerPointAgent:
         self._get_client()
         self._initialized = True
 
-    def _get_agent_instructions(self) -> str:
+    def _get_agent_instructions(self, template_url: Optional[str] = None) -> str:
+        template_section = ""
+        if template_url:
+            template_section = f"""
+## Custom Template (REQUIRED)
+
+The user has configured a branded .pptx template. You MUST pass it as the
+`template_url` parameter on every `build_presentation` call:
+
+    template_url="{template_url}"
+
+This ensures the presentation uses the user's branded theme, colors, and fonts.
+Do NOT omit this parameter — the user expects their branding to be applied.
+"""
+
         return f"""You are a professional PowerPoint presentation creator.
+{template_section}
 You have access to a comprehensive set of PowerPoint MCP tools that let you create,
 design, and export professional presentations.
 
@@ -418,12 +438,24 @@ Your question here
         if context_id:
             self._current_context_id = context_id
 
+        # Resolve user-specific config (e.g. template_url) at request time
+        template_url: Optional[str] = None
+        if context_id:
+            try:
+                user_creds = await get_user_credentials(context_id, "PowerPoint Agent")
+                if user_creds:
+                    template_url = user_creds.get("template_url")
+                    if template_url:
+                        logger.info(f"Resolved user template URL for context={context_id}")
+            except Exception as e:
+                logger.warning(f"Failed to resolve user credentials: {e}")
+
         client = self._get_client()
         model = os.getenv("AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME", "gpt-4o")
 
         kwargs = {
             "model": model,
-            "instructions": self._get_agent_instructions(),
+            "instructions": self._get_agent_instructions(template_url=template_url),
             "input": [{"role": "user", "content": user_message}],
             "tools": [self._mcp_tool_config],
             "stream": True,

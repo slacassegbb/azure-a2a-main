@@ -23,10 +23,34 @@ export interface AgentConfigDetail {
 export interface ConfigSchemaField {
   key: string
   label: string
-  type: 'text' | 'password' | 'tel' | 'email' | 'url' | 'number'
+  type: 'text' | 'password' | 'tel' | 'email' | 'url' | 'number' | 'file'
   required: boolean
   description?: string
   placeholder?: string
+  accept?: string // file input accept attribute, e.g. ".pptx"
+}
+
+/**
+ * Upload a file for agent configuration. Returns the blob URL to store as config value.
+ */
+export async function uploadAgentConfigFile(file: File): Promise<string | null> {
+  try {
+    const formData = new FormData()
+    formData.append('file', file)
+    const headers = getAuthHeaders()
+    // Remove Content-Type so browser sets multipart boundary
+    delete (headers as Record<string, string>)['Content-Type']
+    const resp = await fetch(`${API_BASE_URL}/api/agent-config/upload`, {
+      method: 'POST',
+      headers,
+      body: formData,
+    })
+    if (!resp.ok) return null
+    const data = await resp.json()
+    return data.success ? data.url : null
+  } catch {
+    return null
+  }
 }
 
 /**

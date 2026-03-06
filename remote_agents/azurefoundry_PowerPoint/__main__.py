@@ -60,7 +60,7 @@ try:
     from utils.self_registration import register_with_host_agent, get_host_agent_url
     SELF_REGISTRATION_AVAILABLE = True
 except ImportError:
-    async def register_with_host_agent(agent_card, _host_url=None):
+    async def register_with_host_agent(agent_card, _host_url=None, config_schema=None):
         return False
     def get_host_agent_url() -> str:
         return ""
@@ -147,11 +147,27 @@ def create_a2a_server(host=DEFAULT_HOST, port=DEFAULT_PORT):
     return Starlette(routes=routes)
 
 
+POWERPOINT_CONFIG_SCHEMA = [
+    {
+        "key": "template_url",
+        "label": "Presentation Template (.pptx)",
+        "type": "file",
+        "required": False,
+        "description": "Upload your branded .pptx template. Presentations will use its theme, colors, and fonts.",
+        "accept": ".pptx"
+    }
+]
+
+
 async def register_agent_with_host(agent_card):
     if SELF_REGISTRATION_AVAILABLE and HOST_AGENT_URL:
         await asyncio.sleep(2)
         try:
-            await register_with_host_agent(agent_card, host_url=HOST_AGENT_URL)
+            await register_with_host_agent(
+                agent_card,
+                host_url=HOST_AGENT_URL,
+                config_schema=POWERPOINT_CONFIG_SCHEMA
+            )
         except Exception as e:
             logger.warning(f"Registration failed: {e}")
 

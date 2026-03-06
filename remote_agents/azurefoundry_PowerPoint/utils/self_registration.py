@@ -25,7 +25,8 @@ async def register_with_host_agent(
     agent_card: AgentCard,
     host_url: Optional[str] = None,
     max_retries: int = 3,
-    retry_delay: float = 2.0
+    retry_delay: float = 2.0,
+    config_schema: Optional[list] = None
 ) -> bool:
     """Register this agent with the host agent for automatic discovery.
 
@@ -34,6 +35,7 @@ async def register_with_host_agent(
         host_url: URL of the host agent (defaults to localhost:12000)
         max_retries: Maximum number of registration attempts
         retry_delay: Delay between retry attempts in seconds
+        config_schema: Optional list of user-configurable field definitions
 
     Returns:
         bool: True if registration successful, False otherwise
@@ -60,6 +62,8 @@ async def register_with_host_agent(
                     "agent_address": agent_card.url,
                     "agent_card": agent_card.model_dump()
                 }
+                if config_schema is not None:
+                    payload["config_schema"] = config_schema
 
                 response = await client.post(registration_url, json=payload)
 

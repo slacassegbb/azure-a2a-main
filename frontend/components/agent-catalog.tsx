@@ -61,7 +61,7 @@ import { deriveCategory, getAllCategories, CATEGORY_ICONS } from "@/lib/agent-ca
 import { warnDebug } from '@/lib/debug'
 import { fetchRegistryAgents, checkAgentHealth, checkAgentHealthWithFallback } from '@/lib/agent-registry'
 import { API_BASE_URL } from '@/lib/api-config'
-import { getUserAgentConfigs, getAgentConfig, saveAgentConfig, type ConfigSchemaField } from '@/lib/user-agent-config-api'
+import { getUserAgentConfigs, getAgentConfig, saveAgentConfig, uploadAgentConfigFile, type ConfigSchemaField } from '@/lib/user-agent-config-api'
 import { Label } from "@/components/ui/label"
 import { Settings, Check, Camera, X } from "lucide-react"
 
@@ -791,14 +791,53 @@ export function AgentCatalog() {
                     {field.description && (
                       <p className="text-xs text-slate-500">{field.description}</p>
                     )}
-                    <Input
-                      id={field.key}
-                      type={field.type === 'password' ? 'password' : field.type === 'tel' ? 'tel' : 'text'}
-                      placeholder={field.placeholder || ''}
-                      value={configFormData[field.key] || ''}
-                      onChange={(e) => setConfigFormData(prev => ({ ...prev, [field.key]: e.target.value }))}
-                      className="bg-slate-800 border-slate-700 text-slate-200"
-                    />
+                    {field.type === 'file' ? (
+                      <div className="flex items-center gap-2">
+                        {configFormData[field.key] ? (
+                          <>
+                            <span className="text-xs text-green-400 truncate flex-1">File uploaded</span>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="border-slate-700 text-xs"
+                              onClick={() => {
+                                setConfigFormData(prev => ({ ...prev, [field.key]: '' }))
+                              }}
+                            >
+                              Remove
+                            </Button>
+                          </>
+                        ) : (
+                          <div className="flex-1">
+                            <Input
+                              id={field.key}
+                              type="file"
+                              accept={field.accept || ''}
+                              className="bg-slate-800 border-slate-700 text-slate-200 file:mr-2 file:py-1 file:px-3 file:rounded file:border-0 file:text-xs file:bg-slate-700 file:text-slate-200 cursor-pointer"
+                              onChange={async (e) => {
+                                const file = e.target.files?.[0]
+                                if (!file) return
+                                setConfigSaving(true)
+                                const url = await uploadAgentConfigFile(file)
+                                setConfigSaving(false)
+                                if (url) {
+                                  setConfigFormData(prev => ({ ...prev, [field.key]: url }))
+                                }
+                              }}
+                            />
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <Input
+                        id={field.key}
+                        type={field.type === 'password' ? 'password' : field.type === 'tel' ? 'tel' : 'text'}
+                        placeholder={field.placeholder || ''}
+                        value={configFormData[field.key] || ''}
+                        onChange={(e) => setConfigFormData(prev => ({ ...prev, [field.key]: e.target.value }))}
+                        className="bg-slate-800 border-slate-700 text-slate-200"
+                      />
+                    )}
                   </div>
                 ))}
               </div>
