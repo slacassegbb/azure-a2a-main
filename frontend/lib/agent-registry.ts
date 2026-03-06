@@ -81,6 +81,38 @@ export async function checkAgentHealthWithFallback<T extends { endpoint: string;
 }
 
 // ---------------------------------------------------------------------------
+// Environment filtering
+// ---------------------------------------------------------------------------
+
+const isProduction = !API_BASE_URL.includes('localhost')
+
+/**
+ * Filter agents to only those reachable in the current environment.
+ *
+ * In production: exclude agents that only have localhost URLs, and prefer
+ * the production URL as the endpoint.
+ * In dev: keep everything as-is.
+ */
+export function filterAgentsForEnvironment<T extends { endpoint: string; productionUrl?: string }>(
+  agents: T[]
+): T[] {
+  if (!isProduction) return agents
+
+  return agents
+    .map((agent) => {
+      // In production, prefer the production URL
+      if (agent.productionUrl && !agent.productionUrl.includes('localhost')) {
+        return { ...agent, endpoint: agent.productionUrl }
+      }
+      // Primary endpoint is already a production URL
+      if (!agent.endpoint.includes('localhost')) return agent
+      // Only has localhost URLs — not usable in production
+      return null
+    })
+    .filter(Boolean) as T[]
+}
+
+// ---------------------------------------------------------------------------
 // Fetch + transform
 // ---------------------------------------------------------------------------
 

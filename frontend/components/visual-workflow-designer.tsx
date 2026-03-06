@@ -16,7 +16,7 @@ import { useSearchParams } from "next/navigation"
 import { createContextId, getOrCreateSessionId } from "@/lib/session"
 import { getAgentHexColor } from "@/lib/agent-colors"
 import { logDebug } from '@/lib/debug'
-import { fetchRegistryAgents, checkAgentHealthWithFallback } from '@/lib/agent-registry'
+import { fetchRegistryAgents, filterAgentsForEnvironment } from '@/lib/agent-registry'
 import { API_BASE_URL } from '@/lib/api-config'
 
 interface WorkflowStep {
@@ -203,22 +203,15 @@ export function VisualWorkflowDesigner({
   // Keep ref in sync with state
   useEffect(() => { waitingStepIdRef.current = waitingStepId }, [waitingStepId])
 
-  // Fetch all online agents from registry (not just session-enabled ones)
+  // Fetch all agents from registry, filtered for current environment (no health checks)
   const [allAvailableAgents, setAllAvailableAgents] = useState<Agent[] | null>(null)
   useEffect(() => {
     const fetchAllAgents = async () => {
       try {
         const agents = await fetchRegistryAgents()
-        // Show all agents immediately while health checks run
-        setAllAvailableAgents(agents as Agent[])
-        logDebug("[VisualWorkflowDesigner] Loaded", agents.length, "agents from registry, checking health...")
-        // Health check with local→production fallback
-        const results = await Promise.all(
-          agents.map((agent) => checkAgentHealthWithFallback(agent))
-        )
-        const onlineAgents = results.filter(Boolean) as Agent[]
-        setAllAvailableAgents(onlineAgents)
-        logDebug("[VisualWorkflowDesigner] Health check done:", onlineAgents.length, "online agents")
+        const envAgents = filterAgentsForEnvironment(agents)
+        setAllAvailableAgents(envAgents as Agent[])
+        logDebug("[VisualWorkflowDesigner] Loaded", envAgents.length, "agents from registry (filtered for environment)")
       } catch (err) {
         console.error('[VisualWorkflowDesigner] Error fetching agents:', err)
       }

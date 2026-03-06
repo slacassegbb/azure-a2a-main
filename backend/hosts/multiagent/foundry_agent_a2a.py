@@ -3511,9 +3511,15 @@ Answer with just JSON:
         mode_label = "Agent Mode" if is_agent_mode else "Standard Mode"
         
         context_parts = []
-        
-        # Always search memory for relevant context (retrieval is always enabled)
-        # The memory toggle only controls STORAGE of new interactions, not retrieval
+
+        # When memory is OFF in agent mode, only retrieve document content
+        # (DocumentProcessor entries), not old conversation history that can
+        # inject stale/error context from previous runs.
+        enable_memory = getattr(session_context, 'enable_inter_agent_memory', False)
+        memory_docs_only = is_agent_mode and not enable_memory
+        if memory_docs_only:
+            log_debug(f"[_add_context_to_message] Memory OFF — will only use DocumentProcessor entries")
+
         try:
             # Retrieve top 10 memory results to ensure we get all chunks of large documents
             # This allows chunk reassembly to work correctly for multi-chunk documents
@@ -3528,6 +3534,10 @@ Answer with just JSON:
                 agent_name=None,
                 top_k=top_k_results
             )
+            # When memory is OFF, filter to only document extractions
+            if memory_docs_only and memory_results:
+                memory_results = [r for r in memory_results if r.get('agent_name') == 'DocumentProcessor']
+                log_debug(f"[_add_context_to_message] Filtered to {len(memory_results)} DocumentProcessor result(s)")
             
             if memory_results:
                 context_parts.append("Relevant context from previous interactions:")

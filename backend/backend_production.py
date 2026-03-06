@@ -493,7 +493,7 @@ async def execute_scheduled_workflow(workflow_name: str, session_id: str, timeou
             agent_server.manager.process_message(
                 message, 
                 agent_mode=None,
-                enable_inter_agent_memory=True,
+                enable_inter_agent_memory=False,
                 workflow=workflow_text,
                 workflow_goal=workflow.goal
             ),
@@ -1374,7 +1374,7 @@ def main():
                 agent_server.manager.process_message(
                     message,
                     agent_mode=None,
-                    enable_inter_agent_memory=True,
+                    enable_inter_agent_memory=False,
                     available_workflows=available_workflows,
                     user_id=user_id,
                     user_timezone="America/New_York",
@@ -1680,7 +1680,7 @@ def main():
                 agent_server.manager.process_message(
                     message, 
                     agent_mode=None,  # Auto-detect based on routing
-                    enable_inter_agent_memory=True,
+                    enable_inter_agent_memory=False,
                     workflow=explicit_workflow,  # Use explicit workflow if provided, else let routing decide
                     available_workflows=available_workflows if (available_workflows and not explicit_workflow) else None
                 ), 
