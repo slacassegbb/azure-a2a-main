@@ -191,6 +191,18 @@ def generate_workflow_text(steps: List[Dict[str, Any]], connections: List[Dict[s
         elif len(children) == 1:
             queue.append((children[0], step_number, [], 0))
 
+        # EVALUATE merge-point fix: conditional branch targets are not in outgoing_free,
+        # so the BFS never visits them and misses their successors (the merge/continuation
+        # steps after the branch). Explicitly enqueue those successors so they appear in
+        # the workflow text.
+        agent_name_bfs = step.get('agentName') or step.get('agent') or ''
+        if agent_name_bfs.upper() == 'EVALUATE':
+            for target_id, condition in outgoing.get(step_id, []):
+                if condition in ('true', 'false'):
+                    for merge_id in outgoing_free.get(target_id, []):
+                        if merge_id not in visited:
+                            queue.append((merge_id, step_number, [], 0))
+
         # Update current_step_num after last parallel sibling
         if len(siblings) > 1 and sib_idx == len(siblings) - 1:
             current_step_num = step_number
