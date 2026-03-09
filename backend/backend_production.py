@@ -1674,22 +1674,17 @@ def main():
             
             for w in user_workflows:
                 if w.steps:
-                    # Sort steps by order
                     sorted_steps = sorted(w.steps, key=lambda s: s.get('order', 0))
-                    # Generate workflow text in the format the orchestrator expects
-                    workflow_lines = []
-                    for i, step in enumerate(sorted_steps):
-                        agent_name = step.get('agentName', 'unknown')
-                        default_desc = f'Use the {agent_name} agent'
-                        description = step.get('description', default_desc)
-                        workflow_lines.append(f"{i+1}. [{agent_name}] {description}")
-                    workflow_text = "\n".join(workflow_lines)
-                    
+                    # Use generate_workflow_text so branching workflows produce
+                    # proper IF-TRUE/IF-FALSE notation and post-branch merge steps
+                    # are included — same as the A2A server-side path.
+                    workflow_text = generate_workflow_text(w.steps, w.connections or [])
+
                     workflow_info = {
                         "id": w.id,
                         "name": w.name,
                         "goal": w.goal or "",
-                        "workflow": workflow_text,  # Include the formatted steps!
+                        "workflow": workflow_text,
                         "agents": [step.get('agentName', '') for step in sorted_steps if step.get('agentName')]
                     }
                     available_workflows.append(workflow_info)
