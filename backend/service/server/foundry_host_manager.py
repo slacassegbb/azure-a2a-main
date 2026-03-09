@@ -1325,12 +1325,14 @@ class FoundryHostManager(ApplicationManager):
         import os
         registry = get_registry()
 
-        # Find Twilio agent in registry
-        twilio_config = registry.get_agent("Twilio SMS Agent")
+        # Find Twilio/SMS agent in registry
+        twilio_config = registry.get_agent("Text Message Agent")
+        if not twilio_config:
+            twilio_config = registry.get_agent("Twilio SMS Agent")
         if not twilio_config:
             all_agents = registry.get_all_agents()
             twilio_config = next(
-                (a for a in all_agents if "twilio" in a.get("name", "").lower()),
+                (a for a in all_agents if "twilio" in a.get("name", "").lower() or "text message" in a.get("name", "").lower()),
                 None
             )
 

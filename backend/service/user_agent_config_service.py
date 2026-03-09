@@ -202,7 +202,7 @@ class UserAgentConfigService:
             self.db_conn.rollback()
             return False
 
-    def lookup_user_by_phone(self, phone_number: str, agent_name: str = "Twilio SMS Agent") -> Optional[str]:
+    def lookup_user_by_phone(self, phone_number: str, agent_name: str = "Text Message Agent") -> Optional[str]:
         """Reverse lookup: find user_id by phone number.
 
         Scans all configured rows for the given agent, decrypts config_data,
