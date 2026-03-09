@@ -2445,8 +2445,8 @@ Do NOT skip steps. Do NOT mark goal as completed until ALL workflow steps are do
                 if output and isinstance(output, dict):
                     # Keep result field but truncate if too long
                     result_val = output.get("result")
-                    if isinstance(result_val, str) and len(result_val) > 500:
-                        output["result"] = result_val[:500] + "... [truncated]"
+                    if isinstance(result_val, str) and len(result_val) > 150:
+                        output["result"] = result_val[:150] + "... [truncated]"
                     # Drop bulky nested fields the planner doesn't need
                     for drop_key in ("artifacts", "task_id"):
                         output.pop(drop_key, None)
