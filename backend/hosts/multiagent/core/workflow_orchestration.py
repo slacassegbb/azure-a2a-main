@@ -1574,11 +1574,9 @@ Analyze this request and decide the best approach."""
                     notif_id = str(uuid.uuid4())
                     email_agent_name = None
                     for card in self.cards.values():
-                        if "email" in card.name.lower():
+                        if any(s.id == "email_send" for s in (card.skills or [])):
                             email_agent_name = card.name
                             break
-                    if not email_agent_name:
-                        email_agent_name = "Microsoft Outlook Agent"
                     db_steps.append({
                         "id": notif_id,
                         "agentId": email_agent_name.lower().replace(" ", "-"),
@@ -1595,11 +1593,9 @@ Analyze this request and decide the best approach."""
                     notif_id = str(uuid.uuid4())
                     sms_agent_name = None
                     for card in self.cards.values():
-                        if "twilio" in card.name.lower() or "sms" in card.name.lower() or "text message" in card.name.lower():
+                        if any(s.id == "send_sms" for s in (card.skills or [])):
                             sms_agent_name = card.name
                             break
-                    if not sms_agent_name:
-                        sms_agent_name = "Text Message Agent"
                     db_steps.append({
                         "id": notif_id,
                         "agentId": sms_agent_name.lower().replace(" ", "-"),
