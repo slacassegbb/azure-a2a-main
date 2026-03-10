@@ -2443,13 +2443,18 @@ Do NOT skip steps. Do NOT mark goal as completed until ALL workflow steps are do
             for task_entry in compact_plan.get("tasks", []):
                 output = task_entry.get("output")
                 if output and isinstance(output, dict):
-                    # Keep result field but truncate if too long to avoid blowing up context window
-                    result_val = output.get("result")
-                    if isinstance(result_val, str) and len(result_val) > 500:
-                        output["result"] = result_val[:500] + "... [truncated]"
-                    # Drop bulky nested fields the planner doesn't need
-                    for drop_key in ("artifacts", "task_id"):
-                        output.pop(drop_key, None)
+                    # Keep only a short result summary + evaluation boolean for EVALUATE steps.
+                    # All other fields (user_response, reasoning, artifacts, etc.) are dropped.
+                    # compact_plan is only used for the planner prompt — agent execution uses
+                    # the unmodified plan.tasks. Keeping outputs short prevents domain-specific
+                    # content (financial terms, legal analysis) from triggering Azure content filters.
+                    result_val = output.get("result", "")
+                    if isinstance(result_val, str) and len(result_val) > 300:
+                        result_val = result_val[:300] + "... [truncated]"
+                    slim: dict = {"result": result_val}
+                    if "evaluation" in output:
+                        slim["evaluation"] = output["evaluation"]
+                    task_entry["output"] = slim
 
             # In workflow mode, add an explicit step-completion map so the
             # LLM doesn't have to parse [Step X] prefixes from descriptions.
