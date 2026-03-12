@@ -48,6 +48,33 @@ TaskStateEnum = Literal["pending", "running", "completed", "failed", "cancelled"
 GoalStatus = Literal["incomplete", "completed"]
 
 
+class PlannerTask(BaseModel):
+    """Task proposed by the planner's structured output for agent dispatch.
+
+    Contains the core task fields plus optional structured prompt metadata
+    that the orchestrator uses to build better agent prompts.
+    All new fields are Optional so the LLM can omit them (backward-compatible).
+    """
+    task_description: str = Field(..., description="Complete task instruction for the agent — copy VERBATIM from workflow step.")
+    recommended_agent: Optional[str] = Field(None, description="Agent name to execute this task.")
+    required_inputs_from_steps: Optional[List[str]] = Field(
+        default=None,
+        description="Step labels whose outputs this task needs (e.g., ['1', '2a']). Null means use all previous outputs."
+    )
+    expected_output_format: Optional[str] = Field(
+        default=None,
+        description="Expected output type: 'text', 'file', 'structured_data', 'confirmation'."
+    )
+    output_guidance: Optional[str] = Field(
+        default=None,
+        description="Brief instruction on what the output should contain for downstream steps."
+    )
+
+    def get(self, key: str, default=None):
+        """Dict-like access for backward compatibility with callsites using .get()."""
+        return getattr(self, key, default)
+
+
 class AgentModeTask(BaseModel):
     """Individual task within a multi-agent workflow plan."""
     task_id: str = Field(..., description="Unique A2A task identifier.")
@@ -58,6 +85,8 @@ class AgentModeTask(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     error_message: Optional[str] = Field(None, description="Error message if task failed.")
+    # Structured prompt metadata from planner (carried from PlannerTask)
+    planner_metadata: Optional[PlannerTask] = Field(None, description="Original planner task with structured prompt fields.")
 
 
 class AgentModePlan(BaseModel):
@@ -97,13 +126,13 @@ class QueryResult(BaseModel):
 class NextStep(BaseModel):
     """Orchestrator decision for the next action in a multi-agent workflow."""
     goal_status: GoalStatus = Field(..., description="Whether the goal is completed or not.")
-    next_task: Optional[Dict[str, Optional[str]]] = Field(
+    next_task: Optional[PlannerTask] = Field(
         None,
-        description='Single task: {"task_description": str, "recommended_agent": str|None}. Use this for sequential execution. Set to null if using next_tasks for parallel execution.'
+        description='Single task for sequential execution. Set to null if using next_tasks for parallel execution.'
     )
-    next_tasks: Optional[List[Dict[str, Optional[str]]]] = Field(
+    next_tasks: Optional[List[PlannerTask]] = Field(
         None,
-        description='Multiple tasks to execute IN PARALLEL: [{"task_description": str, "recommended_agent": str|None}, ...]. Use this when workflow has parallel steps (e.g., 2a, 2b). Set to null for sequential execution.'
+        description='Multiple tasks to execute IN PARALLEL. Use this when workflow has parallel steps (e.g., 2a, 2b). Set to null for sequential execution.'
     )
     parallel: bool = Field(
         False,

@@ -41,6 +41,7 @@ from ..models import (
     AgentModeTask,
     AgentModePlan,
     NextStep,
+    PlannerTask,
     RouteSelection,
     EvaluationResult,
     HITLGateResult,
@@ -904,6 +905,186 @@ Analyze the context and return your structured result."""
             )
             return {"error": task.error_message, "output": None}
 
+    def _get_downstream_context(self, workflow: Optional[str], current_step_label: str) -> Optional[str]:
+        """Find what comes after the current step in the workflow to inform the agent."""
+        if not workflow or not workflow.strip():
+            return None
+        try:
+            steps = self._parse_workflow_steps(workflow)
+            for i, step in enumerate(steps):
+                if step["label"] == current_step_label and i + 1 < len(steps):
+                    nxt = steps[i + 1]
+                    return f"Your output will be used by [{nxt['agent']}] in Step {nxt['label']}: {nxt['description'][:150]}"
+            return None
+        except Exception:
+            return None
+
+    def _build_structured_agent_prompt(
+        self,
+        task: AgentModeTask,
+        plan: Optional[Any],
+        document_content: Optional[str],
+        workflow: Optional[str],
+        workflow_goal: Optional[str],
+        previous_task_outputs: Optional[List[str]],
+    ) -> str:
+        """Build a structured, well-crafted prompt for a remote agent.
+
+        Uses planner metadata (when available) to construct a prompt with:
+        - Role & step context
+        - Task instruction
+        - Selective input data (only from required steps)
+        - Output guidance
+        - Downstream context
+        - Constraints
+
+        Falls back to the legacy flat context dump when metadata is absent.
+        """
+        import re as _re
+
+        task_desc = task.task_description
+        recommended_agent = task.recommended_agent or "Agent"
+        metadata = task.planner_metadata  # PlannerTask or None
+
+        # ── Extract step label from task description ──
+        step_match = _re.search(r'\[Step\s+(\d+[a-z]?)\]', task_desc)
+        step_label = step_match.group(1) if step_match else None
+
+        # Count total steps in plan
+        total_steps = len(plan.tasks) if plan else 0
+
+        # ── SECTION: Role ──
+        parts = []
+        if step_label:
+            parts.append(f"## Role\nYou are the **{recommended_agent}** executing Step {step_label} of a multi-agent workflow.")
+        else:
+            parts.append(f"## Role\nYou are the **{recommended_agent}** in a multi-agent workflow.")
+
+        # ── SECTION: Task ──
+        # Strip the [Step X] prefix from the task text since we already stated it in Role
+        clean_task = _re.sub(r'^\[Step\s+\d+[a-z]?\]\s*', '', task_desc).strip()
+        parts.append(f"## Your Task\n{clean_task}")
+
+        # ── SECTION: Workflow Goal ──
+        if workflow_goal:
+            parts.append(f"## Workflow Goal\n{workflow_goal}")
+
+        # ── SECTION: Input Data (selective context) ──
+        context_section = self._build_selective_context(
+            metadata=metadata,
+            plan=plan,
+            document_content=document_content,
+            previous_task_outputs=previous_task_outputs,
+        )
+        if context_section:
+            parts.append(context_section)
+
+        # ── SECTION: Output Expectations ──
+        if metadata:
+            output_lines = []
+            if metadata.expected_output_format:
+                output_lines.append(f"**Format**: {metadata.expected_output_format}")
+            if metadata.output_guidance:
+                output_lines.append(metadata.output_guidance)
+            if output_lines:
+                parts.append("## Output Expectations\n" + "\n".join(output_lines))
+
+        # ── SECTION: Downstream Context ──
+        if workflow and step_label:
+            downstream = self._get_downstream_context(workflow, step_label)
+            if downstream:
+                parts.append(f"## What Happens Next\n{downstream}")
+
+        # ── SECTION: Constraints ──
+        constraint_lines = [
+            "All data you need is provided as text above. Do NOT attempt to download, open, or parse files from other agents — use the text content provided."
+        ]
+        if constraint_lines:
+            parts.append("## Constraints\n" + "\n".join(f"- {c}" for c in constraint_lines))
+
+        return "\n\n".join(parts)
+
+    def _build_selective_context(
+        self,
+        metadata: Optional[Any],
+        plan: Optional[Any],
+        document_content: Optional[str],
+        previous_task_outputs: Optional[List[str]],
+    ) -> Optional[str]:
+        """Build the input data section, selecting only relevant step outputs.
+
+        If planner metadata specifies required_inputs_from_steps, only include
+        outputs from those specific steps. Otherwise fall back to including
+        all previous outputs (legacy behavior).
+        """
+        import re as _re
+
+        max_context_chars = 50000
+        context_parts = []
+        total_chars = 0
+
+        # Document content from Azure Search memory always included first
+        if document_content:
+            context_parts.append(f"### Extracted Document Content:\n{document_content}")
+            total_chars += len(document_content)
+
+        # Determine which outputs to include
+        required_steps = None
+        if metadata and metadata.required_inputs_from_steps:
+            required_steps = set(metadata.required_inputs_from_steps)
+
+        # Strip blob URLs and local paths
+        _url_pattern = _re.compile(r'\n*File:.*?\(https?://[^\)]+\)\s*$', _re.MULTILINE)
+        _path_pattern = _re.compile(r'(?:/tmp/\S+|sandbox:/\S+)')
+
+        if required_steps and plan and plan.tasks:
+            # SELECTIVE: Only include outputs from the requested steps
+            for t in plan.tasks:
+                if t.state != "completed" or not t.output:
+                    continue
+                # Extract step label from this task's description
+                sm = _re.search(r'\[Step\s+(\d+[a-z]?)\]', t.task_description)
+                if not sm:
+                    continue
+                label = sm.group(1)
+                if label not in required_steps:
+                    continue
+                output_text = t.output.get("result", "") or t.output.get("text", "") or str(t.output)
+                if not output_text or len(output_text) < 20:
+                    continue
+                cleaned = _url_pattern.sub('', output_text)
+                cleaned = _path_pattern.sub('[file]', cleaned).strip()
+                if len(cleaned) < 20:
+                    continue
+                if total_chars + len(cleaned) > max_context_chars:
+                    remaining = max_context_chars - total_chars
+                    if remaining > 200:
+                        context_parts.append(f"### Output from Step {label}:\n{cleaned[:remaining]}")
+                    break
+                context_parts.append(f"### Output from Step {label}:\n{cleaned}")
+                total_chars += len(cleaned)
+        elif previous_task_outputs:
+            # LEGACY FALLBACK: Include all previous outputs, newest first
+            for idx, output in enumerate(reversed(previous_task_outputs)):
+                if not output or len(output) < 20:
+                    continue
+                cleaned = _url_pattern.sub('', output)
+                cleaned = _path_pattern.sub('[file]', cleaned).strip()
+                if len(cleaned) < 20:
+                    continue
+                if total_chars + len(cleaned) > max_context_chars:
+                    remaining = max_context_chars - total_chars
+                    if remaining > 200:
+                        context_parts.append(f"### Step Output {len(previous_task_outputs) - idx}:\n{cleaned[:remaining]}")
+                    break
+                context_parts.append(f"### Step Output {len(previous_task_outputs) - idx}:\n{cleaned}")
+                total_chars += len(cleaned)
+
+        if not context_parts:
+            return None
+
+        return "## Input Data from Previous Steps\n" + "\n\n".join(context_parts)
+
     async def _execute_orchestrated_task(
         self,
         task: AgentModeTask,
@@ -912,7 +1093,9 @@ Analyze the context and return your structured result."""
         workflow: Optional[str],
         user_message: str,
         extract_text_fn: Callable,
-        previous_task_outputs: Optional[List[str]] = None
+        previous_task_outputs: Optional[List[str]] = None,
+        plan: Optional[Any] = None,
+        workflow_goal: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Execute a single orchestrated task with full state management.
@@ -984,17 +1167,8 @@ Analyze the context and return your structured result."""
             event_type="agent_start", metadata={"task_description": task_desc}
         )
         
-        # Build enhanced task message with previous task output for sequential context
-        # This enables agents to build upon previous work in the workflow
-        enhanced_task_message = task_desc
-        
-        # SMART CONTEXT SELECTION: Find the most substantial previous output
-        # HITL steps often return short responses like "approve", so we need to find
-        # the actual data (like invoice details) from earlier steps
-
-        # IMPORTANT: Also search Azure Search memory for DocumentProcessor content
-        # The memory search may have the original document content (e.g., full invoice)
-        # while previous_task_outputs only has agent summaries (e.g., Teams message)
+        # ── STRUCTURED PROMPT CONSTRUCTION ──
+        # Search Azure Search memory for DocumentProcessor content (uploaded files)
         document_content = None
         try:
             memory_results = await self._search_relevant_memory(
@@ -1003,18 +1177,14 @@ Analyze the context and return your structured result."""
                 agent_name=None,
                 top_k=5
             )
-
-            # Look for DocumentProcessor results with full document content
             if memory_results:
                 for result in memory_results:
-                    agent_name = result.get('agent_name', '')
-                    if agent_name == 'DocumentProcessor':
+                    if result.get('agent_name', '') == 'DocumentProcessor':
                         inbound = result.get('inbound_payload', {})
                         if isinstance(inbound, str):
                             try:
-                                import json
                                 inbound = json.loads(inbound)
-                            except:
+                            except Exception:
                                 pass
                         if isinstance(inbound, dict) and 'content' in inbound:
                             document_content = str(inbound['content'])
@@ -1023,73 +1193,16 @@ Analyze the context and return your structured result."""
         except Exception as e:
             log_error(f"[Agent Mode] Error searching memory for document content: {e}")
 
-        if previous_task_outputs and len(previous_task_outputs) > 0:
-            log_info(f"[Agent Mode] SMART CONTEXT for '{recommended_agent}': {len(previous_task_outputs)} previous outputs, memory doc={'found ' + str(len(document_content)) + ' chars' if document_content else 'none'}")
-
-            # Include ALL previous outputs so the agent has complete context
-            # (e.g., RFP extraction + web research + strategy — not just the longest one)
-            max_context_chars = 50000
-            context_parts = []
-            total_chars = 0
-
-            # If we have DocumentProcessor content, include it first (original document data)
-            if document_content:
-                context_parts.append(f"### Extracted Document Content:\n{document_content}")
-                total_chars += len(document_content)
-
-            # Strip blob URLs and local paths from previous outputs before passing as context.
-            # Agents see these URLs and try to download/open files they can't process
-            # (e.g., Excel agent trying to open a .docx blob URL from Word agent output).
-            import re
-            _url_pattern = re.compile(r'\n*File:.*?\(https?://[^\)]+\)\s*$', re.MULTILINE)
-            _path_pattern = re.compile(r'(?:/tmp/\S+|sandbox:/\S+)')
-
-            # Add all previous step outputs, newest first (most recent context is most relevant)
-            for idx, output in enumerate(reversed(previous_task_outputs)):
-                if not output or len(output) < 20:
-                    continue  # Skip trivial outputs
-                # Remove blob URLs and local paths so agents use text data, not file downloads
-                cleaned = _url_pattern.sub('', output)
-                cleaned = _path_pattern.sub('[file]', cleaned).strip()
-                if len(cleaned) < 20:
-                    continue
-                if total_chars + len(cleaned) > max_context_chars:
-                    remaining = max_context_chars - total_chars
-                    if remaining > 200:
-                        context_parts.append(f"### Step Output {len(previous_task_outputs) - idx}:\n{cleaned[:remaining]}")
-                    break
-                context_parts.append(f"### Step Output {len(previous_task_outputs) - idx}:\n{cleaned}")
-                total_chars += len(cleaned)
-
-            combined_context = "\n\n".join(context_parts)
-            log_info(f"[Agent Mode] SMART CONTEXT for '{recommended_agent}': selected {len(combined_context)} chars from {len(context_parts)} sources")
-
-            enhanced_task_message = f"""{task_desc}
-
-## Context from Previous Steps:
-{combined_context}
-
-IMPORTANT: All data you need is provided as text above. Create your output using this text data.
-Do NOT attempt to download, open, or parse files from other agents — use the text content provided."""
-
-        elif document_content:
-            # No previous task outputs but we found document content in memory
-            # This happens for the first parallel tasks in a workflow where no sequential
-            # steps ran before them, but the user uploaded documents that were processed
-            max_context_chars = 50000
-            if len(document_content) > max_context_chars:
-                document_content = document_content[:max_context_chars]
-
-            log_info(f"[Agent Mode] SMART CONTEXT for '{recommended_agent}': no previous outputs, using DocumentProcessor memory ({len(document_content)} chars)")
-
-            enhanced_task_message = f"""{task_desc}
-
-## Document Content (from uploaded files):
-{document_content}
-
-IMPORTANT: Use the text content above to complete your task. All required data has been
-extracted and is included in this message. Do NOT attempt to open or parse attached files
-that are not in your native format — use the text content provided instead."""
+        # Build the structured prompt using planner metadata + selective context
+        enhanced_task_message = self._build_structured_agent_prompt(
+            task=task,
+            plan=plan,
+            document_content=document_content,
+            workflow=workflow,
+            workflow_goal=workflow_goal,
+            previous_task_outputs=previous_task_outputs,
+        )
+        log_info(f"[Agent Mode] Structured prompt for '{recommended_agent}': {len(enhanced_task_message)} chars")
         
         # File deduplication for multi-step workflows
         self._deduplicate_workflow_files(session_context)
@@ -1816,9 +1929,9 @@ Analyze this request and decide the best approach."""
     def _expand_parallel_from_workflow(
         self,
         workflow: str,
-        next_task: Dict[str, Any],
+        next_task: Any,
         completed_tasks: List[Any],
-    ) -> Optional[List[Dict[str, str]]]:
+    ) -> Optional[List[Any]]:
         """Detect if the LLM's single next_task belongs to a parallel group in the
         workflow text and expand it to all sibling tasks.
 
@@ -1882,11 +1995,12 @@ Analyze this request and decide the best approach."""
                         f"group {step_num} ({len(group)} tasks: "
                         f"{', '.join(e['label'] for e in group)})"
                     )
+
                     return [
-                        {
-                            "task_description": e["description"],
-                            "recommended_agent": e["agent"],
-                        }
+                        PlannerTask(
+                            task_description=e["description"],
+                            recommended_agent=e["agent"],
+                        )
                         for e in group
                     ]
 
@@ -2152,8 +2266,8 @@ When the workflow contains parallel steps (indicated by letter suffixes like 2a.
     "goal_status": "incomplete",
     "next_task": null,
     "next_tasks": [
-      {"task_description": "Legal review of requirements", "recommended_agent": "Legal Agent"},
-      {"task_description": "Technical assessment", "recommended_agent": "Tech Agent"}
+      {"task_description": "Legal review of requirements", "recommended_agent": "Legal Agent", "required_inputs_from_steps": ["1"], "expected_output_format": "text", "output_guidance": "Summarize legal risks and compliance requirements"},
+      {"task_description": "Technical assessment", "recommended_agent": "Tech Agent", "required_inputs_from_steps": ["1"], "expected_output_format": "text", "output_guidance": "List technical feasibility findings and blockers"}
     ],
     "parallel": true,
     "reasoning": "Steps 2a and 2b can run in parallel as they are independent"
@@ -2209,6 +2323,22 @@ FAILURE HANDLING:
 - **BUT** check if the task requires prerequisite skills from a different agent - if so, delegate to that agent FIRST
 - Each agent should work within their skill domain - use the "skills" field to match task requirements to agent capabilities
 - Tasks should arrive at agents with all necessary context already gathered by appropriate upstream agents
+
+### 📋 STRUCTURED TASK METADATA (OPTIONAL BUT RECOMMENDED)
+When proposing tasks, include these optional fields to help agents produce better results:
+
+- **required_inputs_from_steps**: List of step labels whose outputs this task needs (e.g., ["1", "2a"]).
+  Set to null if the task doesn't need prior output (e.g., first step) or if ALL previous outputs are needed.
+  This prevents sending irrelevant context to agents and reduces confusion.
+
+- **expected_output_format**: What kind of output the agent should produce:
+  "text" — text summary or analysis
+  "file" — a file artifact (document, spreadsheet, image, etc.)
+  "structured_data" — JSON or structured response
+  "confirmation" — simple success/failure acknowledgment
+
+- **output_guidance**: Brief instruction on what the output should contain for the next step.
+  Example: "Include the total amount, due date, and recipient name so the Email Agent can reference them."
 """
         
         # Inject workflow if provided
@@ -2631,16 +2761,10 @@ Analyze the plan and determine the next step."""
                         event_type="phase", metadata={"phase": "parallel_execution", "task_count": len(next_step.next_tasks)}
                     )
                     for task_dict in next_step.next_tasks:
-                        tasks_to_execute.append({
-                            "task_description": task_dict.get("task_description"),
-                            "recommended_agent": task_dict.get("recommended_agent")
-                        })
+                        tasks_to_execute.append(task_dict)
                 elif next_step.next_task:
                     # SEQUENTIAL EXECUTION: Single task via next_task
-                    tasks_to_execute.append({
-                        "task_description": next_step.next_task.get("task_description"),
-                        "recommended_agent": next_step.next_task.get("recommended_agent")
-                    })
+                    tasks_to_execute.append(next_step.next_task)
                 
                 if not tasks_to_execute:
                     log_warning("[Agent Mode] No tasks to execute, breaking loop")
@@ -2694,7 +2818,10 @@ Analyze the plan and determine the next step."""
                                 f"[Workflow Enforcement] Replacing truncated description "
                                 f"'{task_desc[:60]}' → '{best_desc[:80]}'"
                             )
-                            task_dict["task_description"] = best_desc
+                            if isinstance(task_dict, dict):
+                                task_dict["task_description"] = best_desc
+                            else:
+                                task_dict.task_description = best_desc
                             _wf_steps[best_label]["matched"] = True
 
                 # Log final task descriptions for debugging
@@ -2772,8 +2899,8 @@ Analyze the plan and determine the next step."""
                     current_step_number += 1
 
                 for task_idx, task_dict in enumerate(tasks_to_execute):
-                    original_description = task_dict["task_description"]
-                    recommended_agent = task_dict.get("recommended_agent", "")
+                    original_description = task_dict.get("task_description", "") if isinstance(task_dict, dict) else getattr(task_dict, "task_description", "")
+                    recommended_agent = task_dict.get("recommended_agent", "") if isinstance(task_dict, dict) else getattr(task_dict, "recommended_agent", "") or ""
 
                     # Determine the step label for this task
                     if workflow and workflow.strip():
@@ -2787,18 +2914,23 @@ Analyze the plan and determine the next step."""
                             step_label = str(current_step_number)
                     else:
                         step_label = None  # No workflow, no step labeling
-                    
+
                     # Build task description with step label
                     if step_label and not re.search(r'\[Step\s+\d+', original_description):
                         task_description = f"[Step {step_label}] {original_description}"
                     else:
                         task_description = original_description
-                    
+
+                    # Carry planner metadata (PlannerTask) for structured prompt construction
+
+                    planner_meta = task_dict if isinstance(task_dict, PlannerTask) else None
+
                     task = AgentModeTask(
                         task_id=str(uuid.uuid4()),
                         task_description=task_description,
                         recommended_agent=recommended_agent or None,
-                        state="pending"
+                        state="pending",
+                        planner_metadata=planner_meta,
                     )
                     plan.tasks.append(task)
                     pydantic_tasks.append(task)
@@ -2844,7 +2976,9 @@ Analyze the plan and determine the next step."""
                                 workflow=workflow,
                                 user_message=user_message,
                                 extract_text_fn=extract_text_from_response,
-                                previous_task_outputs=previous_output  # ✅ Only LAST output
+                                previous_task_outputs=previous_output,
+                                plan=plan,
+                                workflow_goal=workflow_goal,
                             )
                             return result
                         except Exception as e:
@@ -2949,7 +3083,9 @@ Analyze the plan and determine the next step."""
                             workflow=workflow,
                             user_message=user_message,
                             extract_text_fn=extract_text_from_response,
-                            previous_task_outputs=previous_output
+                            previous_task_outputs=previous_output,
+                            plan=plan,
+                            workflow_goal=workflow_goal,
                         )
                         
                         if result.get("hitl_pause"):
