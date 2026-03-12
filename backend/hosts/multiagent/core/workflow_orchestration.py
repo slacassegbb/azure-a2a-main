@@ -2812,6 +2812,13 @@ Do NOT skip steps. Do NOT mark goal as completed until ALL workflow steps are do
         _interrupt_this_iteration = False
         _critique_replan_used = False  # Tracks if critique already triggered a re-plan
 
+        # Doom-loop detection: track consecutive failures and repeated tasks
+        _agent_consecutive_failures: Dict[str, int] = {}  # agent_name -> consecutive fail count
+        _recent_task_hashes: List[str] = []  # last N task description hashes for repetition detection
+        DOOM_LOOP_MAX_AGENT_FAILURES = 3  # Block agent after N consecutive failures
+        DOOM_LOOP_MAX_TASK_REPEATS = 3  # Detect loop if same task proposed N times
+        DOOM_LOOP_HASH_WINDOW = 10  # Track last N task hashes
+
         while plan.goal_status == "incomplete" and iteration < max_iterations:
             iteration += 1
             _interrupt_this_iteration = False
@@ -3107,6 +3114,66 @@ Analyze the plan and determine the next step."""
                         log_warning(f"[Critique] Already re-planned once, proceeding despite disapproval")
                 else:
                     _critique_replan_used = False  # Reset on approval
+
+                # =========================================================
+                # DOOM-LOOP DETECTION: Catch repeated failures & stuck plans
+                # (Safety cap per paper: hard stop independent of agent reasoning)
+                # =========================================================
+                planned_tasks = next_step.next_tasks if (next_step.next_tasks and next_step.parallel) else (
+                    [next_step.next_task] if next_step.next_task else []
+                )
+                _doom_loop_triggered = False
+                for pt in planned_tasks:
+                    agent_name = pt.recommended_agent or "unknown"
+
+                    # Check 1: Agent blocked after too many consecutive failures
+                    if _agent_consecutive_failures.get(agent_name, 0) >= DOOM_LOOP_MAX_AGENT_FAILURES:
+                        doom_msg = f"Agent '{agent_name}' failed {DOOM_LOOP_MAX_AGENT_FAILURES} consecutive times — halting to prevent doom loop"
+                        log_error(f"[DOOM LOOP] {doom_msg}")
+                        await self._emit_granular_agent_event(
+                            "foundry-host-agent", doom_msg, context_id,
+                            event_type="doom_loop", metadata={
+                                "agent": agent_name,
+                                "consecutive_failures": _agent_consecutive_failures[agent_name],
+                                "trigger": "agent_failure_cap",
+                            }
+                        )
+                        _doom_loop_triggered = True
+                        break
+
+                    # Check 2: Same task description keeps getting proposed (stuck planner)
+                    task_hash = f"{agent_name}::{pt.task_description[:100].strip().lower()}"
+                    repeat_count = _recent_task_hashes.count(task_hash)
+                    if repeat_count >= DOOM_LOOP_MAX_TASK_REPEATS:
+                        doom_msg = f"Same task proposed {repeat_count + 1} times — planner stuck in loop, halting"
+                        log_error(f"[DOOM LOOP] {doom_msg}: {task_hash[:80]}")
+                        await self._emit_granular_agent_event(
+                            "foundry-host-agent", doom_msg, context_id,
+                            event_type="doom_loop", metadata={
+                                "agent": agent_name,
+                                "task_hash": task_hash[:80],
+                                "repeat_count": repeat_count + 1,
+                                "trigger": "task_repetition",
+                            }
+                        )
+                        _doom_loop_triggered = True
+                        break
+
+                    # Track this task hash
+                    _recent_task_hashes.append(task_hash)
+                    if len(_recent_task_hashes) > DOOM_LOOP_HASH_WINDOW:
+                        _recent_task_hashes.pop(0)
+
+                if _doom_loop_triggered:
+                    await self._emit_granular_agent_event(
+                        "foundry-host-agent",
+                        "Workflow stopped: doom loop detected. The system was repeating the same failing actions.",
+                        context_id,
+                        event_type="agent_error",
+                        metadata={"phase": "doom_loop_halt"}
+                    )
+                    all_task_outputs.append("[Workflow halted: doom loop detected — repeated failures or stuck planner]")
+                    break
 
                 # =========================================================
                 # TASK EXECUTION: Handle both sequential and parallel tasks
@@ -3579,6 +3646,18 @@ Analyze the plan and determine the next step."""
                         task.updated_at = datetime.now(timezone.utc)
                         # Emit plan update after each task state change
                         await self._emit_plan_update(plan, context_id, reasoning=next_step.reasoning if next_step else None)
+
+                # =========================================================
+                # DOOM-LOOP TRACKING: Update consecutive failure counters
+                # =========================================================
+                for t in pydantic_tasks:
+                    agent_name = t.recommended_agent or "unknown"
+                    if t.state == "failed":
+                        _agent_consecutive_failures[agent_name] = _agent_consecutive_failures.get(agent_name, 0) + 1
+                        log_info(f"[Doom Loop] {agent_name} consecutive failures: {_agent_consecutive_failures[agent_name]}")
+                    elif t.state == "completed":
+                        # Reset on success
+                        _agent_consecutive_failures[agent_name] = 0
 
                 # =========================================================
                 # REFLECTION: Evaluate results before next planning step

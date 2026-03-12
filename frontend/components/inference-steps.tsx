@@ -2,7 +2,7 @@
 
 import React, { useMemo } from "react"
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
-import { CheckCircle2, Loader, AlertCircle, MessageSquare, Bot, Workflow, Wrench, FileSearch, Send, Zap, FileText, Paperclip, Square, Eye, ShieldCheck } from "lucide-react"
+import { CheckCircle2, Loader, AlertCircle, MessageSquare, Bot, Workflow, Wrench, FileSearch, Send, Zap, FileText, Paperclip, Square, Eye, ShieldCheck, OctagonX } from "lucide-react"
 import { getAgentHexColor } from "@/lib/agent-colors"
 import { logDebug } from '@/lib/debug'
 
@@ -39,7 +39,7 @@ interface AgentInfo {
 }
 
 interface OrchestratorActivity {
-  type: "tool_call" | "agent_dispatch" | "planning" | "document" | "info" | "reflection" | "critique"
+  type: "tool_call" | "agent_dispatch" | "planning" | "document" | "info" | "reflection" | "critique" | "doom_loop"
   label: string
   detail?: string
   timestamp: number
@@ -192,6 +192,16 @@ function parseEventsToAgents(steps: StepEvent[], agentColors?: Record<string, st
           timestamp: activityIndex,
         }
         orchestratorStatus = "validating"
+      } else if (eventType === "doom_loop" && content) {
+        // Doom loop detected — system halting
+        activityIndex++
+        activity = {
+          type: "doom_loop",
+          label: content,
+          detail: step.metadata?.trigger || undefined,
+          timestamp: activityIndex,
+        }
+        orchestratorStatus = "error"
       } else if (eventType === "tool_call") {
         const toolName = step.metadata?.tool_name || "tool"
         const isDocTool = toolName.includes("file_search") || toolName.includes("document") || toolName.includes("search")
@@ -400,6 +410,7 @@ function OrchestratorSection({ activities, status, isLive }: { activities: Orche
       case "planning": return <Zap className="h-3 w-3" />
       case "reflection": return <Eye className="h-3 w-3" />
       case "critique": return <ShieldCheck className="h-3 w-3" />
+      case "doom_loop": return <OctagonX className="h-3 w-3" />
       default: return <Bot className="h-3 w-3" />
     }
   }
