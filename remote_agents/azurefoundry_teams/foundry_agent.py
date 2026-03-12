@@ -846,8 +846,22 @@ Current date: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}
         except Exception as e:
             async with teams_bot._op_lock:
                 del teams_bot.pending_requests[request_id]
+                # If the conversation reference is stale/expired, evict it so it gets
+                # refreshed the next time the user messages the bot.
+                if "ConversationNotFound" in str(e) or "conversation not found" in str(e).lower():
+                    stale_user_id = conv_ref.user.id if conv_ref and conv_ref.user else None
+                    if stale_user_id and stale_user_id in teams_bot.conversation_references:
+                        del teams_bot.conversation_references[stale_user_id]
+                        teams_bot._save_conversation_references()
+                        logger.warning(f"⚠️ Evicted stale conversation reference for user {stale_user_id}")
+                    error_msg = (
+                        "Teams conversation has expired. "
+                        "Please send any message to the bot in Microsoft Teams to re-establish the connection, then retry the workflow."
+                    )
+                else:
+                    error_msg = str(e)
             logger.error(f"Failed to send Teams message: {e}")
-            return False, None, f"Failed to send: {e}", clean_content
+            return False, None, error_msg, clean_content
         
         return True, request_id, message, clean_content
 
