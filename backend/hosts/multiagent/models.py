@@ -135,6 +135,31 @@ class QueryResult(BaseModel):
     refs: str = Field("", description='Optional JSON string with references to inputs/candidates used (e.g., \'{"candidates": ["a","b"]}\').')
 
 
+class ReflectionResult(BaseModel):
+    """Post-execution reflection (ReAct Observe+Assess).
+
+    Produced by gpt-4o-mini after each task execution.
+    Injected into the planner prompt so it can make better decisions.
+    """
+    observation: str = Field(..., description="Factual summary of what the last task(s) produced.")
+    progress_assessment: str = Field(..., description="Progress toward the goal (e.g., '2 of 5 steps done, on track').")
+    should_continue: bool = Field(True, description="False only if a fundamental blocker was detected.")
+    should_replan: bool = Field(False, description="True if the plan needs revision due to unexpected results.")
+    concerns: Optional[str] = Field(None, description="Issues, missing data, or risks. Null if none.")
+    key_data_extracted: Optional[str] = Field(None, description="Critical data points from output that downstream steps need.")
+
+
+class CritiqueResult(BaseModel):
+    """Pre-execution self-critique (ReAct Self-Critique).
+
+    Produced by gpt-4o-mini after the planner selects a task but before dispatch.
+    Catches bad agent selection, missing context, or repeated failures.
+    """
+    approve: bool = Field(True, description="True if the planned action looks correct. False if there's a problem.")
+    reasoning: str = Field(..., description="Brief explanation of approval or concern.")
+    suggested_fix: Optional[str] = Field(None, description="If disapproved, what should change (e.g., 'use Legal Agent instead', 'include Step 1 output').")
+
+
 class NextStep(BaseModel):
     """Orchestrator decision for the next action in a multi-agent workflow."""
     goal_status: GoalStatus = Field(..., description="Whether the goal is completed or not.")

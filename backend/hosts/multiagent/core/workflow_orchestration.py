@@ -47,6 +47,8 @@ from ..models import (
     HITLGateResult,
     QueryResult,
     ScheduledTaskPlan,
+    ReflectionResult,
+    CritiqueResult,
 )
 from ..tool_context import DummyToolContext
 from ..foundry_agent_a2a import _current_parallel_call_id
@@ -998,6 +1000,239 @@ Analyze the context and return your structured result."""
             log_warning(f"[Context Compaction] Summarization failed for '{agent_name}': {e}")
             # Fallback: simple truncation
             return output_text[:250] + "..." if len(output_text) > 250 else output_text
+
+    async def _reflect_on_task_results(
+        self,
+        completed_tasks: List[AgentModeTask],
+        plan: AgentModePlan,
+        workflow: Optional[str],
+        workflow_goal: Optional[str],
+        context_id: str,
+        interrupt_occurred: bool = False,
+    ) -> Optional[ReflectionResult]:
+        """Post-execution reflection: observe results and assess progress (ReAct Phase 1+2).
+
+        Uses gpt-4o-mini for a fast, cheap evaluation of what just happened.
+        Returns None on failure — reflection is advisory, never blocks the loop.
+        """
+        if not completed_tasks:
+            return None
+
+        try:
+            from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+            from openai import AsyncAzureOpenAI
+
+            summarizer_model = os.environ.get("AZURE_SUMMARIZER_MODEL", "gpt-4o-mini")
+            base_endpoint = self._get_base_endpoint()
+
+            credential = DefaultAzureCredential()
+            token_provider = get_bearer_token_provider(
+                credential, "https://cognitiveservices.azure.com/.default"
+            )
+            client = AsyncAzureOpenAI(
+                azure_endpoint=base_endpoint,
+                azure_ad_token_provider=token_provider,
+                api_version="2024-08-01-preview",
+            )
+
+            # Build task summaries for the reflection prompt
+            task_lines = []
+            for t in completed_tasks:
+                summary = t.summary or (t.output.get("result", "")[:300] if t.output else "no output")
+                state_icon = "✓" if t.state == "completed" else "✗"
+                err = f" | Error: {t.error_message[:100]}" if t.error_message else ""
+                task_lines.append(
+                    f"  {state_icon} [{t.recommended_agent or 'unknown'}] {t.task_description[:150]}\n"
+                    f"    Output: {summary}{err}"
+                )
+
+            # Progress stats
+            total_tasks = len(plan.tasks)
+            completed_count = len([t for t in plan.tasks if t.state == "completed"])
+            failed_count = len([t for t in plan.tasks if t.state == "failed"])
+
+            interrupt_note = "\n\nNOTE: The user just redirected this workflow with new instructions." if interrupt_occurred else ""
+
+            user_prompt = (
+                f"Goal: {plan.goal[:500]}\n\n"
+                f"Progress: {completed_count} completed, {failed_count} failed, {total_tasks} total tasks\n"
+                f"{'Workflow: ' + str(len(workflow.strip().split(chr(10)))) + ' steps defined' if workflow else 'Ad-hoc multi-agent (no predefined workflow)'}\n\n"
+                f"Tasks just executed:\n{''.join(task_lines)}"
+                f"{interrupt_note}\n\n"
+                f"Reflect on what happened."
+            )
+
+            await self._emit_granular_agent_event(
+                "foundry-host-agent", "Reflecting on results...", context_id,
+                event_type="phase", metadata={"phase": "reflection"}
+            )
+
+            completion = await client.beta.chat.completions.parse(
+                model=summarizer_model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are a workflow reflection agent. After each task execution, you observe what happened and assess progress.\n"
+                            "You do NOT plan the next step — that is someone else's job. Your only job is:\n"
+                            "1. OBSERVE: What did the task produce? Summarize the factual outcome.\n"
+                            "2. ASSESS: How much progress has been made toward the goal?\n"
+                            "3. CRITIQUE: Are there any concerns, missing data, or issues?\n"
+                            "4. EXTRACT: What key data points will downstream steps need?\n\n"
+                            "Be concise and factual. Do not suggest next actions."
+                        ),
+                    },
+                    {"role": "user", "content": user_prompt},
+                ],
+                response_format=ReflectionResult,
+                temperature=0.0,
+                max_tokens=400,
+            )
+
+            reflection = completion.choices[0].message.parsed
+            if reflection:
+                log_info(f"[Reflection] {reflection.observation[:100]}... | continue={reflection.should_continue}, replan={reflection.should_replan}")
+                await self._emit_granular_agent_event(
+                    "foundry-host-agent", reflection.observation, context_id,
+                    event_type="reflection", metadata={
+                        "phase": "reflection_complete",
+                        "should_continue": reflection.should_continue,
+                        "should_replan": reflection.should_replan,
+                        "progress": reflection.progress_assessment,
+                    }
+                )
+
+            # Track token usage
+            if hasattr(completion, "usage") and completion.usage:
+                self.host_token_usage["prompt_tokens"] += completion.usage.prompt_tokens or 0
+                self.host_token_usage["completion_tokens"] += completion.usage.completion_tokens or 0
+                self.host_token_usage["total_tokens"] += completion.usage.total_tokens or 0
+
+            return reflection
+
+        except Exception as e:
+            log_warning(f"[Reflection] Failed (non-blocking): {e}")
+            return None
+
+    async def _critique_planned_action(
+        self,
+        next_step: NextStep,
+        plan: AgentModePlan,
+        workflow: Optional[str],
+        context_id: str,
+    ) -> Optional[CritiqueResult]:
+        """Pre-execution self-critique: validate the planned action before dispatch (ReAct Phase 2).
+
+        Uses gpt-4o-mini to catch bad agent selection, missing context, or repeated failures.
+        Returns None on failure — critique is advisory, never blocks the loop.
+        """
+        # Build a description of what the planner wants to do
+        tasks_to_check = []
+        if next_step.next_tasks and len(next_step.next_tasks) > 1:
+            tasks_to_check = next_step.next_tasks
+        elif next_step.next_task:
+            tasks_to_check = [next_step.next_task]
+
+        if not tasks_to_check:
+            return None
+
+        try:
+            from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+            from openai import AsyncAzureOpenAI
+
+            summarizer_model = os.environ.get("AZURE_SUMMARIZER_MODEL", "gpt-4o-mini")
+            base_endpoint = self._get_base_endpoint()
+
+            credential = DefaultAzureCredential()
+            token_provider = get_bearer_token_provider(
+                credential, "https://cognitiveservices.azure.com/.default"
+            )
+            client = AsyncAzureOpenAI(
+                azure_endpoint=base_endpoint,
+                azure_ad_token_provider=token_provider,
+                api_version="2024-08-01-preview",
+            )
+
+            # Planned actions
+            action_lines = []
+            for t in tasks_to_check:
+                desc = t.task_description if isinstance(t, PlannerTask) else t.get("task_description", "")
+                agent = t.recommended_agent if isinstance(t, PlannerTask) else t.get("recommended_agent", "")
+                action_lines.append(f"  → Agent: {agent}\n    Task: {desc[:200]}")
+
+            # Recent task history (failures, completed)
+            history_lines = []
+            for t in plan.tasks[-6:]:
+                state_icon = {"completed": "✓", "failed": "✗", "input_required": "⏸"}.get(t.state, "?")
+                history_lines.append(f"  {state_icon} [{t.recommended_agent}] {t.task_description[:100]} → {t.state}")
+
+            user_prompt = (
+                f"Goal: {plan.goal[:400]}\n\n"
+                f"Planner reasoning: {next_step.reasoning}\n\n"
+                f"Planned action(s):\n{''.join(action_lines)}\n\n"
+                f"Recent task history:\n{''.join(history_lines) if history_lines else '  (no tasks yet)'}\n\n"
+                f"{'Workflow is predefined — steps must follow the workflow order.' if workflow else 'Ad-hoc mode — planner chooses freely.'}\n\n"
+                f"Is this planned action correct? Check for:\n"
+                f"- Wrong agent for the task\n"
+                f"- Missing context from prior steps that the agent will need\n"
+                f"- Repeating a previously failed task without changes\n"
+                f"- Task description too vague or truncated\n"
+            )
+
+            await self._emit_granular_agent_event(
+                "foundry-host-agent", "Validating planned action...", context_id,
+                event_type="phase", metadata={"phase": "critique"}
+            )
+
+            completion = await client.beta.chat.completions.parse(
+                model=summarizer_model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are a workflow quality gate. Before a task is dispatched to an agent, you verify the plan is sound.\n"
+                            "You do NOT plan — you only validate. Check:\n"
+                            "1. Is the selected agent appropriate for this task?\n"
+                            "2. Does the task description contain enough context?\n"
+                            "3. Are we about to repeat a failed task without changes?\n"
+                            "4. Is there missing data from prior steps?\n\n"
+                            "Approve unless there is a CLEAR problem. Do not be overly cautious — most plans are fine.\n"
+                            "If disapproving, provide a specific suggested_fix."
+                        ),
+                    },
+                    {"role": "user", "content": user_prompt},
+                ],
+                response_format=CritiqueResult,
+                temperature=0.0,
+                max_tokens=200,
+            )
+
+            critique = completion.choices[0].message.parsed
+            if critique:
+                if critique.approve:
+                    log_info(f"[Critique] Approved: {critique.reasoning[:80]}")
+                else:
+                    log_warning(f"[Critique] DISAPPROVED: {critique.reasoning[:80]} | Fix: {critique.suggested_fix}")
+                    await self._emit_granular_agent_event(
+                        "foundry-host-agent", f"⚠️ {critique.reasoning}", context_id,
+                        event_type="critique", metadata={
+                            "phase": "critique_complete",
+                            "approved": False,
+                            "suggested_fix": critique.suggested_fix,
+                        }
+                    )
+
+            # Track token usage
+            if hasattr(completion, "usage") and completion.usage:
+                self.host_token_usage["prompt_tokens"] += completion.usage.prompt_tokens or 0
+                self.host_token_usage["completion_tokens"] += completion.usage.completion_tokens or 0
+                self.host_token_usage["total_tokens"] += completion.usage.total_tokens or 0
+
+            return critique
+
+        except Exception as e:
+            log_warning(f"[Critique] Failed (non-blocking): {e}")
+            return None
 
     def _build_structured_agent_prompt(
         self,
@@ -2572,10 +2807,16 @@ Do NOT skip steps. Do NOT mark goal as completed until ALL workflow steps are do
 - When agents request information, synthesize their questions and present to the user
 - When the user provides information in a follow-up, create a NEW task with that information"""
         
+        # ReAct reflection from previous iteration (injected into planner prompt)
+        _last_reflection: Optional[ReflectionResult] = None
+        _interrupt_this_iteration = False
+        _critique_replan_used = False  # Tracks if critique already triggered a re-plan
+
         while plan.goal_status == "incomplete" and iteration < max_iterations:
             iteration += 1
+            _interrupt_this_iteration = False
             log_debug(f"[Agent Mode] Iteration {iteration}/{max_iterations}")
-            
+
             # =========================================================
             # CANCELLATION CHECK: Between steps, bail if user cancelled
             # =========================================================
@@ -2592,6 +2833,7 @@ Do NOT skip steps. Do NOT mark goal as completed until ALL workflow steps are do
             # =========================================================
             interrupt_instruction = self.get_interrupt(context_id)
             if interrupt_instruction:
+                _interrupt_this_iteration = True
                 log_info(f"[INTERRUPT] Detected interrupt between steps: {interrupt_instruction[:80]}...")
                 completed_tasks = [t for t in plan.tasks if t.state == "completed"]
                 original_goal = plan.goal
@@ -2764,6 +3006,18 @@ Do NOT skip steps. Do NOT mark goal as completed until ALL workflow steps are do
                     f"Stay focused on achieving this goal. Do not deviate."
                 )
 
+            # Inject reflection from previous iteration (if available)
+            reflection_context = ""
+            if _last_reflection:
+                reflection_context = (
+                    f"\n\nPrevious Step Reflection:\n"
+                    f"- Observation: {_last_reflection.observation}\n"
+                    f"- Progress: {_last_reflection.progress_assessment}\n"
+                    f"- Should Replan: {_last_reflection.should_replan}\n"
+                    f"- Concerns: {_last_reflection.concerns or 'None'}\n"
+                    f"- Key Data: {_last_reflection.key_data_extracted or 'None'}"
+                )
+
             user_prompt = f"""Goal:
 {plan.goal}{conversation_context}{auto_reply_note}{goal_reminder}
 
@@ -2771,7 +3025,7 @@ Current Plan (JSON):
 {json.dumps(compact_plan, indent=2, default=str)}
 
 Available Agents (JSON):
-{json.dumps(available_agents, indent=2)}{workflow_progress}
+{json.dumps(available_agents, indent=2)}{workflow_progress}{reflection_context}
 
 Analyze the plan and determine the next step."""
             
@@ -2831,7 +3085,29 @@ Analyze the plan and determine the next step."""
                         session_context.current_plan = plan
 
                     break
-                
+
+                # =========================================================
+                # SELF-CRITIQUE: Validate planned action before dispatch
+                # (ReAct Phase 2: "Am I about to do something wrong?")
+                # =========================================================
+                critique = await self._critique_planned_action(
+                    next_step=next_step,
+                    plan=plan,
+                    workflow=workflow,
+                    context_id=context_id,
+                )
+                if critique and not critique.approve:
+                    if not _critique_replan_used:
+                        # Disapproved — inject concern and re-plan ONCE
+                        _critique_replan_used = True
+                        log_warning(f"[Critique] Re-planning: {critique.suggested_fix}")
+                        plan.goal = f"{plan.goal}\n\n[CRITIQUE: {critique.reasoning}. Fix: {critique.suggested_fix or 'reconsider'}]"
+                        continue  # Re-enter loop for re-plan
+                    else:
+                        log_warning(f"[Critique] Already re-planned once, proceeding despite disapproval")
+                else:
+                    _critique_replan_used = False  # Reset on approval
+
                 # =========================================================
                 # TASK EXECUTION: Handle both sequential and parallel tasks
                 # =========================================================
@@ -3303,7 +3579,31 @@ Analyze the plan and determine the next step."""
                         task.updated_at = datetime.now(timezone.utc)
                         # Emit plan update after each task state change
                         await self._emit_plan_update(plan, context_id, reasoning=next_step.reasoning if next_step else None)
-                
+
+                # =========================================================
+                # REFLECTION: Evaluate results before next planning step
+                # (ReAct Phase 1+2: Observation + Self-Critique)
+                # =========================================================
+                if plan.goal_status != "completed":
+                    just_executed = [t for t in pydantic_tasks if t.state in ("completed", "failed")]
+                    if just_executed:
+                        _last_reflection = await self._reflect_on_task_results(
+                            completed_tasks=just_executed,
+                            plan=plan,
+                            workflow=workflow,
+                            workflow_goal=workflow_goal,
+                            context_id=context_id,
+                            interrupt_occurred=_interrupt_this_iteration,
+                        )
+                        # Handle reflection advisories
+                        if _last_reflection:
+                            if not _last_reflection.should_continue:
+                                log_warning(f"[Reflection] Advisory: should_continue=False — {_last_reflection.concerns}")
+                            if _last_reflection.should_replan:
+                                log_info(f"[Reflection] Replan advisory triggered")
+                    else:
+                        _last_reflection = None
+
             except Exception as e:
                 log_error(f"[Agent Mode] Orchestration error: {e}")
                 await self._emit_granular_agent_event(

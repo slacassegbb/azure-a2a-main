@@ -2,7 +2,7 @@
 
 import React, { useMemo } from "react"
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
-import { CheckCircle2, Loader, AlertCircle, MessageSquare, Bot, Workflow, Wrench, FileSearch, Send, Zap, FileText, Paperclip, Square } from "lucide-react"
+import { CheckCircle2, Loader, AlertCircle, MessageSquare, Bot, Workflow, Wrench, FileSearch, Send, Zap, FileText, Paperclip, Square, Eye, ShieldCheck } from "lucide-react"
 import { getAgentHexColor } from "@/lib/agent-colors"
 import { logDebug } from '@/lib/debug'
 
@@ -39,7 +39,7 @@ interface AgentInfo {
 }
 
 interface OrchestratorActivity {
-  type: "tool_call" | "agent_dispatch" | "planning" | "document" | "info"
+  type: "tool_call" | "agent_dispatch" | "planning" | "document" | "info" | "reflection" | "critique"
   label: string
   detail?: string
   timestamp: number
@@ -60,14 +60,14 @@ function formatAgentName(name: string): string {
 interface ParsedData {
   agents: AgentInfo[]
   orchestratorActivities: OrchestratorActivity[]
-  orchestratorStatus: "idle" | "planning" | "dispatching" | "complete" | "error"
+  orchestratorStatus: "idle" | "planning" | "dispatching" | "reflecting" | "validating" | "complete" | "error"
 }
 
 function parseEventsToAgents(steps: StepEvent[], agentColors?: Record<string, string>): ParsedData {
   const agentMap = new Map<string, AgentInfo>()
   const orchestratorActivities: OrchestratorActivity[] = []
   const seenOrchestratorLabels = new Set<string>()
-  let orchestratorStatus: "idle" | "planning" | "dispatching" | "complete" | "error" = "idle"
+  let orchestratorStatus: "idle" | "planning" | "dispatching" | "reflecting" | "validating" | "complete" | "error" = "idle"
   let activityIndex = 0
   // Track the current map key for each agent name to support multiple invocations
   // When an agent completes and new events arrive, a new key (e.g., "AgentName::2") is created
@@ -167,7 +167,31 @@ function parseEventsToAgents(steps: StepEvent[], agentColors?: Record<string, st
             label: content,  // Full extraction message with content preview
             timestamp: activityIndex,
           }
+        } else if (phase === "reflection") {
+          orchestratorStatus = "reflecting"
+        } else if (phase === "critique") {
+          orchestratorStatus = "validating"
         }
+      } else if (eventType === "reflection" && content) {
+        // Post-execution reflection — what did we learn?
+        activityIndex++
+        activity = {
+          type: "reflection",
+          label: content,
+          detail: step.metadata?.progress || undefined,
+          timestamp: activityIndex,
+        }
+        orchestratorStatus = "reflecting"
+      } else if (eventType === "critique" && content) {
+        // Pre-execution critique — disapproved action
+        activityIndex++
+        activity = {
+          type: "critique",
+          label: content,
+          detail: step.metadata?.suggested_fix || undefined,
+          timestamp: activityIndex,
+        }
+        orchestratorStatus = "validating"
       } else if (eventType === "tool_call") {
         const toolName = step.metadata?.tool_name || "tool"
         const isDocTool = toolName.includes("file_search") || toolName.includes("document") || toolName.includes("search")
@@ -374,6 +398,8 @@ function OrchestratorSection({ activities, status, isLive }: { activities: Orche
       case "document": return <FileSearch className="h-3 w-3" />
       case "agent_dispatch": return <Send className="h-3 w-3" />
       case "planning": return <Zap className="h-3 w-3" />
+      case "reflection": return <Eye className="h-3 w-3" />
+      case "critique": return <ShieldCheck className="h-3 w-3" />
       default: return <Bot className="h-3 w-3" />
     }
   }
