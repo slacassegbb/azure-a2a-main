@@ -38,7 +38,16 @@ class SessionContext(BaseModel):
     # Persist orchestration plan for multi-turn conversations
     # When an agent asks for info, we save the plan so we can resume it when user provides the answer
     current_plan: Optional["AgentModePlan"] = Field(default=None, description="Current orchestration plan for resuming multi-turn workflows")
-    
+    # Per-context user state (moved from instance-level to avoid race conditions between concurrent contexts)
+    current_user_id: Optional[str] = Field(default=None, description="User ID for this context (for scheduled tasks, etc.)")
+    current_user_message: Optional[str] = Field(default=None, description="Original user message (for HITL resumption)")
+    current_user_timezone: str = Field(default="UTC", description="User timezone (for scheduling)")
+    # Per-context token tracking (moved from instance-level to avoid cross-context clobbering)
+    host_token_usage: Dict[str, int] = Field(
+        default_factory=lambda: {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+        description="Host orchestrator token usage for this context"
+    )
+
     class Config:
         arbitrary_types_allowed = True
 

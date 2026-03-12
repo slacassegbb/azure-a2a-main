@@ -1320,7 +1320,11 @@ class ConversationServer:
         return {"status": "error", "message": "Orchestrator not available"}
 
     async def _interrupt_workflow(self, request: Request):
-        """Interrupt/redirect a running workflow. Called by the WebSocket server via HTTP."""
+        """Interrupt/redirect a running workflow via the thread queue.
+
+        Routes the instruction through process_message so the thread queue
+        detects the running workflow and applies interrupt semantics.
+        """
         data = await request.json()
         context_id = data.get("context_id", "")
         instruction = data.get("instruction", "")
@@ -1328,14 +1332,20 @@ class ConversationServer:
         if not context_id or not instruction:
             return {"status": "error", "message": "Missing context_id or instruction"}
 
-        if hasattr(self.manager, '_host_agent') and self.manager._host_agent:
-            result = await self.manager._host_agent.interrupt_workflow(
-                context_id=context_id,
-                instruction=instruction
-            )
-            return result
+        from a2a.types import Message, Part, TextPart, Role
+        message = Message(
+            message_id=str(uuid.uuid4()),
+            context_id=context_id,
+            role=Role.user,
+            parts=[Part(root=TextPart(text=instruction))],
+        )
 
-        return {"status": "error", "message": "Orchestrator not available"}
+        try:
+            responses = await self.manager.process_message(message)
+            return {"status": "success", "message": "Interrupt delivered via thread queue"}
+        except Exception as e:
+            log_error(f"[Interrupt] Failed to deliver via thread queue: {e}")
+            return {"status": "error", "message": str(e)}
 
     # ==================== SESSION AGENT ENDPOINTS ====================
 

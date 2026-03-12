@@ -1720,9 +1720,12 @@ def main():
                 main_loop
             )
             
-            # Wait for the result with timeout
+            # Wait for the result with timeout (non-blocking so uvicorn can handle concurrent requests)
             try:
-                responses = future.result(timeout=request.timeout)
+                responses = await asyncio.wait_for(
+                    asyncio.wrap_future(future),
+                    timeout=request.timeout
+                )
                 elapsed_time = time.time() - start_time
                 
                 log_debug(f"[Query API] Query completed in {elapsed_time:.2f}s")

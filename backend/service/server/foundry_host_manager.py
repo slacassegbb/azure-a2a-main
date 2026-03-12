@@ -24,6 +24,7 @@ from utils.file_parts import extract_uri, convert_artifact_dict_to_file_part, cr
 import re
 from service.agent_registry import get_session_registry, get_registry
 from service import chat_history_service
+from hosts.multiagent.thread_queue import ThreadQueue, ThreadMessage
 
 # Tenant separator used in contextId format: sessionId::conversationId
 TENANT_SEPARATOR = '::'
@@ -129,6 +130,10 @@ class FoundryHostManager(ApplicationManager):
         self._task_map: Dict[str, str] = {}
         self._next_id: Dict[str, str] = {}
         
+        # Per-context message queue: prevents race conditions when a user
+        # sends a second message while a workflow is running.
+        self._thread_queue = ThreadQueue()
+
         # Register this instance as the global singleton FIRST (before heavy init)
         # so other modules can access it immediately
         set_host_manager(self)
@@ -150,6 +155,10 @@ class FoundryHostManager(ApplicationManager):
             self._host_agent = FoundryHostAgent2([], self._http_client, create_agent_at_startup=True)
             self._host_agent.set_host_manager(self)
             self._host_agent_initialized = True
+            # Wire the thread queue handler now that the host agent exists
+            self._thread_queue.set_handler(self._process_message_internal)
+            # Give the host agent access to queue depth for observability
+            self._host_agent._get_queue_depth = self._thread_queue.get_queue_depth
             log_debug("Foundry agent initialized successfully!")
         except Exception as e:
             log_debug(f"Failed to initialize Foundry agent: {e}")
@@ -400,13 +409,86 @@ class FoundryHostManager(ApplicationManager):
             log_debug(f"[Pre-flight] Failed to emit final_response: {e}")
 
     async def process_message(self, message: Message, agent_mode: bool = None, enable_inter_agent_memory: bool = False, workflow: str = None, workflow_goal: str = None, available_workflows: list = None, user_id: str = None, user_timezone: str = "UTC", sms_reply_to: str = None):
+        """Enqueue a message for sequential processing on its context_id thread.
+
+        Returns the result once the message has been processed.  Messages for
+        the same context_id are serialized; different context_ids run in parallel.
+        """
         await self.ensure_host_agent_initialized()
+
+        context_id = get_context_id(message) or str(uuid.uuid4())
+
+        # Check if a workflow is already running for this context — if so,
+        # treat simple text messages as interrupts (redirect the running workflow)
+        is_proc = self._thread_queue.is_processing(context_id)
+        log_info(f"[ThreadQueue] process_message context_id={context_id[:40]}, is_processing={is_proc}, queue_depth={self._thread_queue.get_queue_depth(context_id)}")
+        if is_proc:
+            has_explicit_workflow = bool(workflow and workflow.strip())
+            if not has_explicit_workflow:
+                # Simple text message while workflow is running → interrupt
+                user_text = ""
+                for part in message.parts:
+                    root = getattr(part, 'root', part)
+                    kind = getattr(root, 'kind', None)
+                    log_info(f"[ThreadQueue] Interrupt text extraction: part_type={type(part).__name__}, root_type={type(root).__name__}, kind={kind}")
+                    if kind == 'text':
+                        user_text = getattr(root, 'text', '')
+                        break
+                    elif hasattr(root, 'text') and isinstance(getattr(root, 'text', None), str):
+                        user_text = root.text
+                        break
+                log_info(f"[ThreadQueue] Interrupt user_text='{user_text[:50]}...' host_agent={self._host_agent is not None}")
+                if user_text and self._host_agent:
+                    log_info(f"[ThreadQueue] Interrupting running workflow for {context_id[:20]}...")
+                    await self._host_agent.interrupt_workflow(context_id, user_text)
+                    return [Message(
+                        message_id=str(uuid.uuid4()),
+                        role="agent",
+                        parts=[Part(root=TextPart(text="Your message has been received and will redirect the current workflow."))],
+                        context_id=context_id,
+                    )]
+
+            depth = self._thread_queue.get_queue_depth(context_id)
+            log_info(f"[ThreadQueue] Workflow running for {context_id[:20]}..., queueing message (depth={depth})")
+
+        thread_msg = ThreadMessage(
+            message=message,
+            context_id=context_id,
+            agent_mode=agent_mode,
+            enable_inter_agent_memory=enable_inter_agent_memory,
+            workflow=workflow,
+            workflow_goal=workflow_goal,
+            available_workflows=available_workflows,
+            user_id=user_id,
+            user_timezone=user_timezone,
+            sms_reply_to=sms_reply_to,
+        )
+
+        future = await self._thread_queue.enqueue(thread_msg)
+        return await future
+
+    async def _process_message_internal(self, thread_msg: ThreadMessage):
+        """Process a single message — called by the ThreadQueue processor.
+
+        This contains the original process_message body: HITL resume, workflow
+        pre-flight, agent enabling, and run_conversation_with_parts.
+        """
+        message = thread_msg.message
+        agent_mode = thread_msg.agent_mode
+        enable_inter_agent_memory = thread_msg.enable_inter_agent_memory
+        workflow = thread_msg.workflow
+        workflow_goal = thread_msg.workflow_goal
+        available_workflows = thread_msg.available_workflows
+        user_id = thread_msg.user_id
+        user_timezone = thread_msg.user_timezone
+        sms_reply_to = thread_msg.sms_reply_to
+
         message_id = get_message_id(message)
         if message_id:
             self._pending_message_ids.append(message_id)
-        
-        extracted_context_id = get_context_id(message)
-        context_id = extracted_context_id or str(uuid.uuid4())
+
+        # context_id was already resolved by process_message (the enqueue wrapper)
+        context_id = thread_msg.context_id
 
         # Auto-detect agent_mode based on workflow presence (backward compatible)
         # If agent_mode is explicitly passed, use it; otherwise detect from workflow

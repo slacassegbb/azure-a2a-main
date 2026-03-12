@@ -301,8 +301,10 @@ class FoundryHostAgent2(EventEmitters, AgentRegistry, StreamingHandlers, MemoryO
         self._cancelled_plan_snapshots: Dict[str, dict] = {}
         # Interrupt support: queued user instructions to redirect a running workflow
         # Key: context_id, Value: new user instruction string
-        self._interrupt_instructions: Dict[str, str] = {}
-        
+        self._interrupt_instructions: Dict[str, list] = {}
+        # Queue depth callback (set by FoundryHostManager after queue init)
+        self._get_queue_depth: Optional[callable] = None
+
         # Configure context-sharing between agents for improved continuity
         # When enabled, agents receive information about previous agent responses
         include_flag = os.environ.get("A2A_INCLUDE_LAST_HOST_TURN", "true").strip().lower()
@@ -4204,6 +4206,8 @@ Answer with just JSON:
         """
         """Run conversation with A2A message parts (including files)."""
         # Store user context for scheduled task handler access
+        # Keep instance-level for backward compatibility, but also store in SessionContext
+        # (per-context isolation — no race conditions when queue serializes per context_id)
         self._current_user_id = user_id
         self._current_user_timezone = user_timezone
         log_debug(f"[ENTRY DEBUG] run_conversation_with_parts: workflow={workflow}, available_workflows={available_workflows}, user_id={user_id}, timezone={user_timezone}")
@@ -4251,6 +4255,12 @@ Answer with just JSON:
             # Store the original user message for HITL resumption
             # This allows send_message_sync to save the goal when an agent returns input_required
             self._current_user_message = user_message
+            # Also persist in SessionContext for per-context isolation
+            session_ctx = self.session_contexts.get(context_id)
+            if session_ctx:
+                session_ctx.current_user_id = user_id
+                session_ctx.current_user_message = user_message
+                session_ctx.current_user_timezone = user_timezone
             log_debug(f"[HITL] Stored _current_user_message for potential HITL resumption")
             
             log_debug(f"Extracted user message: {user_message}")
@@ -6669,18 +6679,29 @@ Workflow completed with result:
         log_info(f"[INTERRUPT] Queuing interrupt for context: {context_id}")
         log_info(f"[INTERRUPT] New instruction: {instruction[:100]}...")
         
-        self._interrupt_instructions[context_id] = instruction
-        
+        if context_id not in self._interrupt_instructions:
+            self._interrupt_instructions[context_id] = []
+        self._interrupt_instructions[context_id].append(instruction)
+        depth = len(self._interrupt_instructions[context_id])
+        log_info(f"[INTERRUPT] Queue depth for {context_id[:20]}...: {depth}")
+
         return {
             "status": "interrupt_queued",
             "context_id": context_id,
             "instruction": instruction,
+            "queue_depth": depth,
             "message": "Interrupt queued. Will redirect after current agent completes."
         }
-    
+
     def get_interrupt(self, context_id: str) -> Optional[str]:
-        """Pop and return a queued interrupt instruction, or None if no interrupt is pending."""
-        return self._interrupt_instructions.pop(context_id, None)
+        """Pop and return the next queued interrupt instruction, or None if empty."""
+        queue = self._interrupt_instructions.get(context_id)
+        if not queue:
+            return None
+        instruction = queue.pop(0)
+        if not queue:
+            del self._interrupt_instructions[context_id]
+        return instruction
 
     def _add_status_message_to_conversation(self, status_text: str, contextId: str):
         """Add a status message directly to the conversation for immediate UI display."""
