@@ -919,6 +919,86 @@ Analyze the context and return your structured result."""
         except Exception:
             return None
 
+    async def _summarize_task_output(
+        self,
+        output_text: str,
+        agent_name: str,
+        task_description: str,
+        context_id: str,
+    ) -> Optional[str]:
+        """Generate a compact LLM summary (~200 chars) of a task output using gpt-4o-mini.
+
+        Used for tiered context compaction: older task outputs are replaced with
+        these summaries so the planner and downstream agents get the gist without
+        blowing up the context window.
+
+        Returns None on failure (caller should fall back to truncation).
+        """
+        if not output_text or len(output_text) < 100:
+            # Too short to bother summarizing — use as-is
+            return output_text[:250] if output_text else None
+
+        try:
+            from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+            from openai import AsyncAzureOpenAI
+
+            # Use gpt-4o-mini for cheap/fast summarization
+            summarizer_model = os.environ.get("AZURE_SUMMARIZER_MODEL", "gpt-4o-mini")
+            base_endpoint = self._get_base_endpoint()
+
+            credential = DefaultAzureCredential()
+            token_provider = get_bearer_token_provider(
+                credential, "https://cognitiveservices.azure.com/.default"
+            )
+            client = AsyncAzureOpenAI(
+                azure_endpoint=base_endpoint,
+                azure_ad_token_provider=token_provider,
+                api_version="2024-08-01-preview",
+            )
+
+            # Truncate input to avoid sending huge payloads to the summarizer
+            input_text = output_text[:4000]
+
+            completion = await client.chat.completions.create(
+                model=summarizer_model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are a concise summarizer for a multi-agent workflow orchestrator. "
+                            "Summarize the agent's output in 1-3 sentences (max 200 characters). "
+                            "Focus on: what action was taken, what was produced, and key data points. "
+                            "If files or documents were created, mention them. Be factual, not verbose."
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": (
+                            f"Agent: {agent_name}\n"
+                            f"Task: {task_description[:200]}\n\n"
+                            f"Output to summarize:\n{input_text}"
+                        ),
+                    },
+                ],
+                temperature=0.0,
+                max_tokens=100,
+            )
+
+            summary = completion.choices[0].message.content.strip()
+            log_info(f"[Context Compaction] Summary for '{agent_name}': {summary[:100]}...")
+
+            # Track summarizer token usage
+            if hasattr(completion, "usage") and completion.usage:
+                self.host_token_usage["prompt_tokens"] += completion.usage.prompt_tokens or 0
+                self.host_token_usage["completion_tokens"] += completion.usage.completion_tokens or 0
+
+            return summary
+
+        except Exception as e:
+            log_warning(f"[Context Compaction] Summarization failed for '{agent_name}': {e}")
+            # Fallback: simple truncation
+            return output_text[:250] + "..." if len(output_text) > 250 else output_text
+
     def _build_structured_agent_prompt(
         self,
         task: AgentModeTask,
@@ -1064,21 +1144,52 @@ Analyze the context and return your structured result."""
                 context_parts.append(f"### Output from Step {label}:\n{cleaned}")
                 total_chars += len(cleaned)
         elif previous_task_outputs:
-            # LEGACY FALLBACK: Include all previous outputs, newest first
+            # TIERED CONTEXT: Last 2 outputs in full, older outputs use LLM summaries.
+            # This is the core of the context compaction strategy from the OpenDev paper.
+            num_outputs = len(previous_task_outputs)
+            recent_threshold = 2  # Keep last N outputs in full
+
+            # Build a summary lookup from the plan's completed tasks
+            task_summaries = {}
+            if plan and plan.tasks:
+                for ti, t in enumerate(plan.tasks):
+                    if t.state == "completed" and t.summary:
+                        task_summaries[ti] = t.summary
+
             for idx, output in enumerate(reversed(previous_task_outputs)):
                 if not output or len(output) < 20:
                     continue
-                cleaned = _url_pattern.sub('', output)
-                cleaned = _path_pattern.sub('[file]', cleaned).strip()
-                if len(cleaned) < 20:
-                    continue
-                if total_chars + len(cleaned) > max_context_chars:
-                    remaining = max_context_chars - total_chars
-                    if remaining > 200:
-                        context_parts.append(f"### Step Output {len(previous_task_outputs) - idx}:\n{cleaned[:remaining]}")
-                    break
-                context_parts.append(f"### Step Output {len(previous_task_outputs) - idx}:\n{cleaned}")
-                total_chars += len(cleaned)
+
+                output_index = num_outputs - 1 - idx  # Original index in all_task_outputs
+                is_recent = idx < recent_threshold
+
+                if is_recent:
+                    # Full output for recent steps
+                    cleaned = _url_pattern.sub('', output)
+                    cleaned = _path_pattern.sub('[file]', cleaned).strip()
+                    if len(cleaned) < 20:
+                        continue
+                    if total_chars + len(cleaned) > max_context_chars:
+                        remaining = max_context_chars - total_chars
+                        if remaining > 200:
+                            context_parts.append(f"### Step Output {output_index + 1} (full):\n{cleaned[:remaining]}")
+                        break
+                    context_parts.append(f"### Step Output {output_index + 1} (full):\n{cleaned}")
+                    total_chars += len(cleaned)
+                else:
+                    # Older steps: use LLM summary if available, else truncate
+                    summary = task_summaries.get(output_index)
+                    if summary:
+                        context_parts.append(f"### Step Output {output_index + 1} (summary):\n{summary}")
+                        total_chars += len(summary)
+                    else:
+                        # No summary available — truncate
+                        cleaned = _url_pattern.sub('', output)
+                        cleaned = _path_pattern.sub('[file]', cleaned).strip()
+                        truncated = cleaned[:300] + "... [truncated]" if len(cleaned) > 300 else cleaned
+                        if truncated and len(truncated) >= 20:
+                            context_parts.append(f"### Step Output {output_index + 1} (truncated):\n{truncated}")
+                            total_chars += len(truncated)
 
         if not context_parts:
             return None
@@ -2566,25 +2677,29 @@ Do NOT skip steps. Do NOT mark goal as completed until ALL workflow steps are do
                 )
             
             # Build a compact version of the plan for the LLM prompt.
-            # Full task outputs can be huge (agent responses) — truncate them
-            # so the LLM can still reason about what happened without blowing
-            # up the context window or degrading decision quality.
+            # Uses tiered context compaction: if an LLM-generated summary exists
+            # for a task, use that instead of truncating the raw output.
+            # This gives the planner much better signal than a blunt 300-char cut.
             compact_plan = plan.model_dump()
             for task_entry in compact_plan.get("tasks", []):
                 output = task_entry.get("output")
                 if output and isinstance(output, dict):
-                    # Keep only a short result summary + evaluation boolean for EVALUATE steps.
-                    # All other fields (user_response, reasoning, artifacts, etc.) are dropped.
-                    # compact_plan is only used for the planner prompt — agent execution uses
-                    # the unmodified plan.tasks. Keeping outputs short prevents domain-specific
-                    # content (financial terms, legal analysis) from triggering Azure content filters.
-                    result_val = output.get("result", "")
-                    if isinstance(result_val, str) and len(result_val) > 300:
-                        result_val = result_val[:300] + "... [truncated]"
-                    slim: dict = {"result": result_val}
+                    # Prefer LLM-generated summary (from _summarize_task_output) over raw truncation.
+                    # The summary field is set after each task completes.
+                    summary = task_entry.get("summary")
+                    if summary:
+                        slim: dict = {"result": summary, "summarized": True}
+                    else:
+                        # Fallback: hard truncation for tasks without summaries (e.g., just started)
+                        result_val = output.get("result", "")
+                        if isinstance(result_val, str) and len(result_val) > 300:
+                            result_val = result_val[:300] + "... [truncated]"
+                        slim = {"result": result_val}
                     if "evaluation" in output:
                         slim["evaluation"] = output["evaluation"]
                     task_entry["output"] = slim
+                # Remove the full summary field from compact_plan to avoid duplication
+                task_entry.pop("summary", None)
 
             # In workflow mode, add an explicit step-completion map so the
             # LLM doesn't have to parse [Step X] prefixes from descriptions.
@@ -2626,8 +2741,17 @@ Do NOT skip steps. Do NOT mark goal as completed until ALL workflow steps are do
                     f"Do NOT use communication agents (e.g., Twilio, Email). Just answer the question directly."
                 )
 
+            # Goal re-injection: every 3 iterations, re-state the workflow goal
+            # prominently to counter "instruction fade-out" in long workflows.
+            goal_reminder = ""
+            if iteration >= 3 and iteration % 3 == 0 and workflow_goal:
+                goal_reminder = (
+                    f"\n\n⚠️ REMINDER — Original Workflow Goal:\n{workflow_goal}\n"
+                    f"Stay focused on achieving this goal. Do not deviate."
+                )
+
             user_prompt = f"""Goal:
-{plan.goal}{conversation_context}{auto_reply_note}
+{plan.goal}{conversation_context}{auto_reply_note}{goal_reminder}
 
 Current Plan (JSON):
 {json.dumps(compact_plan, indent=2, default=str)}
@@ -3050,7 +3174,18 @@ Analyze the plan and determine the next step."""
 
                         _current_parallel_call_id.set(None)
                         task.updated_at = datetime.now(timezone.utc)
-                    
+
+                    # ── Context Compaction: summarize completed parallel task outputs ──
+                    for task in pydantic_tasks:
+                        if task.state == "completed" and task.output and not task.summary:
+                            output_text = task.output.get("result", "") or str(task.output)
+                            task.summary = await self._summarize_task_output(
+                                output_text=output_text,
+                                agent_name=task.recommended_agent or "Agent",
+                                task_description=task.task_description,
+                                context_id=context_id,
+                            )
+
                     # If any task triggered HITL pause, save plan and return
                     if hitl_pause:
                         session_context.current_plan = plan
@@ -3102,7 +3237,17 @@ Analyze the plan and determine the next step."""
                         
                         if result.get("output"):
                             all_task_outputs.append(result["output"])
-                        
+
+                        # ── Context Compaction: summarize completed sequential task output ──
+                        if task.state == "completed" and task.output and not task.summary:
+                            output_text = task.output.get("result", "") or str(task.output)
+                            task.summary = await self._summarize_task_output(
+                                output_text=output_text,
+                                agent_name=task.recommended_agent or "Agent",
+                                task_description=task.task_description,
+                                context_id=context_id,
+                            )
+
                         # Emit agent_complete/agent_error based on task state from the plan
                         # Skip EVALUATE/QUERY tasks — they emit their own events
                         is_evaluate = task.recommended_agent and task.recommended_agent.upper() in ("EVALUATE", "QUERY", "WEB_SEARCH")

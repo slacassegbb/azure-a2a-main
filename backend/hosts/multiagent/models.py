@@ -85,6 +85,9 @@ class AgentModeTask(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     error_message: Optional[str] = Field(None, description="Error message if task failed.")
+    # LLM-generated summary of the output (~200 chars) for tiered context compaction.
+    # Full output stays in `output`; downstream steps use the summary for older tasks.
+    summary: Optional[str] = Field(None, description="Compact LLM-generated summary of task output for context compaction.")
     # Structured prompt metadata from planner (carried from PlannerTask)
     planner_metadata: Optional[PlannerTask] = Field(None, description="Original planner task with structured prompt fields.")
 
