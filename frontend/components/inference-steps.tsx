@@ -47,7 +47,7 @@ interface OrchestratorActivity {
 
 // Inline connectors that appear between agent cards
 interface StepConnector {
-  kind: "reflection" | "critique" | "doom_loop"
+  kind: "reflection" | "critique" | "doom_loop" | "reasoning" | "document"
   text: string            // Main message (observation or critique reasoning)
   detail?: string         // Secondary text (progress assessment or suggested fix)
   afterAgentKey?: string  // mapKey of the agent card this appears after
@@ -109,26 +109,19 @@ function parseEventsToAgents(steps: StepEvent[], agentColors?: Record<string, st
       const phase = step.metadata?.phase  // Check phase early for both "phase" and "info" events
       
       if (eventType === "reasoning" && content) {
-        // The AI's reasoning about what to do - this is the most valuable!
-        activityIndex++
-        activity = {
-          type: "planning",
-          label: content,  // Show full reasoning, UI will handle overflow
-          timestamp: activityIndex,
-        }
+        // Planner reasoning → inline connector between agent cards (not top-level)
+        // This keeps reasoning in execution order instead of bunched at the top.
+        connectors.push({
+          kind: "reasoning" as any,
+          text: content,
+          afterAgentKey: lastCompletedAgentKey,
+        })
         orchestratorStatus = "planning"
       } else if (eventType === "phase" || (eventType === "info" && phase)) {
         // Phase events describe what step is being executed
         // Also handle "info" events that have a phase in metadata
         if (phase === "step_execution") {
-          activityIndex++
-          const stepLabel = step.metadata?.step_label || ""
-          activity = {
-            type: "agent_dispatch",
-            label: `Executing Step ${stepLabel}`,
-            detail: content,
-            timestamp: activityIndex,
-          }
+          // Step dispatch is implicit from the agent card — no need to duplicate
           orchestratorStatus = "dispatching"
         } else if (phase === "complete") {
           orchestratorStatus = "complete"
@@ -155,30 +148,13 @@ function parseEventsToAgents(steps: StepEvent[], agentColors?: Record<string, st
             timestamp: activityIndex,
           }
           orchestratorStatus = "planning"
-        } else if (phase === "document_indexing") {
-          // Orchestrator received files from agent
-          activityIndex++
-          activity = {
-            type: "document",
-            label: content,  // "📥 Received X file(s) from AgentName..."
-            timestamp: activityIndex,
-          }
-        } else if (phase === "document_extraction") {
-          // Orchestrator is extracting content from a file
-          activityIndex++
-          activity = {
-            type: "document",
-            label: content,  // "📄 Extracting content from: filename.pdf"
-            timestamp: activityIndex,
-          }
-        } else if (phase === "document_extraction_complete") {
-          // Orchestrator finished extracting - show the content preview
-          activityIndex++
-          activity = {
-            type: "document",
-            label: content,  // Full extraction message with content preview
-            timestamp: activityIndex,
-          }
+        } else if (phase === "document_indexing" || phase === "document_extraction" || phase === "document_extraction_complete") {
+          // Document events → inline connector after the agent that produced the file
+          connectors.push({
+            kind: "document" as any,
+            text: content,
+            afterAgentKey: lastCompletedAgentKey,
+          })
         } else if (phase === "reflection") {
           // Just a status spinner — don't surface as activity
           orchestratorStatus = "reflecting"
@@ -520,6 +496,28 @@ function InlineConnector({ connector }: { connector: StepConnector }) {
     )
   }
 
+  if (connector.kind === "reasoning") {
+    return (
+      <div className="flex items-start gap-2 mx-3 my-1.5 px-3 py-2 rounded-md bg-blue-500/5 border-l-2 border-blue-500/30">
+        <Zap className="h-3 w-3 text-blue-400/70 flex-shrink-0 mt-0.5" />
+        <div className="min-w-0">
+          <p className="text-[11px] text-blue-300/90 leading-relaxed break-words">{connector.text}</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (connector.kind === "document") {
+    return (
+      <div className="flex items-start gap-2 mx-3 my-1.5 px-3 py-2 rounded-md bg-emerald-500/5 border-l-2 border-emerald-500/30">
+        <FileText className="h-3 w-3 text-emerald-400/70 flex-shrink-0 mt-0.5" />
+        <div className="min-w-0">
+          <p className="text-[11px] text-emerald-300/90 leading-relaxed break-words">{connector.text}</p>
+        </div>
+      </div>
+    )
+  }
+
   return null
 }
 
@@ -737,6 +735,9 @@ export function InferenceSteps({ steps, isInferencing, plan, cancelled, agentCol
           <OrchestratorSection activities={orchestratorActivities} status={orchestratorStatus} isLive={true} />
           
           <div className="space-y-1 pr-1">
+            {connectors
+              .filter(c => !c.afterAgentKey)
+              .map((c, ci) => <InlineConnector key={`orphan-conn-${ci}`} connector={c} />)}
             {agents.map((agent: AgentInfo, i: number) => (
               <React.Fragment key={agent.mapKey}>
                 <AgentCard agent={agent} stepNumber={i + 1} isLive={true} />
@@ -787,6 +788,9 @@ export function InferenceSteps({ steps, isInferencing, plan, cancelled, agentCol
         <AccordionContent>
           <OrchestratorSection activities={orchestratorActivities} status={orchestratorStatus} isLive={false} />
           <div className="space-y-1 pt-1 pb-2">
+            {connectors
+              .filter(c => !c.afterAgentKey)
+              .map((c, ci) => <InlineConnector key={`orphan-conn-${ci}`} connector={c} />)}
             {agents.map((agent: AgentInfo, i: number) => (
               <React.Fragment key={agent.mapKey}>
                 <AgentCard agent={agent} stepNumber={i + 1} isLive={false} />
