@@ -3063,52 +3063,14 @@ Available Agents (JSON):
 
 Analyze the plan and determine the next step."""
             
-            # Get next step from orchestrator.
-            # Per OpenDev paper Section 2.3.5 (Context-Injected Error Recovery):
-            # classify the error, apply targeted recovery, retry with a budget.
-            # For content filter errors, escalate compaction and retry.
+            # Get next step from orchestrator
             try:
-                try:
-                    next_step = await self._call_azure_openai_structured(
-                        system_prompt=system_prompt,
-                        user_prompt=user_prompt,
-                        response_model=NextStep,
-                        context_id=context_id
-                    )
-                except Exception as cf_err:
-                    if "content filter" in str(cf_err).lower() or "content_filter" in str(cf_err).lower():
-                        # Content filter recovery: aggressively compact task outputs and retry.
-                        # Per paper Section 2.3.6: escalate compaction when pressure is critical.
-                        log_warning(f"[Content Filter Recovery] Hit content filter at iteration {iteration}, applying aggressive compaction and retrying...")
-                        await self._emit_granular_agent_event(
-                            "foundry-host-agent", "Content filter triggered — compacting context and retrying...", context_id,
-                            event_type="phase", metadata={"phase": "content_filter_recovery"}
-                        )
-                        # Stage 3 (Aggressive Masking per paper): replace ALL task outputs with minimal state
-                        for task_entry in compact_plan.get("tasks", []):
-                            if task_entry.get("output"):
-                                state = task_entry.get("state", "unknown")
-                                task_entry["output"] = {"result": f"[compacted — task {state}]", "compacted": True}
-                        # Rebuild prompt with compacted plan
-                        user_prompt = f"""Goal:
-{plan.goal}{conversation_context}{auto_reply_note}
-
-Current Plan (JSON):
-{json.dumps(compact_plan, indent=2, default=str)}
-
-Available Agents (JSON):
-{json.dumps(available_agents, indent=2)}{workflow_progress}{_critique_context}
-
-Analyze the plan and determine the next step."""
-                        next_step = await self._call_azure_openai_structured(
-                            system_prompt=system_prompt,
-                            user_prompt=user_prompt,
-                            response_model=NextStep,
-                            context_id=context_id
-                        )
-                        log_info(f"[Content Filter Recovery] Retry succeeded after aggressive compaction")
-                    else:
-                        raise  # Not a content filter error — propagate normally
+                next_step = await self._call_azure_openai_structured(
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    response_model=NextStep,
+                    context_id=context_id
+                )
 
                 log_debug(f"[Agent Mode] Orchestrator: {next_step.reasoning[:100]}... | status={next_step.goal_status}")
                 await self._emit_granular_agent_event(
