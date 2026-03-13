@@ -2811,6 +2811,8 @@ Do NOT skip steps. Do NOT mark goal as completed until ALL workflow steps are do
         _last_reflection: Optional[ReflectionResult] = None
         _interrupt_this_iteration = False
         _critique_replan_used = False  # Tracks if critique already triggered a re-plan
+        _critique_context = ""  # Critique feedback injected as transient prompt context (never mutates plan.goal)
+        _reminder_count = 0  # Guardrail counter: cap how many times reminders fire (per paper Section 2.3.4)
 
         # Doom-loop detection: track consecutive failures and repeated tasks
         _agent_consecutive_failures: Dict[str, int] = {}  # agent_name -> consecutive fail count
@@ -3004,24 +3006,28 @@ Do NOT skip steps. Do NOT mark goal as completed until ALL workflow steps are do
                     f"Do NOT use communication agents (e.g., Twilio, Email). Just answer the question directly."
                 )
 
-            # Event-driven reminders: every 3 iterations, re-inject the goal AND
-            # critical behavioral rules to counter "instruction fade-out" in long workflows.
-            # Per OpenDev paper: re-inject not just the goal but behavioral constraints
-            # that the planner tends to forget in extended sessions.
+            # Event-driven system reminders (per OpenDev paper Section 2.3.4):
+            # Short, targeted messages injected at maximum recency to counter
+            # "instruction fade-out" in long sessions. Key paper principles:
+            # - Reinforce existing instructions, don't introduce new ones
+            # - Use guardrail counters to cap how many times each reminder fires
+            # - Never mutate the goal — inject as transient context
+            MAX_GOAL_REMINDERS = 3  # Paper: reminders that fire every iteration become noise
             goal_reminder = ""
             active_goal = workflow_goal or plan.goal
-            if iteration >= 3 and iteration % 3 == 0 and active_goal:
+            if iteration >= 3 and iteration % 3 == 0 and active_goal and _reminder_count < MAX_GOAL_REMINDERS:
+                _reminder_count += 1
                 goal_reminder = (
-                    f"\n\n⚠️ REMINDER — Original Workflow Goal:\n{active_goal}\n"
-                    f"Stay focused on achieving this goal. Do not deviate.\n\n"
-                    f"🔁 BEHAVIORAL RULES REMINDER:\n"
+                    f"\n\n⚠️ REMINDER ({_reminder_count}/{MAX_GOAL_REMINDERS}) — Original Goal:\n{active_goal}\n"
+                    f"Stay focused. Do not deviate.\n\n"
+                    f"🔁 BEHAVIORAL RULES:\n"
                     f"- Do NOT retry failed steps — a step counts as done even if the agent hit errors or rate limits\n"
-                    f"- Do NOT fabricate missing info — if an agent asks for more info, mark goal completed and surface the question\n"
-                    f"- Match tasks to agents using their skills field — do not force one agent to do another's specialty\n"
+                    f"- Do NOT fabricate missing info — mark goal completed and surface the question\n"
+                    f"- Match tasks to agents by skills — do not force one agent to do another's specialty\n"
                     f"- Keep each task atomic and delegable to a single agent\n"
                     f"- Use parallel execution (next_tasks) when steps are independent"
                 )
-                log_info(f"[Event-Driven Reminder] Injected goal + behavioral rules at iteration {iteration}")
+                log_info(f"[Event-Driven Reminder] Injected goal + behavioral rules at iteration {iteration} ({_reminder_count}/{MAX_GOAL_REMINDERS})")
 
             # Inject reflection from previous iteration (if available)
             reflection_context = ""
@@ -3042,7 +3048,7 @@ Current Plan (JSON):
 {json.dumps(compact_plan, indent=2, default=str)}
 
 Available Agents (JSON):
-{json.dumps(available_agents, indent=2)}{workflow_progress}{reflection_context}
+{json.dumps(available_agents, indent=2)}{workflow_progress}{reflection_context}{_critique_context}
 
 Analyze the plan and determine the next step."""
             
@@ -3105,7 +3111,10 @@ Analyze the plan and determine the next step."""
 
                 # =========================================================
                 # SELF-CRITIQUE: Validate planned action before dispatch
-                # (ReAct Phase 2: "Am I about to do something wrong?")
+                # Per OpenDev paper Algorithm 1 (Phase 1): critique evaluates
+                # the trace, then feedback is injected as transient context —
+                # never mutating plan.goal (which compounds across iterations
+                # and can trigger content filters on long workflows).
                 # =========================================================
                 critique = await self._critique_planned_action(
                     next_step=next_step,
@@ -3115,15 +3124,19 @@ Analyze the plan and determine the next step."""
                 )
                 if critique and not critique.approve:
                     if not _critique_replan_used:
-                        # Disapproved — inject concern and re-plan ONCE
+                        # Disapproved — inject concern into prompt context and re-plan ONCE.
+                        # NOTE: We do NOT mutate plan.goal (which compounds on every iteration
+                        # and can trigger content filters). Instead, _critique_context is
+                        # injected separately into the prompt and cleared on next approval.
                         _critique_replan_used = True
                         log_warning(f"[Critique] Re-planning: {critique.suggested_fix}")
-                        plan.goal = f"{plan.goal}\n\n[CRITIQUE: {critique.reasoning}. Fix: {critique.suggested_fix or 'reconsider'}]"
+                        _critique_context = f"\n\n[CRITIQUE: {critique.reasoning[:300]}. Fix: {critique.suggested_fix or 'reconsider'}]"
                         continue  # Re-enter loop for re-plan
                     else:
                         log_warning(f"[Critique] Already re-planned once, proceeding despite disapproval")
                 else:
                     _critique_replan_used = False  # Reset on approval
+                    _critique_context = ""  # Clear critique context
 
                 # =========================================================
                 # DOOM-LOOP DETECTION: Catch repeated failures & stuck plans
