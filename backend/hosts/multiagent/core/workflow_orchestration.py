@@ -2949,8 +2949,9 @@ Do NOT skip steps. Do NOT mark goal as completed until ALL workflow steps are do
             # consuming 70–80% of the available token budget." We aggressively
             # strip redundant fields and use LLM-generated summaries over raw output.
             compact_plan = plan.model_dump()
-            # Strip plan-level fields already present in the user prompt or unnecessary for planning
-            compact_plan.pop("workflow", None)        # Full workflow text — redundant with workflow_progress
+            # Strip plan-level fields already present in the user prompt or unnecessary for planning.
+            # NOTE: 'workflow' is kept — it contains branching structure (IF-TRUE/IF-FALSE)
+            # that the planner needs alongside task state to skip the correct branches.
             compact_plan.pop("workflow_goal", None)   # Already in user prompt "Goal:" line
             compact_plan.pop("goal", None)            # Already in user prompt "Goal:" line
             compact_plan.pop("created_at", None)
