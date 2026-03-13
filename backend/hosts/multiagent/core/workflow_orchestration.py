@@ -3009,9 +3009,10 @@ Do NOT skip steps. Do NOT mark goal as completed until ALL workflow steps are do
             # Per OpenDev paper: re-inject not just the goal but behavioral constraints
             # that the planner tends to forget in extended sessions.
             goal_reminder = ""
-            if iteration >= 3 and iteration % 3 == 0 and workflow_goal:
+            active_goal = workflow_goal or plan.goal
+            if iteration >= 3 and iteration % 3 == 0 and active_goal:
                 goal_reminder = (
-                    f"\n\n⚠️ REMINDER — Original Workflow Goal:\n{workflow_goal}\n"
+                    f"\n\n⚠️ REMINDER — Original Workflow Goal:\n{active_goal}\n"
                     f"Stay focused on achieving this goal. Do not deviate.\n\n"
                     f"🔁 BEHAVIORAL RULES REMINDER:\n"
                     f"- Do NOT retry failed steps — a step counts as done even if the agent hit errors or rate limits\n"
@@ -3020,6 +3021,7 @@ Do NOT skip steps. Do NOT mark goal as completed until ALL workflow steps are do
                     f"- Keep each task atomic and delegable to a single agent\n"
                     f"- Use parallel execution (next_tasks) when steps are independent"
                 )
+                log_info(f"[Event-Driven Reminder] Injected goal + behavioral rules at iteration {iteration}")
 
             # Inject reflection from previous iteration (if available)
             reflection_context = ""
