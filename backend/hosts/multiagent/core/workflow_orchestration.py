@@ -3070,33 +3070,45 @@ Analyze the plan and determine the next step."""
             # Per OpenDev paper Section 2.3.5: on error, classify it, apply
             # recovery (compaction for content filters, backoff for rate limits),
             # and retry within a budget. Accept failure after budget exhausted.
+            # Uses an inner retry loop so compaction persists across retries
+            # (the outer loop rebuilds compact_plan from scratch, which would undo it).
             try:
-                try:
-                    next_step = await self._call_azure_openai_structured(
-                        system_prompt=system_prompt,
-                        user_prompt=user_prompt,
-                        response_model=NextStep,
-                        context_id=context_id
-                    )
-                    _planner_error_retries = 0  # Reset on success
-                except Exception as planner_err:
-                    _planner_error_retries += 1
-                    err_msg = str(planner_err).lower()
-                    is_content_filter = "content filter" in err_msg or "content_filter" in err_msg
-                    is_rate_limit = "rate limit" in err_msg or "429" in err_msg
+                next_step = None
+                _current_user_prompt = user_prompt
+                for _retry_attempt in range(MAX_PLANNER_ERROR_RETRIES + 1):
+                    try:
+                        next_step = await self._call_azure_openai_structured(
+                            system_prompt=system_prompt,
+                            user_prompt=_current_user_prompt,
+                            response_model=NextStep,
+                            context_id=context_id
+                        )
+                        _planner_error_retries = 0  # Reset on success
+                        break  # Success — exit retry loop
+                    except Exception as planner_err:
+                        _planner_error_retries += 1
+                        err_msg = str(planner_err).lower()
+                        is_content_filter = "content filter" in err_msg or "content_filter" in err_msg
+                        is_rate_limit = "rate limit" in err_msg or "429" in err_msg
 
-                    if _planner_error_retries > MAX_PLANNER_ERROR_RETRIES:
-                        log_error(f"[Error Recovery] Retry budget exhausted ({_planner_error_retries}/{MAX_PLANNER_ERROR_RETRIES}), accepting failure")
-                        raise  # Propagate to outer handler
+                        if _retry_attempt >= MAX_PLANNER_ERROR_RETRIES:
+                            log_error(f"[Error Recovery] Retry budget exhausted ({_planner_error_retries}/{MAX_PLANNER_ERROR_RETRIES}), accepting failure")
+                            raise  # Propagate to outer handler
 
-                    if is_content_filter:
-                        # Recovery: strip all task output content from compact_plan, keep structure
-                        log_warning(f"[Error Recovery] Content filter at iteration {iteration} — compacting task outputs and retrying ({_planner_error_retries}/{MAX_PLANNER_ERROR_RETRIES})")
-                        for te in compact_plan.get("tasks", []):
-                            if te.get("output"):
-                                te["output"] = {"result": f"[task {te.get('state', 'unknown')}]"}
-                        # Rebuild user_prompt with the same structure, just compacted data
-                        user_prompt = f"""Goal:
+                        if is_content_filter:
+                            # Recovery: strip all task output content from compact_plan, keep structure
+                            log_warning(f"[Error Recovery] Content filter at iteration {iteration} — compacting task outputs and retrying ({_retry_attempt + 1}/{MAX_PLANNER_ERROR_RETRIES})")
+                            for te in compact_plan.get("tasks", []):
+                                if te.get("output"):
+                                    te["output"] = {"result": f"[task {te.get('state', 'unknown')}]"}
+                            # Also strip task descriptions that might contain triggering content
+                            # (e.g., long legal/financial text copied from workflow steps)
+                            for te in compact_plan.get("tasks", []):
+                                desc = te.get("task_description", "")
+                                if len(desc) > 200:
+                                    te["task_description"] = desc[:200] + "..."
+                            # Rebuild user_prompt with compacted data
+                            _current_user_prompt = f"""Goal:
 {plan.goal}{conversation_context}{auto_reply_note}{goal_reminder}
 
 Current Plan (JSON):
@@ -3106,19 +3118,21 @@ Available Agents (JSON):
 {json.dumps(available_agents, indent=2)}{workflow_progress}{reflection_context}{_critique_context}
 
 Analyze the plan and determine the next step."""
-                    elif is_rate_limit:
-                        log_warning(f"[Error Recovery] Rate limit at iteration {iteration} — waiting 20s before retry ({_planner_error_retries}/{MAX_PLANNER_ERROR_RETRIES})")
-                        await asyncio.sleep(20)
-                    else:
-                        raise  # Unknown error — propagate immediately
+                        elif is_rate_limit:
+                            log_warning(f"[Error Recovery] Rate limit at iteration {iteration} — waiting 20s before retry ({_retry_attempt + 1}/{MAX_PLANNER_ERROR_RETRIES})")
+                            await asyncio.sleep(20)
+                        else:
+                            raise  # Unknown error — propagate immediately
 
-                    await self._emit_granular_agent_event(
-                        "foundry-host-agent",
-                        f"Planner error (retrying {_planner_error_retries}/{MAX_PLANNER_ERROR_RETRIES})...",
-                        context_id, event_type="phase",
-                        metadata={"phase": "error_recovery", "retry": _planner_error_retries}
-                    )
-                    continue  # Re-enter loop to retry with same or compacted prompt
+                        await self._emit_granular_agent_event(
+                            "foundry-host-agent",
+                            f"Planner error (retrying {_retry_attempt + 1}/{MAX_PLANNER_ERROR_RETRIES})...",
+                            context_id, event_type="phase",
+                            metadata={"phase": "error_recovery", "retry": _retry_attempt + 1}
+                        )
+
+                if next_step is None:
+                    raise Exception("Planner failed to produce a response after retries")
 
                 log_debug(f"[Agent Mode] Orchestrator: {next_step.reasoning[:100]}... | status={next_step.goal_status}")
                 await self._emit_granular_agent_event(
