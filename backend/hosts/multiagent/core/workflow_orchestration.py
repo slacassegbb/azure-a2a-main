@@ -2813,8 +2813,7 @@ Do NOT skip steps. Do NOT mark goal as completed until ALL workflow steps are do
         _critique_replan_used = False  # Tracks if critique already triggered a re-plan
         _critique_context = ""  # Critique feedback injected as transient prompt context (never mutates plan.goal)
         _reminder_count = 0  # Guardrail counter: cap how many times reminders fire (per paper Section 2.3.4)
-        _planner_error_retries = 0  # Error recovery budget (per paper Section 2.3.5: max 3 nudge attempts)
-        MAX_PLANNER_ERROR_RETRIES = 2  # After this many retries, accept the failure
+        MAX_PLANNER_ERROR_RETRIES = 2  # Rate limit retry budget (per paper Section 2.3.5)
 
         # Doom-loop detection: track consecutive failures and repeated tasks
         _agent_consecutive_failures: Dict[str, int] = {}  # agent_name -> consecutive fail count
@@ -3067,66 +3066,37 @@ Available Agents (JSON):
 Analyze the plan and determine the next step."""
             
             # Get next step from orchestrator
-            # Per OpenDev paper Section 2.3.5: on error, classify it, apply
-            # recovery (compaction for content filters, backoff for rate limits),
-            # and retry within a budget. Accept failure after budget exhausted.
-            # Uses an inner retry loop so compaction persists across retries
-            # (the outer loop rebuilds compact_plan from scratch, which would undo it).
+            # Per OpenDev paper Section 2.3.5 (Context-Injected Error Recovery):
+            # On error, classify it, apply recovery strategy, and retry within
+            # a budget. Accept failure only after budget is exhausted.
             try:
                 next_step = None
-                _current_user_prompt = user_prompt
                 for _retry_attempt in range(MAX_PLANNER_ERROR_RETRIES + 1):
                     try:
                         next_step = await self._call_azure_openai_structured(
                             system_prompt=system_prompt,
-                            user_prompt=_current_user_prompt,
+                            user_prompt=user_prompt,
                             response_model=NextStep,
                             context_id=context_id
                         )
-                        _planner_error_retries = 0  # Reset on success
-                        break  # Success — exit retry loop
+                        break  # Success
                     except Exception as planner_err:
-                        _planner_error_retries += 1
-                        err_msg = str(planner_err).lower()
-                        is_content_filter = "content filter" in err_msg or "content_filter" in err_msg
-                        is_rate_limit = "rate limit" in err_msg or "429" in err_msg
-
                         if _retry_attempt >= MAX_PLANNER_ERROR_RETRIES:
-                            log_error(f"[Error Recovery] Retry budget exhausted ({_planner_error_retries}/{MAX_PLANNER_ERROR_RETRIES}), accepting failure")
+                            log_error(f"[Error Recovery] Retry budget exhausted ({_retry_attempt + 1}/{MAX_PLANNER_ERROR_RETRIES}), accepting failure")
                             raise  # Propagate to outer handler
 
-                        if is_content_filter:
-                            # Recovery: strip all task output content from compact_plan, keep structure
-                            log_warning(f"[Error Recovery] Content filter at iteration {iteration} — compacting task outputs and retrying ({_retry_attempt + 1}/{MAX_PLANNER_ERROR_RETRIES})")
-                            for te in compact_plan.get("tasks", []):
-                                if te.get("output"):
-                                    te["output"] = {"result": f"[task {te.get('state', 'unknown')}]"}
-                            # Also strip task descriptions that might contain triggering content
-                            # (e.g., long legal/financial text copied from workflow steps)
-                            for te in compact_plan.get("tasks", []):
-                                desc = te.get("task_description", "")
-                                if len(desc) > 200:
-                                    te["task_description"] = desc[:200] + "..."
-                            # Rebuild user_prompt with compacted data
-                            _current_user_prompt = f"""Goal:
-{plan.goal}{conversation_context}{auto_reply_note}{goal_reminder}
+                        err_msg = str(planner_err).lower()
+                        is_rate_limit = "rate limit" in err_msg or "429" in err_msg
 
-Current Plan (JSON):
-{json.dumps(compact_plan, indent=2, default=str)}
-
-Available Agents (JSON):
-{json.dumps(available_agents, indent=2)}{workflow_progress}{reflection_context}{_critique_context}
-
-Analyze the plan and determine the next step."""
-                        elif is_rate_limit:
-                            log_warning(f"[Error Recovery] Rate limit at iteration {iteration} — waiting 20s before retry ({_retry_attempt + 1}/{MAX_PLANNER_ERROR_RETRIES})")
+                        if is_rate_limit:
+                            log_warning(f"[Error Recovery] Rate limit at iteration {iteration} — waiting 20s ({_retry_attempt + 1}/{MAX_PLANNER_ERROR_RETRIES})")
                             await asyncio.sleep(20)
                         else:
-                            raise  # Unknown error — propagate immediately
+                            log_warning(f"[Error Recovery] Planner error at iteration {iteration} — retrying ({_retry_attempt + 1}/{MAX_PLANNER_ERROR_RETRIES}): {str(planner_err)[:150]}")
 
                         await self._emit_granular_agent_event(
                             "foundry-host-agent",
-                            f"Planner error (retrying {_retry_attempt + 1}/{MAX_PLANNER_ERROR_RETRIES})...",
+                            f"Planner error, retrying ({_retry_attempt + 1}/{MAX_PLANNER_ERROR_RETRIES})...",
                             context_id, event_type="phase",
                             metadata={"phase": "error_recovery", "retry": _retry_attempt + 1}
                         )
