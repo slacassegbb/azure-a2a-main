@@ -84,6 +84,9 @@ function parseEventsToAgents(steps: StepEvent[], agentColors?: Record<string, st
   const currentAgentKey = new Map<string, string>()
   // Track the most recently completed agent(s) for connector placement
   let lastCompletedAgentKey: string | undefined
+  // Track the currently running agent — used for document events that fire
+  // before agent_complete (e.g., file extraction during SSE streaming)
+  let lastRunningAgentKey: string | undefined
   
   // Debug: log all incoming steps
   logDebug("[InferenceSteps] Parsing steps:", steps.map(s => ({ agent: s.agent, eventType: s.eventType, statusLen: s.status?.length, hasImage: !!s.imageUrl })))
@@ -149,11 +152,12 @@ function parseEventsToAgents(steps: StepEvent[], agentColors?: Record<string, st
           }
           orchestratorStatus = "planning"
         } else if (phase === "document_indexing" || phase === "document_extraction" || phase === "document_extraction_complete") {
-          // Document events → inline connector after the agent that produced the file
+          // Document events fire during agent execution (before agent_complete),
+          // so use lastRunningAgentKey to place them after the correct agent card.
           connectors.push({
             kind: "document" as any,
             text: content,
-            afterAgentKey: lastCompletedAgentKey,
+            afterAgentKey: lastRunningAgentKey || lastCompletedAgentKey,
           })
         } else if (phase === "reflection") {
           // Just a status spinner — don't surface as activity
@@ -304,6 +308,7 @@ function parseEventsToAgents(steps: StepEvent[], agentColors?: Record<string, st
     if (eventType === "agent_start") {
       agent.taskDescription = step.metadata?.task_description || content
       agent.status = "running"
+      lastRunningAgentKey = mapKey
     } else if (eventType === "agent_output") {
       // Set agent output (extraction content is now shown in orchestrator section)
       if (!agent.output || agent.output !== content) {
