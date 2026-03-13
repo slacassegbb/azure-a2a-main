@@ -2942,10 +2942,17 @@ Do NOT skip steps. Do NOT mark goal as completed until ALL workflow steps are do
                 )
             
             # Build a compact version of the plan for the LLM prompt.
-            # Uses tiered context compaction: if an LLM-generated summary exists
-            # for a task, use that instead of truncating the raw output.
-            # This gives the planner much better signal than a blunt 300-char cut.
+            # Per OpenDev paper Section 2.3.6 (Adaptive Context Compaction):
+            # "older observations quickly dominate the context window, frequently
+            # consuming 70–80% of the available token budget." We aggressively
+            # strip redundant fields and use LLM-generated summaries over raw output.
             compact_plan = plan.model_dump()
+            # Strip plan-level fields already present in the user prompt or unnecessary for planning
+            compact_plan.pop("workflow", None)        # Full workflow text — redundant with workflow_progress
+            compact_plan.pop("workflow_goal", None)   # Already in user prompt "Goal:" line
+            compact_plan.pop("goal", None)            # Already in user prompt "Goal:" line
+            compact_plan.pop("created_at", None)
+            compact_plan.pop("updated_at", None)
             for task_entry in compact_plan.get("tasks", []):
                 output = task_entry.get("output")
                 if output and isinstance(output, dict):
@@ -2963,8 +2970,12 @@ Do NOT skip steps. Do NOT mark goal as completed until ALL workflow steps are do
                     if "evaluation" in output:
                         slim["evaluation"] = output["evaluation"]
                     task_entry["output"] = slim
-                # Remove the full summary field from compact_plan to avoid duplication
+                # Strip fields that bloat the prompt without helping the planner
                 task_entry.pop("summary", None)
+                task_entry.pop("planner_metadata", None)  # Duplicates task_description + adds output_guidance bloat
+                task_entry.pop("created_at", None)
+                task_entry.pop("updated_at", None)
+                task_entry.pop("error_message", None)
 
             # In workflow mode, add an explicit step-completion map so the
             # LLM doesn't have to parse [Step X] prefixes from descriptions.
