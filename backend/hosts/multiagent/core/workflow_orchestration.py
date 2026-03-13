@@ -3004,13 +3004,21 @@ Do NOT skip steps. Do NOT mark goal as completed until ALL workflow steps are do
                     f"Do NOT use communication agents (e.g., Twilio, Email). Just answer the question directly."
                 )
 
-            # Goal re-injection: every 3 iterations, re-state the workflow goal
-            # prominently to counter "instruction fade-out" in long workflows.
+            # Event-driven reminders: every 3 iterations, re-inject the goal AND
+            # critical behavioral rules to counter "instruction fade-out" in long workflows.
+            # Per OpenDev paper: re-inject not just the goal but behavioral constraints
+            # that the planner tends to forget in extended sessions.
             goal_reminder = ""
             if iteration >= 3 and iteration % 3 == 0 and workflow_goal:
                 goal_reminder = (
                     f"\n\n⚠️ REMINDER — Original Workflow Goal:\n{workflow_goal}\n"
-                    f"Stay focused on achieving this goal. Do not deviate."
+                    f"Stay focused on achieving this goal. Do not deviate.\n\n"
+                    f"🔁 BEHAVIORAL RULES REMINDER:\n"
+                    f"- Do NOT retry failed steps — a step counts as done even if the agent hit errors or rate limits\n"
+                    f"- Do NOT fabricate missing info — if an agent asks for more info, mark goal completed and surface the question\n"
+                    f"- Match tasks to agents using their skills field — do not force one agent to do another's specialty\n"
+                    f"- Keep each task atomic and delegable to a single agent\n"
+                    f"- Use parallel execution (next_tasks) when steps are independent"
                 )
 
             # Inject reflection from previous iteration (if available)

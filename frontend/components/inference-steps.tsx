@@ -45,6 +45,14 @@ interface OrchestratorActivity {
   timestamp: number
 }
 
+// Inline connectors that appear between agent cards
+interface StepConnector {
+  kind: "reflection" | "critique" | "doom_loop"
+  text: string            // Main message (observation or critique reasoning)
+  detail?: string         // Secondary text (progress assessment or suggested fix)
+  afterAgentKey?: string  // mapKey of the agent card this appears after
+}
+
 function formatAgentName(name: string): string {
   if (!name) return "Agent"
   if (name === "foundry-host-agent") return "Orchestrator"
@@ -61,17 +69,21 @@ interface ParsedData {
   agents: AgentInfo[]
   orchestratorActivities: OrchestratorActivity[]
   orchestratorStatus: "idle" | "planning" | "dispatching" | "reflecting" | "validating" | "complete" | "error"
+  connectors: StepConnector[]  // Inline connectors between agent cards
 }
 
 function parseEventsToAgents(steps: StepEvent[], agentColors?: Record<string, string>): ParsedData {
   const agentMap = new Map<string, AgentInfo>()
   const orchestratorActivities: OrchestratorActivity[] = []
+  const connectors: StepConnector[] = []
   const seenOrchestratorLabels = new Set<string>()
   let orchestratorStatus: "idle" | "planning" | "dispatching" | "reflecting" | "validating" | "complete" | "error" = "idle"
   let activityIndex = 0
   // Track the current map key for each agent name to support multiple invocations
   // When an agent completes and new events arrive, a new key (e.g., "AgentName::2") is created
   const currentAgentKey = new Map<string, string>()
+  // Track the most recently completed agent(s) for connector placement
+  let lastCompletedAgentKey: string | undefined
   
   // Debug: log all incoming steps
   logDebug("[InferenceSteps] Parsing steps:", steps.map(s => ({ agent: s.agent, eventType: s.eventType, statusLen: s.status?.length, hasImage: !!s.imageUrl })))
@@ -168,39 +180,38 @@ function parseEventsToAgents(steps: StepEvent[], agentColors?: Record<string, st
             timestamp: activityIndex,
           }
         } else if (phase === "reflection") {
+          // Just a status spinner — don't surface as activity
           orchestratorStatus = "reflecting"
         } else if (phase === "critique") {
+          // Just a status spinner — don't surface as activity
           orchestratorStatus = "validating"
         }
       } else if (eventType === "reflection" && content) {
-        // Post-execution reflection — what did we learn?
-        activityIndex++
-        activity = {
-          type: "reflection",
-          label: content,
+        // Post-execution reflection → inline connector between agent cards
+        connectors.push({
+          kind: "reflection",
+          text: content,
           detail: step.metadata?.progress || undefined,
-          timestamp: activityIndex,
-        }
+          afterAgentKey: lastCompletedAgentKey,
+        })
         orchestratorStatus = "reflecting"
       } else if (eventType === "critique" && content) {
-        // Pre-execution critique — disapproved action
-        activityIndex++
-        activity = {
-          type: "critique",
-          label: content,
+        // Pre-execution critique DISAPPROVAL → inline connector (approvals are never emitted)
+        connectors.push({
+          kind: "critique",
+          text: content,
           detail: step.metadata?.suggested_fix || undefined,
-          timestamp: activityIndex,
-        }
+          afterAgentKey: lastCompletedAgentKey,
+        })
         orchestratorStatus = "validating"
       } else if (eventType === "doom_loop" && content) {
-        // Doom loop detected — system halting
-        activityIndex++
-        activity = {
-          type: "doom_loop",
-          label: content,
+        // Doom loop detected → inline connector
+        connectors.push({
+          kind: "doom_loop",
+          text: content,
           detail: step.metadata?.trigger || undefined,
-          timestamp: activityIndex,
-        }
+          afterAgentKey: lastCompletedAgentKey,
+        })
         orchestratorStatus = "error"
       } else if (eventType === "tool_call") {
         const toolName = step.metadata?.tool_name || "tool"
@@ -324,8 +335,10 @@ function parseEventsToAgents(steps: StepEvent[], agentColors?: Record<string, st
       }
     } else if (eventType === "agent_complete") {
       agent.status = "complete"
+      lastCompletedAgentKey = mapKey  // Track for connector placement
     } else if (eventType === "agent_error") {
       agent.status = "error"
+      lastCompletedAgentKey = mapKey  // Track for connector placement
       // Always capture error content
       if (content) {
         agent.output = agent.output ? `${agent.output}\n\n❌ Error: ${content}` : `❌ Error: ${content}`
@@ -396,6 +409,7 @@ function parseEventsToAgents(steps: StepEvent[], agentColors?: Record<string, st
     agents: sortedAgents,
     orchestratorActivities,
     orchestratorStatus,
+    connectors,
   }
 }
 
@@ -464,6 +478,49 @@ function OrchestratorSection({ activities, status, isLive }: { activities: Orche
       )}
     </div>
   )
+}
+
+function InlineConnector({ connector }: { connector: StepConnector }) {
+  if (connector.kind === "reflection") {
+    return (
+      <div className="flex items-start gap-2 mx-3 my-1.5 px-3 py-2 rounded-md bg-violet-500/5 border-l-2 border-violet-500/30">
+        <Eye className="h-3 w-3 text-violet-400/70 flex-shrink-0 mt-0.5" />
+        <div className="min-w-0">
+          <p className="text-[11px] text-violet-300/90 leading-relaxed break-words">{connector.text}</p>
+          {connector.detail && (
+            <p className="text-[10px] text-muted-foreground mt-0.5">{connector.detail}</p>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  if (connector.kind === "critique") {
+    return (
+      <div className="flex items-start gap-2 mx-3 my-1.5 px-3 py-2 rounded-md bg-amber-500/5 border-l-2 border-amber-500/40">
+        <ShieldCheck className="h-3 w-3 text-amber-400/80 flex-shrink-0 mt-0.5" />
+        <div className="min-w-0">
+          <p className="text-[11px] text-amber-300/90 leading-relaxed break-words">{connector.text}</p>
+          {connector.detail && (
+            <p className="text-[10px] text-muted-foreground mt-0.5">{connector.detail}</p>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  if (connector.kind === "doom_loop") {
+    return (
+      <div className="flex items-start gap-2 mx-3 my-1.5 px-3 py-2 rounded-md bg-red-500/10 border-l-2 border-red-500/50">
+        <OctagonX className="h-3 w-3 text-red-400 flex-shrink-0 mt-0.5" />
+        <div className="min-w-0">
+          <p className="text-[11px] text-red-300 leading-relaxed break-words">{connector.text}</p>
+        </div>
+      </div>
+    )
+  }
+
+  return null
 }
 
 function AgentCard({ agent, stepNumber, isLive }: { agent: AgentInfo; stepNumber: number; isLive: boolean }) {
@@ -643,7 +700,7 @@ function AgentCard({ agent, stepNumber, isLive }: { agent: AgentInfo; stepNumber
 }
 
 export function InferenceSteps({ steps, isInferencing, plan, cancelled, agentColors }: InferenceStepsProps) {
-  const { agents, orchestratorActivities, orchestratorStatus } = useMemo(() => parseEventsToAgents(steps, agentColors), [steps, agentColors])
+  const { agents, orchestratorActivities, orchestratorStatus, connectors } = useMemo(() => parseEventsToAgents(steps, agentColors), [steps, agentColors])
   const summaryLabel = agents.length > 0 ? `${agents.length} agent${agents.length !== 1 ? "s" : ""}` : ""
   const hasOrchestratorActivity = orchestratorActivities.length > 0
 
@@ -680,7 +737,14 @@ export function InferenceSteps({ steps, isInferencing, plan, cancelled, agentCol
           <OrchestratorSection activities={orchestratorActivities} status={orchestratorStatus} isLive={true} />
           
           <div className="space-y-1 pr-1">
-            {agents.map((agent: AgentInfo, i: number) => <AgentCard key={agent.mapKey} agent={agent} stepNumber={i + 1} isLive={true} />)}
+            {agents.map((agent: AgentInfo, i: number) => (
+              <React.Fragment key={agent.mapKey}>
+                <AgentCard agent={agent} stepNumber={i + 1} isLive={true} />
+                {connectors
+                  .filter(c => c.afterAgentKey === agent.mapKey)
+                  .map((c, ci) => <InlineConnector key={`${agent.mapKey}-conn-${ci}`} connector={c} />)}
+              </React.Fragment>
+            ))}
           </div>
         </div>
       </div>
@@ -723,7 +787,14 @@ export function InferenceSteps({ steps, isInferencing, plan, cancelled, agentCol
         <AccordionContent>
           <OrchestratorSection activities={orchestratorActivities} status={orchestratorStatus} isLive={false} />
           <div className="space-y-1 pt-1 pb-2">
-            {agents.map((agent: AgentInfo, i: number) => <AgentCard key={agent.mapKey} agent={agent} stepNumber={i + 1} isLive={false} />)}
+            {agents.map((agent: AgentInfo, i: number) => (
+              <React.Fragment key={agent.mapKey}>
+                <AgentCard agent={agent} stepNumber={i + 1} isLive={false} />
+                {connectors
+                  .filter(c => c.afterAgentKey === agent.mapKey)
+                  .map((c, ci) => <InlineConnector key={`${agent.mapKey}-conn-${ci}`} connector={c} />)}
+              </React.Fragment>
+            ))}
           </div>
         </AccordionContent>
       </AccordionItem>
